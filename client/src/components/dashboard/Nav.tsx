@@ -7,11 +7,11 @@ export function Nav() {
   const [location] = useLocation();
 
   const links = [
-    { href: "/", label: "DASHBOARD", icon: LayoutDashboard },
-    { href: "/strategies", label: "STRATEGIES", icon: Activity },
-    { href: "/history", label: "HISTORY", icon: History },
-    { href: "/wallet", label: "WALLET", icon: Wallet },
-    { href: "/settings", label: "CONFIG", icon: Settings },
+    { href: "/", label: "PANEL", icon: LayoutDashboard },
+    { href: "/strategies", label: "ESTRATEGIAS", icon: Activity },
+    { href: "/history", label: "HISTORIAL", icon: History },
+    { href: "/wallet", label: "CARTERA", icon: Wallet },
+    { href: "/settings", label: "AJUSTES", icon: Settings },
   ];
 
   return (

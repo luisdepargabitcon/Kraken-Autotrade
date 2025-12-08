@@ -17,7 +17,7 @@ export function ChartWidget() {
     <Card className="col-span-2 glass-panel border-border/50 h-full flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-sm font-medium font-mono tracking-wider text-muted-foreground">
-          PORTFOLIO PERFORMANCE
+          RENDIMIENTO DEL PORTAFOLIO
         </CardTitle>
         <Tabs defaultValue="24h" className="h-8">
           <TabsList className="h-8 bg-muted/50 border border-border/50">

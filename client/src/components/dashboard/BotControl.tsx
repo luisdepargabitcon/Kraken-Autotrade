@@ -14,11 +14,11 @@ export function BotControl() {
     <Card className="glass-panel border-border/50">
       <CardHeader className="pb-3 border-b border-border/50 bg-muted/10">
         <CardTitle className="text-sm font-medium font-mono flex items-center justify-between">
-          <span>SYSTEM CONTROL</span>
+          <span>CONTROL DEL SISTEMA</span>
           <div className="flex items-center gap-2">
             <div className={cn("h-2 w-2 rounded-full animate-pulse", isActive ? "bg-green-500" : "bg-red-500")} />
             <span className={cn("text-xs", isActive ? "text-green-500" : "text-red-500")}>
-              {isActive ? "ONLINE" : "OFFLINE"}
+              {isActive ? "EN LÍNEA" : "DESCONECTADO"}
             </span>
           </div>
         </CardTitle>
@@ -26,8 +26,8 @@ export function BotControl() {
       <CardContent className="space-y-6 pt-6">
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <Label className="text-base font-medium">Master Switch</Label>
-            <p className="text-xs text-muted-foreground">Enable autonomous trading</p>
+            <Label className="text-base font-medium">Interruptor Maestro</Label>
+            <p className="text-xs text-muted-foreground">Habilitar trading autónomo</p>
           </div>
           <Button
             size="sm"
@@ -36,19 +36,19 @@ export function BotControl() {
             onClick={() => setIsActive(!isActive)}
           >
             {isActive ? (
-              <><Pause className="mr-2 h-4 w-4" /> STOP</>
+              <><Pause className="mr-2 h-4 w-4" /> PARAR</>
             ) : (
-              <><Play className="mr-2 h-4 w-4" /> START</>
+              <><Play className="mr-2 h-4 w-4" /> INICIAR</>
             )}
           </Button>
         </div>
 
         <div className="space-y-4 pt-4 border-t border-border/50">
           <div className="grid gap-2">
-            <Label className="text-xs font-mono text-muted-foreground">STRATEGY</Label>
+            <Label className="text-xs font-mono text-muted-foreground">ESTRATEGIA</Label>
             <Select defaultValue="momentum">
               <SelectTrigger className="font-mono text-xs bg-background/50 border-border">
-                <SelectValue placeholder="Select strategy" />
+                <SelectValue placeholder="Seleccionar estrategia" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="momentum">MOMENTUM_ALPHA_V2</SelectItem>
@@ -59,15 +59,15 @@ export function BotControl() {
           </div>
 
           <div className="grid gap-2">
-            <Label className="text-xs font-mono text-muted-foreground">RISK LEVEL</Label>
+            <Label className="text-xs font-mono text-muted-foreground">NIVEL DE RIESGO</Label>
             <Select defaultValue="medium">
               <SelectTrigger className="font-mono text-xs bg-background/50 border-border">
-                <SelectValue placeholder="Select risk" />
+                <SelectValue placeholder="Seleccionar riesgo" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="low">LOW (Conservative)</SelectItem>
-                <SelectItem value="medium">MEDIUM (Balanced)</SelectItem>
-                <SelectItem value="high">HIGH (Aggressive)</SelectItem>
+                <SelectItem value="low">BAJO (Conservador)</SelectItem>
+                <SelectItem value="medium">MEDIO (Equilibrado)</SelectItem>
+                <SelectItem value="high">ALTO (Agresivo)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -75,7 +75,7 @@ export function BotControl() {
           <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-md flex gap-3 items-start">
             <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
             <p className="text-[10px] text-yellow-500/80 leading-tight">
-              Running in HIGH FREQUENCY mode. Ensure API limits are set correctly in Kraken dashboard to avoid rate limiting.
+              Ejecutando en modo ALTA FRECUENCIA. Asegure los límites de API en Kraken para evitar bloqueos.
             </p>
           </div>
         </div>
