@@ -1,41 +1,20 @@
-FROM node:20-alpine AS base
+FROM node:20-alpine
 
-# Install dependencies only when needed
-FROM base AS deps
+WORKDIR /app
+
 RUN apk add --no-cache libc6-compat
-WORKDIR /app
 
-# Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm ci
 
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+RUN npm install
+
 COPY . .
 
-# Build the application
 RUN npm run build
-
-# Production image, copy all the files and run
-FROM base AS runner
-WORKDIR /app
-
-ENV NODE_ENV=production
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 appuser
-
-# Copy built application
-COPY --from=builder --chown=appuser:nodejs /app/dist ./dist
-COPY --from=builder --chown=appuser:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:nodejs /app/package.json ./package.json
-
-USER appuser
 
 EXPOSE 5000
 
+ENV NODE_ENV=production
 ENV PORT=5000
 
-CMD ["node", "dist/index.cjs"]
+CMD ["sh", "-c", "npm run db:push && npm start"]
