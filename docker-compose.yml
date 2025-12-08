@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: kraken-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: krakenbot
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeThisPassword123!}
+      POSTGRES_DB: krakenbot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - krakenbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krakenbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # KrakenBot Application
+  app:
+    build: .
+    container_name: kraken-bot-app
+    restart: unless-stopped
+    ports:
+      - "3000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgres://krakenbot:${DB_PASSWORD:-changeThisPassword123!}@postgres:5432/krakenbot
+      
+      # Estas variables se configuran desde la interfaz web
+      # KRAKEN_API_KEY: se configura desde /ajustes
+      # KRAKEN_API_SECRET: se configura desde /ajustes
+      # TELEGRAM_BOT_TOKEN: se configura desde /ajustes
+      # TELEGRAM_CHAT_ID: se configura desde /ajustes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - krakenbot-network
+    volumes:
+      # Monta un volumen para persistir configuración si es necesario
+      - app_config:/app/config
+
+networks:
+  krakenbot-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  app_config:
+    driver: local
