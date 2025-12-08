@@ -1,0 +1,99 @@
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_08_54_434Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_08_59_263Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_04_801Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_10_408Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_15_555Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_21_924Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_28_882Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_39_105Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_55_251Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_10_23_817Z-debug-0.log
+🚀 Instalando dependencias...
+npm error code ENOENT
+npm error syscall open
+npm error path /app/package.json
+npm error errno -2
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+npm error enoent This is related to npm not being able to find a file.
+npm error enoent
+npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_11_16_538Z-debug-0.log

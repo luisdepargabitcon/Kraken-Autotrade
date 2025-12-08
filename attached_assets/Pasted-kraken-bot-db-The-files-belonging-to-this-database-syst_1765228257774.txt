@@ -1,0 +1,149 @@
+kraken-bot-db  | The files belonging to this database system will be owned by user "postgres".
+kraken-bot-db  | This user must also own the server process.
+kraken-bot-db  | 
+kraken-bot-db  | The database cluster will be initialized with locale "en_US.utf8".
+kraken-bot-db   | The default database encoding has accordingly been set to "UTF8".
+kraken-bot-db   | The default text search configuration will be set to "english".
+kraken-bot-db   | 
+kraken-bot-db   | Data page checksums are disabled.
+kraken-bot-db   | 
+kraken-bot-db   | fixing permissions on existing directory /var/lib/postgresql/data ... ok
+kraken-bot-db   | creating subdirectories ... ok
+kraken-bot-db   | selecting dynamic shared memory implementation ... posix
+kraken-bot-db   | selecting default max_connections ... 100
+kraken-bot-db   | selecting default shared_buffers ... 128MB
+kraken-bot-db   | selecting default time zone ... UTC
+kraken-bot-db   | creating configuration files ... ok
+kraken-bot-db   | running bootstrap script ... ok
+kraken-bot-db   | sh: locale: not found
+kraken-bot-db   | 2025-12-08 21:08:47.965 UTC [35] WARNING:  no usable system locales were found
+kraken-bot-db   | performing post-bootstrap initialization ... ok
+kraken-bot-db   | syncing data to disk ... ok
+kraken-bot-db   | 
+kraken-bot-db   | 
+kraken-bot-db   | initdb: warning: enabling "trust" authentication for local connections
+kraken-bot-db   | initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+kraken-bot-db   | Success. You can now start the database server using:
+kraken-bot-db   | 
+kraken-bot-db   |     pg_ctl -D /var/lib/postgresql/data -l logfile start
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-db   | 
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-db   | waiting for server to start....2025-12-08 21:08:51.775 UTC [41] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-app  | npm error syscall open
+kraken-bot-db   | 2025-12-08 21:08:52.088 UTC [41] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-db   | 2025-12-08 21:08:52.101 UTC [44] LOG:  database system was shut down at 2025-12-08 21:08:50 UTC
+kraken-bot-app  | npm error errno -2
+kraken-bot-db   | 2025-12-08 21:08:52.118 UTC [41] LOG:  database system is ready to accept connections
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-db   |  done
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-db   | server started
+kraken-bot-app  | npm error enoent
+kraken-bot-db   | 2025-12-08 21:08:52.648 UTC [60] FATAL:  database "krakenbot" does not exist
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_08_54_434Z-debug-0.log
+kraken-bot-db   | CREATE DATABASE
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-db   | 
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-db   | 
+kraken-bot-db   | /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-db   | 
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-db   | 2025-12-08 21:08:53.105 UTC [41] LOG:  received fast shutdown request
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-db   | waiting for server to shut down....2025-12-08 21:08:53.114 UTC [41] LOG:  aborting any active transactions
+kraken-bot-app  | npm error enoent
+kraken-bot-db   | 2025-12-08 21:08:53.118 UTC [41] LOG:  background worker "logical replication launcher" (PID 47) exited with exit code 1
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_08_59_263Z-debug-0.log
+kraken-bot-db   | 2025-12-08 21:08:53.123 UTC [42] LOG:  shutting down
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-db   | 2025-12-08 21:08:53.133 UTC [42] LOG:  checkpoint starting: shutdown immediate
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-db   | 2025-12-08 21:08:54.111 UTC [42] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.548 s, sync=0.395 s, total=0.988 s; sync files=301, longest=0.014 s, average=0.002 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E928, redo lsn=0/191E928
+kraken-bot-app  | npm error syscall open
+kraken-bot-db   | .2025-12-08 21:08:54.209 UTC [41] LOG:  database system is shut down
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-db   |  done
+kraken-bot-db   | server stopped
+kraken-bot-db   | 
+kraken-bot-db   | PostgreSQL init process complete; ready for start up.
+kraken-bot-db   | 
+kraken-bot-db   | 2025-12-08 21:08:54.325 UTC [1] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-db   | 2025-12-08 21:08:54.325 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+kraken-bot-db   | 2025-12-08 21:08:54.325 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+kraken-bot-db   | 2025-12-08 21:08:54.337 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-db   | 2025-12-08 21:08:54.360 UTC [65] LOG:  database system was shut down at 2025-12-08 21:08:54 UTC
+kraken-bot-db   | 2025-12-08 21:08:54.391 UTC [1] LOG:  database system is ready to accept connections
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_04_801Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_10_408Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_15_555Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_21_924Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_28_882Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_39_105Z-debug-0.log
+kraken-bot-app  | 🚀 Instalando dependencias...
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_09_55_251Z-debug-0.log
+kraken-bot-app  | npm error code ENOENT
+kraken-bot-app  | npm error syscall open
+kraken-bot-app  | npm error path /app/package.json
+kraken-bot-app  | npm error errno -2
+kraken-bot-app  | npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open '/app/package.json'
+kraken-bot-app  | npm error enoent This is related to npm not being able to find a file.
+kraken-bot-app  | npm error enoent
+kraken-bot-app  | npm error A complete log of this run can be found in: /root/.npm/_logs/2025-12-08T21_10_23_817Z-debug-0.log
+kraken-bot-app exited with code 254
