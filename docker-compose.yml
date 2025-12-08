@@ -38,7 +38,7 @@ services:
     networks:
       - krakenbot-network
     volumes:
-      - ./:/app
+      - /BOTKRAKEN:/app
       - node_modules:/app/node_modules
     command: >
       sh -c "
