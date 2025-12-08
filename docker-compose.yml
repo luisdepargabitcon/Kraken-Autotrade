@@ -36,7 +36,7 @@ services:
     networks:
       - krakenbot-network
     volumes:
-      - /share/Container/container-station-data/application/BOTKRAKEN:/app
+      - /share/CHESTER/BOTKRAKEN:/app
     command: >
       sh -c "
         echo '=== Buscando archivos ===' &&
