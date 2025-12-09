@@ -1,0 +1,78 @@
+# KrakenBot - Autonomous Trading Bot
+
+## Overview
+
+KrakenBot is an autonomous cryptocurrency trading bot that connects to the Kraken exchange. It provides a web-based dashboard for monitoring trades, managing portfolio balances (BTC, ETH, SOL, USD), and receiving notifications via Telegram. The application is designed to run 24/7, either on Replit or self-hosted on a QNAP NAS using Docker.
+
+## User Preferences
+
+Preferred communication style: Simple, everyday language.
+
+## System Architecture
+
+### Frontend Architecture
+- **Framework**: React with TypeScript
+- **Routing**: Wouter (lightweight router)
+- **State Management**: TanStack React Query for server state
+- **Styling**: Tailwind CSS with shadcn/ui components (New York style)
+- **Build Tool**: Vite with custom plugins for Replit integration
+- **UI Components**: Radix UI primitives with custom dashboard components
+
+### Backend Architecture
+- **Framework**: Express.js with TypeScript
+- **Runtime**: Node.js with tsx for TypeScript execution
+- **Build**: esbuild for production bundling with selective dependency bundling
+- **API Structure**: RESTful endpoints under `/api/*` prefix
+- **Services**: 
+  - KrakenService: Handles Kraken exchange API integration for trading and balance queries
+  - TelegramService: Sends notifications for trades and system status
+
+### Data Storage
+- **Database**: PostgreSQL with Drizzle ORM
+- **Schema Location**: `shared/schema.ts`
+- **Tables**: 
+  - `bot_config`: Trading bot settings (strategy, risk level, active pairs)
+  - `api_config`: API credentials for Kraken and Telegram
+  - `trades`: Trade history and execution records
+  - `notifications`: Telegram notification queue
+  - `market_data`: Price and market information cache
+
+### Project Structure
+```
+├── client/           # React frontend
+│   ├── src/
+│   │   ├── components/   # UI components (dashboard/, ui/)
+│   │   ├── pages/        # Route pages (Dashboard, Settings, History)
+│   │   ├── hooks/        # Custom React hooks
+│   │   └── lib/          # Utilities and query client
+├── server/           # Express backend
+│   ├── services/     # External service integrations (kraken.ts, telegram.ts)
+│   ├── routes.ts     # API route definitions
+│   ├── storage.ts    # Database access layer
+│   └── db.ts         # Database connection
+├── shared/           # Shared types and schema
+└── migrations/       # Drizzle database migrations
+```
+
+## External Dependencies
+
+### Kraken Exchange API
+- **Package**: `node-kraken-api`
+- **Purpose**: Execute trades, fetch balances, get market data
+- **Configuration**: API key and secret stored in `api_config` table
+- **Features**: Public ticker data, authenticated trading operations
+
+### Telegram Bot API
+- **Package**: `node-telegram-bot-api`
+- **Purpose**: Send trade notifications and system status alerts
+- **Configuration**: Bot token and chat ID stored in `api_config` table
+- **Mode**: Polling disabled (send-only)
+
+### PostgreSQL Database
+- **ORM**: Drizzle ORM with `drizzle-kit` for migrations
+- **Connection**: Via `DATABASE_URL` environment variable
+- **Driver**: `pg` (node-postgres)
+
+### Environment Variables Required
+- `DATABASE_URL`: PostgreSQL connection string
+- Kraken and Telegram credentials are stored in the database after initial setup through the Settings page
