@@ -3,7 +3,10 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { krakenService } from "./services/kraken";
 import { telegramService } from "./services/telegram";
+import { TradingEngine } from "./services/tradingEngine";
 import { z } from "zod";
+
+let tradingEngine: TradingEngine | null = null;
 
 export async function registerRoutes(
   httpServer: Server,
@@ -29,6 +32,16 @@ export async function registerRoutes(
         console.log("[startup] Telegram credentials loaded from database");
       }
     }
+    
+    // Initialize trading engine
+    tradingEngine = new TradingEngine(krakenService, telegramService);
+    
+    // Auto-start if bot was active
+    const botConfig = await storage.getBotConfig();
+    if (botConfig?.isActive && krakenService.isInitialized()) {
+      console.log("[startup] Starting trading engine...");
+      tradingEngine.start();
+    }
   } catch (error) {
     console.error("[startup] Error loading API credentials:", error);
   }
@@ -46,11 +59,12 @@ export async function registerRoutes(
     try {
       const updated = await storage.updateBotConfig(req.body);
       
-      if (req.body.isActive !== undefined) {
-        await telegramService.sendSystemStatus(
-          req.body.isActive,
-          req.body.strategy || updated.strategy
-        );
+      if (req.body.isActive !== undefined && tradingEngine) {
+        if (req.body.isActive) {
+          await tradingEngine.start();
+        } else {
+          await tradingEngine.stop();
+        }
       }
       
       res.json(updated);
@@ -70,6 +84,18 @@ export async function registerRoutes(
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to get API config" });
+    }
+  });
+
+  app.get("/api/trading/status", async (req, res) => {
+    try {
+      res.json({
+        engineRunning: tradingEngine?.isActive() || false,
+        krakenConnected: krakenService.isInitialized(),
+        telegramConnected: telegramService.isInitialized(),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get trading status" });
     }
   });
 
