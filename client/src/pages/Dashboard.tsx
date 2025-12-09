@@ -1,15 +1,82 @@
+import { useQuery } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Ticker } from "@/components/dashboard/Ticker";
 import { AssetCard } from "@/components/dashboard/AssetCard";
 import { TradeLog } from "@/components/dashboard/TradeLog";
 import { ChartWidget } from "@/components/dashboard/ChartWidget";
 import { BotControl } from "@/components/dashboard/BotControl";
+import { AlertCircle } from "lucide-react";
+import { Link } from "wouter";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
 
+interface DashboardData {
+  krakenConnected: boolean;
+  telegramConnected: boolean;
+  botActive: boolean;
+  strategy: string;
+  balances: Record<string, string>;
+  prices: Record<string, { price: string; change: string }>;
+  recentTrades: any[];
+}
+
 export default function Dashboard() {
+  const { data, isLoading, error } = useQuery<DashboardData>({
+    queryKey: ["dashboard"],
+    queryFn: async () => {
+      const res = await fetch("/api/dashboard");
+      if (!res.ok) throw new Error("Failed to fetch dashboard");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const formatBalance = (symbol: string) => {
+    if (!data?.balances) return { balance: "0", value: "$0.00", change: 0 };
+    
+    const krakenSymbol = symbol === "BTC" ? "XXBT" : symbol === "ETH" ? "XETH" : symbol === "SOL" ? "SOL" : "ZUSD";
+    const balance = parseFloat(data.balances[krakenSymbol] || "0");
+    
+    const pricePair = symbol === "BTC" ? "XXBTZUSD" : symbol === "ETH" ? "XETHZUSD" : "SOLUSD";
+    const priceData = data.prices[pricePair];
+    const price = parseFloat(priceData?.price || "0");
+    const change = parseFloat(priceData?.change || "0");
+    
+    const value = symbol === "USD" ? balance : balance * price;
+    
+    return {
+      balance: balance.toFixed(symbol === "USD" ? 2 : 4),
+      value: `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      change: symbol === "USD" ? 0 : change,
+    };
+  };
+
+  const getTotalBalance = () => {
+    if (!data?.balances || !data?.prices) return "$0.00";
+    
+    let total = parseFloat(data.balances["ZUSD"] || "0");
+    
+    const btcBalance = parseFloat(data.balances["XXBT"] || "0");
+    const btcPrice = parseFloat(data.prices["XXBTZUSD"]?.price || "0");
+    total += btcBalance * btcPrice;
+    
+    const ethBalance = parseFloat(data.balances["XETH"] || "0");
+    const ethPrice = parseFloat(data.prices["XETHZUSD"]?.price || "0");
+    total += ethBalance * ethPrice;
+    
+    const solBalance = parseFloat(data.balances["SOL"] || "0");
+    const solPrice = parseFloat(data.prices["SOLUSD"]?.price || "0");
+    total += solBalance * solPrice;
+    
+    return `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const usdData = formatBalance("USD");
+  const btcData = formatBalance("BTC");
+  const ethData = formatBalance("ETH");
+  const solData = formatBalance("SOL");
+
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
-      {/* Background Image Overlay */}
       <div 
         className="fixed inset-0 z-0 opacity-20 pointer-events-none" 
         style={{ 
@@ -20,22 +87,56 @@ export default function Dashboard() {
         }} 
       />
       
-      {/* Content */}
       <div className="relative z-10 flex flex-col min-h-screen">
         <Nav />
         <Ticker />
         
+        {!data?.krakenConnected && !isLoading && (
+          <div className="mx-6 mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-yellow-500" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-yellow-500">Kraken no conectado</p>
+              <p className="text-xs text-muted-foreground">Configura tus claves API en Ajustes para ver datos reales.</p>
+            </div>
+            <Link href="/settings" className="text-sm text-primary hover:underline" data-testid="link-goto-settings">
+              Ir a Ajustes
+            </Link>
+          </div>
+        )}
+        
         <main className="flex-1 p-6 grid grid-cols-1 md:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full">
           
-          {/* Top Row: Asset Stats */}
           <div className="col-span-12 grid grid-cols-1 md:grid-cols-4 gap-6">
-            <AssetCard symbol="USD" name="Balance Total" balance="14,892.45" value="$14,892.45" change={2.4} />
-            <AssetCard symbol="BTC" name="Bitcoin" balance="0.45" value="$43,394.44" change={1.8} />
-            <AssetCard symbol="ETH" name="Ethereum" balance="12.5" value="$43,209.75" change={-0.4} />
-            <AssetCard symbol="SOL" name="Solana" balance="145.0" value="$21,053.50" change={5.2} />
+            <AssetCard 
+              symbol="USD" 
+              name="Balance Total" 
+              balance={usdData.balance} 
+              value={data?.krakenConnected ? getTotalBalance() : "--"} 
+              change={0} 
+            />
+            <AssetCard 
+              symbol="BTC" 
+              name="Bitcoin" 
+              balance={data?.krakenConnected ? btcData.balance : "--"} 
+              value={data?.krakenConnected ? btcData.value : "--"} 
+              change={btcData.change} 
+            />
+            <AssetCard 
+              symbol="ETH" 
+              name="Ethereum" 
+              balance={data?.krakenConnected ? ethData.balance : "--"} 
+              value={data?.krakenConnected ? ethData.value : "--"} 
+              change={ethData.change} 
+            />
+            <AssetCard 
+              symbol="SOL" 
+              name="Solana" 
+              balance={data?.krakenConnected ? solData.balance : "--"} 
+              value={data?.krakenConnected ? solData.value : "--"} 
+              change={solData.change} 
+            />
           </div>
 
-          {/* Middle Row: Main Chart & Control */}
           <div className="col-span-12 md:col-span-9 h-[500px]">
             <ChartWidget />
           </div>
@@ -53,7 +154,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Bottom Row: Logs */}
           <div className="col-span-12">
             <TradeLog />
           </div>

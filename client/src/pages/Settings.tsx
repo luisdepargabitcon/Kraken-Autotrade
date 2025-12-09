@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HardDrive, Bot, MessageSquare, Server, Save, Check, X } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -19,6 +19,22 @@ export default function Settings() {
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
   const [telegramConnected, setTelegramConnected] = useState(false);
+
+  const { data: apiConfig } = useQuery({
+    queryKey: ["apiConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/config/api");
+      if (!res.ok) throw new Error("Failed to fetch config");
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (apiConfig) {
+      setKrakenConnected(apiConfig.krakenConnected);
+      setTelegramConnected(apiConfig.telegramConnected);
+    }
+  }, [apiConfig]);
 
   const krakenMutation = useMutation({
     mutationFn: async () => {

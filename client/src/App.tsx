@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
+import History from "@/pages/History";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -12,9 +13,8 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/settings" component={Settings} />
-      {/* Fallback routes for demo links */}
+      <Route path="/history" component={History} />
       <Route path="/strategies" component={Dashboard} />
-      <Route path="/history" component={Dashboard} />
       <Route path="/wallet" component={Dashboard} />
       
       <Route component={NotFound} />

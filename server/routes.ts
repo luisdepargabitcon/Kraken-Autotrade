@@ -36,6 +36,20 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/config/api", async (req, res) => {
+    try {
+      const config = await storage.getApiConfig();
+      res.json({
+        krakenConnected: config?.krakenConnected || false,
+        telegramConnected: config?.telegramConnected || false,
+        hasKrakenKeys: !!(config?.krakenApiKey && config?.krakenApiSecret),
+        hasTelegramKeys: !!(config?.telegramToken && config?.telegramChatId),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get API config" });
+    }
+  });
+
   app.post("/api/config/kraken", async (req, res) => {
     try {
       const { apiKey, apiSecret } = req.body;
@@ -48,8 +62,15 @@ export async function registerRoutes(
       
       const balance = await krakenService.getBalance();
       
+      await storage.updateApiConfig({
+        krakenApiKey: apiKey,
+        krakenApiSecret: apiSecret,
+        krakenConnected: true,
+      });
+      
       res.json({ success: true, message: "Kraken connected successfully", balance });
     } catch (error) {
+      await storage.updateApiConfig({ krakenConnected: false });
       res.status(500).json({ error: "Failed to connect to Kraken" });
     }
   });
@@ -70,9 +91,59 @@ export async function registerRoutes(
         return res.status(500).json({ error: "Failed to send test message" });
       }
       
+      await storage.updateApiConfig({
+        telegramToken: token,
+        telegramChatId: chatId,
+        telegramConnected: true,
+      });
+      
       res.json({ success: true, message: "Telegram connected successfully" });
     } catch (error) {
+      await storage.updateApiConfig({ telegramConnected: false });
       res.status(500).json({ error: "Failed to connect to Telegram" });
+    }
+  });
+
+  app.get("/api/dashboard", async (req, res) => {
+    try {
+      const apiConfig = await storage.getApiConfig();
+      const botConfig = await storage.getBotConfig();
+      const trades = await storage.getTrades(10);
+      
+      let balances: Record<string, string> = {};
+      let prices: Record<string, { price: string; change: string }> = {};
+      
+      if (krakenService.isInitialized()) {
+        try {
+          balances = await krakenService.getBalance();
+          
+          const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD"];
+          for (const pair of pairs) {
+            try {
+              const ticker = await krakenService.getTicker(pair);
+              const tickerData: any = Object.values(ticker)[0];
+              if (tickerData) {
+                const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+                const openPrice = parseFloat(tickerData.o || "0");
+                const change = openPrice > 0 ? ((currentPrice - openPrice) / openPrice * 100).toFixed(2) : "0";
+                prices[pair] = { price: tickerData.c?.[0] || "0", change };
+              }
+            } catch (e) {}
+          }
+        } catch (e) {}
+      }
+      
+      res.json({
+        krakenConnected: apiConfig?.krakenConnected || false,
+        telegramConnected: apiConfig?.telegramConnected || false,
+        botActive: botConfig?.isActive || false,
+        strategy: botConfig?.strategy || "momentum",
+        balances,
+        prices,
+        recentTrades: trades,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get dashboard data" });
     }
   });
 

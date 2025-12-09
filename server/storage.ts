@@ -3,14 +3,17 @@ import {
   type Trade, 
   type Notification, 
   type MarketData,
+  type ApiConfig,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
   type InsertMarketData,
+  type InsertApiConfig,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
-  marketData as marketDataTable
+  marketData as marketDataTable,
+  apiConfig as apiConfigTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -18,6 +21,9 @@ import { eq, desc } from "drizzle-orm";
 export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
+  
+  getApiConfig(): Promise<ApiConfig | undefined>;
+  updateApiConfig(config: Partial<InsertApiConfig>): Promise<ApiConfig>;
   
   createTrade(trade: InsertTrade): Promise<Trade>;
   getTrades(limit?: number): Promise<Trade[]>;
@@ -50,6 +56,28 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db.update(botConfigTable)
       .set({ ...config, updatedAt: new Date() })
       .where(eq(botConfigTable.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  async getApiConfig(): Promise<ApiConfig | undefined> {
+    const configs = await db.select().from(apiConfigTable).limit(1);
+    if (configs.length === 0) {
+      const [newConfig] = await db.insert(apiConfigTable).values({}).returning();
+      return newConfig;
+    }
+    return configs[0];
+  }
+
+  async updateApiConfig(config: Partial<InsertApiConfig>): Promise<ApiConfig> {
+    const existing = await this.getApiConfig();
+    if (!existing) {
+      const [newConfig] = await db.insert(apiConfigTable).values(config as InsertApiConfig).returning();
+      return newConfig;
+    }
+    const [updated] = await db.update(apiConfigTable)
+      .set({ ...config, updatedAt: new Date() })
+      .where(eq(apiConfigTable.id, existing.id))
       .returning();
     return updated;
   }
