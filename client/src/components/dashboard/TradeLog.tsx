@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   Table,
   TableBody,
@@ -7,20 +8,70 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { RefreshCw, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
-const TRADES = [
-  { id: "T-8923", pair: "ETH/USD", type: "COMPRA", price: "3,450.00", amount: "1.5 ETH", time: "10:42:12", status: "Completado" },
-  { id: "T-8922", pair: "BTC/USD", type: "VENTA", price: "96,500.00", amount: "0.1 BTC", time: "10:38:05", status: "Completado" },
-  { id: "T-8921", pair: "SOL/USD", type: "COMPRA", price: "144.80", amount: "50 SOL", time: "10:15:33", status: "Completado" },
-  { id: "T-8920", pair: "ETH/USD", type: "VENTA", price: "3,465.00", amount: "0.5 ETH", time: "09:55:01", status: "Completado" },
-  { id: "T-8919", pair: "BTC/USD", type: "COMPRA", price: "95,800.00", amount: "0.2 BTC", time: "09:30:12", status: "Completado" },
-];
+interface Trade {
+  id: string;
+  krakenOrderId?: string;
+  pair: string;
+  type: string;
+  price: string;
+  amount: string;
+  time: string;
+  status: string;
+}
 
 export function TradeLog() {
+  const { data: krakenTrades, isLoading, refetch, isFetching } = useQuery<Trade[]>({
+    queryKey: ["krakenTrades"],
+    queryFn: async () => {
+      const res = await fetch("/api/kraken/trades");
+      if (!res.ok) {
+        const dbRes = await fetch("/api/trades?limit=10");
+        if (!dbRes.ok) return [];
+        return dbRes.json();
+      }
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+
+  const formatTime = (timeStr: string) => {
+    const date = new Date(timeStr);
+    return date.toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
+
+  const formatPrice = (price: string) => {
+    const num = parseFloat(price);
+    return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const formatAmount = (amount: string, pair: string) => {
+    const num = parseFloat(amount);
+    const asset = pair.split("/")[0];
+    return `${num.toFixed(6)} ${asset}`;
+  };
+
   return (
     <div className="rounded-md border border-border bg-card/50">
-      <div className="p-4 border-b border-border bg-muted/20">
+      <div className="p-4 border-b border-border bg-muted/20 flex items-center justify-between">
         <h3 className="font-semibold font-mono text-sm tracking-wider text-primary">REGISTRO DE OPERACIONES EN VIVO</h3>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="text-muted-foreground hover:text-primary"
+          data-testid="button-refresh-trades"
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+          Actualizar
+        </Button>
       </div>
       <Table>
         <TableHeader>
@@ -35,21 +86,42 @@ export function TradeLog() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {TRADES.map((trade) => (
-            <TableRow key={trade.id} className="hover:bg-muted/50 border-border font-mono text-xs">
-              <TableCell className="font-medium text-muted-foreground">{trade.id}</TableCell>
-              <TableCell className="text-foreground">{trade.pair}</TableCell>
-              <TableCell>
-                <Badge variant="outline" className={trade.type === "COMPRA" ? "text-green-500 border-green-500/50 bg-green-500/10" : "text-red-500 border-red-500/50 bg-red-500/10"}>
-                  {trade.type}
-                </Badge>
+          {isLoading ? (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center py-8">
+                <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Cargando operaciones...
+                </div>
               </TableCell>
-              <TableCell className="text-right">{trade.price}</TableCell>
-              <TableCell className="text-right text-muted-foreground">{trade.amount}</TableCell>
-              <TableCell className="text-right text-muted-foreground">{trade.time}</TableCell>
-              <TableCell className="text-right text-primary">{trade.status}</TableCell>
             </TableRow>
-          ))}
+          ) : krakenTrades && krakenTrades.length > 0 ? (
+            krakenTrades.slice(0, 10).map((trade) => (
+              <TableRow key={trade.id || trade.krakenOrderId} className="hover:bg-muted/50 border-border font-mono text-xs" data-testid={`trade-row-${trade.id}`}>
+                <TableCell className="font-medium text-muted-foreground">{trade.id}</TableCell>
+                <TableCell className="text-foreground">{trade.pair}</TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={trade.type === "buy" ? "text-green-500 border-green-500/50 bg-green-500/10" : "text-red-500 border-red-500/50 bg-red-500/10"}>
+                    {trade.type === "buy" ? "COMPRA" : "VENTA"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">{formatPrice(trade.price)}</TableCell>
+                <TableCell className="text-right text-muted-foreground">{formatAmount(trade.amount, trade.pair)}</TableCell>
+                <TableCell className="text-right text-muted-foreground">{formatTime(trade.time)}</TableCell>
+                <TableCell className="text-right text-primary">{trade.status === "filled" ? "Completado" : trade.status}</TableCell>
+              </TableRow>
+            ))
+          ) : (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center py-8">
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Clock className="h-8 w-8 opacity-50" />
+                  <p>No hay operaciones registradas</p>
+                  <p className="text-xs">Las operaciones aparecer\u00e1n aqu\u00ed cuando se ejecuten trades.</p>
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>

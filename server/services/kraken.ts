@@ -80,6 +80,37 @@ export class KrakenService {
     return await this.client.closedOrders({ ofs: 0 });
   }
 
+  async getTradesHistory(limit: number = 50, retries: number = 3): Promise<any> {
+    if (!this.client) throw new Error("Kraken client not initialized");
+    
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+        const result = await this.client.tradesHistory({ type: "all" });
+        return result;
+      } catch (error: any) {
+        if (error.message?.includes("EAPI:Invalid nonce") && attempt < retries - 1) {
+          console.log(`[kraken] Nonce error, retrying (${attempt + 1}/${retries})...`);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error("Failed after max retries");
+  }
+
+  formatPairReverse(krakenPair: string): string {
+    const pairMap: Record<string, string> = {
+      "XXBTZUSD": "BTC/USD",
+      "XETHZUSD": "ETH/USD",
+      "SOLUSD": "SOL/USD",
+      "XXBTZXETH": "BTC/ETH",
+      "SOLETH": "SOL/ETH",
+      "XETHXXBT": "ETH/BTC",
+    };
+    return pairMap[krakenPair] || krakenPair;
+  }
+
   private formatPair(pair: string): string {
     const pairMap: Record<string, string> = {
       "BTC/USD": "XXBTZUSD",

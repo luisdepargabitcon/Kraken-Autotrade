@@ -264,5 +264,97 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/trades/sync", async (req, res) => {
+    try {
+      if (!krakenService.isInitialized()) {
+        return res.status(400).json({ error: "Kraken not configured" });
+      }
+
+      const tradesHistory = await krakenService.getTradesHistory();
+      const trades = tradesHistory.trades || {};
+      
+      let synced = 0;
+      for (const [txid, trade] of Object.entries(trades)) {
+        const t = trade as any;
+        try {
+          const existingTrades = await storage.getTrades(1000);
+          const exists = existingTrades.some(et => et.krakenOrderId === txid);
+          
+          if (!exists) {
+            await storage.createTrade({
+              tradeId: `K-${txid.substring(0, 8)}`,
+              pair: krakenService.formatPairReverse(t.pair),
+              type: t.type,
+              price: t.price,
+              amount: t.vol,
+              status: "filled",
+              krakenOrderId: txid,
+              executedAt: new Date(t.time * 1000),
+            });
+            synced++;
+          }
+        } catch (e) {
+          console.error("Error syncing trade:", txid, e);
+        }
+      }
+
+      res.json({ success: true, synced, total: Object.keys(trades).length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to sync trades" });
+    }
+  });
+
+  app.get("/api/kraken/trades", async (req, res) => {
+    try {
+      if (!krakenService.isInitialized()) {
+        const localTrades = await storage.getTrades(50);
+        return res.json(localTrades.map(t => ({
+          id: t.tradeId,
+          krakenOrderId: t.krakenOrderId,
+          pair: t.pair,
+          type: t.type,
+          price: t.price,
+          amount: t.amount,
+          time: t.executedAt?.toISOString() || t.createdAt.toISOString(),
+          status: t.status,
+        })));
+      }
+
+      const tradesHistory = await krakenService.getTradesHistory();
+      const trades = tradesHistory.trades || {};
+      
+      const formattedTrades = Object.entries(trades).map(([txid, trade]) => {
+        const t = trade as any;
+        return {
+          id: txid.substring(0, 10),
+          krakenOrderId: txid,
+          pair: krakenService.formatPairReverse(t.pair),
+          type: t.type,
+          price: t.price,
+          amount: t.vol,
+          cost: t.cost,
+          fee: t.fee,
+          time: new Date(t.time * 1000).toISOString(),
+          status: "filled",
+        };
+      }).sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+      res.json(formattedTrades);
+    } catch (error: any) {
+      console.error("[api/kraken/trades] Error:", error.message);
+      const localTrades = await storage.getTrades(50);
+      res.json(localTrades.map(t => ({
+        id: t.tradeId,
+        krakenOrderId: t.krakenOrderId,
+        pair: t.pair,
+        type: t.type,
+        price: t.price,
+        amount: t.amount,
+        time: t.executedAt?.toISOString() || t.createdAt.toISOString(),
+        status: t.status,
+      })));
+    }
+  });
+
   return httpServer;
 }
