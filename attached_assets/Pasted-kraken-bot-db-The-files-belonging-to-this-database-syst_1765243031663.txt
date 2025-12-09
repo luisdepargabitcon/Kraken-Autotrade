@@ -1,0 +1,125 @@
+kraken-bot-db  | The files belonging to this database system will be owned by user "postgres".
+kraken-bot-db  | This user must also own the server process.
+kraken-bot-db  | 
+kraken-bot-db  | The database cluster will be initialized with locale "en_US.utf8".
+kraken-bot-db  | The default database encoding has accordingly been set to "UTF8".
+kraken-bot-db  | The default text search configuration will be set to "english".
+kraken-bot-db  | 
+kraken-bot-db  | Data page checksums are disabled.
+kraken-bot-db  | 
+kraken-bot-db  | fixing permissions on existing directory /var/lib/postgresql/data ... ok
+kraken-bot-db  | creating subdirectories ... ok
+kraken-bot-db  | selecting dynamic shared memory implementation ... posix
+kraken-bot-db  | selecting default max_connections ... 100
+kraken-bot-db  | selecting default shared_buffers ... 128MB
+kraken-bot-db  | selecting default time zone ... UTC
+kraken-bot-db  | creating configuration files ... ok
+kraken-bot-db  | running bootstrap script ... ok
+kraken-bot-db  | sh: locale: not found
+kraken-bot-db  | 2025-12-09 01:14:51.421 UTC [34] WARNING:  no usable system locales were found
+kraken-bot-db  | performing post-bootstrap initialization ... ok
+kraken-bot-db  | syncing data to disk ... ok
+kraken-bot-db  | 
+kraken-bot-db  | initdb: warning: enabling "trust" authentication for local connections
+kraken-bot-db  | initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+kraken-bot-db  | 
+kraken-bot-db  | Success. You can now start the database server using:
+kraken-bot-db  | 
+kraken-bot-db  |     pg_ctl -D /var/lib/postgresql/data -l logfile start
+kraken-bot-db  | 
+kraken-bot-db  | waiting for server to start....2025-12-09 01:15:01.534 UTC [47] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-db  | 2025-12-09 01:15:01.893 UTC [47] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-db  | 2025-12-09 01:15:01.943 UTC [50] LOG:  database system was shut down at 2025-12-09 01:14:58 UTC
+kraken-bot-db  | 2025-12-09 01:15:01.992 UTC [47] LOG:  database system is ready to accept connections
+kraken-bot-db  |  done
+kraken-bot-db  | server started
+kraken-bot-db  | CREATE DATABASE
+kraken-bot-db  | 
+kraken-bot-db  | 
+kraken-bot-db  | /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+kraken-bot-db  | 
+kraken-bot-db  | waiting for server to shut down...2025-12-09 01:15:05.401 UTC [47] LOG:  received fast shutdown request
+kraken-bot-db  | .2025-12-09 01:15:05.403 UTC [47] LOG:  aborting any active transactions
+kraken-bot-db  | 2025-12-09 01:15:05.405 UTC [47] LOG:  background worker "logical replication launcher" (PID 53) exited with exit code 1
+kraken-bot-db  | 2025-12-09 01:15:05.408 UTC [48] LOG:  shutting down
+kraken-bot-db  | 2025-12-09 01:15:05.412 UTC [48] LOG:  checkpoint starting: shutdown immediate
+kraken-bot-db  | .2025-12-09 01:15:06.599 UTC [48] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.994 s, sync=0.168 s, total=1.192 s; sync files=301, longest=0.007 s, average=0.001 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E928, redo lsn=0/191E928
+kraken-bot-db  | 2025-12-09 01:15:06.642 UTC [47] LOG:  database system is shut down
+kraken-bot-db  |  done
+kraken-bot-db  | server stopped
+kraken-bot-db  | 
+kraken-bot-db  | PostgreSQL init process complete; ready for start up.
+kraken-bot-db  | 
+kraken-bot-db  | 2025-12-09 01:15:06.806 UTC [1] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-db  | 2025-12-09 01:15:06.806 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+kraken-bot-db  | 2025-12-09 01:15:06.806 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+kraken-bot-db  | 2025-12-09 01:15:06.811 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-db  | 2025-12-09 01:15:06.826 UTC [63] LOG:  database system was shut down at 2025-12-09 01:15:06 UTC
+kraken-bot-db  | 2025-12-09 01:15:06.872 UTC [1] LOG:  database system is ready to accept connections
+kraken-bot-app  | npm warn deprecated ts-ev@0.4.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+kraken-bot-app  | npm warn deprecated node-kraken-api@2.2.2: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+kraken-bot-app  | npm warn deprecated har-validator@5.1.5: this library is no longer supported
+kraken-bot-app  | npm warn deprecated @esbuild-kit/esm-loader@2.6.5: Merged into tsx: https://tsx.is
+kraken-bot-app  | npm warn deprecated @esbuild-kit/core-utils@3.3.2: Merged into tsx: https://tsx.is
+kraken-bot-app  | npm warn deprecated uuid@3.4.0: Please upgrade  to version 7 or higher.  Older versions may use Math.random() in certain circumstances, which is known to be problematic.  See https://v8.dev/blog/math-random for details.
+kraken-bot-app  | npm warn deprecated request@2.88.2: request has been deprecated, see https://github.com/request/request/issues/3142
+kraken-bot-app  | 
+kraken-bot-app  | added 608 packages, and audited 609 packages in 1m
+kraken-bot-app  | 
+kraken-bot-app  | 104 packages are looking for funding
+kraken-bot-app  |   run `npm fund` for details
+kraken-bot-app  | 
+kraken-bot-app  | 12 vulnerabilities (2 low, 8 moderate, 2 critical)
+kraken-bot-app  | 
+kraken-bot-app  | To address issues that do not require attention, run:
+kraken-bot-app  |   npm audit fix
+kraken-bot-app  | 
+kraken-bot-app  | To address all issues (including breaking changes), run:
+kraken-bot-app  |   npm audit fix --force
+kraken-bot-app  | 
+kraken-bot-app  | npm notice
+kraken-bot-app  | npm notice New major version of npm available! 10.8.2 -> 11.6.4
+kraken-bot-app  | npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.4
+kraken-bot-app  | Run `npm audit` for details.
+kraken-bot-app  | npm notice To update run: npm install -g npm@11.6.4
+kraken-bot-app  | npm notice
+kraken-bot-app  | 
+kraken-bot-app  | > rest-express@1.0.0 build
+kraken-bot-app  | > tsx script/build.ts
+kraken-bot-app  | 
+kraken-bot-app  | building client...
+kraken-bot-app  | vite v7.1.12 building for production...
+kraken-bot-app  | transforming...
+kraken-bot-app  | ✓ 2480 modules transformed.
+kraken-bot-app  | rendering chunks...
+kraken-bot-app  | computing gzip size...
+kraken-bot-app  | ../dist/public/index.html                                                1.48 kB │ gzip:   0.61 kB
+kraken-bot-app  | ../dist/public/assets/dark_digital_hex_grid_background-CH-7zMzl.png  1,414.45 kB
+kraken-bot-app  | ../dist/public/assets/index-yDhfvK13.css                                90.28 kB │ gzip:  15.64 kB
+kraken-bot-app  | ../dist/public/assets/index-xAJiOmTE.js                              1,079.14 kB │ gzip: 309.78 kB
+kraken-bot-app  | ✓ built in 17.81s
+kraken-bot-app  | 
+kraken-bot-app  | (!) Some chunks are larger than 500 kB after minification. Consider:
+kraken-bot-app  | building server...
+kraken-bot-app  | - Using dynamic import() to code-split the application
+kraken-bot-app  | - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+kraken-bot-app  | - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+kraken-bot-app  | 
+kraken-bot-app  |   dist/index.cjs  1.0mb ⚠️
+kraken-bot-app  | 
+kraken-bot-app  | ⚡ Done in 435ms
+kraken-bot-app  | 
+kraken-bot-app  | > rest-express@1.0.0 db:push
+kraken-bot-app  | > drizzle-kit push
+kraken-bot-app  | 
+kraken-bot-app  | No config path provided, using default 'drizzle.config.ts'
+kraken-bot-app  | Reading config file '/app/drizzle.config.ts'
+kraken-bot-app  | Using 'pg' driver for database querying
+kraken-bot-app  | [⣷] Pulling schema from database...
+[✓] Pulling schema from database...
+kraken-bot-app  | [✓] Changes applied
+kraken-bot-app  | 
+kraken-bot-app  | > rest-express@1.0.0 start
+kraken-bot-app  | > NODE_ENV=production node dist/index.cjs
+kraken-bot-app  | 
+kraken-bot-app  | 1:16:50 AM [express] serving on port 5000
