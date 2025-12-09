@@ -1,0 +1,178 @@
+kraken-bot-db   | The files belonging to this database system will be owned by user "postgres".
+kraken-bot-db   | This user must also own the server process.
+kraken-bot-db   | 
+kraken-bot-db   | The database cluster will be initialized with locale "en_US.utf8".
+kraken-bot-db   | The default database encoding has accordingly been set to "UTF8".
+kraken-bot-db   | The default text search configuration will be set to "english".
+kraken-bot-db   | 
+kraken-bot-db   | Data page checksums are disabled.
+kraken-bot-app  |     triggerUncaughtException(
+kraken-bot-app  |     ^
+kraken-bot-app  | Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+kraken-bot-app  |     at packageResolve (node:internal/modules/esm/resolve:873:9)
+kraken-bot-app  |     at moduleResolve (node:internal/modules/esm/resolve:946:18)
+kraken-bot-app  |     at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+kraken-bot-app  |     at nextResolve (node:internal/modules/esm/hooks:864:28)
+kraken-bot-app  |     at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242662435:2:3744)
+kraken-bot-app  |     at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242662435:2:4243)
+kraken-bot-app  |     at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242662435:2:4984)
+kraken-bot-app  |     at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242662435:2:5355)
+kraken-bot-app  |     at async nextResolve (node:internal/modules/esm/hooks:864:22)
+kraken-bot-db   | 
+kraken-bot-db   | fixing permissions on existing directory /var/lib/postgresql/data ... ok
+kraken-bot-db   | creating subdirectories ... ok
+kraken-bot-db   | selecting dynamic shared memory implementation ... posix
+kraken-bot-db   | selecting default max_connections ... 100
+kraken-bot-db   | selecting default shared_buffers ... 128MB
+kraken-bot-db   | selecting default time zone ... UTC
+kraken-bot-db   | creating configuration files ... ok
+kraken-bot-db   | running bootstrap script ... ok
+kraken-bot-db   | sh: locale: not found
+kraken-bot-db   | 2025-12-09 01:09:13.390 UTC [35] WARNING:  no usable system locales were found
+kraken-bot-db   | performing post-bootstrap initialization ... ok
+kraken-bot-db   | syncing data to disk ... ok
+kraken-bot-db   | 
+kraken-bot-db   | 
+kraken-bot-db   | initdb: warning: enabling "trust" authentication for local connections
+kraken-bot-db   | initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+kraken-bot-db   | Success. You can now start the database server using:
+kraken-bot-db   | 
+kraken-bot-db   |     pg_ctl -D /var/lib/postgresql/data -l logfile start
+kraken-bot-db   | 
+kraken-bot-db   | waiting for server to start....2025-12-09 01:09:18.921 UTC [48] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-db   | 2025-12-09 01:09:19.320 UTC [48] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-db   | 2025-12-09 01:09:19.333 UTC [51] LOG:  database system was shut down at 2025-12-09 01:09:17 UTC
+kraken-bot-db   | 2025-12-09 01:09:19.353 UTC [48] LOG:  database system is ready to accept connections
+kraken-bot-db   |  done
+kraken-bot-db   | server started
+kraken-bot-db   | CREATE DATABASE
+kraken-bot-db   | 
+kraken-bot-db   | 
+kraken-bot-db   | /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+kraken-bot-db   | 
+kraken-bot-db   | waiting for server to shut down...2025-12-09 01:09:20.789 UTC [48] LOG:  received fast shutdown request
+kraken-bot-db   | .2025-12-09 01:09:20.792 UTC [48] LOG:  aborting any active transactions
+kraken-bot-db   | 2025-12-09 01:09:20.794 UTC [48] LOG:  background worker "logical replication launcher" (PID 54) exited with exit code 1
+kraken-bot-db   | 2025-12-09 01:09:20.807 UTC [49] LOG:  shutting down
+kraken-bot-db   | 2025-12-09 01:09:20.809 UTC [49] LOG:  checkpoint starting: shutdown immediate
+kraken-bot-db   | 2025-12-09 01:09:21.669 UTC [49] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.587 s, sync=0.249 s, total=0.863 s; sync files=301, longest=0.011 s, average=0.001 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E928, redo lsn=0/191E928
+kraken-bot-db   | 2025-12-09 01:09:21.704 UTC [48] LOG:  database system is shut down
+kraken-bot-db   |  done
+kraken-bot-db   | server stopped
+kraken-bot-db   | 
+kraken-bot-db   | PostgreSQL init process complete; ready for start up.
+kraken-bot-db   | 
+kraken-bot-db   | 2025-12-09 01:09:21.749 UTC [1] LOG:  starting PostgreSQL 16.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+kraken-bot-db   | 2025-12-09 01:09:21.749 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+kraken-bot-db   | 2025-12-09 01:09:21.749 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+kraken-bot-db   | 2025-12-09 01:09:21.753 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+kraken-bot-db   | 2025-12-09 01:09:21.761 UTC [64] LOG:  database system was shut down at 2025-12-09 01:09:21 UTC
+kraken-bot-db   | 2025-12-09 01:09:21.772 UTC [1] LOG:  database system is ready to accept connections
+kraken-bot-app  |     at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+kraken-bot-app  |   code: 'ERR_MODULE_NOT_FOUND'
+kraken-bot-app  | }
+kraken-bot-app  | 
+kraken-bot-app  | Node.js v20.19.6
+kraken-bot-app  | 
+kraken-bot-app  | up to date, audited 501 packages in 4s
+kraken-bot-app  | 
+kraken-bot-app  | 87 packages are looking for funding
+kraken-bot-app  |   run `npm fund` for details
+kraken-bot-app  | 
+kraken-bot-app  | 8 vulnerabilities (2 low, 4 moderate, 2 critical)
+kraken-bot-app  | 
+kraken-bot-app  | To address issues that do not require attention, run:
+kraken-bot-app  |   npm audit fix
+kraken-bot-app  | 
+kraken-bot-app  | To address all issues (including breaking changes), run:
+kraken-bot-app  |   npm audit fix --force
+kraken-bot-app  | 
+kraken-bot-app  | Run `npm audit` for details.
+kraken-bot-app  | 
+kraken-bot-app  | node:internal/modules/run_main:123
+kraken-bot-app  |     triggerUncaughtException(
+kraken-bot-app  |     ^
+kraken-bot-app  | Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+kraken-bot-app  |     at packageResolve (node:internal/modules/esm/resolve:873:9)
+kraken-bot-app  |     at moduleResolve (node:internal/modules/esm/resolve:946:18)
+kraken-bot-app  |     at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+kraken-bot-app  |     at nextResolve (node:internal/modules/esm/hooks:864:28)
+kraken-bot-app  |     at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242672074:2:3744)
+kraken-bot-app  |     at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242672074:2:4243)
+kraken-bot-app  |     at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242672074:2:4984)
+kraken-bot-app  |     at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242672074:2:5355)
+kraken-bot-app  |     at async nextResolve (node:internal/modules/esm/hooks:864:22)
+kraken-bot-app  |     at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+kraken-bot-app  |   code: 'ERR_MODULE_NOT_FOUND'
+kraken-bot-app  | }
+kraken-bot-app  | 
+kraken-bot-app  | Node.js v20.19.6
+kraken-bot-app  | 
+kraken-bot-app  | up to date, audited 501 packages in 4s
+kraken-bot-app  | 
+kraken-bot-app  | 87 packages are looking for funding
+kraken-bot-app  |   run `npm fund` for details
+kraken-bot-app  | 
+kraken-bot-app  | 8 vulnerabilities (2 low, 4 moderate, 2 critical)
+kraken-bot-app  | 
+kraken-bot-app  | To address issues that do not require attention, run:
+kraken-bot-app  |   npm audit fix
+kraken-bot-app  | 
+kraken-bot-app  | To address all issues (including breaking changes), run:
+kraken-bot-app  |   npm audit fix --force
+kraken-bot-app  | 
+kraken-bot-app  | Run `npm audit` for details.
+kraken-bot-app  | 
+kraken-bot-app  | node:internal/modules/run_main:123
+kraken-bot-app  |     triggerUncaughtException(
+kraken-bot-app  |     ^
+kraken-bot-app  | Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+kraken-bot-app  |     at packageResolve (node:internal/modules/esm/resolve:873:9)
+kraken-bot-app  |     at moduleResolve (node:internal/modules/esm/resolve:946:18)
+kraken-bot-app  |     at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+kraken-bot-app  |     at nextResolve (node:internal/modules/esm/hooks:864:28)
+kraken-bot-app  |     at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242683269:2:3744)
+kraken-bot-app  |     at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242683269:2:4243)
+kraken-bot-app  |     at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242683269:2:4984)
+kraken-bot-app  |     at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242683269:2:5355)
+kraken-bot-app  |     at async nextResolve (node:internal/modules/esm/hooks:864:22)
+kraken-bot-app  |     at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+kraken-bot-app  |   code: 'ERR_MODULE_NOT_FOUND'
+kraken-bot-app  | }
+kraken-bot-app  | 
+kraken-bot-app  | Node.js v20.19.6
+kraken-bot-app  | 
+kraken-bot-app  | up to date, audited 501 packages in 2s
+kraken-bot-app  | 
+kraken-bot-app  | 87 packages are looking for funding
+kraken-bot-app  |   run `npm fund` for details
+kraken-bot-app  | 
+kraken-bot-app  | 8 vulnerabilities (2 low, 4 moderate, 2 critical)
+kraken-bot-app  | 
+kraken-bot-app  | To address issues that do not require attention, run:
+kraken-bot-app  |   npm audit fix
+kraken-bot-app  | 
+kraken-bot-app  | To address all issues (including breaking changes), run:
+kraken-bot-app  |   npm audit fix --force
+kraken-bot-app  | 
+kraken-bot-app  | Run `npm audit` for details.
+kraken-bot-app  | 
+kraken-bot-app  | node:internal/modules/run_main:123
+kraken-bot-app  |     triggerUncaughtException(
+kraken-bot-app  |     ^
+kraken-bot-app  | Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+kraken-bot-app  |     at packageResolve (node:internal/modules/esm/resolve:873:9)
+kraken-bot-app  |     at moduleResolve (node:internal/modules/esm/resolve:946:18)
+kraken-bot-app  |     at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+kraken-bot-app  |     at nextResolve (node:internal/modules/esm/hooks:864:28)
+kraken-bot-app  |     at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242695017:2:3744)
+kraken-bot-app  |     at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242695017:2:4243)
+kraken-bot-app  |     at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242695017:2:4984)
+kraken-bot-app  |     at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765242695017:2:5355)
+kraken-bot-app  |     at async nextResolve (node:internal/modules/esm/hooks:864:22)
+kraken-bot-app  |     at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+kraken-bot-app  |   code: 'ERR_MODULE_NOT_FOUND'
+kraken-bot-app  | }
+kraken-bot-app  | 
+kraken-bot-app  | Node.js v20.19.6
+kraken-bot-app exited with code 1
