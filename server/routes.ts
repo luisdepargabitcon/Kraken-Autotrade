@@ -10,6 +10,29 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
+  // Load saved API credentials on startup
+  try {
+    const apiConfig = await storage.getApiConfig();
+    if (apiConfig) {
+      if (apiConfig.krakenApiKey && apiConfig.krakenApiSecret && apiConfig.krakenConnected) {
+        krakenService.initialize({
+          apiKey: apiConfig.krakenApiKey,
+          apiSecret: apiConfig.krakenApiSecret,
+        });
+        console.log("[startup] Kraken API credentials loaded from database");
+      }
+      if (apiConfig.telegramToken && apiConfig.telegramChatId && apiConfig.telegramConnected) {
+        telegramService.initialize({
+          token: apiConfig.telegramToken,
+          chatId: apiConfig.telegramChatId,
+        });
+        console.log("[startup] Telegram credentials loaded from database");
+      }
+    }
+  } catch (error) {
+    console.error("[startup] Error loading API credentials:", error);
+  }
+  
   app.get("/api/config", async (req, res) => {
     try {
       const config = await storage.getBotConfig();
