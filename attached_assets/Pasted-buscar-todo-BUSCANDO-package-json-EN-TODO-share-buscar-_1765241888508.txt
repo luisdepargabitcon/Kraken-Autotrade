@@ -1,0 +1,38 @@
+buscar-todo  | === BUSCANDO package.json EN TODO /share ===
+buscar-todo  | /share/ZFS37_DATA/share/Container/krakenbot/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/spdx-correct/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/qrcode-terminal/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/genfun/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/proto-list/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/has-unicode/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/punycode/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/xtend/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/http-proxy-agent/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/json-parse-better-errors/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/through2/node_modules/string_decoder/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/through2/node_modules/readable-stream/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/through2/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/configstore/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/nopt/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/lodash.without/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/deep-extend/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/shebang-regex/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/inflight/package.json
+buscar-todo  | /share/ZFS530_DATA/.qpkg/container-station/system-docker/zfs/graph/de3955c569e58757b2f7807f6ab2aa60a6e511058a8a89c0b2959fc881b182a4/usr/local/lib/node_modules/npm/node_modules/libnpmorg/package.json
+buscar-todo  | 
+buscar-todo  | === CONTENIDO DE /share/Container ===
+buscar-todo  | total 51
+buscar-todo  | drwxrwxrwx    6 root     root             6 Dec  8 23:08 .
+buscar-todo  | drwxr-xr-x    3 root     root             4 Jun  3  2025 ..
+buscar-todo  | drwxr-xr-x    2 root     root             2 Jun  3  2025 @Recently-Snapshot
+buscar-todo  | drwxrwxrwx    2 root     root             3 Dec  2 14:10 @Recycle
+buscar-todo  | drwxrwxrwx    7 root     root             7 Jun  3  2025 container-station-data
+buscar-todo  | drwxr-xr-x    2 root     root             3 Dec  8 23:08 krakenbot
+buscar-todo  | 
+buscar-todo  | === CONTENIDO DE /share/Container/krakenbot ===
+buscar-todo  | total 22
+buscar-todo  | drwxr-xr-x    2 root     root             3 Dec  8 23:08 .
+buscar-todo  | drwxrwxrwx    6 root     root             6 Dec  8 23:08 ..
+buscar-todo  | -rwxrwxrwx    1 root     root            82 Dec  9 00:57 package-lock.json
+buscar-todo  | 
+buscar-todo  | === LISTO ===
