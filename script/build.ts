@@ -20,6 +20,8 @@ const allowlist = [
   "multer",
   "nanoid",
   "nodemailer",
+  "node-kraken-api",
+  "node-telegram-bot-api",
   "openai",
   "passport",
   "passport-local",
