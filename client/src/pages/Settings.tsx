@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HardDrive, Bot, MessageSquare, Server, Save, Check, X } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { HardDrive, Bot, MessageSquare, Server, Save, Check, X, Send } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -19,6 +20,7 @@ export default function Settings() {
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
   const [telegramConnected, setTelegramConnected] = useState(false);
+  const [customMessage, setCustomMessage] = useState("");
 
   const { data: apiConfig } = useQuery({
     queryKey: ["apiConfig"],
@@ -71,6 +73,25 @@ export default function Settings() {
     },
     onError: () => {
       toast.error("Error al conectar con Telegram");
+    },
+  });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/telegram/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: customMessage }),
+      });
+      if (!res.ok) throw new Error("Failed to send");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Mensaje enviado a Telegram");
+      setCustomMessage("");
+    },
+    onError: () => {
+      toast.error("Error al enviar mensaje");
     },
   });
 
@@ -201,6 +222,31 @@ export default function Settings() {
                 >
                   {telegramMutation.isPending ? "Probando..." : "Probar Conexión"}
                 </Button>
+                
+                {telegramConnected && (
+                  <div className="pt-4 border-t border-border/50 space-y-3">
+                    <Label>Enviar mensaje personalizado</Label>
+                    <Textarea
+                      placeholder="Escribe un mensaje para enviar a Telegram..."
+                      className="bg-background/50 min-h-[80px]"
+                      value={customMessage}
+                      onChange={(e) => setCustomMessage(e.target.value)}
+                      data-testid="input-custom-message"
+                    />
+                    <Button 
+                      className="w-full"
+                      onClick={() => sendMessageMutation.mutate()}
+                      disabled={!customMessage.trim() || sendMessageMutation.isPending}
+                      data-testid="button-send-message"
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Comandos disponibles: /estado, /pausar, /reanudar, /ultimas, /ayuda
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

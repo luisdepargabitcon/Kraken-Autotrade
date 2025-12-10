@@ -36,6 +36,13 @@ export async function registerRoutes(
     // Initialize trading engine
     tradingEngine = new TradingEngine(krakenService, telegramService);
     
+    // Set engine controller for Telegram commands
+    telegramService.setEngineController({
+      start: async () => { await tradingEngine?.start(); },
+      stop: async () => { await tradingEngine?.stop(); },
+      isActive: () => tradingEngine?.isActive() ?? false,
+    });
+    
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();
     if (botConfig?.isActive && krakenService.isInitialized()) {
@@ -150,6 +157,30 @@ export async function registerRoutes(
     } catch (error) {
       await storage.updateApiConfig({ telegramConnected: false });
       res.status(500).json({ error: "Failed to connect to Telegram" });
+    }
+  });
+
+  app.post("/api/telegram/send", async (req, res) => {
+    try {
+      const { message } = req.body;
+      
+      if (!message) {
+        return res.status(400).json({ error: "Mensaje requerido" });
+      }
+
+      if (!telegramService.isInitialized()) {
+        return res.status(400).json({ error: "Telegram no está configurado" });
+      }
+
+      const sent = await telegramService.sendMessage(message);
+      
+      if (!sent) {
+        return res.status(500).json({ error: "Error enviando mensaje" });
+      }
+      
+      res.json({ success: true, message: "Mensaje enviado" });
+    } catch (error) {
+      res.status(500).json({ error: "Error enviando mensaje a Telegram" });
     }
   });
 
