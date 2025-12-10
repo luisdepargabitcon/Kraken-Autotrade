@@ -1,0 +1,91 @@
+Quiero mejorar el comportamiento del bot de trading (kraken-bot-app) en dos aspectos cuando el tamaño de la operación es demasiado pequeño:
+
+1) Que, si la cuenta tiene saldo pequeño pero suficiente para cubrir el mínimo efectivo de operación, el bot pueda usar prácticamente todo el saldo para intentar operar (en vez de bloquearse siempre con "Monto de compra muy bajo").
+2) Que, si AUN ASÍ no puede operar por monto insuficiente, me envíe un aviso a Telegram indicando claramente el motivo.
+
+Detalles:
+
+A) Lógica para cuentas pequeñas (usar casi todo el saldo)
+
+Actualmente el bot calcula el tamaño de la operación en USD (usdAmount) a partir de balanceUsd y riskLevel, y si usdAmount es muy bajo, escribe un log:
+
+  "[trading] Monto de compra muy bajo: $X.XX"
+
+y devuelve sin operar.
+
+Quiero que:
+
+- Se mantenga la lógica de low/medium/high como está.
+- Se defina un "mínimo efectivo" por operación (effectiveMinTradeUsd) que combine:
+   - el mínimo interno del bot (MIN_TRADE_USD)
+   - y un mínimo aproximado por par según las características de Kraken (por ejemplo un map tipo:
+        BTC/USD → ~10 USD,
+        ETH/USD → ~35 USD,
+        SOL/USD → ~1–5 USD, etc.)
+
+- Se añada una regla especial para saldos pequeños:
+   - si balanceUsd está entre effectiveMinTradeUsd y, por ejemplo, 2 × effectiveMinTradeUsd,
+     entonces el bot intente usar prácticamente todo el saldo para esa operación.
+   - es decir, algo como:
+
+     let usdAmount = balanceUsd * riskFactor;
+
+     // Regla especial para cuentas pequeñas:
+     if (balanceUsd <= effectiveMinTradeUsd * 2 && balanceUsd >= effectiveMinTradeUsd) {
+       // usar casi todo el saldo, dejando algo de margen para comisiones
+       usdAmount = balanceUsd * 0.95;
+     }
+
+B) Aviso a Telegram cuando no puede operar por monto pequeño
+
+Si DESPUÉS de esa lógica el tamaño sigue siendo insuficiente, quiero dos cosas:
+
+1. Que mantenga el log de info:
+
+   if (usdAmount < effectiveMinTradeUsd) {
+     logger.info(`[trading] Monto de compra muy bajo: $${usdAmount.toFixed(2)}`);
+     // ...
+   }
+
+2. Y ADEMÁS, que envíe una notificación a Telegram con un mensaje claro. En el backend ya existe un sistema de notificaciones (por ejemplo una función notify en utils/notifier o similar).
+
+Quiero que, dentro de esa misma condición (usdAmount < effectiveMinTradeUsd), llame a esa función de notificación y envíe un mensaje del estilo:
+
+  - "No se puede abrir operación por monto insuficiente"
+  - incluir:
+      - par (pairSymbol)
+      - saldo total en USD (balanceUsd)
+      - tamaño calculado (usdAmount)
+      - mínimo requerido (effectiveMinTradeUsd)
+      - nivel de riesgo actual (riskLevel)
+
+Por ejemplo (adaptar a la sintaxis real del proyecto):
+
+   await notify(
+     `⚠️ Monto de compra demasiado bajo\n` +
+     `Par: ${pairSymbol}\n` +
+     `Saldo: ${balanceUsd.toFixed(2)} USD\n` +
+     `Tamaño calculado: ${usdAmount.toFixed(2)} USD\n` +
+     `Mínimo requerido: ${effectiveMinTradeUsd.toFixed(2)} USD\n` +
+     `Riesgo: ${riskLevel}`
+   );
+
+y luego hacer `return;` como hasta ahora para no operar.
+
+C) Resumen funcional
+
+- Si el saldo es pequeño pero ≥ mínimo efectivo → se intenta una operación usando casi todo el saldo (p.ej. 95%).
+- Si ni siquiera así se llega al mínimo efectivo:
+   - el bot NO opera (como ahora),
+   - pero además de loggear "Monto de compra muy bajo", me envía un mensaje a Telegram explicando el motivo.
+
+D) Qué quiero que me expliques al final
+
+Al terminar, explícame:
+
+- Qué archivo(s) has modificado.
+- Cómo calculas exactamente effectiveMinTradeUsd (qué mapa usas para los mínimos por par).
+- Qué valor concreto usas para el factor de "casi todo el saldo" (por ejemplo 0.95).
+- Un ejemplo rápido con una cuenta de ~31 USD y riskLevel = "high" o similar, indicando qué pasaría:
+   - si el mínimo del par es 10 USD,
+   - y si el mínimo del par es 35 USD (ejemplo ETH/USD), para que quede claro que ahí no intentará operar y sí enviará el aviso a Telegram.
