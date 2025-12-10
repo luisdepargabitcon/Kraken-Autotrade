@@ -1,0 +1,205 @@
+Quiero mejorar y ordenar completamente la configuración de Telegram, alertas y razonamiento del bot. Te explico cómo lo quiero, en castellano y de forma funcional.
+
+========================
+1) PROBLEMA ACTUAL
+========================
+
+Ahora mismo la configuración de Telegram no se gestiona bien:
+
+- El token y el chat_id parecen estar hardcodeados o no se guardan correctamente.
+- En el formulario no queda claro qué valores están activos realmente.
+- No es flexible para gestionar alertas a distintos chats o canales.
+
+Quiero solucionar esto de forma limpia y definitiva.
+
+========================
+2) NUEVA PESTAÑA: "INTEGRACIONES" o "CONFIGURACIÓN"
+========================
+
+Quiero una nueva pestaña en el panel, por ejemplo:
+
+- “Integraciones”
+- o “Configuración de APIs”
+
+En esta pestaña se gestionarán TODAS las credenciales externas del bot.
+
+Nada debe quedar hardcodeado en el código.
+
+========================
+3) TELEGRAM – CONCEPTO CORRECTO
+========================
+
+Aclaración clave:
+
+- Un TOKEN de Telegram = un bot.
+- Un bot puede enviar mensajes a MUCHOS chat_id (chats privados, grupos, canales, etc.).
+
+Por tanto:
+
+- No necesito muchos tokens.
+- Con 3 bots máximo es suficiente.
+- Lo que necesito es poder configurar muchos chat_id por cada bot y decidir qué alertas va a cada uno.
+
+========================
+4) TELEGRAM – CONFIGURACIÓN QUE QUIERO
+========================
+
+En la pestaña de Integraciones → sección Telegram:
+
+a) Bots (3 slots máximo)
+
+- Slot 1:
+  - Bot Token
+  - Nombre descriptivo (ej: “Alertas principales”)
+- Slot 2:
+  - Bot Token
+  - Nombre descriptivo
+- Slot 3:
+  - Bot Token
+  - Nombre descriptivo
+
+b) Chat IDs (ilimitados por bot)
+
+Para cada bot quiero poder añadir tantos chat_id como quiera. Para cada chat_id:
+
+- Nombre descriptivo (ej: “Mi móvil”, “Canal trading”, “Grupo amigos”).
+- Selector de qué tipos de alertas recibe:
+  - errores
+  - operaciones abiertas
+  - operaciones cerradas
+  - avisos de saldo bajo
+  - avisos de “monto demasiado pequeño”
+  - otros que ya tengas definidos
+
+Internamente puedes guardar esto como una lista de destinos por bot, con flags de qué tipo de alertas envía a cada chat_id.
+
+========================
+5) TELEGRAM – HABLAR CON EL BOT (COMANDOS EN CASTELLANO)
+========================
+
+Quiero poder “hablar con el bot” por Telegram con comandos sencillos en castellano.
+
+Comandos básicos que quiero:
+
+- `/estado`  
+  → El bot responde con:
+    - si está ACTIVO o PAUSADO,
+    - estrategia actual,
+    - nivel de riesgo,
+    - saldo actual,
+    - pares activos.
+
+- `/ultimas_operaciones`  
+  → El bot responde con un resumen de las últimas operaciones:
+    - par,
+    - tipo (compra/venta),
+    - resultado aproximado.
+
+- `/pausar`  
+  → Pausa el bot (equivalente a poner isActive = false en la configuración).
+
+- `/reanudar`  
+  → Reactiva el bot (equivalente a isActive = true).
+
+No quiero nada muy complejo: simplemente que el backend reciba los mensajes de Telegram, reconozca estos comandos y responda con texto sencillo.
+
+========================
+6) FORMULARIO PARA COMANDOS PERSONALIZADOS
+========================
+
+Además de los comandos fijos anteriores, quiero un pequeño formulario para poder añadir comandos personalizados.
+
+En la sección de Telegram de la pestaña de Integraciones:
+
+- Un listado de “Comandos personalizados”.
+- Cada entrada debe permitir:
+  - Nombre del comando (sin la barra), por ejemplo: `mi_comando`
+  - Texto de respuesta que enviará el bot cuando reciba `/mi_comando`.
+
+Con esto me vale algo simple, tipo:
+
+- Si escribo `/mi_comando` en Telegram:
+  - El bot busca si existe un comando personalizado con ese nombre,
+  - Y responde con el texto configurado.
+
+No hace falta que estos comandos personalizados hagan acciones de trading, con que respondan texto es suficiente por ahora.
+
+========================
+7) IA / RAZONAMIENTO (EXPLICACIONES EN LENGUAJE NATURAL)
+========================
+
+Quiero añadir una IA externa (por ejemplo DeepSeek) para una cosa muy concreta:
+
+- Que explique y redacte mensajes de forma más clara y entendible.
+- No es para tomar decisiones de trading, solo para generar texto.
+
+Ejemplos de uso:
+
+- Si el bot no puede abrir una operación porque el monto es pequeño:
+  - La IA genera una explicación sencilla de por qué no ha entrado,
+  - Y esa explicación se envía por Telegram.
+
+- Cuando cierra una operación:
+  - La IA genera un pequeño resumen en lenguaje natural
+    (por ejemplo: “Se ha cerrado una operación en SOL/USD con beneficio después de un movimiento alcista”).
+
+Características:
+
+- Lenguaje sencillo, fácil de entender.
+- Evitar tecnicismos siempre que sea posible.
+- Que ayude a entender qué está haciendo el bot y por qué.
+
+========================
+8) CONFIGURACIÓN DE IA
+========================
+
+En la misma pestaña de Integraciones:
+
+- Sección “IA / Razonamiento”.
+- Campos:
+  - API key (por ejemplo de DeepSeek o la IA que elijas que tenga una versión gratuita razonable).
+- Botones:
+  - “Guardar”
+  - “Probar conexión”
+
+El bot usará esta IA solo para generar textos explicativos (no para decidir órdenes).
+
+========================
+9) GESTIÓN CENTRALIZADA DE CREDENCIALES
+========================
+
+Todas las credenciales deben:
+
+- Guardarse de forma persistente (base de datos o mecanismo equivalente).
+- Poder verse (enmascarando lo sensible: por ejemplo mostrar solo últimos 4 caracteres).
+- Poder editarse y guardarse con un botón claro.
+
+Esto incluye:
+- Telegram (bots y chat_id).
+- Kraken (API key/secret, etc.).
+- IA (DeepSeek u otra).
+
+No quiero nada hardcodeado en el código fuente.
+
+========================
+10) QUÉ NECESITO QUE ME EXPLIQUES AL FINAL
+========================
+
+Cuando termines, por favor explícame:
+
+- Qué archivos has cambiado (frontend y backend).
+- Cómo se guardan ahora las credenciales y en qué modelo/tabla.
+- Cómo:
+  - añadir un bot de Telegram (token),
+  - añadir chat_id de destino para alertas,
+  - definir qué alertas recibe cada chat_id,
+  - definir comandos personalizados,
+  - usar los comandos `/estado`, `/ultimas_operaciones`, `/pausar`, `/reanudar`,
+  - añadir la API de IA (por ejemplo DeepSeek) y probar que funciona.
+
+El objetivo final es tener un bot:
+
+- bien configurable,
+- que pueda enviar alertas a varios chats,
+- que se pueda controlar desde Telegram con comandos sencillos en castellano,
+- y que explique mejor lo que hace gracias a la IA.
