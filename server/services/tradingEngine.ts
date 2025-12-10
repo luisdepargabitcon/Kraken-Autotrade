@@ -56,12 +56,6 @@ const KRAKEN_MINIMUMS: Record<string, number> = {
   "SOL/USD": 0.1,
 };
 
-const EFFECTIVE_MIN_USD: Record<string, number> = {
-  "BTC/USD": 10,
-  "ETH/USD": 35,
-  "SOL/USD": 15,
-};
-
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
 export class TradingEngine {
@@ -227,10 +221,11 @@ El bot de trading autónomo está activo.
           return;
         }
 
-        const effectiveMinUSD = EFFECTIVE_MIN_USD[pair] || 10;
+        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minRequiredUSD = minVolume * currentPrice;
 
-        if (this.currentUsdBalance < effectiveMinUSD) {
-          log(`Saldo USD insuficiente para ${pair}: $${this.currentUsdBalance.toFixed(2)} < $${effectiveMinUSD}`, "trading");
+        if (this.currentUsdBalance < minRequiredUSD) {
+          log(`Saldo USD insuficiente para ${pair}: $${this.currentUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
           if (this.telegramService.isInitialized()) {
             await this.telegramService.sendMessage(`
 ⚠️ *Saldo Insuficiente*
@@ -238,8 +233,8 @@ El bot de trading autónomo está activo.
 No se puede abrir posición en *${pair}*
 
 *Saldo actual:* $${this.currentUsdBalance.toFixed(2)}
-*Mínimo requerido:* $${effectiveMinUSD.toFixed(2)}
-*Nivel de riesgo:* ${riskConfig.maxPositionPercent}%
+*Mínimo requerido:* $${minRequiredUSD.toFixed(2)}
+*Volumen mínimo Kraken:* ${minVolume}
 
 _Deposita más fondos para operar este par._
             `.trim());
@@ -252,32 +247,13 @@ _Deposita más fondos para operar este par._
           riskConfig.maxTradeUSD
         );
 
-        if (tradeAmountUSD < effectiveMinUSD && this.currentUsdBalance >= effectiveMinUSD) {
+        if (tradeAmountUSD < minRequiredUSD && this.currentUsdBalance >= minRequiredUSD) {
           const smallAccountAmount = this.currentUsdBalance * SMALL_ACCOUNT_FACTOR;
           tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
           log(`Cuenta pequeña detectada: usando ${(SMALL_ACCOUNT_FACTOR * 100).toFixed(0)}% del saldo ($${tradeAmountUSD.toFixed(2)})`, "trading");
         }
 
-        if (tradeAmountUSD < effectiveMinUSD) {
-          log(`Monto de compra muy bajo: $${tradeAmountUSD.toFixed(2)} < $${effectiveMinUSD}`, "trading");
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`
-⚠️ *Monto de Compra Insuficiente*
-
-*Par:* ${pair}
-*Saldo:* $${this.currentUsdBalance.toFixed(2)}
-*Monto calculado:* $${tradeAmountUSD.toFixed(2)}
-*Mínimo requerido:* $${effectiveMinUSD.toFixed(2)}
-*Riesgo:* ${riskConfig.maxPositionPercent}%
-
-_El tamaño de la operación es menor al mínimo permitido._
-            `.trim());
-          }
-          return;
-        }
-
         const tradeVolume = tradeAmountUSD / currentPrice;
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
 
         if (tradeVolume < minVolume) {
           log(`Volumen menor al mínimo de Kraken: ${tradeVolume.toFixed(8)} < ${minVolume}`, "trading");
@@ -289,6 +265,7 @@ _El tamaño de la operación es menor al mínimo permitido._
 *Volumen calculado:* ${tradeVolume.toFixed(8)}
 *Mínimo de Kraken:* ${minVolume}
 *Monto USD:* $${tradeAmountUSD.toFixed(2)}
+*Mínimo USD requerido:* $${minRequiredUSD.toFixed(2)}
 
 _Necesitas más saldo para cumplir el mínimo del exchange._
             `.trim());
