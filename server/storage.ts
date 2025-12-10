@@ -4,16 +4,19 @@ import {
   type Notification, 
   type MarketData,
   type ApiConfig,
+  type TelegramChat,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
   type InsertMarketData,
   type InsertApiConfig,
+  type InsertTelegramChat,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
   marketData as marketDataTable,
-  apiConfig as apiConfigTable
+  apiConfig as apiConfigTable,
+  telegramChats as telegramChatsTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -35,6 +38,12 @@ export interface IStorage {
   
   saveMarketData(data: InsertMarketData): Promise<MarketData>;
   getLatestMarketData(pair: string): Promise<MarketData | undefined>;
+  
+  getTelegramChats(): Promise<TelegramChat[]>;
+  getActiveTelegramChats(): Promise<TelegramChat[]>;
+  createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
+  updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat>;
+  deleteTelegramChat(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -125,6 +134,33 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(marketDataTable.timestamp))
       .limit(1);
     return data[0];
+  }
+
+  async getTelegramChats(): Promise<TelegramChat[]> {
+    return await db.select().from(telegramChatsTable).orderBy(desc(telegramChatsTable.createdAt));
+  }
+
+  async getActiveTelegramChats(): Promise<TelegramChat[]> {
+    return await db.select().from(telegramChatsTable)
+      .where(eq(telegramChatsTable.isActive, true))
+      .orderBy(desc(telegramChatsTable.createdAt));
+  }
+
+  async createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat> {
+    const [newChat] = await db.insert(telegramChatsTable).values(chat).returning();
+    return newChat;
+  }
+
+  async updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat> {
+    const [updated] = await db.update(telegramChatsTable)
+      .set(chat)
+      .where(eq(telegramChatsTable.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTelegramChat(id: number): Promise<void> {
+    await db.delete(telegramChatsTable).where(eq(telegramChatsTable.id, id));
   }
 }
 

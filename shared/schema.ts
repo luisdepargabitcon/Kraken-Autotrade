@@ -54,20 +54,35 @@ export const marketData = pgTable("market_data", {
   timestamp: timestamp("timestamp").notNull().defaultNow(),
 });
 
+export const telegramChats = pgTable("telegram_chats", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  chatId: text("chat_id").notNull(),
+  alertTrades: boolean("alert_trades").notNull().default(true),
+  alertErrors: boolean("alert_errors").notNull().default(true),
+  alertSystem: boolean("alert_system").notNull().default(true),
+  alertBalance: boolean("alert_balance").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true, updatedAt: true });
 export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertMarketDataSchema = createInsertSchema(marketData).omit({ id: true, timestamp: true });
 export const insertApiConfigSchema = createInsertSchema(apiConfig).omit({ id: true, updatedAt: true });
+export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true, createdAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type MarketData = typeof marketData.$inferSelect;
 export type ApiConfig = typeof apiConfig.$inferSelect;
+export type TelegramChat = typeof telegramChats.$inferSelect;
 
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type InsertMarketData = z.infer<typeof insertMarketDataSchema>;
 export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
+export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;

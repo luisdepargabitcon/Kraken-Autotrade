@@ -184,6 +184,85 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/telegram/chats", async (req, res) => {
+    try {
+      const chats = await storage.getTelegramChats();
+      res.json(chats);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo chats" });
+    }
+  });
+
+  app.post("/api/telegram/chats", async (req, res) => {
+    try {
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance } = req.body;
+      
+      if (!name || !chatId) {
+        return res.status(400).json({ error: "Nombre y Chat ID son requeridos" });
+      }
+
+      if (!telegramService.isInitialized()) {
+        return res.status(400).json({ error: "Telegram no está configurado. Configura primero el token principal." });
+      }
+
+      const existingChats = await storage.getTelegramChats();
+      const duplicate = existingChats.find(c => c.chatId === chatId);
+      if (duplicate) {
+        return res.status(400).json({ error: "Este Chat ID ya está configurado." });
+      }
+
+      const testSent = await telegramService.sendToChat(chatId, "✅ Chat configurado correctamente en KrakenBot!");
+      if (!testSent) {
+        return res.status(400).json({ error: "No se pudo enviar mensaje al chat. Verifica el Chat ID." });
+      }
+
+      const chat = await storage.createTelegramChat({
+        name,
+        chatId,
+        alertTrades: alertTrades ?? true,
+        alertErrors: alertErrors ?? true,
+        alertSystem: alertSystem ?? true,
+        alertBalance: alertBalance ?? false,
+        isActive: true,
+      });
+      
+      res.json(chat);
+    } catch (error) {
+      res.status(500).json({ error: "Error creando chat" });
+    }
+  });
+
+  app.put("/api/telegram/chats/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, isActive } = req.body;
+      
+      const chat = await storage.updateTelegramChat(id, {
+        name,
+        chatId,
+        alertTrades,
+        alertErrors,
+        alertSystem,
+        alertBalance,
+        isActive,
+      });
+      
+      res.json(chat);
+    } catch (error) {
+      res.status(500).json({ error: "Error actualizando chat" });
+    }
+  });
+
+  app.delete("/api/telegram/chats/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTelegramChat(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Error eliminando chat" });
+    }
+  });
+
   app.get("/api/dashboard", async (req, res) => {
     try {
       const apiConfig = await storage.getApiConfig();

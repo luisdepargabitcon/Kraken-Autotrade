@@ -1,10 +1,13 @@
 import TelegramBot from "node-telegram-bot-api";
 import { storage } from "../storage";
+import type { TelegramChat } from "@shared/schema";
 
 interface TelegramConfig {
   token: string;
   chatId: string;
 }
+
+type AlertType = "trades" | "errors" | "system" | "balance";
 
 type EngineController = {
   start: () => Promise<void>;
@@ -74,6 +77,11 @@ export class TelegramService {
       const riskLevel = config?.riskLevel || "medium";
       const pairs = config?.activePairs?.join(", ") || "BTC/USD, ETH/USD, SOL/USD";
 
+      const chats = await storage.getActiveTelegramChats();
+      const chatsInfo = chats.length > 0 
+        ? `${chats.length} chat(s) configurados` 
+        : "Sin chats adicionales";
+
       const message = `
 📊 *Estado del Bot*
 
@@ -81,6 +89,7 @@ export class TelegramService {
 *Estrategia:* ${strategy}
 *Nivel de riesgo:* ${riskLevel}
 *Pares activos:* ${pairs}
+*Chats Telegram:* ${chatsInfo}
 
 _Usa /ayuda para ver los comandos disponibles_
       `.trim();
@@ -182,6 +191,63 @@ _KrakenBot.AI - Trading Autónomo_
     }
   }
 
+  async sendToChat(chatId: string, message: string): Promise<boolean> {
+    if (!this.bot) {
+      console.warn("Telegram bot not initialized");
+      return false;
+    }
+
+    try {
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+      return true;
+    } catch (error) {
+      console.error(`Failed to send message to chat ${chatId}:`, error);
+      return false;
+    }
+  }
+
+  async sendAlertToMultipleChats(message: string, alertType: AlertType): Promise<void> {
+    if (!this.bot) return;
+
+    const sentChatIds = new Set<string>();
+
+    try {
+      if (this.chatId) {
+        await this.sendMessage(message);
+        sentChatIds.add(this.chatId);
+      }
+
+      const chats = await storage.getActiveTelegramChats();
+      
+      for (const chat of chats) {
+        if (sentChatIds.has(chat.chatId)) continue;
+        
+        const shouldSend = this.shouldSendToChat(chat, alertType);
+        if (shouldSend) {
+          await this.sendToChat(chat.chatId, message);
+          sentChatIds.add(chat.chatId);
+        }
+      }
+    } catch (error) {
+      console.error("Error sending to multiple chats:", error);
+    }
+  }
+
+  private shouldSendToChat(chat: TelegramChat, alertType: AlertType): boolean {
+    switch (alertType) {
+      case "trades":
+        return chat.alertTrades;
+      case "errors":
+        return chat.alertErrors;
+      case "system":
+        return chat.alertSystem;
+      case "balance":
+        return chat.alertBalance;
+      default:
+        return false;
+    }
+  }
+
   async sendTradeNotification(trade: {
     type: string;
     pair: string;
@@ -202,7 +268,7 @@ ${emoji} *Nueva Operación*
 _KrakenBot.AI - Trading Autónomo_
     `.trim();
 
-    return await this.sendMessage(message);
+    await this.sendAlertToMultipleChats(message, "trades");
   }
 
   async sendAlert(title: string, description: string) {
@@ -214,7 +280,7 @@ ${description}
 _KrakenBot.AI - Sistema de Alertas_
     `.trim();
 
-    return await this.sendMessage(message);
+    await this.sendAlertToMultipleChats(message, "errors");
   }
 
   async sendSystemStatus(isActive: boolean, strategy: string) {
@@ -229,7 +295,19 @@ ${emoji} *Estado del Sistema*
 _KrakenBot.AI - Monitoreo_
     `.trim();
 
-    return await this.sendMessage(message);
+    await this.sendAlertToMultipleChats(message, "system");
+  }
+
+  async sendBalanceAlert(title: string, description: string) {
+    const message = `
+💰 *${title}*
+
+${description}
+
+_KrakenBot.AI - Balance_
+    `.trim();
+
+    await this.sendAlertToMultipleChats(message, "balance");
   }
 }
 
