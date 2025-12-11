@@ -32,7 +32,7 @@ export class TelegramService {
       } catch (e) {}
     }
     
-    this.bot = new TelegramBot(config.token, { polling: true });
+    this.bot = new TelegramBot(config.token, { polling: false });
     this.chatId = config.chatId;
     this.setupCommands();
   }
