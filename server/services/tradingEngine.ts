@@ -254,7 +254,7 @@ El bot de trading autónomo está activo.
         
         if (success && this.telegramService.isInitialized()) {
           const pnlEmoji = pnl >= 0 ? "💰" : "📉";
-          await this.telegramService.sendMessage(`
+          await this.telegramService.sendAlertToMultipleChats(`
 ${emoji} *${reason}*
 
 *Par:* ${pair}
@@ -263,7 +263,7 @@ ${emoji} *${reason}*
 *Cantidad vendida:* ${sellAmount}
 
 ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
-          `.trim(), "trade");
+          `.trim(), "trades");
         }
 
         if (success) {
@@ -583,6 +583,71 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
     const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
     return (Math.sqrt(variance) / mean) * 100;
+  }
+
+  private calculateMACD(prices: number[]): { macd: number; signal: number; histogram: number } {
+    if (prices.length < 26) {
+      return { macd: 0, signal: 0, histogram: 0 };
+    }
+    
+    const ema12 = this.calculateEMA(prices.slice(-12), 12);
+    const ema26 = this.calculateEMA(prices.slice(-26), 26);
+    const macd = ema12 - ema26;
+    
+    const macdHistory: number[] = [];
+    for (let i = 26; i <= prices.length; i++) {
+      const e12 = this.calculateEMA(prices.slice(i - 12, i), 12);
+      const e26 = this.calculateEMA(prices.slice(i - 26, i), 26);
+      macdHistory.push(e12 - e26);
+    }
+    
+    const signal = macdHistory.length >= 9 ? this.calculateEMA(macdHistory.slice(-9), 9) : 0;
+    const histogram = macd - signal;
+    
+    return { macd, signal, histogram };
+  }
+
+  private calculateBollingerBands(prices: number[], period: number = 20, stdDevMultiplier: number = 2): { 
+    upper: number; 
+    middle: number; 
+    lower: number; 
+    percentB: number;
+  } {
+    if (prices.length < period) {
+      const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+      return { upper: avg, middle: avg, lower: avg, percentB: 50 };
+    }
+    
+    const recentPrices = prices.slice(-period);
+    const middle = recentPrices.reduce((a, b) => a + b, 0) / period;
+    const stdDev = Math.sqrt(
+      recentPrices.reduce((sum, p) => sum + Math.pow(p - middle, 2), 0) / period
+    );
+    
+    const upper = middle + (stdDevMultiplier * stdDev);
+    const lower = middle - (stdDevMultiplier * stdDev);
+    const currentPrice = prices[prices.length - 1];
+    const percentB = ((currentPrice - lower) / (upper - lower)) * 100;
+    
+    return { upper, middle, lower, percentB };
+  }
+
+  private detectAbnormalVolume(history: PriceData[]): { isAbnormal: boolean; ratio: number; direction: string } {
+    if (history.length < 10) {
+      return { isAbnormal: false, ratio: 1, direction: "neutral" };
+    }
+    
+    const volumes = history.map(h => h.volume);
+    const currentVolume = volumes[volumes.length - 1];
+    const avgVolume = volumes.slice(0, -1).reduce((a, b) => a + b, 0) / (volumes.length - 1);
+    
+    const ratio = currentVolume / avgVolume;
+    const isAbnormal = ratio > 2.0 || ratio < 0.3;
+    
+    const priceChange = (history[history.length - 1].price - history[history.length - 2].price);
+    const direction = priceChange > 0 ? "bullish" : priceChange < 0 ? "bearish" : "neutral";
+    
+    return { isAbnormal, ratio, direction };
   }
 
   private updatePriceHistory(pair: string, data: PriceData) {
