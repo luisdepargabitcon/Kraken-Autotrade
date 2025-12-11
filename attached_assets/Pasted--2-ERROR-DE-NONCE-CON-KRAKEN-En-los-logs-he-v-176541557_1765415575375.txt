@@ -1,0 +1,43 @@
+========================
+2) ERROR DE NONCE CON KRAKEN
+========================
+
+En los logs he visto mensajes del estilo:
+
+- `[kraken] Nonce error, retrying (1/3)...`
+- O errores de la API de Kraken tipo "Invalid nonce".
+
+Quiero que revises y dejes bien resuelta la gestión del nonce para evitar problemas, especialmente en estos casos:
+
+- Cuando el bot se reinicia varias veces seguidas (por ejemplo al hacer cambios).
+- Cuando he tenido versiones corriendo en Replit y en el NAS (o contenedores duplicados) y han podido compartir las mismas credenciales de API de Kraken.
+- Cuando hay varios hilos/procesos que puedan estar usando el mismo cliente de Kraken.
+
+Lo que te pido específicamente:
+
+1. Revisa cómo se está generando el nonce actualmente:
+   - Si se usa timestamp (ms, ns, etc.) o un contador.
+   - Si se genera de forma centralizada o cada llamada lo hace por su cuenta.
+
+2. Asegúrate de que:
+   - Para una misma API key de Kraken, el nonce sea SIEMPRE estrictamente creciente.
+   - Si el bot se ejecuta en un solo contenedor, todas las llamadas compartan el mismo mecanismo de generación de nonce (una sola instancia o un módulo común).
+   - Si el bot hace reintentos cuando recibe un error de nonce, lo haga de forma segura (por ejemplo, esperar un poco y regenerar un nonce mayor) y no entre en un bucle tonto.
+
+3. Me interesa que:
+   - El sistema pueda recuperarse solo de un error puntual de nonce (por ejemplo tras un reinicio rápido),
+   - Pero que NO inunde los logs continuamente si hay un problema grave;
+   - Es decir, que:
+     - loguee el primer error de nonce como warning/error,
+     - haga los reintentos que ya tenéis (1/3, 2/3, 3/3),
+     - y, si persiste, deje un mensaje claro en logs y, si es posible, envíe una alerta por Telegram indicando “problema persistente de nonce con Kraken”.
+
+4. Si ves que el problema de nonce puede deberse a que yo ejecute el bot en dos sitios diferentes a la vez (por ejemplo Replit y NAS usando la misma API key de Kraken):
+   - Explícamelo claramente,
+   - Y, si quieres, añade en el panel una nota o advertencia en la configuración de Kraken indicando que la misma API key no debe usarse en dos instancias simultáneas del bot, porque eso rompe la secuencia de nonces.
+
+Al final, explícame:
+
+- Cómo generáis ahora el nonce,
+- Qué cambios has hecho (si los haces),
+- Y qué comportamiento debería ver yo en los logs si hay un error puntual de nonce (cómo se recupera) frente a un problema persistente (cómo me voy a enterar).
