@@ -190,9 +190,13 @@ export class KrakenService {
       "XXBTZUSD": "BTC/USD",
       "XETHZUSD": "ETH/USD",
       "SOLUSD": "SOL/USD",
+      "XXRPZUSD": "XRP/USD",
+      "XRPUSD": "XRP/USD",
+      "TONUSD": "TON/USD",
       "XXBTZXETH": "BTC/ETH",
-      "SOLETH": "SOL/ETH",
       "XETHXXBT": "ETH/BTC",
+      "ETHXBT": "ETH/BTC",
+      "SOLETH": "SOL/ETH",
     };
     return pairMap[krakenPair] || krakenPair;
   }
@@ -202,6 +206,9 @@ export class KrakenService {
       "BTC/USD": "XXBTZUSD",
       "ETH/USD": "XETHZUSD",
       "SOL/USD": "SOLUSD",
+      "XRP/USD": "XXRPZUSD",
+      "TON/USD": "TONUSD",
+      "ETH/BTC": "XETHXXBT",
       "BTC/ETH": "XXBTZXETH",
       "SOL/ETH": "SOLETH",
     };

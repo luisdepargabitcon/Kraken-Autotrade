@@ -54,6 +54,9 @@ const KRAKEN_MINIMUMS: Record<string, number> = {
   "BTC/USD": 0.0001,
   "ETH/USD": 0.01,
   "SOL/USD": 0.1,
+  "XRP/USD": 10,
+  "TON/USD": 1,
+  "ETH/BTC": 0.01,
 };
 
 const SMALL_ACCOUNT_FACTOR = 0.95;
@@ -103,6 +106,11 @@ export class TradingEngine {
   private readonly PRICE_HISTORY_LENGTH = 50;
   private readonly MIN_TRADE_INTERVAL_MS = 60000;
   private readonly MTF_CACHE_TTL = 300000;
+  
+  private dailyPnL: number = 0;
+  private dailyStartBalance: number = 0;
+  private lastDayReset: string = "";
+  private isDailyLimitReached: boolean = false;
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -191,6 +199,41 @@ El bot de trading autónomo está activo.
       const balances = await this.krakenService.getBalance();
       this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
       
+      // Reset diario del P&L
+      const today = new Date().toISOString().split("T")[0];
+      if (this.lastDayReset !== today) {
+        this.dailyPnL = 0;
+        this.dailyStartBalance = this.currentUsdBalance;
+        this.lastDayReset = today;
+        this.isDailyLimitReached = false;
+        log(`Nuevo día de trading: ${today}. Balance inicial: $${this.dailyStartBalance.toFixed(2)}`, "trading");
+      }
+
+      // Verificar límite de pérdida diaria
+      const dailyLossLimitEnabled = config.dailyLossLimitEnabled ?? true;
+      const dailyLossLimitPercent = parseFloat(config.dailyLossLimitPercent?.toString() || "10");
+      
+      if (dailyLossLimitEnabled && this.dailyStartBalance > 0) {
+        const currentLossPercent = (this.dailyPnL / this.dailyStartBalance) * 100;
+        
+        if (currentLossPercent <= -dailyLossLimitPercent && !this.isDailyLimitReached) {
+          this.isDailyLimitReached = true;
+          log(`🛑 LÍMITE DE PÉRDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (límite: -${dailyLossLimitPercent}%)`, "trading");
+          
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendAlert(
+              "Límite de Pérdida Diaria Alcanzado",
+              `El bot ha pausado las operaciones de COMPRA.\n\n` +
+              `📊 *P&L del día:* ${currentLossPercent.toFixed(2)}%\n` +
+              `💰 *Pérdida:* $${Math.abs(this.dailyPnL).toFixed(2)}\n` +
+              `⚙️ *Límite configurado:* -${dailyLossLimitPercent}%\n\n` +
+              `_Las operaciones de cierre (Stop-Loss, Take-Profit) siguen activas._\n` +
+              `_El trading normal se reanudará mañana automáticamente._`
+            );
+          }
+        }
+      }
+      
       const riskConfig = RISK_LEVELS[config.riskLevel] || RISK_LEVELS.medium;
 
       const stopLossPercent = parseFloat(config.stopLossPercent?.toString() || "5");
@@ -198,8 +241,14 @@ El bot de trading autónomo está activo.
       const trailingStopEnabled = config.trailingStopEnabled ?? false;
       const trailingStopPercent = parseFloat(config.trailingStopPercent?.toString() || "2");
 
+      // Stop-Loss y Take-Profit siempre se verifican (incluso con límite alcanzado)
       for (const pair of config.activePairs) {
         await this.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
+      }
+
+      // No abrir nuevas posiciones si se alcanzó el límite diario
+      if (this.isDailyLimitReached) {
+        return;
       }
 
       if (this.currentUsdBalance < 5) {
@@ -642,8 +691,8 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
   }
 
   private scalpingStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
-    if (history.length < 5) {
-      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes" };
+    if (history.length < 15) {
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para scalping" };
     }
 
     const prices = history.map(h => h.price);
@@ -655,12 +704,23 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     const rsi = this.calculateRSI(prices.slice(-14));
     const volumeAnalysis = this.detectAbnormalVolume(history);
     const macd = this.calculateMACD(prices);
+    const atr = this.calculateATR(history, 14);
+    const atrPercent = this.calculateATRPercent(history, 14);
     
     const reasons: string[] = [];
     let confidence = 0.65;
 
-    if (priceChange < -0.3 && volatility > 0.15) {
+    // Filtro de volatilidad mínima usando ATR
+    if (atrPercent < 0.1) {
+      return { action: "hold", pair, confidence: 0.2, reason: `Volatilidad ATR muy baja (${atrPercent.toFixed(2)}%)` };
+    }
+
+    // Ajustar umbral de entrada basado en ATR
+    const entryThreshold = Math.max(0.2, atrPercent * 0.3);
+
+    if (priceChange < -entryThreshold && volatility > 0.15) {
       reasons.push(`Caída rápida ${priceChange.toFixed(2)}%`);
+      reasons.push(`ATR: ${atrPercent.toFixed(2)}%`);
       
       if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
         confidence += 0.1;
@@ -674,6 +734,10 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
         confidence += 0.05;
         reasons.push("MACD cerca de cruce");
       }
+      // Bonus de confianza si ATR es alto (más oportunidad de profit)
+      if (atrPercent > 0.5) {
+        confidence += 0.05;
+      }
       
       return {
         action: "buy",
@@ -683,8 +747,9 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       };
     }
     
-    if (priceChange > 0.3 && volatility > 0.15) {
+    if (priceChange > entryThreshold && volatility > 0.15) {
       reasons.push(`Subida rápida +${priceChange.toFixed(2)}%`);
+      reasons.push(`ATR: ${atrPercent.toFixed(2)}%`);
       
       if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
         confidence += 0.1;
@@ -693,6 +758,9 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       if (rsi > 60) {
         confidence += 0.05;
         reasons.push(`RSI alto (${rsi.toFixed(0)})`);
+      }
+      if (atrPercent > 0.5) {
+        confidence += 0.05;
       }
       
       return {
@@ -703,43 +771,75 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Sin oportunidad (cambio: ${priceChange.toFixed(2)}%, vol: ${volatility.toFixed(2)}%)` };
+    return { action: "hold", pair, confidence: 0.3, reason: `Sin oportunidad (cambio: ${priceChange.toFixed(2)}%, ATR: ${atrPercent.toFixed(2)}%)` };
   }
 
   private gridStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
-    if (history.length < 10) {
+    if (history.length < 15) {
       return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para grid" };
     }
 
     const prices = history.map(h => h.price);
     const high = Math.max(...prices);
     const low = Math.min(...prices);
-    const range = high - low;
-    const gridSize = range / 5;
     
-    const currentLevel = Math.floor((currentPrice - low) / gridSize);
+    // Usar ATR para determinar el espaciado del grid dinámicamente
+    const atr = this.calculateATR(history, 14);
+    const atrPercent = this.calculateATRPercent(history, 14);
+    
+    // El grid size se basa en ATR para adaptarse a la volatilidad del mercado
+    // Usamos 1.5x ATR como espaciado entre niveles del grid
+    const atrBasedGridSize = atr * 1.5;
+    const rangeBasedGridSize = (high - low) / 5;
+    
+    // Usamos el mayor de los dos para evitar niveles demasiado cercanos
+    const gridSize = Math.max(atrBasedGridSize, rangeBasedGridSize);
+    
+    if (gridSize <= 0) {
+      return { action: "hold", pair, confidence: 0, reason: "Grid size inválido" };
+    }
+    
+    // Calcular niveles basados en precio medio
+    const midPrice = (high + low) / 2;
+    const distanceFromMid = currentPrice - midPrice;
+    const levelFromMid = Math.round(distanceFromMid / gridSize);
+    
     const prevPrice = prices[prices.length - 2];
-    const prevLevel = Math.floor((prevPrice - low) / gridSize);
+    const prevDistanceFromMid = prevPrice - midPrice;
+    const prevLevelFromMid = Math.round(prevDistanceFromMid / gridSize);
     
-    if (currentLevel < prevLevel && currentLevel <= 1) {
+    // Niveles de soporte/resistencia basados en ATR
+    const supportLevel = midPrice - (2 * gridSize);
+    const resistanceLevel = midPrice + (2 * gridSize);
+    
+    let confidence = 0.7;
+    
+    // Ajustar confianza basado en ATR
+    if (atrPercent > 0.5 && atrPercent < 2) {
+      confidence += 0.1; // Volatilidad ideal para grid
+    } else if (atrPercent > 2) {
+      confidence -= 0.1; // Demasiada volatilidad
+    }
+    
+    if (currentPrice <= supportLevel && levelFromMid < prevLevelFromMid) {
       return {
         action: "buy",
         pair,
-        confidence: 0.75,
-        reason: `Grid: Precio bajó al nivel ${currentLevel}/5, comprando en soporte`,
+        confidence: Math.min(0.85, confidence),
+        reason: `Grid ATR: Precio en soporte $${supportLevel.toFixed(2)} (ATR: ${atrPercent.toFixed(2)}%, nivel: ${levelFromMid})`,
       };
     }
     
-    if (currentLevel > prevLevel && currentLevel >= 4) {
+    if (currentPrice >= resistanceLevel && levelFromMid > prevLevelFromMid) {
       return {
         action: "sell",
         pair,
-        confidence: 0.75,
-        reason: `Grid: Precio subió al nivel ${currentLevel}/5, vendiendo en resistencia`,
+        confidence: Math.min(0.85, confidence),
+        reason: `Grid ATR: Precio en resistencia $${resistanceLevel.toFixed(2)} (ATR: ${atrPercent.toFixed(2)}%, nivel: ${levelFromMid})`,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Grid: Precio en nivel ${currentLevel}/5` };
+    return { action: "hold", pair, confidence: 0.3, reason: `Grid: Nivel ${levelFromMid}, ATR: ${atrPercent.toFixed(2)}%` };
   }
 
   private calculateEMA(prices: number[], period: number): number {
@@ -824,6 +924,38 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     return { upper, middle, lower, percentB };
   }
 
+  private calculateATR(history: PriceData[], period: number = 14): number {
+    if (history.length < period + 1) {
+      return 0;
+    }
+    
+    const trueRanges: number[] = [];
+    for (let i = 1; i < history.length; i++) {
+      const current = history[i];
+      const previous = history[i - 1];
+      
+      const tr1 = current.high - current.low;
+      const tr2 = Math.abs(current.high - previous.price);
+      const tr3 = Math.abs(current.low - previous.price);
+      
+      const trueRange = Math.max(tr1, tr2, tr3);
+      trueRanges.push(trueRange);
+    }
+    
+    const recentTRs = trueRanges.slice(-period);
+    const atr = recentTRs.reduce((a, b) => a + b, 0) / recentTRs.length;
+    
+    return atr;
+  }
+
+  private calculateATRPercent(history: PriceData[], period: number = 14): number {
+    const atr = this.calculateATR(history, period);
+    if (history.length === 0 || atr === 0) return 0;
+    
+    const currentPrice = history[history.length - 1].price;
+    return (atr / currentPrice) * 100;
+  }
+
   private detectAbnormalVolume(history: PriceData[]): { isAbnormal: boolean; ratio: number; direction: string } {
     if (history.length < 10) {
       return { isAbnormal: false, ratio: 1, direction: "neutral" };
@@ -867,6 +999,11 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       "BTC/USD": "XXBTZUSD",
       "ETH/USD": "XETHZUSD",
       "SOL/USD": "SOLUSD",
+      "XRP/USD": "XXRPZUSD",
+      "TON/USD": "TONUSD",
+      "ETH/BTC": "XETHXXBT",
+      "BTC/ETH": "XXBTZXETH",
+      "SOL/ETH": "SOLETH",
     };
     return pairMap[pair] || pair.replace("/", "");
   }
@@ -877,6 +1014,8 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       "BTC": ["XXBT", "XBT", "BTC"],
       "ETH": ["XETH", "ETH"],
       "SOL": ["SOL"],
+      "XRP": ["XXRP", "XRP"],
+      "TON": ["TON"],
     };
     
     const keys = assetMap[asset] || [asset];
@@ -948,6 +1087,11 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
         this.currentUsdBalance += volumeNum * price;
         const existing = this.openPositions.get(pair);
         if (existing) {
+          // Calcular P&L de esta venta
+          const pnl = (price - existing.entryPrice) * volumeNum;
+          this.dailyPnL += pnl;
+          log(`P&L de operación: $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
+          
           existing.amount -= volumeNum;
           if (existing.amount <= 0) {
             this.openPositions.delete(pair);

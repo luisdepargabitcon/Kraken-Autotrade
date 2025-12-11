@@ -14,6 +14,8 @@ export const botConfig = pgTable("bot_config", {
   trailingStopEnabled: boolean("trailing_stop_enabled").notNull().default(false),
   trailingStopPercent: decimal("trailing_stop_percent", { precision: 5, scale: 2 }).notNull().default("2.00"),
   nonceErrorAlertsEnabled: boolean("nonce_error_alerts_enabled").notNull().default(true),
+  dailyLossLimitEnabled: boolean("daily_loss_limit_enabled").notNull().default(true),
+  dailyLossLimitPercent: decimal("daily_loss_limit_percent", { precision: 5, scale: 2 }).notNull().default("10.00"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
