@@ -317,6 +317,83 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/performance", async (req, res) => {
+    try {
+      const trades = await storage.getTrades(500);
+      
+      const STARTING_EQUITY = 1000;
+      
+      const sortedTrades = [...trades].sort((a, b) => {
+        const dateA = a.executedAt ? new Date(a.executedAt).getTime() : new Date(a.createdAt).getTime();
+        const dateB = b.executedAt ? new Date(b.executedAt).getTime() : new Date(b.createdAt).getTime();
+        return dateA - dateB;
+      });
+
+      const pairPrices: Record<string, { lastBuyPrice: number; lastBuyAmount: number }> = {};
+      let currentEquity = STARTING_EQUITY;
+      let totalPnl = 0;
+      let wins = 0;
+      let losses = 0;
+      let maxEquity = STARTING_EQUITY;
+      let maxDrawdown = 0;
+
+      const curve: { time: string; equity: number; pnl?: number }[] = [
+        { time: new Date(sortedTrades[0]?.executedAt || sortedTrades[0]?.createdAt || new Date()).toISOString(), equity: STARTING_EQUITY }
+      ];
+
+      for (const trade of sortedTrades) {
+        const pair = trade.pair;
+        const price = parseFloat(trade.price);
+        const amount = parseFloat(trade.amount);
+        const time = trade.executedAt ? new Date(trade.executedAt).toISOString() : new Date(trade.createdAt).toISOString();
+
+        if (trade.type === "buy") {
+          pairPrices[pair] = { lastBuyPrice: price, lastBuyAmount: amount };
+        } else if (trade.type === "sell") {
+          const lastBuy = pairPrices[pair];
+          if (lastBuy && lastBuy.lastBuyPrice > 0) {
+            const pnl = (price - lastBuy.lastBuyPrice) * Math.min(amount, lastBuy.lastBuyAmount);
+            totalPnl += pnl;
+            currentEquity += pnl;
+
+            if (pnl > 0) wins++;
+            else if (pnl < 0) losses++;
+
+            curve.push({ time, equity: currentEquity, pnl });
+
+            if (currentEquity > maxEquity) maxEquity = currentEquity;
+            const drawdown = ((maxEquity - currentEquity) / maxEquity) * 100;
+            if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+            delete pairPrices[pair];
+          }
+        }
+      }
+
+      const totalTrades = wins + losses;
+      const winRatePct = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+      const totalPnlPct = (totalPnl / STARTING_EQUITY) * 100;
+
+      res.json({
+        curve,
+        summary: {
+          startingEquity: STARTING_EQUITY,
+          endingEquity: currentEquity,
+          totalPnlUsd: totalPnl,
+          totalPnlPct,
+          maxDrawdownPct: maxDrawdown,
+          winRatePct,
+          totalTrades,
+          wins,
+          losses
+        }
+      });
+    } catch (error) {
+      console.error("Error calculating performance:", error);
+      res.status(500).json({ error: "Failed to calculate performance" });
+    }
+  });
+
   app.get("/api/market/:pair", async (req, res) => {
     try {
       const { pair } = req.params;
