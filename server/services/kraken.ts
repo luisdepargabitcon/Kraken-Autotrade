@@ -1,4 +1,6 @@
 import * as KrakenAPI from "node-kraken-api";
+import { telegramService } from "./telegram";
+import { storage } from "../storage";
 
 const { Kraken } = KrakenAPI as any;
 
@@ -7,9 +9,15 @@ interface KrakenConfig {
   apiSecret: string;
 }
 
+const NONCE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [500, 1000, 2000];
+
 export class KrakenService {
   private client: any | null = null;
   private publicClient: any;
+  private lastNonceAlertTime: number = 0;
+  private lastNonce: number = 0;
 
   constructor() {
     this.publicClient = new Kraken();
@@ -19,16 +27,84 @@ export class KrakenService {
     this.client = new Kraken({
       key: config.apiKey,
       secret: config.apiSecret,
+      gennonce: () => this.generateNonce(),
     });
+  }
+
+  private generateNonce(): number {
+    let nonce = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    if (nonce <= this.lastNonce) {
+      nonce = this.lastNonce + 1;
+    }
+    this.lastNonce = nonce;
+    return nonce;
   }
 
   isInitialized(): boolean {
     return this.client !== null;
   }
 
+  private async executeWithNonceRetry<T>(
+    endpoint: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 1) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 2]));
+        }
+        return await operation();
+      } catch (error: any) {
+        const isNonceError = error.message?.includes("EAPI:Invalid nonce") || 
+                            error.message?.includes("Invalid nonce");
+        
+        if (isNonceError) {
+          console.log(`[kraken] Nonce error on '${endpoint}', retrying (${attempt}/${MAX_RETRIES})...`);
+          
+          if (attempt === MAX_RETRIES) {
+            console.error(`[kraken] CRITICAL: Persistent nonce error on '${endpoint}' after ${attempt}/${MAX_RETRIES} attempts`);
+            await this.sendNonceAlert(endpoint);
+            throw new Error(`Persistent nonce error on '${endpoint}' - possible duplicate instance running`);
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error(`Failed after ${MAX_RETRIES} retries on '${endpoint}'`);
+  }
+
+  private async sendNonceAlert(endpoint: string): Promise<void> {
+    const now = Date.now();
+    
+    if (now - this.lastNonceAlertTime < NONCE_ALERT_INTERVAL_MS) {
+      console.log(`[kraken] Skipping Telegram nonce alert (rate limited, last sent ${Math.round((now - this.lastNonceAlertTime) / 1000)}s ago)`);
+      return;
+    }
+
+    try {
+      const config = await storage.getBotConfig();
+      if (config && config.nonceErrorAlertsEnabled === false) {
+        console.log(`[kraken] Nonce error alerts disabled in config, skipping Telegram notification`);
+        return;
+      }
+
+      await telegramService.sendAlert(
+        "Error de Nonce con Kraken",
+        `Error persistente de nonce en '${endpoint}' después de 3 intentos.\n\n` +
+        `⚠️ Verifica que no haya otra instancia del bot usando la misma API key de Kraken.\n\n` +
+        `_Este mensaje se enviará máximo cada 30 minutos mientras persista el problema._`
+      );
+      this.lastNonceAlertTime = now;
+      console.log(`[kraken] Nonce alert sent to Telegram`);
+    } catch (alertError) {
+      console.error(`[kraken] Failed to send nonce alert to Telegram:`, alertError);
+    }
+  }
+
   async getBalance() {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.client.balance();
+    return await this.executeWithNonceRetry("getBalance", () => this.client.balance());
   }
 
   async getTicker(pair: string) {
@@ -62,41 +138,27 @@ export class KrakenService {
       orderParams.price = params.price;
     }
 
-    return await this.client.addOrder(orderParams);
+    return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams));
   }
 
   async cancelOrder(txid: string) {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.client.cancelOrder({ txid });
+    return await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }));
   }
 
   async getOpenOrders() {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.client.openOrders();
+    return await this.executeWithNonceRetry("openOrders", () => this.client.openOrders());
   }
 
   async getClosedOrders(limit: number = 50) {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.client.closedOrders({ ofs: 0 });
+    return await this.executeWithNonceRetry("closedOrders", () => this.client.closedOrders({ ofs: 0 }));
   }
 
-  async getTradesHistory(limit: number = 50, retries: number = 3): Promise<any> {
+  async getTradesHistory(limit: number = 50): Promise<any> {
     if (!this.client) throw new Error("Kraken client not initialized");
-    
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
-        const result = await this.client.tradesHistory({ type: "all" });
-        return result;
-      } catch (error: any) {
-        if (error.message?.includes("EAPI:Invalid nonce") && attempt < retries - 1) {
-          console.log(`[kraken] Nonce error, retrying (${attempt + 1}/${retries})...`);
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw new Error("Failed after max retries");
+    return await this.executeWithNonceRetry("tradesHistory", () => this.client.tradesHistory({ type: "all" }));
   }
 
   async getOHLC(pair: string, interval: number = 5): Promise<{

@@ -13,6 +13,7 @@ export const botConfig = pgTable("bot_config", {
   takeProfitPercent: decimal("take_profit_percent", { precision: 5, scale: 2 }).notNull().default("7.00"),
   trailingStopEnabled: boolean("trailing_stop_enabled").notNull().default(false),
   trailingStopPercent: decimal("trailing_stop_percent", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  nonceErrorAlertsEnabled: boolean("nonce_error_alerts_enabled").notNull().default(true),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
