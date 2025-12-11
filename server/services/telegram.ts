@@ -32,7 +32,13 @@ export class TelegramService {
       } catch (e) {}
     }
     
-    this.bot = new TelegramBot(config.token, { polling: false });
+    // Activar polling solo en Docker (NAS) - detectamos por variable de entorno
+    const isDocker = process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production';
+    const enablePolling = isDocker;
+    
+    console.log(`[telegram] Inicializando bot - Polling: ${enablePolling ? 'ACTIVADO (Docker/NAS)' : 'DESACTIVADO (Replit)'}`);
+    
+    this.bot = new TelegramBot(config.token, { polling: enablePolling });
     this.chatId = config.chatId;
     this.setupCommands();
   }

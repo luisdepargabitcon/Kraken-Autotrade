@@ -72,7 +72,11 @@ Preferred communication style: Simple, everyday language.
 - **Package**: `node-telegram-bot-api`
 - **Purpose**: Send trade notifications and system status alerts
 - **Configuration**: Bot token and chat ID stored in `api_config` table
-- **Mode**: Polling disabled (send-only)
+- **Mode**: 
+  - **Replit**: Polling desactivado (solo envía notificaciones)
+  - **Docker/NAS**: Polling activado automáticamente (recibe comandos)
+- **Comandos disponibles**: `/estado`, `/pausar`, `/reanudar`, `/ultimas`, `/ayuda`
+- **Detección automática**: Usa `DOCKER_ENV=true` o `NODE_ENV=production` para activar polling
 
 ### PostgreSQL Database
 - **ORM**: Drizzle ORM with `drizzle-kit` for migrations
