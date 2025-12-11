@@ -69,26 +69,33 @@ export function Nav() {
       </nav>
       
       {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 top-14 z-40 bg-background/95 backdrop-blur-sm">
-          <div className="flex flex-col p-4 gap-2">
-            {links.map((link) => (
-              <Link 
-                key={link.href} 
-                href={link.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className={cn(
-                  "px-4 py-3 rounded-lg text-sm font-mono transition-colors flex items-center gap-3",
-                  location === link.href 
-                    ? "bg-primary/10 text-primary border border-primary/20" 
-                    : "text-muted-foreground hover:text-foreground hover:bg-white/5 border border-transparent"
-                )}
-              >
-                <link.icon className="h-5 w-5" />
-                {link.label}
-              </Link>
-            ))}
+        <>
+          <div 
+            className="lg:hidden fixed inset-0 top-14 z-30 bg-black/50"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="lg:hidden fixed inset-x-0 top-14 z-40 bg-background border-b border-border max-h-[calc(100vh-3.5rem)] overflow-y-auto">
+            <div className="flex flex-col p-4 gap-2">
+              {links.map((link) => (
+                <Link 
+                  key={link.href} 
+                  href={link.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={cn(
+                    "px-4 py-3 rounded-lg text-sm font-mono transition-colors flex items-center gap-3",
+                    location === link.href 
+                      ? "bg-primary/10 text-primary border border-primary/20" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/5 border border-transparent"
+                  )}
+                >
+                  <link.icon className="h-5 w-5" />
+                  {link.label}
+                </Link>
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </>
   );

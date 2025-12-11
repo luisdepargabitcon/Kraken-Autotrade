@@ -106,7 +106,7 @@ export default function Dashboard() {
         
         <main className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 max-w-[1600px] mx-auto w-full">
           
-          <div className="col-span-1 lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+          <div className="col-span-1 lg:col-span-12 grid grid-cols-1 min-[400px]:grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
             <AssetCard 
               symbol="USD" 
               name="Balance Total" 
@@ -137,10 +137,10 @@ export default function Dashboard() {
             />
           </div>
 
-          <div className="col-span-1 lg:col-span-9 h-[300px] md:h-[400px] lg:h-[500px]">
+          <div className="col-span-1 lg:col-span-9 h-[280px] sm:h-[350px] md:h-[400px] lg:h-[500px]">
             <ChartWidget />
           </div>
-          <div className="col-span-1 lg:col-span-3 space-y-4 md:space-y-6">
+          <div className="col-span-1 lg:col-span-3 space-y-3 md:space-y-4 lg:space-y-6">
             <BotControl />
             <div className="glass-panel p-3 md:p-4 rounded-lg border border-border/50">
                <h3 className="text-xs font-mono text-muted-foreground mb-3">PARES ACTIVOS</h3>
