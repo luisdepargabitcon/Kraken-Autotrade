@@ -118,6 +118,53 @@ export class TradingEngine {
     this.telegramService = telegramService;
   }
 
+  private calculatePairExposure(pair: string): number {
+    const position = this.openPositions.get(pair);
+    if (!position) return 0;
+    return position.amount * position.entryPrice;
+  }
+
+  private calculateTotalExposure(): number {
+    let total = 0;
+    this.openPositions.forEach((position) => {
+      total += position.amount * position.entryPrice;
+    });
+    return total;
+  }
+
+  private async checkExposureLimits(
+    pair: string,
+    newTradeUsd: number,
+    config: any
+  ): Promise<{ allowed: boolean; reason?: string; blockedBy?: "pair" | "total" }> {
+    const maxPairExposurePct = parseFloat(config.maxPairExposurePct?.toString() || "25");
+    const maxTotalExposurePct = parseFloat(config.maxTotalExposurePct?.toString() || "60");
+
+    const currentPairExposure = this.calculatePairExposure(pair);
+    const currentTotalExposure = this.calculateTotalExposure();
+
+    const maxPairExposureUsd = this.currentUsdBalance * (maxPairExposurePct / 100);
+    const maxTotalExposureUsd = this.currentUsdBalance * (maxTotalExposurePct / 100);
+
+    if (currentPairExposure + newTradeUsd > maxPairExposureUsd) {
+      return {
+        allowed: false,
+        reason: `Exposición por par excedida: $${(currentPairExposure + newTradeUsd).toFixed(2)} > $${maxPairExposureUsd.toFixed(2)} (${maxPairExposurePct}%)`,
+        blockedBy: "pair"
+      };
+    }
+
+    if (currentTotalExposure + newTradeUsd > maxTotalExposureUsd) {
+      return {
+        allowed: false,
+        reason: `Exposición total excedida: $${(currentTotalExposure + newTradeUsd).toFixed(2)} > $${maxTotalExposureUsd.toFixed(2)} (${maxTotalExposurePct}%)`,
+        blockedBy: "total"
+      };
+    }
+
+    return { allowed: true };
+  }
+
   async start() {
     if (this.isRunning) return;
     
@@ -496,6 +543,38 @@ _Deposita más fondos para operar este par._
 
 _Necesitas más saldo para cumplir el mínimo del exchange._
             `.trim());
+          }
+          return;
+        }
+
+        const botConfig = await storage.getBotConfig();
+        const exposureCheck = await this.checkExposureLimits(pair, tradeAmountUSD, botConfig);
+        if (!exposureCheck.allowed) {
+          log(`Trade bloqueado por límite de exposición: ${exposureCheck.reason}`, "trading");
+          
+          await botLogger.warn("TRADE_BLOCKED", `Trade bloqueado por límite de exposición (${exposureCheck.blockedBy})`, {
+            pair,
+            newTradeUsd: tradeAmountUSD,
+            currentPairExposure: this.calculatePairExposure(pair),
+            currentTotalExposure: this.calculateTotalExposure(),
+            maxPairExposurePct: parseFloat(botConfig?.maxPairExposurePct?.toString() || "25"),
+            maxTotalExposurePct: parseFloat(botConfig?.maxTotalExposurePct?.toString() || "60"),
+            blockedBy: exposureCheck.blockedBy,
+          });
+
+          if (this.telegramService.isInitialized()) {
+            const blockType = exposureCheck.blockedBy === "pair" ? "por par" : "total";
+            await this.telegramService.sendAlertToMultipleChats(`
+🚫 *Trade Bloqueado por Exposición*
+
+*Par:* ${pair}
+*Tipo:* Límite de exposición ${blockType}
+*Nuevo trade:* $${tradeAmountUSD.toFixed(2)}
+
+${exposureCheck.reason}
+
+_Reduce posiciones abiertas o ajusta los límites de exposición._
+            `.trim(), "trades");
           }
           return;
         }
