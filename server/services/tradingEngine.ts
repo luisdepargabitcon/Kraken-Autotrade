@@ -58,6 +58,13 @@ const KRAKEN_MINIMUMS: Record<string, number> = {
 
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
+interface OpenPosition {
+  amount: number;
+  entryPrice: number;
+  highestPrice: number;
+  openedAt: number;
+}
+
 export class TradingEngine {
   private krakenService: KrakenService;
   private telegramService: TelegramService;
@@ -65,7 +72,7 @@ export class TradingEngine {
   private intervalId: NodeJS.Timeout | null = null;
   private priceHistory: Map<string, PriceData[]> = new Map();
   private lastTradeTime: Map<string, number> = new Map();
-  private openPositions: Map<string, { amount: number; entryPrice: number }> = new Map();
+  private openPositions: Map<string, OpenPosition> = new Map();
   private currentUsdBalance: number = 0;
   private readonly PRICE_HISTORY_LENGTH = 50;
   private readonly MIN_TRADE_INTERVAL_MS = 60000;
@@ -157,18 +164,115 @@ El bot de trading autónomo está activo.
       const balances = await this.krakenService.getBalance();
       this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
       
+      const riskConfig = RISK_LEVELS[config.riskLevel] || RISK_LEVELS.medium;
+
+      const stopLossPercent = parseFloat(config.stopLossPercent?.toString() || "5");
+      const takeProfitPercent = parseFloat(config.takeProfitPercent?.toString() || "7");
+      const trailingStopEnabled = config.trailingStopEnabled ?? false;
+      const trailingStopPercent = parseFloat(config.trailingStopPercent?.toString() || "2");
+
+      for (const pair of config.activePairs) {
+        await this.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
+      }
+
       if (this.currentUsdBalance < 5) {
         log(`Saldo USD insuficiente: $${this.currentUsdBalance.toFixed(2)}`, "trading");
         return;
       }
-
-      const riskConfig = RISK_LEVELS[config.riskLevel] || RISK_LEVELS.medium;
 
       for (const pair of config.activePairs) {
         await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
       }
     } catch (error: any) {
       log(`Error en ciclo de trading: ${error.message}`, "trading");
+    }
+  }
+
+  private async checkStopLossTakeProfit(
+    pair: string,
+    stopLossPercent: number,
+    takeProfitPercent: number,
+    trailingStopEnabled: boolean,
+    trailingStopPercent: number,
+    balances: any
+  ) {
+    const position = this.openPositions.get(pair);
+    if (!position || position.amount <= 0) return;
+
+    try {
+      const krakenPair = this.formatKrakenPair(pair);
+      const ticker = await this.krakenService.getTicker(krakenPair);
+      const tickerData: any = Object.values(ticker)[0];
+      if (!tickerData) return;
+
+      const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+
+      if (currentPrice > position.highestPrice) {
+        position.highestPrice = currentPrice;
+        this.openPositions.set(pair, position);
+      }
+
+      let shouldSell = false;
+      let reason = "";
+      let emoji = "";
+
+      if (priceChange <= -stopLossPercent) {
+        shouldSell = true;
+        reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${stopLossPercent}%)`;
+        emoji = "🛑";
+      }
+      else if (priceChange >= takeProfitPercent) {
+        shouldSell = true;
+        reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${takeProfitPercent}%)`;
+        emoji = "🎯";
+      }
+      else if (trailingStopEnabled && position.highestPrice > position.entryPrice) {
+        const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
+        if (dropFromHigh >= trailingStopPercent && priceChange > 0) {
+          shouldSell = true;
+          reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)})`;
+          emoji = "📉";
+        }
+      }
+
+      if (shouldSell) {
+        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const sellAmount = position.amount;
+
+        if (sellAmount < minVolume) {
+          log(`Cantidad a vender (${sellAmount}) menor al mínimo de Kraken (${minVolume}) para ${pair}`, "trading");
+          return;
+        }
+
+        log(`${emoji} ${reason} para ${pair}`, "trading");
+
+        const pnl = (currentPrice - position.entryPrice) * position.amount;
+        const pnlPercent = priceChange;
+
+        const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, reason);
+        
+        if (success && this.telegramService.isInitialized()) {
+          const pnlEmoji = pnl >= 0 ? "💰" : "📉";
+          await this.telegramService.sendMessage(`
+${emoji} *${reason}*
+
+*Par:* ${pair}
+*Precio entrada:* $${position.entryPrice.toFixed(2)}
+*Precio actual:* $${currentPrice.toFixed(2)}
+*Cantidad vendida:* ${sellAmount}
+
+${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
+          `.trim(), "trade");
+        }
+
+        if (success) {
+          this.openPositions.delete(pair);
+          this.lastTradeTime.set(pair, Date.now());
+        }
+      }
+    } catch (error: any) {
+      log(`Error verificando SL/TP para ${pair}: ${error.message}`, "trading");
     }
   }
 
@@ -556,10 +660,24 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
       const volumeNum = parseFloat(volume);
       if (type === "buy") {
         this.currentUsdBalance -= volumeNum * price;
-        const existing = this.openPositions.get(pair) || { amount: 0, entryPrice: 0 };
-        const totalAmount = existing.amount + volumeNum;
-        const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
-        this.openPositions.set(pair, { amount: totalAmount, entryPrice: avgPrice });
+        const existing = this.openPositions.get(pair);
+        if (existing && existing.amount > 0) {
+          const totalAmount = existing.amount + volumeNum;
+          const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
+          this.openPositions.set(pair, { 
+            amount: totalAmount, 
+            entryPrice: avgPrice,
+            highestPrice: Math.max(existing.highestPrice, price),
+            openedAt: existing.openedAt
+          });
+        } else {
+          this.openPositions.set(pair, { 
+            amount: volumeNum, 
+            entryPrice: price,
+            highestPrice: price,
+            openedAt: Date.now()
+          });
+        }
       } else {
         this.currentUsdBalance += volumeNum * price;
         const existing = this.openPositions.get(pair);

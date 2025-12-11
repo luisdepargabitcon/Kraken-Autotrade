@@ -8,7 +8,8 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign } from "lucide-react";
 import { toast } from "sonner";
 
 interface BotConfig {
@@ -17,6 +18,10 @@ interface BotConfig {
   strategy: string;
   riskLevel: string;
   activePairs: string[];
+  stopLossPercent: string;
+  takeProfitPercent: string;
+  trailingStopEnabled: boolean;
+  trailingStopPercent: string;
 }
 
 const STRATEGIES = [
@@ -221,6 +226,111 @@ export default function Strategies() {
               </Card>
             </div>
           </div>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-primary" />
+                Control de Riesgo Automático
+              </CardTitle>
+              <CardDescription>Configura stop-loss, take-profit y trailing stop para proteger tu capital</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-red-500" />
+                      Stop-Loss
+                    </Label>
+                    <span className="font-mono text-lg text-red-500">-{parseFloat(config?.stopLossPercent || "5").toFixed(1)}%</span>
+                  </div>
+                  <Slider
+                    value={[parseFloat(config?.stopLossPercent || "5")]}
+                    onValueChange={(value) => updateMutation.mutate({ stopLossPercent: value[0].toString() } as any)}
+                    min={1}
+                    max={20}
+                    step={0.5}
+                    className="[&>span]:bg-red-500"
+                    data-testid="slider-stop-loss"
+                  />
+                  <p className="text-xs text-muted-foreground">Vende automáticamente si el precio baja este porcentaje desde tu entrada.</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-green-500" />
+                      Take-Profit
+                    </Label>
+                    <span className="font-mono text-lg text-green-500">+{parseFloat(config?.takeProfitPercent || "7").toFixed(1)}%</span>
+                  </div>
+                  <Slider
+                    value={[parseFloat(config?.takeProfitPercent || "7")]}
+                    onValueChange={(value) => updateMutation.mutate({ takeProfitPercent: value[0].toString() } as any)}
+                    min={1}
+                    max={30}
+                    step={0.5}
+                    className="[&>span]:bg-green-500"
+                    data-testid="slider-take-profit"
+                  />
+                  <p className="text-xs text-muted-foreground">Vende automáticamente cuando alcanzas este porcentaje de ganancia.</p>
+                </div>
+              </div>
+
+              <div className="border-t border-border/50 pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      <CircleDollarSign className="h-4 w-4 text-cyan-500" />
+                      Trailing Stop
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">Stop-loss que sube con el precio para asegurar ganancias</p>
+                  </div>
+                  <Switch
+                    checked={config?.trailingStopEnabled || false}
+                    onCheckedChange={(checked) => updateMutation.mutate({ trailingStopEnabled: checked } as any)}
+                    data-testid="switch-trailing-stop"
+                  />
+                </div>
+
+                {config?.trailingStopEnabled && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Distancia del Trailing</Label>
+                      <span className="font-mono text-lg text-cyan-500">{parseFloat(config?.trailingStopPercent || "2").toFixed(1)}%</span>
+                    </div>
+                    <Slider
+                      value={[parseFloat(config?.trailingStopPercent || "2")]}
+                      onValueChange={(value) => updateMutation.mutate({ trailingStopPercent: value[0].toString() } as any)}
+                      min={0.5}
+                      max={10}
+                      step={0.5}
+                      className="[&>span]:bg-cyan-500"
+                      data-testid="slider-trailing-stop"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Si el precio sube y luego cae este porcentaje desde el máximo, se vende automáticamente (solo si estás en ganancia).
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-muted/30 rounded-lg p-4 mt-4">
+                <h4 className="font-medium text-sm mb-2">Ejemplo con configuración actual:</h4>
+                <p className="text-xs text-muted-foreground">
+                  Si compras BTC a $100,000:
+                  <br />• <span className="text-red-500">Stop-Loss:</span> Se vende si baja a ${(100000 * (1 - parseFloat(config?.stopLossPercent || "5") / 100)).toLocaleString()}
+                  <br />• <span className="text-green-500">Take-Profit:</span> Se vende si sube a ${(100000 * (1 + parseFloat(config?.takeProfitPercent || "7") / 100)).toLocaleString()}
+                  {config?.trailingStopEnabled && (
+                    <>
+                      <br />• <span className="text-cyan-500">Trailing Stop:</span> Si sube a $105,000 y luego cae {config?.trailingStopPercent}%, se vende a ${(105000 * (1 - parseFloat(config?.trailingStopPercent || "2") / 100)).toLocaleString()}
+                    </>
+                  )}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         </main>
       </div>
     </div>
