@@ -61,6 +61,12 @@ Preferred communication style: Simple, everyday language.
 - **Purpose**: Execute trades, fetch balances, get market data
 - **Configuration**: API key and secret stored in `api_config` table
 - **Features**: Public ticker data, authenticated trading operations
+- **Nonce Handling**: Centralized retry wrapper with 3 attempts per operation
+  - Uses microsecond timestamps with monotonic increment tracking
+  - Logs include endpoint name and attempt count (e.g., `[kraken] Nonce error on 'addOrder', retrying (1/3)...`)
+  - Failed operations (after 3 retries) trigger Telegram alert (max 1 per 30 min)
+  - Alerts can be disabled via `nonceErrorAlertsEnabled` in bot config
+  - Bot stays alive after failed operations (doesn't crash)
 
 ### Telegram Bot API
 - **Package**: `node-telegram-bot-api`
