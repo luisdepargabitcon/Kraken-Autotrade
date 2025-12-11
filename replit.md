@@ -78,6 +78,22 @@ Preferred communication style: Simple, everyday language.
 - **Comandos disponibles**: `/estado`, `/pausar`, `/reanudar`, `/ultimas`, `/ayuda`
 - **Detección automática**: Usa `DOCKER_ENV=true` o `NODE_ENV=production` para activar polling
 
+## Risk Management Features
+
+### Exposure Control (NEW)
+Limits how much capital can be committed in open positions:
+- **maxPairExposurePct**: Maximum % of balance in a single pair (default 25%)
+- **maxTotalExposurePct**: Maximum % of balance across all positions (default 60%)
+- Configurable from UI in Strategies page ("Control de Exposición")
+- Blocks new trades if limits would be exceeded
+- Logs TRADE_BLOCKED event and sends Telegram alert
+
+### Existing Controls
+- **Stop-Loss**: Auto-sells if price drops X% from entry
+- **Take-Profit**: Auto-sells if price rises X% from entry
+- **Trailing Stop**: Dynamic stop-loss that follows price upward
+- **Daily Loss Limit**: Pauses trading if daily losses exceed X%
+
 ### PostgreSQL Database
 - **ORM**: Drizzle ORM with `drizzle-kit` for migrations
 - **Connection**: Via `DATABASE_URL` environment variable
