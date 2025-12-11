@@ -9,6 +9,10 @@ export const botConfig = pgTable("bot_config", {
   strategy: text("strategy").notNull().default("momentum"),
   riskLevel: text("risk_level").notNull().default("medium"),
   activePairs: text("active_pairs").array().notNull().default(["BTC/USD", "ETH/USD", "SOL/USD"]),
+  stopLossPercent: decimal("stop_loss_percent", { precision: 5, scale: 2 }).notNull().default("5.00"),
+  takeProfitPercent: decimal("take_profit_percent", { precision: 5, scale: 2 }).notNull().default("7.00"),
+  trailingStopEnabled: boolean("trailing_stop_enabled").notNull().default(false),
+  trailingStopPercent: decimal("trailing_stop_percent", { precision: 5, scale: 2 }).notNull().default("2.00"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
