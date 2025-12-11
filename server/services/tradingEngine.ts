@@ -213,11 +213,18 @@ El bot de trading autónomo está activo.
       // Reset diario del P&L
       const today = new Date().toISOString().split("T")[0];
       if (this.lastDayReset !== today) {
+        const previousDayPnL = this.dailyPnL;
         this.dailyPnL = 0;
         this.dailyStartBalance = this.currentUsdBalance;
         this.lastDayReset = today;
         this.isDailyLimitReached = false;
         log(`Nuevo día de trading: ${today}. Balance inicial: $${this.dailyStartBalance.toFixed(2)}`, "trading");
+        
+        await botLogger.info("DAILY_LIMIT_RESET", `Nuevo día de trading: ${today}`, {
+          date: today,
+          previousDayPnL,
+          startBalance: this.dailyStartBalance,
+        });
       }
 
       // Verificar límite de pérdida diaria
