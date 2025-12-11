@@ -1,25 +1,25 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Play, Pause, AlertTriangle, TrendingUp, RefreshCw, Zap, Target } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Play, Pause, TrendingUp, RefreshCw, Zap, Target, Shield, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { BotConfig } from "@shared/schema";
 
-const STRATEGIES = [
-  { id: "momentum", name: "Momentum", icon: TrendingUp },
-  { id: "mean_reversion", name: "Reversión a la Media", icon: RefreshCw },
-  { id: "scalping", name: "Scalping", icon: Zap },
-  { id: "grid", name: "Grid Trading", icon: Target },
-];
+const STRATEGIES: Record<string, { name: string; icon: typeof TrendingUp }> = {
+  momentum: { name: "Momentum", icon: TrendingUp },
+  mean_reversion: { name: "Reversión a la Media", icon: RefreshCw },
+  scalping: { name: "Scalping", icon: Zap },
+  grid: { name: "Grid Trading", icon: Target },
+};
 
-const RISK_LEVELS = [
-  { id: "low", name: "BAJO (Conservador)", color: "text-green-500" },
-  { id: "medium", name: "MEDIO (Equilibrado)", color: "text-yellow-500" },
-  { id: "high", name: "ALTO (Agresivo)", color: "text-red-500" },
-];
+const RISK_LEVELS: Record<string, { name: string; color: string }> = {
+  low: { name: "Bajo", color: "text-green-500 bg-green-500/10 border-green-500/30" },
+  medium: { name: "Medio", color: "text-yellow-500 bg-yellow-500/10 border-yellow-500/30" },
+  high: { name: "Alto", color: "text-red-500 bg-red-500/10 border-red-500/30" },
+};
 
 export function BotControl() {
   const queryClient = useQueryClient();
@@ -40,8 +40,12 @@ export function BotControl() {
   });
 
   const isActive = config?.isActive ?? false;
-  const currentStrategy = STRATEGIES.find(s => s.id === config?.strategy) || STRATEGIES[0];
-  const currentRisk = RISK_LEVELS.find(r => r.id === config?.riskLevel) || RISK_LEVELS[1];
+  const strategyId = config?.strategy || "momentum";
+  const riskId = config?.riskLevel || "medium";
+  
+  const currentStrategy = STRATEGIES[strategyId] || STRATEGIES.momentum;
+  const currentRisk = RISK_LEVELS[riskId] || RISK_LEVELS.medium;
+  const StrategyIcon = currentStrategy.icon;
 
   return (
     <Card className="glass-panel border-border/50">
@@ -79,51 +83,34 @@ export function BotControl() {
         </div>
 
         <div className="space-y-4 pt-4 border-t border-border/50">
-          <div className="grid gap-2">
-            <Label className="text-xs font-mono text-muted-foreground">ESTRATEGIA</Label>
-            <Select 
-              value={config?.strategy || "momentum"}
-              onValueChange={(value) => updateMutation.mutate({ strategy: value })}
-            >
-              <SelectTrigger className="font-mono text-xs bg-background/50 border-border" data-testid="select-dashboard-strategy">
-                <SelectValue placeholder="Seleccionar estrategia" />
-              </SelectTrigger>
-              <SelectContent>
-                {STRATEGIES.map((strategy) => (
-                  <SelectItem key={strategy.id} value={strategy.id}>
-                    <div className="flex items-center gap-2">
-                      <strategy.icon className="h-3 w-3" />
-                      <span>{strategy.name.toUpperCase()}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <div className="grid gap-3">
+            <Label className="text-xs font-mono text-muted-foreground">CONFIGURACIÓN ACTIVA</Label>
+            
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-background/50">
+              <div className="flex items-center gap-2">
+                <StrategyIcon className="h-4 w-4 text-primary" />
+                <span className="text-sm">Estrategia</span>
+              </div>
+              <Badge variant="outline" className="font-mono">
+                {currentStrategy.name.toUpperCase()}
+              </Badge>
+            </div>
 
-          <div className="grid gap-2">
-            <Label className="text-xs font-mono text-muted-foreground">NIVEL DE RIESGO</Label>
-            <Select 
-              value={config?.riskLevel || "medium"}
-              onValueChange={(value) => updateMutation.mutate({ riskLevel: value })}
-            >
-              <SelectTrigger className="font-mono text-xs bg-background/50 border-border" data-testid="select-dashboard-risk">
-                <SelectValue placeholder="Seleccionar riesgo" />
-              </SelectTrigger>
-              <SelectContent>
-                {RISK_LEVELS.map((level) => (
-                  <SelectItem key={level.id} value={level.id}>
-                    <span className={level.color}>{level.name}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-background/50">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-primary" />
+                <span className="text-sm">Nivel de Riesgo</span>
+              </div>
+              <Badge variant="outline" className={cn("font-mono border", currentRisk.color)}>
+                {currentRisk.name.toUpperCase()}
+              </Badge>
+            </div>
           </div>
           
-          <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-md flex gap-3 items-start">
-            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-yellow-500/80 leading-tight">
-              Estrategia: <strong>{currentStrategy.name}</strong> | Riesgo: <strong className={currentRisk.color}>{currentRisk.id.toUpperCase()}</strong>
+          <div className="bg-muted/30 border border-border/50 p-3 rounded-md flex gap-3 items-start">
+            <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              Para cambiar la estrategia o el nivel de riesgo, ve a la pestaña <strong>Estrategias</strong>.
             </p>
           </div>
         </div>
