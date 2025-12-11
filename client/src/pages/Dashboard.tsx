@@ -5,6 +5,7 @@ import { AssetCard } from "@/components/dashboard/AssetCard";
 import { TradeLog } from "@/components/dashboard/TradeLog";
 import { ChartWidget } from "@/components/dashboard/ChartWidget";
 import { BotControl } from "@/components/dashboard/BotControl";
+import { EventsPanel } from "@/components/dashboard/EventsPanel";
 import { AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
@@ -154,8 +155,12 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="col-span-1 lg:col-span-12">
+          <div className="col-span-1 lg:col-span-6">
             <TradeLog />
+          </div>
+          
+          <div className="col-span-1 lg:col-span-6">
+            <EventsPanel />
           </div>
 
         </main>

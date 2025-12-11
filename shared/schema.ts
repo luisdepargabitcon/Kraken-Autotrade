@@ -73,12 +73,22 @@ export const telegramChats = pgTable("telegram_chats", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const botEvents = pgTable("bot_events", {
+  id: serial("id").primaryKey(),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  level: text("level").notNull(),
+  type: text("type").notNull(),
+  message: text("message").notNull(),
+  meta: text("meta"),
+});
+
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true, updatedAt: true });
 export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertMarketDataSchema = createInsertSchema(marketData).omit({ id: true, timestamp: true });
 export const insertApiConfigSchema = createInsertSchema(apiConfig).omit({ id: true, updatedAt: true });
 export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true, createdAt: true });
+export const insertBotEventSchema = createInsertSchema(botEvents).omit({ id: true, timestamp: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -86,6 +96,7 @@ export type Notification = typeof notifications.$inferSelect;
 export type MarketData = typeof marketData.$inferSelect;
 export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
+export type BotEvent = typeof botEvents.$inferSelect;
 
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
@@ -93,3 +104,4 @@ export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type InsertMarketData = z.infer<typeof insertMarketDataSchema>;
 export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
 export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
+export type InsertBotEvent = z.infer<typeof insertBotEventSchema>;

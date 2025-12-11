@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { krakenService } from "./services/kraken";
 import { telegramService } from "./services/telegram";
 import { TradingEngine } from "./services/tradingEngine";
+import { botLogger } from "./services/botLogger";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -489,6 +490,31 @@ export async function registerRoutes(
         time: t.executedAt?.toISOString() || t.createdAt.toISOString(),
         status: t.status,
       })));
+    }
+  });
+
+  app.get("/api/events", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const level = req.query.level as string;
+      
+      const events = await botLogger.getDbEvents(limit);
+      
+      const filtered = level 
+        ? events.filter(e => e.level === level.toUpperCase())
+        : events;
+      
+      res.json(filtered.map(e => ({
+        id: e.id,
+        timestamp: e.timestamp,
+        level: e.level,
+        type: e.type,
+        message: e.message,
+        meta: e.meta ? JSON.parse(e.meta) : null,
+      })));
+    } catch (error: any) {
+      console.error("[api/events] Error:", error.message);
+      res.status(500).json({ error: "Failed to fetch events" });
     }
   });
 

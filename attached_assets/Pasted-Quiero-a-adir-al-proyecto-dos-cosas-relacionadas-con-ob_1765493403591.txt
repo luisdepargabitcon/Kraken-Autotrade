@@ -1,0 +1,103 @@
+Quiero añadir al proyecto dos cosas relacionadas con observabilidad del bot:
+
+1) Logger estructurado (BotLogger)
+2) Un panel en el dashboard que muestre los eventos del bot en tiempo real
+
+Te detallo lo que necesito:
+
+1. Logger estructurado (BotLogger)
+
+En lugar de usar console.log disperso, quiero un servicio centralizado de logging, algo tipo "BotLogger", que se pueda inyectar/usar desde el TradingEngine, el servicio de Kraken y Telegram.
+
+Objetivo: registrar de forma clara y consistente todo lo importante que haga el bot, por ejemplo:
+
+- Trades ejecutados (TRADE_EXECUTED)
+- Trades bloqueados por riesgo (TRADE_BLOCKED)
+- Activación del límite de pérdida diaria (DAILY_LIMIT_HIT)
+- Errores de Kraken (KRAKEN_ERROR)
+- Cambios de estado del bot (BOT_PAUSED, BOT_RESUMED, etc.)
+
+Características que debe tener el logger:
+
+- Niveles: INFO, WARN, ERROR.
+- Campos mínimos por evento:
+  - timestamp (ISO string)
+  - level (INFO/WARN/ERROR)
+  - type (ej. "TRADE_EXECUTED", "RISK_LIMIT_HIT")
+  - message (texto legible)
+  - meta (objeto opcional con datos extra: par, tamaño, error, etc.)
+
+Implementación mínima aceptable:
+
+- Una clase tipo BotLogger con métodos:
+  - info(type, message, meta?)
+  - warn(type, message, meta?)
+  - error(type, message, meta?)
+- De momento puede seguir escribiendo a consola, pero:
+  - Preferiblemente guardar también los últimos N eventos en memoria
+  - Y/o en una tabla sencilla en la base de datos (por ejemplo "bot_events")
+
+Lo importante es que, desde el TradingEngine, pueda llamar a cosas así:
+
+- Cuando se ejecuta un trade:
+  logger.info("TRADE_EXECUTED", "Trade ejecutado en BTC/USD", { side, sizeUsd, pnlUsd })
+
+- Cuando se bloquea un trade por riesgo:
+  logger.warn("TRADE_BLOCKED", "Trade bloqueado por límite de exposición", { pair, sizeUsd })
+
+- Cuando se alcanza el límite diario:
+  logger.info("DAILY_LIMIT_HIT", "Se alcanzó el límite de pérdida diaria. Bot pausado.", { dailyPnlPct })
+
+- Cuando hay un error serio de Kraken:
+  logger.error("KRAKEN_ERROR", "Error en llamada a Kraken", { endpoint, error })
+
+La idea es que el logger sea reutilizable y se pueda evolucionar más adelante (por ejemplo, guardar en BD o enviar a un sistema externo) sin cambiar el código de negocio.
+
+2. Panel de “Eventos del Bot” en el Dashboard
+
+Quiero un panel en el dashboard que me permita ver qué está haciendo el bot, apoyándose en el logger anterior.
+
+Funcionalidad deseada:
+
+- Un endpoint en el backend, algo tipo:
+  GET /api/events
+  que devuelva los últimos N eventos (por ejemplo 50), ordenados por fecha descendente.
+
+  Cada evento con:
+  - timestamp
+  - level
+  - type
+  - message
+  - meta (si aplica)
+
+- En el frontend (dashboard):
+  Un bloque “Eventos del Bot” o “Activity / Logs” que:
+  - Haga fetch periódico (cada 5–10 segundos) a /api/events
+  - Muestre una lista o tabla con:
+    - fecha/hora
+    - tipo
+    - nivel (quizá con color: INFO normal, WARN amarillo, ERROR rojo)
+    - mensaje
+
+Opcional (pero muy útil):
+- Filtro por nivel (ver solo WARN/ERROR, por ejemplo)
+- Scroll para ver históricos
+- Tooltip o desplegable para ver el meta (por ejemplo, detalle del trade bloqueado)
+
+Objetivo de este panel:
+
+- Poder ver en tiempo casi real:
+  - Cuándo se ejecuta un trade y en qué par
+  - Si el bot está bloqueando operaciones por riesgo
+  - Cuándo se dispara el límite de pérdida diaria
+  - Si se está produciendo algún error frecuente con Kraken
+- Que haga juego con el resto del dashboard, pero con prioridad en funcionalidad antes que estética.
+
+Resumen:
+
+1) Crear un logger estructurado (BotLogger) y usarlo en TradingEngine/Kraken/Telegram para registrar los eventos importantes.
+2) Exponer esos eventos a través de un endpoint (/api/events o similar).
+3) Añadir al dashboard un panel de “Eventos del bot” que consuma ese endpoint y muestre la actividad en tiempo real.
+
+No quiero que se cambie ninguna lógica de trading sin consultarlo; solo añadir esta capa de observabilidad (logger + panel de eventos).
+¿Puedes implementarlo y luego explicarme cómo ha quedado?

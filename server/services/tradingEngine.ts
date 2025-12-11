@@ -1,5 +1,6 @@
 import { KrakenService } from "./kraken";
 import { TelegramService } from "./telegram";
+import { botLogger } from "./botLogger";
 import { storage } from "../storage";
 import { log } from "../index";
 
@@ -147,6 +148,13 @@ export class TradingEngine {
     this.isRunning = true;
     log("Motor de trading iniciado", "trading");
     
+    await botLogger.info("BOT_STARTED", "Motor de trading iniciado", {
+      strategy: config.strategy,
+      riskLevel: config.riskLevel,
+      activePairs: config.activePairs,
+      balanceUsd: this.currentUsdBalance,
+    });
+    
     if (this.telegramService.isInitialized()) {
       await this.telegramService.sendMessage(`🤖 *KrakenBot Iniciado*
 
@@ -173,6 +181,9 @@ El bot de trading autónomo está activo.
     }
     
     log("Motor de trading detenido", "trading");
+    
+    await botLogger.info("BOT_STOPPED", "Motor de trading detenido");
+    
     if (this.telegramService.isInitialized()) {
       await this.telegramService.sendMessage("🛑 *KrakenBot Detenido*\n\nEl bot de trading ha sido desactivado.");
     }
@@ -219,6 +230,13 @@ El bot de trading autónomo está activo.
         if (currentLossPercent <= -dailyLossLimitPercent && !this.isDailyLimitReached) {
           this.isDailyLimitReached = true;
           log(`🛑 LÍMITE DE PÉRDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (límite: -${dailyLossLimitPercent}%)`, "trading");
+          
+          await botLogger.warn("DAILY_LIMIT_HIT", "Límite de pérdida diaria alcanzado. Bot pausado para nuevas compras.", {
+            dailyPnL: this.dailyPnL,
+            dailyPnLPercent: currentLossPercent,
+            limitPercent: dailyLossLimitPercent,
+            startBalance: this.dailyStartBalance,
+          });
           
           if (this.telegramService.isInitialized()) {
             await this.telegramService.sendAlert(
@@ -297,11 +315,25 @@ El bot de trading autónomo está activo.
         shouldSell = true;
         reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${stopLossPercent}%)`;
         emoji = "🛑";
+        await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
+          pair,
+          entryPrice: position.entryPrice,
+          currentPrice,
+          priceChange,
+          stopLossPercent,
+        });
       }
       else if (priceChange >= takeProfitPercent) {
         shouldSell = true;
         reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${takeProfitPercent}%)`;
         emoji = "🎯";
+        await botLogger.info("TAKE_PROFIT_HIT", `Take-Profit alcanzado en ${pair}`, {
+          pair,
+          entryPrice: position.entryPrice,
+          currentPrice,
+          priceChange,
+          takeProfitPercent,
+        });
       }
       else if (trailingStopEnabled && position.highestPrice > position.entryPrice) {
         const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
@@ -309,6 +341,14 @@ El bot de trading autónomo está activo.
           shouldSell = true;
           reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)})`;
           emoji = "📉";
+          await botLogger.info("TRAILING_STOP_HIT", `Trailing Stop activado en ${pair}`, {
+            pair,
+            entryPrice: position.entryPrice,
+            highestPrice: position.highestPrice,
+            currentPrice,
+            dropFromHigh,
+            trailingStopPercent,
+          });
         }
       }
 
@@ -1120,9 +1160,29 @@ _KrakenBot.AI - Trading Autónomo_
       }
 
       log(`Orden ejecutada: ${txid}`, "trading");
+      
+      await botLogger.info("TRADE_EXECUTED", `Trade ${type.toUpperCase()} ejecutado en ${pair}`, {
+        pair,
+        type,
+        volume: volumeNum,
+        price,
+        totalUsd: volumeNum * price,
+        txid,
+        reason,
+      });
+      
       return true;
     } catch (error: any) {
       log(`Error ejecutando orden: ${error.message}`, "trading");
+      
+      await botLogger.error("TRADE_FAILED", `Error ejecutando ${type} en ${pair}`, {
+        pair,
+        type,
+        volume,
+        price,
+        error: error.message,
+      });
+      
       if (this.telegramService.isInitialized()) {
         await this.telegramService.sendMessage(`
 ⚠️ *Error en Operación*
