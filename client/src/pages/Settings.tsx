@@ -25,14 +25,14 @@ export default function Settings() {
       <div className="relative z-10 flex flex-col min-h-screen">
         <Nav />
         
-        <main className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-8">
+        <main className="flex-1 p-4 md:p-6 max-w-4xl mx-auto w-full space-y-6 md:space-y-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold font-sans tracking-tight flex items-center gap-3">
-                <Cog className="h-8 w-8 text-primary" />
+              <h1 className="text-xl md:text-3xl font-bold font-sans tracking-tight flex items-center gap-2 md:gap-3">
+                <Cog className="h-6 w-6 md:h-8 md:w-8 text-primary" />
                 Ajustes del Sistema
               </h1>
-              <p className="text-muted-foreground mt-1">Configuración del bot, IA y despliegue.</p>
+              <p className="text-sm md:text-base text-muted-foreground mt-1">Configuración del bot, IA y despliegue.</p>
             </div>
           </div>
 
@@ -71,9 +71,9 @@ export default function Settings() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label>Modelo Predictivo</Label>
+                    <Label className="text-sm">Modelo Predictivo</Label>
                     <Select defaultValue="lstm">
                       <SelectTrigger className="bg-background/50">
                         <SelectValue placeholder="Seleccionar modelo" />
@@ -127,9 +127,9 @@ export default function Settings() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label>Dirección IP del NAS</Label>
+                    <Label className="text-sm">Dirección IP del NAS</Label>
                     <Input placeholder="192.168.1.104" defaultValue="192.168.1.104" className="font-mono bg-background/50" />
                   </div>
                   <div className="grid gap-2">
@@ -180,20 +180,20 @@ export default function Settings() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="p-3 border border-border rounded-lg bg-card/30">
+                <div className="grid grid-cols-2 gap-3 md:gap-4 text-xs md:text-sm">
+                  <div className="p-2 md:p-3 border border-border rounded-lg bg-card/30">
                     <p className="text-muted-foreground">Versión</p>
                     <p className="font-mono font-medium">1.0.0</p>
                   </div>
-                  <div className="p-3 border border-border rounded-lg bg-card/30">
+                  <div className="p-2 md:p-3 border border-border rounded-lg bg-card/30">
                     <p className="text-muted-foreground">Entorno</p>
                     <p className="font-mono font-medium">Producción</p>
                   </div>
-                  <div className="p-3 border border-border rounded-lg bg-card/30">
+                  <div className="p-2 md:p-3 border border-border rounded-lg bg-card/30">
                     <p className="text-muted-foreground">Base de datos</p>
                     <p className="font-mono font-medium text-green-500">Conectada</p>
                   </div>
-                  <div className="p-3 border border-border rounded-lg bg-card/30">
+                  <div className="p-2 md:p-3 border border-border rounded-lg bg-card/30">
                     <p className="text-muted-foreground">Última actualización</p>
                     <p className="font-mono font-medium">{new Date().toLocaleDateString("es-ES")}</p>
                   </div>

@@ -94,14 +94,14 @@ export default function Strategies() {
         <Nav />
         <Ticker />
         
-        <main className="flex-1 p-6 max-w-6xl mx-auto w-full space-y-6">
-          <div className="flex items-center justify-between">
+        <main className="flex-1 p-4 md:p-6 max-w-6xl mx-auto w-full space-y-4 md:space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold font-sans tracking-tight">Estrategias de Trading</h1>
-              <p className="text-muted-foreground mt-1">Configura el comportamiento del bot autónomo.</p>
+              <h1 className="text-2xl md:text-3xl font-bold font-sans tracking-tight">Estrategias de Trading</h1>
+              <p className="text-sm md:text-base text-muted-foreground mt-1">Configura el comportamiento del bot autónomo.</p>
             </div>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">Bot Activo</span>
+            <div className="flex items-center gap-3 md:gap-4">
+              <span className="text-xs md:text-sm text-muted-foreground">Bot Activo</span>
               <Switch
                 checked={config?.isActive || false}
                 onCheckedChange={(checked) => updateMutation.mutate({ isActive: checked })}
@@ -110,11 +110,11 @@ export default function Strategies() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
             <Card className="glass-panel border-border/50">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-primary" />
+                <CardTitle className="flex items-center gap-2 text-base md:text-lg">
+                  <Activity className="h-4 w-4 md:h-5 md:w-5 text-primary" />
                   Estrategia Activa
                 </CardTitle>
                 <CardDescription>Selecciona el algoritmo de trading</CardDescription>
@@ -236,11 +236,11 @@ export default function Strategies() {
               <CardDescription>Configura stop-loss, take-profit y trailing stop para proteger tu capital</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                <div className="space-y-3 md:space-y-4">
                   <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500" />
+                    <Label className="flex items-center gap-2 text-sm">
+                      <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-red-500" />
                       Stop-Loss
                     </Label>
                     <span className="font-mono text-lg text-red-500">-{parseFloat(config?.stopLossPercent || "5").toFixed(1)}%</span>

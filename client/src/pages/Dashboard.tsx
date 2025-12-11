@@ -92,21 +92,21 @@ export default function Dashboard() {
         <Ticker />
         
         {!data?.krakenConnected && !isLoading && (
-          <div className="mx-6 mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-yellow-500" />
+          <div className="mx-4 md:mx-6 mt-4 p-3 md:p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+            <AlertCircle className="h-5 w-5 text-yellow-500 shrink-0" />
             <div className="flex-1">
               <p className="text-sm font-medium text-yellow-500">Kraken no conectado</p>
               <p className="text-xs text-muted-foreground">Configura tus claves API en Ajustes para ver datos reales.</p>
             </div>
-            <Link href="/settings" className="text-sm text-primary hover:underline" data-testid="link-goto-settings">
+            <Link href="/settings" className="text-sm text-primary hover:underline whitespace-nowrap" data-testid="link-goto-settings">
               Ir a Ajustes
             </Link>
           </div>
         )}
         
-        <main className="flex-1 p-6 grid grid-cols-1 md:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full">
+        <main className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 max-w-[1600px] mx-auto w-full">
           
-          <div className="col-span-12 grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="col-span-1 lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
             <AssetCard 
               symbol="USD" 
               name="Balance Total" 
@@ -137,12 +137,12 @@ export default function Dashboard() {
             />
           </div>
 
-          <div className="col-span-12 md:col-span-9 h-[500px]">
+          <div className="col-span-1 lg:col-span-9 h-[300px] md:h-[400px] lg:h-[500px]">
             <ChartWidget />
           </div>
-          <div className="col-span-12 md:col-span-3 space-y-6">
+          <div className="col-span-1 lg:col-span-3 space-y-4 md:space-y-6">
             <BotControl />
-            <div className="glass-panel p-4 rounded-lg border border-border/50">
+            <div className="glass-panel p-3 md:p-4 rounded-lg border border-border/50">
                <h3 className="text-xs font-mono text-muted-foreground mb-3">PARES ACTIVOS</h3>
                <div className="flex flex-wrap gap-2">
                  {["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC"].map(pair => (
@@ -154,7 +154,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="col-span-12">
+          <div className="col-span-1 lg:col-span-12">
             <TradeLog />
           </div>
 
