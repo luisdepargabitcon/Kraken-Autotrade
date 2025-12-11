@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart } from "lucide-react";
 import { toast } from "sonner";
 
 interface BotConfig {
@@ -22,6 +22,8 @@ interface BotConfig {
   takeProfitPercent: string;
   trailingStopEnabled: boolean;
   trailingStopPercent: string;
+  maxPairExposurePct: string;
+  maxTotalExposurePct: string;
 }
 
 const STRATEGIES = [
@@ -327,6 +329,68 @@ export default function Strategies() {
                       <br />• <span className="text-cyan-500">Trailing Stop:</span> Si sube a $105,000 y luego cae {config?.trailingStopPercent}%, se vende a ${(105000 * (1 - parseFloat(config?.trailingStopPercent || "2") / 100)).toLocaleString()}
                     </>
                   )}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <PieChart className="h-5 w-5 text-primary" />
+                Control de Exposición
+              </CardTitle>
+              <CardDescription>Limita cuánto capital puede estar comprometido en posiciones abiertas</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                <div className="space-y-3 md:space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2 text-sm">
+                      <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-orange-500" />
+                      Máx. Exposición por Par
+                    </Label>
+                    <span className="font-mono text-lg text-orange-500">{parseFloat(config?.maxPairExposurePct || "25").toFixed(0)}%</span>
+                  </div>
+                  <Slider
+                    value={[parseFloat(config?.maxPairExposurePct || "25")]}
+                    onValueChange={(value) => updateMutation.mutate({ maxPairExposurePct: value[0].toString() } as any)}
+                    min={5}
+                    max={50}
+                    step={5}
+                    className="[&>span]:bg-orange-500"
+                    data-testid="slider-max-pair-exposure"
+                  />
+                  <p className="text-xs text-muted-foreground">Máximo % del balance que puede estar en un solo par (ej: solo BTC/USD).</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-purple-500" />
+                      Máx. Exposición Total
+                    </Label>
+                    <span className="font-mono text-lg text-purple-500">{parseFloat(config?.maxTotalExposurePct || "60").toFixed(0)}%</span>
+                  </div>
+                  <Slider
+                    value={[parseFloat(config?.maxTotalExposurePct || "60")]}
+                    onValueChange={(value) => updateMutation.mutate({ maxTotalExposurePct: value[0].toString() } as any)}
+                    min={10}
+                    max={100}
+                    step={5}
+                    className="[&>span]:bg-purple-500"
+                    data-testid="slider-max-total-exposure"
+                  />
+                  <p className="text-xs text-muted-foreground">Máximo % del balance que puede estar en todas las posiciones abiertas.</p>
+                </div>
+              </div>
+
+              <div className="bg-muted/30 rounded-lg p-4 mt-4">
+                <h4 className="font-medium text-sm mb-2">Ejemplo con balance de $100:</h4>
+                <p className="text-xs text-muted-foreground">
+                  • <span className="text-orange-500">Por par:</span> Máximo ${parseFloat(config?.maxPairExposurePct || "25")} en cada par individual
+                  <br />• <span className="text-purple-500">Total:</span> Máximo ${parseFloat(config?.maxTotalExposurePct || "60")} en todas las posiciones combinadas
+                  <br />• Si se alcanza algún límite, el bot NO abrirá nuevas posiciones y te notificará.
                 </p>
               </div>
             </CardContent>

@@ -1,0 +1,52 @@
+Próxima mejora que quiero implementar: control de exposición por par y total, con porcentajes configurables por el usuario.
+
+Objetivo:
+Además del Stop Loss, Take Profit, Trailing y límite de pérdida diaria que ya están, quiero añadir un control de riesgo a nivel de exposición, para que el bot NO abra nuevas posiciones si ya tiene demasiado capital comprometido.
+
+Reglas deseadas (pero configurables por el usuario, no fijas en código):
+- Máximo de exposición por par: % del balance total (por ejemplo 25%, pero ajustable).
+- Máximo de exposición total: % del balance total (por ejemplo 60%, pero ajustable).
+
+Definiciones:
+- Exposición por par: suma del nominal en USD de todas las posiciones abiertas en ese par (amount * entryPrice).
+- Exposición total: suma del nominal en USD de todas las posiciones abiertas en todos los pares.
+
+Comportamiento esperado:
+1) Añadir dos campos nuevos en la configuración del bot (en la DB y en el panel de configuración/Estrategias):
+   - maxPairExposurePct   (porcentaje máximo de exposición por par)
+   - maxTotalExposurePct  (porcentaje máximo de exposición total)
+
+   Ejemplo de valores por defecto:
+   - maxPairExposurePct: 25
+   - maxTotalExposurePct: 60
+
+   El usuario debe poder modificarlos desde la UI (sin tocar código), igual que ahora modifica riesgo, SL, TP, etc.
+
+2) Antes de abrir una nueva posición, el bot debe:
+   - Calcular la exposición actual por par (en USD).
+   - Calcular la exposición total actual (en USD).
+   - Calcular el nominal USD de la nueva operación que quiere abrir.
+   - Comparar:
+     - exposiciónPorParActual + nuevoTradeUsd <= (balanceUsd * maxPairExposurePct / 100)
+     - exposiciónTotalActual + nuevoTradeUsd <= (balanceUsd * maxTotalExposurePct / 100)
+
+3) Si el nuevo trade supera alguno de los límites:
+   - No abrir la posición.
+   - Registrar el evento en el logger, con algo tipo:
+     type: "TRADE_BLOCKED"
+     message: "Trade bloqueado por límite de exposición"
+     meta: { pair, newTradeUsd, maxPairExposurePct, maxTotalExposurePct }
+   - Enviar alerta por Telegram indicando que el trade ha sido bloqueado por límite de exposición (y especificar si ha sido por par o por total).
+
+4) Si NO supera los límites:
+   - Seguir con la lógica normal de apertura de posición (ejecución en Kraken, registro del trade, etc.).
+
+Importante:
+- No quiero que se cambie la lógica de trading base (estrategias, SL, TP, trailing, límite diario), solo añadir esta capa de validación ANTES de enviar la orden a Kraken.
+- Los porcentajes de exposición deben:
+  - Vivir en la configuración del bot (DB),
+  - Ser editables desde el panel (por ejemplo en la pantalla de Estrategias o en una sección de Configuración avanzada),
+  - Y usarse siempre desde la configuración, no como constantes hardcodeadas.
+
+¿Puedes implementar esto (con maxPairExposurePct y maxTotalExposurePct configurables por el usuario) y luego explicarme en qué archivos está y cómo se está calculando la exposición?
+```0

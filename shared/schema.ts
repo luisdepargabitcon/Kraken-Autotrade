@@ -16,6 +16,8 @@ export const botConfig = pgTable("bot_config", {
   nonceErrorAlertsEnabled: boolean("nonce_error_alerts_enabled").notNull().default(true),
   dailyLossLimitEnabled: boolean("daily_loss_limit_enabled").notNull().default(true),
   dailyLossLimitPercent: decimal("daily_loss_limit_percent", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  maxPairExposurePct: decimal("max_pair_exposure_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
+  maxTotalExposurePct: decimal("max_total_exposure_pct", { precision: 5, scale: 2 }).notNull().default("60.00"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
