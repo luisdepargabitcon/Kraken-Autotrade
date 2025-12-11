@@ -8,6 +8,7 @@ import Settings from "@/pages/Settings";
 import History from "@/pages/History";
 import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
+import Integrations from "@/pages/Integrations";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/history" component={History} />
       <Route path="/strategies" component={Strategies} />
       <Route path="/wallet" component={Wallet} />
+      <Route path="/integrations" component={Integrations} />
       
       <Route component={NotFound} />
     </Switch>
