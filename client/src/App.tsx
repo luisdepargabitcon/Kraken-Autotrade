@@ -9,6 +9,7 @@ import History from "@/pages/History";
 import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
 import Integrations from "@/pages/Integrations";
+import Guide from "@/pages/Guide";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -20,6 +21,7 @@ function Router() {
       <Route path="/strategies" component={Strategies} />
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/guide" component={Guide} />
       
       <Route component={NotFound} />
     </Switch>

@@ -1,0 +1,76 @@
+Quiero que añadas al panel web del bot una NUEVA PESTAÑA específica de ayuda, por ejemplo llamada **"Guía del bot"** o **"Cómo usar el bot"**.
+
+Objetivo:
+Que esta pestaña explique, de forma visual y muy clara, **todas las características y parámetros del bot**, de manera que cualquier usuario pueda entender:
+- Qué hace cada opción
+- Cómo configurarla correctamente
+- Qué riesgos tiene
+- Ejemplos prácticos de uso
+
+Requisitos de diseño:
+1. La pestaña debe ser **visual**, no solo texto plano:
+   - Tarjetas (cards) para cada bloque de información
+   - Iconos o pequeños encabezados claros (por ejemplo: ⚙️ Configuración, 🧠 Estrategias, ⚠️ Riesgos, 📊 Ejemplos)
+   - Listas con puntos clave, no párrafos gigantes
+   - Si es posible, tooltips o símbolos de “i” de información al lado de cada parámetro del panel principal que se expliquen en esta pestaña
+
+2. Contenido mínimo que quiero en esa pestaña:
+   a) **Resumen general del bot**
+      - Qué hace el bot (trading automático en Kraken)
+      - Qué estrategias incluye (momentum, mean reversion, scalping, grid, etc.)
+      - Qué pares opera (por ejemplo BTC/USD, ETH/USD, etc.)
+
+   b) **Flujo básico para usar el bot correctamente**
+      1. Configurar claves API y conexión con Kraken
+      2. Elegir modo (paper / real)
+      3. Elegir estrategia
+      4. Ajustar parámetros clave (riesgo, tamaño de posición, stop loss, take profit, etc.)
+      5. Arrancar el bot y comprobar el estado en el dashboard
+
+   c) **Definición detallada de cada parámetro importante**  
+      Para cada parámetro del bot quiero:
+      - Nombre del parámetro tal como aparece en el panel
+      - Definición sencilla en lenguaje normal
+      - Qué valores son normales/recomendados
+      - Qué pasa si se pone demasiado alto o demasiado bajo
+      - Ejemplo práctico
+
+      Algunos ejemplos de parámetros a documentar:
+      - Estrategia (momentum, mean reversion, scalping, grid…)
+      - Timeframe / marcos temporales
+      - Tamaño de la posición o tamaño de la orden
+      - Riesgo máximo por operación y por día
+      - Stop Loss y Take Profit
+      - Filtros de volatilidad
+      - Filtros de volumen
+      - Modo paper / modo real
+      - Parámetros específicos de cada estrategia (por ejemplo, EMAs, RSI, MACD, bandas de Bollinger, etc.)
+
+   d) **Estados del bot y significado de cada uno**
+      - Bot activo / inactivo
+      - Conectado / desconectado de Kraken
+      - Modo paper / modo real
+      - Errores típicos (por ejemplo, error de nonce, falta de saldo, error de API) y explicación breve de qué significan
+
+   e) **Instrucciones prácticas: “Cómo operar perfectamente con el bot”**
+      - Checklist antes de dejar el bot trabajando (API correcta, saldo, modo correcto, estrategia elegida, etc.)
+      - Recomendaciones de uso responsable (no usar todo el saldo, probar primero en paper, etc.)
+      - Qué revisar en el dashboard (últimas operaciones, balances, logs básicos)
+      - Qué hacer si aparece un error (ejemplo: nonce error, desconexión, etc.)
+
+3. Estructura visual sugerida:
+   - Secciones apiladas tipo:
+     - “1. ¿Qué hace este bot?”
+     - “2. Pasos para usarlo”
+     - “3. Parámetros y definiciones”
+     - “4. Estados del bot y errores típicos”
+     - “5. Buenas prácticas y consejos”
+   - Cada sección en una card separada, con título grande y texto justificado y fácil de leer.
+   - Que se vea bien en escritorio y móvil (diseño responsive).
+
+4. Implementación:
+   - La pestaña debe integrarse en el mismo frontend que el dashboard actual (por ejemplo, una pestaña adicional en la navegación).
+   - No hace falta que sea contenido dinámico; puede ser estático, pero bien organizado.
+   - El código debe quedar preparado para que yo pueda modificar los textos si quiero afinarlos más adelante.
+
+En resumen: quiero una pestaña de documentación interna del bot, visual y clara, que explique **todas las características y parámetros** con definiciones detalladas y ejemplos, y que actúe como manual de instrucciones para operar correctamente con el bot.

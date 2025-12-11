@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Activity, Settings, History, Wallet, Bell, Plug, Menu, X } from "lucide-react";
+import { LayoutDashboard, Activity, Settings, History, Wallet, Bell, Plug, Menu, X, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Nav() {
@@ -15,6 +15,7 @@ export function Nav() {
     { href: "/wallet", label: "CARTERA", icon: Wallet },
     { href: "/integrations", label: "INTEGRACIONES", icon: Plug },
     { href: "/settings", label: "AJUSTES", icon: Settings },
+    { href: "/guide", label: "GUÍA", icon: BookOpen },
   ];
 
   return (
