@@ -1,0 +1,58 @@
+Sigue habiendo incoherencias entre el PANEL y la pestaña de ESTRATEGIAS, y además el “Interruptor Maestro” del panel no está bien resuelto. Te detallo:
+
+1) Estrategia y nivel de riesgo NO coinciden
+- En la pestaña **Estrategias** yo selecciono, por ejemplo:
+  - Estrategia activa: Momentum
+  - Nivel de riesgo: Alto
+- Sin embargo, en el **PANEL** la sección “Configuración Activa” no siempre refleja lo mismo: a veces muestra otra combinación (por ejemplo, Momentum + Medio), como si el panel tuviera su propia configuración o valores por defecto.
+- Lo que quiero es:
+  - El PANEL debe ser **solo informativo/lectura**.
+  - La estrategia y el riesgo que se muestran en el PANEL deben venir SIEMPRE de la configuración real guardada en la base de datos (lo mismo que devuelve `/api/config`).
+  - La única pantalla donde se puede cambiar estrategia, riesgo, pares, modo real, etc. debe ser la pestaña **Estrategias**.
+  - Es decir, una única fuente de verdad: la tabla de configuración en DB. El Panel solo la muestra.
+
+Revisa por favor que:
+- El PANEL no tenga estado propio ni “valores por defecto” para estrategia/riesgo.
+- Al cargar el PANEL, haga un GET al endpoint correcto (por ejemplo `/api/config`) y muestre exactamente esos valores.
+- Después de cambiar algo en la pestaña Estrategias, el Panel se actualice para mostrar lo mismo (aunque sea tras recargar).
+
+2) “Interruptor Maestro” del panel no funciona y está duplicado con el otro botón de inicio del bot
+- En el PANEL (columna derecha) hay un bloque “Control del Sistema” con:
+  - Estado: Conectado/Desconectado
+  - Botón “Interruptor Maestro – Iniciar / Detener trading autónomo”.
+- Ese botón ahora mismo:
+  - O bien no hace nada real (no veo cambios coherentes en `/api/config` ni en el estado del motor).
+  - O está duplicando la lógica de otro sitio.
+
+El problema es que:
+- En la configuración ya existe un **control para activar/desactivar el bot** (por ejemplo el toggle “Bot Activo” en la pestaña Estrategias / Ajustes).
+- Tener dos botones distintos para “iniciar el bot” confunde bastante.
+
+Lo que quiero aquí es una de estas dos opciones (elige la que te parezca más limpia a nivel de arquitectura):
+
+Opción A (recomendada):
+- El PANEL sigue siendo SOLO informativo.
+- El “Interruptor Maestro” del PANEL:
+  - O se deshabilita (no clickable).
+  - O se convierte en un simple indicador visual del estado del bot (Activo / Inactivo).
+  - Si quieres, puede tener un texto tipo: “Para activar o desactivar el bot, usa la pestaña Estrategias”.
+- De esta forma solo existe UN lugar donde realmente se cambia isActive: la pestaña Estrategias.
+
+Opción B:
+- El “Interruptor Maestro” del PANEL y el toggle de la pestaña Estrategias usan exactamente la **misma lógica y el mismo endpoint** (`/api/config` -> `isActive`).
+- Es decir:
+  - Si activo el bot en Estrategias, el PANEL refleja “Activo”.
+  - Si lo paro desde el PANEL, Estrategias muestra también “Bot inactivo”.
+- Pero, en cualquier caso, que no haya dos estados separados ni código duplicado.
+
+En resumen:
+- El PANEL debe ser un “Dashboard de lectura”: mostrar estrategia, riesgo, pares, estado del bot, etc., SIEMPRE leyendo de la configuración real.
+- No debe tener su propia configuración ni valores predefinidos diferentes.
+- El control de encendido/apagado del bot debe estar unificado: o lo gestionas solo desde Estrategias y el PANEL es informativo, o ambos botones llaman al mismo endpoint y actualizan el mismo campo `isActive` sin desincronizarse.
+
+Por favor, revisa el código de:
+- `client/src/pages/Dashboard.tsx` / `AssetCard`, `BotControl` o donde estés leyendo la config del panel.
+- `client/src/pages/Strategies.tsx`
+- `server/routes.ts`, `server/storage.ts` y cualquier sitio donde se maneje `/api/config` o `/api/bot/config`.
+
+La meta es muy sencilla: que lo que se ve en el PANEL coincida SIEMPRE con lo que está configurado en la pestaña Estrategias y que no haya dos “botones de inicio” independientes para el bot.
