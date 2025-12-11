@@ -65,6 +65,31 @@ interface OpenPosition {
   openedAt: number;
 }
 
+interface OHLCCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface MultiTimeframeData {
+  tf5m: OHLCCandle[];
+  tf1h: OHLCCandle[];
+  tf4h: OHLCCandle[];
+  lastUpdate: number;
+}
+
+interface TrendAnalysis {
+  shortTerm: "bullish" | "bearish" | "neutral";
+  mediumTerm: "bullish" | "bearish" | "neutral";
+  longTerm: "bullish" | "bearish" | "neutral";
+  alignment: number;
+  confidence: number;
+  summary: string;
+}
+
 export class TradingEngine {
   private krakenService: KrakenService;
   private telegramService: TelegramService;
@@ -74,8 +99,10 @@ export class TradingEngine {
   private lastTradeTime: Map<string, number> = new Map();
   private openPositions: Map<string, OpenPosition> = new Map();
   private currentUsdBalance: number = 0;
+  private mtfCache: Map<string, MultiTimeframeData> = new Map();
   private readonly PRICE_HISTORY_LENGTH = 50;
   private readonly MIN_TRADE_INTERVAL_MS = 60000;
+  private readonly MTF_CACHE_TTL = 300000;
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -310,7 +337,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       const history = this.priceHistory.get(pair) || [];
       if (history.length < 5) return;
 
-      const signal = this.analyzeWithStrategy(strategy, pair, history, currentPrice);
+      const signal = await this.analyzeWithStrategy(strategy, pair, history, currentPrice);
       
       if (signal.action === "hold" || signal.confidence < 0.6) {
         return;
@@ -405,24 +432,77 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     }
   }
 
-  private analyzeWithStrategy(
+  private async analyzeWithStrategy(
     strategy: string,
     pair: string,
     history: PriceData[],
     currentPrice: number
-  ): TradeSignal {
+  ): Promise<TradeSignal> {
+    const mtfData = await this.getMultiTimeframeData(pair);
+    const mtfAnalysis = mtfData ? this.analyzeMultiTimeframe(mtfData) : null;
+
+    let signal: TradeSignal;
     switch (strategy) {
       case "momentum":
-        return this.momentumStrategy(pair, history, currentPrice);
+        signal = this.momentumStrategy(pair, history, currentPrice);
+        break;
       case "mean_reversion":
-        return this.meanReversionStrategy(pair, history, currentPrice);
+        signal = this.meanReversionStrategy(pair, history, currentPrice);
+        break;
       case "scalping":
-        return this.scalpingStrategy(pair, history, currentPrice);
+        signal = this.scalpingStrategy(pair, history, currentPrice);
+        break;
       case "grid":
-        return this.gridStrategy(pair, history, currentPrice);
+        signal = this.gridStrategy(pair, history, currentPrice);
+        break;
       default:
         return { action: "hold", pair, confidence: 0, reason: "Estrategia desconocida" };
     }
+
+    if (mtfAnalysis && signal.action !== "hold") {
+      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis);
+      if (mtfBoost.filtered) {
+        return { action: "hold", pair, confidence: 0.3, reason: `Señal filtrada por MTF: ${mtfBoost.reason}` };
+      }
+      signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
+      signal.reason += ` | MTF: ${mtfAnalysis.summary}`;
+    }
+
+    return signal;
+  }
+
+  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis): { filtered: boolean; confidenceBoost: number; reason: string } {
+    if (signal.action === "buy") {
+      if (mtf.longTerm === "bearish" && mtf.mediumTerm === "bearish") {
+        return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h bajista" };
+      }
+      if (mtf.alignment < -0.5) {
+        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF negativa (${mtf.alignment.toFixed(2)})` };
+      }
+      if (mtf.alignment > 0.5) {
+        return { filtered: false, confidenceBoost: 0.15, reason: "Confirmado por MTF alcista" };
+      }
+      if (mtf.longTerm === "bullish") {
+        return { filtered: false, confidenceBoost: 0.1, reason: "Tendencia 4h alcista" };
+      }
+    }
+
+    if (signal.action === "sell") {
+      if (mtf.longTerm === "bullish" && mtf.mediumTerm === "bullish") {
+        return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h alcista" };
+      }
+      if (mtf.alignment > 0.5) {
+        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF positiva (${mtf.alignment.toFixed(2)})` };
+      }
+      if (mtf.alignment < -0.5) {
+        return { filtered: false, confidenceBoost: 0.15, reason: "Confirmado por MTF bajista" };
+      }
+      if (mtf.longTerm === "bearish") {
+        return { filtered: false, confidenceBoost: 0.1, reason: "Tendencia 4h bajista" };
+      }
+    }
+
+    return { filtered: false, confidenceBoost: 0, reason: "Sin filtro MTF aplicado" };
   }
 
   private momentumStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
@@ -912,6 +992,104 @@ _KrakenBot.AI_
       }
       return false;
     }
+  }
+
+  private async getMultiTimeframeData(pair: string): Promise<MultiTimeframeData | null> {
+    try {
+      const cached = this.mtfCache.get(pair);
+      if (cached && Date.now() - cached.lastUpdate < this.MTF_CACHE_TTL) {
+        return cached;
+      }
+
+      const [tf5m, tf1h, tf4h] = await Promise.all([
+        this.krakenService.getOHLC(pair, 5),
+        this.krakenService.getOHLC(pair, 60),
+        this.krakenService.getOHLC(pair, 240),
+      ]);
+
+      const data: MultiTimeframeData = {
+        tf5m: tf5m.slice(-50),
+        tf1h: tf1h.slice(-50),
+        tf4h: tf4h.slice(-50),
+        lastUpdate: Date.now(),
+      };
+
+      this.mtfCache.set(pair, data);
+      log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}`, "trading");
+      return data;
+    } catch (error: any) {
+      log(`Error obteniendo datos MTF para ${pair}: ${error.message}`, "trading");
+      return null;
+    }
+  }
+
+  private analyzeTimeframeTrend(candles: OHLCCandle[]): "bullish" | "bearish" | "neutral" {
+    if (candles.length < 10) return "neutral";
+
+    const closes = candles.map(c => c.close);
+    const ema10 = this.calculateEMA(closes.slice(-10), 10);
+    const ema20 = this.calculateEMA(closes.slice(-20), 20);
+    const currentPrice = closes[closes.length - 1];
+
+    const priceVsEma10 = (currentPrice - ema10) / ema10 * 100;
+    const ema10VsEma20 = (ema10 - ema20) / ema20 * 100;
+
+    let score = 0;
+    if (priceVsEma10 > 0.5) score += 2;
+    else if (priceVsEma10 > 0) score += 1;
+    else if (priceVsEma10 < -0.5) score -= 2;
+    else if (priceVsEma10 < 0) score -= 1;
+
+    if (ema10VsEma20 > 0.3) score += 2;
+    else if (ema10VsEma20 > 0) score += 1;
+    else if (ema10VsEma20 < -0.3) score -= 2;
+    else if (ema10VsEma20 < 0) score -= 1;
+
+    const recentCandles = candles.slice(-5);
+    const higherHighs = recentCandles.filter((c, i) => i > 0 && c.high > recentCandles[i-1].high).length;
+    const lowerLows = recentCandles.filter((c, i) => i > 0 && c.low < recentCandles[i-1].low).length;
+    
+    if (higherHighs >= 3) score += 1;
+    if (lowerLows >= 3) score -= 1;
+
+    if (score >= 3) return "bullish";
+    if (score <= -3) return "bearish";
+    return "neutral";
+  }
+
+  private analyzeMultiTimeframe(mtfData: MultiTimeframeData): TrendAnalysis {
+    const shortTerm = this.analyzeTimeframeTrend(mtfData.tf5m);
+    const mediumTerm = this.analyzeTimeframeTrend(mtfData.tf1h);
+    const longTerm = this.analyzeTimeframeTrend(mtfData.tf4h);
+
+    const trendValues = { bullish: 1, neutral: 0, bearish: -1 };
+    const totalScore = trendValues[shortTerm] + trendValues[mediumTerm] * 1.5 + trendValues[longTerm] * 2;
+    
+    const allAligned = (shortTerm === mediumTerm && mediumTerm === longTerm && shortTerm !== "neutral");
+    const twoAligned = (shortTerm === mediumTerm || mediumTerm === longTerm || shortTerm === longTerm);
+    
+    let alignment = 0;
+    let confidence = 0.5;
+    
+    if (allAligned) {
+      alignment = trendValues[shortTerm];
+      confidence = 0.9;
+    } else if (twoAligned && shortTerm !== "neutral") {
+      alignment = totalScore > 0 ? 0.7 : totalScore < 0 ? -0.7 : 0;
+      confidence = 0.7;
+    } else {
+      alignment = totalScore / 4.5;
+      confidence = 0.5;
+    }
+
+    let summary = "";
+    if (allAligned) {
+      summary = `Tendencia ${shortTerm === "bullish" ? "ALCISTA" : "BAJISTA"} confirmada en todos los timeframes (5m/1h/4h)`;
+    } else {
+      summary = `5m: ${shortTerm}, 1h: ${mediumTerm}, 4h: ${longTerm}`;
+    }
+
+    return { shortTerm, mediumTerm, longTerm, alignment, confidence, summary };
   }
 
   isActive(): boolean {
