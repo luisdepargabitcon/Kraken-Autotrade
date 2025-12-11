@@ -76,3 +76,30 @@ Preferred communication style: Simple, everyday language.
 ### Environment Variables Required
 - `DATABASE_URL`: PostgreSQL connection string
 - Kraken and Telegram credentials are stored in the database after initial setup through the Settings page
+
+## Docker Deployment (QNAP NAS)
+
+### Log Rotation Configuration
+Los contenedores tienen configurada rotación automática de logs para evitar crecimiento ilimitado:
+
+- **App container (kraken-bot-app)**:
+  - max-size: 10MB por archivo
+  - max-file: 3 archivos
+  - Total máximo: 30MB
+
+- **Database container (kraken-bot-db)**:
+  - max-size: 5MB por archivo
+  - max-file: 2 archivos
+  - Total máximo: 10MB
+
+### Comandos útiles
+```bash
+# Ver logs recientes
+docker logs kraken-bot-app --tail 100
+
+# Ver logs en tiempo real
+docker logs -f kraken-bot-app
+
+# Actualizar y reiniciar
+cd /share/ZFS37_DATA/share/Container/krakenbot && git pull && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+```

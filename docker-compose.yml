@@ -18,6 +18,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   app:
     image: node:20-alpine
@@ -49,6 +54,11 @@ services:
         npm run db:push &&
         npm start
       "
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   krakenbot-network:
