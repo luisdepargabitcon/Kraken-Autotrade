@@ -1,3 +1,4 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,10 +7,54 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HardDrive, Bot, Server, Cog } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
+import { toast } from "sonner";
+
+interface BotConfig {
+  id: number;
+  isActive: boolean;
+  strategy: string;
+  riskLevel: string;
+  activePairs: string[];
+  stopLossPercent: string;
+  takeProfitPercent: string;
+  trailingStopEnabled: boolean;
+  trailingStopPercent: string;
+  nonceErrorAlertsEnabled: boolean;
+}
 
 export default function Settings() {
+  const queryClient = useQueryClient();
+
+  const { data: config } = useQuery<BotConfig>({
+    queryKey: ["botConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      if (!res.ok) throw new Error("Failed to fetch config");
+      return res.json();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (updates: Partial<BotConfig>) => {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error("Failed to update config");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] });
+      toast.success("Configuración actualizada");
+    },
+    onError: () => {
+      toast.error("Error al actualizar configuración");
+    },
+  });
+
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
       <div 
@@ -53,6 +98,36 @@ export default function Settings() {
                       Ir a Integraciones
                     </Button>
                   </Link>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Notifications Settings */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-yellow-500/20 rounded-lg">
+                    <AlertTriangle className="h-6 w-6 text-yellow-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Alertas y Notificaciones</CardTitle>
+                    <CardDescription>Configura las alertas de Telegram del bot.</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card/30">
+                  <div className="space-y-0.5">
+                    <Label>Alertas de Error de Nonce</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Envía alerta por Telegram si hay errores persistentes de nonce con Kraken (máx. 1 cada 30 min)
+                    </p>
+                  </div>
+                  <Switch 
+                    checked={config?.nonceErrorAlertsEnabled ?? true}
+                    onCheckedChange={(checked) => updateMutation.mutate({ nonceErrorAlertsEnabled: checked })}
+                    data-testid="switch-nonce-alerts"
+                  />
                 </div>
               </CardContent>
             </Card>
