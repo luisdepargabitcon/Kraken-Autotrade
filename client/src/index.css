@@ -64,6 +64,11 @@
     from { transform: translateX(0); }
     to { transform: translateX(-100%); }
   }
+
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
 }
 
 @layer base {
@@ -102,4 +107,8 @@
   background: hsl(222 47% 10% / 0.7);
   backdrop-filter: blur(12px);
   border: 1px solid hsl(217 33% 25%);
+}
+
+.animate-ticker {
+  animation: ticker-scroll 60s linear infinite;
 }
