@@ -430,88 +430,200 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     const shortEMA = this.calculateEMA(prices.slice(-10), 10);
     const longEMA = this.calculateEMA(prices.slice(-20), 20);
     const rsi = this.calculateRSI(prices.slice(-14));
+    const macd = this.calculateMACD(prices);
+    const bollinger = this.calculateBollingerBands(prices);
+    const volumeAnalysis = this.detectAbnormalVolume(history);
     
     const trend = (currentPrice - prices[0]) / prices[0] * 100;
     
-    if (shortEMA > longEMA && rsi < 70 && trend > 1) {
+    let buySignals = 0;
+    let sellSignals = 0;
+    const reasons: string[] = [];
+
+    if (shortEMA > longEMA) buySignals++;
+    else if (shortEMA < longEMA) sellSignals++;
+
+    if (rsi < 30) { buySignals += 2; reasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
+    else if (rsi < 45) { buySignals++; }
+    else if (rsi > 70) { sellSignals += 2; reasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
+    else if (rsi > 55) { sellSignals++; }
+
+    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; reasons.push("MACD alcista"); }
+    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; reasons.push("MACD bajista"); }
+
+    if (bollinger.percentB < 20) { buySignals++; reasons.push("Precio cerca de Bollinger inferior"); }
+    else if (bollinger.percentB > 80) { sellSignals++; reasons.push("Precio cerca de Bollinger superior"); }
+
+    if (volumeAnalysis.isAbnormal) {
+      if (volumeAnalysis.direction === "bullish") { buySignals++; reasons.push(`Volumen alto alcista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
+      else if (volumeAnalysis.direction === "bearish") { sellSignals++; reasons.push(`Volumen alto bajista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
+    }
+
+    if (trend > 1) buySignals++;
+    else if (trend < -1) sellSignals++;
+
+    const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.08));
+    
+    if (buySignals >= 4 && buySignals > sellSignals && rsi < 70) {
       return {
         action: "buy",
         pair,
-        confidence: Math.min(0.9, 0.6 + (trend / 10)),
-        reason: `Momentum alcista: EMA corta > EMA larga, RSI=${rsi.toFixed(0)}, Tendencia +${trend.toFixed(2)}%`,
+        confidence,
+        reason: `Momentum alcista: ${reasons.join(", ")} | Señales: ${buySignals} compra vs ${sellSignals} venta`,
       };
     }
     
-    if (shortEMA < longEMA && rsi > 30 && trend < -1) {
+    if (sellSignals >= 4 && sellSignals > buySignals && rsi > 30) {
       return {
         action: "sell",
         pair,
-        confidence: Math.min(0.9, 0.6 + (Math.abs(trend) / 10)),
-        reason: `Momentum bajista: EMA corta < EMA larga, RSI=${rsi.toFixed(0)}, Tendencia ${trend.toFixed(2)}%`,
+        confidence,
+        reason: `Momentum bajista: ${reasons.join(", ")} | Señales: ${sellSignals} venta vs ${buySignals} compra`,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: "Sin señal clara de momentum" };
+    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara (${buySignals} compra / ${sellSignals} venta)` };
   }
 
   private meanReversionStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
     const prices = history.map(h => h.price);
     const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
     const stdDev = Math.sqrt(prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length);
-    
     const zScore = (currentPrice - mean) / stdDev;
     
-    if (zScore < -1.5) {
+    const bollinger = this.calculateBollingerBands(prices);
+    const rsi = this.calculateRSI(prices.slice(-14));
+    const volumeAnalysis = this.detectAbnormalVolume(history);
+    
+    const reasons: string[] = [];
+    let confidence = 0.6;
+
+    if (zScore < -2 || bollinger.percentB < 5) {
+      confidence += 0.15;
+      reasons.push(`Extremadamente sobrevendido (Z=${zScore.toFixed(2)}, %B=${bollinger.percentB.toFixed(0)})`);
+      
+      if (rsi < 25) { confidence += 0.1; reasons.push(`RSI muy bajo (${rsi.toFixed(0)})`); }
+      if (volumeAnalysis.isAbnormal && volumeAnalysis.direction === "bearish") {
+        confidence += 0.05;
+        reasons.push("Volumen de capitulación");
+      }
+      
       return {
         action: "buy",
         pair,
-        confidence: Math.min(0.9, 0.6 + (Math.abs(zScore) / 5)),
-        reason: `Precio por debajo de media: Z-Score=${zScore.toFixed(2)}, esperando reversión al alza`,
+        confidence: Math.min(0.95, confidence),
+        reason: `Mean Reversion COMPRA: ${reasons.join(", ")}`,
       };
     }
     
-    if (zScore > 1.5) {
+    if (zScore < -1.5 || bollinger.percentB < 15) {
+      if (rsi < 35) { confidence += 0.1; reasons.push(`RSI bajo (${rsi.toFixed(0)})`); }
+      reasons.push(`Sobrevendido (Z=${zScore.toFixed(2)}, %B=${bollinger.percentB.toFixed(0)})`);
+      
+      return {
+        action: "buy",
+        pair,
+        confidence: Math.min(0.85, confidence),
+        reason: `Mean Reversion COMPRA: ${reasons.join(", ")}`,
+      };
+    }
+    
+    if (zScore > 2 || bollinger.percentB > 95) {
+      confidence += 0.15;
+      reasons.push(`Extremadamente sobrecomprado (Z=${zScore.toFixed(2)}, %B=${bollinger.percentB.toFixed(0)})`);
+      
+      if (rsi > 75) { confidence += 0.1; reasons.push(`RSI muy alto (${rsi.toFixed(0)})`); }
+      if (volumeAnalysis.isAbnormal && volumeAnalysis.direction === "bullish") {
+        confidence += 0.05;
+        reasons.push("Volumen de euforia");
+      }
+      
       return {
         action: "sell",
         pair,
-        confidence: Math.min(0.9, 0.6 + (zScore / 5)),
-        reason: `Precio por encima de media: Z-Score=${zScore.toFixed(2)}, esperando reversión a la baja`,
+        confidence: Math.min(0.95, confidence),
+        reason: `Mean Reversion VENTA: ${reasons.join(", ")}`,
+      };
+    }
+    
+    if (zScore > 1.5 || bollinger.percentB > 85) {
+      if (rsi > 65) { confidence += 0.1; reasons.push(`RSI alto (${rsi.toFixed(0)})`); }
+      reasons.push(`Sobrecomprado (Z=${zScore.toFixed(2)}, %B=${bollinger.percentB.toFixed(0)})`);
+      
+      return {
+        action: "sell",
+        pair,
+        confidence: Math.min(0.85, confidence),
+        reason: `Mean Reversion VENTA: ${reasons.join(", ")}`,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: "Precio cerca de la media" };
+    return { action: "hold", pair, confidence: 0.3, reason: `Precio en rango normal (Z=${zScore.toFixed(2)})` };
   }
 
   private scalpingStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
-    if (history.length < 3) {
+    if (history.length < 5) {
       return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes" };
     }
 
-    const recentPrices = history.slice(-5).map(h => h.price);
+    const prices = history.map(h => h.price);
+    const recentPrices = prices.slice(-5);
     const avgPrice = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
     const priceChange = (currentPrice - avgPrice) / avgPrice * 100;
     
     const volatility = this.calculateVolatility(recentPrices);
+    const rsi = this.calculateRSI(prices.slice(-14));
+    const volumeAnalysis = this.detectAbnormalVolume(history);
+    const macd = this.calculateMACD(prices);
     
-    if (priceChange < -0.3 && volatility > 0.2) {
+    const reasons: string[] = [];
+    let confidence = 0.65;
+
+    if (priceChange < -0.3 && volatility > 0.15) {
+      reasons.push(`Caída rápida ${priceChange.toFixed(2)}%`);
+      
+      if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
+        confidence += 0.1;
+        reasons.push(`Volumen alto (${volumeAnalysis.ratio.toFixed(1)}x)`);
+      }
+      if (rsi < 40) {
+        confidence += 0.05;
+        reasons.push(`RSI bajo (${rsi.toFixed(0)})`);
+      }
+      if (macd.histogram < 0 && macd.histogram > -0.5) {
+        confidence += 0.05;
+        reasons.push("MACD cerca de cruce");
+      }
+      
       return {
         action: "buy",
         pair,
-        confidence: 0.7,
-        reason: `Scalping: Caída rápida ${priceChange.toFixed(2)}%, volatilidad ${volatility.toFixed(2)}%`,
+        confidence: Math.min(0.9, confidence),
+        reason: `Scalping COMPRA: ${reasons.join(", ")}`,
       };
     }
     
-    if (priceChange > 0.3 && volatility > 0.2) {
+    if (priceChange > 0.3 && volatility > 0.15) {
+      reasons.push(`Subida rápida +${priceChange.toFixed(2)}%`);
+      
+      if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
+        confidence += 0.1;
+        reasons.push(`Volumen alto (${volumeAnalysis.ratio.toFixed(1)}x)`);
+      }
+      if (rsi > 60) {
+        confidence += 0.05;
+        reasons.push(`RSI alto (${rsi.toFixed(0)})`);
+      }
+      
       return {
         action: "sell",
         pair,
-        confidence: 0.7,
-        reason: `Scalping: Subida rápida +${priceChange.toFixed(2)}%, volatilidad ${volatility.toFixed(2)}%`,
+        confidence: Math.min(0.9, confidence),
+        reason: `Scalping VENTA: ${reasons.join(", ")}`,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: "Sin oportunidad de scalping" };
+    return { action: "hold", pair, confidence: 0.3, reason: `Sin oportunidad (cambio: ${priceChange.toFixed(2)}%, vol: ${volatility.toFixed(2)}%)` };
   }
 
   private gridStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
@@ -641,7 +753,16 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
     const currentVolume = volumes[volumes.length - 1];
     const avgVolume = volumes.slice(0, -1).reduce((a, b) => a + b, 0) / (volumes.length - 1);
     
+    if (avgVolume <= 0 || !isFinite(avgVolume) || currentVolume <= 0) {
+      return { isAbnormal: false, ratio: 1, direction: "neutral" };
+    }
+    
     const ratio = currentVolume / avgVolume;
+    
+    if (!isFinite(ratio) || isNaN(ratio)) {
+      return { isAbnormal: false, ratio: 1, direction: "neutral" };
+    }
+    
     const isAbnormal = ratio > 2.0 || ratio < 0.3;
     
     const priceChange = (history[history.length - 1].price - history[history.length - 2].price);
