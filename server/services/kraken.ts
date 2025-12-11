@@ -99,6 +99,30 @@ export class KrakenService {
     throw new Error("Failed after max retries");
   }
 
+  async getOHLC(pair: string, interval: number = 5): Promise<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }[]> {
+    const krakenPair = this.formatPair(pair);
+    const response = await this.publicClient.ohlc({ pair: krakenPair, interval });
+    
+    const pairData = Object.values(response).find(Array.isArray) as any[];
+    if (!pairData) return [];
+    
+    return pairData.map((candle: any[]) => ({
+      time: candle[0],
+      open: parseFloat(candle[1]),
+      high: parseFloat(candle[2]),
+      low: parseFloat(candle[3]),
+      close: parseFloat(candle[4]),
+      volume: parseFloat(candle[6]),
+    }));
+  }
+
   formatPairReverse(krakenPair: string): string {
     const pairMap: Record<string, string> = {
       "XXBTZUSD": "BTC/USD",
