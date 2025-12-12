@@ -42,7 +42,12 @@ export async function registerRoutes(
       start: async () => { await tradingEngine?.start(); },
       stop: async () => { await tradingEngine?.stop(); },
       isActive: () => tradingEngine?.isActive() ?? false,
+      getBalance: async () => krakenService.isInitialized() ? await krakenService.getBalance() : {},
+      getOpenPositions: () => tradingEngine?.getOpenPositions() ?? new Map(),
     });
+    
+    // Start heartbeat for Telegram notifications
+    telegramService.startHeartbeat();
     
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();
@@ -298,6 +303,7 @@ export async function registerRoutes(
         telegramConnected: apiConfig?.telegramConnected || false,
         botActive: botConfig?.isActive || false,
         strategy: botConfig?.strategy || "momentum",
+        activePairs: botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"],
         balances,
         prices,
         recentTrades: trades,

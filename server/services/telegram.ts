@@ -13,12 +13,16 @@ type EngineController = {
   start: () => Promise<void>;
   stop: () => Promise<void>;
   isActive: () => boolean;
+  getBalance?: () => Promise<Record<string, string>>;
+  getOpenPositions?: () => Map<string, { amount: number; entryPrice: number }>;
 };
 
 export class TelegramService {
   private bot: TelegramBot | null = null;
   private chatId: string = "";
   private engineController: EngineController | null = null;
+  private startTime: Date = new Date();
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   setEngineController(controller: EngineController) {
     this.engineController = controller;
@@ -64,6 +68,22 @@ export class TelegramService {
 
     this.bot.onText(/\/ayuda/, async (msg) => {
       await this.handleAyuda(msg.chat.id);
+    });
+
+    this.bot.onText(/\/balance/, async (msg) => {
+      await this.handleBalance(msg.chat.id);
+    });
+
+    this.bot.onText(/\/config/, async (msg) => {
+      await this.handleConfig(msg.chat.id);
+    });
+
+    this.bot.onText(/\/exposicion/, async (msg) => {
+      await this.handleExposicion(msg.chat.id);
+    });
+
+    this.bot.onText(/\/uptime/, async (msg) => {
+      await this.handleUptime(msg.chat.id);
     });
 
     this.bot.on("polling_error", (error) => {
@@ -167,6 +187,10 @@ _Usa /ayuda para ver los comandos disponibles_
 🤖 *Comandos disponibles:*
 
 /estado - Ver estado del bot
+/balance - Ver balance actual
+/config - Ver configuración de riesgo
+/exposicion - Ver exposición por par
+/uptime - Ver tiempo encendido
 /pausar - Pausar el bot
 /reanudar - Activar el bot
 /ultimas - Ver últimas operaciones
@@ -176,6 +200,167 @@ _KrakenBot.AI - Trading Autónomo_
     `.trim();
 
     await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+  }
+
+  private async handleBalance(chatId: number) {
+    try {
+      const balances = this.engineController?.getBalance ? await this.engineController.getBalance() : {};
+      const usd = parseFloat(balances?.ZUSD || balances?.USD || "0");
+      const btc = parseFloat(balances?.XXBT || balances?.XBT || "0");
+      const eth = parseFloat(balances?.XETH || balances?.ETH || "0");
+      const sol = parseFloat(balances?.SOL || "0");
+
+      const message = `
+💰 *Balance Actual*
+
+*USD:* $${usd.toFixed(2)}
+*BTC:* ${btc.toFixed(6)}
+*ETH:* ${eth.toFixed(6)}
+*SOL:* ${sol.toFixed(4)}
+
+_Actualizado: ${new Date().toLocaleString("es-ES")}_
+      `.trim();
+
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo balance: ${error.message}`);
+    }
+  }
+
+  private async handleConfig(chatId: number) {
+    try {
+      const config = await storage.getBotConfig();
+      const sl = parseFloat(config?.stopLossPercent?.toString() || "5");
+      const tp = parseFloat(config?.takeProfitPercent?.toString() || "7");
+      const trailing = config?.trailingStopEnabled ? `${config.trailingStopPercent}%` : "Desactivado";
+      const pairExp = parseFloat(config?.maxPairExposurePct?.toString() || "25");
+      const totalExp = parseFloat(config?.maxTotalExposurePct?.toString() || "60");
+      const riskTrade = parseFloat(config?.riskPerTradePct?.toString() || "15");
+
+      const message = `
+⚙️ *Configuración de Riesgo*
+
+🛑 *Stop-Loss:* ${sl}%
+🎯 *Take-Profit:* ${tp}%
+📉 *Trailing Stop:* ${trailing}
+💵 *Riesgo por trade:* ${riskTrade}%
+🔸 *Exp. por par:* ${pairExp}%
+🔹 *Exp. total:* ${totalExp}%
+
+_Estrategia: ${config?.strategy || "momentum"}_
+      `.trim();
+
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo configuración: ${error.message}`);
+    }
+  }
+
+  private async handleExposicion(chatId: number) {
+    try {
+      const positions = this.engineController?.getOpenPositions?.() || new Map();
+      
+      if (positions.size === 0) {
+        await this.bot?.sendMessage(chatId, "📊 *Sin posiciones abiertas*\n\nNo hay exposición actual.", { parse_mode: "Markdown" });
+        return;
+      }
+
+      let message = "📊 *Exposición Actual*\n\n";
+      let totalExp = 0;
+
+      positions.forEach((pos, pair) => {
+        const exposure = pos.amount * pos.entryPrice;
+        totalExp += exposure;
+        const pnl = "N/A";
+        message += `*${pair}:* $${exposure.toFixed(2)}\n`;
+        message += `   Entrada: $${pos.entryPrice.toFixed(2)}\n`;
+        message += `   Cantidad: ${pos.amount.toFixed(6)}\n\n`;
+      });
+
+      message += `*Total expuesto:* $${totalExp.toFixed(2)}`;
+
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "Markdown" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo exposición: ${error.message}`);
+    }
+  }
+
+  private async handleUptime(chatId: number) {
+    const now = new Date();
+    const diff = now.getTime() - this.startTime.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    const engineActive = this.engineController?.isActive() ?? false;
+    const status = engineActive ? "✅ Motor activo" : "⏸️ Motor pausado";
+
+    const message = `
+⏱️ *Uptime del Bot*
+
+*Tiempo encendido:* ${days}d ${hours}h ${minutes}m
+*Estado:* ${status}
+*Iniciado:* ${this.startTime.toLocaleString("es-ES")}
+
+_KrakenBot.AI_
+    `.trim();
+
+    await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+  }
+
+  startHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+    
+    this.heartbeatInterval = setInterval(async () => {
+      await this.sendHeartbeat();
+    }, TWELVE_HOURS);
+
+    console.log("[telegram] Heartbeat iniciado (cada 12h)");
+  }
+
+  private async sendHeartbeat() {
+    try {
+      const config = await storage.getBotConfig();
+      const engineActive = this.engineController?.isActive() ?? false;
+      const status = engineActive ? "✅ Activo" : "⏸️ Pausado";
+      
+      const now = new Date();
+      const diff = now.getTime() - this.startTime.getTime();
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+
+      const trades = await storage.getTrades(5);
+      const recentOps = trades.length > 0 ? `${trades.length} recientes` : "Sin operaciones";
+
+      const message = `
+💓 *Heartbeat - KrakenBot*
+
+*Estado:* ${status}
+*Uptime:* ${days}d ${hours}h
+*Estrategia:* ${config?.strategy || "momentum"}
+*Pares:* ${config?.activePairs?.join(", ") || "N/A"}
+*Ops recientes:* ${recentOps}
+
+_${now.toLocaleString("es-ES")}_
+      `.trim();
+
+      const chats = await storage.getActiveTelegramChats();
+      for (const chat of chats) {
+        if (chat.alertHeartbeat) {
+          await this.sendToChat(chat.chatId, message);
+        }
+      }
+
+      if (this.chatId) {
+        await this.sendMessage(message);
+      }
+    } catch (error) {
+      console.error("[telegram] Error enviando heartbeat:", error);
+    }
   }
 
   isInitialized(): boolean {

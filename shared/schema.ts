@@ -18,6 +18,7 @@ export const botConfig = pgTable("bot_config", {
   dailyLossLimitPercent: decimal("daily_loss_limit_percent", { precision: 5, scale: 2 }).notNull().default("10.00"),
   maxPairExposurePct: decimal("max_pair_exposure_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
   maxTotalExposurePct: decimal("max_total_exposure_pct", { precision: 5, scale: 2 }).notNull().default("60.00"),
+  riskPerTradePct: decimal("risk_per_trade_pct", { precision: 5, scale: 2 }).notNull().default("15.00"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -71,6 +72,7 @@ export const telegramChats = pgTable("telegram_chats", {
   alertErrors: boolean("alert_errors").notNull().default(true),
   alertSystem: boolean("alert_system").notNull().default(true),
   alertBalance: boolean("alert_balance").notNull().default(false),
+  alertHeartbeat: boolean("alert_heartbeat").notNull().default(true),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

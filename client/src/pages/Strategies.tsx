@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
 interface BotConfig {
@@ -24,6 +24,7 @@ interface BotConfig {
   trailingStopPercent: string;
   maxPairExposurePct: string;
   maxTotalExposurePct: string;
+  riskPerTradePct: string;
 }
 
 const STRATEGIES = [
@@ -329,6 +330,46 @@ export default function Strategies() {
                       <br />• <span className="text-cyan-500">Trailing Stop:</span> Si sube a $105,000 y luego cae {config?.trailingStopPercent}%, se vende a ${(105000 * (1 - parseFloat(config?.trailingStopPercent || "2") / 100)).toLocaleString()}
                     </>
                   )}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Wallet className="h-5 w-5 text-primary" />
+                Tamaño de Trade
+              </CardTitle>
+              <CardDescription>Define qué porcentaje del balance se usa en cada operación</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3 md:space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-sm">
+                    <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-blue-500" />
+                    Riesgo por Trade
+                  </Label>
+                  <span className="font-mono text-lg text-blue-500">{parseFloat(config?.riskPerTradePct || "15").toFixed(0)}%</span>
+                </div>
+                <Slider
+                  value={[parseFloat(config?.riskPerTradePct || "15")]}
+                  onValueChange={(value) => updateMutation.mutate({ riskPerTradePct: value[0].toString() } as any)}
+                  min={5}
+                  max={50}
+                  step={5}
+                  className="[&>span]:bg-blue-500"
+                  data-testid="slider-risk-per-trade"
+                />
+                <p className="text-xs text-muted-foreground">Porcentaje del balance USD que se usará en cada operación de compra.</p>
+              </div>
+
+              <div className="bg-muted/30 rounded-lg p-4 mt-4">
+                <h4 className="font-medium text-sm mb-2">Ejemplo con balance de $100:</h4>
+                <p className="text-xs text-muted-foreground">
+                  • <span className="text-blue-500">Tamaño del trade:</span> ${parseFloat(config?.riskPerTradePct || "15")} por operación
+                  <br />• Si el mínimo de Kraken es mayor, se ajustará automáticamente.
+                  <br />• Los límites de exposición se verifican antes de ejecutar.
                 </p>
               </div>
             </CardContent>

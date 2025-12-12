@@ -15,6 +15,7 @@ interface DashboardData {
   telegramConnected: boolean;
   botActive: boolean;
   strategy: string;
+  activePairs: string[];
   balances: Record<string, string>;
   prices: Record<string, { price: string; change: string }>;
   recentTrades: any[];
@@ -146,7 +147,7 @@ export default function Dashboard() {
             <div className="glass-panel p-3 md:p-4 rounded-lg border border-border/50">
                <h3 className="text-xs font-mono text-muted-foreground mb-3">PARES ACTIVOS</h3>
                <div className="flex flex-wrap gap-2">
-                 {["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC"].map(pair => (
+                 {(data?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"]).map(pair => (
                    <span key={pair} className="px-2 py-1 bg-primary/10 text-primary border border-primary/20 rounded text-xs font-mono">
                      {pair}
                    </span>

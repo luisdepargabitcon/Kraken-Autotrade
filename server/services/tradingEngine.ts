@@ -579,15 +579,18 @@ _Deposita más fondos para operar este par._
           return;
         }
 
-        let tradeAmountUSD = Math.min(
-          this.currentUsdBalance * (riskConfig.maxPositionPercent / 100),
-          riskConfig.maxTradeUSD
-        );
+        const botConfig = await storage.getBotConfig();
+        const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
+        
+        let tradeAmountUSD = this.currentUsdBalance * (riskPerTradePct / 100);
+        tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
+        
+        log(`Tamaño de trade: $${tradeAmountUSD.toFixed(2)} (${riskPerTradePct}% de $${this.currentUsdBalance.toFixed(2)})`, "trading");
 
         if (tradeAmountUSD < minRequiredUSD && this.currentUsdBalance >= minRequiredUSD) {
           const smallAccountAmount = this.currentUsdBalance * SMALL_ACCOUNT_FACTOR;
           tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
-          log(`Cuenta pequeña detectada: usando ${(SMALL_ACCOUNT_FACTOR * 100).toFixed(0)}% del saldo ($${tradeAmountUSD.toFixed(2)})`, "trading");
+          log(`Cuenta pequeña detectada: ajustando a ${(SMALL_ACCOUNT_FACTOR * 100).toFixed(0)}% del saldo ($${tradeAmountUSD.toFixed(2)})`, "trading");
         }
 
         const tradeVolume = tradeAmountUSD / currentPrice;
@@ -610,7 +613,6 @@ _Necesitas más saldo para cumplir el mínimo del exchange._
           return;
         }
 
-        const botConfig = await storage.getBotConfig();
         const exposureCheck = await this.checkExposureLimits(pair, tradeAmountUSD, botConfig);
         if (!exposureCheck.allowed) {
           log(`Trade bloqueado por límite de exposición: ${exposureCheck.reason}`, "trading");
@@ -1454,5 +1456,9 @@ _KrakenBot.AI_
 
   isActive(): boolean {
     return this.isRunning;
+  }
+
+  getOpenPositions(): Map<string, { amount: number; entryPrice: number }> {
+    return this.openPositions;
   }
 }
