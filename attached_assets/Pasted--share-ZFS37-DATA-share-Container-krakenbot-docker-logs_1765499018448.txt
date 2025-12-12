@@ -1,0 +1,52 @@
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs kraken-bot-app --tail 50
+    ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+    at packageResolve (node:internal/modules/esm/resolve:873:9)
+    at moduleResolve (node:internal/modules/esm/resolve:946:18)
+    at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498974133:2:3744)
+    at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498974133:2:4243)
+    at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498974133:2:4984)
+    at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498974133:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v20.19.6
+
+up to date, audited 501 packages in 2s
+
+87 packages are looking for funding
+  run `npm fund` for details
+
+8 vulnerabilities (2 low, 4 moderate, 2 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /app/script/build.ts
+    at packageResolve (node:internal/modules/esm/resolve:873:9)
+    at moduleResolve (node:internal/modules/esm/resolve:946:18)
+    at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498985134:2:3744)
+    at resolveDirectory (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498985134:2:4243)
+    at resolveTsPaths (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498985134:2:4984)
+    at async resolve (file:///root/.npm/_npx/fd45a72a545557e9/node_modules/tsx/dist/esm/index.mjs?1765498985134:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:306:24) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v20.19.6
+[/share/ZFS37_DATA/share/Container/krak
