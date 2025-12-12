@@ -84,6 +84,18 @@ export const botEvents = pgTable("bot_events", {
   meta: text("meta"),
 });
 
+export const openPositions = pgTable("open_positions", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull().unique(),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  highestPrice: decimal("highest_price", { precision: 18, scale: 8 }).notNull(),
+  tradeId: text("trade_id"),
+  krakenOrderId: text("kraken_order_id"),
+  openedAt: timestamp("opened_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true, updatedAt: true });
 export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
@@ -91,6 +103,7 @@ export const insertMarketDataSchema = createInsertSchema(marketData).omit({ id: 
 export const insertApiConfigSchema = createInsertSchema(apiConfig).omit({ id: true, updatedAt: true });
 export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true, createdAt: true });
 export const insertBotEventSchema = createInsertSchema(botEvents).omit({ id: true, timestamp: true });
+export const insertOpenPositionSchema = createInsertSchema(openPositions).omit({ id: true, openedAt: true, updatedAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -99,6 +112,7 @@ export type MarketData = typeof marketData.$inferSelect;
 export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
 export type BotEvent = typeof botEvents.$inferSelect;
+export type OpenPosition = typeof openPositions.$inferSelect;
 
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
@@ -107,3 +121,4 @@ export type InsertMarketData = z.infer<typeof insertMarketDataSchema>;
 export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
 export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
 export type InsertBotEvent = z.infer<typeof insertBotEventSchema>;
+export type InsertOpenPosition = z.infer<typeof insertOpenPositionSchema>;
