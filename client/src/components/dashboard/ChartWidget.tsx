@@ -42,6 +42,7 @@ export function ChartWidget() {
 
   const summary = data?.summary;
   const isPositive = (summary?.totalPnlUsd || 0) >= 0;
+  const hasTrades = (summary?.totalTrades || 0) > 0;
 
   return (
     <Card className="col-span-2 glass-panel border-border/50 h-full flex flex-col">
@@ -111,9 +112,13 @@ export function ChartWidget() {
           <div className="h-full flex items-center justify-center text-muted-foreground">
             Cargando datos de rendimiento...
           </div>
-        ) : chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground">
-            No hay datos de trades para mostrar
+        ) : !hasTrades ? (
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-3">
+            <Activity className="h-12 w-12 opacity-30" />
+            <div className="text-center">
+              <p className="font-medium">Sin operaciones completadas</p>
+              <p className="text-sm opacity-70">El gráfico mostrará la curva de equity cuando el bot ejecute trades</p>
+            </div>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
