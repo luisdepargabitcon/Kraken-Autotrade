@@ -5,18 +5,21 @@ import {
   type MarketData,
   type ApiConfig,
   type TelegramChat,
+  type OpenPosition,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
   type InsertMarketData,
   type InsertApiConfig,
   type InsertTelegramChat,
+  type InsertOpenPosition,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
   marketData as marketDataTable,
   apiConfig as apiConfigTable,
-  telegramChats as telegramChatsTable
+  telegramChats as telegramChatsTable,
+  openPositions as openPositionsTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -44,6 +47,12 @@ export interface IStorage {
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat>;
   deleteTelegramChat(id: number): Promise<void>;
+  
+  getOpenPositions(): Promise<OpenPosition[]>;
+  getOpenPosition(pair: string): Promise<OpenPosition | undefined>;
+  saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition>;
+  updateOpenPosition(pair: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined>;
+  deleteOpenPosition(pair: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -161,6 +170,42 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTelegramChat(id: number): Promise<void> {
     await db.delete(telegramChatsTable).where(eq(telegramChatsTable.id, id));
+  }
+
+  async getOpenPositions(): Promise<OpenPosition[]> {
+    return await db.select().from(openPositionsTable);
+  }
+
+  async getOpenPosition(pair: string): Promise<OpenPosition | undefined> {
+    const positions = await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.pair, pair))
+      .limit(1);
+    return positions[0];
+  }
+
+  async saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition> {
+    const existing = await this.getOpenPosition(position.pair);
+    if (existing) {
+      const [updated] = await db.update(openPositionsTable)
+        .set({ ...position, updatedAt: new Date() })
+        .where(eq(openPositionsTable.pair, position.pair))
+        .returning();
+      return updated;
+    }
+    const [newPosition] = await db.insert(openPositionsTable).values(position).returning();
+    return newPosition;
+  }
+
+  async updateOpenPosition(pair: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined> {
+    const [updated] = await db.update(openPositionsTable)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(openPositionsTable.pair, pair))
+      .returning();
+    return updated;
+  }
+
+  async deleteOpenPosition(pair: string): Promise<void> {
+    await db.delete(openPositionsTable).where(eq(openPositionsTable.pair, pair));
   }
 }
 
