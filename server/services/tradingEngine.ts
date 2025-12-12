@@ -195,11 +195,14 @@ export class TradingEngine {
     this.isRunning = true;
     log("Motor de trading iniciado", "trading");
     
+    await this.loadOpenPositionsFromDB();
+    
     await botLogger.info("BOT_STARTED", "Motor de trading iniciado", {
       strategy: config.strategy,
       riskLevel: config.riskLevel,
       activePairs: config.activePairs,
       balanceUsd: this.currentUsdBalance,
+      openPositions: this.openPositions.size,
     });
     
     if (this.telegramService.isInitialized()) {
@@ -243,6 +246,64 @@ El bot de trading autónomo está activo.
       case "momentum": return 30000;
       case "mean_reversion": return 30000;
       default: return 30000;
+    }
+  }
+
+  private async loadOpenPositionsFromDB() {
+    try {
+      const positions = await storage.getOpenPositions();
+      this.openPositions.clear();
+      
+      for (const pos of positions) {
+        this.openPositions.set(pos.pair, {
+          amount: parseFloat(pos.amount),
+          entryPrice: parseFloat(pos.entryPrice),
+          highestPrice: parseFloat(pos.highestPrice),
+          openedAt: new Date(pos.openedAt).getTime(),
+        });
+        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice}`, "trading");
+      }
+      
+      if (positions.length > 0) {
+        log(`${positions.length} posiciones abiertas cargadas desde la base de datos`, "trading");
+        if (this.telegramService.isInitialized()) {
+          const positionsList = positions.map(p => `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)}`).join("\n");
+          await this.telegramService.sendMessage(`📂 *Posiciones Recuperadas*\n\n${positionsList}`);
+        }
+      }
+    } catch (error: any) {
+      log(`Error cargando posiciones: ${error.message}`, "trading");
+    }
+  }
+
+  private async savePositionToDB(pair: string, position: OpenPosition) {
+    try {
+      await storage.saveOpenPosition({
+        pair,
+        entryPrice: position.entryPrice.toString(),
+        amount: position.amount.toString(),
+        highestPrice: position.highestPrice.toString(),
+      });
+    } catch (error: any) {
+      log(`Error guardando posición ${pair}: ${error.message}`, "trading");
+    }
+  }
+
+  private async updatePositionHighestPrice(pair: string, highestPrice: number) {
+    try {
+      await storage.updateOpenPosition(pair, {
+        highestPrice: highestPrice.toString(),
+      });
+    } catch (error: any) {
+      log(`Error actualizando highestPrice ${pair}: ${error.message}`, "trading");
+    }
+  }
+
+  private async deletePositionFromDB(pair: string) {
+    try {
+      await storage.deleteOpenPosition(pair);
+    } catch (error: any) {
+      log(`Error eliminando posición ${pair}: ${error.message}`, "trading");
     }
   }
 
@@ -359,6 +420,7 @@ El bot de trading autónomo está activo.
       if (currentPrice > position.highestPrice) {
         position.highestPrice = currentPrice;
         this.openPositions.set(pair, position);
+        await this.updatePositionHighestPrice(pair, currentPrice);
       }
 
       let shouldSell = false;
@@ -438,6 +500,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
         if (success) {
           this.openPositions.delete(pair);
+          await this.deletePositionFromDB(pair);
           this.lastTradeTime.set(pair, Date.now());
         }
       }
@@ -1192,28 +1255,31 @@ _Reduce posiciones abiertas o ajusta los límites de exposición._
       if (type === "buy") {
         this.currentUsdBalance -= volumeNum * price;
         const existing = this.openPositions.get(pair);
+        let newPosition: OpenPosition;
         if (existing && existing.amount > 0) {
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
-          this.openPositions.set(pair, { 
+          newPosition = { 
             amount: totalAmount, 
             entryPrice: avgPrice,
             highestPrice: Math.max(existing.highestPrice, price),
             openedAt: existing.openedAt
-          });
+          };
+          this.openPositions.set(pair, newPosition);
         } else {
-          this.openPositions.set(pair, { 
+          newPosition = { 
             amount: volumeNum, 
             entryPrice: price,
             highestPrice: price,
             openedAt: Date.now()
-          });
+          };
+          this.openPositions.set(pair, newPosition);
         }
+        await this.savePositionToDB(pair, newPosition);
       } else {
         this.currentUsdBalance += volumeNum * price;
         const existing = this.openPositions.get(pair);
         if (existing) {
-          // Calcular P&L de esta venta
           const pnl = (price - existing.entryPrice) * volumeNum;
           this.dailyPnL += pnl;
           log(`P&L de operación: $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
@@ -1221,6 +1287,10 @@ _Reduce posiciones abiertas o ajusta los límites de exposición._
           existing.amount -= volumeNum;
           if (existing.amount <= 0) {
             this.openPositions.delete(pair);
+            await this.deletePositionFromDB(pair);
+          } else {
+            this.openPositions.set(pair, existing);
+            await this.savePositionToDB(pair, existing);
           }
         }
       }
