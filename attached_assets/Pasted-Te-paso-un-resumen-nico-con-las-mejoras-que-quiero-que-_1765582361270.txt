@@ -1,0 +1,101 @@
+Te paso un resumen único con las mejoras que quiero que implementes/revises. No tocan la lógica de trading, solo control, coherencia y observabilidad.
+
+1) Tamaño de trade dinámico (problema de los $100)
+
+Ahora mismo el bot intenta abrir trades de $100 aunque el balance real sea mucho menor, y luego los bloquea por exposición.
+Esto genera muchos “Trade bloqueado por exposición” innecesarios.
+
+Necesito:
+- Que el tamaño de la orden sea dinámico según balance real.
+- Fórmula base:
+  tradeUsd = balanceUsd * riskPerTradePct
+- riskPerTradePct configurable por el usuario (ej. 10–20%).
+- Respetar siempre:
+  - Máx. Exposición por par,
+  - Máx. Exposición total.
+- Nunca forzar trades de $100 si el balance no lo soporta.
+- Si el tamaño calculado queda por debajo del mínimo de Kraken → no operar y notificar.
+
+Objetivo:
+Que con balances pequeños el bot opere con tamaños pequeños sin obligar a subir los límites de exposición.
+
+2) Pares distintos entre Estrategias y Dashboard (probable hardcode)
+
+Aunque reinicie el bot, el Dashboard muestra pares distintos a los seleccionados en Estrategias.
+Creo que el Dashboard está usando datos hardcodeados o placeholders.
+
+Necesito:
+- Revisar el componente “Pares Activos” del Dashboard.
+- Eliminar cualquier lista hardcodeada.
+- Que el Dashboard muestre únicamente los pares que devuelve el backend (los que usa realmente el motor).
+- Una única fuente de verdad para los pares activos.
+
+3) Telegram: mensajes más naturales y más comandos
+
+Los mensajes actuales funcionan, pero son muy técnicos y secos.
+
+Necesito:
+- Mensajes en lenguaje más natural y claro (frases completas, más contexto).
+- Mantener los datos técnicos, pero explicados de forma humana.
+
+Ampliar comandos de Telegram, por ejemplo:
+- /estado → estado del bot, estrategia, riesgo, pares activos.
+- /balance → balance, equity, PnL total.
+- /config → SL, TP, trailing, exposición.
+- /ultimos → últimas operaciones.
+- /exposicion → exposición por par y total.
+- /uptime → tiempo encendido.
+
+No hace falta implementarlos todos a la vez, pero sí una base útil.
+
+4) Heartbeat integrado en Multi-Chat (NO un chat nuevo)
+
+Cuando hablé de “multi-chat”, me refería a usar la sección Multi-Chat que ya existe (Trades / Errores / Sistema / Balance).
+
+Quiero añadir un nuevo toggle ahí:
+
+✅ Heartbeat (cada 12 horas)
+
+Comportamiento:
+- Cada chat configurado en Multi-Chat recibe el heartbeat solo si el toggle Heartbeat está activado.
+- Es un toggle independiente (como Trades, Errores, etc.).
+
+Contenido del mensaje Heartbeat:
+- Estado: Activo / Pausado
+- Uptime
+- Estrategia y nivel de riesgo
+- Pares activos reales (runtime)
+- Balance / equity actual
+- Nº de operaciones desde el último heartbeat
+- Último error relevante (o “sin errores recientes”)
+
+Objetivo:
+Saber que el bot está vivo y funcionando aunque no haya trades.
+
+5) Gráfico de rendimiento REAL (equity curve) y mejora visual
+
+El gráfico actual del Dashboard es decorativo.
+
+Backend:
+- Crear endpoint tipo GET /api/performance.
+- Leer trades reales de la BD.
+- Ordenarlos por fecha.
+- Calcular equity curve acumulando PnL real.
+- Devolver:
+  - curve [{ time, equity }]
+  - summary (equity inicial/final, PnL USD y %, nº trades, winrate opcional).
+
+Frontend:
+- El gráfico del Dashboard debe consumir /api/performance.
+- Mostrar equity real, no datos simulados.
+- Botón manual de “Actualizar” (no hace falta auto-refresh).
+
+Visual:
+- Mejorar colores y contraste SOLO del gráfico:
+  - línea más visible,
+  - ejes y tooltip legibles.
+- Importante: NO cambiar la plantilla general ni el tema, solo el gráfico.
+
+Resumen:
+- No tocar estrategias ni ejecución.
+- Arreglar tamaño de trade, coherencia de pares, Telegram (lenguaje + comandos + heartbeat) y gráfico real con mejor visibilidad.
