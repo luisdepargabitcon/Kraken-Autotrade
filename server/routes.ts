@@ -42,7 +42,7 @@ export async function registerRoutes(
       start: async () => { await tradingEngine?.start(); },
       stop: async () => { await tradingEngine?.stop(); },
       isActive: () => tradingEngine?.isActive() ?? false,
-      getBalance: async () => krakenService.isInitialized() ? await krakenService.getBalance() : {},
+      getBalance: async () => krakenService.isInitialized() ? await krakenService.getBalance() as Record<string, string> : {},
       getOpenPositions: () => tradingEngine?.getOpenPositions() ?? new Map(),
     });
     
@@ -280,7 +280,7 @@ export async function registerRoutes(
       
       if (krakenService.isInitialized()) {
         try {
-          balances = await krakenService.getBalance();
+          balances = await krakenService.getBalance() as Record<string, string>;
           
           const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD"];
           for (const pair of pairs) {
@@ -343,8 +343,12 @@ export async function registerRoutes(
       let maxEquity = STARTING_EQUITY;
       let maxDrawdown = 0;
 
+      const firstTradeTime = sortedTrades.length > 0 
+        ? new Date(sortedTrades[0].executedAt || sortedTrades[0].createdAt).toISOString()
+        : new Date().toISOString();
+      
       const curve: { time: string; equity: number; pnl?: number }[] = [
-        { time: new Date(sortedTrades[0]?.executedAt || sortedTrades[0]?.createdAt || new Date()).toISOString(), equity: STARTING_EQUITY }
+        { time: firstTradeTime, equity: STARTING_EQUITY }
       ];
 
       for (const trade of sortedTrades) {
@@ -459,7 +463,7 @@ export async function registerRoutes(
         price,
       });
 
-      await storage.updateTradeStatus(tradeId, "filled", order.txid?.[0]);
+      await storage.updateTradeStatus(tradeId, "filled", (order as any).txid?.[0]);
       
       await telegramService.sendTradeNotification({
         type,

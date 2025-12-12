@@ -204,7 +204,11 @@ _KrakenBot.AI - Trading Autónomo_
 
   private async handleBalance(chatId: number) {
     try {
-      const balances = this.engineController?.getBalance ? await this.engineController.getBalance() : {};
+      if (!this.engineController?.getBalance) {
+        await this.bot?.sendMessage(chatId, "⚠️ Kraken no está conectado. Configura las credenciales primero.");
+        return;
+      }
+      const balances = await this.engineController.getBalance();
       const usd = parseFloat(balances?.ZUSD || balances?.USD || "0");
       const btc = parseFloat(balances?.XXBT || balances?.XBT || "0");
       const eth = parseFloat(balances?.XETH || balances?.ETH || "0");
