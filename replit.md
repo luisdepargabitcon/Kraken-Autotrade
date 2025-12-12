@@ -36,6 +36,7 @@ Preferred communication style: Simple, everyday language.
   - `trades`: Trade history and execution records
   - `notifications`: Telegram notification queue
   - `market_data`: Price and market information cache
+  - `open_positions`: Posiciones abiertas persistentes (sobreviven reinicios)
 
 ### Project Structure
 ```
@@ -93,6 +94,14 @@ Limits how much capital can be committed in open positions:
 - **Take-Profit**: Auto-sells if price rises X% from entry
 - **Trailing Stop**: Dynamic stop-loss that follows price upward
 - **Daily Loss Limit**: Pauses trading if daily losses exceed X%
+
+### Position Persistence
+Las posiciones abiertas se guardan en la base de datos y sobreviven reinicios del bot:
+- **Al comprar**: La posición se guarda con par, cantidad, precio de entrada y timestamp
+- **Al vender parcialmente**: Se actualiza la cantidad restante en la BD
+- **Al cerrar posición**: Se elimina de la BD
+- **Al reiniciar**: El bot carga automáticamente las posiciones de la BD
+- Esto evita perder el tracking de operaciones pendientes tras reinicios o actualizaciones
 
 ### PostgreSQL Database
 - **ORM**: Drizzle ORM with `drizzle-kit` for migrations
