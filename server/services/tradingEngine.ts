@@ -51,6 +51,17 @@ const KRAKEN_FEE_PCT = 0.26; // 0.26% per trade
 const ROUND_TRIP_FEE_PCT = KRAKEN_FEE_PCT * 2; // ~0.52% for buy + sell
 const MIN_PROFIT_MULTIPLIER = 2; // Take-profit debe ser al menos 2x las fees
 
+// Defensive improvements
+const MAX_SPREAD_PCT = 0.5; // No comprar si spread > 0.5%
+const TRADING_HOURS_START = 8; // UTC - inicio de horario de trading
+const TRADING_HOURS_END = 22; // UTC - fin de horario de trading
+const POST_STOPLOSS_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown tras stop-loss
+const CONFIDENCE_SIZING_THRESHOLDS = {
+  high: { min: 0.8, factor: 1.0 },    // 100% del monto
+  medium: { min: 0.7, factor: 0.75 }, // 75% del monto
+  low: { min: 0.6, factor: 0.5 },     // 50% del monto
+};
+
 interface OpenPosition {
   amount: number;
   entryPrice: number;
@@ -104,6 +115,9 @@ export class TradingEngine {
   
   private pairCooldowns: Map<string, number> = new Map();
   private lastExposureAlert: Map<string, number> = new Map();
+  private stopLossCooldowns: Map<string, number> = new Map();
+  private tradingHoursEnabled: boolean = true;
+  private spreadFilterEnabled: boolean = true;
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -175,6 +189,70 @@ export class TradingEngine {
     }
     this.lastExposureAlert.set(pair, Date.now());
     return true;
+  }
+
+  // === MEJORA 1: Filtro de Spread ===
+  private calculateSpreadPct(bid: number, ask: number): number {
+    if (bid <= 0 || ask <= 0) return 0;
+    const midPrice = (bid + ask) / 2;
+    return ((ask - bid) / midPrice) * 100;
+  }
+
+  private isSpreadAcceptable(tickerData: any): { acceptable: boolean; spreadPct: number } {
+    if (!this.spreadFilterEnabled) {
+      return { acceptable: true, spreadPct: 0 };
+    }
+    
+    const bid = parseFloat(tickerData.b?.[0] || "0");
+    const ask = parseFloat(tickerData.a?.[0] || "0");
+    const spreadPct = this.calculateSpreadPct(bid, ask);
+    
+    return {
+      acceptable: spreadPct <= MAX_SPREAD_PCT,
+      spreadPct,
+    };
+  }
+
+  // === MEJORA 2: Horarios de Trading ===
+  private isWithinTradingHours(): boolean {
+    if (!this.tradingHoursEnabled) {
+      return true;
+    }
+    
+    const now = new Date();
+    const hourUTC = now.getUTCHours();
+    
+    return hourUTC >= TRADING_HOURS_START && hourUTC < TRADING_HOURS_END;
+  }
+
+  // === MEJORA 3: Position Sizing Dinámico ===
+  private getConfidenceSizingFactor(confidence: number): number {
+    if (confidence >= CONFIDENCE_SIZING_THRESHOLDS.high.min) {
+      return CONFIDENCE_SIZING_THRESHOLDS.high.factor;
+    } else if (confidence >= CONFIDENCE_SIZING_THRESHOLDS.medium.min) {
+      return CONFIDENCE_SIZING_THRESHOLDS.medium.factor;
+    } else if (confidence >= CONFIDENCE_SIZING_THRESHOLDS.low.min) {
+      return CONFIDENCE_SIZING_THRESHOLDS.low.factor;
+    }
+    return 0; // No trade if confidence < 0.6
+  }
+
+  // === MEJORA 4: Cooldown Post Stop-Loss ===
+  private isPairInStopLossCooldown(pair: string): boolean {
+    const cooldownUntil = this.stopLossCooldowns.get(pair);
+    if (!cooldownUntil) return false;
+    
+    if (Date.now() >= cooldownUntil) {
+      this.stopLossCooldowns.delete(pair);
+      return false;
+    }
+    return true;
+  }
+
+  private setStopLossCooldown(pair: string): void {
+    const cooldownUntil = Date.now() + POST_STOPLOSS_COOLDOWN_MS;
+    this.stopLossCooldowns.set(pair, cooldownUntil);
+    log(`${pair} en cooldown post-SL por ${POST_STOPLOSS_COOLDOWN_MS / 60000} minutos`, "trading");
   }
 
   private isProfitableAfterFees(takeProfitPct: number): { 
@@ -419,6 +497,13 @@ El bot de trading autónomo está activo.
         return;
       }
 
+      // MEJORA 2: Verificar horarios de trading
+      if (!this.isWithinTradingHours()) {
+        const hourUTC = new Date().getUTCHours();
+        log(`Fuera de horario de trading (${hourUTC}h UTC). Horario: ${TRADING_HOURS_START}h-${TRADING_HOURS_END}h UTC`, "trading");
+        return;
+      }
+
       for (const pair of config.activePairs) {
         await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
       }
@@ -461,12 +546,15 @@ El bot de trading autónomo está activo.
         shouldSell = true;
         reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${stopLossPercent}%)`;
         emoji = "🛑";
+        // MEJORA 4: Cooldown post stop-loss
+        this.setStopLossCooldown(pair);
         await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
           pair,
           entryPrice: position.entryPrice,
           currentPrice,
           priceChange,
           stopLossPercent,
+          cooldownMinutes: POST_STOPLOSS_COOLDOWN_MS / 60000,
         });
       }
       else if (priceChange >= takeProfitPercent) {
@@ -587,6 +675,19 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
           return;
         }
 
+        // MEJORA 4: Verificar cooldown post stop-loss
+        if (this.isPairInStopLossCooldown(pair)) {
+          log(`${pair}: En cooldown post stop-loss`, "trading");
+          return;
+        }
+
+        // MEJORA 1: Verificar spread antes de comprar
+        const spreadCheck = this.isSpreadAcceptable(tickerData);
+        if (!spreadCheck.acceptable) {
+          log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
+          return;
+        }
+
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
           log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
           return;
@@ -624,6 +725,15 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         
         let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
         tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
+
+        // MEJORA 3: Position sizing dinámico basado en confianza
+        const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
+        const originalBeforeConfidence = tradeAmountUSD;
+        tradeAmountUSD = tradeAmountUSD * confidenceFactor;
+        
+        if (confidenceFactor < 1.0) {
+          log(`${pair}: Sizing ajustado por confianza (${(signal.confidence * 100).toFixed(0)}%): $${originalBeforeConfidence.toFixed(2)} -> $${tradeAmountUSD.toFixed(2)} (${(confidenceFactor * 100).toFixed(0)}%)`, "trading");
+        }
 
         if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
           const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;

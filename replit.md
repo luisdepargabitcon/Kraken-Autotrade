@@ -204,6 +204,39 @@ Evita bucles infinitos cuando no hay exposición disponible:
 | Par sin exposición | 15 min | Cuando `effectiveMaxAllowed < minRequiredUSD` |
 | Saldo insuficiente | 15 min | Cuando `freshUsdBalance < minRequiredUSD` |
 | Volumen bajo | 15 min | Cuando `tradeVolume < minVolume` |
+| **Post Stop-Loss** | **30 min** | Cuando se activa un Stop-Loss en un par |
+
+### Mejoras Defensivas
+
+Filtros adicionales para proteger el capital:
+
+#### 1. Filtro de Spread Bid-Ask
+- **Constante**: `MAX_SPREAD_PCT = 0.5%`
+- **Funcionamiento**: No comprar si el spread es mayor a 0.5%
+- **Cálculo**: `spreadPct = (ask - bid) / midPrice × 100`
+- **Beneficio**: Evita pérdidas inmediatas por spreads amplios
+
+#### 2. Horarios de Trading
+- **Constantes**: `TRADING_HOURS_START = 8` UTC, `TRADING_HOURS_END = 22` UTC
+- **Funcionamiento**: Solo opera entre 8:00 y 22:00 UTC
+- **Beneficio**: Evita slippage en horarios de bajo volumen
+- **Nota**: Stop-Loss y Take-Profit siguen activos 24/7
+
+#### 3. Position Sizing Dinámico
+Ajusta el monto del trade según la confianza de la señal:
+
+| Confianza | Factor | Resultado |
+|-----------|--------|-----------|
+| ≥ 80% | 100% | Trade completo |
+| 70-79% | 75% | 3/4 del monto |
+| 60-69% | 50% | Mitad del monto |
+| < 60% | 0% | No trade |
+
+#### 4. Cooldown Post Stop-Loss
+- **Constante**: `POST_STOPLOSS_COOLDOWN_MS = 30 min`
+- **Funcionamiento**: Tras un Stop-Loss, el par entra en cooldown de 30 minutos
+- **Beneficio**: Evita "revenge trading" automatizado
+- **Nota**: Independiente del cooldown normal de 15 min
 
 ### Mínimos de Kraken
 
