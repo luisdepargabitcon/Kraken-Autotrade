@@ -9,6 +9,8 @@ export type EventType =
   | "TRADE_EXECUTED"
   | "TRADE_BLOCKED"
   | "TRADE_FAILED"
+  | "TRADE_ADJUSTED"
+  | "PAIR_COOLDOWN"
   | "DAILY_LIMIT_HIT"
   | "DAILY_LIMIT_RESET"
   | "BOT_STARTED"

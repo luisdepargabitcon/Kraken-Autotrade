@@ -112,6 +112,11 @@ export class TradingEngine {
   private dailyStartBalance: number = 0;
   private lastDayReset: string = "";
   private isDailyLimitReached: boolean = false;
+  
+  private pairCooldowns: Map<string, number> = new Map();
+  private lastExposureAlert: Map<string, number> = new Map();
+  private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
+  private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -132,37 +137,55 @@ export class TradingEngine {
     return total;
   }
 
-  private async checkExposureLimits(
-    pair: string,
-    newTradeUsd: number,
-    config: any
-  ): Promise<{ allowed: boolean; reason?: string; blockedBy?: "pair" | "total" }> {
+  private getAvailableExposure(pair: string, config: any, freshUsdBalance?: number): { 
+    maxPairAvailable: number; 
+    maxTotalAvailable: number; 
+    maxAllowed: number;
+  } {
     const maxPairExposurePct = parseFloat(config.maxPairExposurePct?.toString() || "25");
     const maxTotalExposurePct = parseFloat(config.maxTotalExposurePct?.toString() || "60");
 
     const currentPairExposure = this.calculatePairExposure(pair);
     const currentTotalExposure = this.calculateTotalExposure();
 
-    const maxPairExposureUsd = this.currentUsdBalance * (maxPairExposurePct / 100);
-    const maxTotalExposureUsd = this.currentUsdBalance * (maxTotalExposurePct / 100);
+    const usdBalance = freshUsdBalance ?? this.currentUsdBalance;
+    const maxPairExposureUsd = usdBalance * (maxPairExposurePct / 100);
+    const maxTotalExposureUsd = usdBalance * (maxTotalExposurePct / 100);
 
-    if (currentPairExposure + newTradeUsd > maxPairExposureUsd) {
-      return {
-        allowed: false,
-        reason: `Exposición por par excedida: $${(currentPairExposure + newTradeUsd).toFixed(2)} > $${maxPairExposureUsd.toFixed(2)} (${maxPairExposurePct}%)`,
-        blockedBy: "pair"
-      };
+    const maxPairAvailable = Math.max(0, maxPairExposureUsd - currentPairExposure);
+    const maxTotalAvailable = Math.max(0, maxTotalExposureUsd - currentTotalExposure);
+    
+    return {
+      maxPairAvailable,
+      maxTotalAvailable,
+      maxAllowed: Math.min(maxPairAvailable, maxTotalAvailable)
+    };
+  }
+
+  private isPairInCooldown(pair: string): boolean {
+    const cooldownUntil = this.pairCooldowns.get(pair);
+    if (!cooldownUntil) return false;
+    
+    if (Date.now() >= cooldownUntil) {
+      this.pairCooldowns.delete(pair);
+      return false;
     }
+    return true;
+  }
 
-    if (currentTotalExposure + newTradeUsd > maxTotalExposureUsd) {
-      return {
-        allowed: false,
-        reason: `Exposición total excedida: $${(currentTotalExposure + newTradeUsd).toFixed(2)} > $${maxTotalExposureUsd.toFixed(2)} (${maxTotalExposurePct}%)`,
-        blockedBy: "total"
-      };
+  private setPairCooldown(pair: string): void {
+    const cooldownUntil = Date.now() + this.COOLDOWN_DURATION_MS;
+    this.pairCooldowns.set(pair, cooldownUntil);
+    log(`${pair} en cooldown por ${this.COOLDOWN_DURATION_MS / 60000} minutos`, "trading");
+  }
+
+  private shouldSendExposureAlert(pair: string): boolean {
+    const lastAlert = this.lastExposureAlert.get(pair) || 0;
+    if (Date.now() - lastAlert < this.EXPOSURE_ALERT_INTERVAL_MS) {
+      return false;
     }
-
-    return { allowed: true };
+    this.lastExposureAlert.set(pair, Date.now());
+    return true;
   }
 
   async start() {
@@ -553,6 +576,10 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       const existingPosition = this.openPositions.get(pair);
 
       if (signal.action === "buy") {
+        if (this.isPairInCooldown(pair)) {
+          return;
+        }
+
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
           log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
           return;
@@ -560,91 +587,97 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
         const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
         const minRequiredUSD = minVolume * currentPrice;
+        const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
 
-        if (this.currentUsdBalance < minRequiredUSD) {
-          log(`Saldo USD insuficiente para ${pair}: $${this.currentUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`
-⚠️ *Saldo Insuficiente*
-
-No se puede abrir posición en *${pair}*
-
-*Saldo actual:* $${this.currentUsdBalance.toFixed(2)}
-*Mínimo requerido:* $${minRequiredUSD.toFixed(2)}
-*Volumen mínimo Kraken:* ${minVolume}
-
-_Deposita más fondos para operar este par._
-            `.trim());
-          }
+        if (freshUsdBalance < minRequiredUSD) {
+          log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          this.setPairCooldown(pair);
           return;
         }
 
         const botConfig = await storage.getBotConfig();
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         
-        let tradeAmountUSD = this.currentUsdBalance * (riskPerTradePct / 100);
+        let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
         tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
-        
-        log(`Tamaño de trade: $${tradeAmountUSD.toFixed(2)} (${riskPerTradePct}% de $${this.currentUsdBalance.toFixed(2)})`, "trading");
 
-        if (tradeAmountUSD < minRequiredUSD && this.currentUsdBalance >= minRequiredUSD) {
-          const smallAccountAmount = this.currentUsdBalance * SMALL_ACCOUNT_FACTOR;
+        if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
+          const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
           tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
-          log(`Cuenta pequeña detectada: ajustando a ${(SMALL_ACCOUNT_FACTOR * 100).toFixed(0)}% del saldo ($${tradeAmountUSD.toFixed(2)})`, "trading");
+        }
+
+        const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
+        const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
+        const effectiveMaxAllowed = Math.min(exposure.maxAllowed, maxByBalance);
+        
+        if (effectiveMaxAllowed < minRequiredUSD) {
+          log(`${pair}: Sin exposición disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, Mínimo: $${minRequiredUSD.toFixed(2)}`, "trading");
+          this.setPairCooldown(pair);
+          
+          if (this.shouldSendExposureAlert(pair)) {
+            await botLogger.info("PAIR_COOLDOWN", `${pair} en cooldown - sin exposición disponible`, {
+              pair,
+              maxAllowed: effectiveMaxAllowed,
+              minRequired: minRequiredUSD,
+              cooldownMinutes: this.COOLDOWN_DURATION_MS / 60000,
+            });
+
+            if (this.telegramService.isInitialized()) {
+              await this.telegramService.sendAlertToMultipleChats(`
+⏸️ *Par en Espera*
+
+*${pair}* sin exposición disponible.
+*Disponible:* $${exposure.maxAllowed.toFixed(2)}
+*Mínimo requerido:* $${minRequiredUSD.toFixed(2)}
+
+_Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automáticamente._
+              `.trim(), "system");
+            }
+          }
+          return;
+        }
+
+        let wasAdjusted = false;
+        let originalAmount = tradeAmountUSD;
+        
+        if (tradeAmountUSD > effectiveMaxAllowed) {
+          originalAmount = tradeAmountUSD;
+          tradeAmountUSD = effectiveMaxAllowed;
+          wasAdjusted = true;
+          
+          log(`${pair}: Trade ajustado de $${originalAmount.toFixed(2)} a $${tradeAmountUSD.toFixed(2)} (límite exposición)`, "trading");
+          
+          await botLogger.info("TRADE_ADJUSTED", `Trade ajustado por límite de exposición`, {
+            pair,
+            originalAmountUsd: originalAmount,
+            adjustedAmountUsd: tradeAmountUSD,
+            maxPairAvailable: exposure.maxPairAvailable,
+            maxTotalAvailable: exposure.maxTotalAvailable,
+            riskPerTradePct,
+          });
         }
 
         const tradeVolume = tradeAmountUSD / currentPrice;
 
         if (tradeVolume < minVolume) {
-          log(`Volumen menor al mínimo de Kraken: ${tradeVolume.toFixed(8)} < ${minVolume}`, "trading");
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`
-⚠️ *Volumen Menor al Mínimo de Kraken*
-
-*Par:* ${pair}
-*Volumen calculado:* ${tradeVolume.toFixed(8)}
-*Mínimo de Kraken:* ${minVolume}
-*Monto USD:* $${tradeAmountUSD.toFixed(2)}
-*Mínimo USD requerido:* $${minRequiredUSD.toFixed(2)}
-
-_Necesitas más saldo para cumplir el mínimo del exchange._
-            `.trim());
-          }
+          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          this.setPairCooldown(pair);
           return;
         }
 
-        const exposureCheck = await this.checkExposureLimits(pair, tradeAmountUSD, botConfig);
-        if (!exposureCheck.allowed) {
-          log(`Trade bloqueado por límite de exposición: ${exposureCheck.reason}`, "trading");
-          
-          await botLogger.warn("TRADE_BLOCKED", `Trade bloqueado por límite de exposición (${exposureCheck.blockedBy})`, {
-            pair,
-            newTradeUsd: tradeAmountUSD,
-            currentPairExposure: this.calculatePairExposure(pair),
-            currentTotalExposure: this.calculateTotalExposure(),
-            maxPairExposurePct: parseFloat(botConfig?.maxPairExposurePct?.toString() || "25"),
-            maxTotalExposurePct: parseFloat(botConfig?.maxTotalExposurePct?.toString() || "60"),
-            blockedBy: exposureCheck.blockedBy,
-          });
-
-          if (this.telegramService.isInitialized()) {
-            const blockType = exposureCheck.blockedBy === "pair" ? "por par" : "total";
-            await this.telegramService.sendAlertToMultipleChats(`
-🚫 *Trade Bloqueado por Exposición*
-
-*Par:* ${pair}
-*Tipo:* Límite de exposición ${blockType}
-*Nuevo trade:* $${tradeAmountUSD.toFixed(2)}
-
-${exposureCheck.reason}
-
-_Reduce posiciones abiertas o ajusta los límites de exposición._
-            `.trim(), "trades");
-          }
-          return;
+        if (wasAdjusted) {
+          log(`${pair}: Ejecutando compra AJUSTADA $${tradeAmountUSD.toFixed(2)} (original: $${originalAmount.toFixed(2)})`, "trading");
+        } else {
+          log(`${pair}: Ejecutando compra $${tradeAmountUSD.toFixed(2)} (${riskPerTradePct}% de $${freshUsdBalance.toFixed(2)})`, "trading");
         }
 
-        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason);
+        const adjustmentInfo = wasAdjusted ? {
+          wasAdjusted: true,
+          originalAmountUsd: originalAmount,
+          adjustedAmountUsd: tradeAmountUSD
+        } : undefined;
+
+        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
         }
@@ -1223,7 +1256,8 @@ _Reduce posiciones abiertas o ajusta los límites de exposición._
     type: "buy" | "sell",
     volume: string,
     price: number,
-    reason: string
+    reason: string,
+    adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number }
   ): Promise<boolean> {
     try {
       log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)}`, "trading");
@@ -1301,6 +1335,11 @@ _Reduce posiciones abiertas o ajusta los límites de exposición._
       const totalUSD = (volumeNum * price).toFixed(2);
       
       if (this.telegramService.isInitialized()) {
+        let adjustmentNote = "";
+        if (adjustmentInfo?.wasAdjusted) {
+          adjustmentNote = `\n📉 _Ajustado por exposición: $${adjustmentInfo.originalAmountUsd.toFixed(2)} → $${adjustmentInfo.adjustedAmountUsd.toFixed(2)}_\n`;
+        }
+        
         await this.telegramService.sendMessage(`
 ${emoji} *Operación Automática Ejecutada*
 
@@ -1310,7 +1349,7 @@ ${emoji} *Operación Automática Ejecutada*
 *Precio:* $${price.toFixed(2)}
 *Total:* $${totalUSD}
 *ID:* ${txid}
-
+${adjustmentNote}
 *Razón:* ${reason}
 
 _KrakenBot.AI - Trading Autónomo_
