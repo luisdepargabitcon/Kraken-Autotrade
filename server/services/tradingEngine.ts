@@ -291,7 +291,7 @@ El bot de trading autónomo está activo.
         log(`${positions.length} posiciones abiertas cargadas desde la base de datos`, "trading");
         if (this.telegramService.isInitialized()) {
           const positionsList = positions.map(p => `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)}`).join("\n");
-          await this.telegramService.sendMessage(`📂 *Posiciones Recuperadas*\n\n${positionsList}`);
+          await this.telegramService.sendMessage(`📂 *Posiciones Abiertas*\n\n${positionsList}`);
         }
       }
     } catch (error: any) {
