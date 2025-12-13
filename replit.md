@@ -126,6 +126,29 @@ Al ejecutar una operación:
 
 ## Gestión de Riesgo
 
+### Filtro de Rentabilidad por Comisiones
+
+El bot verifica que cada trade sea rentable después de comisiones antes de ejecutar:
+
+| Parámetro | Valor | Descripción |
+|-----------|-------|-------------|
+| `KRAKEN_FEE_PCT` | 0.26% | Comisión taker por operación |
+| `ROUND_TRIP_FEE_PCT` | 0.52% | Comisión total (compra + venta) |
+| `MIN_PROFIT_MULTIPLIER` | 2x | Take-profit debe ser al menos 2x las fees |
+
+**Cálculo:**
+- Fees round-trip = 0.52%
+- Take-profit mínimo rentable = 0.52% × 2 = **1.04%**
+- Si take-profit configurado < 1.04% → trade rechazado
+
+**Ejemplo:**
+- Take-profit configurado: 0.8%
+- Fees round-trip: 0.52%
+- Ganancia neta esperada: 0.8% - 0.52% = 0.28%
+- **RECHAZADO** (0.8% < 1.04% mínimo)
+
+Con el take-profit por defecto (7%), el filtro no bloquea trades normales.
+
 ### Control de Exposición
 
 Limita cuánto capital puede estar comprometido en posiciones abiertas:
