@@ -1,0 +1,100 @@
+REPLIT — INSTRUCCIONES CONSOLIDADAS (UI + DATOS DE TRADING)
+
+OBJETIVO GENERAL
+Mejorar la claridad y usabilidad del bot añadiendo:
+1) Sección de POSICIONES ABIERTAS (P&L no realizado en tiempo real)
+2) Mejoras en HISTORIAL (renombrado a OPERACIONES)
+3) Mostrar ganancias/pérdidas por operación
+4) Filtros y límite por defecto de operaciones visibles
+5) Mantener compatibilidad total con el control de riesgo y tamaño de trade existente
+
+--------------------------------------------------
+1) SECCIÓN “POSICIONES ABIERTAS” (NUEVA)
+--------------------------------------------------
+- Crear una sección independiente en la pestaña HISTORIAL (o CARTERA) llamada:
+  “POSICIONES ABIERTAS”
+- Mostrar SOLO posiciones actualmente abiertas (spot):
+  - BUY ejecutado
+  - SIN SELL de cierre todavía
+
+Columnas mínimas:
+- Par (BTC/USD, XRP/USD, etc.)
+- Cantidad
+- Precio de entrada
+- Precio actual (market)
+- P&L NO REALIZADO (USD)
+- P&L NO REALIZADO (%)
+- Tiempo abierta
+
+Comportamiento:
+- El P&L no realizado se recalcula en tiempo real (o en cada refresh de precios).
+- Cuando una posición se cierra (SELL):
+  - Desaparece automáticamente de “Posiciones Abiertas”
+  - Pasa a la sección OPERACIONES como operación cerrada.
+
+--------------------------------------------------
+2) HISTORIAL → RENOMBRAR A “OPERACIONES”
+--------------------------------------------------
+- Cambiar el título de la sección:
+  “Operaciones Recientes” → “OPERACIONES”
+- Esta sección muestra SOLO operaciones cerradas.
+
+--------------------------------------------------
+3) GANANCIA / PÉRDIDA EN OPERACIONES
+--------------------------------------------------
+Para cada operación cerrada (SELL):
+- Mostrar en la MISMA FILA:
+  - Precio de compra
+  - Precio de venta
+  - Ganancia/Pérdida REALIZADA (USD)
+  - Ganancia/Pérdida (%)
+
+Reglas:
+- Las BUY no muestran P&L.
+- El SELL es el que representa el resultado final de la operación.
+- Colorear:
+  - Verde = ganancia
+  - Rojo = pérdida
+
+--------------------------------------------------
+4) LÍMITE Y FILTROS EN OPERACIONES
+--------------------------------------------------
+DEFAULT:
+- Mostrar SOLO las 10 operaciones más recientes.
+
+Selector visible:
+- “Mostrar: [10 ▼]”
+  Opciones: 10 (default), 25, 50, 100, TODO
+
+Comportamiento:
+- Al cambiar el selector, recargar la lista con ese límite.
+- “TODO”:
+  - Mostrar todas las operaciones
+  - Si el volumen es alto, usar paginación o un límite de seguridad.
+
+Filtros simples:
+- Por par
+- Por tipo de resultado: Ganadoras / Perdedoras / Todas
+
+--------------------------------------------------
+5) COMPATIBILIDAD CON CONTROL DE RIESGO
+--------------------------------------------------
+Todo lo anterior NO debe modificar:
+- Stop-loss
+- Take-profit
+- Trailing stop
+- Tamaño de trade
+- Exposición máxima por par o total
+
+Las posiciones abiertas:
+- Siguen gestionadas por el motor de riesgo actual.
+- No se ven afectadas por los cambios de UI.
+
+--------------------------------------------------
+6) OBJETIVO FINAL
+--------------------------------------------------
+- Visualizar claramente:
+  - Qué posiciones están abiertas
+  - Cuánto ganan o pierden en tiempo real
+  - El resultado exacto de cada operación cerrada
+- Mantener el bot más transparente y fácil de auditar, sin cambiar su lógica de trading.
