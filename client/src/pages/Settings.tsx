@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HardDrive, Bot, Server, Cog, AlertTriangle } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -22,6 +22,9 @@ interface BotConfig {
   trailingStopEnabled: boolean;
   trailingStopPercent: string;
   nonceErrorAlertsEnabled: boolean;
+  tradingHoursEnabled: boolean;
+  tradingHoursStart: string;
+  tradingHoursEnd: string;
 }
 
 export default function Settings() {
@@ -129,6 +132,77 @@ export default function Settings() {
                     data-testid="switch-nonce-alerts"
                   />
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Trading Hours Settings */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-500/20 rounded-lg">
+                    <Clock className="h-6 w-6 text-blue-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Horario de Trading</CardTitle>
+                    <CardDescription>Limita las operaciones a horas de mayor liquidez (UTC).</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card/30">
+                  <div className="space-y-0.5">
+                    <Label>Activar Filtro de Horario</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Solo opera dentro del horario configurado (evita baja liquidez nocturna)
+                    </p>
+                  </div>
+                  <Switch 
+                    checked={config?.tradingHoursEnabled ?? true}
+                    onCheckedChange={(checked) => updateMutation.mutate({ tradingHoursEnabled: checked })}
+                    data-testid="switch-trading-hours"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label className="text-sm">Hora de Inicio (UTC)</Label>
+                    <Input 
+                      type="number"
+                      min="0"
+                      max="23"
+                      defaultValue={config?.tradingHoursStart ?? "8"}
+                      key={`start-${config?.tradingHoursStart}`}
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value);
+                        if (!isNaN(val) && val >= 0 && val <= 23) {
+                          updateMutation.mutate({ tradingHoursStart: val.toString() });
+                        }
+                      }}
+                      className="font-mono bg-background/50"
+                      data-testid="input-trading-hours-start"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-sm">Hora de Fin (UTC)</Label>
+                    <Input 
+                      type="number"
+                      min="0"
+                      max="23"
+                      defaultValue={config?.tradingHoursEnd ?? "22"}
+                      key={`end-${config?.tradingHoursEnd}`}
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value);
+                        if (!isNaN(val) && val >= 0 && val <= 23) {
+                          updateMutation.mutate({ tradingHoursEnd: val.toString() });
+                        }
+                      }}
+                      className="font-mono bg-background/50"
+                      data-testid="input-trading-hours-end"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Horario actual: {config?.tradingHoursStart ?? "8"}:00 - {config?.tradingHoursEnd ?? "22"}:00 UTC
+                </p>
               </CardContent>
             </Card>
 

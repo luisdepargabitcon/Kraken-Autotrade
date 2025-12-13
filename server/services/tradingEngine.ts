@@ -116,7 +116,6 @@ export class TradingEngine {
   private pairCooldowns: Map<string, number> = new Map();
   private lastExposureAlert: Map<string, number> = new Map();
   private stopLossCooldowns: Map<string, number> = new Map();
-  private tradingHoursEnabled: boolean = true;
   private spreadFilterEnabled: boolean = true;
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
@@ -214,15 +213,19 @@ export class TradingEngine {
   }
 
   // === MEJORA 2: Horarios de Trading ===
-  private isWithinTradingHours(): boolean {
-    if (!this.tradingHoursEnabled) {
-      return true;
+  private isWithinTradingHours(config: any): { withinHours: boolean; hourUTC: number; start: number; end: number } {
+    const tradingHoursEnabled = config.tradingHoursEnabled ?? true;
+    const start = parseInt(config.tradingHoursStart?.toString() || "8");
+    const end = parseInt(config.tradingHoursEnd?.toString() || "22");
+    
+    if (!tradingHoursEnabled) {
+      return { withinHours: true, hourUTC: new Date().getUTCHours(), start, end };
     }
     
     const now = new Date();
     const hourUTC = now.getUTCHours();
     
-    return hourUTC >= TRADING_HOURS_START && hourUTC < TRADING_HOURS_END;
+    return { withinHours: hourUTC >= start && hourUTC < end, hourUTC, start, end };
   }
 
   // === MEJORA 3: Position Sizing Dinámico ===
@@ -498,9 +501,9 @@ El bot de trading autónomo está activo.
       }
 
       // MEJORA 2: Verificar horarios de trading
-      if (!this.isWithinTradingHours()) {
-        const hourUTC = new Date().getUTCHours();
-        log(`Fuera de horario de trading (${hourUTC}h UTC). Horario: ${TRADING_HOURS_START}h-${TRADING_HOURS_END}h UTC`, "trading");
+      const tradingHoursCheck = this.isWithinTradingHours(config);
+      if (!tradingHoursCheck.withinHours) {
+        log(`Fuera de horario de trading (${tradingHoursCheck.hourUTC}h UTC). Horario: ${tradingHoursCheck.start}h-${tradingHoursCheck.end}h UTC`, "trading");
         return;
       }
 
