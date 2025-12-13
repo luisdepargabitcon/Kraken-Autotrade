@@ -46,6 +46,11 @@ const KRAKEN_MINIMUMS: Record<string, number> = {
 
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
+// Kraken fee structure (taker fees for market orders)
+const KRAKEN_FEE_PCT = 0.26; // 0.26% per trade
+const ROUND_TRIP_FEE_PCT = KRAKEN_FEE_PCT * 2; // ~0.52% for buy + sell
+const MIN_PROFIT_MULTIPLIER = 2; // Take-profit debe ser al menos 2x las fees
+
 interface OpenPosition {
   amount: number;
   entryPrice: number;
@@ -170,6 +175,24 @@ export class TradingEngine {
     }
     this.lastExposureAlert.set(pair, Date.now());
     return true;
+  }
+
+  private isProfitableAfterFees(takeProfitPct: number): { 
+    isProfitable: boolean; 
+    minProfitRequired: number; 
+    roundTripFees: number;
+    netExpectedProfit: number;
+  } {
+    const roundTripFees = ROUND_TRIP_FEE_PCT;
+    const minProfitRequired = roundTripFees * MIN_PROFIT_MULTIPLIER;
+    const netExpectedProfit = takeProfitPct - roundTripFees;
+    
+    return {
+      isProfitable: takeProfitPct >= minProfitRequired,
+      minProfitRequired,
+      roundTripFees,
+      netExpectedProfit,
+    };
   }
 
   async start() {
@@ -581,6 +604,23 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
         const botConfig = await storage.getBotConfig();
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
+        const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
+        
+        // Verificar que el take-profit sea rentable después de comisiones
+        const profitCheck = this.isProfitableAfterFees(takeProfitPct);
+        if (!profitCheck.isProfitable) {
+          log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
+          
+          await botLogger.info("TRADE_REJECTED_LOW_PROFIT", `Trade rechazado por baja rentabilidad esperada`, {
+            pair,
+            takeProfitPct,
+            roundTripFees: profitCheck.roundTripFees,
+            minProfitRequired: profitCheck.minProfitRequired,
+            netExpectedProfit: profitCheck.netExpectedProfit,
+          });
+          
+          return;
+        }
         
         let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
         tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
