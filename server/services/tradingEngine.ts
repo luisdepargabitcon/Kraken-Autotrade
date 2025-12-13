@@ -20,34 +20,18 @@ interface TradeSignal {
 }
 
 interface RiskConfig {
-  maxPositionPercent: number;
-  minTradeUSD: number;
   maxTradeUSD: number;
-  stopLossPercent: number;
-  takeProfitPercent: number;
 }
 
 const RISK_LEVELS: Record<string, RiskConfig> = {
   low: {
-    maxPositionPercent: 1,
-    minTradeUSD: 5,
     maxTradeUSD: 20,
-    stopLossPercent: 2,
-    takeProfitPercent: 3,
   },
   medium: {
-    maxPositionPercent: 3,
-    minTradeUSD: 10,
     maxTradeUSD: 50,
-    stopLossPercent: 5,
-    takeProfitPercent: 7,
   },
   high: {
-    maxPositionPercent: 5,
-    minTradeUSD: 20,
     maxTradeUSD: 100,
-    stopLossPercent: 10,
-    takeProfitPercent: 15,
   },
 };
 
