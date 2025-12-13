@@ -79,29 +79,179 @@ Preferred communication style: Simple, everyday language.
 - **Comandos disponibles**: `/estado`, `/pausar`, `/reanudar`, `/ultimas`, `/ayuda`
 - **Detección automática**: Usa `DOCKER_ENV=true` o `NODE_ENV=production` para activar polling
 
-## Risk Management Features
+## Motor de Trading (TradingEngine)
 
-### Exposure Control (NEW)
-Limits how much capital can be committed in open positions:
-- **maxPairExposurePct**: Maximum % of balance in a single pair (default 25%)
-- **maxTotalExposurePct**: Maximum % of balance across all positions (default 60%)
-- Configurable from UI in Strategies page ("Control de Exposición")
-- Blocks new trades if limits would be exceeded
-- Logs TRADE_BLOCKED event and sends Telegram alert
+El motor de trading es el corazón del bot, ubicado en `server/services/tradingEngine.ts`. Gestiona todo el ciclo de vida de las operaciones de forma autónoma.
 
-### Existing Controls
-- **Stop-Loss**: Auto-sells if price drops X% from entry
-- **Take-Profit**: Auto-sells if price rises X% from entry
-- **Trailing Stop**: Dynamic stop-loss that follows price upward
-- **Daily Loss Limit**: Pauses trading if daily losses exceed X%
+### Ciclo de Trading (`runTradingCycle`)
 
-### Position Persistence
-Las posiciones abiertas se guardan en la base de datos y sobreviven reinicios del bot:
-- **Al comprar**: La posición se guarda con par, cantidad, precio de entrada y timestamp
-- **Al vender parcialmente**: Se actualiza la cantidad restante en la BD
-- **Al cerrar posición**: Se elimina de la BD
-- **Al reiniciar**: El bot carga automáticamente las posiciones de la BD
-- Esto evita perder el tracking de operaciones pendientes tras reinicios o actualizaciones
+El bot ejecuta un ciclo cada 10-30 segundos (según estrategia):
+
+1. **Obtener balance fresco**: Consulta Kraken API para obtener balances actualizados
+2. **Reset diario**: A medianoche resetea el P&L diario y límites
+3. **Verificar límite diario**: Si las pérdidas superan el límite, pausa nuevas compras
+4. **Verificar Stop-Loss/Take-Profit**: Para cada posición abierta, evalúa si debe cerrar
+5. **Analizar pares activos**: Para cada par, ejecuta la estrategia seleccionada
+6. **Ejecutar trades**: Si hay señal válida con confianza > 60%, ejecuta la operación
+
+### Estrategias Disponibles
+
+- **Momentum**: Detecta tendencias fuertes usando RSI, volumen y cambio de precio
+- **Mean Reversion**: Compra en sobreventas (RSI < 30), vende en sobrecompras (RSI > 70)
+- **Scalping**: Operaciones rápidas aprovechando pequeños movimientos (ciclo 10s)
+- **Grid Trading**: Coloca órdenes en niveles de precio predefinidos
+
+### Análisis Multi-Timeframe (MTF)
+
+El bot analiza 3 temporalidades simultáneamente:
+- **5 minutos**: Tendencia corto plazo
+- **1 hora**: Tendencia medio plazo
+- **4 horas**: Tendencia largo plazo
+
+Las señales se filtran según alineación de tendencias:
+- Si compra pero 1h y 4h son bajistas → señal rechazada
+- Si todas las tendencias coinciden → +15% confianza
+
+### Ejecución de Trades (`executeTrade`)
+
+Al ejecutar una operación:
+1. Envía orden de mercado a Kraken
+2. Guarda trade en base de datos con txid
+3. Actualiza posición en memoria y BD
+4. Calcula P&L si es venta
+5. Envía notificación a Telegram
+6. Registra evento en botLogger
+
+---
+
+## Gestión de Riesgo
+
+### Control de Exposición
+
+Limita cuánto capital puede estar comprometido en posiciones abiertas:
+
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `maxPairExposurePct` | 25% | Máximo por par individual |
+| `maxTotalExposurePct` | 60% | Máximo total en todas las posiciones |
+| `riskPerTradePct` | 15% | Porcentaje del balance por operación |
+
+**Flujo de control de exposición:**
+```
+1. Calcular exposición actual (posiciones abiertas × precio entrada)
+2. Calcular máximo disponible = min(límite_par - actual_par, límite_total - actual_total)
+3. Si trade > máximo disponible:
+   a. Si máximo < mínimo de Kraken → Cooldown 15 min, alerta Telegram (max 1/30min)
+   b. Si máximo >= mínimo → Ajustar trade al máximo permitido
+4. Ejecutar trade (original o ajustado)
+5. Telegram muestra "📉 Ajustado por exposición" si fue reducido
+```
+
+### Stop-Loss y Take-Profit
+
+Verificados en cada ciclo para todas las posiciones abiertas:
+
+| Control | Funcionamiento |
+|---------|----------------|
+| **Stop-Loss** | Si precio cae X% desde entrada → venta automática |
+| **Take-Profit** | Si precio sube X% desde entrada → venta automática |
+| **Trailing Stop** | Stop-loss dinámico que sigue al precio. Si precio sube, el stop sube. Si cae X% desde máximo → venta |
+
+**Ejemplo Trailing Stop:**
+- Compra a $100, trailing 2%
+- Precio sube a $110 → stop en $107.80 (2% bajo máximo)
+- Precio sube a $120 → stop sube a $117.60
+- Precio cae a $117 → VENTA (cayó >2% desde $120)
+
+### Límite de Pérdida Diaria
+
+Protección contra días de pérdidas excesivas:
+- Configurable en UI (default 10%)
+- Se calcula: `(P&L_diario / balance_inicial_día) × 100`
+- Si supera límite negativo → pausa nuevas compras
+- Stop-Loss y Take-Profit siguen activos (pueden cerrar posiciones)
+- Reset automático a medianoche
+
+### Sistema de Cooldown
+
+Evita bucles infinitos cuando no hay exposición disponible:
+
+| Cooldown | Duración | Trigger |
+|----------|----------|---------|
+| Par sin exposición | 15 min | Cuando `effectiveMaxAllowed < minRequiredUSD` |
+| Saldo insuficiente | 15 min | Cuando `freshUsdBalance < minRequiredUSD` |
+| Volumen bajo | 15 min | Cuando `tradeVolume < minVolume` |
+
+### Mínimos de Kraken
+
+El bot respeta los volúmenes mínimos de Kraken:
+```
+BTC/USD: 0.0001 BTC
+ETH/USD: 0.01 ETH
+SOL/USD: 0.1 SOL
+XRP/USD: 10 XRP
+TON/USD: 1 TON
+```
+
+### Persistencia de Posiciones
+
+Las posiciones sobreviven reinicios del bot:
+- **Al comprar**: Guarda par, cantidad, precio entrada, precio máximo, timestamp
+- **Al vender parcialmente**: Actualiza cantidad restante
+- **Al cerrar**: Elimina de BD
+- **Al iniciar**: Carga todas las posiciones de la BD
+
+---
+
+## Sistema de Telegram
+
+### Modos de Operación
+
+| Entorno | Polling | Funcionalidad |
+|---------|---------|---------------|
+| Replit | Desactivado | Solo envía notificaciones |
+| Docker/NAS | Activado | Envía notificaciones + recibe comandos |
+
+Detección automática: `DOCKER_ENV=true` o `NODE_ENV=production`
+
+### Comandos Disponibles (solo Docker)
+
+| Comando | Descripción |
+|---------|-------------|
+| `/estado` | Muestra estado del bot, balance y posiciones |
+| `/pausar` | Pausa el bot de trading |
+| `/reanudar` | Reanuda el bot de trading |
+| `/ultimas` | Muestra últimas 5 operaciones |
+| `/ayuda` | Lista de comandos disponibles |
+
+### Tipos de Notificaciones
+
+| Evento | Emoji | Descripción |
+|--------|-------|-------------|
+| Bot iniciado | 🤖 | Estrategia, pares activos, balance |
+| Bot detenido | 🛑 | Confirmación de parada |
+| Compra ejecutada | 🟢 | Par, cantidad, precio, razón |
+| Venta ejecutada | 🔴 | Par, cantidad, precio, P&L |
+| Stop-Loss | 🛑 | Posición cerrada por pérdida |
+| Take-Profit | 🎯 | Posición cerrada por ganancia |
+| Trailing Stop | 📉 | Posición cerrada por retroceso |
+| Límite diario | ⚠️ | Trading pausado por pérdidas |
+| Par en cooldown | ⏸️ | Sin exposición disponible |
+| Trade ajustado | 📉 | Monto reducido por exposición |
+| Error nonce | ⚠️ | Problema con API Kraken |
+
+### Rate Limiting de Alertas
+
+Para evitar spam en Telegram:
+- **Alertas de exposición**: Máximo 1 cada 30 minutos por par
+- **Errores de nonce**: Máximo 1 cada 30 minutos
+- **Cooldown de par**: Solo se notifica 1 vez, luego silencio hasta que se resuelva
+
+### Múltiples Chats
+
+El bot puede enviar a múltiples chats (separados por coma en config):
+- Alertas de trades: Canal principal
+- Alertas de sistema: Canal de sistema (opcional)
 
 ### PostgreSQL Database
 - **ORM**: Drizzle ORM with `drizzle-kit` for migrations
