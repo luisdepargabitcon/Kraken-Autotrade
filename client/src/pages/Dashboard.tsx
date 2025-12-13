@@ -35,11 +35,18 @@ export default function Dashboard() {
   const formatBalance = (symbol: string) => {
     if (!data?.balances) return { balance: "0", value: "$0.00", change: 0 };
     
-    const krakenSymbol = symbol === "BTC" ? "XXBT" : symbol === "ETH" ? "XETH" : symbol === "SOL" ? "SOL" : "ZUSD";
+    const symbolMap: Record<string, string> = {
+      "BTC": "XXBT", "ETH": "XETH", "SOL": "SOL", "XRP": "XXRP", "TON": "TON", "USD": "ZUSD"
+    };
+    const pairMap: Record<string, string> = {
+      "BTC": "XXBTZUSD", "ETH": "XETHZUSD", "SOL": "SOLUSD", "XRP": "XXRPZUSD", "TON": "TONUSD"
+    };
+    
+    const krakenSymbol = symbolMap[symbol] || "ZUSD";
     const balance = parseFloat(data.balances[krakenSymbol] || "0");
     
-    const pricePair = symbol === "BTC" ? "XXBTZUSD" : symbol === "ETH" ? "XETHZUSD" : "SOLUSD";
-    const priceData = data.prices[pricePair];
+    const pricePair = pairMap[symbol];
+    const priceData = pricePair ? data.prices[pricePair] : null;
     const price = parseFloat(priceData?.price || "0");
     const change = parseFloat(priceData?.change || "0");
     
@@ -57,17 +64,19 @@ export default function Dashboard() {
     
     let total = parseFloat(data.balances["ZUSD"] || "0");
     
-    const btcBalance = parseFloat(data.balances["XXBT"] || "0");
-    const btcPrice = parseFloat(data.prices["XXBTZUSD"]?.price || "0");
-    total += btcBalance * btcPrice;
+    const assets = [
+      { symbol: "XXBT", pair: "XXBTZUSD" },
+      { symbol: "XETH", pair: "XETHZUSD" },
+      { symbol: "SOL", pair: "SOLUSD" },
+      { symbol: "XXRP", pair: "XXRPZUSD" },
+      { symbol: "TON", pair: "TONUSD" },
+    ];
     
-    const ethBalance = parseFloat(data.balances["XETH"] || "0");
-    const ethPrice = parseFloat(data.prices["XETHZUSD"]?.price || "0");
-    total += ethBalance * ethPrice;
-    
-    const solBalance = parseFloat(data.balances["SOL"] || "0");
-    const solPrice = parseFloat(data.prices["SOLUSD"]?.price || "0");
-    total += solBalance * solPrice;
+    for (const asset of assets) {
+      const balance = parseFloat(data.balances[asset.symbol] || "0");
+      const price = parseFloat(data.prices[asset.pair]?.price || "0");
+      total += balance * price;
+    }
     
     return `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
@@ -76,6 +85,8 @@ export default function Dashboard() {
   const btcData = formatBalance("BTC");
   const ethData = formatBalance("ETH");
   const solData = formatBalance("SOL");
+  const xrpData = formatBalance("XRP");
+  const tonData = formatBalance("TON");
 
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
@@ -108,7 +119,7 @@ export default function Dashboard() {
         
         <main className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 max-w-[1600px] mx-auto w-full">
           
-          <div className="col-span-1 lg:col-span-12 grid grid-cols-1 min-[400px]:grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+          <div className="col-span-1 lg:col-span-12 grid grid-cols-2 min-[500px]:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
             <AssetCard 
               symbol="USD" 
               name="Balance Total" 
@@ -136,6 +147,20 @@ export default function Dashboard() {
               balance={data?.krakenConnected ? solData.balance : "--"} 
               value={data?.krakenConnected ? solData.value : "--"} 
               change={solData.change} 
+            />
+            <AssetCard 
+              symbol="XRP" 
+              name="Ripple" 
+              balance={data?.krakenConnected ? xrpData.balance : "--"} 
+              value={data?.krakenConnected ? xrpData.value : "--"} 
+              change={xrpData.change} 
+            />
+            <AssetCard 
+              symbol="TON" 
+              name="Toncoin" 
+              balance={data?.krakenConnected ? tonData.balance : "--"} 
+              value={data?.krakenConnected ? tonData.value : "--"} 
+              change={tonData.change} 
             />
           </div>
 
