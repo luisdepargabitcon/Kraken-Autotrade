@@ -595,12 +595,84 @@ El bot de trading autónomo está activo.
           return;
         }
 
+        // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
+        const freshBalances = await this.krakenService.getBalance();
+        const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+        
+        // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
+        if (realAssetBalance < sellAmount * 0.995) {
+          log(`⚠️ Discrepancia de balance en ${pair}: Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
+          
+          // Si balance real es prácticamente cero (< mínimo de Kraken), eliminar posición
+          if (realAssetBalance < minVolume) {
+            log(`Posición huérfana eliminada en ${pair}: balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
+            
+            // NO modificar dailyPnL: si fue vendida manualmente, el usuario ya tiene el USD
+            // Pero SÍ debemos reconciliar exposure y cooldowns
+            
+            // Refrescar balance USD para tener métricas consistentes
+            this.currentUsdBalance = parseFloat(freshBalances?.ZUSD || freshBalances?.USD || "0");
+            
+            this.openPositions.delete(pair);
+            await this.deletePositionFromDB(pair);
+            
+            // Limpiar cooldowns obsoletos y establecer uno nuevo (15 min)
+            this.stopLossCooldowns.delete(pair);
+            this.lastExposureAlert.delete(pair);
+            this.setPairCooldown(pair); // Cooldown estándar de 15 minutos
+            this.lastTradeTime.set(pair, Date.now());
+            
+            if (this.telegramService.isInitialized()) {
+              await this.telegramService.sendMessage(`
+🔄 *Posición Huérfana Eliminada*
+
+*Par:* ${pair}
+*Registrada:* ${sellAmount.toFixed(8)}
+*Real en Kraken:* ${realAssetBalance.toFixed(8)}
+
+_La posición no existe en Kraken y fue eliminada._
+              `.trim());
+            }
+            
+            await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
+              pair,
+              registeredAmount: sellAmount,
+              realBalance: realAssetBalance,
+              newUsdBalance: this.currentUsdBalance,
+            });
+            return;
+          }
+          
+          // Si hay algo de balance pero menos del registrado, ajustar posición al real
+          log(`Ajustando posición ${pair} de ${sellAmount} a ${realAssetBalance}`, "trading");
+          position.amount = realAssetBalance;
+          this.openPositions.set(pair, position);
+          await this.savePositionToDB(pair, position);
+          
+          // Notificar ajuste
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendMessage(`
+🔧 *Posición Ajustada*
+
+*Par:* ${pair}
+*Cantidad anterior:* ${sellAmount.toFixed(8)}
+*Cantidad real:* ${realAssetBalance.toFixed(8)}
+
+_Se usará la cantidad real para la venta._
+            `.trim());
+          }
+          
+          // Continuar con la venta usando el balance real
+        }
+
         log(`${emoji} ${reason} para ${pair}`, "trading");
 
-        const pnl = (currentPrice - position.entryPrice) * position.amount;
+        // Usar position.amount (puede haber sido ajustado al balance real)
+        const actualSellAmount = position.amount;
+        const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
         const pnlPercent = priceChange;
 
-        const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, reason);
+        const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason);
         
         if (success && this.telegramService.isInitialized()) {
           const pnlEmoji = pnl >= 0 ? "💰" : "📉";
@@ -610,7 +682,7 @@ ${emoji} *${reason}*
 *Par:* ${pair}
 *Precio entrada:* $${position.entryPrice.toFixed(2)}
 *Precio actual:* $${currentPrice.toFixed(2)}
-*Cantidad vendida:* ${sellAmount}
+*Cantidad vendida:* ${actualSellAmount.toFixed(8)}
 
 ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
           `.trim(), "trades");

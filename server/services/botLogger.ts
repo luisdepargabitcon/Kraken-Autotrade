@@ -28,6 +28,7 @@ export type EventType =
   | "STOP_LOSS_HIT"
   | "TAKE_PROFIT_HIT"
   | "TRAILING_STOP_HIT"
+  | "ORPHAN_POSITION_CLEANED"
   | "NONCE_ERROR"
   | "BALANCE_CHECK"
   | "SYSTEM_ERROR";
