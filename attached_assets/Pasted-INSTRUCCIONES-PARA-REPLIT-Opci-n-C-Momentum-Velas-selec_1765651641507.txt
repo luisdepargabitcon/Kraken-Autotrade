@@ -1,0 +1,61 @@
+INSTRUCCIONES PARA REPLIT (Opción C: “Momentum (Velas)” + selección de timeframes + “Grandfather” de posiciones)
+
+OBJETIVO
+Crear un modo/estrategia nueva “Momentum (Velas)” que genere señales con velas reales (5m/15m/1h), manteniendo TODA la gestión de riesgo existente (tamaño de trade, exposición, SL/TP/Trailing). Además, al cambiar de modo, NO tocar posiciones abiertas: cada posición conserva el modelo con el que se abrió para poder comparar rendimiento por modelo.
+
+A) NUEVA ESTRATEGIA EN UI
+1) Añadir una tarjeta en “Estrategias”:
+   - Nombre: “Momentum (Velas)”
+2) Dentro de esa tarjeta, añadir selector:
+   - “Timeframe de señal”: 5m / 15m / 1h
+3) (Opcional) Mostrar filtros MTF que se usarán:
+   - Por defecto: 1h + 4h (como filtro/confirmación)
+
+B) CAMBIO CLAVE DE LÓGICA (SEÑAL)
+1) “Momentum (Velas)” NO debe usar priceHistory de ciclos (10–30s) para entry/exit.
+2) La señal (entry/exit) debe calcularse con OHLC de Kraken del timeframe elegido:
+   - getOHLC(pair, selectedTf)
+3) Recomendación: evaluar señal SOLO al cierre de vela del TF elegido (no cada 10–30s).
+
+C) GRANDfATHER (POSICIONES ABIERTAS NO SE TOCAN)
+1) Al cambiar de estrategia/mode:
+   - NO cerrar posiciones abiertas.
+   - NO recalcular su “modelo” con el modo nuevo.
+2) Guardar en cada posición abierta metadatos de origen:
+   - entryStrategy: "momentum_cycle" o "momentum_candles"
+   - entrySignalTf: "cycle_30s" o "5m"/"15m"/"1h"
+   - entryAt, entryPrice, qty, pair
+3) Para decisiones de salida por señal:
+   - Cada posición se evalúa con SU entryStrategy + entrySignalTf, aunque el usuario cambie el modo global.
+4) EXCEPCIÓN:
+   - Los controles globales de riesgo SIEMPRE aplican a todas las posiciones:
+     SL / TP / Trailing / maxExposurePerPair / maxExposureTotal
+   - (El tamaño de trade solo afecta a nuevas entradas)
+
+D) RIESGO Y SIZING (NO CAMBIAR)
+1) “Momentum (Velas)” debe usar exactamente el mismo:
+   - riskPerTradePct
+   - maxExposurePerPairPct
+   - maxExposureTotalPct
+   - SL/TP/Trailing
+2) Si no hay exposición disponible o no se cumple el mínimo de orden:
+   - Estado “Par en espera” (dedupe, no spam)
+
+E) TELEGRAM / UX (RECOMENDADO)
+1) En cada trade notificar:
+   - “Estrategia: Momentum (Velas) TF=15m” o “Momentum (Ciclos)”
+2) Si un par entra en “espera”, no repetir mensaje cada ciclo:
+   - 1 aviso por cooldown/estado, luego silencio hasta cambio.
+
+F) PERFORMANCE: COMPARAR MODELOS (LO QUE QUIERO CONSEGUIR)
+1) En /api/performance (o resumen equivalente), añadir breakdown por:
+   - entryStrategy + entrySignalTf
+2) Mostrar en Dashboard/Performance:
+   - PnL, winrate, nº trades por modelo (para ver qué rinde mejor)
+
+CRITERIOS DE ACEPTACIÓN
+- Activar “Momentum (Velas)” NO cierra posiciones abiertas.
+- Cada posición muestra en UI con qué modelo/TF fue abierta.
+- Las nuevas entradas en “Momentum (Velas)” usan OHLC del TF seleccionado.
+- El riesgo/sizing/exposición funcionan igual que ahora.
+- El rendimiento se puede comparar por modelo/TF.
