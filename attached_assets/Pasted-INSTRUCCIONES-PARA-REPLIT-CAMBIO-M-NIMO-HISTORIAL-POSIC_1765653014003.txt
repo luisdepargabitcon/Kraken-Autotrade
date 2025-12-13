@@ -1,0 +1,69 @@
+INSTRUCCIONES PARA REPLIT (CAMBIO MÍNIMO) – HISTORIAL: “POSICIONES ABIERTAS” + “GANANCIA/PÉRDIDA” EN OPERACIONES
+
+OBJETIVO (SIN REHACER NADA)
+1) En la pestaña HISTORIAL, añadir arriba una sección “POSICIONES ABIERTAS”.
+2) En la lista actual de OPERACIONES, añadir 2 campos por fila:
+   - Ganancia/Pérdida (USD)
+   - Ganancia/Pérdida (%)
+
+PARTE A — POSICIONES ABIERTAS (UI + API sencilla)
+A1) Backend: crear un endpoint simple que devuelva las posiciones abiertas reales.
+- Ruta: GET /api/open-positions
+- Debe devolver solo posiciones “sin cerrar” por par (spot):
+  Campos mínimos por posición:
+  - pair (ej: BTC/USD)
+  - entryTime
+  - entryPrice (precio medio de compra)
+  - qty (cantidad)
+  - costUsd (coste en USD)
+  - lastPrice (precio actual; si lo tenéis ya en el bot)
+  - unrealizedUsd = (lastPrice - entryPrice) * qty
+  - unrealizedPct = unrealizedUsd / costUsd * 100
+  - (opcional) strategyName
+
+A2) ¿De dónde sacar “posiciones abiertas” sin complicarse?
+- Opción rápida (recomendada): usar el “estado interno” del bot si ya guarda la última compra por par (entryPrice/qty).
+- Si no existe estado: detectar “abierta” como “último trade del par fue BUY y no hay SELL posterior”.
+
+A3) Frontend (Historial):
+- Encima del bloque actual de operaciones, añadir un bloque “POSICIONES ABIERTAS”.
+- Renderizar una tabla simple con columnas:
+  Par | Entrada | Precio entrada | Cantidad | Precio actual | P&L USD | P&L %
+- Refresco:
+  - Botón “Actualizar”
+  - (opcional) auto-refresh cada 15–30s llamando a /api/open-positions
+
+PARTE B — GANANCIA/PÉRDIDA EN OPERACIONES (SIN RECONSTRUIR “TRADES”)
+B1) Backend: al devolver la lista de operaciones actuales (órdenes), añadir campos de P&L SOLO cuando sea un SELL de cierre.
+- Para cada fila SELL que cierre una compra previa del mismo par:
+  - Buscar la BUY anterior asociada (la más reciente anterior a ese SELL; asumiendo 1 posición por par).
+  - Calcular:
+    pnlUsd = (sellPrice - buyPrice) * qtyClosed - feesUsd
+    pnlPct = pnlUsd / (buyPrice * qtyClosed) * 100
+- Añadir al JSON del SELL:
+  - linkedBuyPrice
+  - linkedBuyTime
+  - pnlUsd
+  - pnlPct
+  - feesUsd (si lo tenéis)
+IMPORTANTE: Si no podéis asociar BUY->SELL con seguridad, dejar pnl en null y mostrar “—” en UI.
+
+B2) Frontend (Historial > Operaciones):
+- Mantener la lista como está.
+- Añadir 2 columnas nuevas:
+  - P&L (USD)
+  - P&L (%)
+- Reglas de visualización:
+  - Si pnlUsd existe:
+    - verde si > 0
+    - rojo si < 0
+  - Si no existe: mostrar “—”
+- (opcional) En cada SELL, mostrar “Compra: $X” para entender el cálculo.
+
+RESULTADO ESPERADO
+- Se ve una caja/tabla de “POSICIONES ABIERTAS” con P&L no realizado en tiempo real.
+- En “Operaciones”, los SELL muestran la ganancia/pérdida de esa operación (y los BUY muestran “—”).
+
+NOTA (para evitar confusiones)
+- “POSICIONES ABIERTAS” = P&L no realizado (unrealized).
+- “OPERACIONES” (SELL cerrados) = P&L realizado (realized).
