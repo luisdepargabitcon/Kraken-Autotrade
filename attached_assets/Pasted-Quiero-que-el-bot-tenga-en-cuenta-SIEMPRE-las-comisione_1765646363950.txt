@@ -1,0 +1,60 @@
+Quiero que el bot tenga en cuenta SIEMPRE las comisiones de Kraken en todos los cálculos de resultados y estadísticas. Ahora mismo veo que en el log de operaciones ya llega el campo `fee` de Kraken, pero no parece estar integrado en el rendimiento que muestra el panel.
+
+1) Comisiones y rendimiento real del bot
+- Necesito que todas las métricas de rendimiento estén calculadas **netas de comisiones**, no brutas:
+  - Gráfica de rendimiento del bot / portafolio.
+  - Beneficio/perdida acumulado.
+  - Cualquier KPI de rentabilidad que muestre el panel.
+
+Requisitos:
+- Para cada operación (trade) usar:
+  - `cost` → importe de la operación
+  - `fee` → comisión de Kraken
+- El PnL que se acumula en el rendimiento debe restar siempre las comisiones:
+  - PnL_neto = PnL_bruto - fees_totales.
+- Si estás calculando PnL por “round-trip” (compra + venta), suma las fees de ambas patas y descuéntalas.
+
+En resumen: si una operación gana 1 USD pero paga 0.8 USD en comisiones, el bot debe reflejar que la ganancia real es 0.2 USD, no 1 USD.
+
+2) Registro e histórico de operaciones
+Ahora mismo el registro muestra pares, precio, cantidad, coste, fee, etc. Lo que quiero es que también aparezca claramente la GANANCIA / PÉRDIDA de cada operación, incluyendo comisiones.
+
+Para cada operación cerrada (o para cada round-trip si así lo tenéis modelado), quiero ver en el histórico:
+- Ganancia / pérdida neta en USD (o en la divisa base).
+- Porcentaje de ganancia / pérdida sobre el capital usado en esa operación.
+- Ambos valores deben ser **después de restar las fees**.
+
+Ejemplo de columnas adicionales en el histórico:
+- `P&L neto`   (ej. +0.45 USD)
+- `% P&L neto` (ej. +1.2%)
+
+De esta forma, al revisar el historial se ve inmediatamente qué operaciones han sido rentables de verdad después de comisiones.
+
+3) Panel frontal – activos visibles
+En el panel frontal solo aparecen 3 criptos principales con su saldo. Para mí tiene sentido ver TODAS las que realmente estoy utilizando con el bot.
+
+Quiero que en el panel aparezcan estas 5:
+- BTC
+- ETH
+- SOL
+- XRP
+- TON
+
+Requisitos:
+- Añadir tarjetas/saldos para XRP y TON igual que las existentes para BTC, ETH y SOL.
+- Que los datos vengan de los balances reales de Kraken (como ya está para las otras).
+- Dejar claro si el valor mostrado es en la divisa base (USD) o en unidades de la cripto.
+
+4) Resumen
+- El bot debe trabajar SIEMPRE con resultados NETOS (comisiones incluidas) para:
+  - Gráfica de rendimiento
+  - KPIs de rentabilidad
+  - PnL en histórico
+- El historial debe mostrar ganancia/pérdida neta y porcentaje por operación.
+- El panel frontal debe mostrar las 5 criptos que uso con el bot: BTC, ETH, SOL, XRP y TON.
+
+Por favor, revisa el flujo completo:
+- Dónde se guarda `fee` en la base de datos.
+- Cómo se calculan los PnL acumulados y la gráfica de rendimiento.
+- Cómo se rellenan las filas del histórico.
+Y ajusta el cálculo para que todo sea neto de comisiones y se vean las 5 criptos en el panel.
