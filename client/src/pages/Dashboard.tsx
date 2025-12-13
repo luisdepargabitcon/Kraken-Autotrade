@@ -82,11 +82,18 @@ export default function Dashboard() {
   };
 
   const usdData = formatBalance("USD");
-  const btcData = formatBalance("BTC");
-  const ethData = formatBalance("ETH");
-  const solData = formatBalance("SOL");
-  const xrpData = formatBalance("XRP");
-  const tonData = formatBalance("TON");
+  
+  const cryptoAssets = [
+    { symbol: "BTC", name: "Bitcoin", ...formatBalance("BTC") },
+    { symbol: "ETH", name: "Ethereum", ...formatBalance("ETH") },
+    { symbol: "SOL", name: "Solana", ...formatBalance("SOL") },
+    { symbol: "XRP", name: "Ripple", ...formatBalance("XRP") },
+    { symbol: "TON", name: "Toncoin", ...formatBalance("TON") },
+  ].sort((a, b) => {
+    const valueA = parseFloat(a.value.replace(/[$,]/g, "")) || 0;
+    const valueB = parseFloat(b.value.replace(/[$,]/g, "")) || 0;
+    return valueB - valueA;
+  });
 
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
@@ -127,41 +134,16 @@ export default function Dashboard() {
               value={data?.krakenConnected ? getTotalBalance() : "--"} 
               change={0} 
             />
-            <AssetCard 
-              symbol="BTC" 
-              name="Bitcoin" 
-              balance={data?.krakenConnected ? btcData.balance : "--"} 
-              value={data?.krakenConnected ? btcData.value : "--"} 
-              change={btcData.change} 
-            />
-            <AssetCard 
-              symbol="ETH" 
-              name="Ethereum" 
-              balance={data?.krakenConnected ? ethData.balance : "--"} 
-              value={data?.krakenConnected ? ethData.value : "--"} 
-              change={ethData.change} 
-            />
-            <AssetCard 
-              symbol="SOL" 
-              name="Solana" 
-              balance={data?.krakenConnected ? solData.balance : "--"} 
-              value={data?.krakenConnected ? solData.value : "--"} 
-              change={solData.change} 
-            />
-            <AssetCard 
-              symbol="XRP" 
-              name="Ripple" 
-              balance={data?.krakenConnected ? xrpData.balance : "--"} 
-              value={data?.krakenConnected ? xrpData.value : "--"} 
-              change={xrpData.change} 
-            />
-            <AssetCard 
-              symbol="TON" 
-              name="Toncoin" 
-              balance={data?.krakenConnected ? tonData.balance : "--"} 
-              value={data?.krakenConnected ? tonData.value : "--"} 
-              change={tonData.change} 
-            />
+            {cryptoAssets.map((asset) => (
+              <AssetCard 
+                key={asset.symbol}
+                symbol={asset.symbol} 
+                name={asset.name} 
+                balance={data?.krakenConnected ? asset.balance : "--"} 
+                value={data?.krakenConnected ? asset.value : "--"} 
+                change={asset.change} 
+              />
+            ))}
           </div>
 
           <div className="col-span-1 lg:col-span-9 h-[280px] sm:h-[350px] md:h-[400px] lg:h-[500px]">
