@@ -27,6 +27,8 @@ const PRICE_PAIRS: Record<string, string> = {
   "XXBT": "XXBTZUSD",
   "XETH": "XETHZUSD",
   "SOL": "SOLUSD",
+  "XXRP": "XXRPZUSD",
+  "TON": "TONUSD",
 };
 
 export default function Wallet() {

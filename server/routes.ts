@@ -282,7 +282,7 @@ export async function registerRoutes(
         try {
           balances = await krakenService.getBalance() as Record<string, string>;
           
-          const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD"];
+          const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD", "XXRPZUSD", "TONUSD"];
           for (const pair of pairs) {
             try {
               const ticker = await krakenService.getTicker(pair);
