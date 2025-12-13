@@ -1,0 +1,61 @@
+OBJETIVO: Implementar “Modo nuevo” (Momentum por Velas / Opción C) sin afectar posiciones abiertas, usando enfoque “Grandfather” (Opción 2) + trazabilidad por posición para comparar rendimiento por modelo/estrategia.
+
+1) COMPORTAMIENTO AL CAMBIAR DE MODO (Grandfather / Lock por posición)
+- Al activar el modo nuevo, NO cerrar posiciones abiertas.
+- Las posiciones ya abiertas deben conservar el “modelo/estrategia” con el que fueron abiertas hasta que se cierren.
+- El modo nuevo solo aplica a NUEVAS ENTRADAS.
+
+2) METADATOS POR POSICIÓN (para auditoría y comparativa)
+Añadir a la estructura/tabla de posiciones abiertas (o al registro equivalente):
+- entryStrategy: string (ej: "momentum_cycle", "momentum_candles")
+- entrySignalTf: string (ej: "cycle_30s", "5m", "15m", "1h")
+- entryFilterTfs: array/string (ej: ["1h","4h"])
+- entryAt: timestamp
+- entryPrice: number
+- positionId: unique id
+- optionally: entryConfidence / signalReason (texto corto)
+
+Cuando se abre una posición:
+- Guardar estos campos inmediatamente (BD si existe open_positions; si no, en tabla de trades + estado).
+- Mostrar estos campos en UI (Wallet/Positions) para saber “con qué modelo se abrió”.
+
+3) LÓGICA DE SALIDA (exit) “por origen”
+- Para cada posición abierta:
+  - Calcular la salida (exit signal) usando el MISMO entryStrategy + entrySignalTf guardados en la posición.
+  - Es decir, aunque el usuario cambie el modo global, esa posición sigue evaluándose con su propia estrategia de origen.
+- EXCEPCIÓN: risk controls globales SIEMPRE aplican:
+  - Stop Loss / Take Profit / Trailing Stop
+  - maxExposurePerPair / maxExposureTotal
+  - riskPerTradePct (solo relevante para nuevas entradas)
+
+4) UI: NUEVO MODO COMO ESTRATEGIA SEPARADA + TIMEFRAME SELECCIONABLE
+- Añadir una estrategia nueva en la pantalla “Estrategias”:
+  - Nombre: “Momentum (Velas)” o “Momentum HTF”
+- Dentro de esa estrategia:
+  - Selector “Timeframe de señal”: 5m / 15m / 1h (mínimo)
+  - MTF de filtro: por defecto 1h + 4h (o configurable)
+- Nota: este modo NO debe usar priceHistory de ciclos para generar entry/exit.
+
+5) EJECUCIÓN Y FRECUENCIA
+- Para “Momentum (Velas)”:
+  - Generar señales al cierre de vela del timeframe seleccionado (recomendado).
+  - No generar señales con el loop de 10–30 segundos (solo puede actualizar precios/estado).
+- Stops/TP/Trailing pueden evaluarse con mayor frecuencia (loop), pero la señal de estrategia debe ser por velas.
+
+6) COMPARATIVA DE RENDIMIENTO POR MODELO (lo que quiero conseguir)
+- En el endpoint /api/performance (o equivalente):
+  - Agrupar PnL, winrate, drawdown por entryStrategy y entrySignalTf.
+  - Ejemplo de output:
+    - "momentum_cycle": pnlUsd, trades, winRate
+    - "momentum_candles_15m": pnlUsd, trades, winRate
+- En UI (Dashboard/Performance):
+  - Añadir un filtro o desglose “Rendimiento por estrategia/modelo”.
+- En Telegram (opcional):
+  - En cada trade, incluir: “Estrategia: Momentum (Velas 15m)” o “Momentum (Ciclos)”.
+
+7) CRITERIOS DE ACEPTACIÓN
+- Cambiar de modo NO cierra posiciones abiertas.
+- En Wallet/Positions se ve claramente “Estrategia de entrada” por cada posición.
+- Una posición abierta antes del cambio sigue usando su estrategia de origen para señales de salida.
+- El modo nuevo abre nuevas posiciones usando velas del timeframe elegido.
+- El rendimiento se puede comparar por modelo/estrategia en performance.
