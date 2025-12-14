@@ -7,6 +7,7 @@ export const botConfig = pgTable("bot_config", {
   id: serial("id").primaryKey(),
   isActive: boolean("is_active").notNull().default(false),
   strategy: text("strategy").notNull().default("momentum"),
+  signalTimeframe: text("signal_timeframe").notNull().default("cycle"),
   riskLevel: text("risk_level").notNull().default("medium"),
   activePairs: text("active_pairs").array().notNull().default(["BTC/USD", "ETH/USD", "SOL/USD"]),
   stopLossPercent: decimal("stop_loss_percent", { precision: 5, scale: 2 }).notNull().default("5.00"),
@@ -100,6 +101,10 @@ export const openPositions = pgTable("open_positions", {
   highestPrice: decimal("highest_price", { precision: 18, scale: 8 }).notNull(),
   tradeId: text("trade_id"),
   krakenOrderId: text("kraken_order_id"),
+  entryStrategyId: text("entry_strategy_id").notNull().default("momentum_cycle"),
+  entrySignalTf: text("entry_signal_tf").notNull().default("cycle"),
+  signalConfidence: decimal("signal_confidence", { precision: 5, scale: 2 }),
+  signalReason: text("signal_reason"),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
