@@ -295,6 +295,144 @@ export class TradingEngine {
     };
   }
 
+  // === MOMENTUM (VELAS) - Helpers ===
+  private getTimeframeIntervalMinutes(timeframe: string): number {
+    switch (timeframe) {
+      case "5m": return 5;
+      case "15m": return 15;
+      case "1h": return 60;
+      default: return 5;
+    }
+  }
+
+  private async getLastClosedCandle(pair: string, timeframe: string): Promise<OHLCCandle | null> {
+    try {
+      const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
+      const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+      if (!candles || candles.length < 2) return null;
+      return candles[candles.length - 2];
+    } catch (error: any) {
+      log(`Error obteniendo vela cerrada ${pair}/${timeframe}: ${error.message}`, "trading");
+      return null;
+    }
+  }
+
+  private isNewCandleClosed(pair: string, timeframe: string, candleTime: number): boolean {
+    const key = `${pair}:${timeframe}`;
+    const lastTs = this.lastEvaluatedCandle.get(key) || 0;
+    if (candleTime > lastTs) {
+      this.lastEvaluatedCandle.set(key, candleTime);
+      return true;
+    }
+    return false;
+  }
+
+  private async analyzeWithCandleStrategy(
+    pair: string,
+    timeframe: string,
+    candle: OHLCCandle
+  ): Promise<TradeSignal> {
+    const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
+    const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+    if (!candles || candles.length < 20) {
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas" };
+    }
+    
+    const closedCandles = candles.slice(0, -1);
+    return this.momentumCandlesStrategy(pair, closedCandles, candle.close);
+  }
+
+  private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
+    if (candles.length < 20) {
+      return { action: "hold", pair, confidence: 0, reason: "Historial de velas insuficiente" };
+    }
+    
+    const closes = candles.map(c => c.close);
+    const shortEMA = this.calculateEMA(closes.slice(-10), 10);
+    const longEMA = this.calculateEMA(closes.slice(-20), 20);
+    const rsi = this.calculateRSI(closes.slice(-14));
+    const macd = this.calculateMACD(closes);
+    const bollinger = this.calculateBollingerBands(closes);
+    
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+    const isBullishCandle = lastCandle.close > lastCandle.open;
+    const isBearishCandle = lastCandle.close < lastCandle.open;
+    const candleBody = Math.abs(lastCandle.close - lastCandle.open);
+    const candleRange = lastCandle.high - lastCandle.low;
+    const bodyRatio = candleRange > 0 ? candleBody / candleRange : 0;
+    
+    const avgVolume = candles.slice(-10).reduce((sum, c) => sum + c.volume, 0) / 10;
+    const volumeRatio = avgVolume > 0 ? lastCandle.volume / avgVolume : 1;
+    const isHighVolume = volumeRatio > 1.5;
+    
+    let buySignals = 0;
+    let sellSignals = 0;
+    const reasons: string[] = [];
+
+    if (shortEMA > longEMA) buySignals++;
+    else if (shortEMA < longEMA) sellSignals++;
+
+    if (rsi < 30) { buySignals += 2; reasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
+    else if (rsi < 45) { buySignals++; }
+    else if (rsi > 70) { sellSignals += 2; reasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
+    else if (rsi > 55) { sellSignals++; }
+
+    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; reasons.push("MACD alcista"); }
+    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; reasons.push("MACD bajista"); }
+
+    if (bollinger.percentB < 20) { buySignals++; reasons.push("Precio en Bollinger inferior"); }
+    else if (bollinger.percentB > 80) { sellSignals++; reasons.push("Precio en Bollinger superior"); }
+
+    if (isBullishCandle && bodyRatio > 0.6) {
+      buySignals++;
+      reasons.push("Vela alcista fuerte");
+    } else if (isBearishCandle && bodyRatio > 0.6) {
+      sellSignals++;
+      reasons.push("Vela bajista fuerte");
+    }
+
+    if (isHighVolume) {
+      if (isBullishCandle) { buySignals++; reasons.push(`Volumen alto alcista (${volumeRatio.toFixed(1)}x)`); }
+      else if (isBearishCandle) { sellSignals++; reasons.push(`Volumen alto bajista (${volumeRatio.toFixed(1)}x)`); }
+    }
+
+    if (isBullishCandle && prevCandle && prevCandle.close < prevCandle.open) {
+      if (lastCandle.close > prevCandle.open) {
+        buySignals++;
+        reasons.push("Engulfing alcista");
+      }
+    }
+    if (isBearishCandle && prevCandle && prevCandle.close > prevCandle.open) {
+      if (lastCandle.close < prevCandle.open) {
+        sellSignals++;
+        reasons.push("Engulfing bajista");
+      }
+    }
+
+    const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.07));
+    
+    if (buySignals >= 4 && buySignals > sellSignals && rsi < 70) {
+      return {
+        action: "buy",
+        pair,
+        confidence,
+        reason: `Momentum Velas COMPRA: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+      };
+    }
+    
+    if (sellSignals >= 4 && sellSignals > buySignals && rsi > 30) {
+      return {
+        action: "sell",
+        pair,
+        confidence,
+        reason: `Momentum Velas VENTA: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+      };
+    }
+
+    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara velas (${buySignals}/${sellSignals})` };
+  }
+
   async start() {
     if (this.isRunning) return;
     
@@ -390,14 +528,18 @@ El bot de trading autónomo está activo.
           entryPrice: parseFloat(pos.entryPrice),
           highestPrice: parseFloat(pos.highestPrice),
           openedAt: new Date(pos.openedAt).getTime(),
+          entryStrategyId: pos.entryStrategyId || "momentum_cycle",
+          entrySignalTf: pos.entrySignalTf || "cycle",
+          signalConfidence: pos.signalConfidence ? parseFloat(pos.signalConfidence) : undefined,
+          signalReason: pos.signalReason || undefined,
         });
-        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice}`, "trading");
+        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf})`, "trading");
       }
       
       if (positions.length > 0) {
         log(`${positions.length} posiciones abiertas cargadas desde la base de datos`, "trading");
         if (this.telegramService.isInitialized()) {
-          const positionsList = positions.map(p => `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)}`).join("\n");
+          const positionsList = positions.map(p => `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)} (${p.entryStrategyId})`).join("\n");
           await this.telegramService.sendMessage(`📂 *Posiciones Abiertas*\n\n${positionsList}`);
         }
       }
@@ -413,6 +555,10 @@ El bot de trading autónomo está activo.
         entryPrice: position.entryPrice.toString(),
         amount: position.amount.toString(),
         highestPrice: position.highestPrice.toString(),
+        entryStrategyId: position.entryStrategyId,
+        entrySignalTf: position.entrySignalTf,
+        signalConfidence: position.signalConfidence?.toString(),
+        signalReason: position.signalReason,
       });
     } catch (error: any) {
       log(`Error guardando posición ${pair}: ${error.message}`, "trading");
@@ -526,8 +672,21 @@ El bot de trading autónomo está activo.
         return;
       }
 
+      const signalTimeframe = config.signalTimeframe || "cycle";
+      const isCandleMode = signalTimeframe !== "cycle" && config.strategy === "momentum";
+
       for (const pair of config.activePairs) {
-        await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
+        if (isCandleMode) {
+          const candle = await this.getLastClosedCandle(pair, signalTimeframe);
+          if (!candle) continue;
+          
+          if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
+            log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
+            await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+          }
+        } else {
+          await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
+        }
       }
     } catch (error: any) {
       log(`Error en ciclo de trading: ${error.message}`, "trading");
@@ -930,6 +1089,154 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       }
     } catch (error: any) {
       log(`Error analizando ${pair}: ${error.message}`, "trading");
+    }
+  }
+
+  private async analyzePairAndTradeWithCandles(
+    pair: string,
+    timeframe: string,
+    candle: OHLCCandle,
+    riskConfig: RiskConfig,
+    balances: any
+  ) {
+    try {
+      const lastTrade = this.lastTradeTime.get(pair) || 0;
+      if (Date.now() - lastTrade < this.MIN_TRADE_INTERVAL_MS) {
+        return;
+      }
+
+      const signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+      const strategyId = `momentum_candles_${timeframe}`;
+      
+      if (signal.action === "hold" || signal.confidence < 0.6) {
+        return;
+      }
+
+      const krakenPair = this.formatKrakenPair(pair);
+      const ticker = await this.krakenService.getTicker(krakenPair);
+      const tickerData: any = Object.values(ticker)[0];
+      if (!tickerData) return;
+
+      const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      const assetBalance = this.getAssetBalance(pair, balances);
+      const existingPosition = this.openPositions.get(pair);
+
+      if (signal.action === "buy") {
+        if (this.isPairInCooldown(pair)) return;
+        if (this.isPairInStopLossCooldown(pair)) {
+          log(`${pair}: En cooldown post stop-loss`, "trading");
+          return;
+        }
+
+        const spreadCheck = this.isSpreadAcceptable(tickerData);
+        if (!spreadCheck.acceptable) {
+          log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
+          return;
+        }
+
+        if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
+          log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          return;
+        }
+
+        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minRequiredUSD = minVolume * currentPrice;
+        const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
+
+        if (freshUsdBalance < minRequiredUSD) {
+          log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          this.setPairCooldown(pair);
+          return;
+        }
+
+        const botConfig = await storage.getBotConfig();
+        const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
+        const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
+        
+        const profitCheck = this.isProfitableAfterFees(takeProfitPct);
+        if (!profitCheck.isProfitable) {
+          log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
+          return;
+        }
+        
+        let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
+        tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
+
+        const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
+        tradeAmountUSD = tradeAmountUSD * confidenceFactor;
+
+        if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
+          const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
+          tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
+        }
+
+        const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
+        const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
+        const effectiveMaxAllowed = Math.min(exposure.maxAllowed, maxByBalance);
+        
+        if (effectiveMaxAllowed < minRequiredUSD) {
+          log(`${pair}: Sin exposición disponible`, "trading");
+          this.setPairCooldown(pair);
+          return;
+        }
+
+        let wasAdjusted = false;
+        let originalAmount = tradeAmountUSD;
+        
+        if (tradeAmountUSD > effectiveMaxAllowed) {
+          originalAmount = tradeAmountUSD;
+          tradeAmountUSD = effectiveMaxAllowed;
+          wasAdjusted = true;
+        }
+
+        const tradeVolume = tradeAmountUSD / currentPrice;
+
+        if (tradeVolume < minVolume) {
+          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          this.setPairCooldown(pair);
+          return;
+        }
+
+        const adjustmentInfo = wasAdjusted ? {
+          wasAdjusted: true,
+          originalAmountUsd: originalAmount,
+          adjustedAmountUsd: tradeAmountUSD
+        } : undefined;
+
+        const success = await this.executeTrade(
+          pair, 
+          "buy", 
+          tradeVolume.toFixed(8), 
+          currentPrice, 
+          `${signal.reason} [${strategyId}]`, 
+          adjustmentInfo,
+          { strategyId, timeframe, confidence: signal.confidence }
+        );
+        
+        if (success) {
+          this.lastTradeTime.set(pair, Date.now());
+        }
+
+      } else if (signal.action === "sell") {
+        if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
+          return;
+        }
+
+        const availableToSell = existingPosition?.amount || assetBalance;
+        const sellVolume = Math.min(availableToSell, availableToSell * 0.5);
+        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+
+        if (sellVolume < minVolume) {
+          return;
+        }
+
+        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${strategyId}]`);
+        if (success) {
+          this.lastTradeTime.set(pair, Date.now());
+        }
+      }
+    } catch (error: any) {
+      log(`Error analizando ${pair} con velas: ${error.message}`, "trading");
     }
   }
 
@@ -1485,7 +1792,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
     volume: string,
     price: number,
     reason: string,
-    adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number }
+    adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
+    strategyMeta?: { strategyId: string; timeframe: string; confidence: number }
   ): Promise<boolean> {
     try {
       log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)}`, "trading");
@@ -1520,6 +1828,11 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         this.currentUsdBalance -= volumeNum * price;
         const existing = this.openPositions.get(pair);
         let newPosition: OpenPosition;
+        
+        const entryStrategyId = strategyMeta?.strategyId || "momentum_cycle";
+        const entrySignalTf = strategyMeta?.timeframe || "cycle";
+        const signalConfidence = strategyMeta?.confidence;
+        
         if (existing && existing.amount > 0) {
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
@@ -1527,7 +1840,11 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             amount: totalAmount, 
             entryPrice: avgPrice,
             highestPrice: Math.max(existing.highestPrice, price),
-            openedAt: existing.openedAt
+            openedAt: existing.openedAt,
+            entryStrategyId: existing.entryStrategyId,
+            entrySignalTf: existing.entrySignalTf,
+            signalConfidence: existing.signalConfidence,
+            signalReason: existing.signalReason,
           };
           this.openPositions.set(pair, newPosition);
         } else {
@@ -1535,7 +1852,11 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             amount: volumeNum, 
             entryPrice: price,
             highestPrice: price,
-            openedAt: Date.now()
+            openedAt: Date.now(),
+            entryStrategyId,
+            entrySignalTf,
+            signalConfidence,
+            signalReason: reason,
           };
           this.openPositions.set(pair, newPosition);
         }
