@@ -1,0 +1,99 @@
+REPLIT — INSTRUCCIONES MODO “MOMENTUM (VELAS)”
+
+OBJETIVO
+Añadir un modo nuevo de trading llamado “Momentum (Velas)” que opere con velas reales de Kraken (no con ciclos de 10–30s), pensado para mantener operaciones abiertas durante horas. Este modo debe convivir con el actual “Momentum (Ciclos)” sin afectar posiciones abiertas.
+
+--------------------------------------------------
+1) NUEVA ESTRATEGIA EN UI
+--------------------------------------------------
+- Añadir una tarjeta nueva en la pestaña ESTRATEGIAS:
+  Nombre: “Momentum (Velas)”
+- Dentro de la tarjeta, incluir:
+  - Selector “Timeframe de señal”: 5m / 15m / 1h
+  - Texto informativo:
+    “Este modo genera señales con velas reales y reduce el scalping.”
+
+--------------------------------------------------
+2) CAMBIO DE FUENTE DE SEÑAL
+--------------------------------------------------
+- “Momentum (Velas)” NO debe usar:
+  - priceHistory de ciclos
+  - datos acumulados cada 10–30 segundos
+- Debe usar exclusivamente:
+  - OHLC de Kraken del timeframe seleccionado (getOHLC)
+
+--------------------------------------------------
+3) FRECUENCIA DE EVALUACIÓN
+--------------------------------------------------
+- La señal de entrada/salida debe evaluarse:
+  - Preferiblemente SOLO al cierre de vela del timeframe seleccionado
+- El loop rápido del bot puede seguir activo solo para:
+  - Stops
+  - Take Profit
+  - Trailing Stop
+  - Actualización de precios/estado
+
+--------------------------------------------------
+4) INDICADORES Y LÓGICA
+--------------------------------------------------
+- Usar los mismos indicadores ya existentes:
+  - EMA
+  - RSI
+  - MACD
+  - Bollinger (si aplica)
+- Aplicarlos sobre las velas del timeframe elegido.
+- Mantener el enfoque momentum (tendencia + confirmación).
+
+--------------------------------------------------
+5) MULTI-TIMEFRAME (FILTRO)
+--------------------------------------------------
+- El timeframe seleccionado es la SEÑAL principal.
+- Timeframes mayores actúan SOLO como filtro:
+  - Ejemplo:
+    - Señal: 15m
+    - Filtro: 1h y 4h
+- El filtro puede:
+  - Bloquear una entrada si la tendencia mayor es contraria
+  - Aumentar la confianza si están alineados
+- El filtro NO genera entradas por sí mismo.
+
+--------------------------------------------------
+6) GESTIÓN DE RIESGO (NO CAMBIAR)
+--------------------------------------------------
+El modo “Momentum (Velas)” debe usar exactamente la misma gestión de riesgo que ahora:
+- Tamaño de trade (% balance)
+- Exposición máxima por par
+- Exposición total
+- Stop-loss
+- Take-profit
+- Trailing stop
+- Cooldowns y filtros defensivos ya implementados
+
+--------------------------------------------------
+7) POSICIONES ABIERTAS (GRANDFATHER)
+--------------------------------------------------
+- Al activar “Momentum (Velas)”:
+  - NO cerrar posiciones abiertas
+  - NO cambiar la lógica de salida de posiciones ya abiertas
+- Cada posición debe guardar:
+  - Estrategia con la que se abrió
+  - Timeframe de señal
+- Las posiciones abiertas se gestionan con su estrategia original hasta cerrarse.
+- El modo nuevo SOLO aplica a nuevas entradas.
+
+--------------------------------------------------
+8) TELEGRAM / LOGS
+--------------------------------------------------
+- En cada trade, incluir:
+  - “Estrategia: Momentum (Velas) – TF 15m”
+- Cuando una entrada se bloquea (spread, cooldown, exposición):
+  - Mensaje claro, sin spam repetido.
+
+--------------------------------------------------
+9) CRITERIOS DE ACEPTACIÓN
+--------------------------------------------------
+- “Momentum (Velas)” aparece como estrategia independiente.
+- Permite elegir timeframe (5m / 15m / 1h).
+- Reduce claramente el número de operaciones frente a “Momentum (Ciclos)”.
+- Las operaciones duran más tiempo (horas).
+- No rompe el control de riesgo ni las posiciones abiertas existentes.
