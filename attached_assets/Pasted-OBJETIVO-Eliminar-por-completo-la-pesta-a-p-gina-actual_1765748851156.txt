@@ -1,0 +1,63 @@
+OBJETIVO
+Eliminar por completo la pestaña/página actual de “Historial / Posiciones y Operaciones” (ruta /history y su entrada en el menú) y reemplazarla por una nueva pestaña mucho más profesional y entendible, con look & feel tipo “exchange/terminal”, mostrando la información de forma clara, consistente y sin duplicados.
+
+ALCANCE (OBLIGATORIO)
+1) Eliminar por completo la pestaña actual:
+   - Quitar el ítem del menú/nav.
+   - Eliminar la ruta /history y cualquier componente/página asociada.
+   - Eliminar estilos, componentes y lógica que queden huérfanos si ya no se usan.
+
+2) Crear una nueva pestaña llamada “Terminal” (o “Exchange”) con una UI tipo exchange:
+   - Diseño profesional (tablas limpias, jerarquía visual clara, espaciados, tipografía consistente).
+   - Información agrupada como un exchange: balances/resumen, posiciones, órdenes, trades (según datos disponibles).
+   - Debe ser entendible “de un vistazo” y apta para uso diario.
+
+PROPUESTA DE ESTRUCTURA (DEBE IMPLEMENTARSE)
+A) Header de resumen (cards):
+   - Equity / Balance total
+   - PnL realizado (hoy y total si aplica)
+   - PnL no realizado
+   - Nº de posiciones abiertas
+   - Última actualización / estado de sincronización
+
+B) Panel principal (estilo terminal):
+   - Selector de mercado (ej: BTC/USD, XRP/USD, SOL/USD, etc.) y filtros globales.
+   - Secciones en tablas (mínimo):
+     1) Posiciones abiertas
+     2) Órdenes abiertas (si existe concepto/dato)
+     3) Historial de trades/operaciones (ejecuciones)
+
+C) Tablas: requisitos de calidad
+   - Columnas consistentes y con formatos correctos (precio, cantidad, USD, %).
+   - Sorting por columnas, filtros (mercado, lado buy/sell, rango de fechas), búsqueda.
+   - Paginación real (o virtualización si hay muchas filas).
+   - Estados: loading (skeleton), vacío (empty state útil), error (mensaje accionable).
+   - Drawer/modal de “Detalles” al abrir una fila (IDs, timestamps, fees, fuente, etc., según exista).
+
+DATOS DUPLICADOS (OBLIGATORIO)
+Actualmente se muestran datos duplicados. 
+- Identifica la causa raíz de por qué se duplican (en backend, en la consulta, en el estado del frontend, en sincronización, etc.).
+- Corrige el problema para que NO se muestren duplicados.
+- Documenta brevemente en el PR/commit o en un comentario técnico: causa raíz encontrada + qué se cambió para resolverlo.
+(Importante: no necesito una explicación paso a paso; necesito el resultado: causa raíz + corrección aplicada.)
+
+DISEÑO / UX (OBLIGATORIO)
+- Mantener el tema oscuro actual, pero con mejor legibilidad: contraste, espaciado, alineaciones.
+- Números: formateo consistente (separadores, decimales por asset), colores de PnL (verde/rojo), y tooltips para valores calculados.
+- Responsive: usable en 1366x768 y en pantallas grandes. Evitar “bloque pequeño centrado”; usar el ancho disponible con un layout tipo terminal.
+
+COMPATIBILIDAD / NO ROMPER
+- Reutilizar las fuentes de datos existentes (APIs/servicios) siempre que sea posible.
+- No romper el resto del dashboard, navegación, autenticación y estilos globales.
+
+ENTREGABLES
+- Nueva pestaña “Terminal/Exchange” operativa y conectada a datos reales.
+- Pestaña anterior eliminada por completo.
+- Duplicados resueltos y causa raíz documentada.
+- Código limpio: componentes reutilizables, nombres claros, sin lógica duplicada.
+
+CRITERIOS DE ACEPTACIÓN
+- Ya no existe /history ni su ítem de menú.
+- La nueva pestaña se ve y se siente como un exchange básico: resumen + tablas claras + filtros + detalles.
+- No hay filas duplicadas en operaciones/trades ni posiciones.
+- La UI es más entendible que la anterior y aprovecha mejor el espacio.
