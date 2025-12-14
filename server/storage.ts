@@ -22,7 +22,7 @@ import {
   openPositions as openPositionsTable
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gt, lt, sql } from "drizzle-orm";
 
 export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
@@ -33,6 +33,7 @@ export interface IStorage {
   
   createTrade(trade: InsertTrade): Promise<Trade>;
   getTrades(limit?: number): Promise<Trade[]>;
+  getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -107,6 +108,36 @@ export class DatabaseStorage implements IStorage {
 
   async getTrades(limit: number = 50): Promise<Trade[]> {
     return await db.select().from(tradesTable).orderBy(desc(tradesTable.createdAt)).limit(limit);
+  }
+
+  async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all' }): Promise<{ trades: Trade[]; total: number }> {
+    const { limit = 10, offset = 0, pair, result = 'all' } = options;
+    
+    const conditions = [eq(tradesTable.type, 'sell')];
+    
+    if (pair) {
+      conditions.push(eq(tradesTable.pair, pair));
+    }
+    
+    if (result === 'winner') {
+      conditions.push(gt(tradesTable.realizedPnlUsd, '0'));
+    } else if (result === 'loser') {
+      conditions.push(lt(tradesTable.realizedPnlUsd, '0'));
+    }
+    
+    const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+    
+    const trades = await db.select().from(tradesTable)
+      .where(whereClause)
+      .orderBy(desc(tradesTable.executedAt))
+      .limit(limit)
+      .offset(offset);
+    
+    const countResult = await db.select({ count: sql<number>`count(*)` })
+      .from(tradesTable)
+      .where(whereClause);
+    
+    return { trades, total: Number(countResult[0]?.count || 0) };
   }
 
   async updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void> {

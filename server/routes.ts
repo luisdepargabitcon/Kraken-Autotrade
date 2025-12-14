@@ -323,6 +323,70 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/open-positions", async (req, res) => {
+    try {
+      const positions = await storage.getOpenPositions();
+      
+      const positionsWithPnl = await Promise.all(positions.map(async (pos) => {
+        let currentPrice = 0;
+        let unrealizedPnlUsd = 0;
+        let unrealizedPnlPct = 0;
+        
+        if (krakenService.isInitialized()) {
+          try {
+            const krakenPair = krakenService.formatPair(pos.pair);
+            const ticker = await krakenService.getTicker(krakenPair);
+            const tickerData: any = Object.values(ticker)[0];
+            if (tickerData?.c?.[0]) {
+              currentPrice = parseFloat(tickerData.c[0]);
+              const entryPrice = parseFloat(pos.entryPrice);
+              const amount = parseFloat(pos.amount);
+              unrealizedPnlUsd = (currentPrice - entryPrice) * amount;
+              unrealizedPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+            }
+          } catch (e) {}
+        }
+        
+        return {
+          ...pos,
+          currentPrice: currentPrice.toString(),
+          unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
+          unrealizedPnlPct: unrealizedPnlPct.toFixed(2),
+        };
+      }));
+      
+      res.json(positionsWithPnl);
+    } catch (error) {
+      console.error("[api/open-positions] Error:", error);
+      res.status(500).json({ error: "Failed to get open positions" });
+    }
+  });
+
+  app.get("/api/trades/closed", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 10;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const pair = req.query.pair as string | undefined;
+      const result = (req.query.result as 'winner' | 'loser' | 'all') || 'all';
+      
+      const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, result });
+      
+      res.json({
+        trades: trades.map(t => ({
+          ...t,
+          realizedPnlUsd: t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,
+          realizedPnlPct: t.realizedPnlPct ? parseFloat(t.realizedPnlPct).toFixed(2) : null,
+        })),
+        total,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      console.error("[api/trades/closed] Error:", error);
+      res.status(500).json({ error: "Failed to get closed trades" });
+    }
+  });
+
   app.get("/api/performance", async (req, res) => {
     try {
       const trades = await storage.getTrades(500);
