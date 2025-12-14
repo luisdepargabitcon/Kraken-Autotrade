@@ -1867,12 +1867,14 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
               rsi: 50, // Will be enriched from actual indicators in future
               confidence: signalConfidence ?? 50,
             });
+            const sampleTradeId = `SAMPLE-${Date.now()}`;
             const sample = await storage.saveAiSample({
+              tradeId: sampleTradeId,
               pair,
+              side: "buy",
               entryPrice: price.toString(),
               entryTs: new Date(),
               featuresJson: features,
-              strategyId: entryStrategyId,
             });
             if (sample?.id) {
               newPosition.aiSampleId = sample.id;
@@ -1903,9 +1905,10 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
               await storage.updateAiSample(existing.aiSampleId, {
                 exitPrice: price.toString(),
                 exitTs: new Date(),
-                pnl: pnl.toString(),
-                pnlPct: pnlPercent.toString(),
-                labelWin: pnl > 0,
+                pnlGross: pnl.toString(),
+                pnlNet: pnl.toString(),
+                labelWin: pnl > 0 ? 1 : 0,
+                isComplete: true,
               });
               log(`[AI] Sample #${existing.aiSampleId} actualizado: PnL=${pnl.toFixed(2)} (${pnl > 0 ? 'WIN' : 'LOSS'})`, "trading");
             } catch (aiErr: any) {
