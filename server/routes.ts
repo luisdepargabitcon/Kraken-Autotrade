@@ -362,6 +362,109 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/open-positions/sync", async (req, res) => {
+    try {
+      if (!krakenService.isInitialized()) {
+        return res.status(400).json({ error: "Kraken no está configurado" });
+      }
+
+      const balances = await krakenService.getBalance();
+      const existingPositions = await storage.getOpenPositions();
+      
+      const assetMap: Record<string, { krakenKey: string; pair: string }> = {
+        "XXBT": { krakenKey: "XXBT", pair: "BTC/USD" },
+        "XBT": { krakenKey: "XBT", pair: "BTC/USD" },
+        "BTC": { krakenKey: "BTC", pair: "BTC/USD" },
+        "XETH": { krakenKey: "XETH", pair: "ETH/USD" },
+        "ETH": { krakenKey: "ETH", pair: "ETH/USD" },
+        "SOL": { krakenKey: "SOL", pair: "SOL/USD" },
+        "XXRP": { krakenKey: "XXRP", pair: "XRP/USD" },
+        "XRP": { krakenKey: "XRP", pair: "XRP/USD" },
+        "TON": { krakenKey: "TON", pair: "TON/USD" },
+      };
+
+      const KRAKEN_MINIMUMS: Record<string, number> = {
+        "BTC/USD": 0.0001,
+        "ETH/USD": 0.01,
+        "SOL/USD": 0.1,
+        "XRP/USD": 10,
+        "TON/USD": 1,
+      };
+
+      const krakenBalances: Record<string, number> = {};
+      for (const [key, value] of Object.entries(balances || {})) {
+        const mapping = assetMap[key];
+        if (mapping) {
+          const balance = parseFloat(value as string) || 0;
+          if (!krakenBalances[mapping.pair] || balance > krakenBalances[mapping.pair]) {
+            krakenBalances[mapping.pair] = balance;
+          }
+        }
+      }
+
+      let synced = 0;
+      let created = 0;
+      let updated = 0;
+      let deleted = 0;
+
+      for (const [pair, balance] of Object.entries(krakenBalances)) {
+        const minBalance = KRAKEN_MINIMUMS[pair] || 0.01;
+        const existingPos = existingPositions.find(p => p.pair === pair);
+
+        if (balance >= minBalance) {
+          let currentPrice = 0;
+          try {
+            const krakenPair = krakenService.formatPair(pair);
+            const ticker = await krakenService.getTicker(krakenPair);
+            const tickerData: any = Object.values(ticker)[0];
+            currentPrice = parseFloat(tickerData?.c?.[0] || "0");
+          } catch (e) {}
+
+          if (existingPos) {
+            await storage.updateOpenPosition(pair, {
+              amount: balance.toString(),
+              highestPrice: Math.max(parseFloat(existingPos.highestPrice), currentPrice).toString(),
+            });
+            updated++;
+          } else {
+            await storage.saveOpenPosition({
+              pair,
+              entryPrice: currentPrice.toString(),
+              amount: balance.toString(),
+              highestPrice: currentPrice.toString(),
+              entryStrategyId: "manual_sync",
+              entrySignalTf: "sync",
+            });
+            created++;
+          }
+          synced++;
+        } else if (existingPos) {
+          await storage.deleteOpenPosition(pair);
+          deleted++;
+        }
+      }
+
+      for (const pos of existingPositions) {
+        if (!krakenBalances[pos.pair]) {
+          await storage.deleteOpenPosition(pos.pair);
+          deleted++;
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        synced, 
+        created, 
+        updated, 
+        deleted,
+        message: `Sincronizado: ${synced} posiciones (${created} nuevas, ${updated} actualizadas, ${deleted} eliminadas)`
+      });
+    } catch (error: any) {
+      console.error("[api/open-positions/sync] Error:", error);
+      res.status(500).json({ error: error.message || "Error al sincronizar posiciones" });
+    }
+  });
+
   app.get("/api/trades/closed", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 10;

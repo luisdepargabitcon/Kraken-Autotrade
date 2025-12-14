@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight, Download, Activity, CandlestickChart } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight, Download, Activity, CandlestickChart, CloudDownload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface OpenPosition {
@@ -53,6 +53,7 @@ export default function History() {
   const [resultFilter, setResultFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
+  const [syncingPositions, setSyncingPositions] = useState(false);
   const { toast } = useToast();
 
   const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
@@ -109,6 +110,35 @@ export default function History() {
       });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSyncPositions = async () => {
+    setSyncingPositions(true);
+    try {
+      const res = await fetch("/api/open-positions/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: "Posiciones sincronizadas",
+          description: data.message,
+        });
+        refetchPositions();
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "No se pudo sincronizar posiciones",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: "Error de conexión",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncingPositions(false);
     }
   };
 
@@ -199,16 +229,29 @@ export default function History() {
           <Card className="glass-panel border-border/50">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-lg font-mono">POSICIONES ABIERTAS</CardTitle>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => refetchPositions()}
-                disabled={fetchingPositions}
-                className="text-muted-foreground hover:text-primary"
-                data-testid="button-refresh-positions"
-              >
-                <RefreshCw className={`h-4 w-4 ${fetchingPositions ? 'animate-spin' : ''}`} />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleSyncPositions}
+                  disabled={syncingPositions}
+                  className="text-xs"
+                  data-testid="button-sync-positions"
+                >
+                  <CloudDownload className={`h-4 w-4 mr-1 ${syncingPositions ? 'animate-pulse' : ''}`} />
+                  Sincronizar Kraken
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => refetchPositions()}
+                  disabled={fetchingPositions}
+                  className="text-muted-foreground hover:text-primary"
+                  data-testid="button-refresh-positions"
+                >
+                  <RefreshCw className={`h-4 w-4 ${fetchingPositions ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {loadingPositions ? (
