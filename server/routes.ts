@@ -402,6 +402,75 @@ export async function registerRoutes(
         }
       }
 
+      // Obtener historial de trades de Kraken para calcular precio promedio
+      console.log("[sync] Fetching Kraken trades history for weighted average calculation...");
+      const tradesHistory = await krakenService.getTradesHistory({ fetchAll: true });
+      const allTrades = tradesHistory.trades || {};
+
+      // Mapeo de pares Kraken a pares internos
+      const krakenPairMap: Record<string, string> = {
+        "XXBTZUSD": "BTC/USD",
+        "XBTUSD": "BTC/USD",
+        "XETHZUSD": "ETH/USD",
+        "ETHUSD": "ETH/USD",
+        "SOLUSD": "SOL/USD",
+        "XXRPZUSD": "XRP/USD",
+        "XRPUSD": "XRP/USD",
+        "TONUSD": "TON/USD",
+      };
+
+      // Calcular precio promedio ponderado por par basado en historial de compras
+      // Usamos método FIFO: acumulamos compras, restamos ventas
+      const pairAccumulator: Record<string, { totalCost: number; totalAmount: number }> = {};
+
+      // Ordenar trades por fecha (más antiguo primero)
+      const sortedTrades = Object.entries(allTrades)
+        .map(([txid, trade]: [string, any]) => ({ txid, ...trade }))
+        .sort((a, b) => a.time - b.time);
+
+      for (const trade of sortedTrades) {
+        const krakenPair = trade.pair;
+        const internalPair = krakenPairMap[krakenPair];
+        if (!internalPair) continue;
+
+        const volume = parseFloat(trade.vol || "0");
+        const price = parseFloat(trade.price || "0");
+        const cost = volume * price;
+
+        if (!pairAccumulator[internalPair]) {
+          pairAccumulator[internalPair] = { totalCost: 0, totalAmount: 0 };
+        }
+
+        if (trade.type === "buy") {
+          // Acumular compra
+          pairAccumulator[internalPair].totalCost += cost;
+          pairAccumulator[internalPair].totalAmount += volume;
+        } else if (trade.type === "sell") {
+          // Restar venta (FIFO simplificado: reducir proporcionalmente)
+          const acc = pairAccumulator[internalPair];
+          if (acc.totalAmount > 0) {
+            const avgPrice = acc.totalCost / acc.totalAmount;
+            const soldAmount = Math.min(volume, acc.totalAmount);
+            acc.totalCost -= soldAmount * avgPrice;
+            acc.totalAmount -= soldAmount;
+            // Evitar valores negativos por errores de redondeo
+            if (acc.totalAmount < 0.0000001) {
+              acc.totalCost = 0;
+              acc.totalAmount = 0;
+            }
+          }
+        }
+      }
+
+      // Calcular precio promedio ponderado final
+      const weightedAvgPrices: Record<string, number> = {};
+      for (const [pair, acc] of Object.entries(pairAccumulator)) {
+        if (acc.totalAmount > 0) {
+          weightedAvgPrices[pair] = acc.totalCost / acc.totalAmount;
+          console.log(`[sync] ${pair}: weighted avg entry price = $${weightedAvgPrices[pair].toFixed(4)} (based on ${acc.totalAmount.toFixed(6)} accumulated)`);
+        }
+      }
+
       let synced = 0;
       let created = 0;
       let updated = 0;
@@ -420,16 +489,20 @@ export async function registerRoutes(
             currentPrice = parseFloat(tickerData?.c?.[0] || "0");
           } catch (e) {}
 
+          // Usar precio promedio ponderado calculado, o precio actual si no hay historial
+          const entryPrice = weightedAvgPrices[pair] || currentPrice;
+
           if (existingPos) {
             await storage.updateOpenPosition(pair, {
               amount: balance.toString(),
+              entryPrice: entryPrice.toString(),
               highestPrice: Math.max(parseFloat(existingPos.highestPrice), currentPrice).toString(),
             });
             updated++;
           } else {
             await storage.saveOpenPosition({
               pair,
-              entryPrice: currentPrice.toString(),
+              entryPrice: entryPrice.toString(),
               amount: balance.toString(),
               highestPrice: currentPrice.toString(),
               entryStrategyId: "manual_sync",
@@ -457,7 +530,7 @@ export async function registerRoutes(
         created, 
         updated, 
         deleted,
-        message: `Sincronizado: ${synced} posiciones (${created} nuevas, ${updated} actualizadas, ${deleted} eliminadas)`
+        message: `Sincronizado: ${synced} posiciones (${created} nuevas, ${updated} actualizadas, ${deleted} eliminadas). Precios de entrada recalculados desde historial.`
       });
     } catch (error: any) {
       console.error("[api/open-positions/sync] Error:", error);
