@@ -44,6 +44,7 @@ export interface IStorage {
   getTrades(limit?: number): Promise<Trade[]>;
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
+  getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
   getUnsentNotifications(): Promise<Notification[]>;
@@ -169,6 +170,13 @@ export class DatabaseStorage implements IStorage {
     await db.update(tradesTable)
       .set({ status, krakenOrderId, executedAt: new Date() })
       .where(eq(tradesTable.tradeId, tradeId));
+  }
+
+  async getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined> {
+    const trades = await db.select().from(tradesTable)
+      .where(eq(tradesTable.krakenOrderId, krakenOrderId))
+      .limit(1);
+    return trades[0];
   }
 
   async createNotification(notification: InsertNotification): Promise<Notification> {

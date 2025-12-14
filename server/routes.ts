@@ -568,12 +568,12 @@ export async function registerRoutes(
       for (const [txid, trade] of Object.entries(trades)) {
         const t = trade as any;
         try {
-          const existingTrades = await storage.getTrades(1000);
-          const exists = existingTrades.some(et => et.krakenOrderId === txid);
+          // Buscar directamente por krakenOrderId en DB (eficiente)
+          const existingTrade = await storage.getTradeByKrakenOrderId(txid);
           
-          if (!exists) {
+          if (!existingTrade) {
             await storage.createTrade({
-              tradeId: `K-${txid.substring(0, 8)}`,
+              tradeId: `KRAKEN-${txid}`, // Usar txid completo para evitar colisiones
               pair: krakenService.formatPairReverse(t.pair),
               type: t.type,
               price: t.price,

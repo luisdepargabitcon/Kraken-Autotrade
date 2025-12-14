@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
-import History from "@/pages/History";
+import Terminal from "@/pages/Terminal";
 import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
 import Integrations from "@/pages/Integrations";
@@ -17,7 +17,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/settings" component={Settings} />
-      <Route path="/history" component={History} />
+      <Route path="/terminal" component={Terminal} />
       <Route path="/strategies" component={Strategies} />
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />

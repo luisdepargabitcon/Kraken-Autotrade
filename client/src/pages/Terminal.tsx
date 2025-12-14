@@ -1,0 +1,597 @@
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { Nav } from "@/components/dashboard/Nav";
+import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  ArrowUpRight, 
+  ArrowDownRight, 
+  Clock, 
+  DollarSign, 
+  TrendingUp, 
+  TrendingDown, 
+  RefreshCw, 
+  ChevronLeft, 
+  ChevronRight, 
+  Download, 
+  Activity, 
+  CandlestickChart,
+  CircleDot,
+  Zap,
+  Target,
+  BarChart3
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
+interface OpenPosition {
+  id: number;
+  pair: string;
+  entryPrice: string;
+  amount: string;
+  highestPrice: string;
+  openedAt: string;
+  currentPrice: string;
+  unrealizedPnlUsd: string;
+  unrealizedPnlPct: string;
+  entryStrategyId: string;
+  entrySignalTf: string;
+  signalConfidence: string | null;
+}
+
+interface ClosedTrade {
+  id: number;
+  tradeId: string;
+  pair: string;
+  type: string;
+  price: string;
+  amount: string;
+  status: string;
+  entryPrice: string | null;
+  realizedPnlUsd: string | null;
+  realizedPnlPct: string | null;
+  executedAt: string | null;
+  createdAt: string;
+}
+
+interface ClosedTradesResponse {
+  trades: ClosedTrade[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export default function Terminal() {
+  const [limit, setLimit] = useState(10);
+  const [offset, setOffset] = useState(0);
+  const [pairFilter, setPairFilter] = useState<string>("all");
+  const [resultFilter, setResultFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [syncing, setSyncing] = useState(false);
+  const [activeTab, setActiveTab] = useState("positions");
+  const { toast } = useToast();
+
+  const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
+    queryKey: ["openPositions"],
+    queryFn: async () => {
+      const res = await fetch("/api/open-positions");
+      if (!res.ok) throw new Error("Failed to fetch open positions");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const { data: closedData, isLoading: loadingClosed, refetch: refetchClosed, isFetching: fetchingClosed } = useQuery<ClosedTradesResponse>({
+    queryKey: ["closedTrades", limit, offset, pairFilter, resultFilter, typeFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        limit: limit.toString(),
+        offset: offset.toString(),
+        result: resultFilter,
+        type: typeFilter,
+      });
+      if (pairFilter !== "all") {
+        params.set("pair", pairFilter);
+      }
+      const res = await fetch(`/api/trades/closed?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch closed trades");
+      return res.json();
+    },
+  });
+
+  const handleSyncFromKraken = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/trades/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: "Sincronizado",
+          description: `Se importaron ${data.synced} operaciones de Kraken (${data.total} en historial)`,
+        });
+        refetchClosed();
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "No se pudo sincronizar",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: "Error de conexión",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatPrice = (price: string) => {
+    const num = parseFloat(price);
+    if (num >= 1000) {
+      return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  };
+
+  const formatStrategyLabel = (strategyId: string, timeframe: string) => {
+    const strategyMap: Record<string, string> = {
+      "momentum": "MOM",
+      "momentum_candles_5m": "MOM",
+      "momentum_candles_15m": "MOM",
+      "momentum_candles_1h": "MOM",
+      "mean_reversion": "REV",
+      "scalping": "SCA",
+      "grid": "GRD",
+    };
+    const tfMap: Record<string, string> = {
+      "cycle": "CYC",
+      "5m": "5M",
+      "15m": "15M",
+      "1h": "1H",
+    };
+    const strategyName = strategyMap[strategyId] || strategyId.split('_')[0]?.substring(0, 3).toUpperCase() || "MOM";
+    const tfLabel = tfMap[timeframe] || timeframe.toUpperCase();
+    const isCandles = timeframe !== "cycle";
+    return { strategyName, tfLabel, isCandles };
+  };
+
+  const totalPages = closedData ? Math.ceil(closedData.total / limit) : 0;
+  const currentPage = Math.floor(offset / limit) + 1;
+
+  const handlePrevPage = () => {
+    if (offset > 0) {
+      setOffset(Math.max(0, offset - limit));
+    }
+  };
+
+  const handleNextPage = () => {
+    if (closedData && offset + limit < closedData.total) {
+      setOffset(offset + limit);
+    }
+  };
+
+  const handleLimitChange = (value: string) => {
+    const newLimit = value === "all" ? 1000 : parseInt(value);
+    setLimit(newLimit);
+    setOffset(0);
+  };
+
+  const availablePairs = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
+
+  const totalUnrealizedPnl = openPositions?.reduce((sum, pos) => sum + parseFloat(pos.unrealizedPnlUsd), 0) || 0;
+  const positionsCount = openPositions?.length || 0;
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
+      <div 
+        className="fixed inset-0 z-0 opacity-15 pointer-events-none" 
+        style={{ 
+          backgroundImage: `url(${generatedImage})`, 
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          mixBlendMode: 'overlay'
+        }} 
+      />
+      
+      <div className="relative z-10 flex flex-col min-h-screen">
+        <Nav />
+        
+        <main className="flex-1 p-3 md:p-4 lg:p-6 max-w-7xl mx-auto w-full">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 bg-gradient-to-br from-cyan-500/20 to-blue-600/20 rounded-lg flex items-center justify-center border border-cyan-500/30">
+                <BarChart3 className="h-5 w-5 text-cyan-400" />
+              </div>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold font-mono tracking-tight text-foreground">TERMINAL</h1>
+                <p className="text-xs text-muted-foreground font-mono">POSICIONES Y OPERACIONES</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-card/50 rounded-lg border border-border/50">
+                <CircleDot className={`h-3 w-3 ${positionsCount > 0 ? 'text-green-400 animate-pulse' : 'text-muted-foreground'}`} />
+                <span className="font-mono text-xs text-muted-foreground">ACTIVAS:</span>
+                <span className="font-mono text-sm font-bold">{positionsCount}</span>
+              </div>
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${totalUnrealizedPnl >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                {totalUnrealizedPnl >= 0 ? <TrendingUp className="h-3 w-3 text-green-400" /> : <TrendingDown className="h-3 w-3 text-red-400" />}
+                <span className="font-mono text-xs text-muted-foreground">P&L:</span>
+                <span className={`font-mono text-sm font-bold ${totalUnrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {totalUnrealizedPnl >= 0 ? '+' : ''}${totalUnrealizedPnl.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <TabsList className="bg-card/50 border border-border/50 p-1">
+                <TabsTrigger 
+                  value="positions" 
+                  className="font-mono text-xs data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400"
+                  data-testid="tab-positions"
+                >
+                  <Target className="h-3.5 w-3.5 mr-1.5" />
+                  POSICIONES
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="history" 
+                  className="font-mono text-xs data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400"
+                  data-testid="tab-history"
+                >
+                  <Activity className="h-3.5 w-3.5 mr-1.5" />
+                  HISTORIAL
+                </TabsTrigger>
+              </TabsList>
+
+              {activeTab === "positions" && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => refetchPositions()}
+                  disabled={fetchingPositions}
+                  className="font-mono text-xs border-border/50 hover:border-cyan-500/50 hover:text-cyan-400"
+                  data-testid="button-refresh-positions"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${fetchingPositions ? 'animate-spin' : ''}`} />
+                  ACTUALIZAR
+                </Button>
+              )}
+
+              {activeTab === "history" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    <SelectTrigger className="w-[90px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-type-filter">
+                      <SelectValue placeholder="Tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">TODAS</SelectItem>
+                      <SelectItem value="buy">COMPRAS</SelectItem>
+                      <SelectItem value="sell">VENTAS</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={pairFilter} onValueChange={setPairFilter}>
+                    <SelectTrigger className="w-[100px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-pair-filter">
+                      <SelectValue placeholder="Par" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">TODOS</SelectItem>
+                      {availablePairs.map(pair => (
+                        <SelectItem key={pair} value={pair}>{pair}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  
+                  <Select value={resultFilter} onValueChange={setResultFilter}>
+                    <SelectTrigger className="w-[100px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-result-filter">
+                      <SelectValue placeholder="Resultado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">TODAS</SelectItem>
+                      <SelectItem value="winner">GANADORAS</SelectItem>
+                      <SelectItem value="loser">PERDEDORAS</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={limit.toString()} onValueChange={handleLimitChange}>
+                    <SelectTrigger className="w-[70px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-limit">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                      <SelectItem value="all">TODO</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleSyncFromKraken}
+                    disabled={syncing}
+                    className="text-xs font-mono border-border/50 hover:border-cyan-500/50 hover:text-cyan-400"
+                    data-testid="button-sync-kraken"
+                  >
+                    <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
+                    SYNC
+                  </Button>
+
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => refetchClosed()}
+                    disabled={fetchingClosed}
+                    className="text-muted-foreground hover:text-cyan-400"
+                    data-testid="button-refresh-closed"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${fetchingClosed ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <TabsContent value="positions" className="mt-0">
+              <Card className="bg-card/40 border-border/50 backdrop-blur-sm">
+                <CardHeader className="py-3 px-4 border-b border-border/30">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-cyan-400" />
+                      POSICIONES ABIERTAS
+                    </CardTitle>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {openPositions?.length || 0} activa{openPositions?.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {loadingPositions ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-400"></div>
+                    </div>
+                  ) : openPositions && openPositions.length > 0 ? (
+                    <div className="divide-y divide-border/20">
+                      {openPositions.map((pos) => {
+                        const pnlUsd = parseFloat(pos.unrealizedPnlUsd);
+                        const pnlPct = parseFloat(pos.unrealizedPnlPct);
+                        const isProfit = pnlUsd >= 0;
+                        const strategyInfo = formatStrategyLabel(pos.entryStrategyId || "momentum", pos.entrySignalTf || "cycle");
+                        
+                        return (
+                          <div 
+                            key={pos.id}
+                            className="flex flex-col lg:flex-row lg:items-center justify-between p-4 hover:bg-white/[0.02] transition-colors"
+                            data-testid={`position-row-${pos.id}`}
+                          >
+                            <div className="flex items-center gap-4 mb-3 lg:mb-0">
+                              <div className="relative">
+                                <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${isProfit ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+                                  {isProfit ? <TrendingUp className="h-5 w-5 text-green-400" /> : <TrendingDown className="h-5 w-5 text-red-400" />}
+                                </div>
+                                <div className="absolute -top-1 -right-1 h-3 w-3 bg-green-400 rounded-full border-2 border-background animate-pulse" />
+                              </div>
+                              <div>
+                                <div className="font-mono font-bold text-base flex items-center gap-2">
+                                  {pos.pair}
+                                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-mono ${strategyInfo.isCandles ? 'border-cyan-500/50 text-cyan-400' : 'border-primary/50 text-primary'}`}>
+                                    {strategyInfo.isCandles ? <CandlestickChart className="h-2.5 w-2.5 mr-0.5" /> : <Activity className="h-2.5 w-2.5 mr-0.5" />}
+                                    {strategyInfo.strategyName}/{strategyInfo.tfLabel}
+                                  </Badge>
+                                </div>
+                                <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
+                                  <Clock className="h-3 w-3" />
+                                  {formatDate(pos.openedAt)}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 lg:gap-6">
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Cantidad</div>
+                                <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
+                              </div>
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Entrada</div>
+                                <div className="font-mono font-medium text-sm">${formatPrice(pos.entryPrice)}</div>
+                              </div>
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Actual</div>
+                                <div className="font-mono font-medium text-sm">${formatPrice(pos.currentPrice)}</div>
+                              </div>
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">P&L</div>
+                                <div className={`font-mono font-bold text-sm flex items-center gap-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                  ${Math.abs(pnlUsd).toFixed(2)}
+                                  <span className="text-xs opacity-75">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-16">
+                      <div className="h-16 w-16 mx-auto bg-muted/20 rounded-full flex items-center justify-center mb-4">
+                        <Target className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                      <p className="font-mono text-muted-foreground text-sm">NO HAY POSICIONES ABIERTAS</p>
+                      <p className="text-xs text-muted-foreground mt-1">Las posiciones aparecerán cuando el bot compre activos</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-0">
+              <Card className="bg-card/40 border-border/50 backdrop-blur-sm">
+                <CardHeader className="py-3 px-4 border-b border-border/30">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-cyan-400" />
+                      HISTORIAL DE OPERACIONES
+                    </CardTitle>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {closedData?.total || 0} operaciones
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {loadingClosed ? (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-400"></div>
+                    </div>
+                  ) : closedData && closedData.trades.length > 0 ? (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[700px]">
+                          <thead>
+                            <tr className="border-b border-border/30 text-left">
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Tipo</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Par</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Fecha</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Cantidad</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Entrada</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Salida</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">P&L</th>
+                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-center">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/20">
+                            {closedData.trades.map((trade) => {
+                              const pnlUsd = trade.realizedPnlUsd ? parseFloat(trade.realizedPnlUsd) : null;
+                              const pnlPct = trade.realizedPnlPct ? parseFloat(trade.realizedPnlPct) : null;
+                              const isProfit = pnlUsd !== null && pnlUsd >= 0;
+                              
+                              return (
+                                <tr 
+                                  key={trade.id}
+                                  className="hover:bg-white/[0.02] transition-colors"
+                                  data-testid={`closed-trade-row-${trade.id}`}
+                                >
+                                  <td className="py-3 px-4">
+                                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono font-bold ${trade.type === 'buy' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                      {trade.type === 'buy' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                      {trade.type === 'buy' ? 'COMPRA' : 'VENTA'}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <span className="font-mono font-medium text-sm">{trade.pair}</span>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <span className="font-mono text-xs text-muted-foreground">{formatDate(trade.executedAt || trade.createdAt)}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    <span className="font-mono text-sm">{parseFloat(trade.amount).toFixed(6)}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    <span className="font-mono text-sm">{trade.entryPrice ? `$${formatPrice(trade.entryPrice)}` : '-'}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    <span className="font-mono text-sm">${formatPrice(trade.price)}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    {pnlUsd !== null ? (
+                                      <span className={`font-mono font-bold text-sm ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                        {isProfit ? '+' : ''}${pnlUsd.toFixed(2)}
+                                        <span className="text-xs opacity-75 ml-1">
+                                          ({pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(1) : '0'}%)
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span className="font-mono text-sm text-muted-foreground">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <Badge 
+                                      variant="outline"
+                                      className={`font-mono text-[10px] ${
+                                        trade.status === 'filled' 
+                                          ? 'border-green-500/50 text-green-400 bg-green-500/10' 
+                                          : trade.status === 'pending' 
+                                            ? 'border-yellow-500/50 text-yellow-400 bg-yellow-500/10' 
+                                            : 'border-red-500/50 text-red-400 bg-red-500/10'
+                                      }`}
+                                    >
+                                      {trade.status === 'filled' ? 'OK' : trade.status.toUpperCase()}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between p-4 border-t border-border/30">
+                          <span className="text-xs font-mono text-muted-foreground">
+                            {offset + 1}-{Math.min(offset + limit, closedData.total)} de {closedData.total}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handlePrevPage}
+                              disabled={offset === 0}
+                              className="h-7 px-2 font-mono text-xs border-border/50"
+                              data-testid="button-prev-page"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </Button>
+                            <span className="text-xs font-mono text-muted-foreground px-2">
+                              {currentPage}/{totalPages}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleNextPage}
+                              disabled={offset + limit >= closedData.total}
+                              className="h-7 px-2 font-mono text-xs border-border/50"
+                              data-testid="button-next-page"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-16">
+                      <div className="h-16 w-16 mx-auto bg-muted/20 rounded-full flex items-center justify-center mb-4">
+                        <Clock className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                      <p className="font-mono text-muted-foreground text-sm">NO HAY OPERACIONES</p>
+                      <p className="text-xs text-muted-foreground mt-1">Las operaciones aparecerán cuando el bot venda activos</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </main>
+      </div>
+    </div>
+  );
+}
