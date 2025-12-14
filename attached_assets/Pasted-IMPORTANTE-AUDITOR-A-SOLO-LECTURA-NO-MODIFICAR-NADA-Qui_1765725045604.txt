@@ -1,0 +1,59 @@
+IMPORTANTE: AUDITORÍA SOLO LECTURA. NO MODIFICAR NADA.
+
+Quiero que realices ÚNICAMENTE una auditoría técnica del proyecto.
+NO implementes cambios, NO ejecutes entrenamientos, NO actives endpoints,
+NO modifiques código, configuración, modelos ni datos SIN MI APROBACIÓN EXPRESA.
+
+Objetivo:
+Verificar si las opciones del “Motor de Inteligencia Artificial”
+(Deep LSTM v4, Transformer Market-BERT, XGBoost Ensemble)
+están realmente implementadas o si son solo UI/placeholder.
+
+Instrucciones:
+
+1) Localiza en el repositorio el código relacionado con:
+   - Selector “Modelo Predictivo”
+   - Botón “Re-entrenar ahora”
+   - Scheduler de re-entrenamiento (“Cada 24 horas”)
+
+2) Para CADA modelo (Deep LSTM v4, Transformer Market-BERT, XGBoost Ensemble):
+   - Indica el/los archivo(s) exactos donde se define o instancia (ruta completa).
+   - Confirma si existe entrenamiento REAL (fit/train) y con qué librería
+     (xgboost, sklearn, torch, tensorflow, etc.).
+   - Confirma si existe inferencia REAL (predict) conectada al motor de trading
+     que afecte a decisiones buy/sell/hold.
+   - Indica si existen pesos/modelos persistidos
+     (.pkl, .joblib, .pt, .onnx, etc.) y dónde se cargan/guardan.
+
+3) Botón “Re-entrenar ahora”:
+   - Verifica si llama a una función o endpoint real.
+   - Indica si genera logs visibles (inicio/fin, nº de muestras, métricas).
+   - Confirma si actualiza el estado “CONVERGENTE” con datos reales
+     o si es un cambio cosmético.
+   - Indica qué ocurre si no hay datos suficientes (error real vs éxito silencioso).
+
+4) Origen de los datos de entrenamiento:
+   - Especifica si se usan trades reales cerrados del bot
+     (con PnL neto incluyendo comisiones y slippage),
+     o solo backtesting / OHLC / datos simulados.
+   - Señala explícitamente si hay datos mock o placeholders.
+
+5) Métrica “94.2% precisión”:
+   - Indica el archivo y función exactos que calculan ese valor.
+   - Explica qué dataset se usa y si hay separación train/test,
+     walk-forward o riesgo de data leakage.
+
+6) Clasificación final:
+   - Marca cada modelo como:
+     REAL / PARCIAL / PLACEHOLDER
+   - Indica claramente qué falta para que sea REAL,
+     SIN implementar nada todavía.
+
+Entrega:
+Devuélveme un informe SOLO TEXTO con:
+- Tabla: Modelo | Estado (REAL/PARCIAL/PLACEHOLDER) | Evidencia (archivos/funciones) | Qué falta
+- Lista de rutas y funciones clave para revisión manual.
+
+Reitero:
+NO realices cambios ni ejecuciones.
+Espera siempre a mi aprobación explícita antes de cualquier acción.
