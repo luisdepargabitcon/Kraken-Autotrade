@@ -1,0 +1,66 @@
+CONFIRMACIÓN FINAL
+
+Sí, confirmo que quiero implementar el pipeline completo de IA REAL
+(recolección → entrenamiento → modo simulación → filtro),
+PERO sin placeholders y con todo desactivado por defecto hasta cumplir condiciones objetivas.
+
+UBICACIÓN:
+Puedes SUSTITUIR COMPLETAMENTE la sección actual “Motor de Inteligencia Artificial”
+(la que ahora mismo es solo UI y no funciona) por una nueva sección real:
+“IA del Bot – Filtro Inteligente (XGBoost / RandomForest)”.
+
+REQUISITOS OBLIGATORIOS (NO NEGOCIABLES):
+- CERO placeholders.
+- CERO valores hardcodeados.
+- CERO botones sin acción real.
+- Si algo no está implementado al 100%, NO debe mostrarse.
+- Todo dato mostrado en la UI debe venir de backend real (endpoints).
+- Todo botón debe llamar a lógica real y devolver resultado real.
+- Todo debe quedar auditable (logs + timestamp + nº de muestras + métricas).
+
+FUNCIONALIDAD ESPERADA:
+
+1) Recolección PASIVA siempre activa:
+   - FeatureExtractor en la ENTRADA de la operación
+   - TradeCloserHook al CIERRE de la operación
+   - Persistencia real de operaciones completas e incompletas
+
+2) Entrenamiento REAL (controlado):
+   - RandomForest (baseline) o XGBoost si se instala la dependencia
+   - Validación temporal walk-forward (obligatoria)
+   - Guardado real del modelo y de las métricas
+   - Sin entrenamiento si no hay datos suficientes
+
+3) Modo simulación REAL:
+   - La IA evalúa las operaciones, pero NO bloquea operaciones reales
+   - Se registra qué operaciones habría bloqueado y su PnL real posterior
+   - Informe de modo simulación de 7 días con mejora neta real
+
+4) Filtro ACTIVO solo bajo condiciones:
+   - ≥ 300 operaciones completas
+   - Modo simulación de 7 días con resultado positivo
+   - Activación MANUAL por mi parte (toggle)
+   - Interruptor de emergencia (kill switch) inmediato
+
+5) Interfaz clara y simple (tipo semáforo):
+   - Progreso de operaciones completas (83 / 300, etc.)
+   - Estado de la IA:
+     • Recolectando datos  
+     • Lista para entrenar  
+     • Modo simulación  
+     • IA activa  
+     • Error en IA
+   - Botones habilitados solo cuando proceda
+
+ENTREGA ANTES DE APLICAR CAMBIOS:
+- Lista de archivos a modificar o crear (rutas exactas)
+- Diffs propuestos (sin aplicar)
+- Esquema de base de datos
+- Contratos de API
+- Confirmación explícita de que la sección antigua se elimina y se sustituye
+
+IMPORTANTE:
+No actives la IA, no entrenes modelos y no modifiques el trading real
+hasta que yo dé el OK explícito.
+
+Con esto puedes avanzar en el diseño y la propuesta.
