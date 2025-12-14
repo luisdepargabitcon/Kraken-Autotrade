@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight, Download, Activity, CandlestickChart } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface OpenPosition {
@@ -19,6 +19,9 @@ interface OpenPosition {
   currentPrice: string;
   unrealizedPnlUsd: string;
   unrealizedPnlPct: string;
+  entryStrategyId: string;
+  entrySignalTf: string;
+  signalConfidence: string | null;
 }
 
 interface ClosedTrade {
@@ -126,6 +129,27 @@ export default function History() {
     return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
+  const formatStrategyLabel = (strategyId: string, timeframe: string) => {
+    const strategyMap: Record<string, string> = {
+      "momentum": "Momentum",
+      "momentum_candles_5m": "Momentum",
+      "momentum_candles_15m": "Momentum",
+      "momentum_candles_1h": "Momentum",
+      "mean_reversion": "Reversión",
+      "scalping": "Scalping",
+      "grid": "Grid",
+    };
+    const tfMap: Record<string, string> = {
+      "cycle": "Ciclos",
+      "5m": "5m",
+      "15m": "15m",
+      "1h": "1h",
+    };
+    const strategyName = strategyMap[strategyId] || strategyId.split('_')[0] || "Momentum";
+    const tfLabel = tfMap[timeframe] || timeframe;
+    return { strategyName, tfLabel, isCandles: timeframe !== "cycle" };
+  };
+
   const totalPages = closedData ? Math.ceil(closedData.total / limit) : 0;
   const currentPage = Math.floor(offset / limit) + 1;
 
@@ -197,6 +221,7 @@ export default function History() {
                     const pnlUsd = parseFloat(pos.unrealizedPnlUsd);
                     const pnlPct = parseFloat(pos.unrealizedPnlPct);
                     const isProfit = pnlUsd >= 0;
+                    const strategyInfo = formatStrategyLabel(pos.entryStrategyId || "momentum", pos.entrySignalTf || "cycle");
                     
                     return (
                       <div 
@@ -209,8 +234,12 @@ export default function History() {
                             <TrendingUp className="h-4 w-4 md:h-5 md:w-5 text-blue-500" />
                           </div>
                           <div>
-                            <div className="font-mono font-medium text-sm md:text-base">
+                            <div className="font-mono font-medium text-sm md:text-base flex items-center gap-2">
                               {pos.pair}
+                              <Badge variant="outline" className={`text-xs font-normal ${strategyInfo.isCandles ? 'border-cyan-500/50 text-cyan-500' : 'border-primary/50 text-primary'}`}>
+                                {strategyInfo.isCandles ? <CandlestickChart className="h-3 w-3 mr-1" /> : <Activity className="h-3 w-3 mr-1" />}
+                                {strategyInfo.strategyName} ({strategyInfo.tfLabel})
+                              </Badge>
                             </div>
                             <div className="text-xs md:text-sm text-muted-foreground flex items-center gap-2">
                               <Clock className="h-3 w-3" />

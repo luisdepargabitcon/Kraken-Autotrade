@@ -1889,6 +1889,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           adjustmentNote = `\n📉 _Ajustado por exposición: $${adjustmentInfo.originalAmountUsd.toFixed(2)} → $${adjustmentInfo.adjustedAmountUsd.toFixed(2)}_\n`;
         }
         
+        const strategyLabel = strategyMeta?.strategyId ? 
+          ((strategyMeta?.timeframe && strategyMeta.timeframe !== "cycle") ? 
+            `Momentum (Velas ${strategyMeta.timeframe})` : 
+            "Momentum (Ciclos)") : 
+          "Momentum (Ciclos)";
+        const confidenceLabel = strategyMeta?.confidence ? ` | Confianza: ${(strategyMeta.confidence * 100).toFixed(0)}%` : "";
+        
         await this.telegramService.sendMessage(`
 ${emoji} *Operación Automática Ejecutada*
 
@@ -1898,6 +1905,7 @@ ${emoji} *Operación Automática Ejecutada*
 *Precio:* $${price.toFixed(2)}
 *Total:* $${totalUSD}
 *ID:* ${txid}
+*Estrategia:* ${strategyLabel}${confidenceLabel}
 ${adjustmentNote}
 *Razón:* ${reason}
 
@@ -1915,6 +1923,9 @@ _KrakenBot.AI - Trading Autónomo_
         totalUsd: volumeNum * price,
         txid,
         reason,
+        strategyId: strategyMeta?.strategyId || "momentum_cycle",
+        timeframe: strategyMeta?.timeframe || "cycle",
+        confidence: strategyMeta?.confidence,
       });
       
       return true;

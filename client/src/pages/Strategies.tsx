@@ -9,13 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart } from "lucide-react";
 import { toast } from "sonner";
 
 interface BotConfig {
   id: number;
   isActive: boolean;
   strategy: string;
+  signalTimeframe: string;
   riskLevel: string;
   activePairs: string[];
   stopLossPercent: string;
@@ -32,6 +33,13 @@ const STRATEGIES = [
   { id: "mean_reversion", name: "Reversión a la Media", description: "Opera cuando el precio se aleja de promedios", icon: RefreshCw },
   { id: "scalping", name: "Scalping", description: "Operaciones rápidas con pequeñas ganancias", icon: Zap },
   { id: "grid", name: "Grid Trading", description: "Órdenes escalonadas en rangos de precio", icon: Target },
+];
+
+const SIGNAL_TIMEFRAMES = [
+  { id: "cycle", name: "Ciclos (30s)", description: "Evalúa cada ciclo del bot (~30 segundos)" },
+  { id: "5m", name: "Velas 5 min", description: "Evalúa solo al cierre de velas de 5 minutos" },
+  { id: "15m", name: "Velas 15 min", description: "Evalúa solo al cierre de velas de 15 minutos" },
+  { id: "1h", name: "Velas 1 hora", description: "Evalúa solo al cierre de velas de 1 hora" },
 ];
 
 const RISK_LEVELS = [
@@ -150,6 +158,55 @@ export default function Strategies() {
                 ))}
               </CardContent>
             </Card>
+
+            {config?.strategy === "momentum" && (
+              <Card className="glass-panel border-border/50 border-cyan-500/30">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base md:text-lg">
+                    <CandlestickChart className="h-4 w-4 md:h-5 md:w-5 text-cyan-500" />
+                    Modo de Señal (Momentum)
+                  </CardTitle>
+                  <CardDescription>Define cuándo el bot evalúa señales de trading</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {SIGNAL_TIMEFRAMES.map((tf) => (
+                    <div
+                      key={tf.id}
+                      onClick={() => updateMutation.mutate({ signalTimeframe: tf.id } as any)}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        config?.signalTimeframe === tf.id
+                          ? "border-cyan-500 bg-cyan-500/10"
+                          : "border-border/50 hover:border-border"
+                      }`}
+                      data-testid={`timeframe-${tf.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${config?.signalTimeframe === tf.id ? "bg-cyan-500/20" : "bg-muted"}`}>
+                          {tf.id === "cycle" ? (
+                            <Clock className={`h-4 w-4 ${config?.signalTimeframe === tf.id ? "text-cyan-500" : "text-muted-foreground"}`} />
+                          ) : (
+                            <CandlestickChart className={`h-4 w-4 ${config?.signalTimeframe === tf.id ? "text-cyan-500" : "text-muted-foreground"}`} />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{tf.name}</div>
+                          <div className="text-xs text-muted-foreground">{tf.description}</div>
+                        </div>
+                        {config?.signalTimeframe === tf.id && (
+                          <Badge variant="outline" className="font-mono text-cyan-500 border-cyan-500/50">ACTIVO</Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="bg-cyan-500/10 rounded-lg p-3 mt-3 border border-cyan-500/20">
+                    <p className="text-xs text-muted-foreground">
+                      <strong className="text-cyan-500">Velas:</strong> Usa análisis OHLC (EMA, RSI, MACD, patrones de velas) y solo opera al cierre de cada vela.
+                      <br /><strong className="text-cyan-500">Ciclos:</strong> Evalúa precios en tiempo real cada 30 segundos.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="space-y-6">
               <Card className="glass-panel border-border/50">
