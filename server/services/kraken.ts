@@ -156,9 +156,68 @@ export class KrakenService {
     return await this.executeWithNonceRetry("closedOrders", () => this.client.closedOrders({ ofs: 0 }));
   }
 
-  async getTradesHistory(limit: number = 50): Promise<any> {
+  async getTradesHistory(options?: { start?: number; end?: number; fetchAll?: boolean }): Promise<any> {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.executeWithNonceRetry("tradesHistory", () => this.client.tradesHistory({ type: "all" }));
+    
+    const params: any = { type: "all" };
+    if (options?.start) params.start = options.start;
+    if (options?.end) params.end = options.end;
+    
+    // Si no se pide todo el historial, devolver solo la primera página
+    if (!options?.fetchAll) {
+      return await this.executeWithNonceRetry("tradesHistory", () => this.client.tradesHistory(params));
+    }
+    
+    // Fetch all trades with pagination
+    const allTrades: Record<string, any> = {};
+    let offset = 0;
+    let totalCount = 0;
+    const RATE_LIMIT_DELAY = 2000; // 2 segundos entre llamadas
+    
+    console.log("[kraken] Fetching all trades history with pagination...");
+    
+    while (true) {
+      const paginatedParams = { ...params, ofs: offset };
+      
+      const response: any = await this.executeWithNonceRetry("tradesHistory", () => 
+        this.client.tradesHistory(paginatedParams)
+      );
+      
+      const trades = response.trades || {};
+      const count = response.count || 0;
+      
+      if (offset === 0) {
+        totalCount = count;
+        console.log(`[kraken] Total trades in Kraken: ${totalCount}`);
+      }
+      
+      const tradeIds = Object.keys(trades);
+      if (tradeIds.length === 0) {
+        console.log(`[kraken] No more trades at offset ${offset}`);
+        break;
+      }
+      
+      // Merge trades
+      for (const [id, trade] of Object.entries(trades)) {
+        allTrades[id] = trade;
+      }
+      
+      console.log(`[kraken] Fetched ${tradeIds.length} trades at offset ${offset}, total collected: ${Object.keys(allTrades).length}`);
+      
+      offset += 50;
+      
+      if (offset >= totalCount) {
+        console.log(`[kraken] Reached end of trades history`);
+        break;
+      }
+      
+      // Rate limiting - esperar entre llamadas
+      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+    }
+    
+    console.log(`[kraken] Finished fetching ${Object.keys(allTrades).length} total trades`);
+    
+    return { trades: allTrades, count: Object.keys(allTrades).length };
   }
 
   async getOHLC(pair: string, interval: number = 5): Promise<{

@@ -559,7 +559,8 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Kraken not configured" });
       }
 
-      const tradesHistory = await krakenService.getTradesHistory();
+      // Obtener todo el historial de trades con paginación
+      const tradesHistory = await krakenService.getTradesHistory({ fetchAll: true });
       const trades = tradesHistory.trades || {};
       
       let synced = 0;
