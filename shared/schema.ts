@@ -45,6 +45,9 @@ export const trades = pgTable("trades", {
   amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
   status: text("status").notNull().default("pending"),
   krakenOrderId: text("kraken_order_id"),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }),
+  realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 8 }),
+  realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
   executedAt: timestamp("executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
