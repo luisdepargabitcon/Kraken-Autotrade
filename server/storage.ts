@@ -6,6 +6,9 @@ import {
   type ApiConfig,
   type TelegramChat,
   type OpenPosition,
+  type AiTradeSample,
+  type AiShadowDecision,
+  type AiConfig,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
@@ -13,16 +16,22 @@ import {
   type InsertApiConfig,
   type InsertTelegramChat,
   type InsertOpenPosition,
+  type InsertAiTradeSample,
+  type InsertAiShadowDecision,
+  type InsertAiConfig,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
   marketData as marketDataTable,
   apiConfig as apiConfigTable,
   telegramChats as telegramChatsTable,
-  openPositions as openPositionsTable
+  openPositions as openPositionsTable,
+  aiTradeSamples as aiTradeSamplesTable,
+  aiShadowDecisions as aiShadowDecisionsTable,
+  aiConfig as aiConfigTable
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gt, lt, sql } from "drizzle-orm";
+import { eq, desc, and, gt, lt, sql, isNull } from "drizzle-orm";
 
 export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
@@ -54,6 +63,18 @@ export interface IStorage {
   saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition>;
   updateOpenPosition(pair: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined>;
   deleteOpenPosition(pair: string): Promise<void>;
+  
+  saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample>;
+  updateAiSample(tradeId: string, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
+  getAiSamples(options?: { complete?: boolean; limit?: number }): Promise<AiTradeSample[]>;
+  getAiSamplesCount(complete?: boolean): Promise<number>;
+  
+  saveAiShadowDecision(decision: InsertAiShadowDecision): Promise<AiShadowDecision>;
+  updateAiShadowFinalPnl(tradeId: string, pnl: string): Promise<void>;
+  getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number }>;
+  
+  getAiConfig(): Promise<AiConfig | undefined>;
+  updateAiConfig(config: Partial<InsertAiConfig>): Promise<AiConfig>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -241,6 +262,88 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOpenPosition(pair: string): Promise<void> {
     await db.delete(openPositionsTable).where(eq(openPositionsTable.pair, pair));
+  }
+
+  async saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample> {
+    const [newSample] = await db.insert(aiTradeSamplesTable).values(sample).returning();
+    return newSample;
+  }
+
+  async updateAiSample(tradeId: string, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined> {
+    const [updated] = await db.update(aiTradeSamplesTable)
+      .set(updates)
+      .where(eq(aiTradeSamplesTable.tradeId, tradeId))
+      .returning();
+    return updated;
+  }
+
+  async getAiSamples(options?: { complete?: boolean; limit?: number }): Promise<AiTradeSample[]> {
+    const { complete, limit = 1000 } = options || {};
+    if (complete !== undefined) {
+      return await db.select().from(aiTradeSamplesTable)
+        .where(eq(aiTradeSamplesTable.isComplete, complete))
+        .orderBy(desc(aiTradeSamplesTable.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(aiTradeSamplesTable)
+      .orderBy(desc(aiTradeSamplesTable.createdAt))
+      .limit(limit);
+  }
+
+  async getAiSamplesCount(complete?: boolean): Promise<number> {
+    if (complete !== undefined) {
+      const result = await db.select({ count: sql<number>`count(*)` })
+        .from(aiTradeSamplesTable)
+        .where(eq(aiTradeSamplesTable.isComplete, complete));
+      return Number(result[0]?.count || 0);
+    }
+    const result = await db.select({ count: sql<number>`count(*)` }).from(aiTradeSamplesTable);
+    return Number(result[0]?.count || 0);
+  }
+
+  async saveAiShadowDecision(decision: InsertAiShadowDecision): Promise<AiShadowDecision> {
+    const [newDecision] = await db.insert(aiShadowDecisionsTable).values(decision).returning();
+    return newDecision;
+  }
+
+  async updateAiShadowFinalPnl(tradeId: string, pnl: string): Promise<void> {
+    await db.update(aiShadowDecisionsTable)
+      .set({ finalPnlNet: pnl })
+      .where(eq(aiShadowDecisionsTable.tradeId, tradeId));
+  }
+
+  async getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number }> {
+    const allDecisions = await db.select().from(aiShadowDecisionsTable)
+      .where(sql`${aiShadowDecisionsTable.finalPnlNet} IS NOT NULL`);
+    
+    const total = allDecisions.length;
+    const blocked = allDecisions.filter(d => d.wouldBlock).length;
+    const blockedLosers = allDecisions.filter(d => d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
+    const passedLosers = allDecisions.filter(d => !d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
+    
+    return { total, blocked, blockedLosers, passedLosers };
+  }
+
+  async getAiConfig(): Promise<AiConfig | undefined> {
+    const configs = await db.select().from(aiConfigTable).limit(1);
+    if (configs.length === 0) {
+      const [newConfig] = await db.insert(aiConfigTable).values({}).returning();
+      return newConfig;
+    }
+    return configs[0];
+  }
+
+  async updateAiConfig(config: Partial<InsertAiConfig>): Promise<AiConfig> {
+    const existing = await this.getAiConfig();
+    if (!existing) {
+      const [newConfig] = await db.insert(aiConfigTable).values(config as InsertAiConfig).returning();
+      return newConfig;
+    }
+    const [updated] = await db.update(aiConfigTable)
+      .set({ ...config, updatedAt: new Date() })
+      .where(eq(aiConfigTable.id, existing.id))
+      .returning();
+    return updated;
   }
 }
 

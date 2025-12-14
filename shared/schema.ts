@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, timestamp, decimal, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -109,6 +109,46 @@ export const openPositions = pgTable("open_positions", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const aiTradeSamples = pgTable("ai_trade_samples", {
+  id: serial("id").primaryKey(),
+  tradeId: text("trade_id").unique().notNull(),
+  pair: text("pair").notNull(),
+  side: text("side").notNull(),
+  entryTs: timestamp("entry_ts").notNull(),
+  exitTs: timestamp("exit_ts"),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
+  exitPrice: decimal("exit_price", { precision: 18, scale: 8 }),
+  feesTotal: decimal("fees_total", { precision: 18, scale: 8 }),
+  pnlGross: decimal("pnl_gross", { precision: 18, scale: 8 }),
+  pnlNet: decimal("pnl_net", { precision: 18, scale: 8 }),
+  labelWin: integer("label_win"),
+  featuresJson: jsonb("features_json").notNull(),
+  isComplete: boolean("is_complete").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const aiShadowDecisions = pgTable("ai_shadow_decisions", {
+  id: serial("id").primaryKey(),
+  tradeId: text("trade_id").notNull(),
+  ts: timestamp("ts").defaultNow(),
+  score: decimal("score", { precision: 5, scale: 4 }).notNull(),
+  threshold: decimal("threshold", { precision: 5, scale: 4 }).notNull(),
+  wouldBlock: boolean("would_block").notNull(),
+  finalPnlNet: decimal("final_pnl_net", { precision: 18, scale: 8 }),
+});
+
+export const aiConfig = pgTable("ai_config", {
+  id: serial("id").primaryKey(),
+  filterEnabled: boolean("filter_enabled").default(false),
+  shadowEnabled: boolean("shadow_enabled").default(false),
+  modelPath: text("model_path"),
+  lastTrainTs: timestamp("last_train_ts"),
+  nSamples: integer("n_samples").default(0),
+  threshold: decimal("threshold", { precision: 5, scale: 4 }).default("0.60"),
+  metricsJson: jsonb("metrics_json"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true, updatedAt: true });
 export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
@@ -117,6 +157,9 @@ export const insertApiConfigSchema = createInsertSchema(apiConfig).omit({ id: tr
 export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true, createdAt: true });
 export const insertBotEventSchema = createInsertSchema(botEvents).omit({ id: true, timestamp: true });
 export const insertOpenPositionSchema = createInsertSchema(openPositions).omit({ id: true, openedAt: true, updatedAt: true });
+export const insertAiTradeSampleSchema = createInsertSchema(aiTradeSamples).omit({ id: true, createdAt: true });
+export const insertAiShadowDecisionSchema = createInsertSchema(aiShadowDecisions).omit({ id: true, ts: true });
+export const insertAiConfigSchema = createInsertSchema(aiConfig).omit({ id: true, updatedAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -126,6 +169,9 @@ export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
 export type BotEvent = typeof botEvents.$inferSelect;
 export type OpenPosition = typeof openPositions.$inferSelect;
+export type AiTradeSample = typeof aiTradeSamples.$inferSelect;
+export type AiShadowDecision = typeof aiShadowDecisions.$inferSelect;
+export type AiConfig = typeof aiConfig.$inferSelect;
 
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
@@ -135,3 +181,6 @@ export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
 export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
 export type InsertBotEvent = z.infer<typeof insertBotEventSchema>;
 export type InsertOpenPosition = z.infer<typeof insertOpenPositionSchema>;
+export type InsertAiTradeSample = z.infer<typeof insertAiTradeSampleSchema>;
+export type InsertAiShadowDecision = z.infer<typeof insertAiShadowDecisionSchema>;
+export type InsertAiConfig = z.infer<typeof insertAiConfigSchema>;

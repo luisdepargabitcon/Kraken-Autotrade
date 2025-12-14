@@ -5,6 +5,7 @@ import { krakenService } from "./services/kraken";
 import { telegramService } from "./services/telegram";
 import { TradingEngine } from "./services/tradingEngine";
 import { botLogger } from "./services/botLogger";
+import { aiService } from "./services/aiService";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -668,6 +669,75 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[api/events] Error:", error.message);
       res.status(500).json({ error: "Failed to fetch events" });
+    }
+  });
+
+  app.get("/api/ai/status", async (req, res) => {
+    try {
+      const status = await aiService.getStatus();
+      res.json(status);
+    } catch (error: any) {
+      console.error("[api/ai/status] Error:", error.message);
+      res.status(500).json({ error: "Failed to get AI status" });
+    }
+  });
+
+  app.get("/api/ai/samples", async (req, res) => {
+    try {
+      const complete = req.query.complete === "true" ? true : req.query.complete === "false" ? false : undefined;
+      const limit = parseInt(req.query.limit as string) || 100;
+      const samples = await storage.getAiSamples({ complete, limit });
+      const count = await storage.getAiSamplesCount(complete);
+      res.json({ samples, total: count });
+    } catch (error: any) {
+      console.error("[api/ai/samples] Error:", error.message);
+      res.status(500).json({ error: "Failed to get AI samples" });
+    }
+  });
+
+  app.post("/api/ai/retrain", async (req, res) => {
+    try {
+      const result = await aiService.runTraining();
+      if (result.success) {
+        res.json({ success: true, message: result.message });
+      } else {
+        res.status(400).json({ success: false, error: result.message });
+      }
+    } catch (error: any) {
+      console.error("[api/ai/retrain] Error:", error.message);
+      res.status(500).json({ error: "Failed to retrain model" });
+    }
+  });
+
+  app.get("/api/ai/shadow/report", async (req, res) => {
+    try {
+      const report = await storage.getAiShadowReport();
+      res.json(report);
+    } catch (error: any) {
+      console.error("[api/ai/shadow/report] Error:", error.message);
+      res.status(500).json({ error: "Failed to get shadow report" });
+    }
+  });
+
+  app.post("/api/ai/toggle", async (req, res) => {
+    try {
+      const { filterEnabled, shadowEnabled, threshold } = req.body;
+      
+      if (filterEnabled !== undefined) {
+        await aiService.toggleFilter(filterEnabled);
+      }
+      if (shadowEnabled !== undefined) {
+        await aiService.toggleShadow(shadowEnabled);
+      }
+      if (threshold !== undefined) {
+        await aiService.setThreshold(parseFloat(threshold));
+      }
+      
+      const status = await aiService.getStatus();
+      res.json({ success: true, status });
+    } catch (error: any) {
+      console.error("[api/ai/toggle] Error:", error.message);
+      res.status(500).json({ error: "Failed to toggle AI settings" });
     }
   });
 
