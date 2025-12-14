@@ -37,6 +37,8 @@ interface OpenPosition {
   currentPrice: string;
   unrealizedPnlUsd: string;
   unrealizedPnlPct: string;
+  entryValueUsd: string;
+  currentValueUsd: string;
   entryStrategyId: string;
   entrySignalTf: string;
   signalConfidence: string | null;
@@ -51,6 +53,8 @@ interface ClosedTrade {
   amount: string;
   status: string;
   entryPrice: string | null;
+  totalUsd: string;
+  entryValueUsd: string | null;
   realizedPnlUsd: string | null;
   realizedPnlPct: string | null;
   executedAt: string | null;
@@ -406,23 +410,31 @@ export default function Terminal() {
                               </div>
                             </div>
                             
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 lg:gap-6">
+                            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4">
                               <div>
                                 <div className="font-mono text-[10px] text-muted-foreground uppercase">Cantidad</div>
                                 <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
                               </div>
                               <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Entrada</div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Entrada</div>
                                 <div className="font-mono font-medium text-sm">${formatPrice(pos.entryPrice)}</div>
                               </div>
                               <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Actual</div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor de entrada en USD">Valor Entrada</div>
+                                <div className="font-mono font-medium text-sm text-blue-400">${parseFloat(pos.entryValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              </div>
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Actual</div>
                                 <div className="font-mono font-medium text-sm">${formatPrice(pos.currentPrice)}</div>
+                              </div>
+                              <div>
+                                <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor actual en USD">Valor Actual</div>
+                                <div className="font-mono font-medium text-sm text-cyan-400">${parseFloat(pos.currentValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                               </div>
                               <div>
                                 <div className="font-mono text-[10px] text-muted-foreground uppercase">P&L</div>
                                 <div className={`font-mono font-bold text-sm flex items-center gap-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                  ${Math.abs(pnlUsd).toFixed(2)}
+                                  {isProfit ? '+' : '-'}${Math.abs(pnlUsd).toFixed(2)}
                                   <span className="text-xs opacity-75">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
                                 </div>
                               </div>
@@ -465,17 +477,17 @@ export default function Terminal() {
                   ) : closedData && closedData.trades.length > 0 ? (
                     <>
                       <div className="overflow-x-auto">
-                        <table className="w-full min-w-[700px]">
+                        <table className="w-full min-w-[900px]">
                           <thead>
                             <tr className="border-b border-border/30 text-left">
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Tipo</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Par</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal">Fecha</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Cantidad</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Entrada</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Salida</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">P&L</th>
-                              <th className="py-3 px-4 font-mono text-[10px] text-muted-foreground uppercase font-normal text-center">Estado</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal">Tipo</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal">Par</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal">Fecha</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Cantidad</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">Precio</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right" title="Valor total de la operación en USD">Total USD</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal text-right">P&L</th>
+                              <th className="py-3 px-3 font-mono text-[10px] text-muted-foreground uppercase font-normal text-center">Estado</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border/20">
@@ -490,28 +502,30 @@ export default function Terminal() {
                                   className="hover:bg-white/[0.02] transition-colors"
                                   data-testid={`closed-trade-row-${trade.id}`}
                                 >
-                                  <td className="py-3 px-4">
+                                  <td className="py-3 px-3">
                                     <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono font-bold ${trade.type === 'buy' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
                                       {trade.type === 'buy' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                                      {trade.type === 'buy' ? 'COMPRA' : 'VENTA'}
+                                      {trade.type === 'buy' ? 'BUY' : 'SELL'}
                                     </div>
                                   </td>
-                                  <td className="py-3 px-4">
+                                  <td className="py-3 px-3">
                                     <span className="font-mono font-medium text-sm">{trade.pair}</span>
                                   </td>
-                                  <td className="py-3 px-4">
+                                  <td className="py-3 px-3">
                                     <span className="font-mono text-xs text-muted-foreground">{formatDate(trade.executedAt || trade.createdAt)}</span>
                                   </td>
-                                  <td className="py-3 px-4 text-right">
+                                  <td className="py-3 px-3 text-right">
                                     <span className="font-mono text-sm">{parseFloat(trade.amount).toFixed(6)}</span>
                                   </td>
-                                  <td className="py-3 px-4 text-right">
-                                    <span className="font-mono text-sm">{trade.entryPrice ? `$${formatPrice(trade.entryPrice)}` : '-'}</span>
-                                  </td>
-                                  <td className="py-3 px-4 text-right">
+                                  <td className="py-3 px-3 text-right">
                                     <span className="font-mono text-sm">${formatPrice(trade.price)}</span>
                                   </td>
-                                  <td className="py-3 px-4 text-right">
+                                  <td className="py-3 px-3 text-right">
+                                    <span className="font-mono text-sm font-medium text-cyan-400" title="Cantidad × Precio">
+                                      ${parseFloat(trade.totalUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-right">
                                     {pnlUsd !== null ? (
                                       <span className={`font-mono font-bold text-sm ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
                                         {isProfit ? '+' : ''}${pnlUsd.toFixed(2)}
@@ -523,7 +537,7 @@ export default function Terminal() {
                                       <span className="font-mono text-sm text-muted-foreground">-</span>
                                     )}
                                   </td>
-                                  <td className="py-3 px-4 text-center">
+                                  <td className="py-3 px-3 text-center">
                                     <Badge 
                                       variant="outline"
                                       className={`font-mono text-[10px] ${

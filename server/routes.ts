@@ -348,11 +348,18 @@ export async function registerRoutes(
           } catch (e) {}
         }
         
+        const amount = parseFloat(pos.amount);
+        const entryPrice = parseFloat(pos.entryPrice);
+        const entryValueUsd = entryPrice * amount;
+        const currentValueUsd = currentPrice * amount;
+        
         return {
           ...pos,
           currentPrice: currentPrice.toString(),
           unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
           unrealizedPnlPct: unrealizedPnlPct.toFixed(2),
+          entryValueUsd: entryValueUsd.toFixed(2),
+          currentValueUsd: currentValueUsd.toFixed(2),
         };
       }));
       
@@ -374,11 +381,20 @@ export async function registerRoutes(
       const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, result, type });
       
       res.json({
-        trades: trades.map(t => ({
-          ...t,
-          realizedPnlUsd: t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,
-          realizedPnlPct: t.realizedPnlPct ? parseFloat(t.realizedPnlPct).toFixed(2) : null,
-        })),
+        trades: trades.map(t => {
+          const price = parseFloat(t.price);
+          const amount = parseFloat(t.amount);
+          const totalUsd = price * amount;
+          const entryValueUsd = t.entryPrice ? parseFloat(t.entryPrice) * amount : null;
+          
+          return {
+            ...t,
+            totalUsd: totalUsd.toFixed(2),
+            entryValueUsd: entryValueUsd?.toFixed(2) || null,
+            realizedPnlUsd: t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,
+            realizedPnlPct: t.realizedPnlPct ? parseFloat(t.realizedPnlPct).toFixed(2) : null,
+          };
+        }),
         total,
         limit,
         offset,
