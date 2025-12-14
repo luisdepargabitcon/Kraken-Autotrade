@@ -65,7 +65,7 @@ export interface IStorage {
   deleteOpenPosition(pair: string): Promise<void>;
   
   saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample>;
-  updateAiSample(tradeId: string, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
+  updateAiSample(sampleId: number, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
   getAiSamples(options?: { complete?: boolean; limit?: number }): Promise<AiTradeSample[]>;
   getAiSamplesCount(complete?: boolean): Promise<number>;
   
@@ -269,10 +269,10 @@ export class DatabaseStorage implements IStorage {
     return newSample;
   }
 
-  async updateAiSample(tradeId: string, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined> {
+  async updateAiSample(sampleId: number, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined> {
     const [updated] = await db.update(aiTradeSamplesTable)
       .set(updates)
-      .where(eq(aiTradeSamplesTable.tradeId, tradeId))
+      .where(eq(aiTradeSamplesTable.id, sampleId))
       .returning();
     return updated;
   }

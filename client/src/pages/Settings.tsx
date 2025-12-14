@@ -7,9 +7,31 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
+
+interface AiStatus {
+  phase: "red" | "yellow" | "green";
+  phaseLabel: string;
+  completeSamples: number;
+  minSamplesForTrain: number;
+  minSamplesForActivate: number;
+  canTrain: boolean;
+  canActivate: boolean;
+  filterEnabled: boolean;
+  shadowEnabled: boolean;
+  modelLoaded: boolean;
+  lastTrainTs: string | null;
+  threshold: number;
+  metrics: {
+    accuracy?: number;
+    precision?: number;
+    recall?: number;
+    f1?: number;
+  } | null;
+}
 
 interface BotConfig {
   id: number;
@@ -39,6 +61,16 @@ export default function Settings() {
     },
   });
 
+  const { data: aiStatus, isLoading: aiLoading } = useQuery<AiStatus>({
+    queryKey: ["aiStatus"],
+    queryFn: async () => {
+      const res = await fetch("/api/ai/status");
+      if (!res.ok) throw new Error("Failed to fetch AI status");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   const updateMutation = useMutation({
     mutationFn: async (updates: Partial<BotConfig>) => {
       const res = await fetch("/api/config", {
@@ -55,6 +87,44 @@ export default function Settings() {
     },
     onError: () => {
       toast.error("Error al actualizar configuración");
+    },
+  });
+
+  const trainMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/ai/retrain", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to train");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["aiStatus"] });
+      if (data.success) {
+        toast.success(data.message || "Entrenamiento completado");
+      } else {
+        toast.error(data.message || "Error en entrenamiento");
+      }
+    },
+    onError: () => {
+      toast.error("Error al entrenar modelo");
+    },
+  });
+
+  const toggleAiMutation = useMutation({
+    mutationFn: async (payload: { filterEnabled?: boolean; shadowEnabled?: boolean }) => {
+      const res = await fetch("/api/ai/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Failed to toggle");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["aiStatus"] });
+      toast.success("Configuración IA actualizada");
+    },
+    onError: () => {
+      toast.error("Error al actualizar configuración IA");
     },
   });
 
@@ -211,54 +281,105 @@ export default function Settings() {
               <CardHeader>
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-primary/20 rounded-lg">
-                    <Bot className="h-6 w-6 text-primary" />
+                    <Brain className="h-6 w-6 text-primary" />
                   </div>
                   <div>
                     <CardTitle>Motor de Inteligencia Artificial</CardTitle>
-                    <CardDescription>Configura el modelo predictivo y parámetros de trading.</CardDescription>
+                    <CardDescription>Filtro predictivo basado en Machine Learning.</CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label className="text-sm">Modelo Predictivo</Label>
-                    <Select defaultValue="lstm">
-                      <SelectTrigger className="bg-background/50">
-                        <SelectValue placeholder="Seleccionar modelo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="lstm">Deep LSTM V4 (Recomendado)</SelectItem>
-                        <SelectItem value="transformer">Transformer Market-BERT</SelectItem>
-                        <SelectItem value="xgboost">XGBoost Ensemble</SelectItem>
-                      </SelectContent>
-                    </Select>
+                {aiLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
-                  <div className="grid gap-2">
-                    <Label>Intervalo de Re-entrenamiento</Label>
-                    <Select defaultValue="24h">
-                      <SelectTrigger className="bg-background/50">
-                        <SelectValue placeholder="Seleccionar intervalo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1h">Cada 1 Hora</SelectItem>
-                        <SelectItem value="6h">Cada 6 Horas</SelectItem>
-                        <SelectItem value="24h">Cada 24 Horas</SelectItem>
-                        <SelectItem value="weekly">Semanal</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="p-4 border border-border rounded-lg bg-card/30 flex items-center justify-between">
-                   <div className="space-y-1">
-                     <div className="flex items-center gap-2">
-                       <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-                       <span className="font-mono text-sm">Estado del Modelo: CONVERGENTE</span>
-                     </div>
-                     <p className="text-xs text-muted-foreground">Última precisión: 94.2% en backtesting</p>
-                   </div>
-                   <Button size="sm" variant="secondary">Re-entrenar Ahora</Button>
-                </div>
+                ) : aiStatus ? (
+                  <>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Progreso de Entrenamiento</Label>
+                        <span className="text-sm font-mono">
+                          {aiStatus.completeSamples} / {aiStatus.minSamplesForActivate} trades
+                        </span>
+                      </div>
+                      <Progress 
+                        value={(aiStatus.completeSamples / aiStatus.minSamplesForActivate) * 100} 
+                        className="h-2"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {aiStatus.completeSamples < aiStatus.minSamplesForTrain 
+                          ? `Necesitas ${aiStatus.minSamplesForTrain - aiStatus.completeSamples} trades más para entrenar`
+                          : aiStatus.completeSamples < aiStatus.minSamplesForActivate
+                          ? `Puedes entrenar. Faltan ${aiStatus.minSamplesForActivate - aiStatus.completeSamples} para activar filtro`
+                          : "Listo para activar el filtro AI"}
+                      </p>
+                    </div>
+                    
+                    <div className="p-4 border border-border rounded-lg bg-card/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={`h-3 w-3 rounded-full ${
+                            aiStatus.phase === "green" ? "bg-green-500" : 
+                            aiStatus.phase === "yellow" ? "bg-yellow-500" : "bg-red-500"
+                          } ${aiStatus.phase !== "red" ? "animate-pulse" : ""}`}></span>
+                          <span className="font-mono text-sm">{aiStatus.phaseLabel}</span>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          variant="secondary"
+                          disabled={!aiStatus.canTrain || trainMutation.isPending}
+                          onClick={() => trainMutation.mutate()}
+                          data-testid="button-train-ai"
+                        >
+                          {trainMutation.isPending ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Entrenando...</>
+                          ) : "Entrenar Modelo"}
+                        </Button>
+                      </div>
+                      {aiStatus.metrics && (
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Accuracy:</span>
+                            <span className="ml-2 font-mono">{((aiStatus.metrics.accuracy ?? 0) * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Precision:</span>
+                            <span className="ml-2 font-mono">{((aiStatus.metrics.precision ?? 0) * 100).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+                        <div className="space-y-0.5">
+                          <Label>Shadow Mode</Label>
+                          <p className="text-xs text-muted-foreground">Registra predicciones sin bloquear trades</p>
+                        </div>
+                        <Switch 
+                          checked={aiStatus.shadowEnabled}
+                          onCheckedChange={(checked) => toggleAiMutation.mutate({ shadowEnabled: checked })}
+                          data-testid="switch-ai-shadow"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+                        <div className="space-y-0.5">
+                          <Label>Filtro Activo</Label>
+                          <p className="text-xs text-muted-foreground">Bloquea trades con baja probabilidad de éxito</p>
+                        </div>
+                        <Switch 
+                          checked={aiStatus.filterEnabled}
+                          disabled={!aiStatus.canActivate}
+                          onCheckedChange={(checked) => toggleAiMutation.mutate({ filterEnabled: checked })}
+                          data-testid="switch-ai-filter"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Error cargando estado de IA</p>
+                )}
               </CardContent>
             </Card>
 

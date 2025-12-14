@@ -3,6 +3,7 @@ import { TelegramService } from "./telegram";
 import { botLogger } from "./botLogger";
 import { storage } from "../storage";
 import { log } from "../index";
+import { aiService, AiFeatures } from "./aiService";
 
 interface PriceData {
   price: number;
@@ -71,6 +72,7 @@ interface OpenPosition {
   entrySignalTf: string;
   signalConfidence?: number;
   signalReason?: string;
+  aiSampleId?: number;
 }
 
 interface CandleTrackingState {
@@ -1858,6 +1860,28 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             signalConfidence,
             signalReason: reason,
           };
+          
+          // AI Sample collection: save features at entry for new positions
+          try {
+            const features = aiService.extractFeatures({
+              rsi: 50, // Will be enriched from actual indicators in future
+              confidence: signalConfidence ?? 50,
+            });
+            const sample = await storage.saveAiSample({
+              pair,
+              entryPrice: price.toString(),
+              entryTs: new Date(),
+              featuresJson: features,
+              strategyId: entryStrategyId,
+            });
+            if (sample?.id) {
+              newPosition.aiSampleId = sample.id;
+              log(`[AI] Sample #${sample.id} guardado para ${pair}`, "trading");
+            }
+          } catch (aiErr: any) {
+            log(`[AI] Error guardando sample: ${aiErr.message}`, "trading");
+          }
+          
           this.openPositions.set(pair, newPosition);
         }
         await this.savePositionToDB(pair, newPosition);
@@ -1866,11 +1890,30 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const existing = this.openPositions.get(pair);
         if (existing) {
           const pnl = (price - existing.entryPrice) * volumeNum;
+          const pnlPercent = ((price - existing.entryPrice) / existing.entryPrice) * 100;
           this.dailyPnL += pnl;
           log(`P&L de operación: $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
           
           existing.amount -= volumeNum;
-          if (existing.amount <= 0) {
+          const isFullClose = existing.amount <= 0;
+          
+          // AI Sample update: mark sample complete with PnL result only on full close
+          if (existing.aiSampleId && isFullClose) {
+            try {
+              await storage.updateAiSample(existing.aiSampleId, {
+                exitPrice: price.toString(),
+                exitTs: new Date(),
+                pnl: pnl.toString(),
+                pnlPct: pnlPercent.toString(),
+                labelWin: pnl > 0,
+              });
+              log(`[AI] Sample #${existing.aiSampleId} actualizado: PnL=${pnl.toFixed(2)} (${pnl > 0 ? 'WIN' : 'LOSS'})`, "trading");
+            } catch (aiErr: any) {
+              log(`[AI] Error actualizando sample: ${aiErr.message}`, "trading");
+            }
+          }
+          
+          if (isFullClose) {
             this.openPositions.delete(pair);
             await this.deletePositionFromDB(pair);
           } else {
