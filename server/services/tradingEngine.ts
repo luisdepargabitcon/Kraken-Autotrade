@@ -67,6 +67,15 @@ interface OpenPosition {
   entryPrice: number;
   highestPrice: number;
   openedAt: number;
+  entryStrategyId: string;
+  entrySignalTf: string;
+  signalConfidence?: number;
+  signalReason?: string;
+}
+
+interface CandleTrackingState {
+  lastEvaluatedCandleTs: number;
+  lastEvaluatedPair: string;
 }
 
 interface OHLCCandle {
@@ -119,6 +128,16 @@ export class TradingEngine {
   private spreadFilterEnabled: boolean = true;
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
+  
+  // Tracking para Momentum (Velas) - última vela evaluada por par+timeframe
+  private lastEvaluatedCandle: Map<string, number> = new Map();
+  
+  // Timeframe en segundos para calcular cierre de vela
+  private readonly TIMEFRAME_SECONDS: Record<string, number> = {
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "1h": 60 * 60,
+  };
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
