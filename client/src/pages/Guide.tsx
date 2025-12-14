@@ -25,7 +25,10 @@ import {
   XCircle,
   WifiOff,
   Key,
-  Percent
+  Percent,
+  CandlestickChart,
+  Bell,
+  Database
 } from "lucide-react";
 
 export default function Guide() {
@@ -219,6 +222,39 @@ export default function Guide() {
                           <p className="font-medium text-purple-400">Grid Trading</p>
                           <p className="text-muted-foreground">Coloca órdenes de compra y venta en niveles de precio fijos. Funciona bien en mercados laterales.</p>
                         </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="signalmode">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <CandlestickChart className="h-4 w-4 text-cyan-500" />
+                        Modo de Señal (Solo Momentum)
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Define cuándo y cómo el bot evalúa las señales de trading cuando usas la estrategia Momentum.</p>
+                      <div className="space-y-2">
+                        <div className="p-3 bg-card/50 rounded border border-border">
+                          <p className="font-medium text-primary">Ciclos (30 segundos)</p>
+                          <p className="text-muted-foreground">Evalúa precios en tiempo real cada ciclo del bot (~30s). Usa indicadores sobre datos de ticks. Más reactivo pero puede generar más señales falsas. <strong>Ideal para:</strong> Trading activo, mercados muy volátiles.</p>
+                        </div>
+                        <div className="p-3 bg-cyan-500/10 rounded border border-cyan-500/30">
+                          <p className="font-medium text-cyan-400">Velas 5 minutos</p>
+                          <p className="text-muted-foreground">Solo evalúa al cierre de cada vela de 5 min. Usa análisis OHLC completo: EMA, RSI, MACD, patrones de velas (Engulfing), volumen relativo. <strong>Ideal para:</strong> Balance entre rapidez y confirmación.</p>
+                        </div>
+                        <div className="p-3 bg-cyan-500/10 rounded border border-cyan-500/30">
+                          <p className="font-medium text-cyan-400">Velas 15 minutos</p>
+                          <p className="text-muted-foreground">Evalúa cada 15 minutos al cierre de vela. Menos ruido del mercado, señales más confirmadas. <strong>Ideal para:</strong> Swing trading, menos operaciones pero más seguras.</p>
+                        </div>
+                        <div className="p-3 bg-cyan-500/10 rounded border border-cyan-500/30">
+                          <p className="font-medium text-cyan-400">Velas 1 hora</p>
+                          <p className="text-muted-foreground">Evaluación cada hora. Mínimas señales falsas, solo opera en tendencias claras y confirmadas. <strong>Ideal para:</strong> Posiciones largas, mínima intervención.</p>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-primary/10 rounded border border-primary/30">
+                        <p className="text-xs"><strong>Nota:</strong> En modo Velas, el bot usa análisis OHLC avanzado incluyendo patrones de velas japonesas (Engulfing alcista/bajista), Bandas de Bollinger, y análisis de volumen relativo que no están disponibles en modo Ciclos.</p>
                       </div>
                     </AccordionContent>
                   </AccordionItem>
@@ -450,6 +486,70 @@ export default function Guide() {
                       <p className="text-muted-foreground">
                         <strong>Ejemplo:</strong> Con $100 de saldo y riesgo medio, cada operación usará ~$3-5 y el bot parará si pierdes más de $10 en un día.
                       </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="position-tracking">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Database className="h-4 w-4 text-primary" />
+                        Seguimiento de Posiciones
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Cada posición abierta guarda información sobre cómo fue creada.</p>
+                      <div className="p-3 bg-card/50 rounded border border-border">
+                        <p className="font-medium mb-2">Estrategia "Grandfather"</p>
+                        <p className="text-muted-foreground">
+                          Cuando el bot abre una posición, guarda:<br/>
+                          • <strong>Estrategia usada:</strong> Momentum, Scalping, etc.<br/>
+                          • <strong>Timeframe de señal:</strong> Ciclos, 5m, 15m, 1h<br/>
+                          • <strong>Confianza de la señal:</strong> Porcentaje de certeza<br/>
+                          • <strong>Razón:</strong> Indicadores que activaron la compra
+                        </p>
+                      </div>
+                      <div className="p-3 bg-cyan-500/10 rounded border border-cyan-500/30">
+                        <p className="font-medium text-cyan-400 mb-1">¿Por qué es útil?</p>
+                        <p className="text-muted-foreground text-xs">
+                          • Puedes ver en la tabla de posiciones qué estrategia abrió cada trade<br/>
+                          • Al ampliar una posición existente, se mantiene la estrategia original<br/>
+                          • Ayuda a analizar qué configuración funciona mejor para ti
+                        </p>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="telegram">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Bell className="h-4 w-4 text-primary" />
+                        Notificaciones Telegram
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> El bot envía alertas a Telegram cuando ocurren eventos importantes.</p>
+                      <div className="p-3 bg-card/50 rounded border border-border">
+                        <p className="font-medium mb-2">Información en cada notificación</p>
+                        <p className="text-muted-foreground">
+                          • <strong>Tipo:</strong> COMPRA o VENTA<br/>
+                          • <strong>Par y cantidad:</strong> Qué crypto y cuánto<br/>
+                          • <strong>Precio:</strong> A qué precio se ejecutó<br/>
+                          • <strong>Estrategia:</strong> Momentum (Velas 5m), etc.<br/>
+                          • <strong>Confianza:</strong> Porcentaje de certeza de la señal<br/>
+                          • <strong>Razón:</strong> Indicadores que activaron la operación
+                        </p>
+                      </div>
+                      <div className="p-3 bg-green-500/10 rounded border border-green-500/30">
+                        <p className="font-medium text-green-400 mb-1">Tipos de alertas</p>
+                        <p className="text-muted-foreground text-xs">
+                          • 🟢 Compra ejecutada<br/>
+                          • 🔴 Venta ejecutada<br/>
+                          • 🛑 Stop-Loss activado<br/>
+                          • 🎯 Take-Profit alcanzado<br/>
+                          • 📉 Trailing Stop activado<br/>
+                          • ⚠️ Errores o límites alcanzados
+                        </p>
+                      </div>
                     </AccordionContent>
                   </AccordionItem>
 
