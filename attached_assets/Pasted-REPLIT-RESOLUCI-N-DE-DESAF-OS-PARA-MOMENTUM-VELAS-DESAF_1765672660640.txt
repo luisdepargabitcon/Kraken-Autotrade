@@ -1,0 +1,64 @@
+REPLIT — RESOLUCIÓN DE DESAFÍOS PARA “MOMENTUM (VELAS)”
+
+DESAFÍO 1: Detectar cierre de vela (evaluar señal solo al cierre)
+SOLUCIÓN RECOMENDADA (simple y robusta):
+1) En cada tick rápido (10–30s) se puede llamar a OHLC del timeframe seleccionado, pero:
+   - Solo se calcula señal cuando detectemos una vela NUEVA cerrada.
+2) Cómo detectarlo sin “calcular horarios”:
+   - Guardar en memoria/DB: lastEvaluatedCandleCloseTime por (pair, timeframe, strategy)
+   - Al pedir OHLC, tomar la última vela CERRADA (penúltima si el endpoint incluye la vela en formación).
+   - Si candle.closeTime > lastEvaluatedCandleCloseTime:
+       -> evaluar señal
+       -> actualizar lastEvaluatedCandleCloseTime = candle.closeTime
+   - Si no ha cambiado, NO evaluar señal (solo mantener estado).
+
+Nota importante:
+- Kraken OHLC suele devolver velas con timestamp de inicio; definir “cierre” como:
+  candleStart + timeframeSeconds
+- Alternativa más segura: usar siempre la vela anterior a la última si la última puede estar incompleta.
+
+CRITERIO:
+- Una misma vela no debe evaluarse dos veces.
+- Solo se evalúa cuando aparece una vela nueva cerrada.
+
+DESAFÍO 2: Loop rápido vs loop lento
+OBJETIVO:
+- Mantener loop rápido para gestión de riesgo (SL/TP/Trailing y price refresh).
+- Hacer que entradas/salidas por señal dependan del “loop lento” (cierre de vela), sin crear un scheduler separado complejo.
+
+SOLUCIÓN RECOMENDADA (sin dos procesos):
+Dentro del tick rápido:
+A) Bloque 1 (siempre, cada tick):
+- actualizar precios (ticker)
+- aplicar Risk Manager a posiciones abiertas:
+  - Stop Loss
+  - Take Profit
+  - Trailing Stop
+  (esto puede cerrar posiciones en cualquier momento)
+
+B) Bloque 2 (solo cuando hay nueva vela cerrada):
+- para cada par:
+  - comprobar si hay vela nueva cerrada del timeframe de señal
+  - si sí:
+     - calcular indicadores sobre velas (EMA/RSI/MACD/Bollinger)
+     - evaluar entrada/salida por señal
+  - si no:
+     - no hacer nada de señal (evita scalping)
+
+RECOMENDACIÓN ADICIONAL (evitar reentradas rápidas):
+- Tras un cierre por SL/TP/Trailing, aplicar cooldown normal o post-loss cooldown ya implementado.
+- Esto previene: cierre intrabar -> reentrada inmediata en la misma vela.
+
+ENTREGABLES DE IMPLEMENTACIÓN (mínimos)
+- Estado persistente por (pair, tf, strategy):
+  lastEvaluatedCandleTs
+- Función helper:
+  getLastClosedCandle(pair, tf) -> { candle, closeTs }
+- Guardas/condiciones:
+  if closeTs <= lastEvaluatedCandleTs: skip signal evaluation
+
+CRITERIOS DE ACEPTACIÓN (test rápido)
+- En logs debe verse:
+  “Signal evaluated on candle close: pair=X tf=15m candleCloseTs=...”
+  máximo 1 vez por vela.
+- Entre cierres de vela, el bot NO debe abrir/cerrar por “señal” (solo por risk exits).
