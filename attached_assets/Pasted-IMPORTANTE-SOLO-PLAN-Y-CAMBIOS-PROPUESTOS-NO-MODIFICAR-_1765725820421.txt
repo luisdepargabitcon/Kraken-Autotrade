@@ -1,0 +1,109 @@
+IMPORTANTE: SOLO PLAN Y CAMBIOS PROPUESTOS. NO MODIFICAR NI EJECUTAR NADA SIN MI APROBACIÓN EXPLÍCITA.
+Quiero que presentes un diseño + diffs propuestos, y esperes mi “OK” antes de aplicar.
+
+OBJETIVO (IA REALISTA):
+Implementar XGBoost (o alternativa RandomForest si XGBoost complica dependencias) como “FILTRO” (gating) de las señales existentes.
+La IA NO genera señales nuevas, NO decide entradas/salidas por sí sola, y NUNCA sustituye al control de riesgo.
+Solo APRUEBA o BLOQUEA trades que ya fueron propuestos por la estrategia técnica.
+
+ARQUITECTURA DE FLUJO:
+Señal técnica (EMA/RSI/MACD/Bollinger/MTF) → Filtro IA (XGBoost) → Risk Manager (actual) → Ejecución (actual)
+
+ENTREGABLES ANTES DE IMPLEMENTAR:
+1) Lista de archivos a crear/modificar (rutas exactas)
+2) Pseudocódigo por módulo
+3) DIFFs o bloques de código propuestos SIN aplicar
+4) Checklist de riesgos (leakage, pocos datos, latencia, fallos)
+
+1) DATASET (trades reales) — imprescindible
+Crear persistencia “trade_samples” (tabla o colección) con:
+- id, trade_id, symbol, side
+- entry_ts, exit_ts, entry_price, exit_price
+- fees_total (obligatorio), slippage_est (si existe), pnl_gross, pnl_net (obligatorio)
+- label_win: 1 si pnl_net > 0, 0 si pnl_net <= 0
+- features_json: snapshot de features en el momento de ENTRADA:
+  RSI, MACD, EMA_fast, EMA_slow, BB_pos (dist a banda), volatility, spread,
+  trend_HTF, hour_of_day, day_of_week, regime (si lo tenéis), etc.
+
+Implementar “FeatureExtractor”:
+- Se ejecuta justo antes de abrir trade para guardar features.
+Implementar “TradeCloserHook”:
+- Al cerrar trade completa fees/pnl y etiqueta label_win.
+
+NOTA: Si no existe un ledger de trades cerrados, primero definid dónde se guarda el histórico real (DB/archivo).
+Sin trades cerrados etiquetados, NO hay entrenamiento.
+
+2) ENTRENAMIENTO (XGBoost) con validación seria (sin métricas falsas)
+Servicio “mlTrainer”:
+- min_samples para entrenar: proponer default 200 (ajustable)
+- split temporal tipo walk-forward (train pasado, test futuro), NO random split
+- métricas mínimas: AUC + precision/recall + matriz confusión
+- además: expectancy por buckets de score (ej: 0.4-0.5, 0.5-0.6, etc.)
+- guardar modelo: /data/models/ai_filter.joblib (o formato equivalente)
+- guardar status+metrics: /data/models/ai_filter_status.json (timestamp, n_samples, threshold recomendado, métricas)
+
+Si no hay suficientes datos:
+- devolver “NO DATA” y NO cambiar el modelo vigente.
+
+3) INFERENCIA (gating) en tiempo real
+Servicio “aiFilter”:
+- loadModel() al arrancar o lazy-load con cache
+- predictApproval(features) → { approve: boolean, score: number, threshold: number, reason: string }
+
+Reglas:
+- Feature flag AI_FILTER_ENABLED=false por defecto (bypass total).
+- Si AI_FILTER_ENABLED=true y NO hay modelo → bypass + log “NO MODEL”.
+- Si hay modelo:
+  - score = P(win)
+  - approve si score >= THRESHOLD (default 0.60; configurable)
+  - si bloquea: registrar motivo y enviar Telegram:
+    “Trade bloqueado por IA: score=0.42 < 0.60 | setup=momentum | pair=XRP/USD”
+
+Integración exacta:
+- Insertar gating DESPUÉS de generar señal técnica y ANTES del risk manager.
+- El risk manager siempre se ejecuta si el trade fue aprobado por IA.
+
+4) ENDPOINTS (backend) para UI y control
+Crear endpoints:
+- GET /api/ai/status
+  -> {enabled, model_present, last_train_ts, n_samples, metrics, threshold, last_error}
+- POST /api/ai/retrain
+  -> dispara entrenamiento (con lock para evitar concurrente)
+  -> responde con resultado (TRAINED / NO DATA / ERROR) + métricas
+- (opcional) GET /api/ai/metrics (histórico si lo guardáis)
+
+5) UI (Settings) — eliminar placeholders
+En client/src/pages/Settings.tsx:
+- Quitar LSTM y Transformer (no implementar esos).
+- Dejar selector solo entre:
+  - “XGBoost (recomendado)” y opcional “RandomForest (fallback)”
+- Añadir onValueChange y persistencia real (DB o config).
+- “Estado del modelo” y “precisión/métricas” deben venir de /api/ai/status.
+- Botón “Re-entrenar ahora” debe:
+  - llamar POST /api/ai/retrain
+  - mostrar resultado (TRAINED / NO DATA / ERROR)
+  - mostrar timestamp actualizado y nº de muestras
+
+6) SCHEDULER 24h (solo si IA habilitada)
+Job server-side:
+- cada 24h, si AI_FILTER_ENABLED=true:
+  - ejecuta retrain con lock
+  - notifica por log/Telegram SOLO si entrenó o si “NO DATA” (mensaje claro)
+
+7) SEGURIDAD Y FAIL-SAFE
+- Si el entrenamiento falla, mantener el modelo anterior.
+- Si /data no está disponible, bypass sin bloquear trading.
+- Todo evento importante a logs + Telegram (si está activo).
+
+8) PRUEBAS (sin operar real)
+- “dry-run mode”: simular gating sin enviar órdenes, solo logs/Telegram.
+- unit tests del FeatureExtractor, Trainer y Predictor con dataset mínimo.
+
+SALIDA QUE QUIERO (ANTES DE CAMBIOS):
+- Tabla: componente → archivos → qué se añade
+- Diffs propuestos
+- Riesgos y mitigaciones
+- Estimación de mínimo de trades necesarios según histórico disponible
+
+Reitero:
+No apliques nada ni ejecutes entrenamiento hasta que yo diga “OK, implementa”.
