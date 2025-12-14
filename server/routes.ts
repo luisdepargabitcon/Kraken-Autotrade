@@ -368,8 +368,9 @@ export async function registerRoutes(
       const offset = parseInt(req.query.offset as string) || 0;
       const pair = req.query.pair as string | undefined;
       const result = (req.query.result as 'winner' | 'loser' | 'all') || 'all';
+      const type = (req.query.type as 'all' | 'buy' | 'sell') || 'all';
       
-      const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, result });
+      const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, result, type });
       
       res.json({
         trades: trades.map(t => ({

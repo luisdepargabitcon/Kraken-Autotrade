@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown, RefreshCw, ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface OpenPosition {
   id: number;
@@ -47,6 +48,9 @@ export default function History() {
   const [offset, setOffset] = useState(0);
   const [pairFilter, setPairFilter] = useState<string>("all");
   const [resultFilter, setResultFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [syncing, setSyncing] = useState(false);
+  const { toast } = useToast();
 
   const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
     queryKey: ["openPositions"],
@@ -59,12 +63,13 @@ export default function History() {
   });
 
   const { data: closedData, isLoading: loadingClosed, refetch: refetchClosed, isFetching: fetchingClosed } = useQuery<ClosedTradesResponse>({
-    queryKey: ["closedTrades", limit, offset, pairFilter, resultFilter],
+    queryKey: ["closedTrades", limit, offset, pairFilter, resultFilter, typeFilter],
     queryFn: async () => {
       const params = new URLSearchParams({
         limit: limit.toString(),
         offset: offset.toString(),
         result: resultFilter,
+        type: typeFilter,
       });
       if (pairFilter !== "all") {
         params.set("pair", pairFilter);
@@ -74,6 +79,35 @@ export default function History() {
       return res.json();
     },
   });
+
+  const handleSyncFromKraken = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/trades/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: "Sincronizado",
+          description: `Se importaron ${data.synced} operaciones de Kraken (${data.total} en historial)`,
+        });
+        refetchClosed();
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "No se pudo sincronizar",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: "Error de conexión",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "-";
@@ -231,6 +265,17 @@ export default function History() {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <CardTitle className="text-lg font-mono">OPERACIONES</CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    <SelectTrigger className="w-[100px] h-8 text-xs" data-testid="select-type-filter">
+                      <SelectValue placeholder="Tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas</SelectItem>
+                      <SelectItem value="buy">Compras</SelectItem>
+                      <SelectItem value="sell">Ventas</SelectItem>
+                    </SelectContent>
+                  </Select>
+
                   <Select value={pairFilter} onValueChange={setPairFilter}>
                     <SelectTrigger className="w-[120px] h-8 text-xs" data-testid="select-pair-filter">
                       <SelectValue placeholder="Par" />
@@ -268,6 +313,18 @@ export default function History() {
                   </Select>
 
                   <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleSyncFromKraken}
+                    disabled={syncing}
+                    className="text-xs"
+                    data-testid="button-sync-kraken"
+                  >
+                    <Download className={`h-4 w-4 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
+                    Sincronizar
+                  </Button>
+
+                  <Button 
                     variant="ghost" 
                     size="sm" 
                     onClick={() => refetchClosed()}
@@ -300,20 +357,16 @@ export default function History() {
                           data-testid={`closed-trade-row-${trade.id}`}
                         >
                           <div className="flex items-center gap-3 md:gap-4">
-                            <div className={`p-1.5 md:p-2 rounded-lg ${pnlUsd !== null ? (isProfit ? 'bg-green-500/20' : 'bg-red-500/20') : 'bg-gray-500/20'}`}>
-                              {pnlUsd !== null ? (
-                                isProfit ? (
-                                  <ArrowUpRight className="h-4 w-4 md:h-5 md:w-5 text-green-500" />
-                                ) : (
-                                  <ArrowDownRight className="h-4 w-4 md:h-5 md:w-5 text-red-500" />
-                                )
+                            <div className={`p-1.5 md:p-2 rounded-lg ${trade.type === 'buy' ? 'bg-green-500/20' : (pnlUsd !== null ? (isProfit ? 'bg-green-500/20' : 'bg-red-500/20') : 'bg-red-500/20')}`}>
+                              {trade.type === 'buy' ? (
+                                <ArrowUpRight className="h-4 w-4 md:h-5 md:w-5 text-green-500" />
                               ) : (
-                                <ArrowDownRight className="h-4 w-4 md:h-5 md:w-5 text-gray-500" />
+                                <ArrowDownRight className="h-4 w-4 md:h-5 md:w-5 text-red-500" />
                               )}
                             </div>
                             <div>
                               <div className="font-mono font-medium text-sm md:text-base">
-                                VENTA {trade.pair}
+                                {trade.type === 'buy' ? 'COMPRA' : 'VENTA'} {trade.pair}
                               </div>
                               <div className="text-xs md:text-sm text-muted-foreground flex items-center gap-2">
                                 <Clock className="h-3 w-3" />

@@ -201,7 +201,7 @@ export class KrakenService {
     return pairMap[krakenPair] || krakenPair;
   }
 
-  private formatPair(pair: string): string {
+  formatPair(pair: string): string {
     const pairMap: Record<string, string> = {
       "BTC/USD": "XXBTZUSD",
       "ETH/USD": "XETHZUSD",

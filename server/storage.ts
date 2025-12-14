@@ -33,7 +33,7 @@ export interface IStorage {
   
   createTrade(trade: InsertTrade): Promise<Trade>;
   getTrades(limit?: number): Promise<Trade[]>;
-  getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all' }): Promise<{ trades: Trade[]; total: number }>;
+  getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -110,10 +110,14 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(tradesTable).orderBy(desc(tradesTable.createdAt)).limit(limit);
   }
 
-  async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all' }): Promise<{ trades: Trade[]; total: number }> {
-    const { limit = 10, offset = 0, pair, result = 'all' } = options;
+  async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }> {
+    const { limit = 10, offset = 0, pair, result = 'all', type = 'all' } = options;
     
-    const conditions = [eq(tradesTable.type, 'sell')];
+    const conditions: any[] = [];
+    
+    if (type !== 'all') {
+      conditions.push(eq(tradesTable.type, type));
+    }
     
     if (pair) {
       conditions.push(eq(tradesTable.pair, pair));
@@ -125,17 +129,17 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lt(tradesTable.realizedPnlUsd, '0'));
     }
     
-    const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+    const whereClause = conditions.length > 0 ? (conditions.length === 1 ? conditions[0] : and(...conditions)) : undefined;
     
-    const trades = await db.select().from(tradesTable)
-      .where(whereClause)
+    const tradesQuery = db.select().from(tradesTable)
       .orderBy(desc(tradesTable.executedAt))
       .limit(limit)
       .offset(offset);
     
-    const countResult = await db.select({ count: sql<number>`count(*)` })
-      .from(tradesTable)
-      .where(whereClause);
+    const countQuery = db.select({ count: sql<number>`count(*)` }).from(tradesTable);
+    
+    const trades = whereClause ? await tradesQuery.where(whereClause) : await tradesQuery;
+    const countResult = whereClause ? await countQuery.where(whereClause) : await countQuery;
     
     return { trades, total: Number(countResult[0]?.count || 0) };
   }
