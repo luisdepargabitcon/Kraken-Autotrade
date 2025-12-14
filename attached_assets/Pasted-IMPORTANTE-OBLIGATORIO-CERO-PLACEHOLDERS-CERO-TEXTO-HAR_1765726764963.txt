@@ -1,0 +1,82 @@
+IMPORTANTE (OBLIGATORIO): CERO PLACEHOLDERS / CERO TEXTO HARDCODE / CERO BOTONES MUERTOS.
+Todo lo que aparezca en la UI debe estar conectado a backend real, con datos reales, logs y persistencia.
+Si algo no está implementado, debe NO mostrarse o mostrarse como “No disponible” con razón real (ej: NO DATA).
+
+REGLA DE ORO:
+- Nada de “CONVERGENTE”, “94.2%”, “Re-entrenar ahora” o estados inventados.
+- Cada valor visual debe venir de /api/ai/status u otro endpoint real.
+- Cada botón debe tener acción real (onClick → endpoint → resultado).
+- Todo debe quedar auditable: logs + timestamp + nº de samples + métricas.
+
+OBJETIVO:
+Implementar el pipeline completo de IA (recolección → entrenamiento → shadow → activación filtro) con “semáforo” simple:
+- Rojo < 200 trades completos: solo recolección
+- Amarillo 200–299: permitir entrenamiento y shadow (no bloquea)
+- Verde ≥ 300 + shadow 7 días positivo: habilitar botón “Activar IA”
+
+ALCANCE TÉCNICO (REAL):
+1) FASE RECOLECCIÓN (siempre real)
+- FeatureExtractor en ENTRADA (snapshot de indicadores)
+- TradeCloserHook al CIERRE (fees_total + pnl_net + label)
+- Persistencia real en DB: trade_samples con campos completos/incompletos
+- Endpoint real: GET /api/ai/samples -> contadores (total, completos, incompletos)
+
+2) FASE ENTRENAMIENTO (real, controlado)
+- Entrenamiento real en Python (sklearn RandomForest inicialmente; XGBoost si instalamos dependencia)
+- Walk-forward split real (temporal)
+- Guardado real del modelo (/data/models/ai_filter.joblib) + status (/data/models/ai_status.json)
+- Endpoint real:
+  - POST /api/ai/retrain -> devuelve TRAINED / NO DATA / ERROR + métricas reales
+
+3) FASE SHADOW (real, sin bloquear)
+- Shadow mode: la IA calcula approve/block pero NO afecta trading
+- Se registran decisiones shadow con resultado real posterior
+- Persistencia real: ai_shadow_decisions con:
+  trade_id, ts, score, threshold, would_block, final_pnl_net
+- Endpoint real:
+  - GET /api/ai/shadow/report?window=7d
+    -> devuelve “shadow_pnl_delta” (mejora neta estimada) y resumen
+
+4) FASE FILTRO ACTIVO (real, con kill switch)
+- Integrar gating (si AI_FILTER_ENABLED=true) entre señal y risk manager
+- Bypass si no hay modelo o si hay error
+- Telegram real cuando bloquee trades (solo si filtro activo)
+- Kill switch en UI (toggle off inmediato)
+
+5) UI “IA del Bot” (sin placeholders)
+- Eliminar del frontend cualquier modelo no implementado (NO LSTM, NO Transformer).
+- Mostrar solo:
+  - Progreso trades completos (de /api/ai/samples)
+  - Estado calculado (de /api/ai/status)
+  - Último entrenamiento (timestamp real + n_samples + métricas reales)
+  - Shadow 7 días (resultado real)
+- Botones:
+  - “Entrenar ahora” (solo habilitado si completos ≥ 200)
+  - “Iniciar Shadow 7 días” (si hay modelo entrenado)
+  - “Activar IA” (solo si completos ≥ 300 Y shadow 7 días positivo)
+  - “Desactivar IA” siempre visible (kill switch)
+- Si falta algo, mostrar “No disponible” con razón real (NO DATA / NO MODEL / ERROR).
+
+6) VERIFICACIÓN ANTI-PLACEHOLDER (obligatoria)
+Antes de entregar, haz una auditoría automática del repo y reporta:
+- Buscar strings sospechosos hardcode: "94.2", "CONVERGENTE", "backtesting", etc.
+- Buscar botones sin onClick y selects sin onChange
+- Confirmar que cada dato de UI proviene de un endpoint real
+- Confirmar que endpoints existen y se usan
+- Confirmar que los modelos se guardan y se cargan de rutas reales
+- Confirmar logs en consola para cada acción (retrain, shadow start, enable, disable)
+
+ENTREGA ANTES DE APLICAR CAMBIOS (OBLIGATORIO):
+- Lista de archivos a crear/modificar (rutas exactas)
+- Diffs propuestos (sin aplicar)
+- Esquema DB (tablas/colecciones)
+- Contratos de API (request/response)
+- Checklist de pruebas (unit + integración)
+- Confirmación de defaults seguros:
+  AI_FILTER_ENABLED=false
+  AI_AUTO_* = false
+  Shadow no bloquea nunca
+
+Reitero:
+NO implementes nada “de pega”. Si no se implementa al 100%, no se muestra.
+NO ejecutar trading real ni activar IA sin mi aprobación explícita.
