@@ -65,8 +65,8 @@ class TerminalWebSocketServer {
     this.dockerEnabled = process.env.ENABLE_DOCKER_LOGS_STREAM === "true";
 
     this.wss = new WebSocketServer({ 
-      server,
-      path: WS_PATH,
+      noServer: true,
+      perMessageDeflate: false,
     });
 
     this.wss.on("connection", async (ws: WebSocket, req) => {
@@ -291,6 +291,13 @@ class TerminalWebSocketServer {
 
   getClientCount(): number {
     return this.clients.size;
+  }
+
+  handleUpgrade(req: any, socket: any, head: any): void {
+    if (!this.wss) return;
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.wss!.emit("connection", ws, req);
+    });
   }
 
   shutdown(): void {

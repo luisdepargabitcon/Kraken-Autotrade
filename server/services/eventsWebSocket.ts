@@ -26,8 +26,8 @@ class EventsWebSocketServer {
 
   initialize(server: Server): void {
     this.wss = new WebSocketServer({ 
-      server,
-      path: WS_PATH,
+      noServer: true,
+      perMessageDeflate: false,
     });
 
     this.wss.on("connection", async (ws: WebSocket, req) => {
@@ -174,6 +174,13 @@ class EventsWebSocketServer {
 
   getClientCount(): number {
     return this.clients.size;
+  }
+
+  handleUpgrade(req: any, socket: any, head: any): void {
+    if (!this.wss) return;
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.wss!.emit("connection", ws, req);
+    });
   }
 
   shutdown(): void {

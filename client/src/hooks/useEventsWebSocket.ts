@@ -40,7 +40,6 @@ class EventsWebSocketSingleton {
 
   static getInstance(): EventsWebSocketSingleton {
     if (!window.__eventsWsSingleton) {
-      console.log("[WS-Singleton] Creating new singleton instance");
       window.__eventsWsSingleton = new EventsWebSocketSingleton();
     }
     return window.__eventsWsSingleton;
@@ -49,7 +48,6 @@ class EventsWebSocketSingleton {
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     this.refCount++;
-    console.log(`[WS-Singleton] subscribe called, refCount: ${this.refCount}, status: ${this.state.status}, ws: ${this.ws?.readyState}`);
     
     if (this.refCount === 1 && this.state.status === "disconnected") {
       this.connect();
@@ -58,7 +56,6 @@ class EventsWebSocketSingleton {
     return () => {
       this.listeners.delete(listener);
       this.refCount--;
-      console.log(`[WS-Singleton] unsubscribe called, refCount: ${this.refCount}`);
     };
   }
 
@@ -90,22 +87,13 @@ class EventsWebSocketSingleton {
   };
 
   connect(): void {
-    console.log(`[WS-Singleton] connect() called, ws state: ${this.ws?.readyState}, lock: ${this.connectLock}`);
-    
-    if (this.connectLock) {
-      console.log("[WS-Singleton] Connect locked, skipping");
-      return;
-    }
+    if (this.connectLock) return;
     
     if (this.ws?.readyState === WebSocket.OPEN || 
-        this.ws?.readyState === WebSocket.CONNECTING) {
-      console.log("[WS-Singleton] Already connected/connecting, skipping");
-      return;
-    }
+        this.ws?.readyState === WebSocket.CONNECTING) return;
 
     const now = Date.now();
     if (now - this.lastConnectTime < 2000) {
-      console.log("[WS-Singleton] Too soon to reconnect, waiting...");
       if (!this.reconnectTimeout) {
         this.reconnectTimeout = setTimeout(() => {
           this.reconnectTimeout = null;
@@ -118,14 +106,12 @@ class EventsWebSocketSingleton {
     this.connectLock = true;
     this.lastConnectTime = now;
     this.setState({ status: "connecting", error: null });
-    console.log("[WS-Singleton] Creating new WebSocket connection");
 
     try {
       const ws = new WebSocket(this.getWsUrl());
       this.ws = ws;
 
       ws.onopen = () => {
-        console.log("[WS-Singleton] onopen");
         this.connectLock = false;
         this.setState({ status: "connected", error: null });
         this.reconnectAttempts = 0;
@@ -151,7 +137,6 @@ class EventsWebSocketSingleton {
       };
 
       ws.onclose = (event) => {
-        console.log(`[WS-Singleton] onclose: code=${event.code}, reason=${event.reason}, refCount=${this.refCount}`);
         this.ws = null;
         this.connectLock = false;
         
@@ -163,7 +148,6 @@ class EventsWebSocketSingleton {
         if (event.code !== 4001 && event.code !== 1000 && this.refCount > 0) {
           const delay = Math.max(2000, Math.min(2000 * Math.pow(2, this.reconnectAttempts), 30000));
           this.reconnectAttempts++;
-          console.log(`[WS-Singleton] Scheduling reconnect in ${delay}ms`);
           this.setState({ status: "reconnecting" });
           
           this.reconnectTimeout = setTimeout(() => {
@@ -174,8 +158,7 @@ class EventsWebSocketSingleton {
         }
       };
 
-      ws.onerror = (e) => {
-        console.log("[WS-Singleton] onerror", e);
+      ws.onerror = () => {
         this.setState({ error: "Error de conexión WebSocket" });
       };
     } catch (e) {

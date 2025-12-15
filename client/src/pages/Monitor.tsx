@@ -564,15 +564,16 @@ function TerminalTab() {
                 <SelectValue placeholder="Seleccionar fuente..." />
               </SelectTrigger>
               <SelectContent>
-                {sources.map((source) => (
-                  <SelectItem key={source.id} value={source.id} data-testid={`source-${source.id}`}>
-                    {source.name}
-                  </SelectItem>
-                ))}
-                {sources.length === 0 && (
-                  <SelectItem value="" disabled>
+                {sources.length === 0 ? (
+                  <SelectItem value="__empty__" disabled>
                     {dockerEnabled ? "Sin fuentes" : "Docker deshabilitado"}
                   </SelectItem>
+                ) : (
+                  sources.map((source) => (
+                    <SelectItem key={source.id} value={source.id} data-testid={`source-${source.id}`}>
+                      {source.name}
+                    </SelectItem>
+                  ))
                 )}
               </SelectContent>
             </Select>

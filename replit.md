@@ -108,6 +108,17 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 
 ## Recent Changes (Dec 2025)
 
+### WebSocket Connection Stability Fix (Dec 15, 2025)
+- **Issue**: WebSocket connections closed immediately after opening with code 1006 (abnormal closure) in both Replit and NAS environments
+- **Root Cause**: Proxy interference with WebSocket upgrade when using attached mode, and compression negotiation issues
+- **Solution**:
+  - Changed both `eventsWebSocket` and `terminalWebSocket` to use `noServer: true` mode
+  - Created centralized upgrade handler in `routes.ts` that coordinates upgrades for both `/ws/events` and `/ws/logs` paths
+  - Disabled `perMessageDeflate` compression on both WebSocket servers
+  - Added `handleUpgrade()` method to both WebSocket service classes
+- **Files Modified**: `server/routes.ts`, `server/services/eventsWebSocket.ts`, `server/services/terminalWebSocket.ts`
+- **Additional Fixes**: Fixed Telegram Markdown parsing error by escaping special characters in position strategy names, fixed SelectItem empty value error in Monitor.tsx
+
 ### Monitor Real-Time Events (Dec 15, 2025)
 - Added WebSocket-based real-time event streaming to Monitor page
 - New event types for market scan visibility:

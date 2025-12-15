@@ -12,6 +12,23 @@ import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
 
+export function initializeWebSockets(httpServer: Server): void {
+  eventsWs.initialize(httpServer);
+  terminalWsServer.initialize(httpServer);
+  
+  httpServer.on("upgrade", (req, socket, head) => {
+    const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
+    
+    if (pathname === "/ws/events") {
+      eventsWs.handleUpgrade(req, socket, head);
+    } else if (pathname === "/ws/logs") {
+      terminalWsServer.handleUpgrade(req, socket, head);
+    } else {
+      socket.destroy();
+    }
+  });
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -62,12 +79,6 @@ export async function registerRoutes(
     console.error("[startup] Error loading API credentials:", error);
   }
 
-  // Initialize WebSocket server for real-time events
-  eventsWs.initialize(httpServer);
-  
-  // Initialize Terminal WebSocket for log streaming
-  terminalWsServer.initialize(httpServer);
-  
   app.get("/api/config", async (req, res) => {
     try {
       const config = await storage.getBotConfig();
