@@ -23,6 +23,7 @@ export const botConfig = pgTable("bot_config", {
   tradingHoursEnabled: boolean("trading_hours_enabled").notNull().default(true),
   tradingHoursStart: decimal("trading_hours_start", { precision: 2, scale: 0 }).notNull().default("8"),
   tradingHoursEnd: decimal("trading_hours_end", { precision: 2, scale: 0 }).notNull().default("22"),
+  positionMode: text("position_mode").notNull().default("SINGLE"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -143,10 +144,12 @@ export const trainingTrades = pgTable("training_trades", {
   strategyId: text("strategy_id"),
   buyTxid: text("buy_txid").notNull(),
   sellTxid: text("sell_txid"),
+  sellTxidsJson: jsonb("sell_txids_json"),
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
   exitPrice: decimal("exit_price", { precision: 18, scale: 8 }),
   entryAmount: decimal("entry_amount", { precision: 18, scale: 8 }).notNull(),
   exitAmount: decimal("exit_amount", { precision: 18, scale: 8 }),
+  qtyRemaining: decimal("qty_remaining", { precision: 18, scale: 8 }),
   entryFee: decimal("entry_fee", { precision: 18, scale: 8 }).notNull().default("0"),
   exitFee: decimal("exit_fee", { precision: 18, scale: 8 }),
   costUsd: decimal("cost_usd", { precision: 18, scale: 8 }).notNull(),

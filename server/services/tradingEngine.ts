@@ -930,6 +930,14 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
           return;
         }
 
+        // MODO SINGLE: Bloquear compras si ya hay posición abierta
+        const botConfigCheck = await storage.getBotConfig();
+        const positionMode = botConfigCheck?.positionMode || "SINGLE";
+        if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
+          log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          return;
+        }
+
         // MEJORA 4: Verificar cooldown post stop-loss
         if (this.isPairInStopLossCooldown(pair)) {
           log(`${pair}: En cooldown post stop-loss`, "trading");
@@ -1125,6 +1133,15 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) return;
+
+        // MODO SINGLE: Bloquear compras si ya hay posición abierta
+        const botConfigCheck = await storage.getBotConfig();
+        const positionMode = botConfigCheck?.positionMode || "SINGLE";
+        if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
+          log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          return;
+        }
+
         if (this.isPairInStopLossCooldown(pair)) {
           log(`${pair}: En cooldown post stop-loss`, "trading");
           return;
