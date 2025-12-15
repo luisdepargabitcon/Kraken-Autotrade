@@ -1,0 +1,143 @@
+OBJETIVO
+1) Añadir el modo “UNA POSICIÓN POR ACTIVO/PAR” (una compra y una venta por activo/par) para mantener la operativa ordenada.
+2) Implementar FIFO/Netting COMPLETO en el recolector (backfill + etiquetado) para soportar correctamente DCA, ventas parciales y múltiples lotes, sin etiquetas falsas.
+3) Actualizar la pestaña “Terminal” para reflejar las nuevas características (modo de posición, estado FIFO/netting, y trazabilidad de cierres).
+
+REGLAS GENERALES
+- Mensajes y errores en CASTELLANO (UI y API). Mantener errorCode técnico estable si existe.
+- Mantener el umbral de entrenamiento en 300 y el endpoint /api/ai/train tal como está (bloqueo 409 si <300).
+- No usar “aumentar tolerancia a 20–25%” como solución (evitar falsos positivos).
+- No cambiar el motor de riesgo ni el motor de ejecución salvo lo estrictamente necesario para aplicar el modo “una posición”.
+
+FASE 0: VERIFICAR LO YA IMPLEMENTADO (OBLIGATORIO ANTES DE CODIFICAR)
+Antes de hacer cambios, revisa el repo y entrega un checklist “EXISTE / FALTA / PARCIAL” con:
+- Modo “una posición por activo/par” (feature flag / setting / lógica): ¿existe?
+- Definición de “posición abierta” usada por el bot: ¿de dónde sale? ¿coincide con la Terminal?
+- Backfill actual (matching 1:1) y discardReasons: archivo + función + reglas exactas.
+- Estructura de training_trades y si soporta múltiples sellTxid por BUY (o si hace falta campo adicional).
+- Endpoint de backfill y de diagnostic: qué devuelven exactamente.
+- Terminal: qué datos consume, cómo calcula posiciones y si ya muestra “modo” o “fuente de posición”.
+Solo después de este checklist, implementa lo que falte.
+
+FASE 1: MODO “UNA POSICIÓN POR ACTIVO/PAR” (UNA COMPRA Y UNA VENTA)
+A) Setting (configurable)
+- Añadir un setting persistente (en aiConfig o settings existente):
+  positionMode = "SINGLE" | "DCA"
+- Default: "SINGLE"
+
+B) Regla de ejecución (CRÍTICA)
+- Si positionMode="SINGLE" y existe posición abierta (> epsilon) en ese par/activo:
+  - BLOQUEAR nuevas órdenes BUY para ese par/activo
+  - PERMITIR SELL siempre (para poder cerrar)
+- Registrar en logs: “Compra bloqueada: ya hay posición abierta” + par + qty abierta.
+- Usar la MISMA fuente de “posición abierta” que la Terminal para evitar incoherencias.
+
+C) Settings UI
+- Mostrar el modo actual (SINGLE/DCA) en Settings y permitir cambiarlo.
+- Texto en castellano: “Modo recomendado para etiquetas limpias: Una posición por activo”.
+
+FASE 2: FIFO/NETTING COMPLETO EN EL RECOLECTOR (BACKFILL + ETIQUETADO)
+
+A) Definición de lote FIFO (BUY lot)
+- Por cada par, mantener una cola FIFO de lotes:
+  lote = { lotId, buyTxid, entryTs, qtyOriginal, qtyRemaining, avgEntryPrice, entryNotional, entryFees, meta }
+- Basarse en EJECUCIONES reales (fills), no en cantidad “planeada”.
+- Si un BUY se ejecuta en varios fills, consolidar en un único lote con avgEntryPrice ponderado y fees totales.
+
+B) Consumo FIFO de SELL (netting)
+- Ordenar operaciones por timestamp ascendente (y un tie-breaker estable).
+- Cuando llega un SELL:
+  - Consumir qtySell contra lotes FIFO:
+    - Mientras qtySellRemaining > 0 y haya lotes:
+      - tomar lote más antiguo
+      - qtyClosed = min(qtySellRemaining, lote.qtyRemaining)
+      - asignar fees proporcionalmente:
+        entryFeePart = lote.entryFees * (qtyClosed / lote.qtyOriginal)
+        exitFeePart  = sellFeeTotal * (qtyClosed / qtySellOriginal)
+      - pnlGrossPart = (sellPrice - lote.avgEntryPrice) * qtyClosed
+      - pnlNetPart   = pnlGrossPart - entryFeePart - exitFeePart
+      - acumular resultados del lote
+      - actualizar lote.qtyRemaining y qtySellRemaining
+      - si lote.qtyRemaining <= epsilon: cerrar el lote y persistir TRAINING_TRADE
+
+C) Persistencia TRAINING_TRADE (por lote FIFO cerrado)
+- Persistir un TRAINING_TRADE por lote cuando queda completamente cerrado:
+  - entry: entryTs, avgEntryPrice, qtyOriginal, entryFees
+  - exit: exitTs (último sell que completa el lote), avgExitPrice ponderado, exitFees asignadas
+  - pnlNet (suma de tramos), labelWin = pnlNet > 0, holdTimeMinutes
+  - buyTxid
+  - lista de sellTxid usados:
+    - si schema no lo permite, añadir campo sellTxidsJson (o equivalente) para trazabilidad
+
+D) Idempotencia (CRÍTICO)
+- Backfill idempotente: no duplicar trades al re-ejecutar.
+- lotId determinista:
+  - si buyTxid es único por lote, usar buyTxid (+bot_id/strategy si aplica)
+  - si un buyTxid puede representar múltiples lotes, generar lotId determinista (buyTxid + índice fill)
+- Si ya existe el trade para lotId: no recrear; si estaba incompleto y ahora puede cerrarse: actualizarlo.
+
+E) discardReasons (precisos, en castellano en UI)
+- “sin_ventas_posteriores”
+- “ventas_insuficientes_para_cerrar”
+- “venta_sin_compra_previa”
+- “datos_invalidos”
+Reemplazar el genérico “no_matching_sell” por estas causas.
+
+F) Validaciones de integridad
+- exitTs > entryTs para lotes cerrados
+- qtyClosedTotal ≈ qtyOriginal (epsilon)
+- fees y PnL en USD y signos coherentes
+- outliers extremos: descartar con motivo y excluir del entrenamiento
+
+FASE 3: ACTUALIZAR PESTAÑA “TERMINAL” (OBLIGATORIO)
+Actualizar la Terminal para reflejar el nuevo modelo y evitar confusiones:
+
+1) Mostrar “Modo de posición”
+- En el header/resumen de Terminal y/o Settings visible: “Modo: Una posición por activo” o “Modo: DCA”.
+
+2) Mejorar tabla de Posiciones
+- Añadir columnas:
+  - “Qty abierta (FIFO)” (suma de qtyRemaining de lotes por par)
+  - “Lotes abiertos” (número de lotes FIFO abiertos por par)
+  - “Precio medio entrada” (ponderado por qty de lotes abiertos)
+  - “Valor (USD)” (qty abierta * precio actual)
+- Si existe divergencia entre posición calculada y balance Kraken (si está disponible), mostrar badge/alerta: “Divergencia detectada”.
+
+3) Sección “Lotes FIFO”
+- Añadir una sección/tabla (colapsable) por par con los lotes abiertos:
+  - lotId, buyTxid, entryTs, qtyOriginal, qtyRemaining, avgEntryPrice, entryFees
+- Esto es clave para trazabilidad cuando haya DCA.
+
+4) Sección “Cierres / Trades etiquetados”
+- En la tabla de trades etiquetados, añadir:
+  - buyTxid, sellTxids (o indicador “múltiples ventas”), holdTime, pnlNet, label
+- Un botón “ver detalles” por fila que muestre el desglose (tramos consumidos) si se implementa.
+
+5) Cohesión con diagnóstico IA
+- En Terminal (o link directo) mostrar los contadores del diagnóstico IA:
+  - Operaciones, Cerrados, Etiquetados, Razones de descarte (en castellano)
+- Asegurar que los números coinciden con /api/ai/diagnostic.
+
+ENDPOINTS / UI (SOLO LO NECESARIO)
+- Mantener /api/ai/diagnostic; ampliar si hace falta para incluir:
+  - openLotsCount, closedLotsCount, discardReasons detallados, y agregados por par si es posible.
+- “Ejecutar Backfill” debe regenerar usando FIFO/netting.
+
+VALIDACIÓN OBLIGATORIA (EVIDENCIA)
+1) Ejecutar backfill y reportar (antes vs después):
+- labeledTradesCount, openTradesCount, discardReasons
+2) Probar 3 escenarios reales:
+- DCA: 3 BUY + 1 SELL grande → FIFO consume y cierra lotes según qty.
+- Parciales: 1 BUY grande + 3 SELL parciales → FIFO cierra al completar qty.
+- SELL sin BUY → “venta_sin_compra_previa” (sin matches forzados).
+3) Confirmar que /api/ai/train sigue bloqueando <300 con 409 y no cambia estado.
+4) Confirmar que Terminal muestra modo, lotes abiertos y trazabilidad (capturas o descripción exacta).
+5) Build/tests pasan.
+
+CRITERIOS DE ACEPTACIÓN
+- Con positionMode="SINGLE", no se permiten nuevas compras en un par/activo ya abierto; SELL siempre permitido.
+- FIFO/netting soporta DCA y ventas parciales sin tolerancias grandes ni matching 1:1.
+- Disminuyen descartes injustificados y aumentan trades etiquetados correctos.
+- Backfill idempotente y estable.
+- Terminal refleja el nuevo modelo (modo, lotes, qty abierta FIFO, y cierres trazables).
+- Mensajes/errores en castellano.
