@@ -1,0 +1,60 @@
+OBJETIVO
+Hacer el entrenamiento de IA CONSISTENTE y útil: generar un dataset canónico de “trades cerrados” (round-trips) con etiquetas/outcome, no solo samples en BUY. Evitar duplicados, sesgos y fugas de información (data leakage). Mantener compatibilidad con el motor de trading y gestión de riesgo.
+
+REQUISITOS CLAVE
+1) Dataset canónico de entrenamiento:
+   - Entidad principal: TRAINING_TRADE (trade cerrado).
+   - Debe representar un ciclo completo: Entrada → Salida (o cierre) con outcome.
+   - Si solo hay “fills/operaciones”, construir el trade cerrado emparejando BUY/SELL por:
+     (symbol/pair + estrategia/bot_id + ventana temporal + acumulación de cantidad + ordertxid si existe).
+   - Cada TRAINING_TRADE debe tener un ID único y ser idempotente (no duplicarse nunca).
+
+2) Etiquetado / outcome (obligatorio):
+   - Label binaria mínima: win/loss (por PnL neto > 0).
+   - Guardar: pnl_usd_net (incluye fees), pnl_pct, hold_time, slippage estimada si hay datos.
+   - Definir explícitamente qué se considera “cierre”:
+     - SELL que reduce posición a 0, o
+     - trade TTL/timeout, o
+     - stop/take profit si existe.
+
+3) Features sin fuga de información:
+   - Las features deben calcularse usando SOLO información disponible en el momento de la ENTRADA (timestamp de BUY).
+   - Prohibido incluir precio futuro, máximos/mínimos posteriores, PnL futuro o cualquier dato posterior al entry_time.
+   - Guardar un snapshot de features en entry_time.
+
+4) Split de datos y entrenamiento:
+   - Split temporal (no aleatorio): train/validation por rango de fechas para evitar leakage.
+   - Métricas mínimas: accuracy, precision/recall, F1, y matriz de confusión.
+   - Registrar versión de modelo y fecha de entrenamiento.
+
+5) Integración con producción:
+   - Shadow Mode: el modelo predice y se registra, pero NO bloquea trades.
+   - Filtro Activo: solo si el modelo cumple umbral configurado (ej. F1/precision).
+   - Registrar decisión del modelo por trade: score, threshold, decisión, y razón.
+
+6) Backfill (imprescindible para consistencia):
+   - Generar TRAINING_TRADES a partir de histórico ya almacenado, para que el contador suba sin esperar nuevos BUY.
+   - Dedupe fuerte durante backfill.
+
+7) Diagnóstico y trazabilidad:
+   - Endpoint /api/ai/diagnostic debe incluir:
+     - operations_count (fills)
+     - closed_trades_count (TRAINING_TRADE)
+     - labeled_trades_count
+     - last_backfill_run, last_train_run
+     - discard_reasons (por qué no se pudo cerrar/etiquetar)
+   - En la UI de Ajustes IA, mostrar estos contadores y el motivo si está en 0.
+
+ENTREGABLES
+- Implementar entidad TRAINING_TRADE persistida (DB/archivo según arquitectura).
+- Pipeline de construcción de trades cerrados desde operaciones (incluye backfill).
+- Etiquetado neto (fees incluidos) y features snapshot sin leakage.
+- Proceso de entrenamiento reproducible (train + evaluación + versionado).
+- UI/endpoint de diagnóstico ampliado para que sea imposible quedar en 0 sin explicación exacta.
+
+CRITERIOS DE ACEPTACIÓN
+- El contador ya NO cuenta “BUY samples”; cuenta “trades cerrados etiquetados”.
+- Tras backfill, closed_trades_count y/o labeled_trades_count > 0 si hay histórico.
+- Entrenar modelo produce métricas y un artefacto versionado.
+- Shadow Mode registra predicciones sin afectar al trading.
+- No hay duplicados en TRAINING_TRADE y las pruebas/build pasan.
