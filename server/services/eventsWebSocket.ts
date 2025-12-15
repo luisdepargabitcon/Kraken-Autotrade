@@ -6,7 +6,7 @@ import { desc } from "drizzle-orm";
 import { log } from "../index";
 
 const WS_PATH = "/ws/events";
-const SNAPSHOT_LIMIT = 200;
+const SNAPSHOT_LIMIT = 50;
 const HEARTBEAT_INTERVAL = 30000;
 
 interface WsClient extends WebSocket {
@@ -51,24 +51,33 @@ class EventsWebSocketServer {
 
       log(`[WS] Cliente conectado. Total: ${this.clients.size}`, "websocket");
 
-      this.sendMessage(client, {
-        type: "WS_STATUS",
-        payload: {
-          connectedAt: client.connectedAt.toISOString(),
-          serverTime: new Date().toISOString(),
-          clientsConnected: this.clients.size,
-        },
-      });
-
-      try {
-        const snapshot = await this.getEventsSnapshot();
+      setTimeout(async () => {
+        if (client.readyState !== WebSocket.OPEN) {
+          log(`[WS] Cliente cerrado antes de enviar datos iniciales`, "websocket");
+          return;
+        }
+        
         this.sendMessage(client, {
-          type: "EVENTS_SNAPSHOT",
-          payload: snapshot,
+          type: "WS_STATUS",
+          payload: {
+            connectedAt: client.connectedAt.toISOString(),
+            serverTime: new Date().toISOString(),
+            clientsConnected: this.clients.size,
+          },
         });
-      } catch (error) {
-        log(`[WS] Error enviando snapshot: ${error}`, "websocket");
-      }
+        
+        try {
+          const snapshot = await this.getEventsSnapshot();
+          if (client.readyState === WebSocket.OPEN) {
+            this.sendMessage(client, {
+              type: "EVENTS_SNAPSHOT",
+              payload: snapshot,
+            });
+          }
+        } catch (error) {
+          log(`[WS] Error enviando snapshot: ${error}`, "websocket");
+        }
+      }, 500);
 
       client.on("pong", () => {
         client.isAlive = true;
