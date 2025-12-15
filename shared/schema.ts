@@ -137,6 +137,34 @@ export const aiShadowDecisions = pgTable("ai_shadow_decisions", {
   finalPnlNet: decimal("final_pnl_net", { precision: 18, scale: 8 }),
 });
 
+export const trainingTrades = pgTable("training_trades", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),
+  strategyId: text("strategy_id"),
+  buyTxid: text("buy_txid").notNull(),
+  sellTxid: text("sell_txid"),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
+  exitPrice: decimal("exit_price", { precision: 18, scale: 8 }),
+  entryAmount: decimal("entry_amount", { precision: 18, scale: 8 }).notNull(),
+  exitAmount: decimal("exit_amount", { precision: 18, scale: 8 }),
+  entryFee: decimal("entry_fee", { precision: 18, scale: 8 }).notNull().default("0"),
+  exitFee: decimal("exit_fee", { precision: 18, scale: 8 }),
+  costUsd: decimal("cost_usd", { precision: 18, scale: 8 }).notNull(),
+  revenueUsd: decimal("revenue_usd", { precision: 18, scale: 8 }),
+  pnlGross: decimal("pnl_gross", { precision: 18, scale: 8 }),
+  pnlNet: decimal("pnl_net", { precision: 18, scale: 8 }),
+  pnlPct: decimal("pnl_pct", { precision: 10, scale: 4 }),
+  holdTimeMinutes: integer("hold_time_minutes"),
+  labelWin: integer("label_win"),
+  featuresJson: jsonb("features_json"),
+  discardReason: text("discard_reason"),
+  isClosed: boolean("is_closed").notNull().default(false),
+  isLabeled: boolean("is_labeled").notNull().default(false),
+  entryTs: timestamp("entry_ts").notNull(),
+  exitTs: timestamp("exit_ts"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const aiConfig = pgTable("ai_config", {
   id: serial("id").primaryKey(),
   filterEnabled: boolean("filter_enabled").default(false),
@@ -160,6 +188,7 @@ export const insertOpenPositionSchema = createInsertSchema(openPositions).omit({
 export const insertAiTradeSampleSchema = createInsertSchema(aiTradeSamples).omit({ id: true, createdAt: true });
 export const insertAiShadowDecisionSchema = createInsertSchema(aiShadowDecisions).omit({ id: true, ts: true });
 export const insertAiConfigSchema = createInsertSchema(aiConfig).omit({ id: true, updatedAt: true });
+export const insertTrainingTradeSchema = createInsertSchema(trainingTrades).omit({ id: true, createdAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -172,6 +201,7 @@ export type OpenPosition = typeof openPositions.$inferSelect;
 export type AiTradeSample = typeof aiTradeSamples.$inferSelect;
 export type AiShadowDecision = typeof aiShadowDecisions.$inferSelect;
 export type AiConfig = typeof aiConfig.$inferSelect;
+export type TrainingTrade = typeof trainingTrades.$inferSelect;
 
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertTrade = z.infer<typeof insertTradeSchema>;
@@ -184,3 +214,4 @@ export type InsertOpenPosition = z.infer<typeof insertOpenPositionSchema>;
 export type InsertAiTradeSample = z.infer<typeof insertAiTradeSampleSchema>;
 export type InsertAiShadowDecision = z.infer<typeof insertAiShadowDecisionSchema>;
 export type InsertAiConfig = z.infer<typeof insertAiConfigSchema>;
+export type InsertTrainingTrade = z.infer<typeof insertTrainingTradeSchema>;
