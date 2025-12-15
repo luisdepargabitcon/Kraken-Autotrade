@@ -682,6 +682,19 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
+    // Invariance check: if qtyRemaining <= epsilon then normalize to 0 and ensure isClosed=true
+    const allTrainingTrades = await db.select().from(trainingTradesTable);
+    for (const trade of allTrainingTrades) {
+      const qty = parseFloat(trade.qtyRemaining || trade.entryAmount || '0');
+      if (qty <= QTY_EPSILON && qty > 0) {
+        // Normalize tiny residuals to exactly 0
+        await this.updateTrainingTrade(trade.id, { qtyRemaining: '0', isClosed: true });
+      } else if (qty <= QTY_EPSILON && !trade.isClosed) {
+        // qty is already 0 but isClosed is false - fix invariance
+        await this.updateTrainingTrade(trade.id, { isClosed: true });
+      }
+    }
+    
     return { created, closed, labeled, discardReasons };
   }
 }

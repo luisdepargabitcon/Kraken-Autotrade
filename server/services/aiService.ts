@@ -79,6 +79,26 @@ const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
 const MIN_SAMPLES_TRAIN = 300;
 const MIN_SAMPLES_ACTIVATE = 300;
 
+const LEGACY_KEY_MAP: Record<string, string> = {
+  'no_matching_sell': 'venta_sin_compra_previa',
+  'invalid_data': 'datos_invalidos',
+  'outlier_pnl': 'pnl_atipico',
+  'excessive_hold': 'hold_excesivo',
+  'abnormal_fees': 'comisiones_anormales',
+  'invalid_timestamps': 'timestamps_invalidos',
+  'sell_exceeds_lots': 'venta_excede_lotes',
+  'no_execution_date': 'sin_fecha_ejecucion',
+};
+
+function translateDiscardReasons(reasons: Record<string, number>): Record<string, number> {
+  const translated: Record<string, number> = {};
+  for (const [key, count] of Object.entries(reasons)) {
+    const translatedKey = LEGACY_KEY_MAP[key] || key;
+    translated[translatedKey] = (translated[translatedKey] || 0) + count;
+  }
+  return translated;
+}
+
 class AiService {
   private modelLoaded: boolean = false;
   private cachedMetrics: any = null;
@@ -173,10 +193,12 @@ class AiService {
     
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
     
-    const discardReasonsDataset = await storage.getDiscardReasonsDataset();
+    const rawDiscardReasonsDataset = await storage.getDiscardReasonsDataset();
+    const discardReasonsDataset = translateDiscardReasons(rawDiscardReasonsDataset);
     
-    const lastBackfillDiscardReasons: Record<string, number> = 
+    const rawLastBackfillDiscardReasons: Record<string, number> = 
       (aiConfig?.lastBackfillDiscardReasonsJson as Record<string, number>) || {};
+    const lastBackfillDiscardReasons = translateDiscardReasons(rawLastBackfillDiscardReasons);
     
     let winRate: number | null = null;
     let avgPnlNet: number | null = null;
