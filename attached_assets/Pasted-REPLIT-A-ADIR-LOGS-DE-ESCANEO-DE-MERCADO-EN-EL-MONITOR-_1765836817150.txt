@@ -1,0 +1,58 @@
+REPLIT — AÑADIR LOGS DE “ESCANEO DE MERCADO” EN EL MONITOR (SIN SPAM)
+
+Objetivo
+- Quiero ver en el Monitor que el motor está “vivo” y escaneando, aunque NO haya trades.
+- Evitar spam de logs.
+
+Implementación (backend)
+1) Emitir un evento periódico “ENGINE_TICK”
+- Frecuencia: cada 60s (o configurable).
+- Payload recomendado:
+  - activePairs (lista)
+  - openPositionsCount y openPositionsPairs
+  - lastScanAt
+  - loopLatencyMs (si se puede)
+  - marketDataStatus (OK/STALE)
+
+2) Emitir un evento “MARKET_SCAN_SUMMARY”
+- Frecuencia: cada 60s (mismo tick) o cada X ciclos.
+- Un SOLO evento resumen (no uno por par) para no saturar.
+- Payload recomendado:
+  - por cada par:
+    - signal: BUY/SELL/NONE
+    - reasonShort (texto breve: “RSI>70”, “MACD bearish”, “Boll upper”, etc.)
+    - cooldownRemainingSec (si aplica)
+    - exposureAvailable (si aplica)
+    - dataAgeSec (edad de la última vela)
+
+3) Emitir “TRADE_SKIPPED” cuando una señal existe pero se bloquea
+- Solo si signal=BUY/SELL y NO se ejecuta.
+- Incluir reason:
+  - SINGLE_MODE_POSITION_EXISTS
+  - PAIR_COOLDOWN
+  - EXPOSURE_ZERO
+  - MIN_ORDER_NOT_MET
+  - INSUFFICIENT_FUNDS
+  - DAILY_LIMIT_REACHED
+  - DATA_STALE
+- Incluir pair + valores clave (minRequired, maxAllowed, cooldownRemaining, etc.)
+
+4) Integración con WebSocket
+- Estos nuevos eventos deben pasar por el mismo canal WS (/ws/events) como BOT_EVENT.
+- Así se ven instantáneo en Monitor.
+
+Implementación (frontend Monitor)
+5) Filtros
+- Añadir filtros por type para poder:
+  - mostrar/ocultar ENGINE_TICK
+  - mostrar/ocultar MARKET_SCAN_SUMMARY
+  - mostrar TRADE_SKIPPED (prioridad alta)
+
+6) UX recomendado
+- ENGINE_TICK debe quedar visible como “heartbeat” (te dice que está vivo).
+- MARKET_SCAN_SUMMARY: mostrar compacto (colapsado), expandible para ver detalle por par.
+
+Criterio de éxito
+- Aunque no opere, veo al menos 1 evento por minuto:
+  - ENGINE_TICK + MARKET_SCAN_SUMMARY
+- Si hay señal pero se bloquea, veo TRADE_SKIPPED con motivo exacto.
