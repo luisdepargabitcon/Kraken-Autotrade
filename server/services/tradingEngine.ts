@@ -1847,6 +1847,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             entrySignalTf: existing.entrySignalTf,
             signalConfidence: existing.signalConfidence,
             signalReason: existing.signalReason,
+            aiSampleId: existing.aiSampleId,
           };
           this.openPositions.set(pair, newPosition);
         } else {
@@ -1860,14 +1861,17 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             signalConfidence,
             signalReason: reason,
           };
-          
-          // AI Sample collection: save features at entry for new positions
+          this.openPositions.set(pair, newPosition);
+        }
+        
+        // AI Sample collection: save features for ALL buy entries (not just new positions)
+        if (!newPosition.aiSampleId) {
           try {
             const features = aiService.extractFeatures({
               rsi: 50, // Will be enriched from actual indicators in future
               confidence: signalConfidence ?? 50,
             });
-            const sampleTradeId = `SAMPLE-${Date.now()}`;
+            const sampleTradeId = `SAMPLE-${Date.now()}-${pair}`;
             const sample = await storage.saveAiSample({
               tradeId: sampleTradeId,
               pair,
@@ -1883,9 +1887,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           } catch (aiErr: any) {
             log(`[AI] Error guardando sample: ${aiErr.message}`, "trading");
           }
-          
-          this.openPositions.set(pair, newPosition);
         }
+        
         await this.savePositionToDB(pair, newPosition);
       } else {
         this.currentUsdBalance += volumeNum * price;
