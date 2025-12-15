@@ -40,7 +40,10 @@ interface AiDiagnostic {
   labeledTradesCount: number;
   openTradesCount: number;
   lastBackfillRun: string | null;
+  lastBackfillError: string | null;
   lastTrainRun: string | null;
+  lastTrainError: string | null;
+  modelVersion: string | null;
   discardReasons: Record<string, number>;
   winRate: number | null;
   avgPnlNet: number | null;
@@ -362,7 +365,12 @@ export default function Settings() {
                     
                     {aiDiagnostic && (
                       <div className="p-3 border border-border rounded-lg bg-card/30 space-y-2">
-                        <Label className="text-xs text-muted-foreground">Diagnóstico de Dataset</Label>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs text-muted-foreground">Diagnóstico de Dataset</Label>
+                          {aiDiagnostic.modelVersion && (
+                            <span className="text-xs font-mono text-primary">{aiDiagnostic.modelVersion}</span>
+                          )}
+                        </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                           <div className="p-2 bg-background/50 rounded">
                             <span className="text-muted-foreground">Operaciones:</span>
@@ -381,6 +389,34 @@ export default function Settings() {
                             <span className="ml-1 font-mono">{aiDiagnostic.winRate ? `${aiDiagnostic.winRate.toFixed(1)}%` : '-'}</span>
                           </div>
                         </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Último Backfill:</span>
+                            <span className="ml-1 font-mono">
+                              {aiDiagnostic.lastBackfillRun 
+                                ? new Date(aiDiagnostic.lastBackfillRun).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
+                                : 'Nunca'}
+                            </span>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Último Entrenamiento:</span>
+                            <span className="ml-1 font-mono">
+                              {aiDiagnostic.lastTrainRun 
+                                ? new Date(aiDiagnostic.lastTrainRun).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
+                                : 'Nunca'}
+                            </span>
+                          </div>
+                        </div>
+                        {aiDiagnostic.lastBackfillError && (
+                          <div className="text-xs text-red-500 p-2 bg-red-500/10 rounded">
+                            Error Backfill: {aiDiagnostic.lastBackfillError}
+                          </div>
+                        )}
+                        {aiDiagnostic.lastTrainError && (
+                          <div className="text-xs text-red-500 p-2 bg-red-500/10 rounded">
+                            Error Entrenamiento: {aiDiagnostic.lastTrainError}
+                          </div>
+                        )}
                         {Object.keys(aiDiagnostic.discardReasons).length > 0 && (
                           <div className="text-xs text-yellow-500">
                             Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => `${k}: ${v}`).join(', ')}

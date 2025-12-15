@@ -1,0 +1,37 @@
+ESTADO
+Ya se generan training trades (trainingTradesTotal=55; labeled=40), pero lastBackfillRun sigue en null. Quiero cerrar consistencia y entrenamiento end-to-end.
+
+OBJETIVO
+1) Dejar el pipeline totalmente auditable (timestamps, errores, métricas coherentes).
+2) Entrenamiento consistente: entrenar solo con labeledTrades, evitar leakage, versionar modelo y registrar métricas.
+3) Mejorar matching para reducir no_matching_sell cuando sea posible, sin emparejar mal.
+
+TAREAS OBLIGATORIAS
+A) Trazabilidad (debe quedar perfecto)
+- Corregir lastBackfillRun: debe setearse al finalizar backfill y devolverse en /api/ai/diagnostic.
+- Añadir lastBackfillError y lastTrainError (string|null). Si falla DB/insert/training, NO ocultar: mostrar el error.
+- Asegurar que discardReasons refleje descartes reales; “no_matching_sell” debería mapearse claramente a openTradesCount.
+
+B) Entrenamiento end-to-end
+- Crear endpoint /api/ai/train (POST) que:
+  - entrene SOLO con labeledTradesCount (trades cerrados) y nunca con open trades.
+  - haga split temporal (train/val) para evitar leakage.
+  - calcule y devuelva métricas (accuracy, precision/recall, F1).
+  - persista un “model_version” + timestamp lastTrainRun + métricas guardadas.
+- En Settings (Motor IA): botón “Entrenar modelo” + mostrar lastTrainRun, model_version y métricas.
+
+C) Consistencia de labels y PnL
+- Validar que pnlNet incluye fees y que el signo es coherente (ej.: buy->sell a mayor precio debe tender a pnl positivo neto).
+- Añadir checks de integridad: exit_time > entry_time, qty > 0, precios válidos.
+- Si hay outliers, marcarlos y excluirlos del entrenamiento (registrando discardReasons).
+
+D) Mejorar matching para reducir no_matching_sell sin introducir emparejamientos incorrectos
+- Priorizar emparejamiento por IDs del exchange si existen (ordertxid/txid/trade_id).
+- Si no hay IDs, mantener matching conservador, pero documentar la regla y registrar por qué no se pudo emparejar.
+- Soportar parcialidades (scaling in/out) de forma consistente o descartarlas con razón explícita.
+
+CRITERIOS DE ACEPTACIÓN
+- /api/ai/diagnostic muestra lastBackfillRun != null tras backfill y lastTrainRun != null tras entrenar.
+- El entrenamiento produce métricas y versión de modelo.
+- No hay entrenamiento con datos “abiertos” ni con fuga de información.
+- Las razones de descarte son visibles y accionables.

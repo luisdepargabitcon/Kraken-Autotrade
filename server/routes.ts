@@ -733,13 +733,23 @@ export async function registerRoutes(
     try {
       const result = await aiService.runTraining();
       if (result.success) {
-        res.json({ success: true, message: result.message });
+        res.json({ success: true, message: result.message, metrics: result.metrics });
       } else {
         res.status(400).json({ success: false, error: result.message });
       }
     } catch (error: any) {
       console.error("[api/ai/retrain] Error:", error.message);
       res.status(500).json({ error: "Failed to retrain model" });
+    }
+  });
+
+  app.post("/api/ai/train", async (req, res) => {
+    try {
+      const result = await aiService.runTraining();
+      res.json(result);
+    } catch (error: any) {
+      console.error("[api/ai/train] Error:", error.message);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 

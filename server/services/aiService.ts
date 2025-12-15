@@ -58,7 +58,10 @@ export interface AiDiagnostic {
   labeledTradesCount: number;
   openTradesCount: number;
   lastBackfillRun: Date | null;
+  lastBackfillError: string | null;
   lastTrainRun: Date | null;
+  lastTrainError: string | null;
+  modelVersion: string | null;
   discardReasons: Record<string, number>;
   winRate: number | null;
   avgPnlNet: number | null;
@@ -194,8 +197,11 @@ class AiService {
       closedTradesCount: closedCount,
       labeledTradesCount: labeledCount,
       openTradesCount: openCount,
-      lastBackfillRun: null,
+      lastBackfillRun: aiConfig?.lastBackfillTs ?? null,
+      lastBackfillError: aiConfig?.lastBackfillError ?? null,
       lastTrainRun: aiConfig?.lastTrainTs ?? null,
+      lastTrainError: aiConfig?.lastTrainError ?? null,
+      modelVersion: aiConfig?.modelVersion ?? null,
       discardReasons,
       winRate,
       avgPnlNet,
@@ -267,39 +273,87 @@ class AiService {
     });
   }
 
-  async runTraining(): Promise<{ success: boolean; message: string }> {
+  async runTraining(): Promise<{ success: boolean; message: string; metrics?: { accuracy: number; precision: number; recall: number; f1: number; trainSize: number; valSize: number } }> {
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
     
     if (labeledTrades.length < MIN_SAMPLES_TRAIN) {
-      return {
-        success: false,
-        message: `Necesitas al menos ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados (tienes ${labeledTrades.length})`,
-      };
+      const errorMsg = `Necesitas al menos ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados (tienes ${labeledTrades.length})`;
+      await storage.updateAiConfig({ lastTrainError: errorMsg });
+      return { success: false, message: errorMsg };
     }
 
     if (!fs.existsSync(MODEL_DIR)) {
       fs.mkdirSync(MODEL_DIR, { recursive: true });
     }
 
-    const trainingData = labeledTrades.map(trade => ({
-      tradeId: trade.buyTxid,
-      pair: trade.pair,
-      entryPrice: trade.entryPrice,
-      exitPrice: trade.exitPrice,
-      pnlNet: trade.pnlNet,
-      pnlPct: trade.pnlPct,
-      holdTimeMinutes: trade.holdTimeMinutes,
-      labelWin: trade.labelWin,
-      featuresJson: trade.featuresJson || {},
-    }));
+    const sortedTrades = [...labeledTrades].sort((a, b) => {
+      const timeA = a.entryTs ? new Date(a.entryTs).getTime() : 0;
+      const timeB = b.entryTs ? new Date(b.entryTs).getTime() : 0;
+      return timeA - timeB;
+    });
+
+    const validTrades = sortedTrades.filter(trade => {
+      const entryTime = trade.entryTs ? new Date(trade.entryTs).getTime() : 0;
+      const exitTime = trade.exitTs ? new Date(trade.exitTs).getTime() : 0;
+      const entryPrice = parseFloat(trade.entryPrice || '0');
+      const exitPrice = parseFloat(trade.exitPrice || '0');
+      const amount = parseFloat(trade.entryAmount || '0');
+      
+      if (exitTime <= entryTime) return false;
+      if (entryPrice <= 0 || exitPrice <= 0) return false;
+      if (amount <= 0) return false;
+      if (trade.holdTimeMinutes !== null && trade.holdTimeMinutes < 0) return false;
+      
+      return true;
+    });
+
+    if (validTrades.length < MIN_SAMPLES_TRAIN) {
+      const errorMsg = `Solo ${validTrades.length} trades válidos después de validación (necesitas ${MIN_SAMPLES_TRAIN})`;
+      await storage.updateAiConfig({ lastTrainError: errorMsg });
+      return { success: false, message: errorMsg };
+    }
+
+    const splitIdx = Math.floor(validTrades.length * 0.8);
+    const trainTrades = validTrades.slice(0, splitIdx);
+    const valTrades = validTrades.slice(splitIdx);
+
+    const trainingData = {
+      train: trainTrades.map(trade => ({
+        tradeId: trade.buyTxid,
+        pair: trade.pair,
+        entryPrice: trade.entryPrice,
+        exitPrice: trade.exitPrice,
+        pnlNet: trade.pnlNet,
+        pnlPct: trade.pnlPct,
+        holdTimeMinutes: trade.holdTimeMinutes,
+        labelWin: trade.labelWin,
+        featuresJson: trade.featuresJson || {},
+        entryTs: trade.entryTs,
+      })),
+      val: valTrades.map(trade => ({
+        tradeId: trade.buyTxid,
+        pair: trade.pair,
+        entryPrice: trade.entryPrice,
+        exitPrice: trade.exitPrice,
+        pnlNet: trade.pnlNet,
+        pnlPct: trade.pnlPct,
+        holdTimeMinutes: trade.holdTimeMinutes,
+        labelWin: trade.labelWin,
+        featuresJson: trade.featuresJson || {},
+        entryTs: trade.entryTs,
+      })),
+    };
 
     const samplesPath = `${MODEL_DIR}/training_samples.json`;
     fs.writeFileSync(samplesPath, JSON.stringify(trainingData, null, 2));
+
+    const modelVersion = `v${Date.now()}`;
 
     return new Promise((resolve) => {
       const pythonScript = path.join(process.cwd(), "server/services/mlTrainer.py");
       
       if (!fs.existsSync(pythonScript)) {
+        storage.updateAiConfig({ lastTrainError: "Script de entrenamiento no encontrado" });
         resolve({ success: false, message: "Script de entrenamiento no encontrado" });
         return;
       }
@@ -317,33 +371,52 @@ class AiService {
       proc.on("close", async (code) => {
         if (code !== 0) {
           console.error("[AI] Training failed:", stderr);
-          resolve({ success: false, message: `Error en entrenamiento: ${stderr.slice(0, 200)}` });
+          const errorMsg = stderr.slice(0, 500) || 'Unknown training error';
+          await storage.updateAiConfig({ lastTrainError: errorMsg });
+          resolve({ success: false, message: `Error en entrenamiento: ${errorMsg.slice(0, 200)}` });
           return;
         }
 
         try {
           const result = JSON.parse(stdout.trim());
+          const metrics = {
+            accuracy: result.metrics?.accuracy ?? 0,
+            precision: result.metrics?.precision ?? 0,
+            recall: result.metrics?.recall ?? 0,
+            f1: result.metrics?.f1 ?? 0,
+            trainSize: trainTrades.length,
+            valSize: valTrades.length,
+          };
           
           await storage.updateAiConfig({
             lastTrainTs: new Date(),
-            nSamples: labeledTrades.length,
+            lastTrainError: null,
+            nSamples: validTrades.length,
             modelPath: MODEL_PATH,
-            metricsJson: result.metrics,
+            modelVersion,
+            metricsJson: metrics,
           });
 
           this.modelLoaded = true;
           
           resolve({
             success: true,
-            message: `Modelo entrenado con ${labeledTrades.length} trades cerrados. Accuracy: ${(result.metrics?.accuracy * 100).toFixed(1)}%`,
+            message: `Modelo ${modelVersion} entrenado: ${trainTrades.length} train / ${valTrades.length} val. Accuracy: ${(metrics.accuracy * 100).toFixed(1)}%`,
+            metrics,
           });
-        } catch (e) {
-          resolve({ success: true, message: "Modelo entrenado (sin métricas)" });
+        } catch (e: any) {
+          await storage.updateAiConfig({
+            lastTrainTs: new Date(),
+            lastTrainError: null,
+            modelVersion,
+          });
+          resolve({ success: true, message: `Modelo ${modelVersion} entrenado (sin métricas parseables)` });
         }
       });
 
-      proc.on("error", (err) => {
+      proc.on("error", async (err) => {
         console.error("[AI] Training spawn error:", err);
+        await storage.updateAiConfig({ lastTrainError: err.message });
         resolve({ success: false, message: `Error: ${err.message}` });
       });
     });
@@ -352,15 +425,27 @@ class AiService {
   async runBackfill(): Promise<{ success: boolean; message: string; stats: { created: number; closed: number; labeled: number; discardReasons: Record<string, number> } }> {
     try {
       const stats = await storage.runTrainingTradesBackfill();
+      
+      await storage.updateAiConfig({
+        lastBackfillTs: new Date(),
+        lastBackfillError: null,
+      });
+      
       return {
         success: true,
         message: `Backfill completado: ${stats.created} trades creados, ${stats.closed} cerrados, ${stats.labeled} etiquetados`,
         stats,
       };
     } catch (error: any) {
+      const errorMsg = error.message || 'Unknown error';
+      await storage.updateAiConfig({
+        lastBackfillTs: new Date(),
+        lastBackfillError: errorMsg,
+      });
+      
       return {
         success: false,
-        message: `Error en backfill: ${error.message}`,
+        message: `Error en backfill: ${errorMsg}`,
         stats: { created: 0, closed: 0, labeled: 0, discardReasons: {} },
       };
     }
