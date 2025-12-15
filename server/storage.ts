@@ -455,10 +455,13 @@ export class DatabaseStorage implements IStorage {
     }
     
     for (const pair of Object.keys(tradesByPair)) {
+      // Ordenación estable FIFO: timestamp + id (tie-breaker determinista)
       const pairTrades = tradesByPair[pair].sort((a, b) => {
         const timeA = a.executedAt ? new Date(a.executedAt).getTime() : 0;
         const timeB = b.executedAt ? new Date(b.executedAt).getTime() : 0;
-        return timeA - timeB;
+        if (timeA !== timeB) return timeA - timeB;
+        // Tie-breaker: ID de base de datos (determinista)
+        return a.id - b.id;
       });
       
       interface OpenLot {
@@ -498,9 +501,15 @@ export class DatabaseStorage implements IStorage {
         if (trade.type === 'buy') {
           const existing = await this.getTrainingTradeByBuyTxid(tradeTxid);
           if (existing) {
-            if (existing.isClosed) closed++;
-            if (existing.isLabeled) labeled++;
             const qtyRem = parseFloat(existing.qtyRemaining || existing.entryAmount || '0');
+            
+            // Si ya está cerrado y etiquetado/descartado, es inmutable - no reprocesar
+            if (existing.isClosed && qtyRem <= QTY_EPSILON) {
+              // Trade ya procesado completamente - skip sin modificar
+              continue;
+            }
+            
+            // Solo añadir a openLots si tiene cantidad restante para procesar
             if (qtyRem > QTY_EPSILON) {
               openLots.push({
                 dbId: existing.id,

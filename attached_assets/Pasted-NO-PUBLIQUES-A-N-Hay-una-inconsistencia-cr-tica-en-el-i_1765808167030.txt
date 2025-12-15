@@ -1,0 +1,45 @@
+NO PUBLIQUES AÚN. Hay una inconsistencia crítica: en el informe el labeledTradesCount baja (32→17→14) entre ejecuciones de backfill. Eso NO es aceptable si el backfill es idempotente.
+
+OBJETIVO
+Asegurar determinismo y no-destructividad del backfill FIFO/netting:
+- Mismas operaciones de entrada => mismo resultado SIEMPRE.
+- Re-ejecutar backfill sin trades nuevos NO debe reducir labeledTradesCount ni closedTradesCount.
+- Si existe un modo “regenerar dataset”, debe ser explícito y separado del backfill normal.
+
+TAREAS OBLIGATORIAS (SOLO VERIFICAR Y CORREGIR LO MÍNIMO)
+1) Reproducibilidad / determinismo
+- Ejecuta 3 veces seguidas el backfill SIN añadir nuevas operaciones.
+- Tras cada ejecución, captura:
+  - operationsCount, trainingTradesTotal, closedTradesCount, labeledTradesCount, openLotsCount, discardReasons
+- Deben ser exactamente iguales entre ejecuciones #2 y #3 (y no decrecer respecto a #1).
+
+2) Explicación técnica de por qué bajó
+- Localiza exactamente qué parte del código:
+  - borra training_trades,
+  - re-etiqueta trades previos,
+  - o recalcula lotes de forma distinta por orden/epsilon.
+- Reporta archivo + función + condición concreta que causa el cambio.
+
+3) Backfill incremental vs “Regenerar dataset”
+- Si ahora el endpoint “backfill” está regenerando, separa comportamientos:
+  - POST /api/ai/backfill = incremental idempotente (NO borra ni reduce).
+  - POST /api/ai/backfill?rebuild=true (o endpoint separado) = regeneración total (si quieres mantenerlo).
+- La UI “Ejecutar Backfill (Regenerar Dataset)” debe llamar explícitamente al modo rebuild; no mezclar.
+
+4) Ordenación estable (CRÍTICO en FIFO)
+- Asegura tie-breaker estable al ordenar operaciones:
+  - timestamp + id/txid + side + index (determinista)
+- Evitar que dos operaciones con el mismo timestamp se ordenen distinto entre ejecuciones.
+
+5) Invariantes de netting (validación automatizada)
+- Añade una verificación interna (sin romper producción) que falle con error claro si:
+  - un trade previamente cerrado vuelve a “abierto” sin cambios de operaciones,
+  - o si un lotId cambia de cierre a no-cierre sin nuevos datos.
+- Log en castellano, con explicación.
+
+ENTREGABLE
+- Un informe breve con:
+  - métricas de las 3 ejecuciones (deben estabilizar)
+  - causa raíz del descenso
+  - cambio mínimo aplicado para garantizar determinismo
+Solo entonces recomendar “Listo para publicar”.
