@@ -48,9 +48,19 @@ export default function Monitor() {
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [pairFilter, setPairFilter] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+  const [lastMessageTime, setLastMessageTime] = useState<Date | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevEventsLengthRef = useRef(events.length);
+
+  useEffect(() => {
+    if (events.length > 0) {
+      const latestEvent = events[0];
+      if (latestEvent?.timestamp) {
+        setLastMessageTime(new Date(latestEvent.timestamp));
+      }
+    }
+  }, [events]);
 
   useEffect(() => {
     if (autoScroll && events.length > prevEventsLengthRef.current && scrollRef.current) {
@@ -172,6 +182,11 @@ export default function Monitor() {
                   <span className="text-red-400">Errores 24h: {stats.errors}</span>
                   <span className="text-yellow-400">Avisos 24h: {stats.warnings}</span>
                   <span className="text-green-400">Trades 24h: {stats.trades}</span>
+                  {lastMessageTime && (
+                    <span className="text-cyan-400" data-testid="last-message-time">
+                      Último: {lastMessageTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
