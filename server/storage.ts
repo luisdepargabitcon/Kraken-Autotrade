@@ -440,6 +440,10 @@ export class DatabaseStorage implements IStorage {
     let closed = 0;
     let labeled = 0;
     
+    const KRAKEN_FEE_RATE = 0.004;
+    const PNL_OUTLIER_THRESHOLD = 50;
+    const MAX_HOLD_TIME_DAYS = 30;
+    
     const buysByPair: Record<string, Trade[]> = {};
     const sellsByPair: Record<string, Trade[]> = {};
     
@@ -478,27 +482,56 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
+        if (buyAmount <= 0) {
+          discardReasons['invalid_buy_amount'] = (discardReasons['invalid_buy_amount'] || 0) + 1;
+          continue;
+        }
+        
+        if (buyPrice <= 0) {
+          discardReasons['invalid_buy_price'] = (discardReasons['invalid_buy_price'] || 0) + 1;
+          continue;
+        }
+        
+        if (buyCost <= 0) {
+          discardReasons['invalid_buy_cost'] = (discardReasons['invalid_buy_cost'] || 0) + 1;
+          continue;
+        }
+        
         let matchedSell: Trade | null = null;
-        let matchedSellIdx = -1;
-        let remainingAmount = buyAmount;
         
         for (let i = 0; i < sells.length; i++) {
           if (usedSells.has(sells[i].id)) continue;
           
           const sell = sells[i];
           const sellTime = sell.executedAt ? new Date(sell.executedAt).getTime() : 0;
+          if (sellTime <= buyTime) continue;
           
-          if (sellTime > buyTime) {
+          const sellAmount = parseFloat(sell.amount || '0');
+          const amountDiff = Math.abs(sellAmount - buyAmount) / buyAmount;
+          
+          if (amountDiff < 0.02) {
+            matchedSell = sell;
+            break;
+          }
+        }
+        
+        if (!matchedSell) {
+          for (let i = 0; i < sells.length; i++) {
+            if (usedSells.has(sells[i].id)) continue;
+            
+            const sell = sells[i];
+            const sellTime = sell.executedAt ? new Date(sell.executedAt).getTime() : 0;
+            if (sellTime <= buyTime) continue;
+            
             const sellAmount = parseFloat(sell.amount || '0');
-            if (Math.abs(sellAmount - remainingAmount) / remainingAmount < 0.05 || sellAmount <= remainingAmount * 1.1) {
+            if (Math.abs(sellAmount - buyAmount) / buyAmount < 0.10 && sellAmount <= buyAmount * 1.1) {
               matchedSell = sell;
-              matchedSellIdx = i;
               break;
             }
           }
         }
         
-        const entryFee = buyCost * 0.004;
+        const entryFee = buyCost * KRAKEN_FEE_RATE;
         
         const trainingTrade: InsertTrainingTrade = {
           pair,
@@ -513,16 +546,74 @@ export class DatabaseStorage implements IStorage {
         };
         
         if (matchedSell) {
-          usedSells.add(matchedSell.id);
           const sellPrice = parseFloat(matchedSell.price || '0');
           const sellAmount = parseFloat(matchedSell.amount || '0');
+          const sellTime = matchedSell.executedAt ? new Date(matchedSell.executedAt).getTime() : buyTime;
+          
+          let sellValid = true;
+          let sellDiscardReason: string | null = null;
+          
+          if (sellPrice <= 0) {
+            sellValid = false;
+            sellDiscardReason = 'invalid_sell_price';
+          } else if (sellAmount <= 0) {
+            sellValid = false;
+            sellDiscardReason = 'invalid_sell_amount';
+          } else if (sellTime <= buyTime) {
+            sellValid = false;
+            sellDiscardReason = 'invalid_timestamps';
+          }
+          
+          if (!sellValid) {
+            trainingTrade.discardReason = sellDiscardReason!;
+            discardReasons[sellDiscardReason!] = (discardReasons[sellDiscardReason!] || 0) + 1;
+            await this.saveTrainingTrade(trainingTrade);
+            created++;
+            continue;
+          }
+          
           const revenue = sellAmount * sellPrice;
-          const exitFee = revenue * 0.004;
+          const exitFee = revenue * KRAKEN_FEE_RATE;
           const pnlGross = revenue - buyCost;
           const pnlNet = pnlGross - entryFee - exitFee;
           const pnlPct = (pnlNet / buyCost) * 100;
-          const sellTime = matchedSell.executedAt ? new Date(matchedSell.executedAt).getTime() : buyTime;
           const holdTimeMinutes = Math.round((sellTime - buyTime) / 60000);
+          
+          const totalFeePct = ((entryFee + exitFee) / buyCost) * 100;
+          if (totalFeePct > 2.0 || totalFeePct < 0.5) {
+            trainingTrade.discardReason = 'abnormal_fees';
+            discardReasons['abnormal_fees'] = (discardReasons['abnormal_fees'] || 0) + 1;
+            await this.saveTrainingTrade(trainingTrade);
+            created++;
+            continue;
+          }
+          
+          if (Math.abs(pnlPct) > PNL_OUTLIER_THRESHOLD) {
+            trainingTrade.discardReason = 'pnl_outlier';
+            discardReasons['pnl_outlier'] = (discardReasons['pnl_outlier'] || 0) + 1;
+            await this.saveTrainingTrade(trainingTrade);
+            created++;
+            continue;
+          }
+          
+          const holdTimeDays = holdTimeMinutes / (60 * 24);
+          if (holdTimeDays > MAX_HOLD_TIME_DAYS) {
+            trainingTrade.discardReason = 'hold_time_outlier';
+            discardReasons['hold_time_outlier'] = (discardReasons['hold_time_outlier'] || 0) + 1;
+            await this.saveTrainingTrade(trainingTrade);
+            created++;
+            continue;
+          }
+          
+          if (holdTimeMinutes < 0) {
+            trainingTrade.discardReason = 'negative_hold_time';
+            discardReasons['negative_hold_time'] = (discardReasons['negative_hold_time'] || 0) + 1;
+            await this.saveTrainingTrade(trainingTrade);
+            created++;
+            continue;
+          }
+          
+          usedSells.add(matchedSell.id);
           
           trainingTrade.sellTxid = matchedSell.krakenOrderId || matchedSell.tradeId;
           trainingTrade.exitPrice = matchedSell.price;
