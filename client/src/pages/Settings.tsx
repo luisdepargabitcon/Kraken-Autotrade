@@ -39,12 +39,16 @@ interface AiDiagnostic {
   closedTradesCount: number;
   labeledTradesCount: number;
   openTradesCount: number;
+  openLotsCount: number;
+  openTradesDescription: string;
+  openLotsDescription: string;
   lastBackfillRun: string | null;
   lastBackfillError: string | null;
   lastTrainRun: string | null;
   lastTrainError: string | null;
   modelVersion: string | null;
-  discardReasons: Record<string, number>;
+  discardReasonsDataset: Record<string, number>;
+  lastBackfillDiscardReasons: Record<string, number>;
   winRate: number | null;
   avgPnlNet: number | null;
   avgHoldTimeMinutes: number | null;
@@ -468,9 +472,9 @@ export default function Settings() {
                             Error Entrenamiento: {aiDiagnostic.lastTrainError}
                           </div>
                         )}
-                        {Object.keys(aiDiagnostic.discardReasons).length > 0 && (
+                        {Object.keys(aiDiagnostic.discardReasonsDataset || {}).length > 0 && (
                           <div className="text-xs text-yellow-500">
-                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => {
+                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasonsDataset || {}).map(([k, v]) => {
                               const discardLabels: Record<string, string> = {
                                 'sin_fecha_ejecucion': 'Sin fecha de ejecución',
                                 'datos_invalidos': 'Datos inválidos',
