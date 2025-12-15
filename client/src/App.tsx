@@ -10,6 +10,7 @@ import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
 import Integrations from "@/pages/Integrations";
 import Guide from "@/pages/Guide";
+import Monitor from "@/pages/Monitor";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/guide" component={Guide} />
+      <Route path="/monitor" component={Monitor} />
       
       <Route component={NotFound} />
     </Switch>

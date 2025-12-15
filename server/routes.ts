@@ -6,6 +6,7 @@ import { telegramService } from "./services/telegram";
 import { TradingEngine } from "./services/tradingEngine";
 import { botLogger } from "./services/botLogger";
 import { aiService } from "./services/aiService";
+import { eventsWs } from "./services/eventsWebSocket";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -59,6 +60,9 @@ export async function registerRoutes(
   } catch (error) {
     console.error("[startup] Error loading API credentials:", error);
   }
+
+  // Initialize WebSocket server for real-time events
+  eventsWs.initialize(httpServer);
   
   app.get("/api/config", async (req, res) => {
     try {

@@ -2,6 +2,7 @@ import { db } from "../db";
 import { botEvents } from "@shared/schema";
 import type { BotEvent, InsertBotEvent } from "@shared/schema";
 import { desc } from "drizzle-orm";
+import { eventsWs } from "./eventsWebSocket";
 
 export type LogLevel = "INFO" | "WARN" | "ERROR";
 
@@ -72,17 +73,32 @@ class BotLogger {
       this.memoryEvents.pop();
     }
 
+    let insertedId: number | undefined;
     if (this.persistToDb) {
       try {
-        await db.insert(botEvents).values({
+        const result = await db.insert(botEvents).values({
           level,
           type,
           message,
           meta: meta ? JSON.stringify(meta) : null,
-        });
+        }).returning({ id: botEvents.id });
+        insertedId = result[0]?.id;
       } catch (error) {
         console.error("[BotLogger] Error persisting event to DB:", error);
       }
+    }
+
+    try {
+      eventsWs.broadcast({
+        id: insertedId,
+        timestamp,
+        level,
+        type,
+        message,
+        meta,
+      });
+    } catch (error) {
+      // Silently fail if WS not initialized yet
     }
   }
 
