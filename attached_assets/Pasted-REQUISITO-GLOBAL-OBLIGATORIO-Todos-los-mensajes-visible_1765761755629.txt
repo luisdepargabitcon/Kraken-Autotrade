@@ -1,0 +1,94 @@
+REQUISITO GLOBAL (OBLIGATORIO)
+Todos los mensajes visibles en UI y todas las respuestas de error de la API deben estar en CASTELLANO.
+Los códigos técnicos (errorCode) pueden ir en inglés para estabilidad, pero el campo "message" debe ser español.
+
+ANTES DE CAMBIAR NADA (OBLIGATORIO)
+Revisa el repositorio y confirma qué partes YA están implementadas relacionadas con:
+- TRAINING_TRADES (tabla, backfill, dedupe)
+- /api/ai/diagnostic (campos: lastBackfillRun, lastBackfillError, etc.)
+- Endpoint de entrenamiento (si existe /api/ai/train o similar)
+- Persistencia de estado del modelo (modelVersion, lastTrainRun, lastTrainError)
+- UI de Ajustes (botón Entrenar, mensajes, bloqueo por umbral)
+
+ENTREGABLE INICIAL
+Devuélveme un checklist “Existe / Falta / Parcial” por cada punto anterior, con:
+- Archivos y funciones exactas donde está implementado (ruta + nombre de función)
+- Qué falta para cumplir requisitos (solo lo imprescindible)
+
+REGLAS
+- No dupliques endpoints ni tablas: reutiliza lo existente y refactoriza si hace falta.
+- Si algo ya existe pero no cumple (por ejemplo mensajes en inglés), ajusta sin romper contratos.
+- Mantén compatibilidad con el motor de trading y gestión de riesgo (build/tests pasan).
+
+ESTADO ACTUAL
+/api/ai/diagnostic ya muestra:
+- labeledTradesCount=40
+- lastBackfillRun != null
+pero:
+- lastTrainRun = null
+- modelVersion = null
+
+OBJETIVO
+Dejar implementado un entrenamiento consistente y reproducible usando SOLO trades etiquetados (TRAINING_TRADES cerrados), con split temporal, métricas y versionado de modelo, e integración en UI. Importante: NO entrenar hasta alcanzar el umbral (300). El botón debe estar bloqueado hasta entonces con mensaje claro en castellano.
+
+TAREAS OBLIGATORIAS (SOLO DESPUÉS DEL AUDIT, Y SOLO LO QUE FALTE)
+
+1) Endpoint de entrenamiento (preparado, pero protegido por umbral)
+- Crear o completar POST /api/ai/train que:
+  a) carga SOLO training trades con label
+  b) aplica split temporal (80% más antiguo train / 20% más reciente validation)
+  c) entrena modelo y calcula métricas mínimas: accuracy, precision, recall, F1, confusionMatrix
+  d) guarda artefacto del modelo (o pesos/coeficientes) + metadata:
+     - modelVersion (timestamp o hash)
+     - trainWindowStart/End, valWindowStart/End
+     - numTrain, numVal
+     - métricas
+  e) actualiza y persiste:
+     - lastTrainRun
+     - lastTrainError (si falla)
+
+  UMBRAL OBLIGATORIO:
+  - Si labeledTradesCount < 300, NO debe entrenar.
+  - Debe responder 409 (o 400) con JSON y mensaje en CASTELLANO:
+    {
+      "errorCode": "INSUFFICIENT_DATA",
+      "message": "Datos insuficientes para entrenar el modelo. Necesitas 300 trades cerrados etiquetados. Actualmente hay <count>.",
+      "required": 300,
+      "current": <count>
+    }
+  - No debe modificar modelVersion ni lastTrainRun en ese caso.
+
+2) Persistencia de estado del modelo
+- Donde hoy diagnostic devuelve modelVersion=null, debe salir el valor real tras entrenar (cuando se alcance el umbral).
+- Si no hay tabla/config para metadata del modelo, crearla (model_registry o ai_settings), persistente en DB.
+- Guardar también lastTrainError y lastTrainRun en DB para que sobreviva reinicios.
+- lastTrainError debe incluir:
+  - errorCode (técnico)
+  - message en castellano (entendible)
+
+3) UI en Settings (coherente con el umbral, en castellano)
+- Botón “Entrenar modelo” deshabilitado si labeledTradesCount < 300 y mostrar:
+  “Necesitas X trades cerrados más para entrenar”.
+- Mostrar:
+  - Último entrenamiento: “Nunca” si es null
+  - Versión del modelo: “—” si es null
+  - Métricas: “N/A” hasta entrenar
+- Si el backend devuelve error, mostrar el message en castellano tal cual (sin traducir en frontend).
+
+4) Consistencia y anti-leakage (obligatorio antes de entrenar)
+- Features solo con datos disponibles en entry_time (sin datos posteriores).
+- Excluir open trades y trades inválidos (exit_time <= entry_time, qty<=0, precios nulos).
+- discardReasons debe estar en castellano en UI (puede mapearse desde claves técnicas).
+- Añadir validación para detectar fuga de información; si ocurre, fallar con error en castellano:
+  {
+    "errorCode": "DATA_LEAKAGE_DETECTED",
+    "message": "Se detectó fuga de información: se están usando datos posteriores a la entrada para entrenar. Revisa el cálculo de features."
+  }
+
+5) Aceptación
+- Antes de llegar a 300:
+  - /api/ai/train rechaza con errorCode estable + message en castellano y no cambia estado.
+  - UI refleja bloqueo y mensaje claro en castellano.
+- Al llegar a 300:
+  - /api/ai/train entrena y devuelve JSON con métricas y modelVersion.
+  - /api/ai/diagnostic muestra lastTrainRun != null, modelVersion != null, lastTrainError == null.
