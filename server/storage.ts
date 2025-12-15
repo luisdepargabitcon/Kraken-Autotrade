@@ -443,201 +443,211 @@ export class DatabaseStorage implements IStorage {
     const KRAKEN_FEE_RATE = 0.004;
     const PNL_OUTLIER_THRESHOLD = 50;
     const MAX_HOLD_TIME_DAYS = 30;
+    const QTY_EPSILON = 0.00000001;
     
-    const buysByPair: Record<string, Trade[]> = {};
-    const sellsByPair: Record<string, Trade[]> = {};
-    
+    const tradesByPair: Record<string, Trade[]> = {};
     for (const trade of allTrades) {
-      const pair = trade.pair;
-      if (trade.type === 'buy') {
-        if (!buysByPair[pair]) buysByPair[pair] = [];
-        buysByPair[pair].push(trade);
-      } else if (trade.type === 'sell') {
-        if (!sellsByPair[pair]) sellsByPair[pair] = [];
-        sellsByPair[pair].push(trade);
-      }
+      if (!tradesByPair[trade.pair]) tradesByPair[trade.pair] = [];
+      tradesByPair[trade.pair].push(trade);
     }
     
-    for (const pair of Object.keys(buysByPair)) {
-      const buys = buysByPair[pair] || [];
-      const sells = sellsByPair[pair] || [];
+    for (const pair of Object.keys(tradesByPair)) {
+      const pairTrades = tradesByPair[pair].sort((a, b) => {
+        const timeA = a.executedAt ? new Date(a.executedAt).getTime() : 0;
+        const timeB = b.executedAt ? new Date(b.executedAt).getTime() : 0;
+        return timeA - timeB;
+      });
       
-      const usedSells = new Set<number>();
+      interface OpenLot {
+        dbId: number | null;
+        buyTxid: string;
+        entryPrice: number;
+        entryAmount: number;
+        qtyRemaining: number;
+        entryTs: Date;
+        costUsd: number;
+        entryFee: number;
+        sellTxids: string[];
+        totalRevenue: number;
+        totalExitFee: number;
+        lastSellTs: Date | null;
+        lastSellPrice: number;
+      }
       
-      for (const buy of buys) {
-        const existing = await this.getTrainingTradeByBuyTxid(buy.krakenOrderId || buy.tradeId);
-        if (existing) {
-          if (existing.isClosed) closed++;
-          if (existing.isLabeled) labeled++;
+      const openLots: OpenLot[] = [];
+      
+      for (const trade of pairTrades) {
+        const tradeTime = trade.executedAt ? new Date(trade.executedAt) : null;
+        const tradeAmount = parseFloat(trade.amount || '0');
+        const tradePrice = parseFloat(trade.price || '0');
+        const tradeTxid = trade.krakenOrderId || trade.tradeId;
+        
+        if (!tradeTime) {
+          discardReasons['sin_fecha_ejecucion'] = (discardReasons['sin_fecha_ejecucion'] || 0) + 1;
           continue;
         }
         
-        const buyTime = buy.executedAt ? new Date(buy.executedAt).getTime() : 0;
-        const buyAmount = parseFloat(buy.amount || '0');
-        const buyPrice = parseFloat(buy.price || '0');
-        const buyCost = buyAmount * buyPrice;
-        
-        if (!buy.executedAt) {
-          discardReasons['no_execution_time'] = (discardReasons['no_execution_time'] || 0) + 1;
+        if (tradeAmount <= 0 || tradePrice <= 0) {
+          discardReasons['datos_invalidos'] = (discardReasons['datos_invalidos'] || 0) + 1;
           continue;
         }
         
-        if (buyAmount <= 0) {
-          discardReasons['invalid_buy_amount'] = (discardReasons['invalid_buy_amount'] || 0) + 1;
-          continue;
-        }
-        
-        if (buyPrice <= 0) {
-          discardReasons['invalid_buy_price'] = (discardReasons['invalid_buy_price'] || 0) + 1;
-          continue;
-        }
-        
-        if (buyCost <= 0) {
-          discardReasons['invalid_buy_cost'] = (discardReasons['invalid_buy_cost'] || 0) + 1;
-          continue;
-        }
-        
-        let matchedSell: Trade | null = null;
-        
-        for (let i = 0; i < sells.length; i++) {
-          if (usedSells.has(sells[i].id)) continue;
-          
-          const sell = sells[i];
-          const sellTime = sell.executedAt ? new Date(sell.executedAt).getTime() : 0;
-          if (sellTime <= buyTime) continue;
-          
-          const sellAmount = parseFloat(sell.amount || '0');
-          const amountDiff = Math.abs(sellAmount - buyAmount) / buyAmount;
-          
-          if (amountDiff < 0.02) {
-            matchedSell = sell;
-            break;
+        if (trade.type === 'buy') {
+          const existing = await this.getTrainingTradeByBuyTxid(tradeTxid);
+          if (existing) {
+            if (existing.isClosed) closed++;
+            if (existing.isLabeled) labeled++;
+            const qtyRem = parseFloat(existing.qtyRemaining || existing.entryAmount || '0');
+            if (qtyRem > QTY_EPSILON) {
+              openLots.push({
+                dbId: existing.id,
+                buyTxid: tradeTxid,
+                entryPrice: parseFloat(existing.entryPrice),
+                entryAmount: parseFloat(existing.entryAmount),
+                qtyRemaining: qtyRem,
+                entryTs: new Date(existing.entryTs),
+                costUsd: parseFloat(existing.costUsd),
+                entryFee: parseFloat(existing.entryFee || '0'),
+                sellTxids: (existing.sellTxidsJson as string[]) || [],
+                totalRevenue: parseFloat(existing.revenueUsd || '0'),
+                totalExitFee: parseFloat(existing.exitFee || '0'),
+                lastSellTs: existing.exitTs ? new Date(existing.exitTs) : null,
+                lastSellPrice: parseFloat(existing.exitPrice || '0'),
+              });
+            }
+            continue;
           }
-        }
-        
-        if (!matchedSell) {
-          for (let i = 0; i < sells.length; i++) {
-            if (usedSells.has(sells[i].id)) continue;
+          
+          const buyCost = tradeAmount * tradePrice;
+          const entryFee = buyCost * KRAKEN_FEE_RATE;
+          
+          const trainingTrade: InsertTrainingTrade = {
+            pair,
+            buyTxid: tradeTxid,
+            entryPrice: trade.price,
+            entryAmount: trade.amount,
+            qtyRemaining: trade.amount,
+            costUsd: buyCost.toFixed(8),
+            entryFee: entryFee.toFixed(8),
+            entryTs: tradeTime,
+            sellTxidsJson: [],
+            isClosed: false,
+            isLabeled: false,
+          };
+          
+          const saved = await this.saveTrainingTrade(trainingTrade);
+          created++;
+          
+          openLots.push({
+            dbId: saved.id,
+            buyTxid: tradeTxid,
+            entryPrice: tradePrice,
+            entryAmount: tradeAmount,
+            qtyRemaining: tradeAmount,
+            entryTs: tradeTime,
+            costUsd: buyCost,
+            entryFee,
+            sellTxids: [],
+            totalRevenue: 0,
+            totalExitFee: 0,
+            lastSellTs: null,
+            lastSellPrice: 0,
+          });
+          
+        } else if (trade.type === 'sell') {
+          let remainingToSell = tradeAmount;
+          const sellPrice = tradePrice;
+          const sellTime = tradeTime;
+          
+          if (openLots.length === 0) {
+            discardReasons['venta_sin_compra_previa'] = (discardReasons['venta_sin_compra_previa'] || 0) + 1;
+            continue;
+          }
+          
+          while (remainingToSell > QTY_EPSILON && openLots.length > 0) {
+            const lot = openLots[0];
+            const consumeQty = Math.min(remainingToSell, lot.qtyRemaining);
+            const proportion = consumeQty / lot.entryAmount;
+            const sellRevenue = consumeQty * sellPrice;
+            const sellFee = sellRevenue * KRAKEN_FEE_RATE;
             
-            const sell = sells[i];
-            const sellTime = sell.executedAt ? new Date(sell.executedAt).getTime() : 0;
-            if (sellTime <= buyTime) continue;
+            lot.qtyRemaining -= consumeQty;
+            remainingToSell -= consumeQty;
+            lot.sellTxids.push(tradeTxid);
+            lot.totalRevenue += sellRevenue;
+            lot.totalExitFee += sellFee;
+            lot.lastSellTs = sellTime;
+            lot.lastSellPrice = sellPrice;
             
-            const sellAmount = parseFloat(sell.amount || '0');
-            if (Math.abs(sellAmount - buyAmount) / buyAmount < 0.10 && sellAmount <= buyAmount * 1.1) {
-              matchedSell = sell;
-              break;
+            if (lot.qtyRemaining <= QTY_EPSILON) {
+              const pnlGross = lot.totalRevenue - lot.costUsd;
+              const pnlNet = pnlGross - lot.entryFee - lot.totalExitFee;
+              const pnlPct = (pnlNet / lot.costUsd) * 100;
+              const holdTimeMinutes = Math.round((lot.lastSellTs!.getTime() - lot.entryTs.getTime()) / 60000);
+              
+              let discardReason: string | null = null;
+              
+              const totalFeePct = ((lot.entryFee + lot.totalExitFee) / lot.costUsd) * 100;
+              if (totalFeePct > 2.0 || totalFeePct < 0.5) {
+                discardReason = 'comisiones_anormales';
+              } else if (Math.abs(pnlPct) > PNL_OUTLIER_THRESHOLD) {
+                discardReason = 'pnl_atipico';
+              } else if (holdTimeMinutes / (60 * 24) > MAX_HOLD_TIME_DAYS) {
+                discardReason = 'hold_excesivo';
+              } else if (holdTimeMinutes < 0) {
+                discardReason = 'timestamps_invalidos';
+              }
+              
+              if (discardReason) {
+                discardReasons[discardReason] = (discardReasons[discardReason] || 0) + 1;
+              }
+              
+              const avgExitPrice = lot.totalRevenue / lot.entryAmount;
+              
+              await this.updateTrainingTrade(lot.dbId!, {
+                sellTxid: lot.sellTxids[lot.sellTxids.length - 1],
+                sellTxidsJson: lot.sellTxids,
+                exitPrice: avgExitPrice.toFixed(8),
+                exitAmount: lot.entryAmount.toFixed(8),
+                qtyRemaining: '0',
+                revenueUsd: lot.totalRevenue.toFixed(8),
+                exitFee: lot.totalExitFee.toFixed(8),
+                pnlGross: pnlGross.toFixed(8),
+                pnlNet: pnlNet.toFixed(8),
+                pnlPct: pnlPct.toFixed(4),
+                holdTimeMinutes,
+                labelWin: discardReason ? undefined : (pnlNet > 0 ? 1 : 0),
+                exitTs: lot.lastSellTs!,
+                isClosed: true,
+                isLabeled: discardReason ? false : true,
+                discardReason: discardReason || undefined,
+              });
+              
+              closed++;
+              if (!discardReason) labeled++;
+              
+              openLots.shift();
+            } else {
+              await this.updateTrainingTrade(lot.dbId!, {
+                qtyRemaining: lot.qtyRemaining.toFixed(8),
+                sellTxidsJson: lot.sellTxids,
+              });
             }
           }
+          
+          if (remainingToSell > QTY_EPSILON) {
+            discardReasons['venta_excede_lotes'] = (discardReasons['venta_excede_lotes'] || 0) + 1;
+          }
         }
-        
-        const entryFee = buyCost * KRAKEN_FEE_RATE;
-        
-        const trainingTrade: InsertTrainingTrade = {
-          pair,
-          buyTxid: buy.krakenOrderId || buy.tradeId,
-          entryPrice: buy.price,
-          entryAmount: buy.amount,
-          costUsd: buyCost.toFixed(8),
-          entryFee: entryFee.toFixed(8),
-          entryTs: new Date(buy.executedAt),
-          isClosed: false,
-          isLabeled: false,
-        };
-        
-        if (matchedSell) {
-          const sellPrice = parseFloat(matchedSell.price || '0');
-          const sellAmount = parseFloat(matchedSell.amount || '0');
-          const sellTime = matchedSell.executedAt ? new Date(matchedSell.executedAt).getTime() : buyTime;
-          
-          let sellValid = true;
-          let sellDiscardReason: string | null = null;
-          
-          if (sellPrice <= 0) {
-            sellValid = false;
-            sellDiscardReason = 'invalid_sell_price';
-          } else if (sellAmount <= 0) {
-            sellValid = false;
-            sellDiscardReason = 'invalid_sell_amount';
-          } else if (sellTime <= buyTime) {
-            sellValid = false;
-            sellDiscardReason = 'invalid_timestamps';
-          }
-          
-          if (!sellValid) {
-            trainingTrade.discardReason = sellDiscardReason!;
-            discardReasons[sellDiscardReason!] = (discardReasons[sellDiscardReason!] || 0) + 1;
-            await this.saveTrainingTrade(trainingTrade);
-            created++;
-            continue;
-          }
-          
-          const revenue = sellAmount * sellPrice;
-          const exitFee = revenue * KRAKEN_FEE_RATE;
-          const pnlGross = revenue - buyCost;
-          const pnlNet = pnlGross - entryFee - exitFee;
-          const pnlPct = (pnlNet / buyCost) * 100;
-          const holdTimeMinutes = Math.round((sellTime - buyTime) / 60000);
-          
-          const totalFeePct = ((entryFee + exitFee) / buyCost) * 100;
-          if (totalFeePct > 2.0 || totalFeePct < 0.5) {
-            trainingTrade.discardReason = 'abnormal_fees';
-            discardReasons['abnormal_fees'] = (discardReasons['abnormal_fees'] || 0) + 1;
-            await this.saveTrainingTrade(trainingTrade);
-            created++;
-            continue;
-          }
-          
-          if (Math.abs(pnlPct) > PNL_OUTLIER_THRESHOLD) {
-            trainingTrade.discardReason = 'pnl_outlier';
-            discardReasons['pnl_outlier'] = (discardReasons['pnl_outlier'] || 0) + 1;
-            await this.saveTrainingTrade(trainingTrade);
-            created++;
-            continue;
-          }
-          
-          const holdTimeDays = holdTimeMinutes / (60 * 24);
-          if (holdTimeDays > MAX_HOLD_TIME_DAYS) {
-            trainingTrade.discardReason = 'hold_time_outlier';
-            discardReasons['hold_time_outlier'] = (discardReasons['hold_time_outlier'] || 0) + 1;
-            await this.saveTrainingTrade(trainingTrade);
-            created++;
-            continue;
-          }
-          
-          if (holdTimeMinutes < 0) {
-            trainingTrade.discardReason = 'negative_hold_time';
-            discardReasons['negative_hold_time'] = (discardReasons['negative_hold_time'] || 0) + 1;
-            await this.saveTrainingTrade(trainingTrade);
-            created++;
-            continue;
-          }
-          
-          usedSells.add(matchedSell.id);
-          
-          trainingTrade.sellTxid = matchedSell.krakenOrderId || matchedSell.tradeId;
-          trainingTrade.exitPrice = matchedSell.price;
-          trainingTrade.exitAmount = matchedSell.amount;
-          trainingTrade.revenueUsd = revenue.toFixed(8);
-          trainingTrade.exitFee = exitFee.toFixed(8);
-          trainingTrade.pnlGross = pnlGross.toFixed(8);
-          trainingTrade.pnlNet = pnlNet.toFixed(8);
-          trainingTrade.pnlPct = pnlPct.toFixed(4);
-          trainingTrade.holdTimeMinutes = holdTimeMinutes;
-          trainingTrade.labelWin = pnlNet > 0 ? 1 : 0;
-          trainingTrade.exitTs = matchedSell.executedAt ? new Date(matchedSell.executedAt) : undefined;
-          trainingTrade.isClosed = true;
-          trainingTrade.isLabeled = true;
-          
-          closed++;
-          labeled++;
-        } else {
-          trainingTrade.discardReason = 'no_matching_sell';
-          discardReasons['no_matching_sell'] = (discardReasons['no_matching_sell'] || 0) + 1;
+      }
+      
+      for (const lot of openLots) {
+        if (lot.qtyRemaining > QTY_EPSILON && lot.qtyRemaining < lot.entryAmount) {
+          await this.updateTrainingTrade(lot.dbId!, {
+            qtyRemaining: lot.qtyRemaining.toFixed(8),
+            sellTxidsJson: lot.sellTxids,
+          });
         }
-        
-        await this.saveTrainingTrade(trainingTrade);
-        created++;
       }
     }
     

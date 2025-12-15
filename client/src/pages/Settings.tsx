@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2 } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -64,6 +64,7 @@ interface BotConfig {
   tradingHoursEnabled: boolean;
   tradingHoursStart: string;
   tradingHoursEnd: string;
+  positionMode: string;
 }
 
 export default function Settings() {
@@ -323,6 +324,58 @@ export default function Settings() {
               </CardContent>
             </Card>
 
+            {/* Position Mode Settings */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-500/20 rounded-lg">
+                    <Layers className="h-6 w-6 text-purple-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Modo de Posición</CardTitle>
+                    <CardDescription>Controla cómo se acumulan posiciones por cada par.</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-4 border border-border rounded-lg bg-card/30">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <Label>Modo de Acumulación</Label>
+                      <p className="text-sm text-muted-foreground">
+                        SINGLE: Una sola posición por par (bloquea nuevas compras si ya hay posición abierta).
+                        <br />
+                        DCA: Permite múltiples compras del mismo par (Dollar Cost Averaging).
+                      </p>
+                    </div>
+                    <Select 
+                      value={config?.positionMode ?? "SINGLE"}
+                      onValueChange={(value) => updateMutation.mutate({ positionMode: value })}
+                    >
+                      <SelectTrigger className="w-[140px] font-mono bg-background/50" data-testid="select-position-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SINGLE">SINGLE</SelectItem>
+                        <SelectItem value="DCA">DCA</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className={`p-3 rounded-lg text-sm ${config?.positionMode === "DCA" ? "bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" : "bg-green-500/10 border border-green-500/30 text-green-400"}`}>
+                  {config?.positionMode === "DCA" ? (
+                    <>
+                      <strong>Modo DCA activo:</strong> El bot puede realizar múltiples compras del mismo par para promediar el precio de entrada.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Modo SINGLE activo:</strong> El bot bloqueará nuevas compras de un par si ya existe una posición abierta.
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
             {/* AI Integration */}
             <Card className="glass-panel border-border/50">
               <CardHeader>
@@ -419,6 +472,14 @@ export default function Settings() {
                           <div className="text-xs text-yellow-500">
                             Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => {
                               const discardLabels: Record<string, string> = {
+                                'sin_fecha_ejecucion': 'Sin fecha de ejecución',
+                                'datos_invalidos': 'Datos inválidos',
+                                'venta_sin_compra_previa': 'Venta sin compra previa',
+                                'venta_excede_lotes': 'Venta excede lotes disponibles',
+                                'comisiones_anormales': 'Comisiones anormales',
+                                'pnl_atipico': 'PnL atípico (outlier)',
+                                'hold_excesivo': 'Tiempo de hold excesivo',
+                                'timestamps_invalidos': 'Timestamps inválidos',
                                 'no_matching_sell': 'Sin venta de cierre',
                                 'no_execution_time': 'Sin fecha de ejecución',
                                 'invalid_buy_amount': 'Cantidad de compra inválida',
