@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { useEventsWebSocket, BotEvent } from "@/hooks/useEventsWebSocket";
+import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Wifi, WifiOff, RefreshCw, Trash2, Pause, Play, 
   Download, Copy, Search, X, ChevronDown, ChevronRight,
-  AlertCircle, AlertTriangle, Info
+  AlertCircle, AlertTriangle, Info, Terminal, Activity
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +42,41 @@ const DEFAULT_EVENT_TYPES = [
 const DEFAULT_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
 
 export default function Monitor() {
+  const [activeTab, setActiveTab] = useState("events");
+  
+  return (
+    <div className="min-h-screen bg-background">
+      <Nav />
+      <div className="p-4 md:p-6 max-w-[1800px] mx-auto">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <div className="flex items-center gap-4 mb-4">
+            <h1 className="text-xl font-bold">Monitor</h1>
+            <TabsList>
+              <TabsTrigger value="events" className="gap-1" data-testid="tab-events">
+                <Activity className="h-4 w-4" />
+                Eventos
+              </TabsTrigger>
+              <TabsTrigger value="terminal" className="gap-1" data-testid="tab-terminal">
+                <Terminal className="h-4 w-4" />
+                Terminal
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          
+          <TabsContent value="events" className="mt-0">
+            <EventsTab />
+          </TabsContent>
+          
+          <TabsContent value="terminal" className="mt-0">
+            <TerminalTab />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function EventsTab() {
   const { events, status, error, connect, disconnect, clearEvents, isConnected } = useEventsWebSocket();
   
   const [autoScroll, setAutoScroll] = useState(true);
@@ -149,317 +187,511 @@ export default function Monitor() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Nav />
-      <div className="p-4 md:p-6 max-w-[1800px] mx-auto">
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="flex-1 space-y-4">
+    <div className="flex flex-col lg:flex-row gap-4">
+      <div className="flex-1 space-y-4">
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          <div className="flex items-center gap-2">
+            <Badge 
+              variant="outline" 
+              className={cn(
+                "gap-1",
+                isConnected ? "border-green-500 text-green-400" : 
+                status === "reconnecting" ? "border-yellow-500 text-yellow-400" :
+                "border-red-500 text-red-400"
+              )}
+              data-testid="badge-ws-status"
+            >
+              {isConnected ? <Wifi className="h-3 w-3" /> : 
+               status === "reconnecting" ? <RefreshCw className="h-3 w-3 animate-spin" /> :
+               <WifiOff className="h-3 w-3" />}
+              {status === "connected" ? "Conectado" : 
+               status === "reconnecting" ? "Reconectando..." : 
+               status === "connecting" ? "Conectando..." : "Desconectado"}
+            </Badge>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-muted-foreground hidden sm:flex gap-3">
+              <span>Eventos: {stats.total}</span>
+              <span className="text-red-400">Errores 24h: {stats.errors}</span>
+              <span className="text-yellow-400">Avisos 24h: {stats.warnings}</span>
+              <span className="text-green-400">Trades 24h: {stats.trades}</span>
+              {lastMessageTime && (
+                <span className="text-cyan-400" data-testid="last-message-time">
+                  Último: {lastMessageTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <Card className="border-border/50">
+          <CardHeader className="py-3 px-4">
             <div className="flex flex-wrap items-center gap-2 justify-between">
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold">Monitor</h1>
-                <Badge 
-                  variant="outline" 
-                  className={cn(
-                    "gap-1",
-                    isConnected ? "border-green-500 text-green-400" : 
-                    status === "reconnecting" ? "border-yellow-500 text-yellow-400" :
-                    "border-red-500 text-red-400"
-                  )}
-                  data-testid="badge-ws-status"
-                >
-                  {isConnected ? <Wifi className="h-3 w-3" /> : 
-                   status === "reconnecting" ? <RefreshCw className="h-3 w-3 animate-spin" /> :
-                   <WifiOff className="h-3 w-3" />}
-                  {status === "connected" ? "Conectado" : 
-                   status === "reconnecting" ? "Reconectando..." : 
-                   status === "connecting" ? "Conectando..." : "Desconectado"}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-muted-foreground hidden sm:flex gap-3">
-                  <span>Eventos: {stats.total}</span>
-                  <span className="text-red-400">Errores 24h: {stats.errors}</span>
-                  <span className="text-yellow-400">Avisos 24h: {stats.warnings}</span>
-                  <span className="text-green-400">Trades 24h: {stats.trades}</span>
-                  {lastMessageTime && (
-                    <span className="text-cyan-400" data-testid="last-message-time">
-                      Último: {lastMessageTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </span>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="pl-8 h-8 w-40 sm:w-60"
+                    data-testid="input-search"
+                  />
+                  {searchText && (
+                    <button 
+                      onClick={() => setSearchText("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2"
+                    >
+                      <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </button>
                   )}
                 </div>
+                
+                <div className="flex gap-1">
+                  {["INFO", "WARN", "ERROR"].map(level => (
+                    <Button
+                      key={level}
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-8 px-2 text-xs",
+                        levelFilter.includes(level) ? LEVEL_COLORS[level] : "opacity-40"
+                      )}
+                      onClick={() => toggleLevel(level)}
+                      data-testid={`button-filter-${level.toLowerCase()}`}
+                    >
+                      {LEVEL_ICONS[level]}
+                      <span className="hidden sm:inline ml-1">{level}</span>
+                    </Button>
+                  ))}
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setShowFilters(!showFilters)}
+                >
+                  Filtros
+                  {showFilters ? <ChevronDown className="ml-1 h-3 w-3" /> : <ChevronRight className="ml-1 h-3 w-3" />}
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setAutoScroll(!autoScroll)}
+                  title={autoScroll ? "Pausar auto-scroll" : "Reanudar auto-scroll"}
+                  data-testid="button-autoscroll"
+                >
+                  {autoScroll ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={clearEvents}
+                  title="Limpiar"
+                  data-testid="button-clear"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={handleCopyAll}
+                  title="Copiar todo"
+                  data-testid="button-copy-all"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={handleDownload}
+                  title="Descargar"
+                  data-testid="button-download"
+                >
+                  <Download className="h-4 w-4" />
+                </Button>
+                {!isConnected && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={connect}
+                    data-testid="button-reconnect"
+                  >
+                    Reconectar
+                  </Button>
+                )}
               </div>
             </div>
 
-            <Card className="border-border/50">
-              <CardHeader className="py-3 px-4">
-                <div className="flex flex-wrap items-center gap-2 justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Buscar..."
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                        className="pl-8 h-8 w-40 sm:w-60"
-                        data-testid="input-search"
-                      />
-                      {searchText && (
-                        <button 
-                          onClick={() => setSearchText("")}
-                          className="absolute right-2 top-1/2 -translate-y-1/2"
-                        >
-                          <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                        </button>
+            {showFilters && (
+              <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
+                <div className="flex flex-wrap gap-1" data-testid="filter-type-container">
+                  <span className="text-xs text-muted-foreground mr-2">Tipo:</span>
+                  {availableEventTypes.map((type: string) => (
+                    <Badge
+                      key={type}
+                      variant="outline"
+                      className={cn(
+                        "cursor-pointer text-xs",
+                        typeFilter.includes(type) ? "bg-primary/20" : "opacity-50"
                       )}
-                    </div>
-                    
-                    <div className="flex gap-1">
-                      {["INFO", "WARN", "ERROR"].map(level => (
-                        <Button
-                          key={level}
-                          variant="outline"
-                          size="sm"
-                          className={cn(
-                            "h-8 px-2 text-xs",
-                            levelFilter.includes(level) ? LEVEL_COLORS[level] : "opacity-40"
-                          )}
-                          onClick={() => toggleLevel(level)}
-                          data-testid={`button-filter-${level.toLowerCase()}`}
-                        >
-                          {LEVEL_ICONS[level]}
-                          <span className="hidden sm:inline ml-1">{level}</span>
-                        </Button>
-                      ))}
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={() => setShowFilters(!showFilters)}
+                      onClick={() => setTypeFilter(prev => 
+                        prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                      )}
+                      data-testid={`filter-type-${type}`}
                     >
-                      Filtros
-                      {showFilters ? <ChevronDown className="ml-1 h-3 w-3" /> : <ChevronRight className="ml-1 h-3 w-3" />}
+                      {type.replace(/_/g, " ")}
+                    </Badge>
+                  ))}
+                  {typeFilter.length > 0 && (
+                    <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
+                      Limpiar
                     </Button>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setAutoScroll(!autoScroll)}
-                      title={autoScroll ? "Pausar auto-scroll" : "Reanudar auto-scroll"}
-                      data-testid="button-autoscroll"
-                    >
-                      {autoScroll ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={clearEvents}
-                      title="Limpiar"
-                      data-testid="button-clear"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={handleCopyAll}
-                      title="Copiar todo"
-                      data-testid="button-copy-all"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={handleDownload}
-                      title="Descargar"
-                      data-testid="button-download"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    {!isConnected && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={connect}
-                        data-testid="button-reconnect"
-                      >
-                        Reconectar
-                      </Button>
-                    )}
-                  </div>
+                  )}
                 </div>
-
-                {showFilters && (
-                  <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-                    <div className="flex flex-wrap gap-1" data-testid="filter-type-container">
-                      <span className="text-xs text-muted-foreground mr-2">Tipo:</span>
-                      {availableEventTypes.map((type: string) => (
-                        <Badge
-                          key={type}
-                          variant="outline"
-                          className={cn(
-                            "cursor-pointer text-xs",
-                            typeFilter.includes(type) ? "bg-primary/20" : "opacity-50"
-                          )}
-                          onClick={() => setTypeFilter(prev => 
-                            prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-                          )}
-                          data-testid={`filter-type-${type}`}
-                        >
-                          {type.replace(/_/g, " ")}
-                        </Badge>
-                      ))}
-                      {typeFilter.length > 0 && (
-                        <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
-                          Limpiar
-                        </Button>
+                <div className="flex flex-wrap gap-1" data-testid="filter-pair-container">
+                  <span className="text-xs text-muted-foreground mr-2">Par:</span>
+                  {availablePairs.map((pair: string) => (
+                    <Badge
+                      key={pair}
+                      variant="outline"
+                      className={cn(
+                        "cursor-pointer text-xs",
+                        pairFilter.includes(pair) ? "bg-primary/20" : "opacity-50"
                       )}
-                    </div>
-                    <div className="flex flex-wrap gap-1" data-testid="filter-pair-container">
-                      <span className="text-xs text-muted-foreground mr-2">Par:</span>
-                      {availablePairs.map((pair: string) => (
-                        <Badge
-                          key={pair}
-                          variant="outline"
-                          className={cn(
-                            "cursor-pointer text-xs",
-                            pairFilter.includes(pair) ? "bg-primary/20" : "opacity-50"
-                          )}
-                          onClick={() => setPairFilter(prev => 
-                            prev.includes(pair) ? prev.filter(p => p !== pair) : [...prev, pair]
-                          )}
-                          data-testid={`filter-pair-${pair.replace("/", "-")}`}
-                        >
-                          {pair}
-                        </Badge>
-                      ))}
-                      {pairFilter.length > 0 && (
-                        <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setPairFilter([])} data-testid="button-clear-pair-filter">
-                          Limpiar
-                        </Button>
+                      onClick={() => setPairFilter(prev => 
+                        prev.includes(pair) ? prev.filter(p => p !== pair) : [...prev, pair]
                       )}
-                    </div>
-                  </div>
-                )}
-              </CardHeader>
-              
-              <CardContent className="p-0">
-                <ScrollArea className="h-[calc(100vh-320px)]" ref={scrollRef}>
-                  <div className="font-mono text-xs divide-y divide-border/30">
-                    {filteredEvents.length === 0 ? (
-                      <div className="p-8 text-center text-muted-foreground">
-                        {events.length === 0 ? "Esperando eventos..." : "No hay eventos que coincidan con los filtros"}
-                      </div>
-                    ) : (
-                      filteredEvents.map((event, idx) => (
-                        <div
-                          key={event.id || `${event.timestamp}-${idx}`}
-                          className={cn(
-                            "px-3 py-2 hover:bg-muted/30 cursor-pointer transition-colors",
-                            selectedEvent?.id === event.id && "bg-muted/50"
-                          )}
-                          onClick={() => setSelectedEvent(event)}
-                          data-testid={`event-row-${event.id || idx}`}
-                        >
-                          <div className="flex items-start gap-2">
-                            <span className="text-muted-foreground whitespace-nowrap">
-                              {formatDate(event.timestamp)} {formatTimestamp(event.timestamp)}
-                            </span>
-                            <Badge 
-                              variant="outline" 
-                              className={cn("text-[10px] px-1.5 py-0", LEVEL_COLORS[event.level])}
-                            >
-                              {event.level}
-                            </Badge>
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-muted/50">
-                              {event.type.replace(/_/g, " ")}
-                            </Badge>
-                            {event.meta?.pair && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                {event.meta.pair}
-                              </Badge>
-                            )}
-                            <span className="text-foreground truncate flex-1">
-                              {event.message}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="w-full lg:w-80 xl:w-96" data-testid="event-detail-panel">
-            <Card className="border-border/50 sticky top-20">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm">Detalle del evento</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                {selectedEvent ? (
-                  <div className="space-y-3 text-xs" data-testid="event-detail-content">
-                    <div className="flex justify-between items-start">
-                      <Badge className={cn(LEVEL_COLORS[selectedEvent.level])} data-testid="detail-level-badge">
-                        {selectedEvent.level}
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => handleCopyEvent(selectedEvent)}
-                        data-testid="button-copy-event"
-                      >
-                        <Copy className="h-3 w-3 mr-1" />
-                        Copiar
-                      </Button>
-                    </div>
-                    
-                    <div>
-                      <span className="text-muted-foreground">Timestamp:</span>
-                      <p className="font-mono" data-testid="detail-timestamp">{new Date(selectedEvent.timestamp).toLocaleString("es-ES")}</p>
-                    </div>
-                    
-                    <div>
-                      <span className="text-muted-foreground">Tipo:</span>
-                      <p className="font-mono" data-testid="detail-type">{selectedEvent.type}</p>
-                    </div>
-                    
-                    <div>
-                      <span className="text-muted-foreground">Mensaje:</span>
-                      <p className="break-words" data-testid="detail-message">{selectedEvent.message}</p>
-                    </div>
-                    
-                    {selectedEvent.meta && (
-                      <div>
-                        <span className="text-muted-foreground">Meta:</span>
-                        <pre className="mt-1 p-2 bg-muted/50 rounded text-[10px] overflow-x-auto max-h-60" data-testid="detail-meta">
-                          {JSON.stringify(selectedEvent.meta, null, 2)}
-                        </pre>
-                      </div>
-                    )}
+                      data-testid={`filter-pair-${pair.replace("/", "-")}`}
+                    >
+                      {pair}
+                    </Badge>
+                  ))}
+                  {pairFilter.length > 0 && (
+                    <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setPairFilter([])} data-testid="button-clear-pair-filter">
+                      Limpiar
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+          </CardHeader>
+          
+          <CardContent className="p-0">
+            <ScrollArea className="h-[calc(100vh-320px)]" ref={scrollRef}>
+              <div className="font-mono text-xs divide-y divide-border/30">
+                {filteredEvents.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    {events.length === 0 ? "Esperando eventos..." : "No hay eventos que coincidan con los filtros"}
                   </div>
                 ) : (
-                  <p className="text-muted-foreground text-sm" data-testid="detail-empty-message">
-                    Selecciona un evento para ver los detalles
-                  </p>
+                  filteredEvents.map((event, idx) => (
+                    <div
+                      key={event.id || `${event.timestamp}-${idx}`}
+                      className={cn(
+                        "px-3 py-2 hover:bg-muted/30 cursor-pointer transition-colors",
+                        selectedEvent?.id === event.id && "bg-muted/50"
+                      )}
+                      onClick={() => setSelectedEvent(event)}
+                      data-testid={`event-row-${event.id || idx}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-muted-foreground whitespace-nowrap">
+                          {formatDate(event.timestamp)} {formatTimestamp(event.timestamp)}
+                        </span>
+                        <Badge 
+                          variant="outline" 
+                          className={cn("text-[10px] px-1.5 py-0", LEVEL_COLORS[event.level])}
+                        >
+                          {event.level}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-muted/50">
+                          {event.type.replace(/_/g, " ")}
+                        </Badge>
+                        {event.meta?.pair && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {event.meta.pair}
+                          </Badge>
+                        )}
+                        <span className="text-foreground truncate flex-1">
+                          {event.message}
+                        </span>
+                      </div>
+                    </div>
+                  ))
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="w-full lg:w-80 xl:w-96" data-testid="event-detail-panel">
+        <Card className="border-border/50 sticky top-20">
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm">Detalle del evento</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            {selectedEvent ? (
+              <div className="space-y-3 text-xs" data-testid="event-detail-content">
+                <div className="flex justify-between items-start">
+                  <Badge className={cn(LEVEL_COLORS[selectedEvent.level])} data-testid="detail-level-badge">
+                    {selectedEvent.level}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    onClick={() => handleCopyEvent(selectedEvent)}
+                    data-testid="button-copy-event"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copiar
+                  </Button>
+                </div>
+                
+                <div>
+                  <span className="text-muted-foreground">Timestamp:</span>
+                  <p className="font-mono" data-testid="detail-timestamp">{new Date(selectedEvent.timestamp).toLocaleString("es-ES")}</p>
+                </div>
+                
+                <div>
+                  <span className="text-muted-foreground">Tipo:</span>
+                  <p className="font-mono" data-testid="detail-type">{selectedEvent.type}</p>
+                </div>
+                
+                <div>
+                  <span className="text-muted-foreground">Mensaje:</span>
+                  <p className="break-words" data-testid="detail-message">{selectedEvent.message}</p>
+                </div>
+                
+                {selectedEvent.meta && (
+                  <div>
+                    <span className="text-muted-foreground">Meta:</span>
+                    <pre className="mt-1 p-2 bg-muted/50 rounded text-[10px] overflow-x-auto max-h-60" data-testid="detail-meta">
+                      {JSON.stringify(selectedEvent.meta, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm" data-testid="detail-empty-message">
+                Selecciona un evento para ver los detalles
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function TerminalTab() {
+  const {
+    lines,
+    status,
+    error,
+    sources,
+    activeSource,
+    dockerEnabled,
+    lineCount,
+    lastLineTime,
+    connect,
+    startSource,
+    stopSource,
+    clearLines,
+    isConnected,
+  } = useTerminalWebSocket({ autoConnect: true });
+  
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [isPaused, setIsPaused] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevLinesLengthRef = useRef(lines.length);
+
+  useEffect(() => {
+    if (autoScroll && !isPaused && lines.length > prevLinesLengthRef.current && scrollRef.current) {
+      const scrollArea = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollArea) {
+        scrollArea.scrollTop = scrollArea.scrollHeight;
+      }
+    }
+    prevLinesLengthRef.current = lines.length;
+  }, [lines.length, autoScroll, isPaused]);
+
+  const displayLines = isPaused ? lines.slice(0, prevLinesLengthRef.current) : lines;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        <div className="flex items-center gap-2">
+          <Badge 
+            variant="outline" 
+            className={cn(
+              "gap-1",
+              isConnected ? "border-green-500 text-green-400" : 
+              status === "reconnecting" ? "border-yellow-500 text-yellow-400" :
+              "border-red-500 text-red-400"
+            )}
+            data-testid="terminal-ws-status"
+          >
+            {isConnected ? <Wifi className="h-3 w-3" /> : 
+             status === "reconnecting" ? <RefreshCw className="h-3 w-3 animate-spin" /> :
+             <WifiOff className="h-3 w-3" />}
+            {status === "connected" ? "Conectado" : 
+             status === "reconnecting" ? "Reconectando..." : 
+             status === "connecting" ? "Conectando..." : "Desconectado"}
+          </Badge>
+          
+          {isConnected && (
+            <Select
+              value={activeSource || ""}
+              onValueChange={(value) => {
+                if (value) startSource(value);
+              }}
+            >
+              <SelectTrigger className="w-[200px] h-8" data-testid="terminal-source-select">
+                <SelectValue placeholder="Seleccionar fuente..." />
+              </SelectTrigger>
+              <SelectContent>
+                {sources.map((source) => (
+                  <SelectItem key={source.id} value={source.id} data-testid={`source-${source.id}`}>
+                    {source.name}
+                  </SelectItem>
+                ))}
+                {sources.length === 0 && (
+                  <SelectItem value="" disabled>
+                    {dockerEnabled ? "Sin fuentes" : "Docker deshabilitado"}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          )}
+          
+          {activeSource && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={stopSource}
+              data-testid="button-stop-source"
+            >
+              Detener
+            </Button>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-muted-foreground hidden sm:flex gap-3">
+            <span>Líneas: {lineCount}</span>
+            {lastLineTime && (
+              <span className="text-cyan-400" data-testid="terminal-last-line-time">
+                Último: {lastLineTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => {
+                setIsPaused(!isPaused);
+                if (isPaused) {
+                  prevLinesLengthRef.current = lines.length;
+                }
+              }}
+              title={isPaused ? "Reanudar" : "Pausar"}
+              data-testid="button-terminal-pause"
+            >
+              {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={clearLines}
+              title="Limpiar"
+              data-testid="button-terminal-clear"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+            {!isConnected && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={connect}
+                data-testid="button-terminal-reconnect"
+              >
+                Reconectar
+              </Button>
+            )}
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded p-3 text-sm" data-testid="terminal-error">
+          {error}
+        </div>
+      )}
+
+      <Card className="border-border/50 bg-black/80">
+        <CardContent className="p-0">
+          <ScrollArea className="h-[calc(100vh-280px)]" ref={scrollRef}>
+            <div className="font-mono text-xs p-3 text-green-400 whitespace-pre-wrap">
+              {!isConnected ? (
+                <div className="text-muted-foreground">
+                  {status === "connecting" ? "Conectando al servidor..." : "Desconectado. Haz clic en 'Reconectar'."}
+                </div>
+              ) : !activeSource ? (
+                <div className="text-muted-foreground">
+                  Selecciona una fuente de logs para comenzar...
+                  {!dockerEnabled && (
+                    <div className="mt-2 text-yellow-400">
+                      Docker deshabilitado. Configura ENABLE_DOCKER_LOGS_STREAM=true en el servidor para habilitar logs de Docker.
+                    </div>
+                  )}
+                </div>
+              ) : displayLines.length === 0 ? (
+                <div className="text-muted-foreground">
+                  Esperando líneas de log...
+                </div>
+              ) : (
+                displayLines.map((logLine) => (
+                  <div 
+                    key={logLine.id} 
+                    className={cn(
+                      "py-0.5",
+                      logLine.isError && "text-red-400"
+                    )}
+                    data-testid={`log-line-${logLine.id}`}
+                  >
+                    {logLine.line}
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
+      
+      {isPaused && (
+        <div className="text-center text-yellow-400 text-sm" data-testid="terminal-paused-indicator">
+          Pausado - Nuevas líneas no se muestran
+        </div>
+      )}
     </div>
   );
 }

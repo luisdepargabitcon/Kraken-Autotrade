@@ -7,6 +7,7 @@ import { TradingEngine } from "./services/tradingEngine";
 import { botLogger } from "./services/botLogger";
 import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
+import { terminalWsServer } from "./services/terminalWebSocket";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -63,6 +64,9 @@ export async function registerRoutes(
 
   // Initialize WebSocket server for real-time events
   eventsWs.initialize(httpServer);
+  
+  // Initialize Terminal WebSocket for log streaming
+  terminalWsServer.initialize(httpServer);
   
   app.get("/api/config", async (req, res) => {
     try {
