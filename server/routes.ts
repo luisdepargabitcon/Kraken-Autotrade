@@ -700,28 +700,19 @@ export async function registerRoutes(
 
   app.get("/api/ai/diagnostic", async (req, res) => {
     try {
-      const totalTrades = await storage.getTrades(10000).then(t => t.length);
-      const aiSamples = await storage.getAiSamplesCount();
-      const completeSamples = await storage.getAiSamplesCount(true);
-      const trades = await storage.getTrades(100);
-      
-      const buyTrades = trades.filter(t => t.type === 'buy').length;
-      const sellTrades = trades.filter(t => t.type === 'sell').length;
-      
-      res.json({
-        diagnosis: {
-          totalTradesInDb: totalTrades,
-          buyTradesInDb: trades.filter(t => t.type === 'buy').length,
-          sellTradesInDb: trades.filter(t => t.type === 'sell').length,
-          aiSamplesTotal: aiSamples,
-          aiSamplesComplete: completeSamples,
-          samplesPerTradeRatio: totalTrades > 0 ? (aiSamples / totalTrades * 100).toFixed(2) + '%' : '0%',
-          status: aiSamples === 0 ? 'NO SAMPLES COLLECTED' : 'Samples collecting',
-          issue: aiSamples === 0 ? 'AI sample collection moved outside "new position" branch - should start collecting on next buy trade' : 'OK',
-        }
-      });
+      const diagnostic = await aiService.getDiagnostic();
+      res.json(diagnostic);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/ai/backfill", async (req, res) => {
+    try {
+      const result = await aiService.runBackfill();
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 

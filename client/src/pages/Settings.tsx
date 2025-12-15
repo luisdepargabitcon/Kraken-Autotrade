@@ -33,6 +33,20 @@ interface AiStatus {
   } | null;
 }
 
+interface AiDiagnostic {
+  operationsCount: number;
+  trainingTradesTotal: number;
+  closedTradesCount: number;
+  labeledTradesCount: number;
+  openTradesCount: number;
+  lastBackfillRun: string | null;
+  lastTrainRun: string | null;
+  discardReasons: Record<string, number>;
+  winRate: number | null;
+  avgPnlNet: number | null;
+  avgHoldTimeMinutes: number | null;
+}
+
 interface BotConfig {
   id: number;
   isActive: boolean;
@@ -69,6 +83,36 @@ export default function Settings() {
       return res.json();
     },
     refetchInterval: 30000,
+  });
+
+  const { data: aiDiagnostic } = useQuery<AiDiagnostic>({
+    queryKey: ["aiDiagnostic"],
+    queryFn: async () => {
+      const res = await fetch("/api/ai/diagnostic");
+      if (!res.ok) throw new Error("Failed to fetch AI diagnostic");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+
+  const backfillMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/ai/backfill", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to backfill");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["aiStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["aiDiagnostic"] });
+      if (data.success) {
+        toast.success(data.message || "Backfill completado");
+      } else {
+        toast.error(data.message || "Error en backfill");
+      }
+    },
+    onError: () => {
+      toast.error("Error al ejecutar backfill");
+    },
   });
 
   const updateMutation = useMutation({
@@ -298,7 +342,7 @@ export default function Settings() {
                   <>
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label className="text-sm">Progreso de Entrenamiento</Label>
+                        <Label className="text-sm">Trades Cerrados Etiquetados</Label>
                         <span className="text-sm font-mono">
                           {aiStatus.completeSamples} / {aiStatus.minSamplesForActivate} trades
                         </span>
@@ -309,12 +353,53 @@ export default function Settings() {
                       />
                       <p className="text-xs text-muted-foreground">
                         {aiStatus.completeSamples < aiStatus.minSamplesForTrain 
-                          ? `Necesitas ${aiStatus.minSamplesForTrain - aiStatus.completeSamples} trades más para entrenar`
+                          ? `Necesitas ${aiStatus.minSamplesForTrain - aiStatus.completeSamples} trades cerrados más para entrenar`
                           : aiStatus.completeSamples < aiStatus.minSamplesForActivate
                           ? `Puedes entrenar. Faltan ${aiStatus.minSamplesForActivate - aiStatus.completeSamples} para activar filtro`
                           : "Listo para activar el filtro AI"}
                       </p>
                     </div>
+                    
+                    {aiDiagnostic && (
+                      <div className="p-3 border border-border rounded-lg bg-card/30 space-y-2">
+                        <Label className="text-xs text-muted-foreground">Diagnóstico de Dataset</Label>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Operaciones:</span>
+                            <span className="ml-1 font-mono">{aiDiagnostic.operationsCount}</span>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Cerrados:</span>
+                            <span className="ml-1 font-mono">{aiDiagnostic.closedTradesCount}</span>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Etiquetados:</span>
+                            <span className="ml-1 font-mono">{aiDiagnostic.labeledTradesCount}</span>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded">
+                            <span className="text-muted-foreground">Win Rate:</span>
+                            <span className="ml-1 font-mono">{aiDiagnostic.winRate ? `${aiDiagnostic.winRate.toFixed(1)}%` : '-'}</span>
+                          </div>
+                        </div>
+                        {Object.keys(aiDiagnostic.discardReasons).length > 0 && (
+                          <div className="text-xs text-yellow-500">
+                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                          </div>
+                        )}
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          className="w-full"
+                          disabled={backfillMutation.isPending}
+                          onClick={() => backfillMutation.mutate()}
+                          data-testid="button-backfill"
+                        >
+                          {backfillMutation.isPending ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Procesando...</>
+                          ) : "Ejecutar Backfill (Regenerar Dataset)"}
+                        </Button>
+                      </div>
+                    )}
                     
                     <div className="p-4 border border-border rounded-lg bg-card/30">
                       <div className="flex items-center justify-between">
