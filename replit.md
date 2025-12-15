@@ -4,7 +4,9 @@
 KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken exchange. It features a web-based dashboard for monitoring trades, managing cryptocurrency portfolio balances (BTC, ETH, SOL, USD), and receiving real-time notifications via Telegram. The application is built for 24/7 operation, supporting deployment on Replit or self-hosting via Docker on a QNAP NAS. Its core purpose is to automate trading decisions based on predefined strategies and robust risk management, aiming to capitalize on market movements while protecting capital.
 
 ## User Preferences
-Preferred communication style: Simple, everyday language.
+- Preferred communication style: Simple, everyday language.
+- **Entornos**: NAS es la fuente de verdad (producción y dataset IA). Replit solo para desarrollo y pruebas.
+- **Sincronización**: No implementar export/import ni DB remota entre NAS y Replit.
 
 ## System Architecture
 
