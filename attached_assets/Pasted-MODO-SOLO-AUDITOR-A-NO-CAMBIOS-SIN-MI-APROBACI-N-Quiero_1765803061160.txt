@@ -1,0 +1,58 @@
+MODO SOLO AUDITORÍA (NO CAMBIOS SIN MI APROBACIÓN)
+Quiero que investigues y me informes, pero NO quiero que edites código, NO ejecutes migraciones, NO hagas commits, NO cambies configuraciones y NO despliegues nada sin mi confirmación explícita.
+
+OBJETIVO
+1) Verificar exactamente por qué el contador de “Trades etiquetados” sube lento (labeledTradesCount) aunque haya nuevas operaciones.
+2) Confirmar si el sistema actual soporta DCA/“añadir a posición” correctamente, o si el matching sigue siendo 1:1 y por eso genera muchos “Sin venta de cierre”.
+3) Confirmar si ya está implementado (aunque sea parcial) soporte FIFO/netting para el caso “vuelves a DCA y pides FIFO/netting”.
+
+INFORME QUE QUIERO (SOLO INFORMACIÓN)
+A) Estado de datos (con números actuales)
+- operationsCount, trainingTradesTotal, closedTradesCount, labeledTradesCount, openTradesCount
+- discardReasons (especialmente no_matching_sell)
+- ¿Qué se considera “trade cerrado” hoy? (definición exacta usada para labeledTrades)
+
+B) Análisis de por qué no suben etiquetas
+- Enumera las 3 causas más probables según el código actual:
+  1) posiciones abiertas reales
+  2) ventas parciales / múltiples BUY/SELL
+  3) criterios de matching demasiado estrictos (por txid, cantidad exacta, ventana temporal, etc.)
+- Para cada causa, indica la evidencia en el código (archivo + función + resumen breve de la condición).
+
+C) Revisión de compatibilidad con DCA
+- Responde SI/NO con justificación:
+  “Si el bot hace BUY adicionales sobre una posición abierta, ¿el recolector puede generar etiquetas igualmente?”
+- Si la respuesta es NO o PARCIAL, explica exactamente qué escenario falla (ej.: múltiples BUY + un SELL grande, varios SELL parciales, etc.).
+
+D) FIFO / Netting (vuelves a DCA y pides FIFO/netting)
+- Verifica si ya existe implementación de FIFO o netting:
+  - búsqueda en el repo de términos: FIFO, netting, lots, inventory, position lots, matchPartial, consumeLots, allocateFees
+- Si existe:
+  - dónde está (archivos + funciones) y qué cubre (parciales, múltiples compras, múltiples ventas, fees)
+- Si NO existe:
+  - confirma que el matching actual es 1:1 (BUY↔SELL) y describe la lógica exacta (reglas de emparejamiento y tolerancias).
+
+E) Evidencia con ejemplos (sin modificar nada)
+- Selecciona 3 ejemplos recientes de operaciones:
+  1) un caso que sí se convirtió en labeled trade
+  2) un caso que quedó como no_matching_sell
+  3) un caso con múltiples BUY/SELL que muestre el problema con DCA
+- Para cada ejemplo, muestra (solo datos): pair, buyTxid/sellTxid si existen, timestamps, qty, entry/exit, motivo de descarte si aplica.
+  (No cambies datos ni ejecutes backfill; solo lee/consulta.)
+
+SALIDA FINAL (OBLIGATORIA)
+- Conclusión clara: ¿qué está pasando exactamente y por qué?
+- Lista de “siguientes acciones sugeridas” (3 a 5 acciones), priorizadas y con impacto esperado.
+  Ejemplos de acciones (solo sugerencias, NO ejecutar):
+  - activar “una posición por activo”
+  - implementar FIFO/netting
+  - ajustar matching para parciales
+  - añadir tolerancias de cantidades/fees
+  - separar datasets por régimen (DCA vs 1:1)
+- Para cada acción sugerida:
+  - beneficio esperado
+  - riesgo/posible efecto secundario
+  - esfuerzo aproximado (bajo/medio/alto)
+
+IMPORTANTE
+- No implementes nada ahora. Solo quiero el informe y tus conclusiones + sugerencias.
