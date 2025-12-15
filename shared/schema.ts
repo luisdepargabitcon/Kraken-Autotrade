@@ -177,6 +177,7 @@ export const aiConfig = pgTable("ai_config", {
   lastTrainTs: timestamp("last_train_ts"),
   lastBackfillTs: timestamp("last_backfill_ts"),
   lastBackfillError: text("last_backfill_error"),
+  lastBackfillDiscardReasonsJson: jsonb("last_backfill_discard_reasons_json"),
   lastTrainError: text("last_train_error"),
   nSamples: integer("n_samples").default(0),
   threshold: decimal("threshold", { precision: 5, scale: 4 }).default("0.60"),

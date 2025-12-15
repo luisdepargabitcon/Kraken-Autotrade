@@ -58,12 +58,15 @@ export interface AiDiagnostic {
   labeledTradesCount: number;
   openTradesCount: number;
   openLotsCount: number;
+  openTradesDescription: string;
+  openLotsDescription: string;
   lastBackfillRun: Date | null;
   lastBackfillError: string | null;
   lastTrainRun: Date | null;
   lastTrainError: string | null;
   modelVersion: string | null;
-  discardReasons: Record<string, number>;
+  discardReasonsDataset: Record<string, number>;
+  lastBackfillDiscardReasons: Record<string, number>;
   winRate: number | null;
   avgPnlNet: number | null;
   avgHoldTimeMinutes: number | null;
@@ -169,14 +172,11 @@ class AiService {
     const openLotsCount = await storage.getTrainingTradesCount({ hasOpenLots: true });
     
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
-    const discardReasons: Record<string, number> = {};
     
-    const unclosedTrades = await storage.getTrainingTrades({ closed: false });
-    for (const trade of unclosedTrades) {
-      if (trade.discardReason) {
-        discardReasons[trade.discardReason] = (discardReasons[trade.discardReason] || 0) + 1;
-      }
-    }
+    const discardReasonsDataset = await storage.getDiscardReasonsDataset();
+    
+    const lastBackfillDiscardReasons: Record<string, number> = 
+      (aiConfig?.lastBackfillDiscardReasonsJson as Record<string, number>) || {};
     
     let winRate: number | null = null;
     let avgPnlNet: number | null = null;
@@ -200,12 +200,15 @@ class AiService {
       labeledTradesCount: labeledCount,
       openTradesCount: openCount,
       openLotsCount,
+      openTradesDescription: "training_trades con isClosed=false",
+      openLotsDescription: "training_trades con qtyRemaining > 0",
       lastBackfillRun: aiConfig?.lastBackfillTs ?? null,
       lastBackfillError: aiConfig?.lastBackfillError ?? null,
       lastTrainRun: aiConfig?.lastTrainTs ?? null,
       lastTrainError: aiConfig?.lastTrainError ?? null,
       modelVersion: aiConfig?.modelVersion ?? null,
-      discardReasons,
+      discardReasonsDataset,
+      lastBackfillDiscardReasons,
       winRate,
       avgPnlNet,
       avgHoldTimeMinutes,
@@ -447,6 +450,7 @@ class AiService {
       await storage.updateAiConfig({
         lastBackfillTs: new Date(),
         lastBackfillError: null,
+        lastBackfillDiscardReasonsJson: stats.discardReasons,
       });
       
       return {

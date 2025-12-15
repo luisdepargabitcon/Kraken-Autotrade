@@ -85,6 +85,7 @@ export interface IStorage {
   getTrainingTradeByBuyTxid(buyTxid: string): Promise<TrainingTrade | undefined>;
   getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]>;
   getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean; hasOpenLots?: boolean }): Promise<number>;
+  getDiscardReasonsDataset(): Promise<Record<string, number>>;
   getAllTradesForBackfill(): Promise<Trade[]>;
   runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }>;
 }
@@ -428,6 +429,24 @@ export class DatabaseStorage implements IStorage {
     const query = db.select({ count: sql<number>`count(*)` }).from(trainingTradesTable);
     const result = whereClause ? await query.where(whereClause) : await query;
     return Number(result[0]?.count || 0);
+  }
+
+  async getDiscardReasonsDataset(): Promise<Record<string, number>> {
+    const result = await db.select({
+      discardReason: trainingTradesTable.discardReason,
+      count: sql<number>`count(*)`,
+    })
+    .from(trainingTradesTable)
+    .where(sql`${trainingTradesTable.discardReason} IS NOT NULL`)
+    .groupBy(trainingTradesTable.discardReason);
+    
+    const reasons: Record<string, number> = {};
+    for (const row of result) {
+      if (row.discardReason) {
+        reasons[row.discardReason] = Number(row.count);
+      }
+    }
+    return reasons;
   }
 
   async getAllTradesForBackfill(): Promise<Trade[]> {
