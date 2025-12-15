@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -73,6 +74,40 @@ interface BotConfig {
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  
+  const [wsAdminToken, setWsAdminToken] = useState("");
+  const [terminalToken, setTerminalToken] = useState("");
+  const [showWsToken, setShowWsToken] = useState(false);
+  const [showTerminalToken, setShowTerminalToken] = useState(false);
+  const [wsTokenSaved, setWsTokenSaved] = useState(false);
+  const [terminalTokenSaved, setTerminalTokenSaved] = useState(false);
+
+  useEffect(() => {
+    const savedWsToken = localStorage.getItem("WS_ADMIN_TOKEN") || "";
+    const savedTerminalToken = localStorage.getItem("TERMINAL_TOKEN") || "";
+    setWsAdminToken(savedWsToken);
+    setTerminalToken(savedTerminalToken);
+    setWsTokenSaved(!!savedWsToken);
+    setTerminalTokenSaved(!!savedTerminalToken);
+  }, []);
+
+  const handleSaveTokens = () => {
+    if (wsAdminToken) {
+      localStorage.setItem("WS_ADMIN_TOKEN", wsAdminToken);
+      setWsTokenSaved(true);
+    } else {
+      localStorage.removeItem("WS_ADMIN_TOKEN");
+      setWsTokenSaved(false);
+    }
+    if (terminalToken) {
+      localStorage.setItem("TERMINAL_TOKEN", terminalToken);
+      setTerminalTokenSaved(true);
+    } else {
+      localStorage.removeItem("TERMINAL_TOKEN");
+      setTerminalTokenSaved(false);
+    }
+    toast.success("Tokens guardados. Recarga la página para aplicar cambios.");
+  };
 
   const { data: config } = useQuery<BotConfig>({
     queryKey: ["botConfig"],
@@ -224,6 +259,88 @@ export default function Settings() {
                     </Button>
                   </Link>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Monitor Tokens */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-cyan-500/20 rounded-lg">
+                    <Monitor className="h-6 w-6 text-cyan-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Tokens de Monitor</CardTitle>
+                    <CardDescription>Tokens de autenticación para WebSocket (deben coincidir con los del servidor).</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3">
+                  <div className="grid gap-2">
+                    <Label htmlFor="ws-admin-token">WS_ADMIN_TOKEN (Eventos)</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="ws-admin-token"
+                          type={showWsToken ? "text" : "password"}
+                          value={wsAdminToken}
+                          onChange={(e) => setWsAdminToken(e.target.value)}
+                          placeholder="Token para /ws/events"
+                          className="font-mono pr-10"
+                          data-testid="input-ws-admin-token"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowWsToken(!showWsToken)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showWsToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      {wsTokenSaved && (
+                        <Check className="h-5 w-5 text-green-500 self-center" data-testid="check-ws-token" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Opcional en desarrollo, requerido en producción.</p>
+                  </div>
+                  
+                  <div className="grid gap-2">
+                    <Label htmlFor="terminal-token">TERMINAL_TOKEN (Terminal)</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="terminal-token"
+                          type={showTerminalToken ? "text" : "password"}
+                          value={terminalToken}
+                          onChange={(e) => setTerminalToken(e.target.value)}
+                          placeholder="Token para /ws/logs"
+                          className="font-mono pr-10"
+                          data-testid="input-terminal-token"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowTerminalToken(!showTerminalToken)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showTerminalToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      {terminalTokenSaved && (
+                        <Check className="h-5 w-5 text-green-500 self-center" data-testid="check-terminal-token" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Obligatorio para ver logs del servidor.</p>
+                  </div>
+                </div>
+                
+                <Button onClick={handleSaveTokens} className="w-full" data-testid="button-save-tokens">
+                  Guardar Tokens
+                </Button>
+                
+                <p className="text-xs text-muted-foreground text-center">
+                  Los tokens se guardan en tu navegador. Recarga la página después de guardar para aplicar cambios.
+                </p>
               </CardContent>
             </Card>
 
