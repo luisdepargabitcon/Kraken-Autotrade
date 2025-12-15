@@ -141,6 +141,13 @@ export class TradingEngine {
     "1h": 60 * 60,
   };
 
+  // Engine tick tracking (heartbeat cada 60s)
+  private tickIntervalId: NodeJS.Timeout | null = null;
+  private lastTickTime: number = 0;
+  private lastScanTime: number = 0;
+  private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
+  private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
+
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
     this.telegramService = telegramService;
@@ -259,6 +266,62 @@ export class TradingEngine {
       return CONFIDENCE_SIZING_THRESHOLDS.low.factor;
     }
     return 0; // No trade if confidence < 0.6
+  }
+
+  // === ENGINE TICK: Heartbeat cada 60s ===
+  private async emitEngineTick(): Promise<void> {
+    if (!this.isRunning) return;
+
+    try {
+      const config = await storage.getBotConfig();
+      const now = Date.now();
+      const loopLatencyMs = this.lastScanTime > 0 ? now - this.lastScanTime : 0;
+      
+      const openPositionsPairs = Array.from(this.openPositions.keys());
+      
+      await botLogger.info("ENGINE_TICK", "Motor activo - escaneo en curso", {
+        activePairs: config?.activePairs || [],
+        openPositionsCount: this.openPositions.size,
+        openPositionsPairs,
+        lastScanAt: this.lastScanTime > 0 ? new Date(this.lastScanTime).toISOString() : null,
+        loopLatencyMs,
+        balanceUsd: this.currentUsdBalance,
+        isDailyLimitReached: this.isDailyLimitReached,
+        dailyPnL: this.dailyPnL,
+      });
+
+      this.lastTickTime = now;
+
+      // Emitir MARKET_SCAN_SUMMARY si hay resultados
+      if (this.lastScanResults.size > 0) {
+        const scanSummary: Record<string, any> = {};
+        this.lastScanResults.forEach((result, pair) => {
+          scanSummary[pair] = result;
+        });
+
+        await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
+          pairs: scanSummary,
+          scanTime: new Date(this.lastScanTime).toISOString(),
+        });
+      }
+    } catch (error: any) {
+      log(`Error emitiendo ENGINE_TICK: ${error.message}`, "trading");
+    }
+  }
+
+  // Helper to get cooldown remaining seconds
+  private getCooldownRemainingSec(pair: string): number | undefined {
+    const cooldownUntil = this.pairCooldowns.get(pair);
+    if (!cooldownUntil) return undefined;
+    const remaining = Math.max(0, Math.floor((cooldownUntil - Date.now()) / 1000));
+    return remaining > 0 ? remaining : undefined;
+  }
+
+  private getStopLossCooldownRemainingSec(pair: string): number | undefined {
+    const cooldownUntil = this.stopLossCooldowns.get(pair);
+    if (!cooldownUntil) return undefined;
+    const remaining = Math.max(0, Math.floor((cooldownUntil - Date.now()) / 1000));
+    return remaining > 0 ? remaining : undefined;
   }
 
   // === MEJORA 4: Cooldown Post Stop-Loss ===
@@ -488,6 +551,9 @@ El bot de trading autónomo está activo.
     const intervalMs = this.getIntervalForStrategy(config.strategy);
     this.intervalId = setInterval(() => this.runTradingCycle(), intervalMs);
     
+    // Iniciar tick interval para ENGINE_TICK cada 60s
+    this.tickIntervalId = setInterval(() => this.emitEngineTick(), this.TICK_INTERVAL_MS);
+    
     this.runTradingCycle();
   }
 
@@ -498,6 +564,10 @@ El bot de trading autónomo está activo.
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+    if (this.tickIntervalId) {
+      clearInterval(this.tickIntervalId);
+      this.tickIntervalId = null;
     }
     
     log("Motor de trading detenido", "trading");
@@ -592,6 +662,10 @@ El bot de trading autónomo está activo.
         await this.stop();
         return;
       }
+
+      // Actualizar tiempo de escaneo y limpiar resultados anteriores
+      this.lastScanTime = Date.now();
+      this.lastScanResults.clear();
 
       const balances = await this.krakenService.getBalance();
       this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
@@ -918,6 +992,17 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
       const signal = await this.analyzeWithStrategy(strategy, pair, history, currentPrice);
       
+      // Registrar resultado del escaneo
+      const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
+      const botConfigForScan = await storage.getBotConfig();
+      const exposure = this.getAvailableExposure(pair, botConfigForScan, this.currentUsdBalance);
+      this.lastScanResults.set(pair, {
+        signal: signalStr,
+        reason: signal.reason || "Sin señal",
+        cooldownSec: this.getCooldownRemainingSec(pair),
+        exposureAvailable: exposure.maxAllowed,
+      });
+      
       if (signal.action === "hold" || signal.confidence < 0.6) {
         return;
       }
@@ -927,6 +1012,14 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
+          const cooldownSec = this.getCooldownRemainingSec(pair);
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
+            pair,
+            signal: "BUY",
+            reason: "PAIR_COOLDOWN",
+            cooldownRemainingSec: cooldownSec,
+            signalReason: signal.reason,
+          });
           return;
         }
 
@@ -935,12 +1028,27 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
         if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
           log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo SINGLE con posición abierta`, {
+            pair,
+            signal: "BUY",
+            reason: "SINGLE_MODE_POSITION_EXISTS",
+            existingAmount: existingPosition.amount,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         // MEJORA 4: Verificar cooldown post stop-loss
         if (this.isPairInStopLossCooldown(pair)) {
+          const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
           log(`${pair}: En cooldown post stop-loss`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
+            pair,
+            signal: "BUY",
+            reason: "STOPLOSS_COOLDOWN",
+            cooldownRemainingSec: cooldownSec,
+            signalReason: signal.reason,
+          });
           return;
         }
 
@@ -948,11 +1056,26 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         const spreadCheck = this.isSpreadAcceptable(tickerData);
         if (!spreadCheck.acceptable) {
           log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
+            pair,
+            signal: "BUY",
+            reason: "SPREAD_TOO_HIGH",
+            spreadPct: spreadCheck.spreadPct,
+            maxSpreadPct: MAX_SPREAD_PCT,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
           log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
+            pair,
+            signal: "BUY",
+            reason: "POSITION_TOO_LARGE",
+            currentPositionUsd: existingPosition.amount * currentPrice,
+            maxTradeUsd: riskConfig.maxTradeUSD * 2,
+          });
           return;
         }
 
@@ -962,6 +1085,13 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 
         if (freshUsdBalance < minRequiredUSD) {
           log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
+            pair,
+            signal: "BUY",
+            reason: "INSUFFICIENT_FUNDS",
+            availableUsd: freshUsdBalance,
+            minRequiredUsd: minRequiredUSD,
+          });
           this.setPairCooldown(pair);
           return;
         }
@@ -975,8 +1105,10 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         if (!profitCheck.isProfitable) {
           log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
           
-          await botLogger.info("TRADE_REJECTED_LOW_PROFIT", `Trade rechazado por baja rentabilidad esperada`, {
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
             pair,
+            signal: "BUY",
+            reason: "LOW_PROFITABILITY",
             takeProfitPct,
             roundTripFees: profitCheck.roundTripFees,
             minProfitRequired: profitCheck.minProfitRequired,
@@ -1009,6 +1141,13 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         
         if (effectiveMaxAllowed < minRequiredUSD) {
           log(`${pair}: Sin exposición disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, Mínimo: $${minRequiredUSD.toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - sin exposición disponible`, {
+            pair,
+            signal: "BUY",
+            reason: "EXPOSURE_ZERO",
+            exposureAvailable: effectiveMaxAllowed,
+            minRequiredUsd: minRequiredUSD,
+          });
           this.setPairCooldown(pair);
           
           if (this.shouldSendExposureAlert(pair)) {
@@ -1058,6 +1197,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
         if (tradeVolume < minVolume) {
           log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
+            pair,
+            signal: "BUY",
+            reason: "VOLUME_BELOW_MINIMUM",
+            calculatedVolume: tradeVolume,
+            minVolume,
+          });
           this.setPairCooldown(pair);
           return;
         }
@@ -1081,14 +1227,28 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
       } else if (signal.action === "sell") {
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+            pair,
+            signal: "SELL",
+            reason: "NO_POSITION",
+            assetBalance,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         const availableToSell = existingPosition?.amount || assetBalance;
         const sellVolume = Math.min(availableToSell, availableToSell * 0.5);
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
 
-        if (sellVolume < minVolume) {
+        if (sellVolume < minVolumeSell) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - volumen < mínimo`, {
+            pair,
+            signal: "SELL",
+            reason: "VOLUME_BELOW_MINIMUM",
+            calculatedVolume: sellVolume,
+            minVolume: minVolumeSell,
+          });
           return;
         }
 
@@ -1118,6 +1278,17 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       const signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
       const strategyId = `momentum_candles_${timeframe}`;
       
+      // Registrar resultado del escaneo para candles
+      const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
+      const botConfigForScan = await storage.getBotConfig();
+      const exposureScan = this.getAvailableExposure(pair, botConfigForScan, this.currentUsdBalance);
+      this.lastScanResults.set(pair, {
+        signal: signalStr,
+        reason: signal.reason || "Sin señal",
+        cooldownSec: this.getCooldownRemainingSec(pair),
+        exposureAvailable: exposureScan.maxAllowed,
+      });
+      
       if (signal.action === "hold" || signal.confidence < 0.6) {
         return;
       }
@@ -1132,29 +1303,69 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       const existingPosition = this.openPositions.get(pair);
 
       if (signal.action === "buy") {
-        if (this.isPairInCooldown(pair)) return;
+        if (this.isPairInCooldown(pair)) {
+          const cooldownSec = this.getCooldownRemainingSec(pair);
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
+            pair,
+            signal: "BUY",
+            reason: "PAIR_COOLDOWN",
+            cooldownRemainingSec: cooldownSec,
+            signalReason: signal.reason,
+          });
+          return;
+        }
 
         // MODO SINGLE: Bloquear compras si ya hay posición abierta
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
         if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
           log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo SINGLE con posición abierta`, {
+            pair,
+            signal: "BUY",
+            reason: "SINGLE_MODE_POSITION_EXISTS",
+            existingAmount: existingPosition.amount,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         if (this.isPairInStopLossCooldown(pair)) {
+          const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
           log(`${pair}: En cooldown post stop-loss`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
+            pair,
+            signal: "BUY",
+            reason: "STOPLOSS_COOLDOWN",
+            cooldownRemainingSec: cooldownSec,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         const spreadCheck = this.isSpreadAcceptable(tickerData);
         if (!spreadCheck.acceptable) {
           log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
+            pair,
+            signal: "BUY",
+            reason: "SPREAD_TOO_HIGH",
+            spreadPct: spreadCheck.spreadPct,
+            maxSpreadPct: MAX_SPREAD_PCT,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
           log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
+            pair,
+            signal: "BUY",
+            reason: "POSITION_TOO_LARGE",
+            currentPositionUsd: existingPosition.amount * currentPrice,
+            maxTradeUsd: riskConfig.maxTradeUSD * 2,
+          });
           return;
         }
 
@@ -1164,6 +1375,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
         if (freshUsdBalance < minRequiredUSD) {
           log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
+            pair,
+            signal: "BUY",
+            reason: "INSUFFICIENT_FUNDS",
+            availableUsd: freshUsdBalance,
+            minRequiredUsd: minRequiredUSD,
+          });
           this.setPairCooldown(pair);
           return;
         }
@@ -1175,6 +1393,15 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const profitCheck = this.isProfitableAfterFees(takeProfitPct);
         if (!profitCheck.isProfitable) {
           log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
+            pair,
+            signal: "BUY",
+            reason: "LOW_PROFITABILITY",
+            takeProfitPct,
+            roundTripFees: profitCheck.roundTripFees,
+            minProfitRequired: profitCheck.minProfitRequired,
+            strategyId,
+          });
           return;
         }
         
@@ -1195,6 +1422,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         
         if (effectiveMaxAllowed < minRequiredUSD) {
           log(`${pair}: Sin exposición disponible`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - sin exposición disponible`, {
+            pair,
+            signal: "BUY",
+            reason: "EXPOSURE_ZERO",
+            exposureAvailable: effectiveMaxAllowed,
+            minRequiredUsd: minRequiredUSD,
+          });
           this.setPairCooldown(pair);
           return;
         }
@@ -1212,6 +1446,14 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
         if (tradeVolume < minVolume) {
           log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
+            pair,
+            signal: "BUY",
+            reason: "VOLUME_BELOW_MINIMUM",
+            calculatedVolume: tradeVolume,
+            minVolume,
+            strategyId,
+          });
           this.setPairCooldown(pair);
           return;
         }
@@ -1238,14 +1480,30 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
       } else if (signal.action === "sell") {
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+            pair,
+            signal: "SELL",
+            reason: "NO_POSITION",
+            assetBalance,
+            strategyId,
+            signalReason: signal.reason,
+          });
           return;
         }
 
         const availableToSell = existingPosition?.amount || assetBalance;
         const sellVolume = Math.min(availableToSell, availableToSell * 0.5);
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
 
-        if (sellVolume < minVolume) {
+        if (sellVolume < minVolumeSell) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - volumen < mínimo`, {
+            pair,
+            signal: "SELL",
+            reason: "VOLUME_BELOW_MINIMUM",
+            calculatedVolume: sellVolume,
+            minVolume: minVolumeSell,
+            strategyId,
+          });
           return;
         }
 

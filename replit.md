@@ -108,6 +108,16 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 
 ## Recent Changes (Dec 2025)
 
+### Monitor Real-Time Events (Dec 15, 2025)
+- Added WebSocket-based real-time event streaming to Monitor page
+- New event types for market scan visibility:
+  - `ENGINE_TICK`: 60-second heartbeat with engine status (activePairs, openPositions, balanceUsd, dailyPnL)
+  - `MARKET_SCAN_SUMMARY`: Compact summary of per-pair signals (signal, reason, cooldown, exposure)
+  - `TRADE_SKIPPED`: Detailed event when signals are blocked (with reason code)
+- TRADE_SKIPPED reasons include: PAIR_COOLDOWN, SINGLE_MODE_POSITION_EXISTS, STOPLOSS_COOLDOWN, SPREAD_TOO_HIGH, INSUFFICIENT_FUNDS, EXPOSURE_ZERO, POSITION_TOO_LARGE, LOW_PROFITABILITY, VOLUME_BELOW_MINIMUM, NO_POSITION
+- Monitor page updated with filters for new event types
+- Files modified: `server/services/tradingEngine.ts`, `client/src/pages/Monitor.tsx`
+
 ### AI Diagnostic Metrics Unification
 - Added `lastBackfillDiscardReasonsJson` field to `ai_config` table
 - `runBackfill()` now persists discard reasons to `ai_config` for traceability
