@@ -41,3 +41,9 @@ waitForPort = 5000
 
 [agent]
 mockupState = "FULLSTACK"
+
+[userenv]
+
+[userenv.shared]
+TERMINAL_TOKEN = "dev-terminal-2025"
+WS_ADMIN_TOKEN = "dev-admin-2025"
