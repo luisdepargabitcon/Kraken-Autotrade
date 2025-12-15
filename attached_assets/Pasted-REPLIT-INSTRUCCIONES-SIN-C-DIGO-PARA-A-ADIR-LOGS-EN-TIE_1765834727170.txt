@@ -1,0 +1,87 @@
+REPLIT — INSTRUCCIONES (SIN CÓDIGO) PARA AÑADIR LOGS EN TIEMPO REAL POR WEBSOCKET
+
+OBJETIVO
+- Sustituir el polling GET /api/events por un WebSocket que emita eventos/logs en vivo.
+- Mantener /api/events para “snapshot” (histórico) y compatibilidad.
+
+BACKEND (Express)
+1) Añadir WebSocket server (librería recomendada: "ws")
+   - Cambiar el arranque a servidor HTTP explícito (httpServer) para poder adjuntar WS.
+   - Crear WS en: PATH = /ws/events (misma base URL que el backend).
+
+2) Seguridad mínima (OBLIGATORIO)
+   - Requerir token en conexión WS:
+     - Opción A: querystring: /ws/events?token=XXXXX
+     - Opción B: header Authorization: Bearer XXXXX (si el proxy lo permite)
+   - Validar contra ENV: WS_ADMIN_TOKEN
+   - Si token inválido: cerrar conexión inmediatamente.
+
+3) Protocolo de mensajes (JSON)
+   - Enviar siempre JSON con "type" y "payload".
+   - Tipos mínimos:
+     - "EVENTS_SNAPSHOT": payload = array de últimos N eventos (ej. 200)
+     - "BOT_EVENT": payload = evento individual (id, timestamp, level, eventType, message, meta)
+     - "WS_STATUS": payload = { connectedAt, serverTime, version }
+
+4) Snapshot al conectar
+   - Al abrir WS: enviar "EVENTS_SNAPSHOT" con últimos N eventos.
+   - Fuente del snapshot:
+     - Preferible: DB (tabla botEvents) ORDER BY timestamp DESC LIMIT N
+     - Alternativa: buffer en memoria del logger si existe y es fiable.
+
+5) Broadcast en tiempo real
+   - Integrar con el logger actual (BotLogger / botEvents):
+     - Cada vez que se registre un evento (y/o se inserte en DB), emitir también por WS: "BOT_EVENT".
+   - Enviar SOLO a clientes conectados (ready/open).
+
+6) Resiliencia
+   - Implementar ping/pong (o heartbeat) cada ~30s para detectar clientes muertos.
+   - Limpiar conexiones en "close" y "error".
+   - Limitar payload: si meta es enorme, truncar o recortar campos.
+
+7) Observabilidad
+   - Loguear:
+     - conexiones WS abiertas/cerradas (con IP/uid si aplica)
+     - número de clientes conectados
+     - errores de autenticación
+
+FRONTEND (Dashboard)
+8) Sustituir polling por WS
+   - Eliminar/pausar el intervalo de GET /api/events.
+   - Conectar a WS:
+     - ws://HOST/ws/events?token=WS_ADMIN_TOKEN (o wss:// si hay TLS)
+   - Manejo de mensajes:
+     - "EVENTS_SNAPSHOT": reemplazar lista actual (orden cronológico o invertido según UI)
+     - "BOT_EVENT": insertar en tiempo real (prepend si “más reciente arriba”).
+
+9) Reconexión automática
+   - Reintentar reconectar si se corta:
+     - backoff: 1s → 2s → 5s → 10s (máximo 10s)
+   - Mostrar estado visual: Connected / Reconnecting / Disconnected.
+
+10) Rendimiento UI
+   - Si entran muchos eventos, bufferizar en cliente y “flush” cada 200–500ms para no bloquear render.
+
+DEVOPS / CONFIG
+11) Variables de entorno
+   - WS_ADMIN_TOKEN=...
+   - WS_SNAPSHOT_LIMIT=200 (opcional)
+   - WS_PATH=/ws/events (opcional)
+
+12) Reverse proxy (si aplica)
+   - Verificar que el proxy permite WebSocket upgrade:
+     - Nginx/Traefik/Cloudflare: habilitar Upgrade/Connection.
+   - Si hay TLS, usar wss://.
+
+CRITERIOS DE ACEPTACIÓN
+A) En el navegador aparecen logs en vivo sin refrescar.
+B) Desaparecen los spam de “GET /api/events 304”.
+C) Al recargar la página, carga últimos N eventos y luego streaming.
+D) Sin token válido, la conexión WS no se mantiene.
+E) No hay fugas: al cerrar pestaña, el servidor reduce el contador de clientes.
+
+ENTREGABLES
+- Un módulo WS (ej.: server/realtime/eventsWs.*) + cambios mínimos en el arranque del servidor.
+- Integración en BotLogger para emitir eventos.
+- Frontend actualizado con WS + reconexión + estado de conexión.
+- Nota breve en README: cómo probar (incluye wscat o similar).
