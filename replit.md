@@ -118,6 +118,12 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 - Monitor page updated with filters for new event types
 - Files modified: `server/services/tradingEngine.ts`, `client/src/pages/Monitor.tsx`
 
+### WebSocket Context Provider (Dec 15, 2025)
+- Centralized EventsWebSocket via React Context to avoid duplicate connections
+- EventsWebSocketProvider wraps App, both Dashboard and Monitor share single WebSocket
+- `useEventsFeed()` hook replaces direct useEventsWebSocket calls in components
+- Fixed reconnection loop caused by useCallback dependency chain in hook
+
 ### Monitor Terminal Tab + WebSocket Improvements (Dec 15, 2025)
 - **FASE 1 - Events WebSocket**:
   - `/ws/events` with `WS_ADMIN_TOKEN` authentication (optional in dev, required in prod)

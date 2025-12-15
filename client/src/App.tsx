@@ -3,6 +3,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { EventsWebSocketProvider } from "@/context/EventsWebSocketContext";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
 import Terminal from "@/pages/Terminal";
@@ -34,8 +35,10 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <Router />
+        <EventsWebSocketProvider>
+          <Toaster />
+          <Router />
+        </EventsWebSocketProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

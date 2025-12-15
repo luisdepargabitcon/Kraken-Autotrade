@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Nav } from "@/components/dashboard/Nav";
-import { useEventsWebSocket, BotEvent } from "@/hooks/useEventsWebSocket";
+import { useEventsFeed } from "@/context/EventsWebSocketContext";
+import { BotEvent } from "@/hooks/useEventsWebSocket";
 import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -77,7 +78,7 @@ export default function Monitor() {
 }
 
 function EventsTab() {
-  const { events, status, error, connect, disconnect, clearEvents, isConnected } = useEventsWebSocket();
+  const { events, status, error, connect, disconnect, clearEvents, isConnected } = useEventsFeed();
   
   const [autoScroll, setAutoScroll] = useState(true);
   const [selectedEvent, setSelectedEvent] = useState<BotEvent | null>(null);

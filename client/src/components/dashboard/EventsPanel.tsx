@@ -11,11 +11,13 @@ import {
   RefreshCw,
   Trash2
 } from "lucide-react";
-import { useEventsWebSocket, BotEvent } from "@/hooks/useEventsWebSocket";
+import { useEventsFeed } from "@/context/EventsWebSocketContext";
+import { BotEvent } from "@/hooks/useEventsWebSocket";
 import { cn } from "@/lib/utils";
 
 export function EventsPanel() {
-  const { events, status, clearEvents, connect, isConnected } = useEventsWebSocket({ maxEvents: 50 });
+  const { events: allEvents, status, clearEvents, connect, isConnected } = useEventsFeed();
+  const events = allEvents.slice(0, 50);
 
   const getLevelIcon = (level: string) => {
     switch (level) {

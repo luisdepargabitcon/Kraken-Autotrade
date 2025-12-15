@@ -28,25 +28,30 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
   const reconnectAttemptsRef = useRef(0);
   const eventBufferRef = useRef<BotEvent[]>([]);
   const flushIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const maxEventsRef = useRef(maxEvents);
+  const mountedRef = useRef(true);
 
-  const getWsUrl = useCallback(() => {
+  maxEventsRef.current = maxEvents;
+
+  const getWsUrl = () => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const token = localStorage.getItem("WS_ADMIN_TOKEN") || "";
     return `${protocol}//${window.location.host}/ws/events${token ? `?token=${token}` : ""}`;
-  }, []);
+  };
 
-  const flushBuffer = useCallback(() => {
-    if (eventBufferRef.current.length > 0) {
+  const flushBuffer = () => {
+    if (eventBufferRef.current.length > 0 && mountedRef.current) {
       setEvents((prev) => {
         const newEvents = [...eventBufferRef.current, ...prev];
         eventBufferRef.current = [];
-        return newEvents.slice(0, maxEvents);
+        return newEvents.slice(0, maxEventsRef.current);
       });
     }
-  }, [maxEvents]);
+  };
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+  const connectWs = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     setStatus("connecting");
     setError(null);
@@ -56,14 +61,20 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (!mountedRef.current) {
+          ws.close();
+          return;
+        }
         setStatus("connected");
         setError(null);
         reconnectAttemptsRef.current = 0;
 
+        if (flushIntervalRef.current) clearInterval(flushIntervalRef.current);
         flushIntervalRef.current = setInterval(flushBuffer, 300);
       };
 
       ws.onmessage = (event) => {
+        if (!mountedRef.current) return;
         try {
           const data = JSON.parse(event.data);
           
@@ -80,6 +91,8 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
       };
 
       ws.onclose = (event) => {
+        if (!mountedRef.current) return;
+        
         setStatus("disconnected");
         wsRef.current = null;
 
@@ -89,26 +102,28 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
         }
 
         if (event.code !== 4001 && event.code !== 1000) {
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 10000);
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
           reconnectAttemptsRef.current++;
           setStatus("reconnecting");
           
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
+            if (mountedRef.current) connectWs();
           }, delay);
         }
       };
 
       ws.onerror = () => {
-        setError("Error de conexión WebSocket");
+        if (mountedRef.current) {
+          setError("Error de conexión WebSocket");
+        }
       };
     } catch (e) {
       setError("No se pudo establecer conexión WebSocket");
       setStatus("disconnected");
     }
-  }, [getWsUrl, flushBuffer]);
+  };
 
-  const disconnect = useCallback(() => {
+  const disconnectWs = () => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -122,7 +137,7 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
       wsRef.current = null;
     }
     setStatus("disconnected");
-  }, []);
+  };
 
   const clearEvents = useCallback(() => {
     setEvents([]);
@@ -130,13 +145,20 @@ export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    
     if (autoConnect) {
-      connect();
+      connectWs();
     }
+    
     return () => {
-      disconnect();
+      mountedRef.current = false;
+      disconnectWs();
     };
-  }, [autoConnect, connect, disconnect]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const connect = useCallback(() => connectWs(), []);
+  const disconnect = useCallback(() => disconnectWs(), []);
 
   return {
     events,
