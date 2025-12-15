@@ -1,0 +1,71 @@
+NO PUBLIQUES TODAVÍA. QUIERO VERIFICACIÓN COMPLETA DE NO-REGRESIÓN (SIN CAMBIOS SI NO ES NECESARIO)
+
+OBJETIVO
+Verificar que lo implementado (modo SINGLE/DCA, FIFO, diagnóstico, Terminal) no tiene errores y no ha roto otras partes del sistema (motor trading, riesgo, ejecución, DB, UI). Quiero solo validación y, si aparece algún fallo, propones el fix mínimo y me pides aprobación antes de aplicarlo.
+
+REGLAS
+- No hacer deploy/publicar hasta que yo confirme.
+- No refactorizar ni “mejorar” cosas que no estén relacionadas con bugs detectados.
+- Si detectas un error, NO lo arregles automáticamente: primero reporta causa + archivos + impacto + propuesta de fix mínimo.
+
+CHECKLIST DE VERIFICACIÓN OBLIGATORIO (CON EVIDENCIA)
+
+1) BUILD / TEST / LINT
+- Ejecuta:
+  - npm test (si existe)
+  - npm run lint (si existe)
+  - npm run build
+- Reporta resultados (OK/FAIL) y cualquier warning crítico.
+
+2) SANIDAD DE API (SMOKE)
+- Verifica endpoints principales devuelven 200 y JSON válido:
+  - GET /api/ai/diagnostic  (incluye openLotsCount, modo, discardReasons)
+  - POST /api/ai/backfill   (o el endpoint equivalente; confirma que responde y es idempotente)
+  - POST /api/ai/train con <300 (debe devolver 409 con JSON en castellano y NO modificar estado)
+  - Endpoints de Terminal: positions/trades/history (los que consuma la UI)
+- Incluye 3 respuestas ejemplo (resumen de campos clave, no hace falta todo el JSON).
+
+3) DB / MIGRACIONES / ESQUEMA
+- Confirma que el esquema está consistente:
+  - training_trades (campos necesarios; si añadiste sellTxidsJson u otros, confirmar que existen en el entorno real)
+  - aiConfig (modelVersion, lastTrainTs, lastTrainError, metricsJson)
+- Confirma que no hay errores de inserción (constraints) en backfill y que es idempotente (dos ejecuciones seguidas no duplican filas).
+
+4) FIFO / NETTING: INTEGRIDAD DE DATOS (CRÍTICO)
+- Ejecuta backfill 2 veces y reporta:
+  - labeledTradesCount antes y después (debe estabilizarse)
+  - openLotsCount antes y después (coherente)
+  - discardReasons (coherentes)
+- Valida invariantes en 5 trades cerrados aleatorios:
+  - exitTs > entryTs
+  - qtyClosedTotal ≈ qtyOriginal (dentro de epsilon)
+  - pnlNet calculado y fees no negativos
+- Reporta cualquier outlier o inconsistencia y el motivo.
+
+5) MODO SINGLE (CRÍTICO)
+- Prueba funcional:
+  - Con una posición abierta en un par, intenta generar una señal BUY para ese mismo par (simulación o llamada interna).
+  - Debe bloquearla y registrar log “Compra bloqueada: ya hay posición abierta”.
+  - Verifica que SELL sigue permitido y se ejecuta.
+- Verifica que el criterio de “posición abierta” usado por el bloqueo coincide con el que muestra Terminal.
+
+6) UI NO-REGRESIÓN
+- Recorre pantallas críticas y confirma que no se rompió nada:
+  - Terminal (badge modo, tabla posiciones, P&L)
+  - Ajustes (selector SINGLE/DCA, aviso, botón backfill)
+  - Historial/operaciones (sin duplicados)
+- Verifica consola del navegador sin errores (React) y sin llamadas a endpoints inexistentes.
+
+7) MOTOR TRADING / RIESGO (NO-REGRESIÓN)
+- Verifica que:
+  - El motor de ejecución sigue funcionando (no cambiaste rutas/credenciales).
+  - La gestión de riesgo sigue aplicándose igual (no alteraste límites ni sizing).
+- Si hay tests o checks internos, ejecútalos; si no existen, valida con un “dry run” o simulación y logs.
+
+ENTREGABLE FINAL
+- Un informe breve con:
+  - Resultado por cada punto (OK/FAIL)
+  - Evidencia (comandos ejecutados y outputs relevantes)
+  - Lista de posibles riesgos residuales (si los hay)
+  - Si todo es OK: recomendación explícita “Listo para publicar”
+  - Si hay FAIL: propuesta de fix mínimo + pedir mi aprobación antes de aplicarlo
