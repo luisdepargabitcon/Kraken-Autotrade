@@ -57,6 +57,7 @@ export interface AiDiagnostic {
   closedTradesCount: number;
   labeledTradesCount: number;
   openTradesCount: number;
+  openLotsCount: number;
   lastBackfillRun: Date | null;
   lastBackfillError: string | null;
   lastTrainRun: Date | null;
@@ -165,6 +166,7 @@ class AiService {
     const closedCount = await storage.getTrainingTradesCount({ closed: true });
     const labeledCount = await storage.getTrainingTradesCount({ labeled: true });
     const openCount = await storage.getTrainingTradesCount({ closed: false });
+    const openLotsCount = await storage.getTrainingTradesCount({ hasOpenLots: true });
     
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
     const discardReasons: Record<string, number> = {};
@@ -197,6 +199,7 @@ class AiService {
       closedTradesCount: closedCount,
       labeledTradesCount: labeledCount,
       openTradesCount: openCount,
+      openLotsCount,
       lastBackfillRun: aiConfig?.lastBackfillTs ?? null,
       lastBackfillError: aiConfig?.lastBackfillError ?? null,
       lastTrainRun: aiConfig?.lastTrainTs ?? null,

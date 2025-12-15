@@ -84,7 +84,7 @@ export interface IStorage {
   updateTrainingTrade(id: number, updates: Partial<InsertTrainingTrade>): Promise<TrainingTrade | undefined>;
   getTrainingTradeByBuyTxid(buyTxid: string): Promise<TrainingTrade | undefined>;
   getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]>;
-  getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean }): Promise<number>;
+  getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean; hasOpenLots?: boolean }): Promise<number>;
   getAllTradesForBackfill(): Promise<Trade[]>;
   runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }>;
 }
@@ -407,8 +407,8 @@ export class DatabaseStorage implements IStorage {
     return whereClause ? await query.where(whereClause) : await query;
   }
 
-  async getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean }): Promise<number> {
-    const { closed, labeled } = options || {};
+  async getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean; hasOpenLots?: boolean }): Promise<number> {
+    const { closed, labeled, hasOpenLots } = options || {};
     const conditions: any[] = [];
     
     if (closed !== undefined) {
@@ -416,6 +416,9 @@ export class DatabaseStorage implements IStorage {
     }
     if (labeled !== undefined) {
       conditions.push(eq(trainingTradesTable.isLabeled, labeled));
+    }
+    if (hasOpenLots === true) {
+      conditions.push(sql`${trainingTradesTable.qtyRemaining} > 0`);
     }
     
     const whereClause = conditions.length > 0 

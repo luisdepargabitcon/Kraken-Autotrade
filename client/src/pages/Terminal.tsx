@@ -23,7 +23,9 @@ import {
   CircleDot,
   Zap,
   Target,
-  BarChart3
+  BarChart3,
+  Layers,
+  Square
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -77,6 +79,16 @@ export default function Terminal() {
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("positions");
   const { toast } = useToast();
+
+  const { data: botConfig } = useQuery<{ positionMode?: string }>({
+    queryKey: ["botConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      if (!res.ok) throw new Error("Failed to fetch config");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
 
   const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
     queryKey: ["openPositions"],
@@ -231,6 +243,25 @@ export default function Terminal() {
             </div>
             
             <div className="flex items-center gap-3">
+              <div 
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${
+                  botConfig?.positionMode === 'DCA' 
+                    ? 'bg-purple-500/10 border-purple-500/30' 
+                    : 'bg-amber-500/10 border-amber-500/30'
+                }`}
+                data-testid="badge-position-mode"
+              >
+                {botConfig?.positionMode === 'DCA' 
+                  ? <Layers className="h-3 w-3 text-purple-400" /> 
+                  : <Square className="h-3 w-3 text-amber-400" />
+                }
+                <span className="font-mono text-xs text-muted-foreground">MODO:</span>
+                <span className={`font-mono text-sm font-bold ${
+                  botConfig?.positionMode === 'DCA' ? 'text-purple-400' : 'text-amber-400'
+                }`}>
+                  {botConfig?.positionMode || 'SINGLE'}
+                </span>
+              </div>
               <div className="flex items-center gap-2 px-3 py-1.5 bg-card/50 rounded-lg border border-border/50">
                 <CircleDot className={`h-3 w-3 ${positionsCount > 0 ? 'text-green-400 animate-pulse' : 'text-muted-foreground'}`} />
                 <span className="font-mono text-xs text-muted-foreground">ACTIVAS:</span>
