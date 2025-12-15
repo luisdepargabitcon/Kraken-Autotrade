@@ -72,7 +72,7 @@ const MODEL_DIR = "/tmp/models";
 const MODEL_PATH = `${MODEL_DIR}/ai_filter.joblib`;
 const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
 
-const MIN_SAMPLES_TRAIN = 200;
+const MIN_SAMPLES_TRAIN = 300;
 const MIN_SAMPLES_ACTIVATE = 300;
 
 class AiService {
@@ -273,13 +273,24 @@ class AiService {
     });
   }
 
-  async runTraining(): Promise<{ success: boolean; message: string; metrics?: { accuracy: number; precision: number; recall: number; f1: number; trainSize: number; valSize: number } }> {
+  async runTraining(): Promise<{ 
+    success: boolean; 
+    message: string; 
+    errorCode?: string;
+    required?: number;
+    current?: number;
+    metrics?: { accuracy: number; precision: number; recall: number; f1: number; trainSize: number; valSize: number } 
+  }> {
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
     
     if (labeledTrades.length < MIN_SAMPLES_TRAIN) {
-      const errorMsg = `Necesitas al menos ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados (tienes ${labeledTrades.length})`;
-      await storage.updateAiConfig({ lastTrainError: errorMsg });
-      return { success: false, message: errorMsg };
+      return { 
+        success: false, 
+        errorCode: "INSUFFICIENT_DATA",
+        message: `Datos insuficientes para entrenar el modelo. Necesitas ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados. Actualmente hay ${labeledTrades.length}.`,
+        required: MIN_SAMPLES_TRAIN,
+        current: labeledTrades.length
+      };
     }
 
     if (!fs.existsSync(MODEL_DIR)) {
@@ -308,9 +319,13 @@ class AiService {
     });
 
     if (validTrades.length < MIN_SAMPLES_TRAIN) {
-      const errorMsg = `Solo ${validTrades.length} trades válidos después de validación (necesitas ${MIN_SAMPLES_TRAIN})`;
-      await storage.updateAiConfig({ lastTrainError: errorMsg });
-      return { success: false, message: errorMsg };
+      return { 
+        success: false, 
+        errorCode: "INSUFFICIENT_DATA",
+        message: `Datos insuficientes para entrenar el modelo. Solo hay ${validTrades.length} trades válidos después de validación. Necesitas ${MIN_SAMPLES_TRAIN}.`,
+        required: MIN_SAMPLES_TRAIN,
+        current: validTrades.length
+      };
     }
 
     const splitIdx = Math.floor(validTrades.length * 0.8);

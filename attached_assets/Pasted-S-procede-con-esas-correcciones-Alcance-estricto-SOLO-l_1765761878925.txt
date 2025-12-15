@@ -1,0 +1,50 @@
+Sí, procede con esas correcciones. Alcance estricto: SOLO lo imprescindible según tu checklist, sin refactors extra ni cambios de arquitectura.
+
+CORRECCIONES OBLIGATORIAS (EN ORDEN)
+1) Umbral único para entrenar = 300 (CRÍTICO)
+- Cambia MIN_SAMPLES_TRAIN de 200 a 300.
+- Mantén MIN_SAMPLES_ACTIVATE=300 si aplica, pero que entrenar también sea 300 (no 200).
+- Asegura que el backend y el frontend usan el mismo umbral (evitar desalineación).
+
+2) Formato de error conforme a spec + status correcto (CRÍTICO)
+- Cuando labeledTradesCount < 300, /api/ai/train debe responder con status 409 y JSON EXACTO:
+  {
+    "errorCode": "INSUFFICIENT_DATA",
+    "message": "Datos insuficientes para entrenar el modelo. Necesitas 300 trades cerrados etiquetados. Actualmente hay <count>.",
+    "required": 300,
+    "current": <count>
+  }
+- En ese caso NO debe modificar aiConfig (modelVersion, lastTrainTs, metricsJson, lastTrainError).
+- Si hay otro error interno, devuelve:
+  { "errorCode": "TRAINING_ERROR", "message": "<mensaje en castellano>" } con status 500
+  y guarda lastTrainError en aiConfig en castellano.
+
+3) Castellano completo en API (CRÍTICO)
+- Reemplaza cualquier mensaje en inglés (ej. “Failed to get AI samples”) por castellano.
+- Mantén errorCode técnico estable; el campo message siempre en castellano.
+
+4) UI Settings alineada a 300 (CRÍTICO)
+- La lógica canTrain debe comparar contra 300.
+- Si <300: botón deshabilitado + mostrar texto EXACTO:
+  “Necesitas X trades cerrados más para entrenar”.
+  donde X = 300 - labeledTradesCount.
+- Mantén “Último entrenamiento: Nunca” si lastTrainRun es null, y “Versión del modelo: —” si modelVersion es null.
+- Si el backend devuelve 409 INSUFFICIENT_DATA, mostrar el message tal cual (castellano).
+
+5) discardReasons en UI (IMPORTANTE)
+- Mapear códigos técnicos a castellano (sin cambiar las claves en backend):
+  - no_matching_sell → “Sin venta de cierre (no se encontró una salida compatible)”
+  - (cualquier otro) → “Motivo: <código>”
+- Mostrar también el conteo.
+
+VALIDACIÓN OBLIGATORIA (ENTREGAR EVIDENCIA)
+A) Llamada a /api/ai/diagnostic antes (labeledTradesCount=40) y confirmar umbral 300 aplicado en UI.
+B) Llamada a POST /api/ai/train con labeledTradesCount=40 y mostrar la respuesta completa:
+   - status 409
+   - JSON con errorCode, message, required=300, current=40 (o el valor real)
+C) Confirmar que aiConfig no cambió tras el 409 (modelVersion sigue null, lastTrainRun sigue null, lastTrainError sigue null o no se altera).
+D) Captura/confirmación en Settings: botón deshabilitado + mensaje “Necesitas 260 trades cerrados más para entrenar” (si current=40).
+
+NO HACER
+- No cambiar el pipeline de backfill, matching, ni la estructura de training_trades.
+- No modificar contratos salvo el formato de error especificado.

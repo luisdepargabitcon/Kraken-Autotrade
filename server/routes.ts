@@ -694,7 +694,7 @@ export async function registerRoutes(
       res.json(status);
     } catch (error: any) {
       console.error("[api/ai/status] Error:", error.message);
-      res.status(500).json({ error: "Failed to get AI status" });
+      res.status(500).json({ errorCode: "STATUS_ERROR", message: "Error al obtener el estado de la IA" });
     }
   });
 
@@ -725,31 +725,55 @@ export async function registerRoutes(
       res.json({ samples, total: count });
     } catch (error: any) {
       console.error("[api/ai/samples] Error:", error.message);
-      res.status(500).json({ error: "Failed to get AI samples" });
+      res.status(500).json({ errorCode: "SAMPLES_ERROR", message: "Error al obtener las muestras de IA" });
     }
   });
 
   app.post("/api/ai/retrain", async (req, res) => {
     try {
       const result = await aiService.runTraining();
-      if (result.success) {
-        res.json({ success: true, message: result.message, metrics: result.metrics });
+      if (!result.success && result.errorCode === "INSUFFICIENT_DATA") {
+        res.status(409).json({
+          errorCode: result.errorCode,
+          message: result.message,
+          required: result.required,
+          current: result.current
+        });
+      } else if (!result.success) {
+        res.status(500).json({
+          errorCode: result.errorCode || "TRAINING_ERROR",
+          message: result.message
+        });
       } else {
-        res.status(400).json({ success: false, error: result.message });
+        res.json({ success: true, message: result.message, metrics: result.metrics });
       }
     } catch (error: any) {
       console.error("[api/ai/retrain] Error:", error.message);
-      res.status(500).json({ error: "Failed to retrain model" });
+      res.status(500).json({ errorCode: "TRAINING_ERROR", message: "Error interno al reentrenar el modelo" });
     }
   });
 
   app.post("/api/ai/train", async (req, res) => {
     try {
       const result = await aiService.runTraining();
-      res.json(result);
+      if (!result.success && result.errorCode === "INSUFFICIENT_DATA") {
+        res.status(409).json({
+          errorCode: result.errorCode,
+          message: result.message,
+          required: result.required,
+          current: result.current
+        });
+      } else if (!result.success) {
+        res.status(500).json({
+          errorCode: result.errorCode || "TRAINING_ERROR",
+          message: result.message
+        });
+      } else {
+        res.json({ success: true, message: result.message, metrics: result.metrics });
+      }
     } catch (error: any) {
       console.error("[api/ai/train] Error:", error.message);
-      res.status(500).json({ success: false, error: error.message });
+      res.status(500).json({ errorCode: "TRAINING_ERROR", message: `Error interno al entrenar el modelo: ${error.message}` });
     }
   });
 
@@ -759,7 +783,7 @@ export async function registerRoutes(
       res.json(report);
     } catch (error: any) {
       console.error("[api/ai/shadow/report] Error:", error.message);
-      res.status(500).json({ error: "Failed to get shadow report" });
+      res.status(500).json({ errorCode: "SHADOW_REPORT_ERROR", message: "Error al obtener el informe de shadow" });
     }
   });
 
@@ -781,7 +805,7 @@ export async function registerRoutes(
       res.json({ success: true, status });
     } catch (error: any) {
       console.error("[api/ai/toggle] Error:", error.message);
-      res.status(500).json({ error: "Failed to toggle AI settings" });
+      res.status(500).json({ errorCode: "TOGGLE_ERROR", message: "Error al cambiar la configuración de IA" });
     }
   });
 

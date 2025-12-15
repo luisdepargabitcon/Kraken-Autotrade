@@ -355,11 +355,9 @@ export default function Settings() {
                         className="h-2"
                       />
                       <p className="text-xs text-muted-foreground">
-                        {aiStatus.completeSamples < aiStatus.minSamplesForTrain 
-                          ? `Necesitas ${aiStatus.minSamplesForTrain - aiStatus.completeSamples} trades cerrados más para entrenar`
-                          : aiStatus.completeSamples < aiStatus.minSamplesForActivate
-                          ? `Puedes entrenar. Faltan ${aiStatus.minSamplesForActivate - aiStatus.completeSamples} para activar filtro`
-                          : "Listo para activar el filtro AI"}
+                        {aiStatus.completeSamples < 300 
+                          ? `Necesitas ${300 - aiStatus.completeSamples} trades cerrados más para entrenar`
+                          : "Listo para entrenar y activar el filtro AI"}
                       </p>
                     </div>
                     
@@ -419,7 +417,23 @@ export default function Settings() {
                         )}
                         {Object.keys(aiDiagnostic.discardReasons).length > 0 && (
                           <div className="text-xs text-yellow-500">
-                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasons).map(([k, v]) => {
+                              const discardLabels: Record<string, string> = {
+                                'no_matching_sell': 'Sin venta de cierre',
+                                'no_execution_time': 'Sin fecha de ejecución',
+                                'invalid_buy_amount': 'Cantidad de compra inválida',
+                                'invalid_buy_price': 'Precio de compra inválido',
+                                'invalid_buy_cost': 'Coste de compra inválido',
+                                'invalid_sell_price': 'Precio de venta inválido',
+                                'invalid_sell_amount': 'Cantidad de venta inválida',
+                                'invalid_timestamps': 'Timestamps inválidos',
+                                'abnormal_fees': 'Comisiones anormales',
+                                'pnl_outlier': 'PnL atípico (outlier)',
+                                'hold_time_outlier': 'Tiempo de hold excesivo',
+                                'negative_hold_time': 'Tiempo de hold negativo',
+                              };
+                              return `${discardLabels[k] || k}: ${v}`;
+                            }).join(', ')}
                           </div>
                         )}
                         <Button 
