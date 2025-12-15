@@ -1,0 +1,104 @@
+OBJETIVO
+Crear una nueva pestaña/ventana llamada “Inline” (o “Monitor”) para ver en TIEMPO REAL lo que está pasando en el bot (tipo ventana a logs), con opción de copiar/descargar, y con una sección clara de avisos/errores/alertas y estado del bot. Debe explicar decisiones (entra/no entra) con motivos claros, no mensajes cortos.
+
+ANTES DE CAMBIAR NADA (OBLIGATORIO)
+1) Audita el repo para localizar:
+   - Logger actual (console.log, winston/pino, utilidades de log)
+   - Dónde se toman decisiones (señal IA, riesgo, ejecución, filtro “posición abierta”, etc.)
+   - Dónde se reportan errores y cómo
+2) Devuélveme un checklist “Existe / Falta / Parcial” para:
+   - Streaming en vivo (SSE/WebSocket)
+   - Buffer de logs en servidor
+   - Modelo de “alertas” (warn/error) separado del log
+   - UI existente de logs/estado (si la hay)
+3) Solo después implementa lo que falte, sin duplicar.
+
+DISEÑO FUNCIONAL (OBLIGATORIO)
+A) Nueva pestaña “Inline / Monitor”
+- Añadir item al menú y nueva ruta (ej. /inline).
+- Layout tipo terminal/exchange, dark theme, usable en móvil y desktop.
+
+B) Bloque 1: Estado del bot (claro y compacto)
+Mostrar en cards o panel:
+- Estado: “En ejecución / Pausado / Sin conexión / Error”
+- Última evaluación: timestamp
+- Próxima evaluación (si existe loop)
+- Exchange conectado: Kraken (estado OK/ERROR)
+- Nº posiciones abiertas + exposición total (USD si existe)
+- Última orden enviada (par, lado, qty, precio) y resultado
+- Contadores: errores últimas 24h, avisos últimas 24h
+
+C) Bloque 2: Decisiones (explicación legible)
+Cada ciclo del bot debe producir un “Decision Event” con estructura:
+- timestamp
+- par (symbol/pair)
+- decisión: “ENTRAR BUY / ENTRAR SELL / NO ENTRAR”
+- motivo principal (texto en castellano, 1 línea)
+- detalle expandible (lista de checks)
+Ejemplos de checks:
+- Señal IA: score=… umbral=…
+- Riesgo: OK o bloqueado por “exposición máxima”, “drawdown”, etc.
+- Posición abierta: “bloqueado: ya existe posición abierta (1 BUY→1 SELL activo)”
+- Liquidez/spread: OK o bloqueado
+- Cooldown: OK o bloqueado
+- Datos: OK o bloqueado (faltan velas, feed, etc.)
+
+D) Bloque 3: Logs en vivo (copiables)
+- Visor tipo consola con autoscroll.
+- Botones: Pausar/Continuar autoscroll, Limpiar, Copiar selección, Copiar todo, Descargar .txt.
+- Filtros por nivel: INFO / WARN / ERROR / DECISION / RISK / EXEC / DATA.
+- Búsqueda por texto y filtro por par.
+
+E) Bloque 4: Alertas y errores (sección separada)
+- Lista de alertas con severidad:
+  - ERROR (rojo), WARNING (amarillo), INFO (azul)
+- Cada alerta con: timestamp, módulo, mensaje claro, y “detalle” (stack si aplica).
+- Botón “Copiar alerta” y opcional “Marcar como visto”.
+
+ARQUITECTURA (OBLIGATORIA, SIN ROMPER NADA)
+1) Servidor: implementar streaming en tiempo real
+- Preferible SSE (Server-Sent Events) por simplicidad.
+- Endpoint: GET /api/monitor/stream (SSE) que emita eventos JSON.
+- Endpoint: GET /api/monitor/snapshot que devuelva:
+  - estado del bot
+  - últimos N logs (buffer)
+  - alertas activas
+- Mantener un ring buffer en memoria (ej. 2000–5000 líneas) para no crecer sin límite.
+
+2) Modelo de evento (estándar)
+Unifica todo con estructura:
+{
+  "ts": ISO,
+  "level": "INFO|WARN|ERROR|DECISION|RISK|EXEC|DATA",
+  "module": "trading|risk|ai|exchange|db|ui",
+  "pair": "XRP/USD" (opcional),
+  "message": "castellano, claro",
+  "details": { ... } (opcional, para expandir),
+  "eventType": "LOG|ALERT|DECISION|STATUS"
+}
+
+3) Integración mínima con el motor
+- NO reescribir el motor. Solo instrumentar:
+  - En el punto de decisión: emitir DECISION con motivos.
+  - En errores: emitir ALERT/ERROR con message claro.
+  - En ejecuciones: emitir EXEC con resultado (accepted/rejected/fail).
+- Redactar secretos: nunca loguear API keys, tokens, headers sensibles.
+
+4) Idioma
+- Todo texto visible en UI y todos “message” de API en castellano.
+- Mantener códigos técnicos internos si hace falta en details, pero el message debe ser español.
+
+CRITERIOS DE ACEPTACIÓN
+- La pestaña “Inline/Monitor” existe y muestra datos en vivo sin refrescar.
+- Puedo copiar (selección y/o todo) y descargar logs.
+- Veo claramente:
+  - estado del bot
+  - por qué entra/no entra (con checks detallados)
+  - alertas/errores separados del log general
+- No impacta el trading: misma lógica, solo observabilidad.
+- Rendimiento estable: buffer acotado y streaming ligero.
+
+VALIDACIÓN (OBLIGATORIA)
+- Generar 1 evento DECISION por ciclo.
+- Simular al menos 1 WARNING y 1 ERROR (sin romper producción) para comprobar panel de alertas.
+- Verificar que los endpoints responden y que la UI se actualiza en tiempo real.
