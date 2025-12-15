@@ -9,6 +9,7 @@ import {
   type AiTradeSample,
   type AiShadowDecision,
   type AiConfig,
+  type TrainingTrade,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
@@ -19,6 +20,7 @@ import {
   type InsertAiTradeSample,
   type InsertAiShadowDecision,
   type InsertAiConfig,
+  type InsertTrainingTrade,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
@@ -28,7 +30,8 @@ import {
   openPositions as openPositionsTable,
   aiTradeSamples as aiTradeSamplesTable,
   aiShadowDecisions as aiShadowDecisionsTable,
-  aiConfig as aiConfigTable
+  aiConfig as aiConfigTable,
+  trainingTrades as trainingTradesTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull } from "drizzle-orm";
@@ -76,6 +79,14 @@ export interface IStorage {
   
   getAiConfig(): Promise<AiConfig | undefined>;
   updateAiConfig(config: Partial<InsertAiConfig>): Promise<AiConfig>;
+  
+  saveTrainingTrade(trade: InsertTrainingTrade): Promise<TrainingTrade>;
+  updateTrainingTrade(id: number, updates: Partial<InsertTrainingTrade>): Promise<TrainingTrade | undefined>;
+  getTrainingTradeByBuyTxid(buyTxid: string): Promise<TrainingTrade | undefined>;
+  getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]>;
+  getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean }): Promise<number>;
+  getAllTradesForBackfill(): Promise<Trade[]>;
+  runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -352,6 +363,194 @@ export class DatabaseStorage implements IStorage {
       .where(eq(aiConfigTable.id, existing.id))
       .returning();
     return updated;
+  }
+
+  async saveTrainingTrade(trade: InsertTrainingTrade): Promise<TrainingTrade> {
+    const [newTrade] = await db.insert(trainingTradesTable).values(trade).returning();
+    return newTrade;
+  }
+
+  async updateTrainingTrade(id: number, updates: Partial<InsertTrainingTrade>): Promise<TrainingTrade | undefined> {
+    const [updated] = await db.update(trainingTradesTable)
+      .set(updates)
+      .where(eq(trainingTradesTable.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getTrainingTradeByBuyTxid(buyTxid: string): Promise<TrainingTrade | undefined> {
+    const trades = await db.select().from(trainingTradesTable)
+      .where(eq(trainingTradesTable.buyTxid, buyTxid))
+      .limit(1);
+    return trades[0];
+  }
+
+  async getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]> {
+    const { closed, labeled, limit = 1000 } = options || {};
+    const conditions: any[] = [];
+    
+    if (closed !== undefined) {
+      conditions.push(eq(trainingTradesTable.isClosed, closed));
+    }
+    if (labeled !== undefined) {
+      conditions.push(eq(trainingTradesTable.isLabeled, labeled));
+    }
+    
+    const whereClause = conditions.length > 0 
+      ? (conditions.length === 1 ? conditions[0] : and(...conditions)) 
+      : undefined;
+    
+    const query = db.select().from(trainingTradesTable)
+      .orderBy(desc(trainingTradesTable.entryTs))
+      .limit(limit);
+    
+    return whereClause ? await query.where(whereClause) : await query;
+  }
+
+  async getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean }): Promise<number> {
+    const { closed, labeled } = options || {};
+    const conditions: any[] = [];
+    
+    if (closed !== undefined) {
+      conditions.push(eq(trainingTradesTable.isClosed, closed));
+    }
+    if (labeled !== undefined) {
+      conditions.push(eq(trainingTradesTable.isLabeled, labeled));
+    }
+    
+    const whereClause = conditions.length > 0 
+      ? (conditions.length === 1 ? conditions[0] : and(...conditions)) 
+      : undefined;
+    
+    const query = db.select({ count: sql<number>`count(*)` }).from(trainingTradesTable);
+    const result = whereClause ? await query.where(whereClause) : await query;
+    return Number(result[0]?.count || 0);
+  }
+
+  async getAllTradesForBackfill(): Promise<Trade[]> {
+    return await db.select().from(tradesTable)
+      .where(eq(tradesTable.status, 'filled'))
+      .orderBy(tradesTable.executedAt);
+  }
+
+  async runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }> {
+    const allTrades = await this.getAllTradesForBackfill();
+    const discardReasons: Record<string, number> = {};
+    let created = 0;
+    let closed = 0;
+    let labeled = 0;
+    
+    const buysByPair: Record<string, Trade[]> = {};
+    const sellsByPair: Record<string, Trade[]> = {};
+    
+    for (const trade of allTrades) {
+      const pair = trade.pair;
+      if (trade.type === 'buy') {
+        if (!buysByPair[pair]) buysByPair[pair] = [];
+        buysByPair[pair].push(trade);
+      } else if (trade.type === 'sell') {
+        if (!sellsByPair[pair]) sellsByPair[pair] = [];
+        sellsByPair[pair].push(trade);
+      }
+    }
+    
+    for (const pair of Object.keys(buysByPair)) {
+      const buys = buysByPair[pair] || [];
+      const sells = sellsByPair[pair] || [];
+      
+      const usedSells = new Set<number>();
+      
+      for (const buy of buys) {
+        const existing = await this.getTrainingTradeByBuyTxid(buy.krakenOrderId || buy.tradeId);
+        if (existing) {
+          if (existing.isClosed) closed++;
+          if (existing.isLabeled) labeled++;
+          continue;
+        }
+        
+        const buyTime = buy.executedAt ? new Date(buy.executedAt).getTime() : 0;
+        const buyAmount = parseFloat(buy.amount || '0');
+        const buyPrice = parseFloat(buy.price || '0');
+        const buyCost = buyAmount * buyPrice;
+        
+        if (!buy.executedAt) {
+          discardReasons['no_execution_time'] = (discardReasons['no_execution_time'] || 0) + 1;
+          continue;
+        }
+        
+        let matchedSell: Trade | null = null;
+        let matchedSellIdx = -1;
+        let remainingAmount = buyAmount;
+        
+        for (let i = 0; i < sells.length; i++) {
+          if (usedSells.has(sells[i].id)) continue;
+          
+          const sell = sells[i];
+          const sellTime = sell.executedAt ? new Date(sell.executedAt).getTime() : 0;
+          
+          if (sellTime > buyTime) {
+            const sellAmount = parseFloat(sell.amount || '0');
+            if (Math.abs(sellAmount - remainingAmount) / remainingAmount < 0.05 || sellAmount <= remainingAmount * 1.1) {
+              matchedSell = sell;
+              matchedSellIdx = i;
+              break;
+            }
+          }
+        }
+        
+        const entryFee = buyCost * 0.004;
+        
+        const trainingTrade: InsertTrainingTrade = {
+          pair,
+          buyTxid: buy.krakenOrderId || buy.tradeId,
+          entryPrice: buy.price,
+          entryAmount: buy.amount,
+          costUsd: buyCost.toFixed(8),
+          entryFee: entryFee.toFixed(8),
+          entryTs: new Date(buy.executedAt),
+          isClosed: false,
+          isLabeled: false,
+        };
+        
+        if (matchedSell) {
+          usedSells.add(matchedSell.id);
+          const sellPrice = parseFloat(matchedSell.price || '0');
+          const sellAmount = parseFloat(matchedSell.amount || '0');
+          const revenue = sellAmount * sellPrice;
+          const exitFee = revenue * 0.004;
+          const pnlGross = revenue - buyCost;
+          const pnlNet = pnlGross - entryFee - exitFee;
+          const pnlPct = (pnlNet / buyCost) * 100;
+          const sellTime = matchedSell.executedAt ? new Date(matchedSell.executedAt).getTime() : buyTime;
+          const holdTimeMinutes = Math.round((sellTime - buyTime) / 60000);
+          
+          trainingTrade.sellTxid = matchedSell.krakenOrderId || matchedSell.tradeId;
+          trainingTrade.exitPrice = matchedSell.price;
+          trainingTrade.exitAmount = matchedSell.amount;
+          trainingTrade.revenueUsd = revenue.toFixed(8);
+          trainingTrade.exitFee = exitFee.toFixed(8);
+          trainingTrade.pnlGross = pnlGross.toFixed(8);
+          trainingTrade.pnlNet = pnlNet.toFixed(8);
+          trainingTrade.pnlPct = pnlPct.toFixed(4);
+          trainingTrade.holdTimeMinutes = holdTimeMinutes;
+          trainingTrade.labelWin = pnlNet > 0 ? 1 : 0;
+          trainingTrade.exitTs = matchedSell.executedAt ? new Date(matchedSell.executedAt) : undefined;
+          trainingTrade.isClosed = true;
+          trainingTrade.isLabeled = true;
+          
+          closed++;
+          labeled++;
+        } else {
+          trainingTrade.discardReason = 'no_matching_sell';
+          discardReasons['no_matching_sell'] = (discardReasons['no_matching_sell'] || 0) + 1;
+        }
+        
+        await this.saveTrainingTrade(trainingTrade);
+        created++;
+      }
+    }
+    
+    return { created, closed, labeled, discardReasons };
   }
 }
 
