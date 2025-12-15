@@ -51,6 +51,20 @@ export interface AiStatus {
   } | null;
 }
 
+export interface AiDiagnostic {
+  operationsCount: number;
+  trainingTradesTotal: number;
+  closedTradesCount: number;
+  labeledTradesCount: number;
+  openTradesCount: number;
+  lastBackfillRun: Date | null;
+  lastTrainRun: Date | null;
+  discardReasons: Record<string, number>;
+  winRate: number | null;
+  avgPnlNet: number | null;
+  avgHoldTimeMinutes: number | null;
+}
+
 const MODEL_DIR = "/tmp/models";
 const MODEL_PATH = `${MODEL_DIR}/ai_filter.joblib`;
 const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
@@ -98,15 +112,15 @@ class AiService {
 
   async getStatus(): Promise<AiStatus> {
     const aiConfig = await storage.getAiConfig();
-    const completeSamples = await storage.getAiSamplesCount(true);
+    const labeledCount = await storage.getTrainingTradesCount({ labeled: true });
     
     let phase: "red" | "yellow" | "green" = "red";
     let phaseLabel = "Recolectando datos";
     
-    if (completeSamples >= MIN_SAMPLES_ACTIVATE && aiConfig?.filterEnabled) {
+    if (labeledCount >= MIN_SAMPLES_ACTIVATE && aiConfig?.filterEnabled) {
       phase = "green";
       phaseLabel = "Filtro activo";
-    } else if (completeSamples >= MIN_SAMPLES_TRAIN) {
+    } else if (labeledCount >= MIN_SAMPLES_TRAIN) {
       phase = "yellow";
       phaseLabel = "Listo para entrenar";
     }
@@ -127,17 +141,65 @@ class AiService {
     return {
       phase,
       phaseLabel,
-      completeSamples,
+      completeSamples: labeledCount,
       minSamplesForTrain: MIN_SAMPLES_TRAIN,
       minSamplesForActivate: MIN_SAMPLES_ACTIVATE,
-      canTrain: completeSamples >= MIN_SAMPLES_TRAIN,
-      canActivate: completeSamples >= MIN_SAMPLES_ACTIVATE && modelExists,
+      canTrain: labeledCount >= MIN_SAMPLES_TRAIN,
+      canActivate: labeledCount >= MIN_SAMPLES_ACTIVATE && modelExists,
       filterEnabled: aiConfig?.filterEnabled ?? false,
       shadowEnabled: aiConfig?.shadowEnabled ?? false,
       modelLoaded: modelExists && this.modelLoaded,
       lastTrainTs: aiConfig?.lastTrainTs ?? null,
       threshold: parseFloat(aiConfig?.threshold ?? "0.60"),
       metrics,
+    };
+  }
+
+  async getDiagnostic(): Promise<AiDiagnostic> {
+    const aiConfig = await storage.getAiConfig();
+    const allTrades = await storage.getAllTradesForBackfill();
+    const trainingTradesTotal = await storage.getTrainingTradesCount();
+    const closedCount = await storage.getTrainingTradesCount({ closed: true });
+    const labeledCount = await storage.getTrainingTradesCount({ labeled: true });
+    const openCount = await storage.getTrainingTradesCount({ closed: false });
+    
+    const labeledTrades = await storage.getTrainingTrades({ labeled: true });
+    const discardReasons: Record<string, number> = {};
+    
+    const unclosedTrades = await storage.getTrainingTrades({ closed: false });
+    for (const trade of unclosedTrades) {
+      if (trade.discardReason) {
+        discardReasons[trade.discardReason] = (discardReasons[trade.discardReason] || 0) + 1;
+      }
+    }
+    
+    let winRate: number | null = null;
+    let avgPnlNet: number | null = null;
+    let avgHoldTimeMinutes: number | null = null;
+    
+    if (labeledTrades.length > 0) {
+      const wins = labeledTrades.filter(t => t.labelWin === 1).length;
+      winRate = (wins / labeledTrades.length) * 100;
+      
+      const pnlSum = labeledTrades.reduce((sum, t) => sum + parseFloat(t.pnlNet || '0'), 0);
+      avgPnlNet = pnlSum / labeledTrades.length;
+      
+      const holdSum = labeledTrades.reduce((sum, t) => sum + (t.holdTimeMinutes || 0), 0);
+      avgHoldTimeMinutes = holdSum / labeledTrades.length;
+    }
+    
+    return {
+      operationsCount: allTrades.length,
+      trainingTradesTotal,
+      closedTradesCount: closedCount,
+      labeledTradesCount: labeledCount,
+      openTradesCount: openCount,
+      lastBackfillRun: null,
+      lastTrainRun: aiConfig?.lastTrainTs ?? null,
+      discardReasons,
+      winRate,
+      avgPnlNet,
+      avgHoldTimeMinutes,
     };
   }
 
@@ -206,12 +268,12 @@ class AiService {
   }
 
   async runTraining(): Promise<{ success: boolean; message: string }> {
-    const samples = await storage.getAiSamples({ complete: true });
+    const labeledTrades = await storage.getTrainingTrades({ labeled: true });
     
-    if (samples.length < MIN_SAMPLES_TRAIN) {
+    if (labeledTrades.length < MIN_SAMPLES_TRAIN) {
       return {
         success: false,
-        message: `Necesitas al menos ${MIN_SAMPLES_TRAIN} samples (tienes ${samples.length})`,
+        message: `Necesitas al menos ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados (tienes ${labeledTrades.length})`,
       };
     }
 
@@ -219,8 +281,20 @@ class AiService {
       fs.mkdirSync(MODEL_DIR, { recursive: true });
     }
 
+    const trainingData = labeledTrades.map(trade => ({
+      tradeId: trade.buyTxid,
+      pair: trade.pair,
+      entryPrice: trade.entryPrice,
+      exitPrice: trade.exitPrice,
+      pnlNet: trade.pnlNet,
+      pnlPct: trade.pnlPct,
+      holdTimeMinutes: trade.holdTimeMinutes,
+      labelWin: trade.labelWin,
+      featuresJson: trade.featuresJson || {},
+    }));
+
     const samplesPath = `${MODEL_DIR}/training_samples.json`;
-    fs.writeFileSync(samplesPath, JSON.stringify(samples, null, 2));
+    fs.writeFileSync(samplesPath, JSON.stringify(trainingData, null, 2));
 
     return new Promise((resolve) => {
       const pythonScript = path.join(process.cwd(), "server/services/mlTrainer.py");
@@ -252,7 +326,7 @@ class AiService {
           
           await storage.updateAiConfig({
             lastTrainTs: new Date(),
-            nSamples: samples.length,
+            nSamples: labeledTrades.length,
             modelPath: MODEL_PATH,
             metricsJson: result.metrics,
           });
@@ -261,7 +335,7 @@ class AiService {
           
           resolve({
             success: true,
-            message: `Modelo entrenado con ${samples.length} samples. Accuracy: ${(result.metrics?.accuracy * 100).toFixed(1)}%`,
+            message: `Modelo entrenado con ${labeledTrades.length} trades cerrados. Accuracy: ${(result.metrics?.accuracy * 100).toFixed(1)}%`,
           });
         } catch (e) {
           resolve({ success: true, message: "Modelo entrenado (sin métricas)" });
@@ -273,6 +347,23 @@ class AiService {
         resolve({ success: false, message: `Error: ${err.message}` });
       });
     });
+  }
+
+  async runBackfill(): Promise<{ success: boolean; message: string; stats: { created: number; closed: number; labeled: number; discardReasons: Record<string, number> } }> {
+    try {
+      const stats = await storage.runTrainingTradesBackfill();
+      return {
+        success: true,
+        message: `Backfill completado: ${stats.created} trades creados, ${stats.closed} cerrados, ${stats.labeled} etiquetados`,
+        stats,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message: `Error en backfill: ${error.message}`,
+        stats: { created: 0, closed: 0, labeled: 0, discardReasons: {} },
+      };
+    }
   }
 
   async toggleFilter(enabled: boolean): Promise<void> {
