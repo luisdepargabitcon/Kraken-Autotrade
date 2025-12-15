@@ -118,6 +118,28 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 - Monitor page updated with filters for new event types
 - Files modified: `server/services/tradingEngine.ts`, `client/src/pages/Monitor.tsx`
 
+### Monitor Terminal Tab + WebSocket Improvements (Dec 15, 2025)
+- **FASE 1 - Events WebSocket**:
+  - `/ws/events` with `WS_ADMIN_TOKEN` authentication (optional in dev, required in prod)
+  - Snapshot inicial (200 eventos) + streaming en tiempo real
+  - EventsPanel.tsx ahora usa WebSocket (eliminado polling GET /api/events)
+  - Indicador "Último mensaje HH:MM:SS" en Monitor
+  - Follow tail (auto-scroll), Pause/Clear functionality
+- **FASE 2 - Terminal WebSocket**:
+  - `/ws/logs` con `TERMINAL_TOKEN` obligatorio
+  - Tab "Terminal" en Monitor con selector de fuentes predefinidas
+  - Solo fuentes en whitelist (no comandos libres):
+    - `docker compose logs -f --tail=200` (si ENABLE_DOCKER_LOGS_STREAM=true)
+    - `docker logs -f --tail=200 <container>` (krakenbot, krakenbot-db)
+    - `tail -f <ruta_log>` (rutas fijas)
+  - UX: auto-scroll, Pause/Resume, Clear, contador de líneas, último mensaje
+- **Environment Variables**:
+  - `WS_ADMIN_TOKEN`: Token para autenticar conexiones a /ws/events (opcional en Replit, requerido en NAS)
+  - `TERMINAL_TOKEN`: Token obligatorio para /ws/logs
+  - `ENABLE_DOCKER_LOGS_STREAM`: Habilita fuentes Docker (default: false)
+- **Tokens en frontend**: Guardar en localStorage como `WS_ADMIN_TOKEN` y `TERMINAL_TOKEN`
+- Files: `server/services/eventsWebSocket.ts`, `server/services/terminalWebSocket.ts`, `client/src/pages/Monitor.tsx`, `client/src/hooks/useTerminalWebSocket.ts`, `client/src/components/dashboard/EventsPanel.tsx`
+
 ### AI Diagnostic Metrics Unification
 - Added `lastBackfillDiscardReasonsJson` field to `ai_config` table
 - `runBackfill()` now persists discard reasons to `ai_config` for traceability
