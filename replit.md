@@ -20,18 +20,26 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 - **Framework**: Express.js with TypeScript.
 - **Runtime**: Node.js.
 - **API**: RESTful endpoints (`/api/*`).
-- **Services**: KrakenService for exchange interaction, TelegramService for notifications.
+- **Services**: KrakenService for exchange interaction, TelegramService for notifications, AiService for ML filter.
 
 ### Data Storage
 - **Database**: PostgreSQL with Drizzle ORM.
 - **Schema**: Defined in `shared/schema.ts`.
-- **Key Tables**: `bot_config` (trading settings), `api_config` (credentials), `trades` (history), `notifications` (queue), `open_positions` (persistent open trades).
+- **Key Tables**: 
+  - `bot_config` (trading settings)
+  - `api_config` (credentials)
+  - `trades` (history)
+  - `notifications` (queue)
+  - `open_positions` (persistent open trades)
+  - `training_trades` (AI dataset - BUY/SELL pairs with PnL labels)
+  - `ai_config` (AI filter settings and backfill state)
 
 ### Trading Engine
 - **Core Loop**: Executes every 10-30 seconds, including balance checks, daily resets, stop-loss/take-profit evaluations, and strategy analysis.
 - **Strategies**: Momentum, Mean Reversion, Scalping, Grid Trading.
 - **Multi-Timeframe Analysis (MTF)**: Analyzes 5-min, 1-hour, and 4-hour trends to filter trade signals.
 - **Trade Execution**: Market orders, database logging, position updates, Telegram notifications.
+- **Position Mode**: SINGLE (one position per pair) or DCA (multiple entries allowed).
 
 ### Risk Management
 - **Commission Profitability Filter**: Ensures trades are profitable after Kraken fees (min 1.04% take-profit).
@@ -47,6 +55,31 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
     - **Real Balance Verification**: Prevents "Insufficient funds" errors by verifying actual Kraken balances before selling and rectifying discrepancies.
 - **Kraken Minimums**: Adheres to Kraken's minimum trade volumes for each asset.
 - **Position Persistence**: Open positions are stored in the database to survive bot restarts.
+
+### AI Filter Module
+- **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
+- **Phases**: 
+  - Red (collecting data)
+  - Yellow (ready to train, 300+ samples)
+  - Green (filter active)
+- **Training Data Pipeline**:
+  - `training_trades` table stores BUY/SELL pairs with FIFO matching
+  - Backfill reconstructs dataset from `trades` table (idempotent operation)
+  - Labels: `labelWin = 1` if PnL > 0, `labelWin = 0` otherwise
+- **Discard Reasons** (trades excluded from training):
+  - `venta_sin_compra_previa`: SELL without prior BUY (inventory from before bot)
+  - `datos_invalidos`: Invalid price/amount data
+  - `pnl_atipico`: PnL outlier (> 50%)
+  - `hold_excesivo`: Hold time > 30 days
+  - `comisiones_anormales`: Fee percentage outside 0.5-2.0%
+  - `timestamps_invalidos`: Exit before entry
+- **Diagnostic Metrics** (`GET /api/ai/diagnostic`):
+  - `discardReasonsDataset`: Aggregated counts from `training_trades.discardReason` (persisted)
+  - `lastBackfillDiscardReasons`: Counts from most recent backfill run (stored in `ai_config`)
+  - `openTradesCount`: training_trades with isClosed=false
+  - `openLotsCount`: training_trades with qtyRemaining > 0
+- **Invariance Rule**: If `qtyRemaining <= epsilon` then `isClosed = true` (enforced at end of backfill)
+- **Legacy Key Translation**: English keys from old backfills are translated to Spanish in diagnostic output via `LEGACY_KEY_MAP`
 
 ### Telegram Integration
 - **Modes**: Polling activated for Docker/NAS deployments (receiving commands), disabled for Replit (sending notifications only).
@@ -72,3 +105,19 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
     - **ORM**: Drizzle ORM.
     - **Connection**: Via `DATABASE_URL` environment variable.
     - **Driver**: `pg`.
+
+## Recent Changes (Dec 2025)
+
+### AI Diagnostic Metrics Unification
+- Added `lastBackfillDiscardReasonsJson` field to `ai_config` table
+- `runBackfill()` now persists discard reasons to `ai_config` for traceability
+- `getDiagnostic()` returns both `discardReasonsDataset` (from DB) and `lastBackfillDiscardReasons` (from last run)
+- Legacy English keys automatically translated to Spanish via `LEGACY_KEY_MAP`
+- Invariance enforcement: qtyRemaining <= epsilon → normalize to 0 + isClosed=true
+- SQL aggregate query for discard reasons (no 10k row limit)
+
+### Files Modified
+- `shared/schema.ts`: Added `lastBackfillDiscardReasonsJson` jsonb field
+- `server/storage.ts`: Added `getDiscardReasonsDataset()`, invariance check
+- `server/services/aiService.ts`: Added `LEGACY_KEY_MAP`, `translateDiscardReasons()`, save to aiConfig
+- `client/src/pages/Settings.tsx`: Updated interface and render to use new field names
