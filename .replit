@@ -41,9 +41,3 @@ waitForPort = 5000
 
 [agent]
 mockupState = "FULLSTACK"
-
-[userenv]
-
-[userenv.development]
-WS_ADMIN_TOKEN = "krakenbot_eventos_2025"
-TERMINAL_TOKEN = "krakenbot_terminal_2025"
