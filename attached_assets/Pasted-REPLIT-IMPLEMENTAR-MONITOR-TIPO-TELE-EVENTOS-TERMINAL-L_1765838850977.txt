@@ -1,0 +1,76 @@
+REPLIT — IMPLEMENTAR “MONITOR TIPO TELE” (EVENTOS + TERMINAL LOGS) EN EL DASHBOARD (CORRE EN EL NAS)
+
+CONTEXTO
+- La app corre en el NAS (Docker). Quiero ver logs en tiempo real sin polling.
+- Quiero que el Monitor tenga una vista tipo “tele” (texto corriendo), y opcionalmente comandos (modo seguro).
+
+OBJETIVO (EN UNA SOLA PESTAÑA)
+- Reutilizar la pestaña “Monitor” y añadir sub-tabs:
+  1) EVENTOS (WS /ws/events) → trades/stop-loss/errores/eventos del bot
+  2) TERMINAL (WS /ws/logs) → “tele” de logs del sistema/docker/app
+
+REQUISITOS UX “TELE” (POR DEFECTO)
+- Auto-scroll: ON (seguir siempre el final)
+- Orden: Newest at bottom
+- Botones: Pause / Clear / Resume
+- Indicadores visibles:
+  - Estado: Connected / Reconnecting / Disconnected
+  - Contador: “Líneas recibidas: N”
+  - “Último mensaje: HH:MM:SS”
+
+1) EVENTOS DEL BOT (YA EXISTENTE O A CONFIRMAR)
+- WebSocket: /ws/events
+- Auth: WS_ADMIN_TOKEN obligatorio
+- Al conectar: enviar snapshot inicial (últimos 200 eventos) + streaming de nuevos eventos
+- Criterio: eliminar polling GET /api/events (no más 304 cada X segundos)
+
+2) TERMINAL / LOGS “TELE” (NUEVO)
+2.1 Backend (NAS / Docker)
+- WebSocket: /ws/logs (separado de /ws/events)
+- Auth: TERMINAL_TOKEN obligatorio
+- Protocolo JSON:
+  - Cliente → Servidor:
+    - START { source, options }
+    - STOP
+  - Servidor → Cliente:
+    - LINE { ts, source, text }
+    - STATUS { running, source, startedAt }
+    - ERROR { message }
+
+2.2 Fuentes de logs (modo seguro: SOLO PREDEFINIDAS)
+- Implementar un selector en UI con estas opciones (no comandos libres):
+  A) “docker compose logs -f --tail=200”
+  B) “docker logs -f --tail=200 <containerName>”
+  C) “tail -f <ruta_log_app>” (si existe)
+- Mostrar en UI el “source” actual y si está RUNNING.
+
+2.3 Requisito técnico (MUY IMPORTANTE en NAS Docker)
+- El streaming debe ejecutarse donde están los contenedores:
+  - Si el dashboard está en el mismo host y tiene acceso:
+    - usar docker compose / docker logs desde el host o desde un contenedor con permisos.
+  - Si el contenedor NO tiene acceso a Docker:
+    - montar docker.sock (solo si aceptas el riesgo)
+    - o ejecutar el stream vía SSH local al NAS (recomendado si no quieres docker.sock)
+- Elegir la opción más segura viable en tu setup.
+
+2.4 Resiliencia
+- Heartbeat ping/pong cada 30s
+- Cleanup en close/error
+- Reconexión automática en frontend con backoff 1s/2s/5s/10s
+
+3) (OPCIONAL) TERMINAL INTERACTIVO (COMANDOS)
+- Solo si lo activamos explícitamente.
+- Requisitos de seguridad:
+  - Whitelist de comandos permitidos (NO comandos libres).
+  - Ejemplos whitelist:
+    - docker compose logs -f --tail=200
+    - docker logs -f --tail=200 <container>
+    - tail -f <log>
+    - uptime / df -h / free -m
+- Si no whitelist: NO implementar input de comandos.
+
+CRITERIOS DE ÉXITO
+- En Monitor → EVENTOS: se reciben eventos en vivo (sin refrescar) y desaparece el spam de GET /api/events 304.
+- En Monitor → TERMINAL: veo líneas de logs correr en tiempo real, con auto-scroll ON y botones Pause/Clear.
+- Veo “Líneas recibidas” y “Último mensaje HH:MM:SS” actualizándose.
+- Todo protegido por tokens (WS_ADMIN_TOKEN y TERMINAL_TOKEN).
