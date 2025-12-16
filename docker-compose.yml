@@ -40,6 +40,9 @@ services:
       KRAKEN_API_SECRET: ${KRAKEN_API_SECRET:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      WS_ADMIN_TOKEN: ${WS_ADMIN_TOKEN:-}
+      TERMINAL_TOKEN: ${TERMINAL_TOKEN:-}
+      ENABLE_DOCKER_LOGS_STREAM: "true"
     depends_on:
       postgres:
         condition: service_healthy
