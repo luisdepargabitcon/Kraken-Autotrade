@@ -39,13 +39,13 @@ const PREDEFINED_SOURCES: LogSource[] = [
     id: "krakenbot_container",
     name: "KrakenBot Container",
     type: "docker_container",
-    containerName: "krakenbot",
+    containerName: "kraken-bot-app",
   },
   {
     id: "postgres_container",
     name: "PostgreSQL Container",
     type: "docker_container",
-    containerName: "krakenbot-db",
+    containerName: "kraken-bot-db",
   },
   {
     id: "app_log",
