@@ -1,0 +1,160 @@
+CHECKLIST SMART_GUARD (3 FASES) + INSTRUCCIONES PARA QUE REPLIT LO VERIFIQUE
+Objetivo: que Replit NO “opine”, sino que confirme (✅/❌) con evidencia: archivos, logs y consultas DB.
+
+========================
+FASE 1 — “Modo por posición” (snapshot solo para posiciones NUEVAS)
+========================
+
+[ ] 1.1 Migración DB aplicada
+EVIDENCIA (Replit):
+- Mostrar migración (archivo y commit) y ejecutar/verificar:
+
+SQL:
+\d open_positions
+-- debe aparecer:
+-- entry_mode (text)
+-- config_snapshot_json (jsonb)
+
+Si no usan psql, que lo comprueben con el ORM/Drizzle/Prisma equivalente mostrando el schema.
+
+[ ] 1.2 Al abrir posición: se guarda entry_mode="SMART_GUARD"
+EVIDENCIA (Replit):
+- Indicar archivo y función donde se crea la posición (executeTrade / createOpenPosition / etc.)
+- Log añadido en apertura:
+  “OPEN_POSITION saved entry_mode=SMART_GUARD”
+
+VERIFICACIÓN DB (Replit):
+SELECT id, pair, entry_mode
+FROM open_positions
+ORDER BY id DESC
+LIMIT 5;
+
+✅ si las nuevas salen con entry_mode=SMART_GUARD
+
+[ ] 1.3 Al abrir posición: se guarda config_snapshot_json (no vacío)
+EVIDENCIA (Replit):
+SELECT id, pair, entry_mode, jsonb_typeof(config_snapshot_json) AS t, config_snapshot_json
+FROM open_positions
+ORDER BY id DESC
+LIMIT 1;
+
+✅ si t='object' y contiene campos Smart Guard (mínimo, BE, trailing, etc.)
+
+[ ] 1.4 Al cerrar/gestionar: usa snapshot si existe, fallback si no existe
+EVIDENCIA (Replit):
+- Indicar función exacta que evalúa cierres (checkStopLossTakeProfit / manageOpenPosition / etc.)
+- Añadir log (temporal para verificación):
+  “USING SNAPSHOT for position {id}”
+  “FALLBACK TO CURRENT CONFIG for position {id} (no snapshot)”
+
+PRUEBA (Replit):
+- Abrir una posición nueva, cambiar parámetros en panel, y demostrar por logs que:
+  sigue usando “USING SNAPSHOT” con los valores antiguos.
+
+========================
+FASE 2 — Lógica SMART_GUARD (entrada mínima + salida inteligente)
+========================
+
+[ ] 2.1 El panel tiene modo SMART_GUARD en “Modo de posición”
+EVIDENCIA (Replit):
+- Captura del UI donde se ve “SINGLE / DCA / SMART_GUARD”
+- Indicar ruta del componente (client/…).
+
+[ ] 2.2 Entrada mínima por operación (por par)
+EVIDENCIA (Replit):
+- En config existen campos (nombres en lenguaje claro):
+  - minimoPorOperacionUsd (o similar)
+  - maximoPorOperacionUsd (o similar)
+- En el motor, en la decisión de tamaño, se aplica:
+  - si disponible >= mínimo → usa mínimo (capado por máximo)
+  - si disponible < mínimo → usa disponible (si permitido)
+
+PRUEBA (Replit) — con logs claros, sin tecnicismos:
+- Añadir log de decisión (temporal):
+  “ENTRADA: BTC/USD — disponible=XXX, mínimo=100, máximo=YYY → tamaño=100 (motivo: mínimo)”
+  o
+  “ENTRADA: BTC/USD — disponible=60 < mínimo=100 → tamaño=60 (motivo: usar disponible)”
+
+[ ] 2.3 “Una compra – una venta” por par (respeta SINGLE por par)
+EVIDENCIA (Replit):
+- Mostrar el check:
+  openPositions.get(pair) bloquea re-entrada en el mismo par para SMART_GUARD
+- Log:
+  “BTC/USD: bloqueado — ya hay posición en este par”
+
+[ ] 2.4 Break-even (no perder) + colchón comisiones automático
+EVIDENCIA (Replit):
+- Existe un parámetro de panel tipo “Cubrir comisiones automáticamente”
+- Existe cálculo BE_OFFSET usando fees reales o fallback
+
+PRUEBA (Replit):
+- Log de activación:
+  “BE activado: ETH/USD — ganancia=2.1% → stop a entry + 0.45% (comisiones)”
+✅ si se ve el “colchón” aplicado
+
+[ ] 2.5 Stop dinámico (trailing) con: empieza, distancia, pasos, y “solo ajusta a favor”
+EVIDENCIA (Replit):
+- Parámetros en panel (lenguaje claro):
+  - “Activar stop dinámico”
+  - “Empieza a partir de (%)”
+  - “Distancia (%)”
+  - “Ajuste en pasos (%)”
+  - “Solo ajusta a favor” (ON por defecto)
+- En código hay “ratchet”: nuevoStop = max(stopActual, stopCalculado)
+
+PRUEBA (Replit):
+- Log:
+  “TRAIL: BTC/USD — stop sube de 1.90 a 1.93”
+  y nunca un log de bajada.
+
+[ ] 2.6 Take-profit fijo por defecto OFF y con prioridad si se enciende
+EVIDENCIA (Replit):
+- Parámetro UI “Take-profit fijo” (OFF)
+- En el cierre: si TP fijo ON y precio >= TP → cerrar inmediatamente
+
+========================
+FASE 3 — UX/Diagnóstico (que tú entiendas por qué no entra) + escalonado excepcional
+========================
+
+[ ] 3.1 Diagnóstico por par “en castellano”
+EVIDENCIA (Replit):
+- Nuevo endpoint o payload de “scan” que incluya:
+  signal + motivo + saldo disponible + por qué NO entra
+- Ejemplos de motivos (sin jerga):
+  - “Sin señal clara”
+  - “Ya hay una posición en este par”
+  - “No hay saldo suficiente”
+  - “Aún no alcanza el mínimo por operación”
+  - “En pausa / en cooldown” (si aplica)
+
+[ ] 3.2 Defaults por par (editables)
+EVIDENCIA (Replit):
+- Existe tabla/objeto de defaults por par en config
+- UI permite editar por par (o al menos JSON en panel)
+
+[ ] 3.3 Salida escalonada OFF por defecto y solo si “excepcional”
+EVIDENCIA (Replit):
+- Parámetro “Salida escalonada” OFF
+- Parámetro “Solo si excepcional” ON
+- Parámetro “Mínimo por parte (USD)”
+- Log cuando se activa:
+  “ESCALONADO: activado por condición excepcional (motivo: …)”
+✅ si NO vende “trozos” pequeños.
+
+========================
+PRUEBA FINAL (la más importante)
+========================
+Replit debe ejecutar este guion y reportar resultados:
+
+1) Poner modo SMART_GUARD.
+2) Set mínimo por operación = 100.
+3) Forzar un caso donde haya saldo disponible > 100.
+4) Abrir una posición nueva → comprobar en DB entry_mode + snapshot.
+5) Cambiar parámetros del panel (BE/TRAIL) tras abrir.
+6) En el siguiente tick, demostrar por logs que usa SNAPSHOT (no panel actual).
+7) Subir precio en simulación/backtest o esperar mercado:
+   demostrar activación BE y luego TRAIL (logs).
+8) Confirmar que el diagnóstico por par indica “por qué no entra” cuando no entra.
+
+ENTREGA QUE QUIERO DE REPLIT
+- Un “✅/❌” por cada item + enlaces a archivos tocados (rutas) + output de SQL + 3 logs clave.
