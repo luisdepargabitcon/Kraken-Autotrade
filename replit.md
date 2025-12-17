@@ -165,8 +165,27 @@ KrakenBot is an autonomous cryptocurrency trading bot designed for the Kraken ex
 - Invariance enforcement: qtyRemaining <= epsilon → normalize to 0 + isClosed=true
 - SQL aggregate query for discard reasons (no 10k row limit)
 
+### Position Config Snapshot (Dec 17, 2025)
+- **Purpose**: New positions now store a snapshot of trading parameters (SL/TP/trailing) at entry time
+- **Behavior**:
+  - **New positions**: Save `entry_mode` + `config_snapshot_json` with effective parameters at entry
+  - **Legacy positions**: Continue using current `botConfig` values (fallback)
+  - **DCA entries**: Preserve original snapshot from first entry
+- **Database Changes**: Added `entry_mode TEXT` + `config_snapshot_json JSONB` to `open_positions` table
+- **ConfigSnapshot Fields**:
+  - `stopLossPercent`: SL% at entry
+  - `takeProfitPercent`: TP% at entry
+  - `trailingStopEnabled`: boolean
+  - `trailingStopPercent`: trailing% at entry
+  - `positionMode`: SINGLE/DCA at entry
+- **Logs**: 
+  - At entry: `NEW POSITION: BTC/USD - snapshot saved (SL=5%, TP=7%, trailing=false, mode=SINGLE)`
+  - At close: `Stop-Loss activado ... [snapshot (SINGLE)]` or `[current config (legacy)]`
+- **Files Modified**: `shared/schema.ts`, `server/services/tradingEngine.ts`
+
 ### Files Modified
-- `shared/schema.ts`: Added `lastBackfillDiscardReasonsJson` jsonb field
+- `shared/schema.ts`: Added `lastBackfillDiscardReasonsJson` jsonb field, `entry_mode` + `config_snapshot_json` to open_positions
 - `server/storage.ts`: Added `getDiscardReasonsDataset()`, invariance check
 - `server/services/aiService.ts`: Added `LEGACY_KEY_MAP`, `translateDiscardReasons()`, save to aiConfig
+- `server/services/tradingEngine.ts`: Added ConfigSnapshot interface, snapshot save/load/use logic
 - `client/src/pages/Settings.tsx`: Updated interface and render to use new field names
