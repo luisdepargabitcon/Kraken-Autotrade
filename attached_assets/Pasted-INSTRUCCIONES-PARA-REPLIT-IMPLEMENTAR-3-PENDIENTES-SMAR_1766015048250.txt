@@ -1,0 +1,93 @@
+INSTRUCCIONES PARA REPLIT — IMPLEMENTAR 3 PENDIENTES SMART_GUARD (SIN CAMBIAR LO YA HECHO)
+
+OBJETIVO
+Completar SMART_GUARD con:
+(1) Entrada mínima real por operación
+(2) Diagnóstico por par en castellano (por qué entra / por qué no entra)
+(3) Defaults por par (overrides) aplicados en motor + UI editable
+
+REGLAS
+- No tocar ni reescribir la lógica existente si ya funciona.
+- No migrar ni “congelar” posiciones antiguas: solo aplica snapshot a posiciones nuevas (como ya está).
+- Nada de tecnicismos en UI: mensajes claros tipo “No entra porque…”
+- Mantener: 1 posición por par (como SINGLE) + scale-out solo excepcional.
+
+------------------------------------------------------------
+1) PENDIENTE 2.2 — ENTRADA MÍNIMA (sgMinEntryUsd) EN EL MOTOR
+Qué debe pasar:
+- Si el bot detecta señal BUY para un par en SMART_GUARD:
+  - Calcula “usdDisponibleParaEntrar”.
+  - Si usdDisponibleParaEntrar < sgMinEntryUsd → NO compra y registra motivo “Saldo insuficiente para mínimo”.
+  - Si usdDisponibleParaEntrar >= sgMinEntryUsd → compra por:
+      entryUsd = min( usdDisponibleParaEntrar, sgHardMaxEntryUsd (si existe), tamaño calculado actual (si lo mantenéis) )
+  - Si el usuario tiene menos de sgMinEntryUsd pero > 0 y la configuración permite “usar lo disponible”:
+      opción sgAllowUseAvailableBelowMin (default true/false según criterio)
+      Si true: compra con lo disponible SOLO si supera un umbral mínimo absoluto (ej. 20 USD) para evitar comisiones absurdas.
+
+Requisitos:
+- Log claro al bloquear:
+  "SMART_GUARD BTC/USD: No entro — mínimo por operación 100 USD, disponible 43 USD"
+- Este motivo debe alimentar el Diagnóstico por par (punto 2).
+
+------------------------------------------------------------
+2) PENDIENTE 3.1 — ENDPOINT DIAGNÓSTICO POR PAR (CASTELLANO)
+Crear endpoint:
+GET /api/scan/diagnostic
+
+Respuesta propuesta (simple, sin tecnicismos):
+{
+  "scanTime": "...",
+  "pairs": {
+    "BTC/USD": {
+      "status": "NO_ENTRA" | "ENTRA" | "EN_POSICION" | "ENFRIAMIENTO",
+      "motivo": "Sin señal clara" | "Mínimo por operación no alcanzado" | "En enfriamiento" | "Ya hay una posición abierta en este par" | "Límite diario alcanzado" | "Saldo insuficiente",
+      "detalles": {
+        "senal": "COMPRA" | "VENTA" | "NINGUNA",
+        "confianza": 0-100 (si la tenéis),
+        "usdDisponible": number,
+        "minOperacionUsd": number,
+        "enfriamientoMin": number,
+        "tienePosicion": boolean
+      }
+    }, ...
+  }
+}
+
+Implementación:
+- Reutilizar la lógica que ya produce logs tipo PAIR_COOLDOWN / EXPOSURE / NO_SIGNAL,
+  pero traduciendo a “motivo” en lenguaje humano.
+- No se pide IA, solo “explicación clara”.
+
+UI:
+- En pestaña Monitor (o donde ya está el monitor), sub-sección “Diagnóstico”
+- Tabla: Par | Estado | Motivo | Disponible | Mínimo | Último escaneo
+
+------------------------------------------------------------
+3) PENDIENTE 3.2 — DEFAULTS POR PAR (sgPairOverrides) USADOS + EDITABLES
+Motor:
+- Si existe sgPairOverrides[pair], debe sobreescribir SOLO los parámetros de SMART_GUARD para ese par:
+  - SL inicial (si aplica en vuestro SG)
+  - BE_AT
+  - TRAIL_START
+  - TRAIL_DISTANCE
+  - TRAIL_STEP
+  - (y opcionalmente) minEntryUsd por par si lo soportáis
+- Estos overrides deben guardarse en snapshot cuando se abre la posición, para que no cambie aunque el panel cambie.
+
+UI:
+- Editor simple por par (no JSON crudo):
+  - Selector de par (BTC/ETH/SOL/XRP/TON)
+  - Campos numéricos (los anteriores)
+  - Botón “Restaurar valores recomendados”
+  - Botón “Guardar”
+
+Mensajes en castellano, por ejemplo:
+- “Proteger ganancias a partir de (%)”
+- “Stop dinámico desde (%)”
+- “Distancia del stop dinámico (%)”
+- “Paso mínimo del stop (%)”
+
+------------------------------------------------------------
+CRITERIOS DE ACEPTACIÓN (PARA QUE YO DIGA “OK”)
+A) Entrada mínima:
+- Con
