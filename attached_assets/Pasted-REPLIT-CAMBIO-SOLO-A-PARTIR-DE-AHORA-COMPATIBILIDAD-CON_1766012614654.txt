@@ -1,0 +1,57 @@
+REPLIT — CAMBIO “SOLO A PARTIR DE AHORA” + COMPATIBILIDAD CON MOTOR IA (DATASET)
+
+Perfecto: las posiciones ya abiertas me dan igual. Implementa “snapshot por posición” SOLO para nuevas operaciones, PERO asegúrate de que el Motor de IA (dataset/backfill/etiquetado) lo tenga en cuenta.
+
+A) SNAPSHOT SOLO PARA POSICIONES NUEVAS (mínimo cambio)
+1) DB open_positions:
+- entry_mode TEXT NULL
+- config_snapshot_json JSONB NULL
+
+2) Al ABRIR posición (solo nuevas):
+- Guardar entry_mode (modo actual del panel / o el modo nuevo)
+- Guardar config_snapshot_json (parámetros efectivos usados al entrar: SL/TP/trailing + overrides por par + lo que aplique)
+
+3) Al GESTIONAR/CERRAR:
+- Si position.config_snapshot_json existe → usarlo (posición nueva)
+- Si no existe → usar botConfig actual (posición legacy)
+
+B) MOTOR IA / DATASET — NO ROMPER Y MEJORAR CALIDAD
+Ahora mismo el motor dice:
+- “Venta sin compra previa: 26”
+- “PnL atípico (outlier): 36”
+Eso es demasiado descarte y frena el entrenamiento.
+
+Requisitos:
+1) En cada trade CERRADO, guardar también “contexto de entrada” si existe:
+- entry_mode
+- snapshot (o un resumen de snapshot: SL/TP/trailing/…)
+- señal/resumen de señales (si ya existe)
+- pair, timestamps, fees, qty, entryPrice, exitPrice, pnl, holdTime
+
+2) Dataset builder / Backfill:
+- Si snapshot existe, incluirlo como columnas/features.
+- Si NO existe (trades antiguos), dejarlo NULL sin romper nada (no intentar reconstruir).
+
+3) Reducir “Venta sin compra previa” (si es posible):
+- Priorizar emparejar BUY↔SELL por positionId / open_position_id (si existe) antes que por heurísticas.
+- Si hay SELL de un activo que ya existía antes (saldo previo), marcarlo como “manual/preexistente” y NO contaminar el dataset (pero que quede visible en diagnóstico).
+
+4) Outliers (PnL atípico):
+- Revisar si los outliers vienen de cálculos en pares con distinta divisa (ej. totalUsd raro, conversiones, fees).
+- Ideal: outlier detection por par y por tamaño relativo (PnL% vs PnL absoluto), para no tirar trades normales.
+
+C) UI / Diagnóstico (lenguaje claro)
+En el monitor de IA:
+- Mostrar “Por qué no se usa este trade para entrenar” en lenguaje humano:
+  - “No encontramos la compra correspondiente”
+  - “Comisiones fuera de rango”
+  - “Resultado extremo para este par (posible dato erróneo)”
+y permitir ver el ID/txid asociado.
+
+D) DESPUÉS DE IMPLEMENTAR
+- Ejecutar “Regenerar Dataset / Backfill” para comprobar si bajan descartes (especialmente “venta sin compra” y “outlier”).
+- No hace falta entrenar todavía; primero queremos un dataset limpio.
+
+Confírmame al final:
+- Qué campos exactos se guardan en config_snapshot_json
+- Qué campos exactos llegan al dataset y si aumentó el nº de “Cerrados/Etiquetados útiles”.
