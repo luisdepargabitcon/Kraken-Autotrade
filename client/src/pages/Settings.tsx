@@ -590,32 +590,58 @@ export default function Settings() {
                           </div>
                         )}
                         {Object.keys(aiDiagnostic.discardReasonsDataset || {}).length > 0 && (
-                          <div className="text-xs text-yellow-500">
-                            Razones de descarte: {Object.entries(aiDiagnostic.discardReasonsDataset || {}).map(([k, v]) => {
-                              const discardLabels: Record<string, string> = {
-                                'sin_fecha_ejecucion': 'Sin fecha de ejecución',
-                                'datos_invalidos': 'Datos inválidos',
-                                'venta_sin_compra_previa': 'Venta sin compra previa',
-                                'venta_excede_lotes': 'Venta excede lotes disponibles',
-                                'comisiones_anormales': 'Comisiones anormales',
-                                'pnl_atipico': 'PnL atípico (outlier)',
-                                'hold_excesivo': 'Tiempo de hold excesivo',
-                                'timestamps_invalidos': 'Timestamps inválidos',
-                                'no_matching_sell': 'Sin venta de cierre',
-                                'no_execution_time': 'Sin fecha de ejecución',
-                                'invalid_buy_amount': 'Cantidad de compra inválida',
-                                'invalid_buy_price': 'Precio de compra inválido',
-                                'invalid_buy_cost': 'Coste de compra inválido',
-                                'invalid_sell_price': 'Precio de venta inválido',
-                                'invalid_sell_amount': 'Cantidad de venta inválida',
-                                'invalid_timestamps': 'Timestamps inválidos',
-                                'abnormal_fees': 'Comisiones anormales',
-                                'pnl_outlier': 'PnL atípico (outlier)',
-                                'hold_time_outlier': 'Tiempo de hold excesivo',
-                                'negative_hold_time': 'Tiempo de hold negativo',
-                              };
-                              return `${discardLabels[k] || k}: ${v}`;
-                            }).join(', ')}
+                          <div className="space-y-2 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+                            <div className="flex items-center gap-2 text-yellow-500 text-xs font-medium">
+                              <span>⚠️ Trades Excluidos del Entrenamiento</span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1.5 text-xs">
+                              {Object.entries(aiDiagnostic.discardReasonsDataset || {}).map(([k, v]) => {
+                                const discardInfo: Record<string, { label: string; desc: string }> = {
+                                  'sin_fecha_ejecucion': { 
+                                    label: 'Sin fecha', 
+                                    desc: 'El trade no tiene timestamp de ejecución' 
+                                  },
+                                  'datos_invalidos': { 
+                                    label: 'Datos inválidos', 
+                                    desc: 'Precio o cantidad <= 0' 
+                                  },
+                                  'venta_sin_compra_previa': { 
+                                    label: 'Venta huérfana', 
+                                    desc: 'SELL sin BUY correspondiente (inventario pre-bot)' 
+                                  },
+                                  'venta_excede_lotes': { 
+                                    label: 'Venta excede stock', 
+                                    desc: 'La cantidad vendida supera los lotes abiertos' 
+                                  },
+                                  'comisiones_anormales': { 
+                                    label: 'Comisiones raras', 
+                                    desc: 'Fees fuera del rango 0.1%-2.5%' 
+                                  },
+                                  'pnl_atipico': { 
+                                    label: 'PnL extremo', 
+                                    desc: 'Ganancia/pérdida > 100% (outlier estadístico)' 
+                                  },
+                                  'hold_excesivo': { 
+                                    label: 'Hold muy largo', 
+                                    desc: 'Posición mantenida > 30 días' 
+                                  },
+                                  'timestamps_invalidos': { 
+                                    label: 'Fechas erróneas', 
+                                    desc: 'Exit timestamp antes de entry timestamp' 
+                                  },
+                                };
+                                const info = discardInfo[k] || { label: k, desc: 'Sin descripción disponible' };
+                                return (
+                                  <div key={k} className="flex items-center justify-between p-1.5 bg-background/50 rounded" title={info.desc}>
+                                    <span className="text-muted-foreground">{info.label}</span>
+                                    <span className="font-mono text-yellow-500">{v as number}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-1">
+                              💡 Estos trades se excluyen para evitar sesgos en el modelo ML
+                            </div>
                           </div>
                         )}
                         <Button 

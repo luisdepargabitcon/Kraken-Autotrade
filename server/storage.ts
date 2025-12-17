@@ -463,8 +463,10 @@ export class DatabaseStorage implements IStorage {
     let labeled = 0;
     
     const KRAKEN_FEE_RATE = 0.004;
-    const PNL_OUTLIER_THRESHOLD = 50;
+    const PNL_OUTLIER_THRESHOLD = 100; // Increased from 50% - crypto is volatile
     const MAX_HOLD_TIME_DAYS = 30;
+    const MIN_FEE_PCT = 0.1; // Lowered from 0.5% - discount tiers exist
+    const MAX_FEE_PCT = 2.5; // Raised from 2.0% - allow for spread costs
     const QTY_EPSILON = 0.00000001;
     
     const tradesByPair: Record<string, Trade[]> = {};
@@ -619,7 +621,7 @@ export class DatabaseStorage implements IStorage {
               let discardReason: string | null = null;
               
               const totalFeePct = ((lot.entryFee + lot.totalExitFee) / lot.costUsd) * 100;
-              if (totalFeePct > 2.0 || totalFeePct < 0.5) {
+              if (totalFeePct > MAX_FEE_PCT || totalFeePct < MIN_FEE_PCT) {
                 discardReason = 'comisiones_anormales';
               } else if (Math.abs(pnlPct) > PNL_OUTLIER_THRESHOLD) {
                 discardReason = 'pnl_atipico';
