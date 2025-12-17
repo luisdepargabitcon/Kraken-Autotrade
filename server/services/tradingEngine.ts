@@ -69,6 +69,21 @@ interface ConfigSnapshot {
   trailingStopEnabled: boolean;
   trailingStopPercent: number;
   positionMode: string;
+  // SMART_GUARD specific fields (only populated when positionMode === "SMART_GUARD")
+  sgMinEntryUsd?: number;
+  sgAllowUnderMin?: boolean;
+  sgBeAtPct?: number;
+  sgFeeCushionPct?: number;
+  sgFeeCushionAuto?: boolean;
+  sgTrailStartPct?: number;
+  sgTrailDistancePct?: number;
+  sgTrailStepPct?: number;
+  sgTpFixedEnabled?: boolean;
+  sgTpFixedPct?: number;
+  sgScaleOutEnabled?: boolean;
+  sgScaleOutPct?: number;
+  sgMinPartUsd?: number;
+  sgScaleOutThreshold?: number;
 }
 
 interface OpenPosition {
@@ -83,6 +98,11 @@ interface OpenPosition {
   aiSampleId?: number;
   entryMode?: string;
   configSnapshot?: ConfigSnapshot;
+  // SMART_GUARD dynamic state
+  sgBreakEvenActivated?: boolean;
+  sgCurrentStopPrice?: number;
+  sgTrailingActivated?: boolean;
+  sgScaleOutDone?: boolean;
 }
 
 interface CandleTrackingState {
@@ -619,6 +639,11 @@ El bot de trading autónomo está activo.
           signalReason: pos.signalReason || undefined,
           entryMode: pos.entryMode || undefined,
           configSnapshot,
+          // SMART_GUARD state
+          sgBreakEvenActivated: pos.sgBreakEvenActivated ?? false,
+          sgCurrentStopPrice: pos.sgCurrentStopPrice ? parseFloat(pos.sgCurrentStopPrice) : undefined,
+          sgTrailingActivated: pos.sgTrailingActivated ?? false,
+          sgScaleOutDone: pos.sgScaleOutDone ?? false,
         });
         
         const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : "[legacy: uses current config]";
@@ -655,6 +680,11 @@ El bot de trading autónomo está activo.
         signalReason: position.signalReason,
         entryMode: position.entryMode,
         configSnapshotJson: position.configSnapshot,
+        // SMART_GUARD state
+        sgBreakEvenActivated: position.sgBreakEvenActivated,
+        sgCurrentStopPrice: position.sgCurrentStopPrice?.toString(),
+        sgTrailingActivated: position.sgTrailingActivated,
+        sgScaleOutDone: position.sgScaleOutDone,
       });
     } catch (error: any) {
       log(`Error guardando posición ${pair}: ${error.message}`, "trading");
@@ -817,6 +847,12 @@ El bot de trading autónomo está activo.
         position.highestPrice = currentPrice;
         this.openPositions.set(pair, position);
         await this.updatePositionHighestPrice(pair, currentPrice);
+      }
+
+      // Check if this is a SMART_GUARD position - use dedicated logic
+      if (position.entryMode === "SMART_GUARD" && position.configSnapshot) {
+        await this.checkSmartGuardExit(pair, position, currentPrice, priceChange);
+        return;
       }
 
       // Use snapshot params if available (new positions), else use current config (legacy)
@@ -1000,6 +1036,200 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       }
     } catch (error: any) {
       log(`Error verificando SL/TP para ${pair}: ${error.message}`, "trading");
+    }
+  }
+
+  private async checkSmartGuardExit(
+    pair: string,
+    position: OpenPosition,
+    currentPrice: number,
+    priceChange: number
+  ) {
+    const snapshot = position.configSnapshot!;
+    const paramsSource = `SMART_GUARD snapshot`;
+    
+    // Get snapshot params with defaults
+    const beAtPct = snapshot.sgBeAtPct ?? 1.5;
+    const feeCushionPct = snapshot.sgFeeCushionPct ?? 0.45;
+    const trailStartPct = snapshot.sgTrailStartPct ?? 2.0;
+    const trailDistancePct = snapshot.sgTrailDistancePct ?? 1.5;
+    const trailStepPct = snapshot.sgTrailStepPct ?? 0.25;
+    const tpFixedEnabled = snapshot.sgTpFixedEnabled ?? false;
+    const tpFixedPct = snapshot.sgTpFixedPct ?? 10;
+    const scaleOutEnabled = snapshot.sgScaleOutEnabled ?? false;
+    const scaleOutPct = snapshot.sgScaleOutPct ?? 35;
+    const minPartUsd = snapshot.sgMinPartUsd ?? 50;
+    const scaleOutThreshold = snapshot.sgScaleOutThreshold ?? 80;
+    
+    // Also use the standard SL from snapshot as ultimate protection
+    const ultimateSL = snapshot.stopLossPercent;
+    
+    let shouldSellFull = false;
+    let shouldScaleOut = false;
+    let sellReason = "";
+    let emoji = "";
+    let positionModified = false;
+    
+    // Calculate break-even price (entry + fee cushion)
+    const breakEvenPrice = position.entryPrice * (1 + feeCushionPct / 100);
+    
+    // 1. ULTIMATE STOP-LOSS - Emergency exit (always active)
+    if (priceChange <= -ultimateSL) {
+      shouldSellFull = true;
+      sellReason = `Stop-Loss emergencia SMART_GUARD (${priceChange.toFixed(2)}% < -${ultimateSL}%) [${paramsSource}]`;
+      emoji = "🛑";
+      this.setStopLossCooldown(pair);
+      await botLogger.warn("SG_EMERGENCY_STOPLOSS", `SMART_GUARD Stop-Loss emergencia en ${pair}`, {
+        pair, entryPrice: position.entryPrice, currentPrice, priceChange, ultimateSL, paramsSource,
+      });
+    }
+    
+    // 2. FIXED TAKE-PROFIT (if enabled)
+    else if (tpFixedEnabled && priceChange >= tpFixedPct) {
+      shouldSellFull = true;
+      sellReason = `Take-Profit fijo SMART_GUARD (${priceChange.toFixed(2)}% >= ${tpFixedPct}%) [${paramsSource}]`;
+      emoji = "🎯";
+      await botLogger.info("SG_TP_FIXED", `SMART_GUARD TP fijo alcanzado en ${pair}`, {
+        pair, entryPrice: position.entryPrice, currentPrice, priceChange, tpFixedPct, paramsSource,
+      });
+    }
+    
+    // 3. BREAK-EVEN ACTIVATION - Move stop to breakeven when profit >= beAtPct
+    else if (!position.sgBreakEvenActivated && priceChange >= beAtPct) {
+      position.sgBreakEvenActivated = true;
+      position.sgCurrentStopPrice = breakEvenPrice;
+      positionModified = true;
+      log(`SMART_GUARD ${pair}: Break-even activado (+${priceChange.toFixed(2)}%), stop movido a $${breakEvenPrice.toFixed(4)}`, "trading");
+      await botLogger.info("SG_BREAKEVEN_ACTIVATED", `SMART_GUARD break-even activado en ${pair}`, {
+        pair, entryPrice: position.entryPrice, currentPrice, priceChange, beAtPct, breakEvenPrice, paramsSource,
+      });
+    }
+    
+    // 4. TRAILING STOP ACTIVATION - Start trailing when profit >= trailStartPct
+    if (!position.sgTrailingActivated && priceChange >= trailStartPct) {
+      position.sgTrailingActivated = true;
+      const trailStopPrice = currentPrice * (1 - trailDistancePct / 100);
+      // Only update stop if higher than current
+      if (!position.sgCurrentStopPrice || trailStopPrice > position.sgCurrentStopPrice) {
+        position.sgCurrentStopPrice = trailStopPrice;
+      }
+      positionModified = true;
+      log(`SMART_GUARD ${pair}: Trailing activado (+${priceChange.toFixed(2)}%), stop dinámico @ $${position.sgCurrentStopPrice!.toFixed(4)}`, "trading");
+      await botLogger.info("SG_TRAILING_ACTIVATED", `SMART_GUARD trailing activado en ${pair}`, {
+        pair, entryPrice: position.entryPrice, currentPrice, priceChange, trailStartPct, trailDistancePct, 
+        stopPrice: position.sgCurrentStopPrice, paramsSource,
+      });
+    }
+    
+    // 5. TRAILING STOP UPDATE - Ratchet up stop with step increments
+    if (position.sgTrailingActivated && position.sgCurrentStopPrice) {
+      const newTrailStop = currentPrice * (1 - trailDistancePct / 100);
+      const minStepPrice = position.sgCurrentStopPrice * (1 + trailStepPct / 100);
+      
+      // Only update if new stop is higher by at least one step
+      if (newTrailStop > minStepPrice) {
+        const oldStop = position.sgCurrentStopPrice;
+        position.sgCurrentStopPrice = newTrailStop;
+        positionModified = true;
+        log(`SMART_GUARD ${pair}: Trailing step $${oldStop.toFixed(4)} → $${newTrailStop.toFixed(4)} (+${trailStepPct}%)`, "trading");
+      }
+    }
+    
+    // 6. CHECK IF STOP PRICE HIT
+    if (position.sgCurrentStopPrice && currentPrice <= position.sgCurrentStopPrice) {
+      const stopType = position.sgTrailingActivated ? "Trailing Stop" : "Break-even Stop";
+      shouldSellFull = true;
+      sellReason = `${stopType} SMART_GUARD ($${currentPrice.toFixed(2)} <= $${position.sgCurrentStopPrice.toFixed(2)}) [${paramsSource}]`;
+      emoji = position.sgTrailingActivated ? "📉" : "⚖️";
+      await botLogger.info("SG_STOP_HIT", `SMART_GUARD ${stopType} activado en ${pair}`, {
+        pair, entryPrice: position.entryPrice, currentPrice, stopPrice: position.sgCurrentStopPrice,
+        stopType, paramsSource,
+      });
+    }
+    
+    // 7. SCALE-OUT (optional, only if exceptional signal)
+    if (!shouldSellFull && scaleOutEnabled && !position.sgScaleOutDone) {
+      // Only scale out if signal confidence >= threshold and part is worth selling
+      const partValue = position.amount * currentPrice * (scaleOutPct / 100);
+      if (position.signalConfidence && position.signalConfidence >= scaleOutThreshold && partValue >= minPartUsd) {
+        if (priceChange >= trailStartPct) { // Only scale out in profit
+          shouldScaleOut = true;
+          sellReason = `Scale-out SMART_GUARD (${scaleOutPct}% @ +${priceChange.toFixed(2)}%, conf=${position.signalConfidence}%) [${paramsSource}]`;
+          emoji = "📊";
+          position.sgScaleOutDone = true;
+          positionModified = true;
+          await botLogger.info("SG_SCALE_OUT", `SMART_GUARD scale-out en ${pair}`, {
+            pair, entryPrice: position.entryPrice, currentPrice, priceChange, scaleOutPct,
+            confidence: position.signalConfidence, partValue, paramsSource,
+          });
+        }
+      }
+    }
+    
+    // Save position changes
+    if (positionModified && !shouldSellFull && !shouldScaleOut) {
+      this.openPositions.set(pair, position);
+      await this.savePositionToDB(pair, position);
+    }
+    
+    // Execute sell if needed
+    if (shouldSellFull || shouldScaleOut) {
+      const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+      let sellAmount = shouldScaleOut 
+        ? position.amount * (scaleOutPct / 100)
+        : position.amount;
+      
+      if (sellAmount < minVolume) {
+        log(`SMART_GUARD: Cantidad a vender (${sellAmount}) menor al mínimo (${minVolume}) para ${pair}`, "trading");
+        return;
+      }
+      
+      // Balance verification
+      const freshBalances = await this.krakenService.getBalance();
+      const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+      
+      if (realAssetBalance < sellAmount * 0.995) {
+        if (realAssetBalance < minVolume) {
+          log(`SMART_GUARD: Posición huérfana en ${pair}, eliminando`, "trading");
+          this.openPositions.delete(pair);
+          await this.deletePositionFromDB(pair);
+          this.setPairCooldown(pair);
+          return;
+        }
+        sellAmount = realAssetBalance;
+        position.amount = realAssetBalance;
+      }
+      
+      log(`${emoji} ${sellReason} para ${pair}`, "trading");
+      
+      const pnl = (currentPrice - position.entryPrice) * sellAmount;
+      const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason);
+      
+      if (success && this.telegramService.isInitialized()) {
+        const pnlEmoji = pnl >= 0 ? "💰" : "📉";
+        await this.telegramService.sendAlertToMultipleChats(`
+${emoji} *${sellReason}*
+
+*Par:* ${pair}
+*Precio entrada:* $${position.entryPrice.toFixed(2)}
+*Precio actual:* $${currentPrice.toFixed(2)}
+*Cantidad vendida:* ${sellAmount.toFixed(8)}
+
+${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)
+        `.trim(), "trades");
+      }
+      
+      if (success) {
+        if (shouldSellFull || position.amount <= 0) {
+          this.openPositions.delete(pair);
+          await this.deletePositionFromDB(pair);
+        } else {
+          // Partial sell (scale-out)
+          this.openPositions.set(pair, position);
+          await this.savePositionToDB(pair, position);
+        }
+        this.lastTradeTime.set(pair, Date.now());
+      }
     }
   }
 
@@ -2179,14 +2409,33 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         } else {
           // NEW POSITION: create snapshot of current config
           const currentConfig = await storage.getBotConfig();
+          const entryMode = currentConfig?.positionMode || "SINGLE";
+          
           const configSnapshot: ConfigSnapshot = {
             stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
             takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
             trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
             trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
-            positionMode: currentConfig?.positionMode || "SINGLE",
+            positionMode: entryMode,
           };
-          const entryMode = currentConfig?.positionMode || "SINGLE";
+          
+          // Add SMART_GUARD specific params if mode is SMART_GUARD
+          if (entryMode === "SMART_GUARD") {
+            configSnapshot.sgMinEntryUsd = parseFloat(currentConfig?.sgMinEntryUsd?.toString() || "100");
+            configSnapshot.sgAllowUnderMin = currentConfig?.sgAllowUnderMin ?? true;
+            configSnapshot.sgBeAtPct = parseFloat(currentConfig?.sgBeAtPct?.toString() || "1.5");
+            configSnapshot.sgFeeCushionPct = parseFloat(currentConfig?.sgFeeCushionPct?.toString() || "0.45");
+            configSnapshot.sgFeeCushionAuto = currentConfig?.sgFeeCushionAuto ?? true;
+            configSnapshot.sgTrailStartPct = parseFloat(currentConfig?.sgTrailStartPct?.toString() || "2");
+            configSnapshot.sgTrailDistancePct = parseFloat(currentConfig?.sgTrailDistancePct?.toString() || "1.5");
+            configSnapshot.sgTrailStepPct = parseFloat(currentConfig?.sgTrailStepPct?.toString() || "0.25");
+            configSnapshot.sgTpFixedEnabled = currentConfig?.sgTpFixedEnabled ?? false;
+            configSnapshot.sgTpFixedPct = parseFloat(currentConfig?.sgTpFixedPct?.toString() || "10");
+            configSnapshot.sgScaleOutEnabled = currentConfig?.sgScaleOutEnabled ?? false;
+            configSnapshot.sgScaleOutPct = parseFloat(currentConfig?.sgScaleOutPct?.toString() || "35");
+            configSnapshot.sgMinPartUsd = parseFloat(currentConfig?.sgMinPartUsd?.toString() || "50");
+            configSnapshot.sgScaleOutThreshold = parseFloat(currentConfig?.sgScaleOutThreshold?.toString() || "80");
+          }
           
           newPosition = { 
             amount: volumeNum, 
@@ -2199,9 +2448,19 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             signalReason: reason,
             entryMode,
             configSnapshot,
+            // SMART_GUARD initial state
+            sgBreakEvenActivated: false,
+            sgCurrentStopPrice: undefined,
+            sgTrailingActivated: false,
+            sgScaleOutDone: false,
           };
           this.openPositions.set(pair, newPosition);
-          log(`NEW POSITION: ${pair} - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
+          
+          if (entryMode === "SMART_GUARD") {
+            log(`NEW POSITION: ${pair} - SMART_GUARD snapshot saved (BE=${configSnapshot.sgBeAtPct}%, trail=${configSnapshot.sgTrailDistancePct}%, TP=${configSnapshot.sgTpFixedEnabled ? configSnapshot.sgTpFixedPct + '%' : 'OFF'})`, "trading");
+          } else {
+            log(`NEW POSITION: ${pair} - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
+          }
         }
         
         // AI Sample collection: save features for ALL buy entries (not just new positions)

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -70,6 +70,22 @@ interface BotConfig {
   tradingHoursStart: string;
   tradingHoursEnd: string;
   positionMode: string;
+  // SMART_GUARD fields
+  sgMinEntryUsd: string;
+  sgAllowUnderMin: boolean;
+  sgBeAtPct: string;
+  sgFeeCushionPct: string;
+  sgFeeCushionAuto: boolean;
+  sgTrailStartPct: string;
+  sgTrailDistancePct: string;
+  sgTrailStepPct: string;
+  sgTpFixedEnabled: boolean;
+  sgTpFixedPct: string;
+  sgScaleOutEnabled: boolean;
+  sgScaleOutPct: string;
+  sgMinPartUsd: string;
+  sgScaleOutThreshold: string;
+  sgPairOverrides: Record<string, unknown> | null;
 }
 
 export default function Settings() {
@@ -473,20 +489,31 @@ export default function Settings() {
                       value={config?.positionMode ?? "SINGLE"}
                       onValueChange={(value) => updateMutation.mutate({ positionMode: value })}
                     >
-                      <SelectTrigger className="w-[140px] font-mono bg-background/50" data-testid="select-position-mode">
+                      <SelectTrigger className="w-[160px] font-mono bg-background/50" data-testid="select-position-mode">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="SINGLE">SINGLE</SelectItem>
                         <SelectItem value="DCA">DCA</SelectItem>
+                        <SelectItem value="SMART_GUARD">SMART_GUARD</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-                <div className={`p-3 rounded-lg text-sm ${config?.positionMode === "DCA" ? "bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" : "bg-green-500/10 border border-green-500/30 text-green-400"}`}>
+                <div className={`p-3 rounded-lg text-sm ${
+                  config?.positionMode === "DCA" 
+                    ? "bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" 
+                    : config?.positionMode === "SMART_GUARD"
+                    ? "bg-blue-500/10 border border-blue-500/30 text-blue-400"
+                    : "bg-green-500/10 border border-green-500/30 text-green-400"
+                }`}>
                   {config?.positionMode === "DCA" ? (
                     <>
                       <strong>Modo DCA activo:</strong> El bot puede realizar múltiples compras del mismo par para promediar el precio de entrada.
+                    </>
+                  ) : config?.positionMode === "SMART_GUARD" ? (
+                    <>
+                      <strong>Modo SMART_GUARD activo:</strong> Una posición por par con protección inteligente: break-even automático, stop dinámico (trailing) y salida escalonada opcional.
                     </>
                   ) : (
                     <>
@@ -494,6 +521,189 @@ export default function Settings() {
                     </>
                   )}
                 </div>
+                
+                {config?.positionMode === "SMART_GUARD" && (
+                  <div className="space-y-4 p-4 border border-blue-500/30 rounded-lg bg-blue-500/5" data-testid="panel-smart-guard-config">
+                    <h4 className="font-medium text-blue-400 flex items-center gap-2" data-testid="text-smart-guard-title">
+                      <Shield className="h-4 w-4" />
+                      Configuración SMART_GUARD
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-sm">Mínimo por operación (USD)</Label>
+                        <Input
+                          type="number"
+                          value={config.sgMinEntryUsd}
+                          onChange={(e) => updateMutation.mutate({ sgMinEntryUsd: e.target.value })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-min-entry"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-min-entry-desc">No entrar si el monto disponible es menor a este valor.</p>
+                        <div className="flex items-center justify-between mt-2">
+                          <Label className="text-xs text-muted-foreground">Permitir entradas menores</Label>
+                          <Switch
+                            checked={config.sgAllowUnderMin}
+                            onCheckedChange={(checked) => updateMutation.mutate({ sgAllowUnderMin: checked })}
+                            data-testid="switch-sg-allow-under-min"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Proteger ganancias a partir de (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={config.sgBeAtPct}
+                          onChange={(e) => updateMutation.mutate({ sgBeAtPct: e.target.value })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-be-at"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-be-at-desc">Mover stop a break-even cuando la ganancia alcance este %.</p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Colchón de comisiones (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.05"
+                          value={config.sgFeeCushionPct}
+                          onChange={(e) => updateMutation.mutate({ sgFeeCushionPct: e.target.value })}
+                          className="font-mono bg-background/50"
+                          disabled={config.sgFeeCushionAuto}
+                          data-testid="input-sg-fee-cushion"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-fee-cushion-desc">Margen sobre precio de entrada para cubrir fees (~0.45%).</p>
+                        <div className="flex items-center justify-between mt-2">
+                          <Label className="text-xs text-muted-foreground">Calcular automáticamente</Label>
+                          <Switch
+                            checked={config.sgFeeCushionAuto}
+                            onCheckedChange={(checked) => updateMutation.mutate({ sgFeeCushionAuto: checked })}
+                            data-testid="switch-sg-fee-cushion-auto"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Stop dinámico: empieza a partir de (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={config.sgTrailStartPct}
+                          onChange={(e) => updateMutation.mutate({ sgTrailStartPct: e.target.value })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-trail-start"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-start-desc">El trailing stop se activa cuando la ganancia alcanza este %.</p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Stop dinámico: distancia (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={config.sgTrailDistancePct}
+                          onChange={(e) => updateMutation.mutate({ sgTrailDistancePct: e.target.value })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-trail-distance"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-distance-desc">Distancia del stop respecto al precio máximo alcanzado.</p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Stop dinámico: paso mínimo (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.05"
+                          value={config.sgTrailStepPct}
+                          onChange={(e) => updateMutation.mutate({ sgTrailStepPct: e.target.value })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-trail-step"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-step-desc">El stop sube en escalones de al menos este % para evitar spam.</p>
+                      </div>
+                    </div>
+                    
+                    <div className="border-t border-border/50 pt-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1">
+                          <Label>Salida por objetivo fijo (opcional)</Label>
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-tp-fixed-desc">Cerrar toda la posición al alcanzar un % de ganancia fijo.</p>
+                        </div>
+                        <Switch
+                          checked={config.sgTpFixedEnabled}
+                          onCheckedChange={(checked) => updateMutation.mutate({ sgTpFixedEnabled: checked })}
+                          data-testid="switch-sg-tp-fixed"
+                        />
+                      </div>
+                      
+                      {config.sgTpFixedEnabled && (
+                        <div className="space-y-2">
+                          <Label className="text-sm">Take-Profit fijo (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.5"
+                            value={config.sgTpFixedPct}
+                            onChange={(e) => updateMutation.mutate({ sgTpFixedPct: e.target.value })}
+                            className="font-mono bg-background/50"
+                            data-testid="input-sg-tp-fixed"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="border-t border-border/50 pt-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1">
+                          <Label>Salida en 2 pasos (solo si es excepcional)</Label>
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-scale-out-desc">Vender una parte cuando la señal es muy fuerte, el resto con trailing.</p>
+                        </div>
+                        <Switch
+                          checked={config.sgScaleOutEnabled}
+                          onCheckedChange={(checked) => updateMutation.mutate({ sgScaleOutEnabled: checked })}
+                          data-testid="switch-sg-scale-out"
+                        />
+                      </div>
+                      
+                      {config.sgScaleOutEnabled && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-sm">Porcentaje a vender (%)</Label>
+                            <Input
+                              type="number"
+                              step="5"
+                              value={config.sgScaleOutPct}
+                              onChange={(e) => updateMutation.mutate({ sgScaleOutPct: e.target.value })}
+                              className="font-mono bg-background/50"
+                              data-testid="input-sg-scale-out-pct"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm">Mínimo parte (USD)</Label>
+                            <Input
+                              type="number"
+                              value={config.sgMinPartUsd}
+                              onChange={(e) => updateMutation.mutate({ sgMinPartUsd: e.target.value })}
+                              className="font-mono bg-background/50"
+                              data-testid="input-sg-min-part"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm">Confianza mínima (%)</Label>
+                            <Input
+                              type="number"
+                              value={config.sgScaleOutThreshold}
+                              onChange={(e) => updateMutation.mutate({ sgScaleOutThreshold: e.target.value })}
+                              className="font-mono bg-background/50"
+                              data-testid="input-sg-scale-threshold"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

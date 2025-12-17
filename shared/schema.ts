@@ -24,6 +24,23 @@ export const botConfig = pgTable("bot_config", {
   tradingHoursStart: decimal("trading_hours_start", { precision: 2, scale: 0 }).notNull().default("8"),
   tradingHoursEnd: decimal("trading_hours_end", { precision: 2, scale: 0 }).notNull().default("22"),
   positionMode: text("position_mode").notNull().default("SINGLE"),
+  // SMART_GUARD configuration
+  sgMinEntryUsd: decimal("sg_min_entry_usd", { precision: 10, scale: 2 }).notNull().default("100.00"),
+  sgAllowUnderMin: boolean("sg_allow_under_min").notNull().default(true),
+  sgBeAtPct: decimal("sg_be_at_pct", { precision: 5, scale: 2 }).notNull().default("1.50"),
+  sgFeeCushionPct: decimal("sg_fee_cushion_pct", { precision: 5, scale: 2 }).notNull().default("0.45"),
+  sgFeeCushionAuto: boolean("sg_fee_cushion_auto").notNull().default(true),
+  sgTrailStartPct: decimal("sg_trail_start_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  sgTrailDistancePct: decimal("sg_trail_distance_pct", { precision: 5, scale: 2 }).notNull().default("1.50"),
+  sgTrailStepPct: decimal("sg_trail_step_pct", { precision: 5, scale: 2 }).notNull().default("0.25"),
+  sgTpFixedEnabled: boolean("sg_tp_fixed_enabled").notNull().default(false),
+  sgTpFixedPct: decimal("sg_tp_fixed_pct", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  sgScaleOutEnabled: boolean("sg_scale_out_enabled").notNull().default(false),
+  sgScaleOutPct: decimal("sg_scale_out_pct", { precision: 5, scale: 2 }).notNull().default("35.00"),
+  sgMinPartUsd: decimal("sg_min_part_usd", { precision: 10, scale: 2 }).notNull().default("50.00"),
+  sgScaleOutThreshold: decimal("sg_scale_out_threshold", { precision: 5, scale: 2 }).notNull().default("80.00"),
+  // SMART_GUARD pair overrides (JSON: { "BTC/USD": { trailDistancePct: 1.0 }, ... })
+  sgPairOverrides: jsonb("sg_pair_overrides"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -108,6 +125,11 @@ export const openPositions = pgTable("open_positions", {
   signalReason: text("signal_reason"),
   entryMode: text("entry_mode"),
   configSnapshotJson: jsonb("config_snapshot_json"),
+  // SMART_GUARD dynamic state
+  sgBreakEvenActivated: boolean("sg_break_even_activated").default(false),
+  sgCurrentStopPrice: decimal("sg_current_stop_price", { precision: 18, scale: 8 }),
+  sgTrailingActivated: boolean("sg_trailing_activated").default(false),
+  sgScaleOutDone: boolean("sg_scale_out_done").default(false),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

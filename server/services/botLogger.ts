@@ -35,7 +35,14 @@ export type EventType =
   | "ORPHAN_POSITION_CLEANED"
   | "NONCE_ERROR"
   | "BALANCE_CHECK"
-  | "SYSTEM_ERROR";
+  | "SYSTEM_ERROR"
+  // SMART_GUARD events
+  | "SG_EMERGENCY_STOPLOSS"
+  | "SG_TP_FIXED"
+  | "SG_BREAKEVEN_ACTIVATED"
+  | "SG_TRAILING_ACTIVATED"
+  | "SG_STOP_HIT"
+  | "SG_SCALE_OUT";
 
 interface LogMeta {
   [key: string]: any;
