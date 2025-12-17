@@ -605,6 +605,9 @@ El bot de trading autónomo está activo.
       this.openPositions.clear();
       
       for (const pos of positions) {
+        const hasSnapshot = pos.configSnapshotJson && pos.entryMode;
+        const configSnapshot = hasSnapshot ? (pos.configSnapshotJson as ConfigSnapshot) : undefined;
+        
         this.openPositions.set(pos.pair, {
           amount: parseFloat(pos.amount),
           entryPrice: parseFloat(pos.entryPrice),
@@ -614,17 +617,23 @@ El bot de trading autónomo está activo.
           entrySignalTf: pos.entrySignalTf || "cycle",
           signalConfidence: pos.signalConfidence ? parseFloat(pos.signalConfidence) : undefined,
           signalReason: pos.signalReason || undefined,
+          entryMode: pos.entryMode || undefined,
+          configSnapshot,
         });
-        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf})`, "trading");
+        
+        const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : "[legacy: uses current config]";
+        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
       }
       
       if (positions.length > 0) {
         log(`${positions.length} posiciones abiertas cargadas desde la base de datos`, "trading");
         if (this.telegramService.isInitialized()) {
           const escapeMarkdown = (text: string) => text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
-          const positionsList = positions.map(p => 
-            `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)} (${escapeMarkdown(p.entryStrategyId || '')})`
-          ).join("\n");
+          const positionsList = positions.map(p => {
+            const hasSnap = p.configSnapshotJson && p.entryMode;
+            const snapLabel = hasSnap ? `📸${escapeMarkdown(p.entryMode || '')}` : `⚙️legacy`;
+            return `• ${p.pair}: ${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)} (${snapLabel})`;
+          }).join("\n");
           await this.telegramService.sendMessage(`📂 *Posiciones Abiertas*\n\n${positionsList}`);
         }
       }
@@ -644,6 +653,8 @@ El bot de trading autónomo está activo.
         entrySignalTf: position.entrySignalTf,
         signalConfidence: position.signalConfidence?.toString(),
         signalReason: position.signalReason,
+        entryMode: position.entryMode,
+        configSnapshotJson: position.configSnapshot,
       });
     } catch (error: any) {
       log(`Error guardando posición ${pair}: ${error.message}`, "trading");
@@ -808,42 +819,64 @@ El bot de trading autónomo está activo.
         await this.updatePositionHighestPrice(pair, currentPrice);
       }
 
+      // Use snapshot params if available (new positions), else use current config (legacy)
+      let effectiveSL: number;
+      let effectiveTP: number;
+      let effectiveTrailingEnabled: boolean;
+      let effectiveTrailingPct: number;
+      let paramsSource: string;
+
+      if (position.configSnapshot) {
+        effectiveSL = position.configSnapshot.stopLossPercent;
+        effectiveTP = position.configSnapshot.takeProfitPercent;
+        effectiveTrailingEnabled = position.configSnapshot.trailingStopEnabled;
+        effectiveTrailingPct = position.configSnapshot.trailingStopPercent;
+        paramsSource = `snapshot (${position.entryMode})`;
+      } else {
+        effectiveSL = stopLossPercent;
+        effectiveTP = takeProfitPercent;
+        effectiveTrailingEnabled = trailingStopEnabled;
+        effectiveTrailingPct = trailingStopPercent;
+        paramsSource = "current config (legacy)";
+      }
+
       let shouldSell = false;
       let reason = "";
       let emoji = "";
 
-      if (priceChange <= -stopLossPercent) {
+      if (priceChange <= -effectiveSL) {
         shouldSell = true;
-        reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${stopLossPercent}%)`;
+        reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${effectiveSL}%) [${paramsSource}]`;
         emoji = "🛑";
-        // MEJORA 4: Cooldown post stop-loss
         this.setStopLossCooldown(pair);
         await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
           pair,
           entryPrice: position.entryPrice,
           currentPrice,
           priceChange,
-          stopLossPercent,
+          stopLossPercent: effectiveSL,
+          paramsSource,
           cooldownMinutes: POST_STOPLOSS_COOLDOWN_MS / 60000,
         });
       }
-      else if (priceChange >= takeProfitPercent) {
+      else if (priceChange >= effectiveTP) {
         shouldSell = true;
-        reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${takeProfitPercent}%)`;
+        reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${effectiveTP}%) [${paramsSource}]`;
         emoji = "🎯";
         await botLogger.info("TAKE_PROFIT_HIT", `Take-Profit alcanzado en ${pair}`, {
           pair,
           entryPrice: position.entryPrice,
           currentPrice,
           priceChange,
-          takeProfitPercent,
+          takeProfitPercent: effectiveTP,
+          paramsSource,
         });
       }
-      else if (trailingStopEnabled && position.highestPrice > position.entryPrice) {
+      else if (effectiveTrailingEnabled && position.highestPrice > position.entryPrice) {
         const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
-        if (dropFromHigh >= trailingStopPercent && priceChange > 0) {
+        if (dropFromHigh >= effectiveTrailingPct && priceChange > 0) {
           shouldSell = true;
-          reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)})`;
+          reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)}) [${paramsSource}]`;
           emoji = "📉";
           await botLogger.info("TRAILING_STOP_HIT", `Trailing Stop activado en ${pair}`, {
             pair,
@@ -851,7 +884,8 @@ El bot de trading autónomo está activo.
             highestPrice: position.highestPrice,
             currentPrice,
             dropFromHigh,
-            trailingStopPercent,
+            trailingStopPercent: effectiveTrailingPct,
+            paramsSource,
           });
         }
       }
@@ -2124,6 +2158,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const signalConfidence = strategyMeta?.confidence;
         
         if (existing && existing.amount > 0) {
+          // DCA: preserve original snapshot and mode
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
           newPosition = { 
@@ -2136,9 +2171,23 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             signalConfidence: existing.signalConfidence,
             signalReason: existing.signalReason,
             aiSampleId: existing.aiSampleId,
+            entryMode: existing.entryMode,
+            configSnapshot: existing.configSnapshot,
           };
           this.openPositions.set(pair, newPosition);
+          log(`DCA entry: ${pair} - preserved snapshot from original entry`, "trading");
         } else {
+          // NEW POSITION: create snapshot of current config
+          const currentConfig = await storage.getBotConfig();
+          const configSnapshot: ConfigSnapshot = {
+            stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+            takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+            trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+            trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+            positionMode: currentConfig?.positionMode || "SINGLE",
+          };
+          const entryMode = currentConfig?.positionMode || "SINGLE";
+          
           newPosition = { 
             amount: volumeNum, 
             entryPrice: price,
@@ -2148,8 +2197,11 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             entrySignalTf,
             signalConfidence,
             signalReason: reason,
+            entryMode,
+            configSnapshot,
           };
           this.openPositions.set(pair, newPosition);
+          log(`NEW POSITION: ${pair} - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
         }
         
         // AI Sample collection: save features for ALL buy entries (not just new positions)
