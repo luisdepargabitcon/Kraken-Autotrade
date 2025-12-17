@@ -132,6 +132,20 @@ export async function registerRoutes(
     }
   });
 
+  // === DIAGNÓSTICO DEL SCAN ===
+  app.get("/api/scan/diagnostic", async (req, res) => {
+    try {
+      if (!tradingEngine) {
+        return res.status(503).json({ error: "Motor de trading no inicializado" });
+      }
+      const diagnostic = await tradingEngine.getScanDiagnostic();
+      res.json(diagnostic);
+    } catch (error: any) {
+      console.error("[scan/diagnostic] Error:", error.message);
+      res.status(500).json({ error: "Error obteniendo diagnóstico del scan" });
+    }
+  });
+
   app.post("/api/config/kraken", async (req, res) => {
     try {
       const { apiKey, apiSecret } = req.body;

@@ -63,6 +63,9 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
   low: { min: 0.6, factor: 0.5 },     // 50% del monto
 };
 
+// SMART_GUARD: umbral absoluto mínimo para evitar comisiones absurdas
+const SG_ABSOLUTE_MIN_USD = 20;
+
 interface ConfigSnapshot {
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -220,6 +223,67 @@ export class TradingEngine {
       maxTotalAvailable,
       maxAllowed: Math.min(maxPairAvailable, maxTotalAvailable)
     };
+  }
+
+  // === SMART_GUARD: Obtener parámetros con overrides por par ===
+  private getSmartGuardParams(pair: string, config: any): {
+    sgMinEntryUsd: number;
+    sgAllowUnderMin: boolean;
+    sgBeAtPct: number;
+    sgFeeCushionPct: number;
+    sgFeeCushionAuto: boolean;
+    sgTrailStartPct: number;
+    sgTrailDistancePct: number;
+    sgTrailStepPct: number;
+    sgTpFixedEnabled: boolean;
+    sgTpFixedPct: number;
+    sgScaleOutEnabled: boolean;
+    sgScaleOutPct: number;
+    sgMinPartUsd: number;
+    sgScaleOutThreshold: number;
+  } {
+    // Valores base de config global
+    const base = {
+      sgMinEntryUsd: parseFloat(config?.sgMinEntryUsd?.toString() || "100"),
+      sgAllowUnderMin: config?.sgAllowUnderMin ?? true,
+      sgBeAtPct: parseFloat(config?.sgBeAtPct?.toString() || "1.5"),
+      sgFeeCushionPct: parseFloat(config?.sgFeeCushionPct?.toString() || "0.45"),
+      sgFeeCushionAuto: config?.sgFeeCushionAuto ?? true,
+      sgTrailStartPct: parseFloat(config?.sgTrailStartPct?.toString() || "2"),
+      sgTrailDistancePct: parseFloat(config?.sgTrailDistancePct?.toString() || "1.5"),
+      sgTrailStepPct: parseFloat(config?.sgTrailStepPct?.toString() || "0.25"),
+      sgTpFixedEnabled: config?.sgTpFixedEnabled ?? false,
+      sgTpFixedPct: parseFloat(config?.sgTpFixedPct?.toString() || "10"),
+      sgScaleOutEnabled: config?.sgScaleOutEnabled ?? false,
+      sgScaleOutPct: parseFloat(config?.sgScaleOutPct?.toString() || "35"),
+      sgMinPartUsd: parseFloat(config?.sgMinPartUsd?.toString() || "50"),
+      sgScaleOutThreshold: parseFloat(config?.sgScaleOutThreshold?.toString() || "80"),
+    };
+
+    // Aplicar overrides por par si existen
+    const overrides = config?.sgPairOverrides?.[pair];
+    if (overrides) {
+      const merged = { ...base };
+      // Floats
+      if (overrides.sgMinEntryUsd !== undefined) merged.sgMinEntryUsd = parseFloat(overrides.sgMinEntryUsd.toString());
+      if (overrides.sgBeAtPct !== undefined) merged.sgBeAtPct = parseFloat(overrides.sgBeAtPct.toString());
+      if (overrides.sgFeeCushionPct !== undefined) merged.sgFeeCushionPct = parseFloat(overrides.sgFeeCushionPct.toString());
+      if (overrides.sgTrailStartPct !== undefined) merged.sgTrailStartPct = parseFloat(overrides.sgTrailStartPct.toString());
+      if (overrides.sgTrailDistancePct !== undefined) merged.sgTrailDistancePct = parseFloat(overrides.sgTrailDistancePct.toString());
+      if (overrides.sgTrailStepPct !== undefined) merged.sgTrailStepPct = parseFloat(overrides.sgTrailStepPct.toString());
+      if (overrides.sgTpFixedPct !== undefined) merged.sgTpFixedPct = parseFloat(overrides.sgTpFixedPct.toString());
+      if (overrides.sgMinPartUsd !== undefined) merged.sgMinPartUsd = parseFloat(overrides.sgMinPartUsd.toString());
+      if (overrides.sgScaleOutPct !== undefined) merged.sgScaleOutPct = parseFloat(overrides.sgScaleOutPct.toString());
+      if (overrides.sgScaleOutThreshold !== undefined) merged.sgScaleOutThreshold = parseFloat(overrides.sgScaleOutThreshold.toString());
+      // Booleans
+      if (overrides.sgAllowUnderMin !== undefined) merged.sgAllowUnderMin = !!overrides.sgAllowUnderMin;
+      if (overrides.sgFeeCushionAuto !== undefined) merged.sgFeeCushionAuto = !!overrides.sgFeeCushionAuto;
+      if (overrides.sgTpFixedEnabled !== undefined) merged.sgTpFixedEnabled = !!overrides.sgTpFixedEnabled;
+      if (overrides.sgScaleOutEnabled !== undefined) merged.sgScaleOutEnabled = !!overrides.sgScaleOutEnabled;
+      return merged;
+    }
+
+    return base;
   }
 
   private isPairInCooldown(pair: string): boolean {
@@ -1300,15 +1364,15 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
           return;
         }
 
-        // MODO SINGLE: Bloquear compras si ya hay posición abierta
+        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
-          log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo SINGLE con posición abierta`, {
+        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && existingPosition && existingPosition.amount > 0) {
+          log(`${pair}: Compra bloqueada - Modo ${positionMode} activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo ${positionMode} con posición abierta`, {
             pair,
             signal: "BUY",
-            reason: "SINGLE_MODE_POSITION_EXISTS",
+            reason: positionMode === "SMART_GUARD" ? "SMART_GUARD_POSITION_EXISTS" : "SINGLE_MODE_POSITION_EXISTS",
             existingAmount: existingPosition.amount,
             signalReason: signal.reason,
           });
@@ -1377,44 +1441,107 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // Verificar que el take-profit sea rentable después de comisiones
-        const profitCheck = this.isProfitableAfterFees(takeProfitPct);
-        if (!profitCheck.isProfitable) {
-          log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
-          
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
-            pair,
-            signal: "BUY",
-            reason: "LOW_PROFITABILITY",
-            takeProfitPct,
-            roundTripFees: profitCheck.roundTripFees,
-            minProfitRequired: profitCheck.minProfitRequired,
-            netExpectedProfit: profitCheck.netExpectedProfit,
-          });
-          
-          return;
-        }
+        // === SMART_GUARD: Sizing específico con validación de entrada mínima ===
+        let tradeAmountUSD: number;
+        let wasAdjusted = false;
+        let originalAmount: number;
         
-        let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
-        tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
+        if (positionMode === "SMART_GUARD") {
+          const sgParams = this.getSmartGuardParams(pair, botConfig);
+          const sgMinEntryUsd = sgParams.sgMinEntryUsd;
+          const sgAllowUnderMin = sgParams.sgAllowUnderMin;
+          
+          // SMART_GUARD usa el disponible directamente (sin exposure limits)
+          const availableForTrade = freshUsdBalance * 0.95; // 95% para dejar margen
+          
+          if (availableForTrade < sgMinEntryUsd) {
+            // No llega al mínimo configurado
+            if (sgAllowUnderMin && availableForTrade >= SG_ABSOLUTE_MIN_USD) {
+              // Permitir entrada reducida si hay al menos $20
+              tradeAmountUSD = availableForTrade;
+              wasAdjusted = true;
+              originalAmount = sgMinEntryUsd;
+              log(`SMART_GUARD ${pair}: Entrada reducida — usando $${availableForTrade.toFixed(2)} disponibles (mínimo configurado $${sgMinEntryUsd.toFixed(2)})`, "trading");
+              await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada reducida por saldo`, {
+                pair,
+                signal: "BUY",
+                reason: "SG_REDUCED_ENTRY",
+                availableUsd: availableForTrade,
+                minEntryUsd: sgMinEntryUsd,
+                absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+              });
+            } else {
+              // NO comprar - no llega ni al mínimo absoluto
+              log(`SMART_GUARD ${pair}: No entro — mínimo por operación $${sgMinEntryUsd.toFixed(2)}, disponible $${availableForTrade.toFixed(2)}`, "trading");
+              this.lastScanResults.set(pair, {
+                signal: "BUY",
+                reason: "SG_MIN_ENTRY_NOT_MET",
+                exposureAvailable: availableForTrade,
+              });
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD no entra - mínimo no alcanzado`, {
+                pair,
+                signal: "BUY",
+                reason: "SG_MIN_ENTRY_NOT_MET",
+                availableUsd: availableForTrade,
+                minEntryUsd: sgMinEntryUsd,
+                absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+                allowUnderMin: sgAllowUnderMin,
+              });
+              return;
+            }
+          } else {
+            // Disponible >= mínimo: usar el mínimo configurado
+            tradeAmountUSD = sgMinEntryUsd;
+            originalAmount = tradeAmountUSD;
+            log(`SMART_GUARD ${pair}: Entrada por $${tradeAmountUSD.toFixed(2)} (mínimo configurado, disponible $${availableForTrade.toFixed(2)})`, "trading");
+          }
+        } else {
+          // Modos SINGLE/DCA: lógica original con exposure limits
+          
+          // Verificar que el take-profit sea rentable después de comisiones
+          const profitCheck = this.isProfitableAfterFees(takeProfitPct);
+          if (!profitCheck.isProfitable) {
+            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
+            
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
+              pair,
+              signal: "BUY",
+              reason: "LOW_PROFITABILITY",
+              takeProfitPct,
+              roundTripFees: profitCheck.roundTripFees,
+              minProfitRequired: profitCheck.minProfitRequired,
+              netExpectedProfit: profitCheck.netExpectedProfit,
+            });
+            
+            return;
+          }
+          
+          tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
+          tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
 
-        // MEJORA 3: Position sizing dinámico basado en confianza
-        const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
-        const originalBeforeConfidence = tradeAmountUSD;
-        tradeAmountUSD = tradeAmountUSD * confidenceFactor;
-        
-        if (confidenceFactor < 1.0) {
-          log(`${pair}: Sizing ajustado por confianza (${(signal.confidence * 100).toFixed(0)}%): $${originalBeforeConfidence.toFixed(2)} -> $${tradeAmountUSD.toFixed(2)} (${(confidenceFactor * 100).toFixed(0)}%)`, "trading");
-        }
+          // MEJORA 3: Position sizing dinámico basado en confianza
+          const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
+          const originalBeforeConfidence = tradeAmountUSD;
+          tradeAmountUSD = tradeAmountUSD * confidenceFactor;
+          
+          if (confidenceFactor < 1.0) {
+            log(`${pair}: Sizing ajustado por confianza (${(signal.confidence * 100).toFixed(0)}%): $${originalBeforeConfidence.toFixed(2)} -> $${tradeAmountUSD.toFixed(2)} (${(confidenceFactor * 100).toFixed(0)}%)`, "trading");
+          }
 
-        if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
-          const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
-          tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
+          if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
+            const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
+            tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
+          }
+          
+          originalAmount = tradeAmountUSD;
         }
 
         const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
         const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
-        const effectiveMaxAllowed = Math.min(exposure.maxAllowed, maxByBalance);
+        // SMART_GUARD no aplica límites de exposición (ya validó el mínimo arriba)
+        const effectiveMaxAllowed = positionMode === "SMART_GUARD" 
+          ? maxByBalance 
+          : Math.min(exposure.maxAllowed, maxByBalance);
         
         if (effectiveMaxAllowed < minRequiredUSD) {
           log(`${pair}: Sin exposición disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, Mínimo: $${minRequiredUSD.toFixed(2)}`, "trading");
@@ -1450,10 +1577,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        let wasAdjusted = false;
-        let originalAmount = tradeAmountUSD;
-        
-        if (tradeAmountUSD > effectiveMaxAllowed) {
+        // Ajustar por límite de exposición (solo para SINGLE/DCA, SMART_GUARD ya validó arriba)
+        if (positionMode !== "SMART_GUARD" && tradeAmountUSD > effectiveMaxAllowed) {
           originalAmount = tradeAmountUSD;
           tradeAmountUSD = effectiveMaxAllowed;
           wasAdjusted = true;
@@ -1468,6 +1593,24 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             maxTotalAvailable: exposure.maxTotalAvailable,
             riskPerTradePct,
           });
+        }
+
+        // SMART_GUARD: Validación final de mínimo absoluto $20 para cualquier trade
+        if (positionMode === "SMART_GUARD" && tradeAmountUSD < SG_ABSOLUTE_MIN_USD) {
+          log(`SMART_GUARD ${pair}: Trade bloqueado - monto final $${tradeAmountUSD.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
+          this.lastScanResults.set(pair, {
+            signal: "BUY",
+            reason: "SG_ABSOLUTE_MIN_NOT_MET",
+            exposureAvailable: tradeAmountUSD,
+          });
+          await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto no alcanzado`, {
+            pair,
+            signal: "BUY",
+            reason: "SG_ABSOLUTE_MIN_NOT_MET",
+            tradeAmountUsd: tradeAmountUSD,
+            absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+          });
+          return;
         }
 
         const tradeVolume = tradeAmountUSD / currentPrice;
@@ -1592,15 +1735,15 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        // MODO SINGLE: Bloquear compras si ya hay posición abierta
+        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        if (positionMode === "SINGLE" && existingPosition && existingPosition.amount > 0) {
-          log(`${pair}: Compra bloqueada - Modo SINGLE activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo SINGLE con posición abierta`, {
+        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && existingPosition && existingPosition.amount > 0) {
+          log(`${pair}: Compra bloqueada - Modo ${positionMode} activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo ${positionMode} con posición abierta`, {
             pair,
             signal: "BUY",
-            reason: "SINGLE_MODE_POSITION_EXISTS",
+            reason: positionMode === "SMART_GUARD" ? "SMART_GUARD_POSITION_EXISTS" : "SINGLE_MODE_POSITION_EXISTS",
             existingAmount: existingPosition.amount,
             signalReason: signal.reason,
           });
@@ -2707,5 +2850,87 @@ _KrakenBot.AI_
 
   getOpenPositions(): Map<string, { amount: number; entryPrice: number }> {
     return this.openPositions;
+  }
+
+  // === DIAGNÓSTICO: Obtener resultados del scan con razones en español ===
+  async getScanDiagnostic(): Promise<{
+    pairs: Array<{
+      pair: string;
+      signal: string;
+      razon: string;
+      cooldownSec?: number;
+      exposureAvailable?: number;
+      hasPosition: boolean;
+      positionUsd?: number;
+    }>;
+    positionMode: string;
+    usdBalance: number;
+    totalOpenPositions: number;
+    lastScanAt: string | null;
+  }> {
+    const config = await storage.getBotConfig();
+    const positionMode = config?.positionMode || "SINGLE";
+    
+    // Mapeo de razones a español
+    const reasonTranslations: Record<string, string> = {
+      "PAIR_COOLDOWN": "Par en cooldown - esperando reintentos",
+      "SINGLE_MODE_POSITION_EXISTS": "Modo SINGLE - ya hay posición abierta",
+      "SMART_GUARD_POSITION_EXISTS": "Modo SMART_GUARD - ya hay posición abierta",
+      "STOPLOSS_COOLDOWN": "Cooldown post stop-loss activo",
+      "SPREAD_TOO_HIGH": "Spread demasiado alto para operar",
+      "POSITION_TOO_LARGE": "Posición existente demasiado grande",
+      "INSUFFICIENT_FUNDS": "Fondos USD insuficientes",
+      "LOW_PROFITABILITY": "Take-profit menor que comisiones",
+      "EXPOSURE_ZERO": "Sin exposición disponible",
+      "VOLUME_BELOW_MINIMUM": "Volumen calculado < mínimo Kraken",
+      "SG_MIN_ENTRY_NOT_MET": "SMART_GUARD - mínimo de entrada no alcanzado",
+      "SG_REDUCED_ENTRY": "SMART_GUARD - entrada reducida por saldo bajo",
+      "SG_ABSOLUTE_MIN_NOT_MET": "SMART_GUARD - monto < $20 mínimo absoluto",
+      "NO_POSITION": "Sin posición para vender",
+      "AI_FILTER_REJECTED": "Señal rechazada por filtro IA",
+      "Sin señal": "Sin señal de trading activa",
+    };
+
+    const pairs: Array<{
+      pair: string;
+      signal: string;
+      razon: string;
+      cooldownSec?: number;
+      exposureAvailable?: number;
+      hasPosition: boolean;
+      positionUsd?: number;
+    }> = [];
+
+    this.lastScanResults.forEach((result, pair) => {
+      const position = this.openPositions.get(pair);
+      const hasPosition = !!(position && position.amount > 0);
+      
+      // Traducir la razón
+      let razon = result.reason;
+      for (const [key, value] of Object.entries(reasonTranslations)) {
+        if (razon.includes(key) || razon === key) {
+          razon = value;
+          break;
+        }
+      }
+
+      pairs.push({
+        pair,
+        signal: result.signal,
+        razon,
+        cooldownSec: result.cooldownSec,
+        exposureAvailable: result.exposureAvailable,
+        hasPosition,
+        positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+      });
+    });
+
+    return {
+      pairs,
+      positionMode,
+      usdBalance: this.currentUsdBalance,
+      totalOpenPositions: this.openPositions.size,
+      lastScanAt: this.lastScanTime > 0 ? new Date(this.lastScanTime).toISOString() : null,
+    };
   }
 }

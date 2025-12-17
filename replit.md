@@ -43,6 +43,18 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Position Persistence**: Open positions are stored in the database.
 - **Configuration Snapshot**: New positions store a snapshot of trading parameters at entry.
 
+### SMART_GUARD Mode
+- **Purpose**: Intelligent capital protection with strict entry validation.
+- **Entry Validation**: Minimum entry USD per trade (sgMinEntryUsd), $20 absolute minimum threshold.
+- **Reduced Entry**: If sgAllowUnderMin=true and available >= $20, allows entry with available balance.
+- **Break-Even Protection**: Moves stop-loss to entry price + fees when profit reaches sgBeAtPct.
+- **Trailing Stop**: Activates at sgTrailStartPct profit, follows at sgTrailDistancePct, updates at sgTrailStepPct steps.
+- **Fixed Take-Profit**: Optional sgTpFixedPct for guaranteed profit capture.
+- **Scale-Out**: Optional partial profit taking at sgScaleOutPct before fixed TP.
+- **Per-Pair Overrides**: sgPairOverrides allows customizing parameters per trading pair.
+- **Sizing**: Uses available balance directly (ignores exposure limits) with sgMinEntryUsd as target.
+- **Diagnostic Endpoint**: GET /api/scan/diagnostic provides scan results with Spanish reasons.
+
 ### AI Filter Module
 - **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
 - **Phases**: Red (data collection), Yellow (ready to train), Green (filter active).
