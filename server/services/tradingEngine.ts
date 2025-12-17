@@ -63,6 +63,14 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
   low: { min: 0.6, factor: 0.5 },     // 50% del monto
 };
 
+interface ConfigSnapshot {
+  stopLossPercent: number;
+  takeProfitPercent: number;
+  trailingStopEnabled: boolean;
+  trailingStopPercent: number;
+  positionMode: string;
+}
+
 interface OpenPosition {
   amount: number;
   entryPrice: number;
@@ -73,6 +81,8 @@ interface OpenPosition {
   signalConfidence?: number;
   signalReason?: string;
   aiSampleId?: number;
+  entryMode?: string;
+  configSnapshot?: ConfigSnapshot;
 }
 
 interface CandleTrackingState {

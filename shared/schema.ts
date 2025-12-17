@@ -106,6 +106,8 @@ export const openPositions = pgTable("open_positions", {
   entrySignalTf: text("entry_signal_tf").notNull().default("cycle"),
   signalConfidence: decimal("signal_confidence", { precision: 5, scale: 2 }),
   signalReason: text("signal_reason"),
+  entryMode: text("entry_mode"),
+  configSnapshotJson: jsonb("config_snapshot_json"),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
