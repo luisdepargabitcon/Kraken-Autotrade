@@ -1,0 +1,121 @@
+OBJETIVO
+Añadir un 3er modo en “Modo de posición” llamado: SMART_GUARD
+(va en el MISMO desplegable que SINGLE y DCA, porque define cómo se gestionan entradas/salidas por par).
+
+========================
+1) UI (lenguaje claro)
+========================
+En Ajustes → Modo de posición (dropdown):
+- SINGLE
+- DCA
+- SMART_GUARD  → “Entrada mínima + protección de comisiones + stop que se ajusta a favor”
+
+Cuando el usuario elige SMART_GUARD, mostrar esta sección de ajustes (SIN tecnicismos):
+
+A) Tamaño de entrada (por operación)
+- “Importe mínimo por operación (USD)”               [default: 100]
+- “Importe máximo por operación (USD)”               [default: 500]
+- “Si no hay mínimo disponible, usar lo disponible”  [default: ON]
+- “(Opcional) Ignorar límites internos de tamaño/exposición del modo actual” [default: OFF]
+  Texto ayuda: “Si está ON, este modo calcula el importe por su cuenta (mínimo/máximo)”.
+
+B) Protección para no perder (incluye comisiones)
+- “Activar protección de comisiones”                 [default: ON]
+- “Activar cuando la ganancia llegue a ( % )”         [default: 2.0]
+- “Cubrir comisiones automáticamente (si es posible)” [default: ON]
+- “Margen extra si no se puede calcular ( % )”        [default: 0.45]
+
+C) Stop que se ajusta a favor (sube cuando el precio sube)
+- “Activar stop que se ajusta a favor”               [default: ON]
+- “Empezar a ajustarlo a partir de ( % )”            [default: 3.2]
+- “Dejar una distancia de seguridad ( % )”           [default: 2.0]
+- “Ajustar en pasos de ( % )”                        [default: 0.2]
+- “No bajar nunca el stop (solo mejora)”             [default: ON]
+
+D) Venta rápida por objetivo (opcional)
+- “Vender todo al llegar a ( % )”                    [default: OFF]
+- “Objetivo de venta total ( % )”                    [default: 5.5]
+  Nota UI: “Si esto está ON, puede cerrar antes que el stop ajustable.”
+
+E) Vender en 2 partes (solo si merece mucho la pena)
+- “Permitir vender en 2 partes”                      [default: OFF]
+- “Solo si la oportunidad es excepcional”            [default: ON]
+- “No vender partes pequeñas (USD mínimo por parte)” [default: 80]
+- “Venta 1: cerrar ( % ) al llegar a ( % )”          [default: 35% a 4.5%]
+- “Venta 2 (opcional): cerrar ( % ) al llegar a ( % )” [default: OFF, 25% a 6.5%]
+  Nota UI: “Menos ventas = menos comisiones. Por defecto OFF.”
+
+F) Ajustes por par (valores recomendados, editables)
+Mostrar una tabla por par con:
+- “Stop inicial ( % )”
+- “Activar protección de comisiones a ( % )”
+- “Empezar stop ajustable a ( % )”
+- “Distancia de seguridad ( % )”
+- “Paso ( % )”
+
+========================
+2) Config interna (código) — NOMBRES TÉCNICOS SOLO AQUÍ
+========================
+Renombrar prefijo BOT1_ → SG_ (SMART_GUARD)
+
+# MODE
+POSITION_MODE="SMART_GUARD"
+
+# ENTRADA (USD)
+SG_MIN_ENTRY_USD=100
+SG_HARD_MAX_ENTRY_USD=500
+SG_USE_AVAILABLE_IF_BELOW_MIN=true
+SG_OPTIONAL_IGNORE_EXISTING_SIZE_AND_EXPOSURE=false
+
+# PROTECCIÓN DE COMISIONES (break-even)
+SG_PROTECT_FEES_ENABLED=true
+SG_PROTECT_FEES_AT_PCT_DEFAULT=2.0
+SG_PROTECT_FEES_AUTO_CUSHION=true
+SG_FEE_CUSHION_FALLBACK_PCT=0.45
+
+# STOP AJUSTABLE A FAVOR (trailing)
+SG_FOLLOW_STOP_ENABLED=true
+SG_FOLLOW_START_PCT_DEFAULT=3.2
+SG_FOLLOW_DISTANCE_PCT_DEFAULT=2.0
+SG_FOLLOW_STEP_PCT_DEFAULT=0.2
+SG_STOP_ONLY_IMPROVES=true
+
+# OBJETIVO DE VENTA TOTAL (TP fijo) — por defecto OFF
+SG_SELL_ALL_AT_TARGET_ENABLED=false
+SG_SELL_ALL_TARGET_PCT=5.5
+
+# VENDER EN 2 PARTES — por defecto OFF
+SG_TWO_STEP_EXIT_ENABLED=false
+SG_TWO_STEP_EXIT_ONLY_IF_EXCEPTIONAL=true
+SG_TWO_STEP_MIN_PART_USD=80
+SG_STEP1_TARGET_PCT=4.5
+SG_STEP1_SELL_PCT=35
+SG_STEP2_ENABLED=false
+SG_STEP2_TARGET_PCT=6.5
+SG_STEP2_SELL_PCT=25
+
+========================
+3) Defaults “óptimos” por par (volatilidad) — editables en UI
+========================
+SG_PAIR_OVERRIDES = {
+  "BTC/USD": { "INITIAL_SL_PCT": 3.0, "PROTECT_FEES_AT_PCT": 1.7, "FOLLOW_START_PCT": 2.7, "FOLLOW_DISTANCE_PCT": 1.4, "FOLLOW_STEP_PCT": 0.2 },
+  "ETH/USD": { "INITIAL_SL_PCT": 3.4, "PROTECT_FEES_AT_PCT": 1.9, "FOLLOW_START_PCT": 2.9, "FOLLOW_DISTANCE_PCT": 1.7, "FOLLOW_STEP_PCT": 0.2 },
+  "SOL/USD": { "INITIAL_SL_PCT": 4.2, "PROTECT_FEES_AT_PCT": 2.2, "FOLLOW_START_PCT": 3.5, "FOLLOW_DISTANCE_PCT": 2.2, "FOLLOW_STEP_PCT": 0.2 },
+  "XRP/USD": { "INITIAL_SL_PCT": 4.8, "PROTECT_FEES_AT_PCT": 2.4, "FOLLOW_START_PCT": 3.9, "FOLLOW_DISTANCE_PCT": 2.6, "FOLLOW_STEP_PCT": 0.2 },
+  "TON/USD": { "INITIAL_SL_PCT": 5.2, "PROTECT_FEES_AT_PCT": 2.6, "FOLLOW_START_PCT": 4.2, "FOLLOW_DISTANCE_PCT": 3.0, "FOLLOW_STEP_PCT": 0.2 }
+}
+
+========================
+4) Reglas de funcionamiento (para que lo implemente Replit)
+========================
+- Sigue siendo “una compra / una venta” por par (compatible con SINGLE por par).
+- Entrada:
+  - Si USD disponible >= SG_MIN_ENTRY_USD → usar al menos SG_MIN_ENTRY_USD (sin pasar SG_HARD_MAX_ENTRY_USD).
+  - Si USD disponible < SG_MIN_ENTRY_USD y SG_USE_AVAILABLE_IF_BELOW_MIN=true → entrar con lo disponible.
+- Salida:
+  1) Si SG_SELL_ALL_AT_TARGET_ENABLED=true y toca el % objetivo → vende todo (cierre inmediato).
+  2) Si SG_TWO_STEP_EXIT_ENABLED=true y “excepcional” → vende una parte en STEP1; el resto lo gestiona el stop ajustable.
+  3) Si no, el stop ajustable se encarga de la salida.
+- “No bajar nunca el stop” (SG_STOP_ONLY_IMPROVES=true): solo se mueve a favor para proteger ganancias (evita retroceder y “darle aire” al precio en contra).
+
+LISTO PARA REPLIT: implementar SMART_GUARD en el dropdown “Modo de posición” + sección de ajustes con textos claros (UI) y estas claves internas (SG_*).
