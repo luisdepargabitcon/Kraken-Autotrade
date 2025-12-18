@@ -1448,52 +1448,76 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         
         if (positionMode === "SMART_GUARD") {
           const sgParams = this.getSmartGuardParams(pair, botConfig);
-          const sgMinEntryUsd = sgParams.sgMinEntryUsd;
-          const sgAllowUnderMin = sgParams.sgAllowUnderMin;
+          const sgMinEntryUsd = sgParams.sgMinEntryUsd;  // minOperacionUsd
+          const sgAllowUnderMin = sgParams.sgAllowUnderMin;  // permitirMenor
           
-          // SMART_GUARD usa el disponible directamente (sin exposure limits)
-          const availableForTrade = freshUsdBalance * 0.95; // 95% para dejar margen
+          // usdDisponible = saldo real disponible
+          const usdDisponible = freshUsdBalance * 0.95; // 95% para dejar margen
           
-          if (availableForTrade < sgMinEntryUsd) {
-            // No llega al mínimo configurado
-            if (sgAllowUnderMin && availableForTrade >= SG_ABSOLUTE_MIN_USD) {
-              // Permitir entrada reducida si hay al menos $20
-              tradeAmountUSD = availableForTrade;
+          // orderUsd = tamaño de la orden (en SMART_GUARD = min(usdDisponible, sgMinEntryUsd))
+          let orderUsd = Math.min(usdDisponible, sgMinEntryUsd);
+          
+          // === REGLA PRINCIPAL SMART_GUARD (según documento) ===
+          
+          if (usdDisponible >= sgMinEntryUsd) {
+            // CASO A: Hay saldo suficiente para cumplir el mínimo por operación
+            if (orderUsd >= sgMinEntryUsd) {
+              // A.1: orderUsd >= min -> PERMITIR ENTRADA
+              tradeAmountUSD = sgMinEntryUsd;
+              originalAmount = tradeAmountUSD;
+              log(`SMART_GUARD ${pair}: Entrada por $${tradeAmountUSD.toFixed(2)} (mínimo configurado, disponible $${usdDisponible.toFixed(2)})`, "trading");
+            } else {
+              // A.2: orderUsd < min (por límites/redondeos/confianza)
+              if (sgAllowUnderMin) {
+                // Permitir entrada reducida
+                tradeAmountUSD = orderUsd;
+                wasAdjusted = true;
+                originalAmount = sgMinEntryUsd;
+                log(`SMART_GUARD ${pair}: Entrada reducida permitida — $${tradeAmountUSD.toFixed(2)} (mínimo $${sgMinEntryUsd.toFixed(2)}, permitirMenor=ON)`, "trading");
+                await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada reducida (permitirMenor ON)`, {
+                  pair, signal: "BUY", reason: "SG_REDUCED_ENTRY",
+                  orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible,
+                });
+              } else {
+                // BLOQUEAR - tiene saldo pero orderUsd < min y no permite menores
+                log(`SMART_GUARD ${pair}: No entro — mínimo $${sgMinEntryUsd.toFixed(2)}, tamaño calculado $${orderUsd.toFixed(2)}, permitirMenor=OFF`, "trading");
+                this.lastScanResults.set(pair, {
+                  signal: "BUY", reason: "SG_MIN_ENTRY_NOT_MET", exposureAvailable: orderUsd,
+                });
+                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo no alcanzado (tiene saldo)`, {
+                  pair, signal: "BUY", reason: "SG_MIN_ENTRY_NOT_MET",
+                  orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible, allowUnderMin: sgAllowUnderMin,
+                });
+                return;
+              }
+            }
+          } else {
+            // CASO B: NO hay saldo suficiente para cumplir el mínimo por operación
+            // Ignorar el mínimo por operación, solo validar mínimo absoluto
+            orderUsd = usdDisponible; // usar todo el disponible
+            
+            if (orderUsd >= SG_ABSOLUTE_MIN_USD) {
+              // B.1: Permitir entrada con lo disponible
+              tradeAmountUSD = orderUsd;
               wasAdjusted = true;
               originalAmount = sgMinEntryUsd;
-              log(`SMART_GUARD ${pair}: Entrada reducida — usando $${availableForTrade.toFixed(2)} disponibles (mínimo configurado $${sgMinEntryUsd.toFixed(2)})`, "trading");
-              await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada reducida por saldo`, {
-                pair,
-                signal: "BUY",
-                reason: "SG_REDUCED_ENTRY",
-                availableUsd: availableForTrade,
-                minEntryUsd: sgMinEntryUsd,
-                absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+              log(`SMART_GUARD ${pair}: Saldo < mínimo — entro con $${tradeAmountUSD.toFixed(2)} disponibles (>= $${SG_ABSOLUTE_MIN_USD} mínimo absoluto)`, "trading");
+              await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada con saldo disponible (< min operación)`, {
+                pair, signal: "BUY", reason: "SG_REDUCED_ENTRY",
+                orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible, absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
               });
             } else {
-              // NO comprar - no llega ni al mínimo absoluto
-              log(`SMART_GUARD ${pair}: No entro — mínimo por operación $${sgMinEntryUsd.toFixed(2)}, disponible $${availableForTrade.toFixed(2)}`, "trading");
+              // B.2: BLOQUEAR - por debajo del mínimo absoluto
+              log(`SMART_GUARD ${pair}: No entro — disponible $${orderUsd.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
               this.lastScanResults.set(pair, {
-                signal: "BUY",
-                reason: "SG_MIN_ENTRY_NOT_MET",
-                exposureAvailable: availableForTrade,
+                signal: "BUY", reason: "SG_ABSOLUTE_MIN_NOT_MET", exposureAvailable: orderUsd,
               });
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD no entra - mínimo no alcanzado`, {
-                pair,
-                signal: "BUY",
-                reason: "SG_MIN_ENTRY_NOT_MET",
-                availableUsd: availableForTrade,
-                minEntryUsd: sgMinEntryUsd,
-                absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
-                allowUnderMin: sgAllowUnderMin,
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - por debajo mínimo absoluto`, {
+                pair, signal: "BUY", reason: "SG_ABSOLUTE_MIN_NOT_MET",
+                orderUsd, absoluteMinUsd: SG_ABSOLUTE_MIN_USD, usdDisponible,
               });
               return;
             }
-          } else {
-            // Disponible >= mínimo: usar el mínimo configurado
-            tradeAmountUSD = sgMinEntryUsd;
-            originalAmount = tradeAmountUSD;
-            log(`SMART_GUARD ${pair}: Entrada por $${tradeAmountUSD.toFixed(2)} (mínimo configurado, disponible $${availableForTrade.toFixed(2)})`, "trading");
           }
         } else {
           // Modos SINGLE/DCA: lógica original con exposure limits
@@ -2872,21 +2896,21 @@ _KrakenBot.AI_
     const config = await storage.getBotConfig();
     const positionMode = config?.positionMode || "SINGLE";
     
-    // Mapeo de razones a español
+    // Mapeo de razones a español (según documento SMART_GUARD)
     const reasonTranslations: Record<string, string> = {
-      "PAIR_COOLDOWN": "Par en cooldown - esperando reintentos",
-      "SINGLE_MODE_POSITION_EXISTS": "Modo SINGLE - ya hay posición abierta",
-      "SMART_GUARD_POSITION_EXISTS": "Modo SMART_GUARD - ya hay posición abierta",
-      "STOPLOSS_COOLDOWN": "Cooldown post stop-loss activo",
+      "PAIR_COOLDOWN": "En enfriamiento - esperando reintentos",
+      "SINGLE_MODE_POSITION_EXISTS": "Ya hay posición abierta en este par",
+      "SMART_GUARD_POSITION_EXISTS": "Ya hay posición abierta en este par",
+      "STOPLOSS_COOLDOWN": "Enfriamiento post stop-loss activo",
       "SPREAD_TOO_HIGH": "Spread demasiado alto para operar",
       "POSITION_TOO_LARGE": "Posición existente demasiado grande",
       "INSUFFICIENT_FUNDS": "Fondos USD insuficientes",
       "LOW_PROFITABILITY": "Take-profit menor que comisiones",
       "EXPOSURE_ZERO": "Sin exposición disponible",
       "VOLUME_BELOW_MINIMUM": "Volumen calculado < mínimo Kraken",
-      "SG_MIN_ENTRY_NOT_MET": "SMART_GUARD - mínimo de entrada no alcanzado",
-      "SG_REDUCED_ENTRY": "SMART_GUARD - entrada reducida por saldo bajo",
-      "SG_ABSOLUTE_MIN_NOT_MET": "SMART_GUARD - monto < $20 mínimo absoluto",
+      "SG_MIN_ENTRY_NOT_MET": "Mínimo por operación no alcanzado (tiene saldo, pero tamaño quedó por debajo)",
+      "SG_REDUCED_ENTRY": "Saldo por debajo del mínimo — entro con lo disponible",
+      "SG_ABSOLUTE_MIN_NOT_MET": "Por debajo del mínimo absoluto — no compensa por comisiones",
       "NO_POSITION": "Sin posición para vender",
       "AI_FILTER_REJECTED": "Señal rechazada por filtro IA",
       "Sin señal": "Sin señal de trading activa",
