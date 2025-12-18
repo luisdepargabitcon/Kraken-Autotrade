@@ -52,9 +52,12 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Trailing Stop**: Activates at sgTrailStartPct profit, follows at sgTrailDistancePct, updates at sgTrailStepPct steps.
 - **Fixed Take-Profit**: Optional sgTpFixedPct for guaranteed profit capture.
 - **Scale-Out**: Optional partial profit taking at sgScaleOutPct before fixed TP.
-- **Per-Pair Overrides**: sgPairOverrides allows customizing parameters per trading pair.
+- **Per-Pair Overrides**: sgPairOverrides allows customizing parameters per trading pair via API and UI.
 - **Sizing**: Uses available balance directly (ignores exposure limits) with sgMinEntryUsd as target.
 - **Diagnostic Endpoint**: GET /api/scan/diagnostic provides scan results with Spanish reasons.
+- **Telegram Alerts**: Notifications for key events (Break-Even activation, Trailing Stop activation/updates, Scale-Out execution) with 5-min throttle on trailing updates.
+- **Override API**: GET/PUT/DELETE /api/config/sg-overrides/:pair for managing per-pair parameters.
+- **Event Types**: SG_BREAK_EVEN_ACTIVATED, SG_TRAILING_ACTIVATED, SG_TRAILING_STOP_UPDATED, SG_SCALE_OUT_EXECUTED, CONFIG_OVERRIDE_UPDATED.
 
 ### Environment Safety
 - **DRY_RUN Mode**: Prevents real orders from being sent to exchange.
