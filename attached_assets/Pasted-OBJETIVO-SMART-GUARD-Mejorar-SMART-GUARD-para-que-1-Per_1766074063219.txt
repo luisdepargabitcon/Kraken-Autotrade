@@ -1,0 +1,165 @@
+OBJETIVO (SMART_GUARD)
+Mejorar SMART_GUARD para que:
+1) Permita hasta 2 posiciones/lotes abiertos por PAR (solo pares USD) EXCLUSIVAMENTE en SMART_GUARD.
+2) Cada posición abierta muestre y persista el modo con el que se abrió (openedMode) para auditoría.
+3) Aclare y aplique correctamente los mínimos:
+   - mínimo configurable por orden (ej. 100 USD)
+   - mínimo absoluto del exchange (ej. 20 USD)
+4) Añadir botón en UI para cerrar una posición manualmente (market), con trazabilidad, sin contaminar el entrenamiento por defecto.
+5) (NUEVO) En la pestaña “Estrategia”, añadir un selector/interruptores para el “Modo de posición” (SINGLE / DCA / SMART_GUARD) y que quede claro cuál está activo y cómo afecta al comportamiento.
+
+ANTES DE IMPLEMENTAR (OBLIGATORIO)
+- Confirmar en repo:
+  - dónde se decide el modo por par (SMART_GUARD/SINGLE/DCA)
+  - dónde se calcula orderUsdProposed/orderUsdFinal
+  - dónde se aplican validaciones de mínimo (final antes de executeTrade y antes de DRY_RUN)
+  - dónde se persisten posiciones/operaciones y training_trades
+- No duplicar lógica; extender lo existente.
+
+H) (NUEVO) UI “MODO DE POSICIÓN” EN PESTAÑA ESTRATEGIA (SINGLE / DCA / SMART_GUARD)
+1) UI
+- En la pestaña Estrategia añadir un bloque “Modo de posición” con:
+  - Opción A (recomendada): Radio/Segmented control con 3 opciones:
+    - SINGLE | DCA | SMART_GUARD
+  - (Alternativa) Interruptores, pero deben ser mutuamente excluyentes (solo uno activo).
+- Mostrar explicación breve bajo el selector:
+  - SINGLE: 1 posición por par, sin escalado.
+  - DCA: permite añadir (según reglas actuales).
+  - SMART_GUARD: reglas Smart Guard (mínimos, slots, bloqueo por posición, etc.)
+- Mostrar “Activo ahora: <modo>” de forma visible.
+
+2) Persistencia
+- Guardar el modo activo en DB (bot_config o tabla equivalente) como:
+  - positionMode = "SINGLE" | "DCA" | "SMART_GUARD"
+- Si el sistema ya guarda estrategia por par, respetarlo; si es global, aplicarlo globalmente.
+- Exponerlo en /api/config y en cualquier endpoint de diagnóstico relevante.
+
+3) Consistencia operativa (sin romper posiciones abiertas)
+- Cambiar el modo en UI afecta a nuevas entradas a partir del siguiente tick.
+- Las posiciones ya abiertas deben seguir mostrando openedMode con el que se abrieron (auditoría).
+- No ejecutar conversiones automáticas ni cierres forzados al cambiar de modo.
+
+4) Protección y claridad
+- Si el usuario activa SMART_GUARD:
+  - habilitar sgMaxOpenLotsPerPair y permitir 2 slots SOLO en este modo.
+- Si el usuario activa SINGLE o DCA:
+  - deshabilitar 2 slots (sgMaxOpenLotsPerPair no aplica) y mantener el comportamiento actual.
+- Registrar evento de config:
+  - CONFIG_CHANGED con meta { oldMode, newMode, env, instanceId, user }
+
+5) Validación UI/API
+- Al cambiar el modo, el estado en UI debe actualizarse y /api/config debe reflejarlo.
+- Añadir en UI un aviso si está en REPLIT/DEV (DRY_RUN):
+  - “Entorno DEV: operaciones simuladas”.
+
+A) 2 POSICIONES/L0TES SOLO EN SMART_GUARD (SLOTS)
+1) Nuevo parámetro en config:
+   - sgMaxOpenLotsPerPair (default 1; permitir 2)
+   - Este parámetro SOLO se respeta si strategy/mode del par es SMART_GUARD.
+   - En SINGLE/DCA: mantener comportamiento actual (no habilitar 2 slots).
+
+2) Regla:
+   - openLotsCount(pair) >= sgMaxOpenLotsPerPair => bloquear nueva BUY:
+     - type: TRADE_SKIPPED
+     - reason: SMART_GUARD_MAX_LOTS_REACHED
+     - message: "Señal BUY ignorada: máximo de posiciones abiertas alcanzado en este par"
+     - meta: { pair, openLotsCount, maxLots, env, instanceId }
+
+B) OWNERSHIP / openedMode EN POSICIONES ABIERTAS
+1) Persistir en cada posición/lote:
+   - strategy="SMART_GUARD"
+   - openedMode="SMART_GUARD" (y mantener el campo para auditoría futura)
+   - lotId, entryTxid/orderId, entryTs, entryQty, entryPrice, entryFeeUsd
+   - remainingQty
+   - status OPEN/CLOSED
+
+2) Mostrar en UI (Posiciones abiertas):
+   - "Modo apertura: SMART_GUARD"
+   - y Lote 1 / Lote 2 (si aplica)
+   - qty restante, entry, PnL realizado (si hay parciales), tiempo abierto
+
+3) Eventos/logs deben incluir siempre:
+   - pair, strategy, openedMode, lotId, env, instanceId
+
+C) MINIMOS: SEPARAR Y APLICAR DOS MINIMOS (CLARIDAD TOTAL)
+Definir claramente:
+1) Mínimo configurable por orden (SMART_GUARD)
+- sgMinEntryUsd (ej. 100)
+- sgAllowUnderMin (toggle)
+Semántica: "mínimo NOTIONAL por orden"
+Validación FINAL y única fuente de verdad, justo antes de executeTrade y también antes de simular en DRY_RUN:
+- if strategy==SMART_GUARD && !sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd:
+    -> TRADE_SKIPPED reason=MIN_ORDER_USD
+    -> message: "Señal BUY ignorada: el total de la orden es menor que el mínimo configurado"
+    -> meta: usdDisponible, orderUsdProposed, orderUsdFinal, sgMinEntryUsd, sgAllowUnderMin, pair, lotId
+
+2) Mínimo absoluto (exchange)
+- absoluteMinOrderUsd (ej. 20) (configurable si queréis)
+Semántica: "mínimo técnico del exchange"
+- if orderUsdFinal < absoluteMinOrderUsd:
+    -> TRADE_SKIPPED reason=MIN_ORDER_ABSOLUTE
+    -> message: "Señal BUY ignorada: el total de la orden es menor que el mínimo absoluto del exchange"
+    -> meta: orderUsdFinal, absoluteMinOrderUsd, pair, lotId
+
+IMPORTANTE:
+- No reutilizar sgMinEntryUsd como “tamaño objetivo de orden”.
+- Si existe “target stake”, separarlo como sgTargetEntryUsd para evitar ambigüedad.
+- Asegurar que MIN_ORDER_USD se evalúa con orderUsdFinal REAL (tras caps, rounding, step size).
+
+D) CIERRE FIFO POR LOTES (para que "compro X, vendo X" sea cierto)
+- Cuando haya SELL, cerrar lotes FIFO del mismo pair:
+  - consumir remainingQty del lote OPEN más antiguo
+  - soportar cierres parciales
+  - al cerrar lote => status=CLOSED, calcular pnlNetUsd, holdTime y generar training_trade (si es automático)
+
+E) BOTÓN “CERRAR POSICIÓN” MANUAL EN UI (MARKET)
+1) UI:
+- En cada posición/lote OPEN: botón “Cerrar posición” (market) y opcional “Cerrar parcial”.
+- Confirmación: modal con resumen (pair, qty, estimación).
+
+2) Backend:
+- Endpoint: POST /api/positions/close
+  body: { pair, lotId, mode:"MARKET", qty? }
+- Reglas:
+  - Solo permitir orden real si TRADING_ENABLED=true y dryRun=false (NAS/PROD).
+  - En REPLIT/DEV o dryRun=true: simular cierre y loguear con prefijo [REPLIT/DEV][DRY_RUN].
+
+3) Trazabilidad:
+- Registrar evento:
+  - POSITION_CLOSE_REQUESTED (manual)
+  - POSITION_CLOSED_MANUAL (si ejecuta) o POSITION_CLOSE_SIMULATED (si DRY_RUN)
+- Incluir meta: { pair, lotId, qty, manual:true, env, instanceId }
+
+4) IA / Recolección:
+- Las operaciones manuales DEBEN quedar registradas, pero el training_trade generado debe marcarse:
+  - source="MANUAL_UI" o isManual=true
+- Por defecto, EXCLUIR manuales del entrenamiento del modelo (para no contaminar).
+- Mantener visible en diagnostic cuántas muestras manuales hay (contador separado).
+
+F) TELEGRAM / ENTORNO
+- Todos los mensajes desde Replit deben llevar prefijo:
+  - [REPLIT/DEV][DRY_RUN]
+- En NAS opcional:
+  - [NAS/PROD]
+- No enviar Telegram de “operación ejecutada” cuando sea SKIP por mínimos o por maxLots.
+
+G) VALIDACIÓN (OBLIGATORIA)
+Probar (con evidencia en /api/events):
+1) SMART_GUARD con sgMaxOpenLotsPerPair=2:
+   - 2 BUY permitidas (si pasan mínimos/riesgo)
+   - 3ª BUY => TRADE_SKIPPED SMART_GUARD_MAX_LOTS_REACHED
+2) Mínimo:
+   - orderUsdFinal < 100 y sgAllowUnderMin=false => TRADE_SKIPPED MIN_ORDER_USD
+3) Mínimo absoluto:
+   - orderUsdFinal < 20 => TRADE_SKIPPED MIN_ORDER_ABSOLUTE
+4) Manual close:
+   - Cerrar un lote con el botón => evento manual + actualización de posición + sin contaminar training (manual marcado y excluido del entrenamiento por defecto)
+5) (NUEVO) Cambio de modo en UI:
+   - Cambiar SINGLE/DCA/SMART_GUARD y comprobar /api/config + evento CONFIG_CHANGED + UI “Activo ahora”.
+
+CRITERIO DE ACEPTACIÓN
+- En SMART_GUARD, nunca se ejecuta/simula una BUY < sgMinEntryUsd si allowUnderMin=false.
+- Las 2 posiciones por par solo existen en SMART_GUARD.
+- Las posiciones abiertas muestran openedMode y lotId.
+- El cierre manual funciona, queda trazado y no entrena el modelo por defecto.
+- El selector de “Modo de posición” funciona, es excluyente y refleja el modo real en backend.
