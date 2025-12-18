@@ -1,0 +1,36 @@
+PROBLEMA
+Hay inconsistencia: Telegram muestra “Operación Automática Ejecutada” (BUY ETH/USD con ID), pero en el monitor de eventos existe TRADE_SKIPPED a la misma hora: “Señal BUY ignorada - modo SMART_GUARD con posición abierta (SMART_GUARD_POSITION_EXISTS)”. Además, esa supuesta compra no aparece en el panel de posiciones abiertas.
+
+OBJETIVO
+Encontrar la causa raíz y dejar trazabilidad: por qué se envía el mensaje de Telegram si el motor registra SKIPPED, y por qué no aparece como posición.
+
+TAREAS OBLIGATORIAS
+1) Correlación por timestamp y “order id”
+- Localiza el punto exacto donde se genera el mensaje Telegram “Operación Automática Ejecutada”.
+- Identifica qué evento lo dispara: ¿TRADE_EXECUTED? ¿ORDER_SUBMITTED? ¿SIGNAL_ACCEPTED? ¿otra cosa?
+- Comprueba si se envía incluso cuando el motor decide SKIP.
+
+2) Verificación real contra el exchange / DB (sin suposiciones)
+- Buscar en la base de datos (trades/operations/ordenes) el ID de la operación que salió en Telegram.
+- Determinar estado real: filled/partial/canceled/rejected/no record.
+- Si no existe registro o está canceled/rejected => Telegram está notificando demasiado pronto o con evento incorrecto.
+
+3) Revisar Smart Guard enforcement
+- Confirmar en el código que la condición SMART_GUARD_POSITION_EXISTS corta la ejecución antes de “placeOrder”.
+- Verificar que NO existe una segunda ruta que llame a placeOrder ignorando Smart Guard.
+- Añadir logging (botLogger) en castellano en 3 puntos:
+  a) antes de evaluar Smart Guard (posición detectada)
+  b) justo antes de enviar orden al exchange (con decision=EXECUTE/SKIP)
+  c) tras respuesta del exchange (accepted/filled/canceled/rejected)
+
+4) Concurrencia / doble instancia
+- Revisar si el loop de trading puede solaparse (async sin lock) y provocar race.
+- Confirmar que solo hay 1 instancia del bot corriendo en NAS (si hay 2 contenedores/procesos, documentarlo como causa).
+
+ENTREGABLE
+- Causa raíz con archivo+función+línea.
+- Evidencia: logs correlacionados y estado real de la orden.
+- Propuesta de fix (pero no aplicar hasta confirmar):
+  - Telegram debe enviarse SOLO en ORDER_FILLED (o en ORDER_ACCEPTED con mensaje distinto “Orden enviada”, y luego “Orden ejecutada” al fill).
+  - Añadir eventos ORDER_SUBMITTED / ORDER_ACK / ORDER_FILLED / ORDER_CANCELED / ORDER_REJECTED.
+  - Añadir un correlationId en todos los eventos y en Telegram.
