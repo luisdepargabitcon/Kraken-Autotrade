@@ -151,6 +151,8 @@ class EventsWebSocketServer {
     type: string;
     message: string;
     meta?: any;
+    env?: string;
+    instanceId?: string;
   }): void {
     const message: WsMessage = {
       type: "BOT_EVENT",
