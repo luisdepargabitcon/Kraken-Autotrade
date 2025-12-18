@@ -1,0 +1,59 @@
+SÍ. PRUEBA ESTAS FUNCIONALIDADES ESPECÍFICAS (SMART_GUARD + overrides por par + alertas):
+
+0) PRECONDICIÓN (entorno)
+- En REPLIT/DEV: dryRun=true (simulado) y Telegram con prefijo [REPLIT/DEV][DRY_RUN]
+- En NAS/PROD: dryRun=false (real) y prefijo [NAS/PROD] (si está activado)
+
+1) ALERTAS TELEGRAM: Break-Even / Trailing / Scale-Out (sin spam)
+Objetivo: verificar que se notifican activaciones y updates clave, pero sin repetirse.
+- Forzar un escenario (o usar /api/test/signal en DEV) para que:
+  A) Break-Even se active (profit >= sgBeAtPct) => 1 evento + 1 Telegram:
+     - evento: SG_BREAK_EVEN_ACTIVATED (o equivalente)
+     - meta debe incluir: pair, lotId, entryPrice, currentPrice, stopPriceNuevo, profitPct, env, instanceId
+  B) Trailing se active (profit >= sgTrailStartPct) => 1 evento + 1 Telegram:
+     - evento: SG_TRAILING_ACTIVATED
+  C) Trailing actualice stop (solo si mejora y cumple sgTrailStepPct) => evento + Telegram con throttle:
+     - evento: SG_TRAILING_STOP_UPDATED
+     - verificar que NO manda mensajes si no mejora el stop
+  D) Scale-Out se ejecute => 1 evento + 1 Telegram:
+     - evento: SG_SCALE_OUT_EXECUTED
+     - meta con qty vendida, total USD, threshold, sgMinPartUsd, env, instanceId
+- Confirmar “anti-spam”:
+  - no repetir BE/TRAIL “activado” si ya está activado
+  - los updates de trailing no spamean (throttle)
+
+2) API + UI: Overrides por par (13 parámetros)
+Objetivo: asegurar que editar overrides desde UI cambia el config efectivo solo para ese par y queda reflejado en configSnapshot.
+Pasos:
+A) En UI, editar override para ETH/USD (ej: sgMinEntryUsd=120 o sgTrailDistancePct ajustado).
+B) Guardar y comprobar:
+   - GET /api/config (o /api/config/sg-overrides) muestra el override para ETH/USD
+   - Los demás pares mantienen valores globales
+C) Abrir una nueva posición/lote en ETH/USD (en DEV con DRY_RUN):
+   - Verificar que open_position.configSnapshotJson contiene el override aplicado
+D) Reset del override (borrar):
+   - Confirmar que vuelve a global y queda auditado en eventos:
+     - CONFIG_OVERRIDE_UPDATED / CONFIG_OVERRIDE_DELETED con {pair, changedKeys, env, instanceId}
+
+3) MULTI-LOT (2 slots): coherencia de límites
+Objetivo: confirmar que con sgMaxOpenLotsPerPair=2:
+- Se permiten 2 BUY en el mismo par (si pasan mínimos/riesgo)
+- La 3ª BUY => TRADE_SKIPPED reason=SMART_GUARD_MAX_LOTS_REACHED
+- La UI muestra slots X/Y correctamente (sin drift)
+Evidencia:
+- pegar 1 evento PROCEED para L1, 1 para L2, y 1 SKIP para el tercero con meta.
+
+4) MÍNIMOS: MIN_ORDER_USD vs MIN_ORDER_ABSOLUTE (mensajes correctos)
+Objetivo: validar que los dos mínimos se diferencian y dan razón correcta.
+Casos:
+A) orderUsdFinal < sgMinEntryUsd con allowUnderMin=false => SKIP MIN_ORDER_USD
+B) orderUsdFinal < SG_ABSOLUTE_MIN_USD (20) => SKIP MIN_ORDER_ABSOLUTE
+Evidencia:
+- 2 eventos TRADE_SKIPPED con meta: orderUsdFinal, sgMinEntryUsd, allowUnderMin, absoluteMin, pair, lotId
+
+5) REPORTE FINAL
+- Devolverme 6 evidencias:
+  - 4 capturas/pegas de eventos (BE, TRAIL_ACTIVATED, TRAIL_STOP_UPDATED, SCALE_OUT)
+  - 1 evidencia overrides (GET + configSnapshotJson de una posición nueva)
+  - 1 evidencia multi-lot (L1, L2, SKIP 3º)
+y 2 ejemplos de Telegram (1 activación y 1 trailing update) con prefijo de entorno.
