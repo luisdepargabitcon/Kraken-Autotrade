@@ -1,0 +1,64 @@
+SMART_GUARD — BLOQUE COMPLETO (REGLAS DE ENTRADA + LÓGICA CLARA)
+
+OBJETIVO
+- Evitar operaciones demasiado pequeñas cuando hay saldo suficiente.
+- Si NO hay saldo suficiente para el “mínimo por operación”, permitir operar con lo disponible,
+  pero nunca por debajo de un mínimo absoluto (para que las comisiones no se coman el trade).
+- “Permitir entradas menores” SOLO debe afectar cuando SÍ hay saldo suficiente para cumplir el mínimo,
+  pero el tamaño final calculado queda por debajo por límites/riesgo/redondeos.
+
+DEFINICIONES
+- minOperacionUsd = “Mínimo por operación (USD)” (ej: 100)
+- minAbsolutoUsd  = “Mínimo absoluto (USD)” (ej: 20)  [puede ser fijo o configurable]
+- usdDisponible   = balance USD disponible real (freshUsdBalance)
+- orderUsd        = tamaño FINAL de la orden en USD (después de margen, redondeos, límites, etc.)
+- permitirMenor   = toggle UI “Permitir entradas menores” (ON/OFF)
+
+REGLA PRINCIPAL (ENTRADAS SMART_GUARD)
+1) Calcular orderUsd de forma normal para SMART_GUARD (ej: orderUsd = usdDisponible * 0.95 o lo que aplique)
+   Nota: la validación siempre se hace contra orderUsd FINAL, no contra usdDisponible.
+
+2) Si usdDisponible >= minOperacionUsd (hay saldo suficiente para cumplir el mínimo):
+   2.1) Si orderUsd >= minOperacionUsd:
+        -> PERMITIR ENTRADA
+   2.2) Si orderUsd < minOperacionUsd:
+        -> Si permitirMenor = ON:
+              PERMITIR ENTRADA con orderUsd (entrada reducida)
+              Registrar motivo informativo: “Entrada reducida (por límites), pero permitida”
+           Si permitirMenor = OFF:
+              BLOQUEAR ENTRADA
+              Motivo diagnóstico: “Mínimo por operación no alcanzado”
+              Mensaje claro: “No entro — mínimo 100 USD, tamaño calculado 49 USD”
+
+3) Si usdDisponible < minOperacionUsd (NO hay saldo suficiente para cumplir el mínimo):
+   -> Ignorar el mínimo por operación (no tiene sentido bloquear si no existe ese saldo)
+   3.1) Si orderUsd >= minAbsolutoUsd:
+        PERMITIR ENTRADA con lo disponible (orderUsd)
+        Motivo informativo: “Saldo < mínimo por operación — entro con lo disponible”
+   3.2) Si orderUsd < minAbsolutoUsd:
+        BLOQUEAR ENTRADA
+        Motivo diagnóstico: “Por debajo del mínimo absoluto”
+        Mensaje claro: “No entro — disponible 18 USD < mínimo absoluto 20 USD”
+
+IMPORTANTE (PARA EVITAR BUGS)
+- “Permitir entradas menores” NO debe bloquear el caso usdDisponible < minOperacionUsd.
+  En ese caso la regla es: entra con lo disponible si supera el mínimo absoluto.
+- El log y el diagnóstico deben reflejar exactamente qué regla se aplicó.
+- Validar siempre el orderUsd FINAL (post-margen/post-redondeo/post-límites), porque es el importe real ejecutado.
+
+SALIDA ESPERADA EN DIAGNÓSTICO (EN CASTELLANO)
+Motivos posibles (humanos):
+- “Señal en espera”
+- “Ya hay posición abierta en este par”
+- “En enfriamiento (X min restantes)”
+- “Fuera de horario de trading”
+- “Límite diario alcanzado”
+- “Mínimo por operación no alcanzado (tienes saldo suficiente, pero el tamaño quedó por debajo)”
+- “Saldo por debajo del mínimo — entro con lo disponible (si supera el mínimo absoluto)”
+- “Por debajo del mínimo absoluto — no compensa por comisiones”
+
+CONFIGURACIÓN RECOMENDADA (DEFAULTS)
+- Mínimo por operación (minOperacionUsd): 100 USD
+- Mínimo absoluto (minAbsolutoUsd): 20 USD
+- Permitir entradas menores (permitirMenor): OFF por defecto
+  (porque si hay saldo suficiente, queremos evitar trades pequeños)

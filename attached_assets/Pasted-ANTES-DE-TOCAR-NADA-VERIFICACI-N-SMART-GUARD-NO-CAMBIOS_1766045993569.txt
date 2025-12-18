@@ -1,0 +1,41 @@
+ANTES DE TOCAR NADA — VERIFICACIÓN SMART_GUARD (NO CAMBIOS AÚN)
+
+Necesito que verifiques en el código si YA está implementada (y dónde) la lógica de entrada SMART_GUARD con estas reglas, para evitar conflictos y duplicados.
+
+OBJETIVO DE LA VERIFICACIÓN
+Confirmar si existe una validación que cumpla EXACTAMENTE esto:
+
+A) Si usdDisponible >= minOperacionUsd:
+   - Si orderUsd < minOperacionUsd:
+     - permitirMenor OFF  => BLOQUEAR
+     - permitirMenor ON   => PERMITIR
+
+B) Si usdDisponible < minOperacionUsd:
+   - Ignorar el mínimo por operación
+   - Permitir comprar con lo disponible si orderUsd >= minAbsolutoUsd
+   - Bloquear si orderUsd < minAbsolutoUsd
+
+C) “Permitir entradas menores” NO debe bloquear el caso B (cuando no hay saldo suficiente).
+   Solo aplica en el caso A (saldo suficiente pero tamaño final queda por debajo del mínimo).
+
+QUÉ QUIERO QUE ME DEVUELVAS (EVIDENCIA)
+1) Archivo(s) y función(es) exactas donde se calcula el tamaño de orden y se valida:
+   - ruta + nombre de función
+   - fragmento de código relevante (no todo el archivo, solo el bloque de validación)
+
+2) Confirmación de cuál variable se usa como:
+   - usdDisponible (freshUsdBalance u otra)
+   - orderUsd (tamaño final que realmente se manda a Kraken)
+   - minOperacionUsd (sgMinEntryUsd)
+   - permitirMenor (sgAllowUnderMin)
+   - minAbsolutoUsd (20 fijo o configurable)
+
+3) Casos de prueba rápidos (solo razonamiento, no ejecutar):
+   - Caso 1: usdDisponible=280, min=100, orderUsd=49, permitirMenor=OFF => ¿bloquea?
+   - Caso 2: usdDisponible=280, min=100, orderUsd=49, permitirMenor=ON  => ¿entra?
+   - Caso 3: usdDisponible=80,  min=100, orderUsd=76, permitirMenor=OFF => ¿entra (por “saldo < mínimo”)? 
+   - Caso 4: usdDisponible=18,  min=100, orderUsd=17, permitirMenor=ON/OFF => ¿bloquea por mínimo absoluto?
+
+IMPORTANTE
+- NO implementes cambios todavía.
+- Solo quiero verificación + ubicación exacta en el código + confirmación de que las reglas están alineadas.
