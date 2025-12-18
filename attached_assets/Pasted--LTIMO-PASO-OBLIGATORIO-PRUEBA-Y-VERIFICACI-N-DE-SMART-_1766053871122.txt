@@ -1,0 +1,47 @@
+ÚLTIMO PASO (OBLIGATORIO): PRUEBA Y VERIFICACIÓN DE SMART_GUARD EN REPLIT (DRY_RUN)
+
+OBJETIVO
+Probar en Replit (modo DRY_RUN) que SMART_GUARD funciona correctamente, especialmente en:
+- Mínimo por orden (sgMinEntryUsd=100) con “permitir menores” OFF
+- Bloqueo por posición abierta (SMART_GUARD_POSITION_EXISTS)
+- Logging trazable (orderUsdProposed/orderUsdFinal/min/allowUnderMin/decision/reason)
+- Telegram etiquetado como [REPLIT/DEV][DRY_RUN]
+
+CASOS DE PRUEBA OBLIGATORIOS (con evidencia en /api/events)
+1) Mínimo por orden (bloqueo)
+- Config: sgMinEntryUsd=100, sgAllowUnderMin=false
+- Condición: forzar un sizing <100 (p.ej. balance disponible bajo o stake pequeño)
+- Esperado:
+  - Evento TRADE_SKIPPED con reason=MIN_ORDER_USD
+  - meta incluye: usdDisponible, orderUsdProposed, orderUsdFinal, minOrderUsd=100, allowUnderMin=false, mode=SMART_GUARD
+  - NO se llama a Kraken (DRY_RUN) y NO se envía Telegram de “ejecutada” (solo opcional aviso de SKIP, con throttle)
+
+2) Permitir menores (permitido)
+- Config: sgMinEntryUsd=100, sgAllowUnderMin=true
+- Condición: orderUsdFinal <100
+- Esperado:
+  - decision=PROCEED
+  - Evento “simulado” (DRY_RUN) con orderUsdFinal real
+  - Telegram con prefijo [REPLIT/DEV][DRY_RUN]
+
+3) Posición abierta (bloqueo Smart Guard)
+- Config: SMART_GUARD activo y regla de “posición abierta” activa
+- Precondición: simular o establecer una posición abierta para el par (existingAmount>0)
+- Esperado:
+  - TRADE_SKIPPED con reason=SMART_GUARD_POSITION_EXISTS
+  - meta incluye: existingAmount y pair
+  - NO se genera orden ni Telegram de ejecución
+
+4) Caso positivo (>=100 y sin posición)
+- Config: sgMinEntryUsd=100, sgAllowUnderMin=false
+- Condición: orderUsdFinal >= 100 y no hay posición abierta
+- Esperado:
+  - decision=PROCEED
+  - En DRY_RUN: “Trade Simulado” con orderUsdFinal>=100
+  - Logs completos + Telegram [REPLIT/DEV][DRY_RUN]
+
+VALIDACIÓN (ENTREGABLE)
+- Proporciona para cada caso:
+  - 1 captura o extracto de /api/events (o IDs de eventos) mostrando el reason y meta completa
+  - Confirmación de que no se envían órdenes reales (DRY_RUN)
+  - Ejemplo de mensaje Telegram con prefijo de entorno

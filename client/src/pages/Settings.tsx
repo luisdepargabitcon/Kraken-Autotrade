@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
+import { EnvironmentBadge } from "@/components/dashboard/EnvironmentBadge";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -249,6 +250,8 @@ export default function Settings() {
         <Nav />
         
         <main className="flex-1 p-4 md:p-6 max-w-4xl mx-auto w-full space-y-6 md:space-y-8">
+          <EnvironmentBadge />
+          
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl md:text-3xl font-bold font-sans tracking-tight flex items-center gap-2 md:gap-3">

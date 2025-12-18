@@ -6,6 +6,7 @@ import { TradeLog } from "@/components/dashboard/TradeLog";
 import { ChartWidget } from "@/components/dashboard/ChartWidget";
 import { BotControl } from "@/components/dashboard/BotControl";
 import { EventsPanel } from "@/components/dashboard/EventsPanel";
+import { EnvironmentBadge } from "@/components/dashboard/EnvironmentBadge";
 import { AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
@@ -110,6 +111,10 @@ export default function Dashboard() {
       <div className="relative z-10 flex flex-col min-h-screen">
         <Nav />
         <Ticker />
+        
+        <div className="mx-4 md:mx-6 mt-4">
+          <EnvironmentBadge />
+        </div>
         
         {!data?.krakenConnected && !isLoading && (
           <div className="mx-4 md:mx-6 mt-4 p-3 md:p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">

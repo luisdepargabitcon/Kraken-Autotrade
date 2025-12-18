@@ -8,6 +8,7 @@ import { botLogger } from "./services/botLogger";
 import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
+import { environment } from "./services/environment";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -707,14 +708,19 @@ export async function registerRoutes(
         ? events.filter(e => e.level === level.toUpperCase())
         : events;
       
-      res.json(filtered.map(e => ({
-        id: e.id,
-        timestamp: e.timestamp,
-        level: e.level,
-        type: e.type,
-        message: e.message,
-        meta: e.meta ? JSON.parse(e.meta) : null,
-      })));
+      res.json(filtered.map(e => {
+        const meta = e.meta ? JSON.parse(e.meta) : null;
+        return {
+          id: e.id,
+          timestamp: e.timestamp,
+          level: e.level,
+          type: e.type,
+          message: e.message,
+          meta,
+          env: meta?.env || null,
+          instanceId: meta?.instanceId || null,
+        };
+      }));
     } catch (error: any) {
       console.error("[api/events] Error:", error.message);
       res.status(500).json({ error: "Failed to fetch events" });
@@ -734,7 +740,30 @@ export async function registerRoutes(
   app.get("/api/ai/diagnostic", async (req, res) => {
     try {
       const diagnostic = await aiService.getDiagnostic();
-      res.json(diagnostic);
+      const config = await storage.getBotConfig();
+      const dryRun = environment.isReplit || (config?.dryRunMode ?? false);
+      res.json({
+        ...diagnostic,
+        env: environment.envTag,
+        instanceId: environment.instanceId,
+        dryRun,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/environment", async (req, res) => {
+    try {
+      const config = await storage.getBotConfig();
+      const dryRun = environment.isReplit || (config?.dryRunMode ?? false);
+      res.json({
+        env: environment.envTag,
+        instanceId: environment.instanceId,
+        isReplit: environment.isReplit,
+        isNAS: environment.isNAS,
+        dryRun,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
