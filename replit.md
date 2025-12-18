@@ -46,6 +46,7 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 ### SMART_GUARD Mode
 - **Purpose**: Intelligent capital protection with strict entry validation.
 - **Entry Validation**: Minimum entry USD per trade (sgMinEntryUsd), $20 absolute minimum threshold.
+- **Final Order Validation**: Before executeTrade(), validates orderUsdFinal against sgMinEntryUsd. Blocks trade if below minimum and sgAllowUnderMin=false.
 - **Reduced Entry**: If sgAllowUnderMin=true and available >= $20, allows entry with available balance.
 - **Break-Even Protection**: Moves stop-loss to entry price + fees when profit reaches sgBeAtPct.
 - **Trailing Stop**: Activates at sgTrailStartPct profit, follows at sgTrailDistancePct, updates at sgTrailStepPct steps.
@@ -54,6 +55,13 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Per-Pair Overrides**: sgPairOverrides allows customizing parameters per trading pair.
 - **Sizing**: Uses available balance directly (ignores exposure limits) with sgMinEntryUsd as target.
 - **Diagnostic Endpoint**: GET /api/scan/diagnostic provides scan results with Spanish reasons.
+
+### Environment Safety
+- **DRY_RUN Mode**: Prevents real orders from being sent to exchange.
+- **Auto-Detection**: Replit environment (REPLIT_DEPLOYMENT, REPL_ID) forces DRY_RUN automatically.
+- **NAS Control**: On NAS, dryRunMode can be toggled via bot_config.
+- **Simulation**: In DRY_RUN, executeTrade() logs events and sends "[DRY_RUN] Trade Simulado" Telegram messages without touching Kraken.
+- **Production Safety**: NAS is the source of truth for production trading; Replit is development/testing only.
 
 ### AI Filter Module
 - **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
