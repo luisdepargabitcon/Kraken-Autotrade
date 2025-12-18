@@ -1,0 +1,60 @@
+APROBADO: implementar pendientes, con prioridad y alcance controlado.
+
+PRIORIDAD 1 (primero): Telegram alerts de activación (Break-Even / Trailing / Scale-Out)
+OBJETIVO
+Enviar mensajes Telegram cuando se ACTIVA o ACTUALIZA:
+- Break-Even (sgBreakEvenActivated pasa de false→true)
+- Trailing (sgTrailingActivated pasa de false→true) y cuando se actualiza el stop (sgCurrentStopPrice mejora)
+- Scale-Out (cuando se ejecuta el parcial, y marcar sgScaleOutDone)
+
+REGLAS
+1) No spam: throttle por (pair + lotId + tipo de alerta)
+   - Activación: solo 1 vez por evento (flag already true => no repetir)
+   - Updates stop: solo si mejora y supera sgTrailStepPct (ya existe) + no más de 1 msg cada X min (configurable)
+2) Formato consistente:
+   - prefijo env: [NAS/PROD] o [REPLIT/DEV][DRY_RUN]
+   - incluir pair, lote (lotId corto), acción, nuevo stop, trigger (%profit), motivo
+3) DRY_RUN: debe enviar mensaje marcado como [DRY_RUN] igual.
+4) Eventos en /api/events:
+   - Añadir tipos: SG_BREAK_EVEN_ACTIVATED, SG_TRAILING_ACTIVATED, SG_TRAILING_STOP_UPDATED, SG_SCALE_OUT_EXECUTED
+   - Incluir meta con: pair, lotId, entryPrice, currentPrice, stopPrice, profitPct, env, instanceId
+
+CRITERIO DE ACEPTACIÓN
+- Activar BE/trailing/scale-out genera 1 evento + 1 Telegram (sin repetición).
+- Update de stop genera mensaje solo cuando mejora y pasa el step + throttle.
+
+PRIORIDAD 2 (después): UI editor de overrides por par (sgPairOverrides)
+OBJETIVO
+Permitir editar overrides por par desde UI sin tocar DB a mano, con validación y vista previa.
+
+REQUISITOS UI
+1) Sección “Overrides por par” en Settings/Estrategia
+- Tabla de pares (BTC/USD, ETH/USD, etc.)
+- Botón “Editar” abre modal
+- Campos editables con inputs (números/boolean)
+- Botones: Guardar / Cancelar / Reset (borrar overrides del par)
+- Mostrar “efectivo” (global + override) en vista previa
+
+REQUISITOS BACKEND
+1) Endpoints:
+- GET /api/config/sg-overrides  -> devuelve overrides actuales + lista de pares
+- PUT /api/config/sg-overrides/:pair -> actualiza solo ese par
+- DELETE /api/config/sg-overrides/:pair -> elimina override del par
+2) Validación server-side:
+- rangos razonables (pct 0–100, usd >=0, etc.)
+- rechazar NaN y strings
+3) Audit log:
+- evento CONFIG_OVERRIDE_UPDATED con meta { pair, changedKeys, env, instanceId, user }
+
+SEGURIDAD
+- En REPLIT/DEV permitido, pero marcar en UI/Telegram/Events env e instanceId.
+- No exponer secretos.
+
+CRITERIO DE ACEPTACIÓN
+- Puedo editar 1 parámetro (ej sgMinEntryUsd) para ETH/USD, guardar, y al abrir una nueva posición se usa el override (configSnapshot lo refleja).
+- Reset elimina el override y vuelve a global.
+
+NO HACER TODAVÍA (scope control)
+- P&L parcial contable
+- DCA dentro de SMART_GUARD
+- Pyramid / Hedge

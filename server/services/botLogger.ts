@@ -42,8 +42,13 @@ export type EventType =
   | "SG_TP_FIXED"
   | "SG_BREAKEVEN_ACTIVATED"
   | "SG_TRAILING_ACTIVATED"
+  | "SG_TRAILING_STOP_UPDATED"
   | "SG_STOP_HIT"
   | "SG_SCALE_OUT"
+  | "SG_SCALE_OUT_EXECUTED"
+  | "SG_BREAK_EVEN_ACTIVATED"
+  // Config events
+  | "CONFIG_OVERRIDE_UPDATED"
   // DRY_RUN mode
   | "DRY_RUN_TRADE"
   // TEST endpoint events

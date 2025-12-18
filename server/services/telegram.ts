@@ -8,7 +8,7 @@ interface TelegramConfig {
   chatId: string;
 }
 
-type AlertType = "trades" | "errors" | "system" | "balance";
+type AlertType = "trades" | "errors" | "system" | "balance" | "status";
 
 type EngineController = {
   start: () => Promise<void>;

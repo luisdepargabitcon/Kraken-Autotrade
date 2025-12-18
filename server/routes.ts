@@ -201,6 +201,135 @@ export async function registerRoutes(
     }
   });
 
+  // === SMART_GUARD Per-Pair Overrides ===
+  const SG_OVERRIDE_SCHEMA = z.object({
+    sgMinEntryUsd: z.number().min(0).max(100000).optional(),
+    sgAllowUnderMin: z.boolean().optional(),
+    sgBeAtPct: z.number().min(0).max(100).optional(),
+    sgFeeCushionPct: z.number().min(0).max(10).optional(),
+    sgFeeCushionAuto: z.boolean().optional(),
+    sgTrailStartPct: z.number().min(0).max(100).optional(),
+    sgTrailDistancePct: z.number().min(0).max(50).optional(),
+    sgTrailStepPct: z.number().min(0).max(10).optional(),
+    sgTpFixedEnabled: z.boolean().optional(),
+    sgTpFixedPct: z.number().min(0).max(500).optional(),
+    sgScaleOutEnabled: z.boolean().optional(),
+    sgScaleOutPct: z.number().min(0).max(100).optional(),
+    sgMinPartUsd: z.number().min(0).max(10000).optional(),
+    sgScaleOutThreshold: z.number().min(0).max(100).optional(),
+  });
+
+  const TRADEABLE_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
+
+  app.get("/api/config/sg-overrides", async (req, res) => {
+    try {
+      const config = await storage.getBotConfig();
+      const overrides = (config?.sgPairOverrides as Record<string, unknown>) || {};
+      res.json({
+        pairs: TRADEABLE_PAIRS,
+        overrides,
+        global: {
+          sgMinEntryUsd: config?.sgMinEntryUsd,
+          sgAllowUnderMin: config?.sgAllowUnderMin,
+          sgBeAtPct: config?.sgBeAtPct,
+          sgFeeCushionPct: config?.sgFeeCushionPct,
+          sgFeeCushionAuto: config?.sgFeeCushionAuto,
+          sgTrailStartPct: config?.sgTrailStartPct,
+          sgTrailDistancePct: config?.sgTrailDistancePct,
+          sgTrailStepPct: config?.sgTrailStepPct,
+          sgTpFixedEnabled: config?.sgTpFixedEnabled,
+          sgTpFixedPct: config?.sgTpFixedPct,
+          sgScaleOutEnabled: config?.sgScaleOutEnabled,
+          sgScaleOutPct: config?.sgScaleOutPct,
+          sgMinPartUsd: config?.sgMinPartUsd,
+          sgScaleOutThreshold: config?.sgScaleOutThreshold,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get SG overrides" });
+    }
+  });
+
+  app.put("/api/config/sg-overrides/:pair", async (req, res) => {
+    try {
+      // Normalize pair: accept both BTC-USD and BTC/USD in URL
+      const pairRaw = decodeURIComponent(req.params.pair).replace(/-/g, "/");
+      if (!TRADEABLE_PAIRS.includes(pairRaw)) {
+        return res.status(400).json({ error: `Par inválido: ${pairRaw}` });
+      }
+
+      // Coerce string values to numbers where expected
+      const body = { ...req.body };
+      for (const key of Object.keys(body)) {
+        if (typeof body[key] === "string" && !["sgAllowUnderMin", "sgFeeCushionAuto", "sgTpFixedEnabled", "sgScaleOutEnabled"].includes(key)) {
+          const num = parseFloat(body[key]);
+          if (!isNaN(num)) body[key] = num;
+        }
+      }
+
+      const parsed = SG_OVERRIDE_SCHEMA.safeParse(body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+
+      const config = await storage.getBotConfig();
+      const currentOverrides = (config?.sgPairOverrides as Record<string, unknown>) || {};
+      const existingPair = (currentOverrides[pairRaw] as Record<string, unknown>) || {};
+      
+      // Merge with existing override for this pair
+      const newPairOverride = { ...existingPair, ...parsed.data };
+      const newOverrides = { ...currentOverrides, [pairRaw]: newPairOverride };
+
+      await storage.updateBotConfig({ sgPairOverrides: newOverrides });
+
+      // Log the change
+      const envInfo = environment.getInfo();
+      await botLogger.info("CONFIG_OVERRIDE_UPDATED", `Override actualizado para ${pairRaw}`, {
+        pair: pairRaw,
+        changedKeys: Object.keys(parsed.data),
+        env: envInfo.env,
+        instanceId: envInfo.instanceId,
+      });
+
+      res.json({ success: true, pair: pairRaw, override: newPairOverride });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update SG override" });
+    }
+  });
+
+  app.delete("/api/config/sg-overrides/:pair", async (req, res) => {
+    try {
+      // Normalize pair: accept both BTC-USD and BTC/USD in URL
+      const pairRaw = decodeURIComponent(req.params.pair).replace(/-/g, "/");
+      if (!TRADEABLE_PAIRS.includes(pairRaw)) {
+        return res.status(400).json({ error: `Par inválido: ${pairRaw}` });
+      }
+
+      const config = await storage.getBotConfig();
+      const currentOverrides = (config?.sgPairOverrides as Record<string, unknown>) || {};
+      
+      if (!(pairRaw in currentOverrides)) {
+        return res.status(404).json({ error: `No hay override para ${pairRaw}` });
+      }
+
+      const { [pairRaw]: removed, ...newOverrides } = currentOverrides;
+      await storage.updateBotConfig({ sgPairOverrides: newOverrides });
+
+      // Log the change
+      const envInfo = environment.getInfo();
+      await botLogger.info("CONFIG_OVERRIDE_UPDATED", `Override eliminado para ${pairRaw}`, {
+        pair: pairRaw,
+        changedKeys: ["DELETED"],
+        env: envInfo.env,
+        instanceId: envInfo.instanceId,
+      });
+
+      res.json({ success: true, pair: pairRaw, message: "Override eliminado" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete SG override" });
+    }
+  });
+
   app.post("/api/telegram/send", async (req, res) => {
     try {
       const { message } = req.body;

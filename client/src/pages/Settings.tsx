@@ -1208,10 +1208,16 @@ const OVERRIDE_FIELDS = [
   { key: "sgMinEntryUsd", label: "Mínimo entrada (USD)", type: "number" },
   { key: "sgAllowUnderMin", label: "Permitir bajo mínimo", type: "boolean" },
   { key: "sgBeAtPct", label: "Break-Even (%)", type: "number" },
+  { key: "sgFeeCushionPct", label: "Colchón comisiones (%)", type: "number" },
   { key: "sgTrailStartPct", label: "Trail inicio (%)", type: "number" },
   { key: "sgTrailDistancePct", label: "Trail distancia (%)", type: "number" },
+  { key: "sgTrailStepPct", label: "Trail paso (%)", type: "number" },
   { key: "sgTpFixedEnabled", label: "TP fijo habilitado", type: "boolean" },
   { key: "sgTpFixedPct", label: "TP fijo (%)", type: "number" },
+  { key: "sgScaleOutEnabled", label: "Scale-Out habilitado", type: "boolean" },
+  { key: "sgScaleOutPct", label: "Scale-Out (%)", type: "number" },
+  { key: "sgScaleOutThreshold", label: "Scale-Out confianza (%)", type: "number" },
+  { key: "sgMinPartUsd", label: "Mínimo parte (USD)", type: "number" },
 ];
 
 function PairOverrideFields({ pairData, onUpdateValue, onRemoveValue }: PairOverrideFieldsProps) {

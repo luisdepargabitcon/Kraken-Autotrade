@@ -4,6 +4,7 @@ import { botLogger } from "./botLogger";
 import { storage } from "../storage";
 import { log } from "../index";
 import { aiService, AiFeatures } from "./aiService";
+import { environment } from "./environment";
 
 interface PriceData {
   price: number;
@@ -189,6 +190,10 @@ export class TradingEngine {
   private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
   
+  // SMART_GUARD alert throttle: key = "lotId:eventType", value = timestamp
+  private sgAlertThrottle: Map<string, number> = new Map();
+  private readonly SG_TRAIL_UPDATE_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between trailing stop updates
+  
   // DRY_RUN mode: audit without sending real orders
   private dryRunMode: boolean = false;
   private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
@@ -232,6 +237,85 @@ export class TradingEngine {
       }
     });
     return count;
+  }
+
+  // === SMART_GUARD ALERT HELPERS ===
+  private shouldSendSgAlert(lotId: string, eventType: string, throttleMs?: number): boolean {
+    const key = `${lotId}:${eventType}`;
+    const lastAlert = this.sgAlertThrottle.get(key);
+    const now = Date.now();
+    const cooldown = throttleMs ?? 0;
+    
+    if (lastAlert && now - lastAlert < cooldown) {
+      return false;
+    }
+    this.sgAlertThrottle.set(key, now);
+    return true;
+  }
+
+  private async sendSgEventAlert(
+    eventType: "SG_BREAK_EVEN_ACTIVATED" | "SG_TRAILING_ACTIVATED" | "SG_TRAILING_STOP_UPDATED" | "SG_SCALE_OUT_EXECUTED",
+    position: OpenPosition,
+    currentPrice: number,
+    extra: { stopPrice?: number; profitPct: number; reason: string }
+  ) {
+    const { lotId, pair, entryPrice } = position;
+    const shortLotId = lotId.substring(0, 12);
+    const envPrefix = environment.getMessagePrefix(this.dryRunMode);
+    const envInfo = environment.getInfo();
+
+    // Emit event for /api/events
+    await botLogger.info(eventType, `${eventType} en ${pair}`, {
+      pair,
+      lotId,
+      entryPrice,
+      currentPrice,
+      stopPrice: extra.stopPrice,
+      profitPct: extra.profitPct,
+      env: envInfo.env,
+      instanceId: envInfo.instanceId,
+      reason: extra.reason,
+    });
+
+    // Send Telegram notification
+    if (this.telegramService.isInitialized()) {
+      let emoji = "";
+      let title = "";
+      
+      switch (eventType) {
+        case "SG_BREAK_EVEN_ACTIVATED":
+          emoji = "⚖️";
+          title = "Break-Even Activado";
+          break;
+        case "SG_TRAILING_ACTIVATED":
+          emoji = "📈";
+          title = "Trailing Stop Activado";
+          break;
+        case "SG_TRAILING_STOP_UPDATED":
+          emoji = "🔼";
+          title = "Stop Actualizado";
+          break;
+        case "SG_SCALE_OUT_EXECUTED":
+          emoji = "📊";
+          title = "Scale-Out Ejecutado";
+          break;
+      }
+
+      const message = `
+${emoji} *${envPrefix}${title}*
+
+*Par:* ${pair}
+*Lote:* \`${shortLotId}\`
+*Entry:* $${entryPrice.toFixed(2)}
+*Actual:* $${currentPrice.toFixed(2)}
+*Profit:* ${extra.profitPct >= 0 ? '+' : ''}${extra.profitPct.toFixed(2)}%
+${extra.stopPrice ? `*Nuevo Stop:* $${extra.stopPrice.toFixed(4)}` : ''}
+
+_${extra.reason}_
+      `.trim();
+
+      await this.telegramService.sendAlertToMultipleChats(message, "status");
+    }
   }
 
   private getUniquePairs(): string[] {
@@ -1285,9 +1369,15 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       position.sgCurrentStopPrice = breakEvenPrice;
       positionModified = true;
       log(`SMART_GUARD ${pair}: Break-even activado (+${priceChange.toFixed(2)}%), stop movido a $${breakEvenPrice.toFixed(4)}`, "trading");
-      await botLogger.info("SG_BREAKEVEN_ACTIVATED", `SMART_GUARD break-even activado en ${pair}`, {
-        pair, entryPrice: position.entryPrice, currentPrice, priceChange, beAtPct, breakEvenPrice, paramsSource,
-      });
+      
+      // Send alert (only once per lot, no throttle needed as flag prevents re-entry)
+      if (this.shouldSendSgAlert(position.lotId, "SG_BREAK_EVEN_ACTIVATED")) {
+        await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
+          stopPrice: breakEvenPrice,
+          profitPct: priceChange,
+          reason: `Profit +${beAtPct}% alcanzado, stop movido a break-even + comisiones`,
+        });
+      }
     }
     
     // 4. TRAILING STOP ACTIVATION - Start trailing when profit >= trailStartPct
@@ -1300,10 +1390,15 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       }
       positionModified = true;
       log(`SMART_GUARD ${pair}: Trailing activado (+${priceChange.toFixed(2)}%), stop dinámico @ $${position.sgCurrentStopPrice!.toFixed(4)}`, "trading");
-      await botLogger.info("SG_TRAILING_ACTIVATED", `SMART_GUARD trailing activado en ${pair}`, {
-        pair, entryPrice: position.entryPrice, currentPrice, priceChange, trailStartPct, trailDistancePct, 
-        stopPrice: position.sgCurrentStopPrice, paramsSource,
-      });
+      
+      // Send alert (only once per lot)
+      if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_ACTIVATED")) {
+        await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
+          stopPrice: position.sgCurrentStopPrice,
+          profitPct: priceChange,
+          reason: `Profit +${trailStartPct}% alcanzado, trailing stop iniciado a ${trailDistancePct}% del máximo`,
+        });
+      }
     }
     
     // 5. TRAILING STOP UPDATE - Ratchet up stop with step increments
@@ -1317,6 +1412,15 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         position.sgCurrentStopPrice = newTrailStop;
         positionModified = true;
         log(`SMART_GUARD ${pair}: Trailing step $${oldStop.toFixed(4)} → $${newTrailStop.toFixed(4)} (+${trailStepPct}%)`, "trading");
+        
+        // Send alert with throttle (max 1 per 5 min)
+        if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_STOP_UPDATED", this.SG_TRAIL_UPDATE_THROTTLE_MS)) {
+          await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
+            stopPrice: newTrailStop,
+            profitPct: priceChange,
+            reason: `Stop actualizado: $${oldStop.toFixed(2)} → $${newTrailStop.toFixed(2)}`,
+          });
+        }
       }
     }
     
@@ -1343,10 +1447,14 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
           emoji = "📊";
           position.sgScaleOutDone = true;
           positionModified = true;
-          await botLogger.info("SG_SCALE_OUT", `SMART_GUARD scale-out en ${pair}`, {
-            pair, entryPrice: position.entryPrice, currentPrice, priceChange, scaleOutPct,
-            confidence: position.signalConfidence, partValue, paramsSource,
-          });
+          
+          // Send alert (only once as sgScaleOutDone flag prevents re-entry)
+          if (this.shouldSendSgAlert(position.lotId, "SG_SCALE_OUT_EXECUTED")) {
+            await this.sendSgEventAlert("SG_SCALE_OUT_EXECUTED", position, currentPrice, {
+              profitPct: priceChange,
+              reason: `Vendido ${scaleOutPct}% de posición ($${partValue.toFixed(2)}) a +${priceChange.toFixed(2)}%`,
+            });
+          }
         }
       }
     }
