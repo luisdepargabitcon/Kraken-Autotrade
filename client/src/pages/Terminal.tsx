@@ -46,6 +46,8 @@ interface OpenPosition {
   entryStrategyId: string;
   entrySignalTf: string;
   signalConfidence: string | null;
+  lotId: string;
+  entryMode: string | null;
 }
 
 interface ClosedTrade {
@@ -80,11 +82,11 @@ export default function Terminal() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("positions");
-  const [closingPair, setClosingPair] = useState<string | null>(null);
+  const [closingLotId, setClosingLotId] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: botConfig } = useQuery<{ positionMode?: string }>({
+  const { data: botConfig } = useQuery<{ positionMode?: string; sgMaxOpenLotsPerPair?: number }>({
     queryKey: ["botConfig"],
     queryFn: async () => {
       const res = await fetch("/api/config");
@@ -93,6 +95,12 @@ export default function Terminal() {
     },
     refetchInterval: 60000,
   });
+
+  const getLotsCountByPair = (pair: string) => {
+    if (!openPositions) return { count: 0, max: botConfig?.sgMaxOpenLotsPerPair || 1 };
+    const count = openPositions.filter(p => p.pair === pair).length;
+    return { count, max: botConfig?.sgMaxOpenLotsPerPair || 1 };
+  };
 
   const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
     queryKey: ["openPositions"],
@@ -152,12 +160,12 @@ export default function Terminal() {
   };
 
   const closePositionMutation = useMutation({
-    mutationFn: async (pair: string) => {
+    mutationFn: async ({ pair, lotId }: { pair: string; lotId: string }) => {
       const pairEncoded = pair.replace("/", "-");
       const res = await fetch(`/api/positions/${pairEncoded}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "Cierre manual desde dashboard" }),
+        body: JSON.stringify({ reason: "Cierre manual desde dashboard", lotId }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -165,8 +173,8 @@ export default function Terminal() {
       }
       return res.json();
     },
-    onMutate: (pair) => {
-      setClosingPair(pair);
+    onMutate: ({ lotId }) => {
+      setClosingLotId(lotId);
     },
     onSuccess: (data) => {
       toast({
@@ -184,13 +192,14 @@ export default function Terminal() {
       });
     },
     onSettled: () => {
-      setClosingPair(null);
+      setClosingLotId(null);
     },
   });
 
-  const handleClosePosition = (pair: string) => {
-    if (confirm(`¿Estás seguro de cerrar la posición de ${pair}? Esta acción no se puede deshacer.`)) {
-      closePositionMutation.mutate(pair);
+  const handleClosePosition = (pair: string, lotId: string) => {
+    const shortLotId = lotId.substring(0, 8);
+    if (confirm(`¿Cerrar lote ${shortLotId} de ${pair}? Esta acción no se puede deshacer.`)) {
+      closePositionMutation.mutate({ pair, lotId });
     }
   };
 
@@ -480,10 +489,22 @@ export default function Terminal() {
                                     {strategyInfo.isCandles ? <CandlestickChart className="h-2.5 w-2.5 mr-0.5" /> : <Activity className="h-2.5 w-2.5 mr-0.5" />}
                                     {strategyInfo.strategyName}/{strategyInfo.tfLabel}
                                   </Badge>
+                                  {pos.entryMode && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono border-orange-500/50 text-orange-400">
+                                      <Layers className="h-2.5 w-2.5 mr-0.5" />
+                                      {pos.entryMode}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
                                   <Clock className="h-3 w-3" />
                                   {formatDate(pos.openedAt)}
+                                  <span className="text-[10px] opacity-60">| Lote: {pos.lotId?.substring(0, 8) || 'N/A'}</span>
+                                  {botConfig?.positionMode === 'SMART_GUARD' && (
+                                    <Badge variant="secondary" className="text-[9px] px-1 py-0 ml-1" title="Slots usados / máximo">
+                                      {getLotsCountByPair(pos.pair).count}/{getLotsCountByPair(pos.pair).max}
+                                    </Badge>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -521,12 +542,12 @@ export default function Terminal() {
                               <Button
                                 variant="destructive"
                                 size="sm"
-                                onClick={() => handleClosePosition(pos.pair)}
-                                disabled={closingPair === pos.pair}
+                                onClick={() => handleClosePosition(pos.pair, pos.lotId)}
+                                disabled={closingLotId === pos.lotId}
                                 className="shrink-0"
-                                data-testid={`button-close-position-${pos.id}`}
+                                data-testid={`button-close-position-${pos.lotId}`}
                               >
-                                {closingPair === pos.pair ? (
+                                {closingLotId === pos.lotId ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <X className="h-4 w-4" />

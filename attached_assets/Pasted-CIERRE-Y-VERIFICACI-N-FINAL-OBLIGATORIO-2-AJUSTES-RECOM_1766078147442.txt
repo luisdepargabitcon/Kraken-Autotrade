@@ -1,0 +1,52 @@
+CIERRE Y VERIFICACIÓN FINAL (OBLIGATORIO) + 2 AJUSTES RECOMENDADOS
+
+OBJETIVO
+Confirmar que los 5 pasos funcionan en conjunto (sin regresiones) y que NAS/PROD no se ve afectado por el endpoint de test ni por DRY_RUN.
+
+A) VERIFICACIONES FINALES (EVIDENCIA EN /api/events)
+1) /api/test/signal (DEV/DRY_RUN)
+- Confirmar que en NAS/PROD devuelve 403 (o 404) siempre.
+- En Replit/DEV:
+  A) Forzar BUY con orderUsdFinal < sgMinEntryUsd (100) y sgAllowUnderMin=false
+     => TRADE_SKIPPED reason=MIN_ORDER_USD + meta completa (orderUsdProposed/orderUsdFinal/min/allowUnderMin/lotId)
+  B) Forzar BUY con orderUsdFinal < absoluteMinOrderUsd (20)
+     => TRADE_SKIPPED reason=MIN_ORDER_ABSOLUTE + meta completa
+  C) Forzar 3 BUY seguidas con sgMaxOpenLotsPerPair=2
+     => 2 PROCEED y 3ª TRADE_SKIPPED reason=SMART_GUARD_MAX_LOTS_REACHED
+     => openLotsCount/maxLots en meta
+
+2) Multi-lot tracking
+- Generar 2 lotes en el mismo par (L1 y L2) y comprobar:
+  - Cada evento incluye lotId
+  - SL/TP evaluado por lotId (no por par)
+  - Cierre manual por lotId cierra SOLO ese lote
+  - No hay “fallback legacy” (ya lo indicaste) y no afecta a lote equivocado
+
+3) Cierre manual
+- Ejecutar cierre manual en Replit (DRY_RUN) con un lotId
+  => POSITION_CLOSE_REQUESTED + POSITION_CLOSE_SIMULATED (o equivalente) con manual=true
+- Confirmar que el training trade generado (si aplica) queda marcado manual (source/isManual)
+  y que el entrenamiento lo excluye por defecto.
+
+B) 2 AJUSTES RECOMENDADOS (CALIDAD)
+1) UI/posiciones
+- En el panel de posiciones abiertas:
+  - mostrar claramente L1/L2 (o lotId corto), openedMode/entryMode, qtyRemaining, entryPrice
+  - botón “Cerrar” por lote (ya soporta lotId)
+  - si sgMaxOpenLotsPerPair=2, mostrar “Slots usados: 1/2, 2/2”
+
+2) Traducción y consistencia de reasons
+- Confirmar mapeo en UI/Telegram de reasons técnicos:
+  MIN_ORDER_USD -> "Mínimo por orden"
+  MIN_ORDER_ABSOLUTE -> "Mínimo absoluto del exchange"
+  SMART_GUARD_MAX_LOTS_REACHED -> "Máximo de lotes alcanzado"
+- Asegurar que mensajes al usuario están 100% en castellano.
+
+ENTREGABLE
+- Pegar aquí 6 eventos relevantes (JSON recortado) con correlationId:
+  - MIN_ORDER_USD
+  - MIN_ORDER_ABSOLUTE
+  - MAX_LOTS_REACHED
+  - 2x PROCEED (lote 1 y lote 2)
+  - Cierre manual (REQUESTED + SIMULATED/EXECUTED)
+- Confirmación explícita: /api/test/signal está bloqueado en NAS/PROD.
