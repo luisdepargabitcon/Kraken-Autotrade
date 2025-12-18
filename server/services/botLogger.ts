@@ -52,7 +52,8 @@ export type EventType =
   // DRY_RUN mode
   | "DRY_RUN_TRADE"
   // TEST endpoint events
-  | "TEST_TRADE_SIMULATED";
+  | "TEST_TRADE_SIMULATED"
+  | "TEST_POSITION_CREATED";
 
 interface LogMeta {
   [key: string]: any;

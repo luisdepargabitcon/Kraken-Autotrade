@@ -1337,5 +1337,232 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // TEST ENDPOINT: Simular eventos SMART_GUARD para testing
+  // Solo disponible en REPLIT/DEV o cuando dryRun=true
+  // ============================================================
+  app.post("/api/test/sg-event", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      // SEGURIDAD: Solo permitir en REPLIT/DEV o dryRun=true
+      if (envInfo.isNAS && !dryRun) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Este endpoint solo está disponible en entorno de desarrollo (REPLIT/DEV) o con dryRun activado",
+        });
+      }
+      
+      const testEventSchema = z.object({
+        event: z.enum(["SG_BREAK_EVEN_ACTIVATED", "SG_TRAILING_ACTIVATED", "SG_TRAILING_STOP_UPDATED", "SG_SCALE_OUT_EXECUTED"]),
+        pair: z.string().default("BTC/USD"),
+        lotId: z.string().optional(),
+        entryPrice: z.number().positive().default(100000),
+        currentPrice: z.number().positive().optional(),
+        profitPct: z.number().default(2.5),
+        stopPrice: z.number().positive().optional(),
+        scaleOutQty: z.number().positive().optional(),
+        scaleOutUsd: z.number().positive().optional(),
+      });
+      
+      const parsed = testEventSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: parsed.error.issues });
+      }
+      
+      const { event, pair, entryPrice, profitPct } = parsed.data;
+      const lotId = parsed.data.lotId || `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const currentPrice = parsed.data.currentPrice || entryPrice * (1 + profitPct / 100);
+      const stopPrice = parsed.data.stopPrice || currentPrice * 0.98;
+      
+      const baseMeta = {
+        pair,
+        lotId,
+        entryPrice,
+        currentPrice,
+        profitPct: profitPct.toFixed(2) + "%",
+        env: envInfo.env,
+        instanceId: envInfo.instanceId,
+        testMode: true,
+      };
+      
+      let message = "";
+      let telegramMsg = "";
+      const prefix = environment.getMessagePrefix();
+      
+      switch (event) {
+        case "SG_BREAK_EVEN_ACTIVATED":
+          message = `SMART_GUARD Break-Even activado en ${pair}`;
+          telegramMsg = `${prefix}⚖️ *Break-Even Activado*\n` +
+            `Par: ${pair}\n` +
+            `Lote: \`${lotId}\`\n` +
+            `Entrada: $${entryPrice.toFixed(2)}\n` +
+            `Precio actual: $${currentPrice.toFixed(2)}\n` +
+            `Profit: +${profitPct.toFixed(2)}%\n` +
+            `Stop movido a: $${stopPrice.toFixed(2)}`;
+          await botLogger.info(event, message, { ...baseMeta, stopPrice });
+          await telegramService.sendNotification(telegramMsg, "status");
+          break;
+          
+        case "SG_TRAILING_ACTIVATED":
+          message = `SMART_GUARD Trailing Stop activado en ${pair}`;
+          telegramMsg = `${prefix}🎯 *Trailing Stop Activado*\n` +
+            `Par: ${pair}\n` +
+            `Lote: \`${lotId}\`\n` +
+            `Entrada: $${entryPrice.toFixed(2)}\n` +
+            `Precio actual: $${currentPrice.toFixed(2)}\n` +
+            `Profit: +${profitPct.toFixed(2)}%\n` +
+            `Stop dinámico: $${stopPrice.toFixed(2)}`;
+          await botLogger.info(event, message, { ...baseMeta, stopPrice });
+          await telegramService.sendNotification(telegramMsg, "status");
+          break;
+          
+        case "SG_TRAILING_STOP_UPDATED":
+          const oldStop = stopPrice * 0.99;
+          message = `SMART_GUARD Trailing Stop actualizado en ${pair}`;
+          telegramMsg = `${prefix}📈 *Trailing Stop Actualizado*\n` +
+            `Par: ${pair}\n` +
+            `Lote: \`${lotId}\`\n` +
+            `Stop: $${oldStop.toFixed(2)} → $${stopPrice.toFixed(2)}\n` +
+            `Profit actual: +${profitPct.toFixed(2)}%`;
+          await botLogger.info(event, message, { ...baseMeta, stopPrice, oldStop });
+          await telegramService.sendNotification(telegramMsg, "status");
+          break;
+          
+        case "SG_SCALE_OUT_EXECUTED":
+          const scaleOutQty = parsed.data.scaleOutQty || 0.001;
+          const scaleOutUsd = parsed.data.scaleOutUsd || scaleOutQty * currentPrice;
+          message = `SMART_GUARD Scale-Out ejecutado en ${pair}`;
+          telegramMsg = `${prefix}📊 *Scale-Out Ejecutado*\n` +
+            `Par: ${pair}\n` +
+            `Lote: \`${lotId}\`\n` +
+            `Vendido: ${scaleOutQty} ($${scaleOutUsd.toFixed(2)})\n` +
+            `Profit: +${profitPct.toFixed(2)}%`;
+          await botLogger.info(event, message, { ...baseMeta, scaleOutQty, scaleOutUsd });
+          await telegramService.sendNotification(telegramMsg, "status");
+          break;
+      }
+      
+      res.json({
+        success: true,
+        event,
+        message,
+        meta: baseMeta,
+        telegramSent: true,
+      });
+      
+    } catch (error: any) {
+      console.error("[api/test/sg-event] Error:", error.message);
+      res.status(500).json({ error: "TEST_SG_EVENT_ERROR", message: error.message });
+    }
+  });
+
+  // ============================================================
+  // TEST ENDPOINT: Probar multi-lot (crear posiciones de prueba)
+  // ============================================================
+  app.post("/api/test/create-position", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      if (envInfo.isNAS && !dryRun) {
+        return res.status(403).json({ error: "FORBIDDEN" });
+      }
+      
+      const schema = z.object({
+        pair: z.string().default("BTC/USD"),
+        amount: z.number().positive().default(0.001),
+        entryPrice: z.number().positive().default(100000),
+      });
+      
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: parsed.error.issues });
+      }
+      
+      const { pair, amount, entryPrice } = parsed.data;
+      const lotId = `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      
+      // Add to trading engine's open positions
+      if (tradingEngine) {
+        const position = {
+          pair,
+          amount,
+          entryPrice,
+          timestamp: new Date().toISOString(),
+          lotId,
+          strategy: "test",
+          signalConfidence: 80,
+          // SMART_GUARD flags
+          sgBreakEvenActivated: false,
+          sgTrailingActivated: false,
+          sgCurrentStopPrice: null,
+          sgScaleOutDone: false,
+          configSnapshotJson: botConfig ? JSON.stringify({
+            sgMinEntryUsd: botConfig.sgMinEntryUsd,
+            sgBeAtPct: botConfig.sgBeAtPct,
+            sgTrailStartPct: botConfig.sgTrailStartPct,
+            sgTrailDistancePct: botConfig.sgTrailDistancePct,
+          }) : null,
+        };
+        
+        tradingEngine.getOpenPositions().set(lotId, position);
+        
+        // Count lots for this pair
+        const allPositions = tradingEngine.getOpenPositions();
+        let pairLots = 0;
+        for (const [, pos] of allPositions) {
+          if (pos.pair === pair) pairLots++;
+        }
+        
+        await botLogger.info("TEST_POSITION_CREATED", `Posición de prueba creada: ${pair} x${amount}`, {
+          pair, lotId, amount, entryPrice, pairLots, env: envInfo.env,
+        });
+        
+        res.json({
+          success: true,
+          lotId,
+          position,
+          pairLotsCount: pairLots,
+        });
+      } else {
+        res.status(500).json({ error: "ENGINE_NOT_READY" });
+      }
+      
+    } catch (error: any) {
+      res.status(500).json({ error: "CREATE_POSITION_ERROR", message: error.message });
+    }
+  });
+
+  // ============================================================
+  // TEST ENDPOINT: Eliminar posición de prueba
+  // ============================================================
+  app.delete("/api/test/position/:lotId", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      if (envInfo.isNAS && !dryRun) {
+        return res.status(403).json({ error: "FORBIDDEN" });
+      }
+      
+      const { lotId } = req.params;
+      
+      if (tradingEngine) {
+        const deleted = tradingEngine.getOpenPositions().delete(lotId);
+        res.json({ success: true, deleted, lotId });
+      } else {
+        res.status(500).json({ error: "ENGINE_NOT_READY" });
+      }
+      
+    } catch (error: any) {
+      res.status(500).json({ error: "DELETE_POSITION_ERROR", message: error.message });
+    }
+  });
+
   return httpServer;
 }
