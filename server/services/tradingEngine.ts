@@ -67,6 +67,77 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
 // SMART_GUARD: umbral absoluto mínimo para evitar comisiones absurdas
 const SG_ABSOLUTE_MIN_USD = 20;
 
+// === VALIDACIÓN CENTRALIZADA DE MÍNIMOS (fuente única de verdad) ===
+interface MinimumValidationParams {
+  positionMode: string;
+  orderUsdFinal: number;
+  orderUsdProposed: number;
+  usdDisponible: number;
+  exposureAvailable: number;
+  pair: string;
+  sgMinEntryUsd?: number;
+  sgAllowUnderMin?: boolean;
+  dryRun?: boolean;
+  env?: string;
+}
+
+interface MinimumValidationResult {
+  valid: boolean;
+  skipReason?: "MIN_ORDER_ABSOLUTE" | "MIN_ORDER_USD";
+  message?: string;
+  meta?: Record<string, any>;
+}
+
+function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidationResult {
+  const {
+    positionMode,
+    orderUsdFinal,
+    orderUsdProposed,
+    usdDisponible,
+    exposureAvailable,
+    pair,
+    sgMinEntryUsd = 100,
+    sgAllowUnderMin = true,
+    dryRun = false,
+    env = "UNKNOWN",
+  } = params;
+
+  const meta = {
+    pair,
+    usdDisponible,
+    orderUsdProposed,
+    orderUsdFinal,
+    sgMinEntryUsd,
+    sgAllowUnderMin,
+    exposureAvailable,
+    env,
+    dryRun,
+    absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+  };
+
+  // REGLA B: Mínimo ABSOLUTO del exchange (siempre, en todos los modos)
+  if (orderUsdFinal < SG_ABSOLUTE_MIN_USD) {
+    return {
+      valid: false,
+      skipReason: "MIN_ORDER_ABSOLUTE",
+      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`,
+      meta,
+    };
+  }
+
+  // REGLA A: Mínimo CONFIGURABLE (solo SMART_GUARD con sgAllowUnderMin=false)
+  if (positionMode === "SMART_GUARD" && !sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
+    return {
+      valid: false,
+      skipReason: "MIN_ORDER_USD",
+      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < sgMinEntryUsd $${sgMinEntryUsd.toFixed(2)} (sgAllowUnderMin=OFF)`,
+      meta,
+    };
+  }
+
+  return { valid: true };
+}
+
 interface ConfigSnapshot {
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -1692,84 +1763,37 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // === SMART_GUARD: Sizing específico con validación de entrada mínima ===
+        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) ===
+        // sgMinEntryUsd es un UMBRAL mínimo (PISO), NO un target
+        // El sizing se calcula con lógica normal, luego se valida contra el mínimo
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
         
+        // Para SMART_GUARD: calcular orderUsdProposed por lógica normal, luego validar mínimos
+        const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, botConfig) : null;
+        const sgMinEntryUsd = sgParams?.sgMinEntryUsd || 100;
+        const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true;
+        
+        // usdDisponible = saldo real disponible (95% para dejar margen)
+        const usdDisponible = freshUsdBalance * 0.95;
+        
         if (positionMode === "SMART_GUARD") {
-          const sgParams = this.getSmartGuardParams(pair, botConfig);
-          const sgMinEntryUsd = sgParams.sgMinEntryUsd;  // minOperacionUsd
-          const sgAllowUnderMin = sgParams.sgAllowUnderMin;  // permitirMenor
+          // SMART_GUARD: Calcular sizing basado en riesgo, LUEGO validar mínimo
+          // El sizing = min(riskPerTradePct * balance, usdDisponible)
+          const riskBasedAmount = freshUsdBalance * (riskPerTradePct / 100);
+          const maxByRisk = Math.min(riskBasedAmount, riskConfig.maxTradeUSD);
           
-          // usdDisponible = saldo real disponible
-          const usdDisponible = freshUsdBalance * 0.95; // 95% para dejar margen
+          // orderUsdProposed = el menor entre lo que permite el riesgo y lo disponible
+          const orderUsdProposed = Math.min(maxByRisk, usdDisponible);
+          originalAmount = orderUsdProposed;
           
-          // orderUsd = tamaño de la orden (en SMART_GUARD = min(usdDisponible, sgMinEntryUsd))
-          let orderUsd = Math.min(usdDisponible, sgMinEntryUsd);
+          // El sizing final es lo propuesto (sgMinEntryUsd es solo VALIDACIÓN, no sizing)
+          tradeAmountUSD = orderUsdProposed;
           
-          // === REGLA PRINCIPAL SMART_GUARD (según documento) ===
+          log(`SMART_GUARD ${pair}: Sizing calculado $${tradeAmountUSD.toFixed(2)} (riskPct=${riskPerTradePct}%, disponible $${usdDisponible.toFixed(2)}, minRequerido $${sgMinEntryUsd.toFixed(2)})`, "trading");
           
-          if (usdDisponible >= sgMinEntryUsd) {
-            // CASO A: Hay saldo suficiente para cumplir el mínimo por operación
-            if (orderUsd >= sgMinEntryUsd) {
-              // A.1: orderUsd >= min -> PERMITIR ENTRADA
-              tradeAmountUSD = sgMinEntryUsd;
-              originalAmount = tradeAmountUSD;
-              log(`SMART_GUARD ${pair}: Entrada por $${tradeAmountUSD.toFixed(2)} (mínimo configurado, disponible $${usdDisponible.toFixed(2)})`, "trading");
-            } else {
-              // A.2: orderUsd < min (por límites/redondeos/confianza)
-              if (sgAllowUnderMin) {
-                // Permitir entrada reducida
-                tradeAmountUSD = orderUsd;
-                wasAdjusted = true;
-                originalAmount = sgMinEntryUsd;
-                log(`SMART_GUARD ${pair}: Entrada reducida permitida — $${tradeAmountUSD.toFixed(2)} (mínimo $${sgMinEntryUsd.toFixed(2)}, permitirMenor=ON)`, "trading");
-                await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada reducida (permitirMenor ON)`, {
-                  pair, signal: "BUY", reason: "SG_REDUCED_ENTRY",
-                  orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible,
-                });
-              } else {
-                // BLOQUEAR - tiene saldo pero orderUsd < min y no permite menores
-                log(`SMART_GUARD ${pair}: No entro — mínimo $${sgMinEntryUsd.toFixed(2)}, tamaño calculado $${orderUsd.toFixed(2)}, permitirMenor=OFF`, "trading");
-                this.lastScanResults.set(pair, {
-                  signal: "BUY", reason: "SG_MIN_ENTRY_NOT_MET", exposureAvailable: orderUsd,
-                });
-                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo no alcanzado (tiene saldo)`, {
-                  pair, signal: "BUY", reason: "SG_MIN_ENTRY_NOT_MET",
-                  orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible, allowUnderMin: sgAllowUnderMin,
-                });
-                return;
-              }
-            }
-          } else {
-            // CASO B: NO hay saldo suficiente para cumplir el mínimo por operación
-            // Ignorar el mínimo por operación, solo validar mínimo absoluto
-            orderUsd = usdDisponible; // usar todo el disponible
-            
-            if (orderUsd >= SG_ABSOLUTE_MIN_USD) {
-              // B.1: Permitir entrada con lo disponible
-              tradeAmountUSD = orderUsd;
-              wasAdjusted = true;
-              originalAmount = sgMinEntryUsd;
-              log(`SMART_GUARD ${pair}: Saldo < mínimo — entro con $${tradeAmountUSD.toFixed(2)} disponibles (>= $${SG_ABSOLUTE_MIN_USD} mínimo absoluto)`, "trading");
-              await botLogger.info("TRADE_ADJUSTED", `SMART_GUARD entrada con saldo disponible (< min operación)`, {
-                pair, signal: "BUY", reason: "SG_REDUCED_ENTRY",
-                orderUsd, minEntryUsd: sgMinEntryUsd, usdDisponible, absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
-              });
-            } else {
-              // B.2: BLOQUEAR - por debajo del mínimo absoluto
-              log(`SMART_GUARD ${pair}: No entro — disponible $${orderUsd.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
-              this.lastScanResults.set(pair, {
-                signal: "BUY", reason: "MIN_ORDER_ABSOLUTE", exposureAvailable: orderUsd,
-              });
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto exchange no alcanzado`, {
-                pair, signal: "BUY", reason: "MIN_ORDER_ABSOLUTE",
-                orderUsd, absoluteMinUsd: SG_ABSOLUTE_MIN_USD, usdDisponible,
-              });
-              return;
-            }
-          }
+          // La validación de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
         } else {
           // Modos SINGLE/DCA: lógica original con exposure limits
           
@@ -1870,24 +1894,6 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           });
         }
 
-        // SMART_GUARD: Validación final de mínimo absoluto $20 para cualquier trade
-        if (positionMode === "SMART_GUARD" && tradeAmountUSD < SG_ABSOLUTE_MIN_USD) {
-          log(`SMART_GUARD ${pair}: Trade bloqueado - monto final $${tradeAmountUSD.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
-          this.lastScanResults.set(pair, {
-            signal: "BUY",
-            reason: "MIN_ORDER_ABSOLUTE",
-            exposureAvailable: tradeAmountUSD,
-          });
-          await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto exchange no alcanzado`, {
-            pair,
-            signal: "BUY",
-            reason: "MIN_ORDER_ABSOLUTE",
-            tradeAmountUsd: tradeAmountUSD,
-            absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
-          });
-          return;
-        }
-
         const tradeVolume = tradeAmountUSD / currentPrice;
 
         if (tradeVolume < minVolume) {
@@ -1903,33 +1909,38 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        // === VALIDACIÓN FINAL OBLIGATORIA: Mínimo por orden (notional) ===
-        // Esta es la ÚNICA fuente de verdad antes de enviar al exchange
+        // === VALIDACIÓN FINAL ÚNICA Y CENTRALIZADA (fuente de verdad) ===
+        // Se ejecuta ANTES de executeTrade() para REAL y DRY_RUN
         const orderUsdFinal = tradeAmountUSD;
-        const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, config) : null;
-        const minOrderUsd = sgParams?.sgMinEntryUsd || 0;
-        const allowUnderMin = sgParams?.sgAllowUnderMin ?? true;
+        const envPrefix = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
         
-        if (positionMode === "SMART_GUARD" && !allowUnderMin && orderUsdFinal < minOrderUsd) {
-          log(`[FINAL CHECK] ${pair}: SKIP - orderUsdFinal $${orderUsdFinal.toFixed(2)} < minOrderUsd $${minOrderUsd.toFixed(2)} (allowUnderMin=OFF)`, "trading");
+        const validationResult = validateMinimumsOrSkip({
+          positionMode,
+          orderUsdFinal,
+          orderUsdProposed: originalAmount || tradeAmountUSD,
+          usdDisponible: freshUsdBalance,
+          exposureAvailable: effectiveMaxAllowed,
+          pair,
+          sgMinEntryUsd,
+          sgAllowUnderMin,
+          dryRun: this.dryRunMode,
+          env: envPrefix,
+        });
+        
+        if (!validationResult.valid) {
+          log(`[FINAL CHECK] ${pair}: SKIP - ${validationResult.message}`, "trading");
           
           this.lastScanResults.set(pair, {
             signal: "BUY",
-            reason: "MIN_ORDER_USD",
+            reason: validationResult.skipReason!,
             exposureAvailable: orderUsdFinal,
           });
           
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - mínimo por orden no alcanzado`, {
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - ${validationResult.skipReason}`, {
             pair,
             signal: "BUY",
-            reason: "MIN_ORDER_USD",
-            mode: positionMode,
-            usdDisponible: freshUsdBalance,
-            orderUsdProposed: originalAmount || tradeAmountUSD,
-            orderUsdFinal,
-            minOrderUsd,
-            allowUnderMin,
-            decision: "SKIP",
+            reason: validationResult.skipReason,
+            ...validationResult.meta,
           });
           
           this.setPairCooldown(pair);
@@ -1937,8 +1948,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         }
         
         // Log de decisión final antes de ejecutar
-        if (positionMode === "SMART_GUARD" && allowUnderMin && orderUsdFinal < minOrderUsd) {
-          log(`[FINAL CHECK] ${pair}: ALLOWED UNDER MIN - orderUsdFinal $${orderUsdFinal.toFixed(2)} < minOrderUsd $${minOrderUsd.toFixed(2)} (allowUnderMin=ON)`, "trading");
+        if (positionMode === "SMART_GUARD" && sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
+          log(`[FINAL CHECK] ${pair}: ALLOWED UNDER MIN - orderUsdFinal $${orderUsdFinal.toFixed(2)} < sgMinEntryUsd $${sgMinEntryUsd.toFixed(2)} (sgAllowUnderMin=ON)`, "trading");
         }
 
         if (wasAdjusted) {
@@ -1959,9 +1970,10 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           usdDisponible: freshUsdBalance,
           orderUsdProposed: originalAmount || tradeAmountUSD,
           orderUsdFinal,
-          minOrderUsd,
-          allowUnderMin,
+          minOrderUsd: sgMinEntryUsd,
+          allowUnderMin: sgAllowUnderMin,
           dryRun: this.dryRunMode,
+          env: envPrefix,
         };
 
         const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, undefined, executionMeta);
@@ -2848,10 +2860,47 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       
       // === DRY_RUN MODE: Simular sin enviar orden real ===
       if (this.dryRunMode) {
-        const simTxid = `DRY-${Date.now()}`;
-        log(`[DRY_RUN] SIMULACIÓN ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} (Total: $${totalUSD.toFixed(2)})`, "trading");
+        const envPrefix = environment.isReplit ? "[REPLIT/DEV][DRY\\_RUN]" : "[NAS/PROD][DRY\\_RUN]";
+        const envPrefixLog = environment.isReplit ? "[REPLIT/DEV][DRY_RUN]" : "[NAS/PROD][DRY_RUN]";
         
-        await botLogger.info("DRY_RUN_TRADE", `[DRY_RUN] Trade simulado - NO enviado al exchange`, {
+        // === DOBLE CINTURÓN: Validación redundante para DRY_RUN ===
+        // Si falla mínimos, ni simula ni envía mensaje de trade
+        if (type === "buy" && executionMeta) {
+          const positionMode = executionMeta.mode || "SINGLE";
+          const orderUsdFinal = totalUSD;
+          const sgMinEntryUsd = executionMeta.minOrderUsd || 100;
+          const sgAllowUnderMin = executionMeta.allowUnderMin ?? true;
+          
+          const doubleBeltValidation = validateMinimumsOrSkip({
+            positionMode,
+            orderUsdFinal,
+            orderUsdProposed: executionMeta.orderUsdProposed || orderUsdFinal,
+            usdDisponible: executionMeta.usdDisponible || 0,
+            exposureAvailable: executionMeta.orderUsdFinal || 0,
+            pair,
+            sgMinEntryUsd,
+            sgAllowUnderMin,
+            dryRun: true,
+            env: envPrefixLog,
+          });
+          
+          if (!doubleBeltValidation.valid) {
+            log(`${envPrefixLog} BLOQUEADO - ${doubleBeltValidation.message}`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `${envPrefixLog} Trade bloqueado en double-belt`, {
+              pair,
+              type,
+              reason: doubleBeltValidation.skipReason,
+              ...doubleBeltValidation.meta,
+            });
+            // NO enviar Telegram de simulación - solo log
+            return false;
+          }
+        }
+        
+        const simTxid = `DRY-${Date.now()}`;
+        log(`${envPrefixLog} SIMULACIÓN ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} (Total: $${totalUSD.toFixed(2)})`, "trading");
+        
+        await botLogger.info("DRY_RUN_TRADE", `${envPrefixLog} Trade simulado - NO enviado al exchange`, {
           pair,
           type,
           volume: volumeNum,
@@ -2862,16 +2911,20 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           ...(executionMeta || {}),
         });
         
-        // NO enviar Telegram de "ejecutada" en dry run, solo aviso de simulación
+        // Enviar Telegram de simulación con prefijo correcto
         if (this.telegramService.isInitialized()) {
+          const sgInfo = executionMeta && executionMeta.mode === "SMART_GUARD"
+            ? `\n*Min. Orden:* $${executionMeta.minOrderUsd?.toFixed(2) || "N/A"}\n*Permitir Menor:* ${executionMeta.allowUnderMin ? "SÍ" : "NO"}`
+            : "";
+          
           await this.telegramService.sendMessage(`
-🧪 *[DRY\\_RUN] Trade Simulado*
+🧪 *${envPrefix} Trade Simulado*
 
 *Tipo:* ${type.toUpperCase()}
 *Par:* ${pair}
 *Cantidad:* ${volume}
 *Precio:* $${price.toFixed(2)}
-*Total:* $${totalUSD.toFixed(2)}
+*Total:* $${totalUSD.toFixed(2)}${sgInfo}
 
 _⚠️ Modo simulación - NO se envió orden real_
           `.trim());
