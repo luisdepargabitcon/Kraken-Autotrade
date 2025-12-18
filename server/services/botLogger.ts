@@ -45,7 +45,9 @@ export type EventType =
   | "SG_STOP_HIT"
   | "SG_SCALE_OUT"
   // DRY_RUN mode
-  | "DRY_RUN_TRADE";
+  | "DRY_RUN_TRADE"
+  // TEST endpoint events
+  | "TEST_TRADE_SIMULATED";
 
 interface LogMeta {
   [key: string]: any;

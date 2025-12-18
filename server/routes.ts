@@ -871,5 +871,186 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // TEST ENDPOINT: Simular señal BUY para validar SMART_GUARD
+  // Solo disponible en REPLIT/DEV o cuando dryRun=true
+  // ============================================================
+  app.post("/api/test/signal", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      // SEGURIDAD: Solo permitir en REPLIT/DEV o dryRun=true
+      if (envInfo.isNAS && !dryRun) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Este endpoint solo está disponible en entorno de desarrollo (REPLIT/DEV) o con dryRun activado",
+          env: envInfo.env,
+          dryRun,
+        });
+      }
+      
+      // Validar body
+      const testSignalSchema = z.object({
+        pair: z.string().min(1),
+        signal: z.enum(["BUY"]),
+        price: z.number().positive().optional(),
+        forceOrderUsd: z.number().positive().optional(),
+        forceHasPosition: z.boolean().optional(),
+        forceOpenLots: z.number().int().min(0).optional(),
+      });
+      
+      const parsed = testSignalSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "VALIDATION_ERROR",
+          message: "Parámetros inválidos",
+          details: parsed.error.issues,
+        });
+      }
+      
+      const { pair, signal, price, forceOrderUsd, forceHasPosition, forceOpenLots } = parsed.data;
+      const correlationId = `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      
+      // Obtener datos del mercado si no se proporciona precio
+      let currentPrice = price;
+      if (!currentPrice) {
+        try {
+          const ticker = await krakenService.getTicker(pair);
+          currentPrice = parseFloat(ticker?.c?.[0] || "0");
+        } catch {
+          currentPrice = 100; // Fallback para test
+        }
+      }
+      
+      // Obtener configuración SMART_GUARD
+      const positionMode = botConfig?.positionMode || "SINGLE";
+      const sgMinEntryUsd = parseFloat(botConfig?.sgMinEntryUsd?.toString() || "100");
+      const sgAllowUnderMin = botConfig?.sgAllowUnderMin ?? true;
+      const sgMaxOpenLotsPerPair = 1; // Por defecto 1, se implementará en paso 3
+      const SG_ABSOLUTE_MIN_USD = 20;
+      
+      // Obtener balance USD
+      let usdBalance = 0;
+      try {
+        const balances = await krakenService.getBalance() as Record<string, string>;
+        usdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
+      } catch {
+        usdBalance = 100; // Fallback para test
+      }
+      
+      // Simular orderUsdFinal
+      const orderUsdFinal = forceOrderUsd ?? Math.min(usdBalance * 0.95, sgMinEntryUsd);
+      
+      // Simular si hay posición abierta
+      const hasPosition = forceHasPosition ?? (tradingEngine?.getOpenPositions().has(pair) ?? false);
+      const openLots = forceOpenLots ?? (hasPosition ? 1 : 0);
+      
+      // Construir meta base
+      const baseMeta = {
+        correlationId,
+        pair,
+        signal,
+        env: envInfo.env,
+        instanceId: envInfo.instanceId,
+        testMode: true,
+        positionMode,
+        usdDisponible: usdBalance,
+        orderUsdProposed: sgMinEntryUsd,
+        orderUsdFinal,
+        sgMinEntryUsd,
+        sgAllowUnderMin,
+        sgMaxOpenLotsPerPair,
+        absoluteMinOrderUsd: SG_ABSOLUTE_MIN_USD,
+        hasPosition,
+        openLots,
+        currentPrice,
+      };
+      
+      let result: { decision: string; reason: string; message: string };
+      
+      // === VALIDACIÓN 1: Posición abierta en SMART_GUARD/SINGLE ===
+      if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && hasPosition && openLots >= sgMaxOpenLotsPerPair) {
+        const reason = positionMode === "SMART_GUARD" 
+          ? (openLots >= sgMaxOpenLotsPerPair ? "SMART_GUARD_MAX_LOTS_REACHED" : "SMART_GUARD_POSITION_EXISTS")
+          : "SINGLE_MODE_POSITION_EXISTS";
+        
+        await botLogger.info("TRADE_SKIPPED", `[TEST] Señal BUY bloqueada - ${reason}`, {
+          ...baseMeta,
+          reason,
+          existingLots: openLots,
+        });
+        
+        result = {
+          decision: "TRADE_SKIPPED",
+          reason,
+          message: reason === "SMART_GUARD_MAX_LOTS_REACHED"
+            ? `Máximo de lotes abiertos alcanzado (${openLots}/${sgMaxOpenLotsPerPair})`
+            : "Ya hay posición abierta en este par",
+        };
+      }
+      // === VALIDACIÓN 2: Mínimo absoluto exchange (MIN_ORDER_ABSOLUTE) - Prioridad más alta ===
+      else if (orderUsdFinal < SG_ABSOLUTE_MIN_USD) {
+        const reason = "MIN_ORDER_ABSOLUTE";
+        
+        await botLogger.info("TRADE_SKIPPED", `[TEST] Señal BUY bloqueada - mínimo absoluto exchange`, {
+          ...baseMeta,
+          reason,
+        });
+        
+        result = {
+          decision: "TRADE_SKIPPED",
+          reason,
+          message: `Mínimo absoluto exchange no alcanzado: $${orderUsdFinal.toFixed(2)} < $${SG_ABSOLUTE_MIN_USD}`,
+        };
+      }
+      // === VALIDACIÓN 3: Mínimo por orden (MIN_ORDER_USD) ===
+      else if (positionMode === "SMART_GUARD" && !sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
+        const reason = "MIN_ORDER_USD";
+        
+        await botLogger.info("TRADE_SKIPPED", `[TEST] Señal BUY bloqueada - mínimo por orden no alcanzado`, {
+          ...baseMeta,
+          reason,
+        });
+        
+        result = {
+          decision: "TRADE_SKIPPED",
+          reason,
+          message: `Mínimo por orden no alcanzado: $${orderUsdFinal.toFixed(2)} < $${sgMinEntryUsd.toFixed(2)} (allowUnderMin=OFF)`,
+        };
+      }
+      // === CASO POSITIVO: Trade permitido (simulado) ===
+      else {
+        const reason = "TEST_TRADE_ALLOWED";
+        
+        await botLogger.info("TEST_TRADE_SIMULATED", `[TEST] Señal BUY pasaría todas las validaciones`, {
+          ...baseMeta,
+          reason,
+        });
+        
+        result = {
+          decision: "TEST_TRADE_SIMULATED",
+          reason,
+          message: `Trade de $${orderUsdFinal.toFixed(2)} pasaría todas las validaciones en ${positionMode}`,
+        };
+      }
+      
+      res.json({
+        success: true,
+        correlationId,
+        ...result,
+        meta: baseMeta,
+      });
+      
+    } catch (error: any) {
+      console.error("[api/test/signal] Error:", error.message);
+      res.status(500).json({
+        error: "TEST_SIGNAL_ERROR",
+        message: `Error al procesar señal de prueba: ${error.message}`,
+      });
+    }
+  });
+
   return httpServer;
 }
