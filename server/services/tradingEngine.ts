@@ -90,6 +90,8 @@ interface ConfigSnapshot {
 }
 
 interface OpenPosition {
+  lotId: string; // Unique identifier for this lot (multi-lot support)
+  pair: string; // Pair for this position
   amount: number;
   entryPrice: number;
   highestPrice: number;
@@ -106,6 +108,12 @@ interface OpenPosition {
   sgCurrentStopPrice?: number;
   sgTrailingActivated?: boolean;
   sgScaleOutDone?: boolean;
+}
+
+function generateLotId(pair: string): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  return `LOT-${pair.replace("/", "")}-${timestamp}-${random}`;
 }
 
 interface CandleTrackingState {
@@ -145,7 +153,7 @@ export class TradingEngine {
   private intervalId: NodeJS.Timeout | null = null;
   private priceHistory: Map<string, PriceData[]> = new Map();
   private lastTradeTime: Map<string, number> = new Map();
-  private openPositions: Map<string, OpenPosition> = new Map();
+  private openPositions: Map<string, OpenPosition> = new Map(); // Key is lotId for multi-lot support
   private currentUsdBalance: number = 0;
   private mtfCache: Map<string, MultiTimeframeData> = new Map();
   private readonly PRICE_HISTORY_LENGTH = 50;
@@ -196,10 +204,52 @@ export class TradingEngine {
     }
   }
 
+  // === MULTI-LOT HELPERS ===
+  private getPositionsByPair(pair: string): OpenPosition[] {
+    const positions: OpenPosition[] = [];
+    this.openPositions.forEach((position) => {
+      if (position.pair === pair) {
+        positions.push(position);
+      }
+    });
+    return positions;
+  }
+
+  private getFirstPositionByPair(pair: string): OpenPosition | undefined {
+    for (const position of this.openPositions.values()) {
+      if (position.pair === pair) {
+        return position;
+      }
+    }
+    return undefined;
+  }
+
+  private countLotsForPair(pair: string): number {
+    let count = 0;
+    this.openPositions.forEach((position) => {
+      if (position.pair === pair) {
+        count++;
+      }
+    });
+    return count;
+  }
+
+  private getUniquePairs(): string[] {
+    const pairs = new Set<string>();
+    this.openPositions.forEach((position) => {
+      pairs.add(position.pair);
+    });
+    return Array.from(pairs);
+  }
+
   private calculatePairExposure(pair: string): number {
-    const position = this.openPositions.get(pair);
-    if (!position) return 0;
-    return position.amount * position.entryPrice;
+    let total = 0;
+    this.openPositions.forEach((position) => {
+      if (position.pair === pair) {
+        total += position.amount * position.entryPrice;
+      }
+    });
+    return total;
   }
 
   private calculateTotalExposure(): number {
@@ -719,7 +769,12 @@ El bot de trading autónomo está activo.
         const hasSnapshot = pos.configSnapshotJson && pos.entryMode;
         const configSnapshot = hasSnapshot ? (pos.configSnapshotJson as ConfigSnapshot) : undefined;
         
-        this.openPositions.set(pos.pair, {
+        // Use existing lotId or generate one for legacy positions
+        const lotId = pos.lotId || generateLotId(pos.pair);
+        
+        this.openPositions.set(lotId, {
+          lotId,
+          pair: pos.pair,
           amount: parseFloat(pos.amount),
           entryPrice: parseFloat(pos.entryPrice),
           highestPrice: parseFloat(pos.highestPrice),
@@ -737,12 +792,18 @@ El bot de trading autónomo está activo.
           sgScaleOutDone: pos.sgScaleOutDone ?? false,
         });
         
+        // If position lacked lotId, update DB
+        if (!pos.lotId) {
+          await storage.updateOpenPositionLotId(pos.id, lotId);
+          log(`Migrated legacy position ${pos.pair} -> lotId: ${lotId}`, "trading");
+        }
+        
         const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : "[legacy: uses current config]";
-        log(`Posición recuperada: ${pos.pair} - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
+        log(`Posición recuperada: ${pos.pair} (${lotId}) - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
       }
       
       if (positions.length > 0) {
-        log(`${positions.length} posiciones abiertas cargadas desde la base de datos`, "trading");
+        log(`${positions.length} posiciones abiertas (${this.openPositions.size} lotes) cargadas desde la base de datos`, "trading");
         if (this.telegramService.isInitialized()) {
           const escapeMarkdown = (text: string) => text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
           const positionsList = positions.map(p => {
@@ -760,7 +821,8 @@ El bot de trading autónomo está activo.
 
   private async savePositionToDB(pair: string, position: OpenPosition) {
     try {
-      await storage.saveOpenPosition({
+      await storage.saveOpenPositionByLotId({
+        lotId: position.lotId,
         pair,
         entryPrice: position.entryPrice.toString(),
         amount: position.amount.toString(),
@@ -778,7 +840,15 @@ El bot de trading autónomo está activo.
         sgScaleOutDone: position.sgScaleOutDone,
       });
     } catch (error: any) {
-      log(`Error guardando posición ${pair}: ${error.message}`, "trading");
+      log(`Error guardando posición ${pair} (${position.lotId}): ${error.message}`, "trading");
+    }
+  }
+
+  private async deletePositionFromDBByLotId(lotId: string) {
+    try {
+      await storage.deleteOpenPositionByLotId(lotId);
+    } catch (error: any) {
+      log(`Error eliminando posición ${lotId}: ${error.message}`, "trading");
     }
   }
 
@@ -789,6 +859,16 @@ El bot de trading autónomo está activo.
       });
     } catch (error: any) {
       log(`Error actualizando highestPrice ${pair}: ${error.message}`, "trading");
+    }
+  }
+
+  private async updatePositionHighestPriceByLotId(lotId: string, highestPrice: number) {
+    try {
+      await storage.updateOpenPositionByLotId(lotId, {
+        highestPrice: highestPrice.toString(),
+      });
+    } catch (error: any) {
+      log(`Error actualizando highestPrice ${lotId}: ${error.message}`, "trading");
     }
   }
 
@@ -922,8 +1002,9 @@ El bot de trading autónomo está activo.
     trailingStopPercent: number,
     balances: any
   ) {
-    const position = this.openPositions.get(pair);
-    if (!position || position.amount <= 0) return;
+    // Get all positions for this pair (multi-lot support)
+    const positions = this.getPositionsByPair(pair);
+    if (positions.length === 0) return;
 
     try {
       const krakenPair = this.formatKrakenPair(pair);
@@ -932,201 +1013,232 @@ El bot de trading autónomo está activo.
       if (!tickerData) return;
 
       const currentPrice = parseFloat(tickerData.c?.[0] || "0");
-      const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
 
-      if (currentPrice > position.highestPrice) {
-        position.highestPrice = currentPrice;
-        this.openPositions.set(pair, position);
-        await this.updatePositionHighestPrice(pair, currentPrice);
+      // Process each position for this pair independently
+      for (const position of positions) {
+        if (position.amount <= 0) continue;
+        
+        await this.checkSinglePositionSLTP(
+          pair, position, currentPrice, stopLossPercent, takeProfitPercent,
+          trailingStopEnabled, trailingStopPercent, balances
+        );
       }
+    } catch (error: any) {
+      log(`Error verificando SL/TP para ${pair}: ${error.message}`, "trading");
+    }
+  }
 
-      // Check if this is a SMART_GUARD position - use dedicated logic
-      if (position.entryMode === "SMART_GUARD" && position.configSnapshot) {
-        await this.checkSmartGuardExit(pair, position, currentPrice, priceChange);
+  private async checkSinglePositionSLTP(
+    pair: string,
+    position: OpenPosition,
+    currentPrice: number,
+    stopLossPercent: number,
+    takeProfitPercent: number,
+    trailingStopEnabled: boolean,
+    trailingStopPercent: number,
+    balances: any
+  ) {
+    const lotId = position.lotId;
+    const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+
+    if (currentPrice > position.highestPrice) {
+      position.highestPrice = currentPrice;
+      this.openPositions.set(lotId, position);
+      await this.updatePositionHighestPriceByLotId(lotId, currentPrice);
+    }
+
+    // Check if this is a SMART_GUARD position - use dedicated logic
+    if (position.entryMode === "SMART_GUARD" && position.configSnapshot) {
+      await this.checkSmartGuardExit(pair, position, currentPrice, priceChange);
+      return;
+    }
+
+    // Use snapshot params if available (new positions), else use current config (legacy)
+    let effectiveSL: number;
+    let effectiveTP: number;
+    let effectiveTrailingEnabled: boolean;
+    let effectiveTrailingPct: number;
+    let paramsSource: string;
+
+    if (position.configSnapshot) {
+      effectiveSL = position.configSnapshot.stopLossPercent;
+      effectiveTP = position.configSnapshot.takeProfitPercent;
+      effectiveTrailingEnabled = position.configSnapshot.trailingStopEnabled;
+      effectiveTrailingPct = position.configSnapshot.trailingStopPercent;
+      paramsSource = `snapshot (${position.entryMode})`;
+    } else {
+      effectiveSL = stopLossPercent;
+      effectiveTP = takeProfitPercent;
+      effectiveTrailingEnabled = trailingStopEnabled;
+      effectiveTrailingPct = trailingStopPercent;
+      paramsSource = "current config (legacy)";
+    }
+
+    let shouldSell = false;
+    let reason = "";
+    let emoji = "";
+
+    if (priceChange <= -effectiveSL) {
+      shouldSell = true;
+      reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${effectiveSL}%) [${paramsSource}]`;
+      emoji = "🛑";
+      this.setStopLossCooldown(pair);
+      await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
+        pair,
+        lotId,
+        entryPrice: position.entryPrice,
+        currentPrice,
+        priceChange,
+        stopLossPercent: effectiveSL,
+        paramsSource,
+        cooldownMinutes: POST_STOPLOSS_COOLDOWN_MS / 60000,
+      });
+    }
+    else if (priceChange >= effectiveTP) {
+      shouldSell = true;
+      reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${effectiveTP}%) [${paramsSource}]`;
+      emoji = "🎯";
+      await botLogger.info("TAKE_PROFIT_HIT", `Take-Profit alcanzado en ${pair}`, {
+        pair,
+        lotId,
+        entryPrice: position.entryPrice,
+        currentPrice,
+        priceChange,
+        takeProfitPercent: effectiveTP,
+        paramsSource,
+      });
+    }
+    else if (effectiveTrailingEnabled && position.highestPrice > position.entryPrice) {
+      const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
+      if (dropFromHigh >= effectiveTrailingPct && priceChange > 0) {
+        shouldSell = true;
+        reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)}) [${paramsSource}]`;
+        emoji = "📉";
+        await botLogger.info("TRAILING_STOP_HIT", `Trailing Stop activado en ${pair}`, {
+          pair,
+          lotId,
+          entryPrice: position.entryPrice,
+          highestPrice: position.highestPrice,
+          currentPrice,
+          dropFromHigh,
+          trailingStopPercent: effectiveTrailingPct,
+          paramsSource,
+        });
+      }
+    }
+
+    if (shouldSell) {
+      const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+      const sellAmount = position.amount;
+
+      if (sellAmount < minVolume) {
+        log(`Cantidad a vender (${sellAmount}) menor al mínimo de Kraken (${minVolume}) para ${pair} (${lotId})`, "trading");
         return;
       }
 
-      // Use snapshot params if available (new positions), else use current config (legacy)
-      let effectiveSL: number;
-      let effectiveTP: number;
-      let effectiveTrailingEnabled: boolean;
-      let effectiveTrailingPct: number;
-      let paramsSource: string;
-
-      if (position.configSnapshot) {
-        effectiveSL = position.configSnapshot.stopLossPercent;
-        effectiveTP = position.configSnapshot.takeProfitPercent;
-        effectiveTrailingEnabled = position.configSnapshot.trailingStopEnabled;
-        effectiveTrailingPct = position.configSnapshot.trailingStopPercent;
-        paramsSource = `snapshot (${position.entryMode})`;
-      } else {
-        effectiveSL = stopLossPercent;
-        effectiveTP = takeProfitPercent;
-        effectiveTrailingEnabled = trailingStopEnabled;
-        effectiveTrailingPct = trailingStopPercent;
-        paramsSource = "current config (legacy)";
-      }
-
-      let shouldSell = false;
-      let reason = "";
-      let emoji = "";
-
-      if (priceChange <= -effectiveSL) {
-        shouldSell = true;
-        reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${effectiveSL}%) [${paramsSource}]`;
-        emoji = "🛑";
-        this.setStopLossCooldown(pair);
-        await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
-          pair,
-          entryPrice: position.entryPrice,
-          currentPrice,
-          priceChange,
-          stopLossPercent: effectiveSL,
-          paramsSource,
-          cooldownMinutes: POST_STOPLOSS_COOLDOWN_MS / 60000,
-        });
-      }
-      else if (priceChange >= effectiveTP) {
-        shouldSell = true;
-        reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${effectiveTP}%) [${paramsSource}]`;
-        emoji = "🎯";
-        await botLogger.info("TAKE_PROFIT_HIT", `Take-Profit alcanzado en ${pair}`, {
-          pair,
-          entryPrice: position.entryPrice,
-          currentPrice,
-          priceChange,
-          takeProfitPercent: effectiveTP,
-          paramsSource,
-        });
-      }
-      else if (effectiveTrailingEnabled && position.highestPrice > position.entryPrice) {
-        const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
-        if (dropFromHigh >= effectiveTrailingPct && priceChange > 0) {
-          shouldSell = true;
-          reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)}) [${paramsSource}]`;
-          emoji = "📉";
-          await botLogger.info("TRAILING_STOP_HIT", `Trailing Stop activado en ${pair}`, {
-            pair,
-            entryPrice: position.entryPrice,
-            highestPrice: position.highestPrice,
-            currentPrice,
-            dropFromHigh,
-            trailingStopPercent: effectiveTrailingPct,
-            paramsSource,
-          });
-        }
-      }
-
-      if (shouldSell) {
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
-        const sellAmount = position.amount;
-
-        if (sellAmount < minVolume) {
-          log(`Cantidad a vender (${sellAmount}) menor al mínimo de Kraken (${minVolume}) para ${pair}`, "trading");
-          return;
-        }
-
-        // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
-        const freshBalances = await this.krakenService.getBalance();
-        const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+      // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
+      const freshBalances = await this.krakenService.getBalance();
+      const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+      
+      // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
+      if (realAssetBalance < sellAmount * 0.995) {
+        log(`⚠️ Discrepancia de balance en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
         
-        // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
-        if (realAssetBalance < sellAmount * 0.995) {
-          log(`⚠️ Discrepancia de balance en ${pair}: Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
+        // Si balance real es prácticamente cero (< mínimo de Kraken), eliminar posición
+        if (realAssetBalance < minVolume) {
+          log(`Posición huérfana eliminada en ${pair} (${lotId}): balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
           
-          // Si balance real es prácticamente cero (< mínimo de Kraken), eliminar posición
-          if (realAssetBalance < minVolume) {
-            log(`Posición huérfana eliminada en ${pair}: balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
-            
-            // NO modificar dailyPnL: si fue vendida manualmente, el usuario ya tiene el USD
-            // Pero SÍ debemos reconciliar exposure y cooldowns
-            
-            // Refrescar balance USD para tener métricas consistentes
-            this.currentUsdBalance = parseFloat(freshBalances?.ZUSD || freshBalances?.USD || "0");
-            
-            this.openPositions.delete(pair);
-            await this.deletePositionFromDB(pair);
-            
-            // Limpiar cooldowns obsoletos y establecer uno nuevo (15 min)
-            this.stopLossCooldowns.delete(pair);
-            this.lastExposureAlert.delete(pair);
-            this.setPairCooldown(pair); // Cooldown estándar de 15 minutos
-            this.lastTradeTime.set(pair, Date.now());
-            
-            if (this.telegramService.isInitialized()) {
-              await this.telegramService.sendMessage(`
+          // NO modificar dailyPnL: si fue vendida manualmente, el usuario ya tiene el USD
+          // Pero SÍ debemos reconciliar exposure y cooldowns
+          
+          // Refrescar balance USD para tener métricas consistentes
+          this.currentUsdBalance = parseFloat(freshBalances?.ZUSD || freshBalances?.USD || "0");
+          
+          this.openPositions.delete(lotId);
+          await this.deletePositionFromDBByLotId(lotId);
+          
+          // Limpiar cooldowns obsoletos y establecer uno nuevo (15 min)
+          this.stopLossCooldowns.delete(pair);
+          this.lastExposureAlert.delete(pair);
+          this.setPairCooldown(pair);
+          this.lastTradeTime.set(pair, Date.now());
+          
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendMessage(`
 🔄 *Posición Huérfana Eliminada*
 
 *Par:* ${pair}
+*Lot:* ${lotId}
 *Registrada:* ${sellAmount.toFixed(8)}
 *Real en Kraken:* ${realAssetBalance.toFixed(8)}
 
 _La posición no existe en Kraken y fue eliminada._
-              `.trim());
-            }
-            
-            await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
-              pair,
-              registeredAmount: sellAmount,
-              realBalance: realAssetBalance,
-              newUsdBalance: this.currentUsdBalance,
-            });
-            return;
+            `.trim());
           }
           
-          // Si hay algo de balance pero menos del registrado, ajustar posición al real
-          log(`Ajustando posición ${pair} de ${sellAmount} a ${realAssetBalance}`, "trading");
-          position.amount = realAssetBalance;
-          this.openPositions.set(pair, position);
-          await this.savePositionToDB(pair, position);
-          
-          // Notificar ajuste
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`
+          await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
+            pair,
+            lotId,
+            registeredAmount: sellAmount,
+            realBalance: realAssetBalance,
+            newUsdBalance: this.currentUsdBalance,
+          });
+          return;
+        }
+        
+        // Si hay algo de balance pero menos del registrado, ajustar posición al real
+        log(`Ajustando posición ${pair} (${lotId}) de ${sellAmount} a ${realAssetBalance}`, "trading");
+        position.amount = realAssetBalance;
+        this.openPositions.set(lotId, position);
+        await this.savePositionToDB(pair, position);
+        
+        // Notificar ajuste
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendMessage(`
 🔧 *Posición Ajustada*
 
 *Par:* ${pair}
+*Lot:* ${lotId}
 *Cantidad anterior:* ${sellAmount.toFixed(8)}
 *Cantidad real:* ${realAssetBalance.toFixed(8)}
 
 _Se usará la cantidad real para la venta._
-            `.trim());
-          }
-          
-          // Continuar con la venta usando el balance real
+          `.trim());
         }
-
-        log(`${emoji} ${reason} para ${pair}`, "trading");
-
-        // Usar position.amount (puede haber sido ajustado al balance real)
-        const actualSellAmount = position.amount;
-        const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
-        const pnlPercent = priceChange;
-
-        const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason);
         
-        if (success && this.telegramService.isInitialized()) {
-          const pnlEmoji = pnl >= 0 ? "💰" : "📉";
-          await this.telegramService.sendAlertToMultipleChats(`
+        // Continuar con la venta usando el balance real
+      }
+
+      log(`${emoji} ${reason} para ${pair} (${lotId})`, "trading");
+
+      // Usar position.amount (puede haber sido ajustado al balance real)
+      const actualSellAmount = position.amount;
+      const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
+      const pnlPercent = priceChange;
+
+      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId };
+      const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
+      
+      if (success && this.telegramService.isInitialized()) {
+        const pnlEmoji = pnl >= 0 ? "💰" : "📉";
+        await this.telegramService.sendAlertToMultipleChats(`
 ${emoji} *${reason}*
 
 *Par:* ${pair}
+*Lot:* ${lotId}
 *Precio entrada:* $${position.entryPrice.toFixed(2)}
 *Precio actual:* $${currentPrice.toFixed(2)}
 *Cantidad vendida:* ${actualSellAmount.toFixed(8)}
 
 ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
-          `.trim(), "trades");
-        }
-
-        if (success) {
-          this.openPositions.delete(pair);
-          await this.deletePositionFromDB(pair);
-          this.lastTradeTime.set(pair, Date.now());
-        }
+        `.trim(), "trades");
       }
-    } catch (error: any) {
-      log(`Error verificando SL/TP para ${pair}: ${error.message}`, "trading");
+
+      if (success) {
+        this.openPositions.delete(lotId);
+        await this.deletePositionFromDBByLotId(lotId);
+        this.lastTradeTime.set(pair, Date.now());
+      }
     }
   }
 
@@ -1257,9 +1369,11 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       }
     }
     
+    const lotId = position.lotId;
+    
     // Save position changes
     if (positionModified && !shouldSellFull && !shouldScaleOut) {
-      this.openPositions.set(pair, position);
+      this.openPositions.set(lotId, position);
       await this.savePositionToDB(pair, position);
     }
     
@@ -1271,7 +1385,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         : position.amount;
       
       if (sellAmount < minVolume) {
-        log(`SMART_GUARD: Cantidad a vender (${sellAmount}) menor al mínimo (${minVolume}) para ${pair}`, "trading");
+        log(`SMART_GUARD: Cantidad a vender (${sellAmount}) menor al mínimo (${minVolume}) para ${pair} (${lotId})`, "trading");
         return;
       }
       
@@ -1281,9 +1395,9 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
       
       if (realAssetBalance < sellAmount * 0.995) {
         if (realAssetBalance < minVolume) {
-          log(`SMART_GUARD: Posición huérfana en ${pair}, eliminando`, "trading");
-          this.openPositions.delete(pair);
-          await this.deletePositionFromDB(pair);
+          log(`SMART_GUARD: Posición huérfana en ${pair} (${lotId}), eliminando`, "trading");
+          this.openPositions.delete(lotId);
+          await this.deletePositionFromDBByLotId(lotId);
           this.setPairCooldown(pair);
           return;
         }
@@ -1291,10 +1405,11 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
         position.amount = realAssetBalance;
       }
       
-      log(`${emoji} ${sellReason} para ${pair}`, "trading");
+      log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
       
       const pnl = (currentPrice - position.entryPrice) * sellAmount;
-      const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason);
+      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId };
+      const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
         const pnlEmoji = pnl >= 0 ? "💰" : "📉";
@@ -1302,6 +1417,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
 ${emoji} *${sellReason}*
 
 *Par:* ${pair}
+*Lot:* ${lotId}
 *Precio entrada:* $${position.entryPrice.toFixed(2)}
 *Precio actual:* $${currentPrice.toFixed(2)}
 *Cantidad vendida:* ${sellAmount.toFixed(8)}
@@ -1312,11 +1428,11 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
       
       if (success) {
         if (shouldSellFull || position.amount <= 0) {
-          this.openPositions.delete(pair);
-          await this.deletePositionFromDB(pair);
+          this.openPositions.delete(lotId);
+          await this.deletePositionFromDBByLotId(lotId);
         } else {
           // Partial sell (scale-out)
-          this.openPositions.set(pair, position);
+          this.openPositions.set(lotId, position);
           await this.savePositionToDB(pair, position);
         }
         this.lastTradeTime.set(pair, Date.now());
@@ -1376,7 +1492,8 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
       }
 
       const assetBalance = this.getAssetBalance(pair, balances);
-      const existingPosition = this.openPositions.get(pair);
+      const existingPositions = this.getPositionsByPair(pair);
+      const existingPosition = existingPositions[0];
 
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
@@ -1398,7 +1515,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        const currentOpenLots = (existingPosition && existingPosition.amount > 0) ? 1 : 0;
+        const currentOpenLots = this.countLotsForPair(pair);
         
         if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
           const reasonCode = positionMode === "SMART_GUARD" 
@@ -1789,7 +1906,10 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason);
+        const sellContext = existingPosition 
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }
+          : undefined;
+        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason, undefined, undefined, undefined, sellContext);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
         }
@@ -1837,7 +1957,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
 
       const currentPrice = parseFloat(tickerData.c?.[0] || "0");
       const assetBalance = this.getAssetBalance(pair, balances);
-      const existingPosition = this.openPositions.get(pair);
+      const existingPositions = this.getPositionsByPair(pair);
+      const existingPosition = existingPositions[0];
 
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
@@ -1859,7 +1980,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        const currentOpenLots = (existingPosition && existingPosition.amount > 0) ? 1 : 0;
+        const currentOpenLots = this.countLotsForPair(pair);
         
         if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
           const reasonCode = positionMode === "SMART_GUARD" 
@@ -2061,7 +2182,10 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${strategyId}]`);
+        const sellContext = existingPosition 
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }
+          : undefined;
+        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${strategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
         }
@@ -2625,7 +2749,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
     reason: string,
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
     strategyMeta?: { strategyId: string; timeframe: string; confidence: number },
-    executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean }
+    executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean },
+    sellContext?: { entryPrice: number; aiSampleId?: number } // For sells: pass entry price for correct P&L calculation
   ): Promise<boolean> {
     try {
       const volumeNum = parseFloat(volume);
@@ -2695,36 +2820,35 @@ _⚠️ Modo simulación - NO se envió orden real_
       // volumeNum ya declarado arriba
       if (type === "buy") {
         this.currentUsdBalance -= volumeNum * price;
-        const existing = this.openPositions.get(pair);
+        const existingPositions = this.getPositionsByPair(pair);
+        const existing = existingPositions[0]; // First position for DCA mode
         let newPosition: OpenPosition;
         
         const entryStrategyId = strategyMeta?.strategyId || "momentum_cycle";
         const entrySignalTf = strategyMeta?.timeframe || "cycle";
         const signalConfidence = strategyMeta?.confidence;
         
-        if (existing && existing.amount > 0) {
-          // DCA: preserve original snapshot and mode
+        const currentConfig = await storage.getBotConfig();
+        const entryMode = currentConfig?.positionMode || "SINGLE";
+        
+        // In SMART_GUARD with multi-lot, always create new positions
+        const shouldCreateNewLot = entryMode === "SMART_GUARD" || !existing || existing.amount <= 0;
+        
+        if (!shouldCreateNewLot && existing) {
+          // DCA mode: update existing position
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
           newPosition = { 
+            ...existing,
             amount: totalAmount, 
             entryPrice: avgPrice,
             highestPrice: Math.max(existing.highestPrice, price),
-            openedAt: existing.openedAt,
-            entryStrategyId: existing.entryStrategyId,
-            entrySignalTf: existing.entrySignalTf,
-            signalConfidence: existing.signalConfidence,
-            signalReason: existing.signalReason,
-            aiSampleId: existing.aiSampleId,
-            entryMode: existing.entryMode,
-            configSnapshot: existing.configSnapshot,
           };
-          this.openPositions.set(pair, newPosition);
-          log(`DCA entry: ${pair} - preserved snapshot from original entry`, "trading");
+          this.openPositions.set(existing.lotId, newPosition);
+          log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry`, "trading");
         } else {
-          // NEW POSITION: create snapshot of current config
-          const currentConfig = await storage.getBotConfig();
-          const entryMode = currentConfig?.positionMode || "SINGLE";
+          // NEW POSITION: create snapshot of current config with unique lotId
+          const lotId = generateLotId(pair);
           
           const configSnapshot: ConfigSnapshot = {
             stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
@@ -2754,6 +2878,8 @@ _⚠️ Modo simulación - NO se envió orden real_
           }
           
           newPosition = { 
+            lotId,
+            pair,
             amount: volumeNum, 
             entryPrice: price,
             highestPrice: price,
@@ -2770,12 +2896,13 @@ _⚠️ Modo simulación - NO se envió orden real_
             sgTrailingActivated: false,
             sgScaleOutDone: false,
           };
-          this.openPositions.set(pair, newPosition);
+          this.openPositions.set(lotId, newPosition);
           
+          const lotCount = this.countLotsForPair(pair);
           if (entryMode === "SMART_GUARD") {
-            log(`NEW POSITION: ${pair} - SMART_GUARD snapshot saved (BE=${configSnapshot.sgBeAtPct}%, trail=${configSnapshot.sgTrailDistancePct}%, TP=${configSnapshot.sgTpFixedEnabled ? configSnapshot.sgTpFixedPct + '%' : 'OFF'})`, "trading");
+            log(`NEW LOT #${lotCount}: ${pair} (${lotId}) - SMART_GUARD snapshot saved (BE=${configSnapshot.sgBeAtPct}%, trail=${configSnapshot.sgTrailDistancePct}%, TP=${configSnapshot.sgTpFixedEnabled ? configSnapshot.sgTpFixedPct + '%' : 'OFF'})`, "trading");
           } else {
-            log(`NEW POSITION: ${pair} - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
+            log(`NEW POSITION: ${pair} (${lotId}) - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
           }
         }
         
@@ -2806,21 +2933,22 @@ _⚠️ Modo simulación - NO se envió orden real_
         
         await this.savePositionToDB(pair, newPosition);
       } else {
+        // SELL: Update balance and P&L tracking
+        // Note: Position management for sells is now handled by the callers 
+        // (checkSinglePositionSLTP, checkSmartGuardExit, forceClosePosition)
+        // which have the lotId context. This block only updates balance/P&L metrics.
         this.currentUsdBalance += volumeNum * price;
-        const existing = this.openPositions.get(pair);
-        if (existing) {
-          const pnl = (price - existing.entryPrice) * volumeNum;
-          const pnlPercent = ((price - existing.entryPrice) / existing.entryPrice) * 100;
+        
+        // Calculate P&L using sellContext if provided (for correct per-lot tracking)
+        if (sellContext) {
+          const pnl = (price - sellContext.entryPrice) * volumeNum;
           this.dailyPnL += pnl;
           log(`P&L de operación: $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
           
-          existing.amount -= volumeNum;
-          const isFullClose = existing.amount <= 0;
-          
-          // AI Sample update: mark sample complete with PnL result only on full close
-          if (existing.aiSampleId && isFullClose) {
+          // AI Sample update: mark sample complete with PnL result
+          if (sellContext.aiSampleId) {
             try {
-              await storage.updateAiSample(existing.aiSampleId, {
+              await storage.updateAiSample(sellContext.aiSampleId, {
                 exitPrice: price.toString(),
                 exitTs: new Date(),
                 pnlGross: pnl.toString(),
@@ -2828,20 +2956,21 @@ _⚠️ Modo simulación - NO se envió orden real_
                 labelWin: pnl > 0 ? 1 : 0,
                 isComplete: true,
               });
-              log(`[AI] Sample #${existing.aiSampleId} actualizado: PnL=${pnl.toFixed(2)} (${pnl > 0 ? 'WIN' : 'LOSS'})`, "trading");
+              log(`[AI] Sample #${sellContext.aiSampleId} actualizado: PnL=${pnl.toFixed(2)} (${pnl > 0 ? 'WIN' : 'LOSS'})`, "trading");
             } catch (aiErr: any) {
               log(`[AI] Error actualizando sample: ${aiErr.message}`, "trading");
             }
           }
-          
-          if (isFullClose) {
-            this.openPositions.delete(pair);
-            await this.deletePositionFromDB(pair);
-          } else {
-            this.openPositions.set(pair, existing);
-            await this.savePositionToDB(pair, existing);
+        } else {
+          // Fallback: try to find position for P&L (legacy path, less accurate for multi-lot)
+          const existing = this.getFirstPositionByPair(pair);
+          if (existing) {
+            const pnl = (price - existing.entryPrice) * volumeNum;
+            this.dailyPnL += pnl;
+            log(`P&L de operación (legacy): $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
           }
         }
+        // Position deletion is handled by the caller (checkSinglePositionSLTP, checkSmartGuardExit, etc.)
       }
 
       const emoji = type === "buy" ? "🟢" : "🔴";
@@ -3026,7 +3155,8 @@ _KrakenBot.AI_
     pair: string,
     currentPrice: number,
     correlationId: string,
-    reason: string
+    reason: string,
+    lotId?: string // Optional: specify which lot to close (for multi-lot support)
   ): Promise<{
     success: boolean;
     error?: string;
@@ -3034,9 +3164,19 @@ _KrakenBot.AI_
     pnlUsd?: number;
     pnlPct?: number;
     dryRun?: boolean;
+    lotId?: string;
   }> {
     try {
-      const position = this.openPositions.get(pair);
+      // Find the position to close
+      let position: OpenPosition | undefined;
+      if (lotId) {
+        position = this.openPositions.get(lotId);
+      } else {
+        // Close the first position for this pair
+        const positions = this.getPositionsByPair(pair);
+        position = positions[0];
+      }
+      
       if (!position || position.amount <= 0) {
         return {
           success: false,
@@ -3044,21 +3184,22 @@ _KrakenBot.AI_
         };
       }
 
+      const positionLotId = position.lotId;
       const amount = position.amount;
       const entryPrice = position.entryPrice;
       const pnlUsd = (currentPrice - entryPrice) * amount;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
 
-      log(`[MANUAL_CLOSE] Iniciando cierre de ${pair}: ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+      log(`[MANUAL_CLOSE] Iniciando cierre de ${pair} (${positionLotId}): ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
 
       // En DRY_RUN, simular el cierre
       if (this.dryRunMode) {
         const simTxid = `MANUAL-DRY-${Date.now()}`;
-        log(`[DRY_RUN] SIMULACIÓN cierre manual ${pair} - ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+        log(`[DRY_RUN] SIMULACIÓN cierre manual ${pair} (${positionLotId}) - ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
 
         // Actualizar memoria y DB para reflejar el cierre (aunque sea simulado)
-        this.openPositions.delete(pair);
-        await storage.deleteOpenPosition(pair);
+        this.openPositions.delete(positionLotId);
+        await storage.deleteOpenPositionByLotId(positionLotId);
 
         // Registrar el trade de cierre
         const tradeId = `MANUAL-${Date.now()}`;
@@ -3097,6 +3238,7 @@ _⚠️ Modo simulación - NO se envió orden real_
           pnlUsd,
           pnlPct,
           dryRun: true,
+          lotId: positionLotId,
         };
       }
 
@@ -3116,9 +3258,9 @@ _⚠️ Modo simulación - NO se envió orden real_
         };
       }
 
-      // Actualizar memoria y DB
-      this.openPositions.delete(pair);
-      await storage.deleteOpenPosition(pair);
+      // Actualizar memoria y DB (usar lotId para multi-lot)
+      this.openPositions.delete(positionLotId);
+      await storage.deleteOpenPositionByLotId(positionLotId);
 
       // Registrar el trade de cierre
       const tradeId = `MANUAL-${Date.now()}`;
@@ -3153,7 +3295,7 @@ _Cierre solicitado manualmente desde dashboard_
         `.trim());
       }
 
-      log(`[MANUAL_CLOSE] Cierre exitoso ${pair} - Order: ${txid}, PnL: $${pnlUsd.toFixed(2)}`, "trading");
+      log(`[MANUAL_CLOSE] Cierre exitoso ${pair} (${positionLotId}) - Order: ${txid}, PnL: $${pnlUsd.toFixed(2)}`, "trading");
 
       return {
         success: true,
@@ -3161,6 +3303,7 @@ _Cierre solicitado manualmente desde dashboard_
         pnlUsd,
         pnlPct,
         dryRun: false,
+        lotId: positionLotId,
       };
 
     } catch (error: any) {

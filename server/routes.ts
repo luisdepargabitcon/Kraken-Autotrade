@@ -408,17 +408,25 @@ export async function registerRoutes(
   app.post("/api/positions/:pair/close", async (req, res) => {
     try {
       const pair = req.params.pair.replace("-", "/"); // Convert BTC-USD back to BTC/USD
-      const { reason } = req.body;
+      const { reason, lotId } = req.body; // Optional lotId for multi-lot support
       
       const correlationId = `MANUAL-CLOSE-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
       
       // Verificar que la posición existe
       const positions = await storage.getOpenPositions();
-      const position = positions.find(p => p.pair === pair);
+      let position;
+      if (lotId) {
+        // Specific lot requested
+        position = positions.find(p => p.lotId === lotId);
+      } else {
+        // Close first position for the pair
+        position = positions.find(p => p.pair === pair);
+      }
       
       if (!position) {
         await botLogger.warn("MANUAL_CLOSE_FAILED", `Intento de cierre manual fallido - posición no encontrada`, {
           pair,
+          lotId: lotId || "not_specified",
           correlationId,
           reason: reason || "Usuario solicitó cierre manual",
         });
@@ -473,10 +481,13 @@ export async function registerRoutes(
       const pnlUsd = (currentPrice - entryPrice) * amount;
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
       
+      const positionLotId = position.lotId;
+      
       // Log el intento de cierre manual
       await botLogger.info("MANUAL_CLOSE_INITIATED", `Cierre manual iniciado por usuario`, {
         correlationId,
         pair,
+        lotId: positionLotId,
         amount,
         entryPrice,
         currentPrice,
@@ -494,12 +505,13 @@ export async function registerRoutes(
         });
       }
       
-      const closeResult = await tradingEngine.forceClosePosition(pair, currentPrice, correlationId, reason || "Cierre manual por usuario");
+      const closeResult = await tradingEngine.forceClosePosition(pair, currentPrice, correlationId, reason || "Cierre manual por usuario", positionLotId);
       
       if (closeResult.success) {
         await botLogger.info("MANUAL_CLOSE_SUCCESS", `Posición cerrada manualmente`, {
           correlationId,
           pair,
+          lotId: closeResult.lotId || positionLotId,
           amount,
           exitPrice: currentPrice,
           realizedPnlUsd: closeResult.pnlUsd?.toFixed(2),
@@ -512,6 +524,7 @@ export async function registerRoutes(
           success: true,
           correlationId,
           pair,
+          lotId: closeResult.lotId || positionLotId,
           amount,
           exitPrice: currentPrice,
           realizedPnlUsd: closeResult.pnlUsd?.toFixed(2),
@@ -525,6 +538,7 @@ export async function registerRoutes(
         await botLogger.error("MANUAL_CLOSE_FAILED", `Error al cerrar posición manualmente`, {
           correlationId,
           pair,
+          lotId: positionLotId,
           error: closeResult.error,
         });
         

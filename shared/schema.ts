@@ -116,7 +116,8 @@ export const botEvents = pgTable("bot_events", {
 
 export const openPositions = pgTable("open_positions", {
   id: serial("id").primaryKey(),
-  pair: text("pair").notNull().unique(),
+  lotId: text("lot_id").notNull().unique(), // Unique identifier for each lot (multi-lot support)
+  pair: text("pair").notNull(), // Removed unique constraint for multi-lot support
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
   amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
   highestPrice: decimal("highest_price", { precision: 18, scale: 8 }).notNull(),

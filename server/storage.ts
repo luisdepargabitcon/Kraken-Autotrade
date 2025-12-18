@@ -64,9 +64,15 @@ export interface IStorage {
   
   getOpenPositions(): Promise<OpenPosition[]>;
   getOpenPosition(pair: string): Promise<OpenPosition | undefined>;
+  getOpenPositionByLotId(lotId: string): Promise<OpenPosition | undefined>;
+  getOpenPositionsByPair(pair: string): Promise<OpenPosition[]>;
   saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition>;
+  saveOpenPositionByLotId(position: InsertOpenPosition): Promise<OpenPosition>;
   updateOpenPosition(pair: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined>;
+  updateOpenPositionByLotId(lotId: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined>;
+  updateOpenPositionLotId(id: number, lotId: string): Promise<void>;
   deleteOpenPosition(pair: string): Promise<void>;
+  deleteOpenPositionByLotId(lotId: string): Promise<void>;
   
   saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample>;
   updateAiSample(sampleId: number, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
@@ -259,12 +265,40 @@ export class DatabaseStorage implements IStorage {
     return positions[0];
   }
 
+  async getOpenPositionByLotId(lotId: string): Promise<OpenPosition | undefined> {
+    const positions = await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.lotId, lotId))
+      .limit(1);
+    return positions[0];
+  }
+
+  async getOpenPositionsByPair(pair: string): Promise<OpenPosition[]> {
+    return await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.pair, pair));
+  }
+
   async saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition> {
     const existing = await this.getOpenPosition(position.pair);
     if (existing) {
       const [updated] = await db.update(openPositionsTable)
         .set({ ...position, updatedAt: new Date() })
         .where(eq(openPositionsTable.pair, position.pair))
+        .returning();
+      return updated;
+    }
+    const [newPosition] = await db.insert(openPositionsTable).values(position).returning();
+    return newPosition;
+  }
+
+  async saveOpenPositionByLotId(position: InsertOpenPosition): Promise<OpenPosition> {
+    if (!position.lotId) {
+      throw new Error("lotId is required for saveOpenPositionByLotId");
+    }
+    const existing = await this.getOpenPositionByLotId(position.lotId);
+    if (existing) {
+      const [updated] = await db.update(openPositionsTable)
+        .set({ ...position, updatedAt: new Date() })
+        .where(eq(openPositionsTable.lotId, position.lotId))
         .returning();
       return updated;
     }
@@ -280,8 +314,26 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async updateOpenPositionByLotId(lotId: string, updates: Partial<InsertOpenPosition>): Promise<OpenPosition | undefined> {
+    const [updated] = await db.update(openPositionsTable)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(openPositionsTable.lotId, lotId))
+      .returning();
+    return updated;
+  }
+
+  async updateOpenPositionLotId(id: number, lotId: string): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({ lotId, updatedAt: new Date() })
+      .where(eq(openPositionsTable.id, id));
+  }
+
   async deleteOpenPosition(pair: string): Promise<void> {
     await db.delete(openPositionsTable).where(eq(openPositionsTable.pair, pair));
+  }
+
+  async deleteOpenPositionByLotId(lotId: string): Promise<void> {
+    await db.delete(openPositionsTable).where(eq(openPositionsTable.lotId, lotId));
   }
 
   async saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample> {
