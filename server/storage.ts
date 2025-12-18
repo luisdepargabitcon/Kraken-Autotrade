@@ -94,16 +94,39 @@ export interface IStorage {
   getDiscardReasonsDataset(): Promise<Record<string, number>>;
   getAllTradesForBackfill(): Promise<Trade[]>;
   runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }>;
+  
+  // Schema health check and auto-migration
+  checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }>;
+  runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }>;
 }
 
 export class DatabaseStorage implements IStorage {
+  private schemaMigrationAttempted = false;
+  
   async getBotConfig(): Promise<BotConfig | undefined> {
-    const configs = await db.select().from(botConfigTable).limit(1);
-    if (configs.length === 0) {
-      const [newConfig] = await db.insert(botConfigTable).values({}).returning();
-      return newConfig;
+    try {
+      const configs = await db.select().from(botConfigTable).limit(1);
+      if (configs.length === 0) {
+        const [newConfig] = await db.insert(botConfigTable).values({}).returning();
+        return newConfig;
+      }
+      return configs[0];
+    } catch (error) {
+      // If schema is outdated, try auto-migration ONCE then retry
+      if (!this.schemaMigrationAttempted && error instanceof Error && error.message.includes('does not exist')) {
+        console.log('[storage] Schema issue detected, attempting auto-migration...');
+        this.schemaMigrationAttempted = true;
+        const migrationResult = await this.runSchemaMigration();
+        if (migrationResult.success) {
+          console.log('[storage] Auto-migration successful, retrying getBotConfig...');
+          return this.getBotConfig();
+        }
+        // Migration failed - propagate error
+        console.error('[storage] Auto-migration failed:', migrationResult.error);
+      }
+      // No fallback - surface the error so operators know to fix schema
+      throw error;
     }
-    return configs[0];
   }
 
   async updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig> {
@@ -750,6 +773,139 @@ export class DatabaseStorage implements IStorage {
     }
     
     return { created, closed, labeled, discardReasons };
+  }
+
+  async checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }> {
+    const missingColumns: string[] = [];
+    
+    // Check required columns in bot_config table
+    const requiredBotConfigColumns = [
+      { column: 'sg_max_open_lots_per_pair', table: 'bot_config' },
+      { column: 'sg_pair_overrides', table: 'bot_config' },
+      { column: 'dry_run_mode', table: 'bot_config' },
+      { column: 'sg_min_entry_usd', table: 'bot_config' },
+      { column: 'sg_allow_under_min', table: 'bot_config' },
+      { column: 'sg_be_at_pct', table: 'bot_config' },
+      { column: 'sg_trail_start_pct', table: 'bot_config' },
+      { column: 'sg_trail_distance_pct', table: 'bot_config' },
+      { column: 'sg_trail_step_pct', table: 'bot_config' },
+      { column: 'sg_tp_fixed_enabled', table: 'bot_config' },
+      { column: 'sg_tp_fixed_pct', table: 'bot_config' },
+      { column: 'sg_scale_out_enabled', table: 'bot_config' },
+      { column: 'sg_scale_out_pct', table: 'bot_config' },
+      { column: 'sg_min_part_usd', table: 'bot_config' },
+      { column: 'sg_scale_out_threshold', table: 'bot_config' },
+      { column: 'sg_fee_cushion_pct', table: 'bot_config' },
+      { column: 'sg_fee_cushion_auto', table: 'bot_config' },
+    ];
+    
+    const requiredOpenPositionsColumns = [
+      { column: 'lot_id', table: 'open_positions' },
+      { column: 'sg_break_even_activated', table: 'open_positions' },
+      { column: 'sg_trailing_activated', table: 'open_positions' },
+      { column: 'sg_current_stop_price', table: 'open_positions' },
+      { column: 'sg_scale_out_done', table: 'open_positions' },
+      { column: 'config_snapshot_json', table: 'open_positions' },
+    ];
+    
+    const allRequiredColumns = [...requiredBotConfigColumns, ...requiredOpenPositionsColumns];
+    
+    // Health check ONLY reports status - does NOT auto-migrate
+    // Migration should be run by script/migrate.ts (Docker startup) or manually
+    // This ensures the migration flow has a single source of truth
+    for (const { column, table } of allRequiredColumns) {
+      const result = await db.execute(sql`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_name = ${table} AND column_name = ${column}
+      `);
+      if (result.rows.length === 0) {
+        missingColumns.push(`${table}.${column}`);
+      }
+    }
+    
+    if (missingColumns.length > 0) {
+      console.warn(`[schema] Health check: missing columns detected: ${missingColumns.join(', ')}`);
+      console.warn('[schema] Run "npx tsx script/migrate.ts" to fix schema issues');
+    }
+    
+    return { healthy: missingColumns.length === 0, missingColumns, migrationRan: false };
+  }
+
+  async runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }> {
+    const columnsAdded: string[] = [];
+    
+    try {
+      // Define all migrations with safe ADD COLUMN IF NOT EXISTS
+      const migrations = [
+        // bot_config columns
+        { table: 'bot_config', column: 'sg_max_open_lots_per_pair', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_max_open_lots_per_pair INTEGER DEFAULT 1' },
+        { table: 'bot_config', column: 'sg_pair_overrides', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_pair_overrides JSONB' },
+        { table: 'bot_config', column: 'dry_run_mode', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS dry_run_mode BOOLEAN DEFAULT false' },
+        { table: 'bot_config', column: 'sg_min_entry_usd', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_min_entry_usd DECIMAL(10,2) DEFAULT 100.00' },
+        { table: 'bot_config', column: 'sg_allow_under_min', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_allow_under_min BOOLEAN DEFAULT true' },
+        { table: 'bot_config', column: 'sg_be_at_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_be_at_pct DECIMAL(5,2) DEFAULT 1.50' },
+        { table: 'bot_config', column: 'sg_trail_start_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_trail_start_pct DECIMAL(5,2) DEFAULT 2.00' },
+        { table: 'bot_config', column: 'sg_trail_distance_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_trail_distance_pct DECIMAL(5,2) DEFAULT 1.50' },
+        { table: 'bot_config', column: 'sg_trail_step_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_trail_step_pct DECIMAL(5,2) DEFAULT 0.25' },
+        { table: 'bot_config', column: 'sg_tp_fixed_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_tp_fixed_enabled BOOLEAN DEFAULT false' },
+        { table: 'bot_config', column: 'sg_tp_fixed_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_tp_fixed_pct DECIMAL(5,2) DEFAULT 10.00' },
+        { table: 'bot_config', column: 'sg_scale_out_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_scale_out_enabled BOOLEAN DEFAULT false' },
+        { table: 'bot_config', column: 'sg_scale_out_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_scale_out_pct DECIMAL(5,2) DEFAULT 35.00' },
+        { table: 'bot_config', column: 'sg_min_part_usd', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_min_part_usd DECIMAL(10,2) DEFAULT 50.00' },
+        { table: 'bot_config', column: 'sg_scale_out_threshold', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_scale_out_threshold DECIMAL(5,2) DEFAULT 80.00' },
+        { table: 'bot_config', column: 'sg_fee_cushion_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_pct DECIMAL(5,2) DEFAULT 0.45' },
+        { table: 'bot_config', column: 'sg_fee_cushion_auto', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_auto BOOLEAN DEFAULT true' },
+        
+        // open_positions columns
+        { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
+        { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },
+        { table: 'open_positions', column: 'sg_trailing_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_trailing_activated BOOLEAN DEFAULT false' },
+        { table: 'open_positions', column: 'sg_current_stop_price', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_current_stop_price DECIMAL(18,8)' },
+        { table: 'open_positions', column: 'sg_scale_out_done', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_scale_out_done BOOLEAN DEFAULT false' },
+        { table: 'open_positions', column: 'config_snapshot_json', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS config_snapshot_json JSONB' },
+      ];
+      
+      for (const migration of migrations) {
+        try {
+          await db.execute(sql.raw(migration.sql));
+          columnsAdded.push(`${migration.table}.${migration.column}`);
+        } catch (e) {
+          // Column may already exist, continue
+        }
+      }
+      
+      // Backfill lot_id for existing positions without it
+      try {
+        await db.execute(sql`
+          UPDATE open_positions 
+          SET lot_id = 'LEGACY-' || id::text || '-' || SUBSTRING(MD5(pair || opened_at::text) FROM 1 FOR 6)
+          WHERE lot_id IS NULL
+        `);
+        
+        // Add unique constraint if not exists (safe: only if all lot_ids are unique)
+        const duplicates = await db.execute(sql`
+          SELECT lot_id, COUNT(*) FROM open_positions WHERE lot_id IS NOT NULL GROUP BY lot_id HAVING COUNT(*) > 1
+        `);
+        if (duplicates.rows.length === 0) {
+          try {
+            await db.execute(sql`
+              ALTER TABLE open_positions ADD CONSTRAINT open_positions_lot_id_unique UNIQUE (lot_id)
+            `);
+          } catch (e) {
+            // Constraint may already exist
+          }
+        }
+      } catch (e) {
+        console.log('[schema] lot_id backfill note:', e);
+      }
+      
+      console.log(`[schema] Migration completed. Columns added: ${columnsAdded.join(', ') || 'none (all exist)'}`);
+      return { success: true, columnsAdded };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[schema] Migration failed:', errorMessage);
+      return { success: false, columnsAdded, error: errorMessage };
+    }
   }
 }
 

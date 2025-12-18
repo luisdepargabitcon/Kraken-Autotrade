@@ -1,0 +1,50 @@
+BUG CRÍTICO: Cierre manual rompe API (NAS)
+Error en logs:
+POST /api/positions/TON-USD/close 500
+"kr.isReplitEnvironment is not a function"
+
+CAUSA
+En el handler /api/positions/:pair/close se está llamando a isReplitEnvironment() sobre "kr".
+"kr" NO es el módulo de entorno, por eso peta (undefined is not a function).
+
+OBJETIVO
+Que el cierre manual funcione y NO dependa de un método inexistente.
+Además, no debe tumbar el endpoint con 500: debe responder 200/4xx con motivo claro.
+
+TAREAS
+1) Localizar el uso:
+- Buscar en repo:
+  rg -n "isReplitEnvironment" server
+- Identificar exactamente dónde se llama "kr.isReplitEnvironment()"
+  (probable: server/routes.ts handler de positions close o un servicio llamado desde ahí).
+
+2) Fix correcto (sin ambigüedad):
+- Reemplazar "kr.isReplitEnvironment()" por una fuente real de verdad:
+  Opción A (recomendada): usar el módulo environment existente.
+    import { environment } from "../services/environment" (o la ruta real)
+    const isReplit = environment.isReplitEnvironment()
+  Opción B: detección directa (si no existe módulo):
+    const isReplit = Boolean(process.env.REPL_ID || process.env.REPLIT_DEPLOYMENT)
+
+IMPORTANTE:
+- No acoplar el cierre a "Replit" si ya existe dryRunMode en bot_config.
+  La decisión final debe ser:
+    const dryRun = isReplit || botConfig.dryRunMode === true
+
+3) Robustez:
+- Si la detección de entorno/config falla, NO tirar 500.
+  Responder 503 con JSON en castellano:
+    { errorCode:"SERVICE_UNAVAILABLE", message:"No se pudo determinar el modo de ejecución (dryRun/producción)." }
+
+4) Validación obligatoria (NAS):
+- curl POST /api/positions/TON-USD/close (o el par que corresponda) debe devolver:
+  - 200 si simula/ejecuta
+  - 409 si bloqueado por reglas (ej. TRADING_DISABLED, NO_POSITION, etc.)
+  Nunca 500 por este motivo.
+- Debe emitirse evento:
+  POSITION_CLOSE_REQUESTED + POSITION_CLOSED_MANUAL o POSITION_CLOSE_SIMULATED
+  con {pair, lotId, env, instanceId}
+
+5) (Bonus recomendado) Tipado para que no vuelva:
+- Asegurar que "kr" tenga tipo de KrakenClient (sin isReplitEnvironment).
+- Asegurar que environment tenga su propia interfaz/funciones.

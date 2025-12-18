@@ -57,7 +57,7 @@ services:
         apk add --no-cache docker-cli &&
         npm install --include=dev &&
         npx tsx script/build.ts &&
-        npm run db:push &&
+        npx tsx script/migrate.ts &&
         npm start
       "
     logging:

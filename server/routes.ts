@@ -35,6 +35,38 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
+  // Health check endpoint - MUST be registered before any other routes
+  // Returns JSON for monitoring/load balancers (not index.html)
+  // Returns 503 on errors so monitors can detect failures
+  app.get("/api/health", async (req, res) => {
+    try {
+      const schemaStatus = await storage.checkSchemaHealth();
+      if (!schemaStatus.healthy) {
+        // Schema issues - return 503 so monitors detect the problem
+        return res.status(503).json({
+          status: "unhealthy",
+          timestamp: new Date().toISOString(),
+          schema: schemaStatus,
+          uptime: process.uptime(),
+          message: "Schema migration required. Missing columns: " + schemaStatus.missingColumns.join(", "),
+        });
+      }
+      res.json({
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        schema: schemaStatus,
+        uptime: process.uptime(),
+      });
+    } catch (error) {
+      // Return 503 on errors so monitors can detect failures
+      res.status(503).json({
+        status: "error",
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  });
+
   // Load saved API credentials on startup
   try {
     const apiConfig = await storage.getApiConfig();
@@ -570,7 +602,7 @@ export async function registerRoutes(
       // Obtener precio actual (con fallback para DRY_RUN)
       let currentPrice: number;
       const botConfig = await storage.getBotConfig();
-      const isDryRun = botConfig?.dryRunMode || environment.isReplitEnvironment();
+      const isDryRun = botConfig?.dryRunMode || environment.isReplit;
       
       if (krakenService.isInitialized()) {
         try {
@@ -1390,7 +1422,7 @@ export async function registerRoutes(
       
       let message = "";
       let telegramMsg = "";
-      const prefix = environment.getMessagePrefix();
+      const prefix = environment.getMessagePrefix(true); // Test events are always DRY_RUN
       
       switch (event) {
         case "SG_BREAK_EVEN_ACTIVATED":
@@ -1514,9 +1546,9 @@ export async function registerRoutes(
         // Count lots for this pair
         const allPositions = tradingEngine.getOpenPositions();
         let pairLots = 0;
-        for (const [, pos] of allPositions) {
+        Array.from(allPositions.values()).forEach((pos: any) => {
           if (pos.pair === pair) pairLots++;
-        }
+        });
         
         await botLogger.info("TEST_POSITION_CREATED", `Posición de prueba creada: ${pair} x${amount}`, {
           pair, lotId, amount, entryPrice, pairLots, env: envInfo.env,
