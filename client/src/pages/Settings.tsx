@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield, ChevronRight, Trash2, Plus, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -702,6 +704,12 @@ export default function Settings() {
                         </div>
                       )}
                     </div>
+                    
+                    <PairOverridesSection 
+                      overrides={config.sgPairOverrides as Record<string, Record<string, unknown>> | null}
+                      onUpdate={(newOverrides) => updateMutation.mutate({ sgPairOverrides: newOverrides })}
+                      activePairs={config.activePairs}
+                    />
                   </div>
                 )}
               </CardContent>
@@ -1027,6 +1035,240 @@ export default function Settings() {
           </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+interface PairOverridesSectionProps {
+  overrides: Record<string, Record<string, unknown>> | null;
+  onUpdate: (newOverrides: Record<string, Record<string, unknown>> | null) => void;
+  activePairs: string[];
+}
+
+function PairOverridesSection({ overrides, onUpdate, activePairs }: PairOverridesSectionProps) {
+  const [expandedPair, setExpandedPair] = useState<string | null>(null);
+  const [newPair, setNewPair] = useState<string>("");
+  
+  const currentOverrides = overrides || {};
+  const pairsWithOverrides = Object.keys(currentOverrides);
+  const availablePairs = activePairs.filter(p => !pairsWithOverrides.includes(p));
+
+  const handleAddPair = () => {
+    if (!newPair || pairsWithOverrides.includes(newPair)) return;
+    onUpdate({
+      ...currentOverrides,
+      [newPair]: {}
+    });
+    setExpandedPair(newPair);
+    setNewPair("");
+  };
+
+  const handleRemovePair = (pair: string) => {
+    const updated = { ...currentOverrides };
+    delete updated[pair];
+    onUpdate(Object.keys(updated).length > 0 ? updated : null);
+    if (expandedPair === pair) setExpandedPair(null);
+  };
+
+  const handleUpdatePairValue = (pair: string, key: string, value: string | boolean) => {
+    const updated = {
+      ...currentOverrides,
+      [pair]: {
+        ...currentOverrides[pair],
+        [key]: value
+      }
+    };
+    onUpdate(updated);
+  };
+
+  const handleRemovePairValue = (pair: string, key: string) => {
+    const pairData = { ...currentOverrides[pair] };
+    delete pairData[key];
+    const updated = {
+      ...currentOverrides,
+      [pair]: pairData
+    };
+    if (Object.keys(pairData).length === 0) {
+      delete updated[pair];
+    }
+    onUpdate(Object.keys(updated).length > 0 ? updated : null);
+  };
+
+  return (
+    <div className="border-t border-blue-500/30 pt-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <h5 className="text-sm font-medium text-blue-300" data-testid="text-pair-overrides-title">
+          Ajustes por Par
+        </h5>
+        <span className="text-xs text-muted-foreground">
+          {pairsWithOverrides.length} par(es) configurado(s)
+        </span>
+      </div>
+      
+      <p className="text-xs text-muted-foreground mb-3">
+        Configura parámetros específicos para cada par. Los valores aquí sobreescriben la configuración global.
+      </p>
+
+      {pairsWithOverrides.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {pairsWithOverrides.map((pair) => (
+            <div key={pair} className="border border-border rounded-lg bg-background/30">
+              <div 
+                className="flex items-center justify-between p-2 cursor-pointer hover:bg-muted/20"
+                onClick={() => setExpandedPair(expandedPair === pair ? null : pair)}
+              >
+                <div className="flex items-center gap-2">
+                  <ChevronRight className={cn("h-4 w-4 transition-transform", expandedPair === pair && "rotate-90")} />
+                  <span className="font-mono text-sm">{pair}</span>
+                  <Badge variant="secondary" className="text-xs">
+                    {Object.keys(currentOverrides[pair]).length} override(s)
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-red-400 hover:text-red-300"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemovePair(pair);
+                  }}
+                  data-testid={`btn-remove-override-${pair.replace("/", "-")}`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+              
+              {expandedPair === pair && (
+                <div className="p-3 border-t border-border space-y-3">
+                  <PairOverrideFields
+                    pairData={currentOverrides[pair]}
+                    onUpdateValue={(key, value) => handleUpdatePairValue(pair, key, value)}
+                    onRemoveValue={(key) => handleRemovePairValue(pair, key)}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {availablePairs.length > 0 && (
+        <div className="flex gap-2">
+          <Select value={newPair} onValueChange={setNewPair}>
+            <SelectTrigger className="w-[180px] bg-background/50" data-testid="select-new-pair">
+              <SelectValue placeholder="Seleccionar par..." />
+            </SelectTrigger>
+            <SelectContent>
+              {availablePairs.map((pair) => (
+                <SelectItem key={pair} value={pair}>{pair}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleAddPair}
+            disabled={!newPair}
+            data-testid="btn-add-pair-override"
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            Agregar
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface PairOverrideFieldsProps {
+  pairData: Record<string, unknown>;
+  onUpdateValue: (key: string, value: string | boolean) => void;
+  onRemoveValue: (key: string) => void;
+}
+
+const OVERRIDE_FIELDS = [
+  { key: "sgMinEntryUsd", label: "Mínimo entrada (USD)", type: "number" },
+  { key: "sgAllowUnderMin", label: "Permitir bajo mínimo", type: "boolean" },
+  { key: "sgBeAtPct", label: "Break-Even (%)", type: "number" },
+  { key: "sgTrailStartPct", label: "Trail inicio (%)", type: "number" },
+  { key: "sgTrailDistancePct", label: "Trail distancia (%)", type: "number" },
+  { key: "sgTpFixedEnabled", label: "TP fijo habilitado", type: "boolean" },
+  { key: "sgTpFixedPct", label: "TP fijo (%)", type: "number" },
+];
+
+function PairOverrideFields({ pairData, onUpdateValue, onRemoveValue }: PairOverrideFieldsProps) {
+  const activeKeys = Object.keys(pairData);
+  const availableFields = OVERRIDE_FIELDS.filter(f => !activeKeys.includes(f.key));
+  const [newFieldKey, setNewFieldKey] = useState<string>("");
+
+  const handleAddField = () => {
+    if (!newFieldKey) return;
+    const field = OVERRIDE_FIELDS.find(f => f.key === newFieldKey);
+    if (field) {
+      onUpdateValue(newFieldKey, field.type === "boolean" ? false : "");
+      setNewFieldKey("");
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {activeKeys.map((key) => {
+        const field = OVERRIDE_FIELDS.find(f => f.key === key);
+        if (!field) return null;
+        
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <Label className="text-xs w-32 flex-shrink-0">{field.label}</Label>
+            {field.type === "boolean" ? (
+              <Switch
+                checked={!!pairData[key]}
+                onCheckedChange={(val) => onUpdateValue(key, val)}
+                data-testid={`switch-override-${key}`}
+              />
+            ) : (
+              <Input
+                type="number"
+                value={String(pairData[key] || "")}
+                onChange={(e) => onUpdateValue(key, e.target.value)}
+                className="h-7 text-xs font-mono flex-1"
+                data-testid={`input-override-${key}`}
+              />
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-red-400"
+              onClick={() => onRemoveValue(key)}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        );
+      })}
+      
+      {availableFields.length > 0 && (
+        <div className="flex gap-2 pt-2 border-t border-border/50">
+          <Select value={newFieldKey} onValueChange={setNewFieldKey}>
+            <SelectTrigger className="w-[200px] h-7 text-xs" data-testid="select-new-field">
+              <SelectValue placeholder="Agregar campo..." />
+            </SelectTrigger>
+            <SelectContent>
+              {availableFields.map((f) => (
+                <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-7 text-xs"
+            onClick={handleAddField}
+            disabled={!newFieldKey}
+          >
+            <Plus className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

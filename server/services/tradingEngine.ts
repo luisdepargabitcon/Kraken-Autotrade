@@ -2562,22 +2562,23 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             positionMode: entryMode,
           };
           
-          // Add SMART_GUARD specific params if mode is SMART_GUARD
+          // Add SMART_GUARD specific params using getSmartGuardParams() for per-pair override support
           if (entryMode === "SMART_GUARD") {
-            configSnapshot.sgMinEntryUsd = parseFloat(currentConfig?.sgMinEntryUsd?.toString() || "100");
-            configSnapshot.sgAllowUnderMin = currentConfig?.sgAllowUnderMin ?? true;
-            configSnapshot.sgBeAtPct = parseFloat(currentConfig?.sgBeAtPct?.toString() || "1.5");
-            configSnapshot.sgFeeCushionPct = parseFloat(currentConfig?.sgFeeCushionPct?.toString() || "0.45");
-            configSnapshot.sgFeeCushionAuto = currentConfig?.sgFeeCushionAuto ?? true;
-            configSnapshot.sgTrailStartPct = parseFloat(currentConfig?.sgTrailStartPct?.toString() || "2");
-            configSnapshot.sgTrailDistancePct = parseFloat(currentConfig?.sgTrailDistancePct?.toString() || "1.5");
-            configSnapshot.sgTrailStepPct = parseFloat(currentConfig?.sgTrailStepPct?.toString() || "0.25");
-            configSnapshot.sgTpFixedEnabled = currentConfig?.sgTpFixedEnabled ?? false;
-            configSnapshot.sgTpFixedPct = parseFloat(currentConfig?.sgTpFixedPct?.toString() || "10");
-            configSnapshot.sgScaleOutEnabled = currentConfig?.sgScaleOutEnabled ?? false;
-            configSnapshot.sgScaleOutPct = parseFloat(currentConfig?.sgScaleOutPct?.toString() || "35");
-            configSnapshot.sgMinPartUsd = parseFloat(currentConfig?.sgMinPartUsd?.toString() || "50");
-            configSnapshot.sgScaleOutThreshold = parseFloat(currentConfig?.sgScaleOutThreshold?.toString() || "80");
+            const sgParams = this.getSmartGuardParams(pair, currentConfig);
+            configSnapshot.sgMinEntryUsd = sgParams.sgMinEntryUsd;
+            configSnapshot.sgAllowUnderMin = sgParams.sgAllowUnderMin;
+            configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
+            configSnapshot.sgFeeCushionPct = sgParams.sgFeeCushionPct;
+            configSnapshot.sgFeeCushionAuto = sgParams.sgFeeCushionAuto;
+            configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
+            configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
+            configSnapshot.sgTrailStepPct = sgParams.sgTrailStepPct;
+            configSnapshot.sgTpFixedEnabled = sgParams.sgTpFixedEnabled;
+            configSnapshot.sgTpFixedPct = sgParams.sgTpFixedPct;
+            configSnapshot.sgScaleOutEnabled = sgParams.sgScaleOutEnabled;
+            configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
+            configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
+            configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
           }
           
           newPosition = { 

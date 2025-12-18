@@ -1,0 +1,64 @@
+PRUEBA / VERIFICACIÓN SMART_GUARD (sin “operar a ciegas”)
+
+OBJETIVO
+Confirmar 3 cosas:
+1) Bloqueo por mínimo (sgMinEntryUsd)
+2) Entrada reducida usando disponible (sgAllowUnderMin) respetando mínimo absoluto $20
+3) Overrides por par se aplican y quedan congelados en snapshot (config_snapshot_json)
+
+A) CHECK RÁPIDO: Endpoint diagnóstico
+1) Ejecuta 1 ciclo de engine (o espera al siguiente tick).
+2) Llama al endpoint:
+   GET /api/scan/diagnostic
+3) Pega aquí el JSON completo (o al menos 2 pares) y confirma:
+   - “motivo” está en español claro
+   - “detalles” incluye: señal, usdDisponible, minOperacionUsd, tienePosicion, enfriamientoMin (si aplica)
+
+B) CASO 1 — Bloqueo por mínimo (NO entra)
+Config:
+- positionMode = SMART_GUARD
+- sgMinEntryUsd = 1000
+- sgAllowUnderMin = false
+- activePairs = 1 par (ej. BTC/USD) para aislar
+
+Evidencia esperada:
+- Log tipo:
+  “SMART_GUARD BTC/USD: No entro — mínimo $1000, disponible $X”
+- /api/scan/diagnostic debe devolver motivo:
+  “Mínimo por operación no alcanzado …”
+
+C) CASO 2 — Entrada reducida (entra con disponible) + umbral $20
+Config:
+- sgMinEntryUsd = 200
+- sgAllowUnderMin = true
+- Asegura balance USD entre $20 y $199 (si en Replit no es posible, simula/mocking de freshUsdBalance solo para prueba)
+
+Evidencia esperada:
+- Log tipo:
+  “SMART_GUARD BTC/USD: Entrada reducida — usando $X disponibles (mínimo $200)”
+- Confirmar que si usdDisponible < $20:
+  - NO entra
+  - motivo “Saldo disponible insuficiente (mínimo absoluto $20)”
+
+D) CASO 3 — Overrides por par + snapshot congelado
+Config:
+- sgMinEntryUsd global = 200
+- Override BTC/USD: sgMinEntryUsd = 150 (o cambia BE/TRAIL también)
+- Abre una posición nueva en BTC/USD (aunque sea mínima en entorno seguro)
+
+Evidencia esperada (OBLIGATORIA):
+1) Log “snapshot saved …”
+2) Consulta DB (open_positions) para esa posición:
+   - entry_mode = 'SMART_GUARD'
+   - config_snapshot_json contiene los valores MERGEADOS (override aplicado), por ejemplo:
+     config_snapshot_json->>'sgMinEntryUsd' = '150'
+3) Cambia luego el valor global en el panel y confirma que la posición ya abierta
+   sigue usando el snapshot (no el global nuevo) para la gestión de salida.
+
+ENTREGABLES (lo que necesito que pegues aquí)
+1) Salida de GET /api/scan/diagnostic (al menos BTC y ETH)
+2) 10-20 líneas de logs de cada caso (B, C, D)
+3) 1 query de DB (resultado) mostrando entry_mode + config_snapshot_json para una posición SMART_GUARD
+
+NOTA
+No hace falta añadir sgHardMaxEntryUsd ahora. Si en el futuro se necesita, lo añadimos como extra.

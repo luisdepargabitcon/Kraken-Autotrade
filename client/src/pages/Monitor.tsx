@@ -13,8 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { 
   Wifi, WifiOff, RefreshCw, Trash2, Pause, Play, 
   Download, Copy, Search, X, ChevronDown, ChevronRight,
-  AlertCircle, AlertTriangle, Info, Terminal, Activity
+  AlertCircle, AlertTriangle, Info, Terminal, Activity,
+  Eye, TrendingUp, TrendingDown, Minus
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -61,6 +63,10 @@ export default function Monitor() {
                 <Terminal className="h-4 w-4" />
                 Terminal
               </TabsTrigger>
+              <TabsTrigger value="diagnostic" className="gap-1" data-testid="tab-diagnostic">
+                <Eye className="h-4 w-4" />
+                Diagnóstico
+              </TabsTrigger>
             </TabsList>
           </div>
           
@@ -70,6 +76,10 @@ export default function Monitor() {
           
           <TabsContent value="terminal" className="mt-0">
             <TerminalTab />
+          </TabsContent>
+          
+          <TabsContent value="diagnostic" className="mt-0">
+            <DiagnosticTab />
           </TabsContent>
         </Tabs>
       </div>
@@ -694,6 +704,169 @@ function TerminalTab() {
           Pausado - Nuevas líneas no se muestran
         </div>
       )}
+    </div>
+  );
+}
+
+interface DiagnosticPair {
+  pair: string;
+  signal: string;
+  razon: string;
+  cooldownSec?: number;
+  exposureAvailable: number;
+  hasPosition: boolean;
+  positionUsd?: number;
+}
+
+interface DiagnosticData {
+  pairs: DiagnosticPair[];
+  positionMode: string;
+  usdBalance: number;
+  totalOpenPositions: number;
+  lastScanAt: string | null;
+}
+
+function DiagnosticTab() {
+  const { data, isLoading, error, refetch } = useQuery<DiagnosticData>({
+    queryKey: ["/api/scan/diagnostic"],
+    refetchInterval: 10000,
+  });
+
+  const getSignalBadge = (signal: string) => {
+    switch (signal) {
+      case "BUY":
+        return (
+          <Badge className="bg-green-500/20 text-green-400 border-green-500/30 gap-1">
+            <TrendingUp className="h-3 w-3" />
+            COMPRA
+          </Badge>
+        );
+      case "SELL":
+        return (
+          <Badge className="bg-red-500/20 text-red-400 border-red-500/30 gap-1">
+            <TrendingDown className="h-3 w-3" />
+            VENTA
+          </Badge>
+        );
+      default:
+        return (
+          <Badge className="bg-muted text-muted-foreground border-muted-foreground/30 gap-1">
+            <Minus className="h-3 w-3" />
+            SIN SEÑAL
+          </Badge>
+        );
+    }
+  };
+
+  const formatTime = (isoString: string | null) => {
+    if (!isoString) return "Nunca";
+    const date = new Date(isoString);
+    return date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-lg">Diagnóstico de Escaneo</CardTitle>
+          <div className="flex items-center gap-2">
+            {data && (
+              <span className="text-xs text-muted-foreground">
+                Último scan: {formatTime(data.lastScanAt)}
+              </span>
+            )}
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => refetch()}
+              disabled={isLoading}
+              data-testid="btn-refresh-diagnostic"
+            >
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              Actualizar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {error ? (
+            <div className="text-red-400 text-sm" data-testid="diagnostic-error">
+              Error al cargar diagnóstico: {(error as Error).message}
+            </div>
+          ) : !data ? (
+            <div className="text-muted-foreground text-sm">Cargando...</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Modo</div>
+                  <div className="text-lg font-semibold" data-testid="diagnostic-mode">{data.positionMode}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Balance USD</div>
+                  <div className="text-lg font-semibold" data-testid="diagnostic-balance">${data.usdBalance.toFixed(2)}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Posiciones Abiertas</div>
+                  <div className="text-lg font-semibold" data-testid="diagnostic-positions">{data.totalOpenPositions}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Pares Escaneados</div>
+                  <div className="text-lg font-semibold" data-testid="diagnostic-pairs-count">{data.pairs.length}</div>
+                </div>
+              </div>
+
+              {data.pairs.length === 0 ? (
+                <div className="text-muted-foreground text-sm text-center py-8" data-testid="diagnostic-no-data">
+                  No hay datos de escaneo. Activa el bot para comenzar a escanear pares.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm" data-testid="diagnostic-table">
+                    <thead>
+                      <tr className="border-b border-muted">
+                        <th className="text-left py-2 px-3 font-medium">Par</th>
+                        <th className="text-left py-2 px-3 font-medium">Señal</th>
+                        <th className="text-left py-2 px-3 font-medium">Razón</th>
+                        <th className="text-right py-2 px-3 font-medium">Cooldown</th>
+                        <th className="text-right py-2 px-3 font-medium">Disponible</th>
+                        <th className="text-center py-2 px-3 font-medium">Posición</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.pairs.map((p) => (
+                        <tr 
+                          key={p.pair} 
+                          className="border-b border-muted/50 hover:bg-muted/20"
+                          data-testid={`diagnostic-row-${p.pair.replace("/", "-")}`}
+                        >
+                          <td className="py-2 px-3 font-mono">{p.pair}</td>
+                          <td className="py-2 px-3">{getSignalBadge(p.signal)}</td>
+                          <td className="py-2 px-3 text-muted-foreground">{p.razon}</td>
+                          <td className="py-2 px-3 text-right font-mono text-muted-foreground">
+                            {p.cooldownSec && p.cooldownSec > 0 ? `${p.cooldownSec}s` : "-"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono">
+                            ${p.exposureAvailable?.toFixed(2) || "0.00"}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            {p.hasPosition ? (
+                              <Badge variant="secondary" className="bg-blue-500/20 text-blue-400">
+                                ${p.positionUsd?.toFixed(0) || "?"}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
