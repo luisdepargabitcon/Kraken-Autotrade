@@ -42,7 +42,9 @@ export type EventType =
   | "SG_BREAKEVEN_ACTIVATED"
   | "SG_TRAILING_ACTIVATED"
   | "SG_STOP_HIT"
-  | "SG_SCALE_OUT";
+  | "SG_SCALE_OUT"
+  // DRY_RUN mode
+  | "DRY_RUN_TRADE";
 
 interface LogMeta {
   [key: string]: any;

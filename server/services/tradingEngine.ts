@@ -180,10 +180,20 @@ export class TradingEngine {
   private lastScanTime: number = 0;
   private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
+  
+  // DRY_RUN mode: audit without sending real orders
+  private dryRunMode: boolean = false;
+  private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
     this.telegramService = telegramService;
+    
+    // Auto-enable dry run on Replit to prevent accidental real trades
+    if (this.isReplitEnvironment) {
+      this.dryRunMode = true;
+      log("[SAFETY] Entorno Replit detectado - DRY_RUN activado automáticamente", "trading");
+    }
   }
 
   private calculatePairExposure(pair: string): number {
@@ -609,6 +619,18 @@ export class TradingEngine {
     if (!this.telegramService.isInitialized()) {
       log("Telegram no está configurado, continuando sin notificaciones", "trading");
     }
+    
+    // Load dryRunMode from config (Replit always forces dry run regardless of DB setting)
+    const dbDryRun = (config as any).dryRunMode ?? false;
+    if (this.isReplitEnvironment) {
+      this.dryRunMode = true;
+      log("[SAFETY] Modo DRY_RUN forzado en Replit - no se enviarán órdenes reales", "trading");
+    } else {
+      this.dryRunMode = dbDryRun;
+      if (this.dryRunMode) {
+        log("[INFO] Modo DRY_RUN activado desde configuración", "trading");
+      }
+    }
 
     try {
       const balances = await this.krakenService.getBalance();
@@ -624,22 +646,27 @@ export class TradingEngine {
     
     await this.loadOpenPositionsFromDB();
     
+    const modeLabel = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE (órdenes reales)";
+    
     await botLogger.info("BOT_STARTED", "Motor de trading iniciado", {
       strategy: config.strategy,
       riskLevel: config.riskLevel,
       activePairs: config.activePairs,
       balanceUsd: this.currentUsdBalance,
       openPositions: this.openPositions.size,
+      dryRunMode: this.dryRunMode,
+      isReplitEnvironment: this.isReplitEnvironment,
     });
     
     if (this.telegramService.isInitialized()) {
+      const dryRunNote = this.dryRunMode ? "\n⚠️ *Modo:* DRY\\_RUN (sin órdenes reales)" : "";
       await this.telegramService.sendMessage(`🤖 *KrakenBot Iniciado*
 
 El bot de trading autónomo está activo.
 *Estrategia:* ${config.strategy}
 *Nivel de riesgo:* ${config.riskLevel}
 *Pares activos:* ${config.activePairs.join(", ")}
-*Balance USD:* $${this.currentUsdBalance.toFixed(2)}`);
+*Balance USD:* $${this.currentUsdBalance.toFixed(2)}${dryRunNote}`);
     }
     
     const intervalMs = this.getIntervalForStrategy(config.strategy);
@@ -1652,6 +1679,44 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
+        // === VALIDACIÓN FINAL OBLIGATORIA: Mínimo por orden (notional) ===
+        // Esta es la ÚNICA fuente de verdad antes de enviar al exchange
+        const orderUsdFinal = tradeAmountUSD;
+        const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, config) : null;
+        const minOrderUsd = sgParams?.sgMinEntryUsd || 0;
+        const allowUnderMin = sgParams?.sgAllowUnderMin ?? true;
+        
+        if (positionMode === "SMART_GUARD" && !allowUnderMin && orderUsdFinal < minOrderUsd) {
+          log(`[FINAL CHECK] ${pair}: SKIP - orderUsdFinal $${orderUsdFinal.toFixed(2)} < minOrderUsd $${minOrderUsd.toFixed(2)} (allowUnderMin=OFF)`, "trading");
+          
+          this.lastScanResults.set(pair, {
+            signal: "BUY",
+            reason: "MIN_ORDER_USD",
+            exposureAvailable: orderUsdFinal,
+          });
+          
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - mínimo por orden no alcanzado`, {
+            pair,
+            signal: "BUY",
+            reason: "MIN_ORDER_USD",
+            mode: positionMode,
+            usdDisponible: freshUsdBalance,
+            orderUsdProposed: originalAmount || tradeAmountUSD,
+            orderUsdFinal,
+            minOrderUsd,
+            allowUnderMin,
+            decision: "SKIP",
+          });
+          
+          this.setPairCooldown(pair);
+          return;
+        }
+        
+        // Log de decisión final antes de ejecutar
+        if (positionMode === "SMART_GUARD" && allowUnderMin && orderUsdFinal < minOrderUsd) {
+          log(`[FINAL CHECK] ${pair}: ALLOWED UNDER MIN - orderUsdFinal $${orderUsdFinal.toFixed(2)} < minOrderUsd $${minOrderUsd.toFixed(2)} (allowUnderMin=ON)`, "trading");
+        }
+
         if (wasAdjusted) {
           log(`${pair}: Ejecutando compra AJUSTADA $${tradeAmountUSD.toFixed(2)} (original: $${originalAmount.toFixed(2)})`, "trading");
         } else {
@@ -1663,8 +1728,19 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           originalAmountUsd: originalAmount,
           adjustedAmountUsd: tradeAmountUSD
         } : undefined;
+        
+        // Meta completa para trazabilidad
+        const executionMeta = {
+          mode: positionMode,
+          usdDisponible: freshUsdBalance,
+          orderUsdProposed: originalAmount || tradeAmountUSD,
+          orderUsdFinal,
+          minOrderUsd,
+          allowUnderMin,
+          dryRun: this.dryRunMode,
+        };
 
-        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo);
+        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, undefined, executionMeta);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
         }
@@ -2514,9 +2590,47 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
     price: number,
     reason: string,
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
-    strategyMeta?: { strategyId: string; timeframe: string; confidence: number }
+    strategyMeta?: { strategyId: string; timeframe: string; confidence: number },
+    executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean }
   ): Promise<boolean> {
     try {
+      const volumeNum = parseFloat(volume);
+      const totalUSD = volumeNum * price;
+      
+      // === DRY_RUN MODE: Simular sin enviar orden real ===
+      if (this.dryRunMode) {
+        const simTxid = `DRY-${Date.now()}`;
+        log(`[DRY_RUN] SIMULACIÓN ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} (Total: $${totalUSD.toFixed(2)})`, "trading");
+        
+        await botLogger.info("DRY_RUN_TRADE", `[DRY_RUN] Trade simulado - NO enviado al exchange`, {
+          pair,
+          type,
+          volume: volumeNum,
+          price,
+          totalUsd: totalUSD,
+          simTxid,
+          reason,
+          ...(executionMeta || {}),
+        });
+        
+        // NO enviar Telegram de "ejecutada" en dry run, solo aviso de simulación
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendMessage(`
+🧪 *[DRY\\_RUN] Trade Simulado*
+
+*Tipo:* ${type.toUpperCase()}
+*Par:* ${pair}
+*Cantidad:* ${volume}
+*Precio:* $${price.toFixed(2)}
+*Total:* $${totalUSD.toFixed(2)}
+
+_⚠️ Modo simulación - NO se envió orden real_
+          `.trim());
+        }
+        
+        return true; // Simular éxito para flujo normal
+      }
+      
       log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)}`, "trading");
       
       const order = await this.krakenService.placeOrder({
@@ -2544,7 +2658,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         executedAt: new Date(),
       });
 
-      const volumeNum = parseFloat(volume);
+      // volumeNum ya declarado arriba
       if (type === "buy") {
         this.currentUsdBalance -= volumeNum * price;
         const existing = this.openPositions.get(pair);
@@ -2697,7 +2811,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       }
 
       const emoji = type === "buy" ? "🟢" : "🔴";
-      const totalUSD = (volumeNum * price).toFixed(2);
+      const totalUSDFormatted = totalUSD.toFixed(2);
       
       if (this.telegramService.isInitialized()) {
         let adjustmentNote = "";
@@ -2719,7 +2833,7 @@ ${emoji} *Operación Automática Ejecutada*
 *Par:* ${pair}
 *Cantidad:* ${volume}
 *Precio:* $${price.toFixed(2)}
-*Total:* $${totalUSD}
+*Total:* $${totalUSDFormatted}
 *ID:* ${txid}
 *Estrategia:* ${strategyLabel}${confidenceLabel}
 ${adjustmentNote}
@@ -2911,6 +3025,7 @@ _KrakenBot.AI_
       "SG_MIN_ENTRY_NOT_MET": "Mínimo por operación no alcanzado (tiene saldo, pero tamaño quedó por debajo)",
       "SG_REDUCED_ENTRY": "Saldo por debajo del mínimo — entro con lo disponible",
       "SG_ABSOLUTE_MIN_NOT_MET": "Por debajo del mínimo absoluto — no compensa por comisiones",
+      "MIN_ORDER_USD": "SKIP - Mínimo por orden no alcanzado (allowUnderMin=OFF)",
       "NO_POSITION": "Sin posición para vender",
       "AI_FILTER_REJECTED": "Señal rechazada por filtro IA",
       "Sin señal": "Sin señal de trading activa",

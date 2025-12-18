@@ -41,6 +41,8 @@ export const botConfig = pgTable("bot_config", {
   sgScaleOutThreshold: decimal("sg_scale_out_threshold", { precision: 5, scale: 2 }).notNull().default("80.00"),
   // SMART_GUARD pair overrides (JSON: { "BTC/USD": { trailDistancePct: 1.0 }, ... })
   sgPairOverrides: jsonb("sg_pair_overrides"),
+  // DRY_RUN mode: audit/verify without sending real orders to exchange
+  dryRunMode: boolean("dry_run_mode").notNull().default(false),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

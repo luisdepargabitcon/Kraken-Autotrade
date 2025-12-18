@@ -1,0 +1,49 @@
+SÍ, apruebo implementar el fix del mínimo en SMART_GUARD.
+
+CONDICIONES OBLIGATORIAS (no negociables)
+1) La validación debe ser FINAL y ÚNICA fuente de verdad
+- Debe ejecutarse en el último punto antes de enviar la orden al exchange (justo antes de executeTrade / placeOrder).
+- Debe usar el “orderUsdFinal” real (tras exposure caps, rounding, step-size, fees buffer si aplica).
+- Debe cubrir TODOS los paths de compra (SMART_GUARD, DCA, recompras, etc.) sin depender de “Caso A/B”.
+
+2) Semántica clara del setting
+- sgMinEntryUsd debe interpretarse como “MÍNIMO POR ORDEN (notional)”, no como “tamaño objetivo”.
+- Si queréis conservar “tamaño objetivo”, separarlo en otro parámetro (ej: sgTargetEntryUsd) para evitar ambigüedad.
+- Si NO queréis separar, al menos renombrar variables internas para no inducir errores.
+
+3) Toggle “Permitir entradas menores”
+- Si sgAllowUnderMin = false → bloquear si orderUsdFinal < sgMinEntryUsd (SKIP).
+- Si sgAllowUnderMin = true → permitir, pero loguear explícitamente que se permitió under-min.
+
+4) Logging y trazabilidad
+En el evento TRADE_SKIPPED incluir en meta:
+- pair, mode
+- usdDisponible
+- orderUsdProposed (antes de caps)
+- orderUsdFinal (justo antes de enviar)
+- sgMinEntryUsd
+- sgAllowUnderMin
+- reason = MIN_ORDER_USD
+Además, si se ejecuta:
+- TRADE_SUBMITTED/EXECUTED con orderUsdFinal y txid.
+
+5) Telegram
+- Si se hace SKIP por mínimo, NO enviar mensaje de “Operación automática ejecutada”.
+- (Opcional) enviar un mensaje distinto tipo “Señal ignorada: mínimo por operación” pero solo si no genera spam (throttle).
+
+6) Tests rápidos / verificación
+Añadir 3 casos mínimos (aunque sea en logs manuales):
+A) balance 50, min 100, allowUnderMin OFF → SKIP por MIN_ORDER_USD
+B) balance 50, min 100, allowUnderMin ON → EXECUTE con ~50 (si pasa demás validaciones)
+C) balance 350, min 100, allowUnderMin OFF → EXECUTE (orderUsdFinal >= 100)
+
+7) Sobre “Telegram sin posición” (segundo problema)
+Después del fix del mínimo, abrir un ticket aparte:
+- Añadir correlationId por ciclo de decisión + txid
+- Verificar que solo se envía Telegram tras confirmación de order ACK/FILLED (según cómo lo estéis modelando)
+- Comprobar si hay doble instancia en NAS (revisar docker compose / procesos).
+No mezclarlo en este PR para mantener riesgo bajo.
+
+ENTREGABLE
+- PR/commit con el fix + logs + traducciones de reason si aplica.
+- Evidencia: un ejemplo real en /api/events mostrando SKIP por MIN_ORDER_USD con meta completa.
