@@ -1403,7 +1403,7 @@ export async function registerRoutes(
             `Profit: +${profitPct.toFixed(2)}%\n` +
             `Stop movido a: $${stopPrice.toFixed(2)}`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice });
-          await telegramService.sendNotification(telegramMsg, "status");
+          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
           break;
           
         case "SG_TRAILING_ACTIVATED":
@@ -1416,7 +1416,7 @@ export async function registerRoutes(
             `Profit: +${profitPct.toFixed(2)}%\n` +
             `Stop dinámico: $${stopPrice.toFixed(2)}`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice });
-          await telegramService.sendNotification(telegramMsg, "status");
+          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
           break;
           
         case "SG_TRAILING_STOP_UPDATED":
@@ -1428,7 +1428,7 @@ export async function registerRoutes(
             `Stop: $${oldStop.toFixed(2)} → $${stopPrice.toFixed(2)}\n` +
             `Profit actual: +${profitPct.toFixed(2)}%`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice, oldStop });
-          await telegramService.sendNotification(telegramMsg, "status");
+          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
           break;
           
         case "SG_SCALE_OUT_EXECUTED":
@@ -1441,7 +1441,7 @@ export async function registerRoutes(
             `Vendido: ${scaleOutQty} ($${scaleOutUsd.toFixed(2)})\n` +
             `Profit: +${profitPct.toFixed(2)}%`;
           await botLogger.info(event, message, { ...baseMeta, scaleOutQty, scaleOutUsd });
-          await telegramService.sendNotification(telegramMsg, "status");
+          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
           break;
       }
       
