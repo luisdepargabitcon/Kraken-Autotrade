@@ -1537,10 +1537,10 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
               // B.2: BLOQUEAR - por debajo del mínimo absoluto
               log(`SMART_GUARD ${pair}: No entro — disponible $${orderUsd.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
               this.lastScanResults.set(pair, {
-                signal: "BUY", reason: "SG_ABSOLUTE_MIN_NOT_MET", exposureAvailable: orderUsd,
+                signal: "BUY", reason: "MIN_ORDER_ABSOLUTE", exposureAvailable: orderUsd,
               });
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - por debajo mínimo absoluto`, {
-                pair, signal: "BUY", reason: "SG_ABSOLUTE_MIN_NOT_MET",
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto exchange no alcanzado`, {
+                pair, signal: "BUY", reason: "MIN_ORDER_ABSOLUTE",
                 orderUsd, absoluteMinUsd: SG_ABSOLUTE_MIN_USD, usdDisponible,
               });
               return;
@@ -1651,13 +1651,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           log(`SMART_GUARD ${pair}: Trade bloqueado - monto final $${tradeAmountUSD.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`, "trading");
           this.lastScanResults.set(pair, {
             signal: "BUY",
-            reason: "SG_ABSOLUTE_MIN_NOT_MET",
+            reason: "MIN_ORDER_ABSOLUTE",
             exposureAvailable: tradeAmountUSD,
           });
-          await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto no alcanzado`, {
+          await botLogger.info("TRADE_SKIPPED", `SMART_GUARD bloqueado - mínimo absoluto exchange no alcanzado`, {
             pair,
             signal: "BUY",
-            reason: "SG_ABSOLUTE_MIN_NOT_MET",
+            reason: "MIN_ORDER_ABSOLUTE",
             tradeAmountUsd: tradeAmountUSD,
             absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
           });
@@ -3024,7 +3024,7 @@ _KrakenBot.AI_
       "VOLUME_BELOW_MINIMUM": "Volumen calculado < mínimo Kraken",
       "SG_MIN_ENTRY_NOT_MET": "Mínimo por operación no alcanzado (tiene saldo, pero tamaño quedó por debajo)",
       "SG_REDUCED_ENTRY": "Saldo por debajo del mínimo — entro con lo disponible",
-      "SG_ABSOLUTE_MIN_NOT_MET": "Por debajo del mínimo absoluto — no compensa por comisiones",
+      "MIN_ORDER_ABSOLUTE": "Por debajo del mínimo absoluto ($20) — mínimo exchange no alcanzado",
       "MIN_ORDER_USD": "SKIP - Mínimo por orden no alcanzado (allowUnderMin=OFF)",
       "NO_POSITION": "Sin posición para vender",
       "AI_FILTER_REJECTED": "Señal rechazada por filtro IA",
