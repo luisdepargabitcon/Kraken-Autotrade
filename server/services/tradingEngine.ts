@@ -852,16 +852,6 @@ El bot de trading autónomo está activo.
     }
   }
 
-  private async updatePositionHighestPrice(pair: string, highestPrice: number) {
-    try {
-      await storage.updateOpenPosition(pair, {
-        highestPrice: highestPrice.toString(),
-      });
-    } catch (error: any) {
-      log(`Error actualizando highestPrice ${pair}: ${error.message}`, "trading");
-    }
-  }
-
   private async updatePositionHighestPriceByLotId(lotId: string, highestPrice: number) {
     try {
       await storage.updateOpenPositionByLotId(lotId, {
@@ -869,14 +859,6 @@ El bot de trading autónomo está activo.
       });
     } catch (error: any) {
       log(`Error actualizando highestPrice ${lotId}: ${error.message}`, "trading");
-    }
-  }
-
-  private async deletePositionFromDB(pair: string) {
-    try {
-      await storage.deleteOpenPosition(pair);
-    } catch (error: any) {
-      log(`Error eliminando posición ${pair}: ${error.message}`, "trading");
     }
   }
 
@@ -2962,13 +2944,8 @@ _⚠️ Modo simulación - NO se envió orden real_
             }
           }
         } else {
-          // Fallback: try to find position for P&L (legacy path, less accurate for multi-lot)
-          const existing = this.getFirstPositionByPair(pair);
-          if (existing) {
-            const pnl = (price - existing.entryPrice) * volumeNum;
-            this.dailyPnL += pnl;
-            log(`P&L de operación (legacy): $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
-          }
+          // No sellContext provided - this is a bug, log warning
+          log(`[WARN] Sell ejecutado sin sellContext para ${pair} - P&L no registrado. Todos los sell deben proporcionar sellContext.`, "trading");
         }
         // Position deletion is handled by the caller (checkSinglePositionSLTP, checkSmartGuardExit, etc.)
       }
