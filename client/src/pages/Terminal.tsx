@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,8 +46,8 @@ interface OpenPosition {
   entryStrategyId: string;
   entrySignalTf: string;
   signalConfidence: string | null;
-  lotId: string;
-  entryMode: string | null;
+  lotId?: string | null;
+  entryMode?: string | null;
 }
 
 interface ClosedTrade {
@@ -82,9 +82,11 @@ export default function Terminal() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("positions");
-  const [closingLotId, setClosingLotId] = useState<string | null>(null);
+  const [closingKey, setClosingKey] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const getPositionKey = (pair: string, lotId?: string | null) => lotId || pair;
 
   const { data: botConfig } = useQuery<{ positionMode?: string; sgMaxOpenLotsPerPair?: number }>({
     queryKey: ["botConfig"],
@@ -96,12 +98,6 @@ export default function Terminal() {
     refetchInterval: 60000,
   });
 
-  const getLotsCountByPair = (pair: string) => {
-    if (!openPositions) return { count: 0, max: botConfig?.sgMaxOpenLotsPerPair || 1 };
-    const count = openPositions.filter(p => p.pair === pair).length;
-    return { count, max: botConfig?.sgMaxOpenLotsPerPair || 1 };
-  };
-
   const { data: openPositions, isLoading: loadingPositions, refetch: refetchPositions, isFetching: fetchingPositions } = useQuery<OpenPosition[]>({
     queryKey: ["openPositions"],
     queryFn: async () => {
@@ -111,6 +107,21 @@ export default function Terminal() {
     },
     refetchInterval: 30000,
   });
+
+  const lotsCountByPair = useMemo(() => {
+    if (!openPositions) return new Map<string, { count: number; max: number }>();
+    const maxLots = botConfig?.sgMaxOpenLotsPerPair || 1;
+    const counts = new Map<string, { count: number; max: number }>();
+    for (const pos of openPositions) {
+      const current = counts.get(pos.pair);
+      counts.set(pos.pair, { count: (current?.count || 0) + 1, max: maxLots });
+    }
+    return counts;
+  }, [openPositions, botConfig?.sgMaxOpenLotsPerPair]);
+
+  const getLotsCountByPair = (pair: string) => {
+    return lotsCountByPair.get(pair) || { count: 0, max: botConfig?.sgMaxOpenLotsPerPair || 1 };
+  };
 
   const { data: closedData, isLoading: loadingClosed, refetch: refetchClosed, isFetching: fetchingClosed } = useQuery<ClosedTradesResponse>({
     queryKey: ["closedTrades", limit, offset, pairFilter, resultFilter, typeFilter],
@@ -160,12 +171,14 @@ export default function Terminal() {
   };
 
   const closePositionMutation = useMutation({
-    mutationFn: async ({ pair, lotId }: { pair: string; lotId: string }) => {
+    mutationFn: async ({ pair, lotId }: { pair: string; lotId?: string | null }) => {
       const pairEncoded = pair.replace("/", "-");
+      const body: { reason: string; lotId?: string } = { reason: "Cierre manual desde dashboard" };
+      if (lotId) body.lotId = lotId;
       const res = await fetch(`/api/positions/${pairEncoded}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "Cierre manual desde dashboard", lotId }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -173,8 +186,8 @@ export default function Terminal() {
       }
       return res.json();
     },
-    onMutate: ({ lotId }) => {
-      setClosingLotId(lotId);
+    onMutate: ({ pair, lotId }) => {
+      setClosingKey(getPositionKey(pair, lotId));
     },
     onSuccess: (data) => {
       toast({
@@ -192,13 +205,13 @@ export default function Terminal() {
       });
     },
     onSettled: () => {
-      setClosingLotId(null);
+      setClosingKey(null);
     },
   });
 
-  const handleClosePosition = (pair: string, lotId: string) => {
-    const shortLotId = lotId.substring(0, 8);
-    if (confirm(`¿Cerrar lote ${shortLotId} de ${pair}? Esta acción no se puede deshacer.`)) {
+  const handleClosePosition = (pair: string, lotId?: string | null) => {
+    const displayId = lotId ? lotId.substring(0, 8) : pair;
+    if (confirm(`¿Cerrar ${lotId ? `lote ${displayId}` : `posición`} de ${pair}? Esta acción no se puede deshacer.`)) {
       closePositionMutation.mutate({ pair, lotId });
     }
   };
@@ -543,11 +556,11 @@ export default function Terminal() {
                                 variant="destructive"
                                 size="sm"
                                 onClick={() => handleClosePosition(pos.pair, pos.lotId)}
-                                disabled={closingLotId === pos.lotId}
+                                disabled={closingKey === getPositionKey(pos.pair, pos.lotId)}
                                 className="shrink-0"
-                                data-testid={`button-close-position-${pos.lotId}`}
+                                data-testid={`button-close-position-${pos.lotId || pos.id}`}
                               >
-                                {closingLotId === pos.lotId ? (
+                                {closingKey === getPositionKey(pos.pair, pos.lotId) ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <X className="h-4 w-4" />
