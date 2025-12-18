@@ -1,0 +1,51 @@
+IMPORTANTE: ANTES DE HACER NADA NUEVO, VERIFICA EL CÓDIGO Y LO YA IMPLEMENTADO (NO QUIERO REHACER NI ROMPER NADA)
+
+CONTEXTO
+He leído tu análisis/presupuesto. Sospecho que varias cosas ya están parcialmente implementadas (por ejemplo prefijos Telegram, mínimos, DRY_RUN, validación final). Necesito que revises el código actual y confirmes qué existe exactamente antes de volver a implementarlo.
+
+INSTRUCCIONES OBLIGATORIAS (VERIFICACIÓN PREVIA)
+1) Auditoría de “ya existe / parcial / falta”
+Para cada ítem (H, A, B, C, D, E, endpoint test), confirma:
+- Estado: ✅ EXISTE / 🟡 PARCIAL / ❌ FALTA
+- Evidencia: archivo + función + líneas
+- Si está PARCIAL: qué falta exactamente y por qué (en 2–3 bullets)
+- Si está EXISTE: NO lo toques; solo añade tests/ajustes mínimos si hace falta.
+
+Lista a auditar:
+H) UI Modo de Posición (selector SINGLE/DCA/SMART_GUARD)
+A) 2 slots por par (sgMaxOpenLotsPerPair) SOLO en SMART_GUARD
+B) openedMode + lotId en posiciones (persistencia + UI + eventos)
+C) Separación de mínimos (MIN_ORDER_USD vs MIN_ORDER_ABSOLUTE) + mensajes claros
+D) Cierre FIFO por lotes (compro X / vendo X por lote) con parciales
+E) Botón cerrar posición manual (market) + trazabilidad + excluir del training por defecto
+F) Telegram prefijos (ya dijiste ✅) — verificar que se aplica a TODOS los mensajes
+G) Validación/tests (evidencia en /api/events)
++ Endpoint de test: POST /api/test/signal (solo DEV/DRY_RUN)
+
+2) No duplicar lógica ni crear módulos nuevos
+- Reutiliza funciones existentes.
+- Si hay que cambiar schema, hazlo solo si es imprescindible y minimiza migraciones.
+
+3) Prioridad de ejecución (SI Y SOLO SI TRAS AUDITORÍA FALTA)
+- Paso 1: Endpoint /api/test/signal (solo REPLIT/DEV, DRY_RUN) para probar SMART_GUARD sin depender del mercado.
+- Paso 2: H + C (bajo riesgo) solo si no existen o están incompletos.
+- Paso 3: A + B (slots + openedMode/lotId) solo si realmente faltan (y con migración mínima).
+- Paso 4: D + E (FIFO + cierre manual), último, por ser lo más complejo.
+
+4) Requisito de seguridad para el endpoint test (OBLIGATORIO)
+- Solo disponible si env=REPLIT/DEV o dryRun=true.
+- Debe registrar eventos (DECISION/TRADE_SKIPPED) pero jamás enviar orden real.
+- Debe permitir forzar casos:
+  - MIN_ORDER_USD
+  - SMART_GUARD_POSITION_EXISTS
+  - SMART_GUARD_MAX_LOTS_REACHED
+
+5) Entregable previo a implementar
+Antes de tocar nada, devuélveme una tabla/resumen con:
+- Ítem -> Estado -> Evidencia (archivo/líneas) -> Acción propuesta (si aplica)
+
+NOTA
+El “1000” ya quedó aclarado: no hay seed; fue edición manual previa. No volver a tocar defaults si ya están bien.
+
+OBJETIVO FINAL
+Evitar rehacer y evitar regresiones: solo completar lo que falte con cambios mínimos y verificables.
