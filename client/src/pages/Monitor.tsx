@@ -713,7 +713,7 @@ interface DiagnosticPair {
   signal: string;
   razon: string;
   cooldownSec?: number;
-  exposureAvailable: number;
+  exposureAvailable: number | { maxPairAvailable: number; maxTotalAvailable: number; maxAllowed: number };
   hasPosition: boolean;
   positionUsd?: number;
 }
@@ -847,7 +847,9 @@ function DiagnosticTab() {
                             {p.cooldownSec && p.cooldownSec > 0 ? `${p.cooldownSec}s` : "-"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono">
-                            ${p.exposureAvailable?.toFixed(2) || "0.00"}
+                            ${typeof p.exposureAvailable === 'object' 
+                              ? (p.exposureAvailable?.maxAllowed?.toFixed(2) || "0.00")
+                              : (p.exposureAvailable?.toFixed(2) || "0.00")}
                           </td>
                           <td className="py-2 px-3 text-center">
                             {p.hasPosition ? (
