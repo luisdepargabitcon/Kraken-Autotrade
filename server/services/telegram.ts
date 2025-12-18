@@ -1,6 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
+import { environment } from "./environment";
 
 interface TelegramConfig {
   token: string;
@@ -371,14 +372,16 @@ _${now.toLocaleString("es-ES")}_
     return this.bot !== null && this.chatId !== "";
   }
 
-  async sendMessage(message: string): Promise<boolean> {
+  async sendMessage(message: string, options?: { skipPrefix?: boolean }): Promise<boolean> {
     if (!this.bot || !this.chatId) {
       console.warn("Telegram not initialized, skipping notification");
       return false;
     }
 
     try {
-      await this.bot.sendMessage(this.chatId, message, { parse_mode: "Markdown" });
+      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefix();
+      const fullMessage = prefix + message;
+      await this.bot.sendMessage(this.chatId, fullMessage, { parse_mode: "Markdown" });
       return true;
     } catch (error) {
       console.error("Failed to send Telegram message:", error);
@@ -386,14 +389,26 @@ _${now.toLocaleString("es-ES")}_
     }
   }
 
-  async sendToChat(chatId: string, message: string): Promise<boolean> {
+  private async getMessagePrefix(): Promise<string> {
+    try {
+      const config = await storage.getBotConfig();
+      const dryRun = config?.dryRunMode ?? false;
+      return environment.getMessagePrefix(dryRun);
+    } catch {
+      return environment.getMessagePrefix(false);
+    }
+  }
+
+  async sendToChat(chatId: string, message: string, options?: { skipPrefix?: boolean }): Promise<boolean> {
     if (!this.bot) {
       console.warn("Telegram bot not initialized");
       return false;
     }
 
     try {
-      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefix();
+      const fullMessage = prefix + message;
+      await this.bot.sendMessage(chatId, fullMessage, { parse_mode: "Markdown" });
       return true;
     } catch (error) {
       console.error(`Failed to send message to chat ${chatId}:`, error);

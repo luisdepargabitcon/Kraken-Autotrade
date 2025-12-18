@@ -3,6 +3,7 @@ import { botEvents } from "@shared/schema";
 import type { BotEvent, InsertBotEvent } from "@shared/schema";
 import { desc } from "drizzle-orm";
 import { eventsWs } from "./eventsWebSocket";
+import { environment } from "./environment";
 
 export type LogLevel = "INFO" | "WARN" | "ERROR";
 
@@ -56,6 +57,8 @@ interface MemoryEvent {
   type: EventType;
   message: string;
   meta?: LogMeta;
+  env: string;
+  instanceId: string;
 }
 
 const MAX_MEMORY_EVENTS = 100;
@@ -73,13 +76,16 @@ class BotLogger {
 
   private async log(level: LogLevel, type: EventType, message: string, meta?: LogMeta): Promise<void> {
     const timestamp = new Date().toISOString();
+    const env = environment.envTag;
+    const instanceId = environment.instanceId;
     
     console.log(this.formatConsoleLog(level, type, message));
     if (meta) {
       console.log("  Meta:", JSON.stringify(meta, null, 2));
     }
 
-    const event: MemoryEvent = { timestamp, level, type, message, meta };
+    const enrichedMeta = { ...meta, env, instanceId };
+    const event: MemoryEvent = { timestamp, level, type, message, meta: enrichedMeta, env, instanceId };
     this.memoryEvents.unshift(event);
     if (this.memoryEvents.length > MAX_MEMORY_EVENTS) {
       this.memoryEvents.pop();
@@ -92,7 +98,7 @@ class BotLogger {
           level,
           type,
           message,
-          meta: meta ? JSON.stringify(meta) : null,
+          meta: enrichedMeta ? JSON.stringify(enrichedMeta) : null,
         }).returning({ id: botEvents.id });
         insertedId = result[0]?.id;
       } catch (error) {
@@ -107,7 +113,9 @@ class BotLogger {
         level,
         type,
         message,
-        meta,
+        meta: enrichedMeta,
+        env,
+        instanceId,
       });
     } catch (error) {
       // Silently fail if WS not initialized yet
