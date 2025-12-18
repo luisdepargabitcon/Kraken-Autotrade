@@ -727,9 +727,10 @@ interface DiagnosticData {
 }
 
 function DiagnosticTab() {
-  const { data, isLoading, error, refetch } = useQuery<DiagnosticData>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<DiagnosticData>({
     queryKey: ["/api/scan/diagnostic"],
     refetchInterval: 10000,
+    staleTime: 0,
   });
 
   const getSignalBadge = (signal: string) => {
@@ -779,10 +780,10 @@ function DiagnosticTab() {
               variant="outline" 
               size="sm" 
               onClick={() => refetch()}
-              disabled={isLoading}
+              disabled={isFetching}
               data-testid="btn-refresh-diagnostic"
             >
-              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
               Actualizar
             </Button>
           </div>

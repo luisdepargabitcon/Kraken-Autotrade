@@ -2902,29 +2902,50 @@ _KrakenBot.AI_
       positionUsd?: number;
     }> = [];
 
-    this.lastScanResults.forEach((result, pair) => {
-      const position = this.openPositions.get(pair);
-      const hasPosition = !!(position && position.amount > 0);
-      
-      // Traducir la razón
-      let razon = result.reason;
-      for (const [key, value] of Object.entries(reasonTranslations)) {
-        if (razon.includes(key) || razon === key) {
-          razon = value;
-          break;
+    // Si hay datos de escaneo, usar esos
+    if (this.lastScanResults.size > 0) {
+      this.lastScanResults.forEach((result, pair) => {
+        const position = this.openPositions.get(pair);
+        const hasPosition = !!(position && position.amount > 0);
+        
+        // Traducir la razón
+        let razon = result.reason;
+        for (const [key, value] of Object.entries(reasonTranslations)) {
+          if (razon.includes(key) || razon === key) {
+            razon = value;
+            break;
+          }
         }
-      }
 
-      pairs.push({
-        pair,
-        signal: result.signal,
-        razon,
-        cooldownSec: result.cooldownSec,
-        exposureAvailable: result.exposureAvailable,
-        hasPosition,
-        positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+        pairs.push({
+          pair,
+          signal: result.signal,
+          razon,
+          cooldownSec: result.cooldownSec,
+          exposureAvailable: result.exposureAvailable,
+          hasPosition,
+          positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+        });
       });
-    });
+    } else {
+      // Si no hay datos de escaneo, mostrar pares activos con info básica
+      const activePairs = config?.activePairs || [];
+      for (const pair of activePairs) {
+        const position = this.openPositions.get(pair);
+        const hasPosition = !!(position && position.amount > 0);
+        const exposure = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+        
+        pairs.push({
+          pair,
+          signal: "NONE",
+          razon: this.isRunning ? "Esperando primer escaneo..." : "Bot inactivo - actívalo para escanear",
+          cooldownSec: this.getCooldownRemainingSec(pair),
+          exposureAvailable: exposure,
+          hasPosition,
+          positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+        });
+      }
+    }
 
     return {
       pairs,
