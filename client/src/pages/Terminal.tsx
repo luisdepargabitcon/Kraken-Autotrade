@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
@@ -25,7 +25,9 @@ import {
   Target,
   BarChart3,
   Layers,
-  Square
+  Square,
+  X,
+  Loader2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -78,7 +80,9 @@ export default function Terminal() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("positions");
+  const [closingPair, setClosingPair] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: botConfig } = useQuery<{ positionMode?: string }>({
     queryKey: ["botConfig"],
@@ -144,6 +148,49 @@ export default function Terminal() {
       });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const closePositionMutation = useMutation({
+    mutationFn: async (pair: string) => {
+      const pairEncoded = pair.replace("/", "-");
+      const res = await fetch(`/api/positions/${pairEncoded}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Cierre manual desde dashboard" }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Error al cerrar posición");
+      }
+      return res.json();
+    },
+    onMutate: (pair) => {
+      setClosingPair(pair);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: data.message?.includes("DRY_RUN") ? "Cierre Simulado" : "Posición Cerrada",
+        description: `${data.pair}: PnL ${parseFloat(data.realizedPnlUsd) >= 0 ? '+' : ''}$${data.realizedPnlUsd} (${parseFloat(data.realizedPnlPct) >= 0 ? '+' : ''}${data.realizedPnlPct}%)`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["openPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["closedTrades"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setClosingPair(null);
+    },
+  });
+
+  const handleClosePosition = (pair: string) => {
+    if (confirm(`¿Estás seguro de cerrar la posición de ${pair}? Esta acción no se puede deshacer.`)) {
+      closePositionMutation.mutate(pair);
     }
   };
 
@@ -441,34 +488,51 @@ export default function Terminal() {
                               </div>
                             </div>
                             
-                            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4">
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Cantidad</div>
-                                <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
-                              </div>
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Entrada</div>
-                                <div className="font-mono font-medium text-sm">${formatPrice(pos.entryPrice)}</div>
-                              </div>
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor de entrada en USD">Valor Entrada</div>
-                                <div className="font-mono font-medium text-sm text-blue-400">${parseFloat(pos.entryValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              </div>
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Actual</div>
-                                <div className="font-mono font-medium text-sm">${formatPrice(pos.currentPrice)}</div>
-                              </div>
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor actual en USD">Valor Actual</div>
-                                <div className="font-mono font-medium text-sm text-cyan-400">${parseFloat(pos.currentValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              </div>
-                              <div>
-                                <div className="font-mono text-[10px] text-muted-foreground uppercase">P&L</div>
-                                <div className={`font-mono font-bold text-sm flex items-center gap-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                  {isProfit ? '+' : '-'}${Math.abs(pnlUsd).toFixed(2)}
-                                  <span className="text-xs opacity-75">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
+                            <div className="flex items-center gap-4">
+                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4 flex-1">
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase">Cantidad</div>
+                                  <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Entrada</div>
+                                  <div className="font-mono font-medium text-sm">${formatPrice(pos.entryPrice)}</div>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor de entrada en USD">Valor Entrada</div>
+                                  <div className="font-mono font-medium text-sm text-blue-400">${parseFloat(pos.entryValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Actual</div>
+                                  <div className="font-mono font-medium text-sm">${formatPrice(pos.currentPrice)}</div>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor actual en USD">Valor Actual</div>
+                                  <div className="font-mono font-medium text-sm text-cyan-400">${parseFloat(pos.currentValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase">P&L</div>
+                                  <div className={`font-mono font-bold text-sm flex items-center gap-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                    {isProfit ? '+' : '-'}${Math.abs(pnlUsd).toFixed(2)}
+                                    <span className="text-xs opacity-75">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
+                                  </div>
                                 </div>
                               </div>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleClosePosition(pos.pair)}
+                                disabled={closingPair === pos.pair}
+                                className="shrink-0"
+                                data-testid={`button-close-position-${pos.id}`}
+                              >
+                                {closingPair === pos.pair ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <X className="h-4 w-4" />
+                                )}
+                                <span className="hidden sm:inline ml-1">Cerrar</span>
+                              </Button>
                             </div>
                           </div>
                         );

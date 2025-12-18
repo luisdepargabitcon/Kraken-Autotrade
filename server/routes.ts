@@ -404,6 +404,148 @@ export async function registerRoutes(
     }
   });
 
+  // === CIERRE MANUAL DE POSICIÓN ===
+  app.post("/api/positions/:pair/close", async (req, res) => {
+    try {
+      const pair = req.params.pair.replace("-", "/"); // Convert BTC-USD back to BTC/USD
+      const { reason } = req.body;
+      
+      const correlationId = `MANUAL-CLOSE-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      
+      // Verificar que la posición existe
+      const positions = await storage.getOpenPositions();
+      const position = positions.find(p => p.pair === pair);
+      
+      if (!position) {
+        await botLogger.warn("MANUAL_CLOSE_FAILED", `Intento de cierre manual fallido - posición no encontrada`, {
+          pair,
+          correlationId,
+          reason: reason || "Usuario solicitó cierre manual",
+        });
+        
+        return res.status(404).json({
+          success: false,
+          error: "POSITION_NOT_FOUND",
+          message: `No se encontró posición abierta para ${pair}`,
+        });
+      }
+      
+      // Obtener precio actual (con fallback para DRY_RUN)
+      let currentPrice: number;
+      const botConfig = await storage.getBotConfig();
+      const isDryRun = botConfig?.dryRunMode || environment.isReplitEnvironment();
+      
+      if (krakenService.isInitialized()) {
+        try {
+          const krakenPair = krakenService.formatPair(pair);
+          const ticker = await krakenService.getTicker(krakenPair);
+          const tickerData: any = Object.values(ticker)[0];
+          
+          if (tickerData?.c?.[0]) {
+            currentPrice = parseFloat(tickerData.c[0]);
+          } else {
+            throw new Error("No ticker data");
+          }
+        } catch (e) {
+          if (!isDryRun) {
+            return res.status(500).json({
+              success: false,
+              error: "PRICE_UNAVAILABLE",
+              message: "No se pudo obtener el precio actual",
+            });
+          }
+          // En DRY_RUN, usar precio de entrada como fallback
+          currentPrice = parseFloat(position.entryPrice);
+        }
+      } else {
+        if (!isDryRun) {
+          return res.status(503).json({
+            success: false,
+            error: "KRAKEN_NOT_INITIALIZED",
+            message: "Kraken API no está conectada",
+          });
+        }
+        // En DRY_RUN, usar precio de entrada como fallback (simulación)
+        currentPrice = parseFloat(position.entryPrice);
+      }
+      const amount = parseFloat(position.amount);
+      const entryPrice = parseFloat(position.entryPrice);
+      const pnlUsd = (currentPrice - entryPrice) * amount;
+      const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+      
+      // Log el intento de cierre manual
+      await botLogger.info("MANUAL_CLOSE_INITIATED", `Cierre manual iniciado por usuario`, {
+        correlationId,
+        pair,
+        amount,
+        entryPrice,
+        currentPrice,
+        estimatedPnlUsd: pnlUsd.toFixed(2),
+        estimatedPnlPct: pnlPct.toFixed(2),
+        reason: reason || "Usuario solicitó cierre manual",
+      });
+      
+      // Ejecutar la venta a través del trading engine
+      if (!tradingEngine) {
+        return res.status(503).json({
+          success: false,
+          error: "ENGINE_NOT_RUNNING",
+          message: "Motor de trading no está activo",
+        });
+      }
+      
+      const closeResult = await tradingEngine.forceClosePosition(pair, currentPrice, correlationId, reason || "Cierre manual por usuario");
+      
+      if (closeResult.success) {
+        await botLogger.info("MANUAL_CLOSE_SUCCESS", `Posición cerrada manualmente`, {
+          correlationId,
+          pair,
+          amount,
+          exitPrice: currentPrice,
+          realizedPnlUsd: closeResult.pnlUsd?.toFixed(2),
+          realizedPnlPct: closeResult.pnlPct?.toFixed(2),
+          krakenOrderId: closeResult.orderId,
+          dryRun: closeResult.dryRun,
+        });
+        
+        res.json({
+          success: true,
+          correlationId,
+          pair,
+          amount,
+          exitPrice: currentPrice,
+          realizedPnlUsd: closeResult.pnlUsd?.toFixed(2),
+          realizedPnlPct: closeResult.pnlPct?.toFixed(2),
+          orderId: closeResult.orderId,
+          message: closeResult.dryRun 
+            ? `[DRY_RUN] Cierre simulado de ${pair}`
+            : `Posición ${pair} cerrada exitosamente`,
+        });
+      } else {
+        await botLogger.error("MANUAL_CLOSE_FAILED", `Error al cerrar posición manualmente`, {
+          correlationId,
+          pair,
+          error: closeResult.error,
+        });
+        
+        res.status(500).json({
+          success: false,
+          correlationId,
+          error: "CLOSE_FAILED",
+          message: closeResult.error || "Error al cerrar la posición",
+        });
+      }
+      
+    } catch (error: any) {
+      console.error("[api/positions/close] Error:", error.message);
+      res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: `Error al procesar cierre: ${error.message}`,
+      });
+    }
+  });
+
   app.get("/api/trades/closed", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 10;

@@ -3021,6 +3021,157 @@ _KrakenBot.AI_
     return this.isRunning;
   }
 
+  // === CIERRE MANUAL DE POSICIÓN ===
+  async forceClosePosition(
+    pair: string,
+    currentPrice: number,
+    correlationId: string,
+    reason: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    orderId?: string;
+    pnlUsd?: number;
+    pnlPct?: number;
+    dryRun?: boolean;
+  }> {
+    try {
+      const position = this.openPositions.get(pair);
+      if (!position || position.amount <= 0) {
+        return {
+          success: false,
+          error: "No se encontró posición abierta en memoria para este par",
+        };
+      }
+
+      const amount = position.amount;
+      const entryPrice = position.entryPrice;
+      const pnlUsd = (currentPrice - entryPrice) * amount;
+      const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+
+      log(`[MANUAL_CLOSE] Iniciando cierre de ${pair}: ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+
+      // En DRY_RUN, simular el cierre
+      if (this.dryRunMode) {
+        const simTxid = `MANUAL-DRY-${Date.now()}`;
+        log(`[DRY_RUN] SIMULACIÓN cierre manual ${pair} - ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+
+        // Actualizar memoria y DB para reflejar el cierre (aunque sea simulado)
+        this.openPositions.delete(pair);
+        await storage.deleteOpenPosition(pair);
+
+        // Registrar el trade de cierre
+        const tradeId = `MANUAL-${Date.now()}`;
+        await storage.createTrade({
+          tradeId,
+          pair,
+          type: "sell",
+          price: currentPrice.toString(),
+          amount: amount.toFixed(8),
+          status: "filled",
+          krakenOrderId: simTxid,
+          entryPrice: entryPrice.toString(),
+          realizedPnlUsd: pnlUsd.toString(),
+          realizedPnlPct: pnlPct.toString(),
+          executedAt: new Date(),
+        });
+
+        // Notificar por Telegram
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendMessage(`
+🧪 *[DRY\\_RUN] Cierre Manual Simulado*
+
+*Par:* ${pair}
+*Cantidad:* ${amount.toFixed(8)}
+*Precio entrada:* $${entryPrice.toFixed(2)}
+*Precio salida:* $${currentPrice.toFixed(2)}
+*PnL:* ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)
+
+_⚠️ Modo simulación - NO se envió orden real_
+          `.trim());
+        }
+
+        return {
+          success: true,
+          orderId: simTxid,
+          pnlUsd,
+          pnlPct,
+          dryRun: true,
+        };
+      }
+
+      // PRODUCCIÓN: Ejecutar orden real de venta
+      const order = await this.krakenService.placeOrder({
+        pair,
+        type: "sell",
+        ordertype: "market",
+        volume: amount.toFixed(8),
+      });
+
+      const txid = order.txid?.[0];
+      if (!txid) {
+        return {
+          success: false,
+          error: "Orden enviada pero no se recibió txid de confirmación",
+        };
+      }
+
+      // Actualizar memoria y DB
+      this.openPositions.delete(pair);
+      await storage.deleteOpenPosition(pair);
+
+      // Registrar el trade de cierre
+      const tradeId = `MANUAL-${Date.now()}`;
+      await storage.createTrade({
+        tradeId,
+        pair,
+        type: "sell",
+        price: currentPrice.toString(),
+        amount: amount.toFixed(8),
+        status: "filled",
+        krakenOrderId: txid,
+        entryPrice: entryPrice.toString(),
+        realizedPnlUsd: pnlUsd.toString(),
+        realizedPnlPct: pnlPct.toString(),
+        executedAt: new Date(),
+      });
+
+      // Notificar por Telegram
+      if (this.telegramService.isInitialized()) {
+        const pnlEmoji = pnlUsd >= 0 ? "🟢" : "🔴";
+        await this.telegramService.sendMessage(`
+${pnlEmoji} *Cierre Manual Ejecutado*
+
+*Par:* ${pair}
+*Cantidad:* ${amount.toFixed(8)}
+*Precio entrada:* $${entryPrice.toFixed(2)}
+*Precio salida:* $${currentPrice.toFixed(2)}
+*PnL:* ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)
+*Order ID:* \`${txid}\`
+
+_Cierre solicitado manualmente desde dashboard_
+        `.trim());
+      }
+
+      log(`[MANUAL_CLOSE] Cierre exitoso ${pair} - Order: ${txid}, PnL: $${pnlUsd.toFixed(2)}`, "trading");
+
+      return {
+        success: true,
+        orderId: txid,
+        pnlUsd,
+        pnlPct,
+        dryRun: false,
+      };
+
+    } catch (error: any) {
+      log(`[MANUAL_CLOSE] Error al cerrar ${pair}: ${error.message}`, "trading");
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
   getOpenPositions(): Map<string, { amount: number; entryPrice: number }> {
     return this.openPositions;
   }
