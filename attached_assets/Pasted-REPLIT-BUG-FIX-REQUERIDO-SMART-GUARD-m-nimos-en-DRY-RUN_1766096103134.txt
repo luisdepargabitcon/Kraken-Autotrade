@@ -1,0 +1,62 @@
+REPLIT — BUG + FIX REQUERIDO (SMART_GUARD mínimos en DRY_RUN)
+
+SÍNTOMA
+- En REPLIT/DEV (DRY_RUN) el bot está enviando Telegram de “Trade Simulado” con totales ~$14 (BUY BTC/SOL).
+- En NAS/PROD también he visto BUY < sgMinEntryUsd (ej: TON/USD totalUsd=91.71 cuando sgMinEntryUsd=100 y sgAllowUnderMin=false) debido a “Ajustado por exposición”.
+
+CAUSA PROBABLE
+1) En DRY_RUN hay un “monto fijo de simulación” (tipo 14 USD) o una ruta de cálculo distinta que NO respeta SMART_GUARD mínimos.
+2) En NAS/PROD, el ajuste por exposición reduce orderUsdFinal por debajo de sgMinEntryUsd, y aun así se ejecuta (faltaría check final después del cap).
+
+FIX OBLIGATORIO (misma lógica para REAL y DRY_RUN)
+- Implementar una VALIDACIÓN FINAL ÚNICA usando orderUsdFinal REAL (después de: exposición, caps, redondeos, min lot size, etc.)
+- La validación debe ejecutarse ANTES de:
+  a) executeTrade() (real)
+  b) simulateTrade()/DRY_RUN telegram (simulación)
+  
+REGLAS EXACTAS
+A) MINIMO CONFIGURABLE (SMART_GUARD)
+if positionMode=="SMART_GUARD" && sgAllowUnderMin==false && orderUsdFinal < sgMinEntryUsd:
+  - log event: TRADE_SKIPPED
+  - reason: MIN_ORDER_USD
+  - message: "Señal BUY ignorada: total de la orden < mínimo configurado"
+  - meta: { pair, usdDisponible, orderUsdProposed, orderUsdFinal, sgMinEntryUsd, sgAllowUnderMin, exposureAvailable, env, instanceId }
+  - NO enviar Telegram de “Trade Simulado/Ejecutado” (para no spamear)
+
+B) MINIMO ABSOLUTO EXCHANGE
+if orderUsdFinal < SG_ABSOLUTE_MIN_USD (o absoluteMinOrderUsd configurable):
+  - TRADE_SKIPPED reason=MIN_ORDER_ABSOLUTE
+  - NO enviar Telegram de trade
+
+C) AJUSTE POR EXPOSICIÓN
+- Si el tamaño se reduce por exposición y cae por debajo de sgMinEntryUsd, debe BLOQUEAR (A).
+- O sea: exposición/caps pueden bajar orderUsdFinal, pero el mínimo final manda.
+
+D) DRY_RUN
+- Prohibido simular trades por debajo de sgMinEntryUsd cuando sgAllowUnderMin=false.
+- El DRY_RUN debe pasar por la misma validación final.
+- Si se quiere mantener un “monto fijo de simulación” para tests, solo permitido si:
+  - respeta mínimos, o
+  - se marca como TEST y se desactiva cuando positionMode=SMART_GUARD.
+
+TELEGRAM (claridad)
+- Si env=REPLIT/DEV: prefijo obligatorio “[REPLIT/DEV][DRY_RUN]”.
+- Para SKIP, si se notifica (opcional), que sea:
+  “[REPLIT/DEV][DRY_RUN] BUY bloqueada: MIN_ORDER_USD (orderUsdFinal=14 < 100)”
+  y no “Trade Simulado”.
+
+PRUEBAS (EVIDENCIA EN /api/events)
+1) REPLIT/DEV: sgMinEntryUsd=100, sgAllowUnderMin=false
+   - forzar BUY -> debe producir TRADE_SKIPPED MIN_ORDER_USD
+   - NO debe existir Telegram “Trade Simulado $14”
+2) NAS/PROD: caso con “Ajustado por exposición” que deje orderUsdFinal < 100
+   - debe producir TRADE_SKIPPED MIN_ORDER_USD
+   - NO debe ejecutar orden real ni Telegram de ejecutada
+3) Caso absolute min:
+   - orderUsdFinal < 20 -> TRADE_SKIPPED MIN_ORDER_ABSOLUTE
+
+CRITERIO DE ACEPTACIÓN
+- Nunca se ejecuta NI se simula una BUY en SMART_GUARD por debajo de sgMinEntryUsd si sgAllowUnderMin=false.
+- Los ajustes por exposición NO pueden saltarse el mínimo final.
+- DRY_RUN y REAL comparten la misma validación final.
+```0
