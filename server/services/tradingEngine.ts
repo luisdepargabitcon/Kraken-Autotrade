@@ -1394,14 +1394,31 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && existingPosition && existingPosition.amount > 0) {
-          log(`${pair}: Compra bloqueada - Modo ${positionMode} activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo ${positionMode} con posición abierta`, {
+        const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
+        
+        // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
+        const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
+        const currentOpenLots = (existingPosition && existingPosition.amount > 0) ? 1 : 0;
+        
+        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
+          const reasonCode = positionMode === "SMART_GUARD" 
+            ? "SMART_GUARD_MAX_LOTS_REACHED" 
+            : "SINGLE_MODE_POSITION_EXISTS";
+          
+          log(`${pair}: Compra bloqueada - Modo ${positionMode}, lotes abiertos ${currentOpenLots}/${maxLotsForMode}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de lotes alcanzado`, {
             pair,
             signal: "BUY",
-            reason: positionMode === "SMART_GUARD" ? "SMART_GUARD_POSITION_EXISTS" : "SINGLE_MODE_POSITION_EXISTS",
-            existingAmount: existingPosition.amount,
+            reason: reasonCode,
+            currentOpenLots,
+            maxOpenLots: maxLotsForMode,
+            existingAmount: existingPosition?.amount || 0,
             signalReason: signal.reason,
+          });
+          this.lastScanResults.set(pair, {
+            signal: "BUY",
+            reason: reasonCode,
+            exposureAvailable: 0,
           });
           return;
         }
@@ -1838,14 +1855,31 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && existingPosition && existingPosition.amount > 0) {
-          log(`${pair}: Compra bloqueada - Modo ${positionMode} activo y ya hay posición abierta (${existingPosition.amount.toFixed(6)})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - modo ${positionMode} con posición abierta`, {
+        const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
+        
+        // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
+        const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
+        const currentOpenLots = (existingPosition && existingPosition.amount > 0) ? 1 : 0;
+        
+        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
+          const reasonCode = positionMode === "SMART_GUARD" 
+            ? "SMART_GUARD_MAX_LOTS_REACHED" 
+            : "SINGLE_MODE_POSITION_EXISTS";
+          
+          log(`${pair}: Compra bloqueada - Modo ${positionMode}, lotes abiertos ${currentOpenLots}/${maxLotsForMode}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de lotes alcanzado`, {
             pair,
             signal: "BUY",
-            reason: positionMode === "SMART_GUARD" ? "SMART_GUARD_POSITION_EXISTS" : "SINGLE_MODE_POSITION_EXISTS",
-            existingAmount: existingPosition.amount,
+            reason: reasonCode,
+            currentOpenLots,
+            maxOpenLots: maxLotsForMode,
+            existingAmount: existingPosition?.amount || 0,
             signalReason: signal.reason,
+          });
+          this.lastScanResults.set(pair, {
+            signal: "BUY",
+            reason: reasonCode,
+            exposureAvailable: 0,
           });
           return;
         }
@@ -3015,6 +3049,7 @@ _KrakenBot.AI_
       "PAIR_COOLDOWN": "En enfriamiento - esperando reintentos",
       "SINGLE_MODE_POSITION_EXISTS": "Ya hay posición abierta en este par",
       "SMART_GUARD_POSITION_EXISTS": "Ya hay posición abierta en este par",
+      "SMART_GUARD_MAX_LOTS_REACHED": "Máximo de lotes abiertos alcanzado para este par",
       "STOPLOSS_COOLDOWN": "Enfriamiento post stop-loss activo",
       "SPREAD_TOO_HIGH": "Spread demasiado alto para operar",
       "POSITION_TOO_LARGE": "Posición existente demasiado grande",

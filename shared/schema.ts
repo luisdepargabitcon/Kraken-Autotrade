@@ -39,6 +39,7 @@ export const botConfig = pgTable("bot_config", {
   sgScaleOutPct: decimal("sg_scale_out_pct", { precision: 5, scale: 2 }).notNull().default("35.00"),
   sgMinPartUsd: decimal("sg_min_part_usd", { precision: 10, scale: 2 }).notNull().default("50.00"),
   sgScaleOutThreshold: decimal("sg_scale_out_threshold", { precision: 5, scale: 2 }).notNull().default("80.00"),
+  sgMaxOpenLotsPerPair: integer("sg_max_open_lots_per_pair").notNull().default(1),
   // SMART_GUARD pair overrides (JSON: { "BTC/USD": { trailDistancePct: 1.0 }, ... })
   sgPairOverrides: jsonb("sg_pair_overrides"),
   // DRY_RUN mode: audit/verify without sending real orders to exchange

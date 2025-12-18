@@ -88,6 +88,7 @@ interface BotConfig {
   sgScaleOutPct: string;
   sgMinPartUsd: string;
   sgScaleOutThreshold: string;
+  sgMaxOpenLotsPerPair: number;
   sgPairOverrides: Record<string, unknown> | null;
 }
 
@@ -553,6 +554,20 @@ export default function Settings() {
                             data-testid="switch-sg-allow-under-min"
                           />
                         </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-sm">Máximo lotes por par</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={config.sgMaxOpenLotsPerPair || 1}
+                          onChange={(e) => updateMutation.mutate({ sgMaxOpenLotsPerPair: parseInt(e.target.value) || 1 })}
+                          className="font-mono bg-background/50"
+                          data-testid="input-sg-max-lots"
+                        />
+                        <p className="text-xs text-muted-foreground" data-testid="text-sg-max-lots-desc">Número máximo de posiciones abiertas por par (1 = una entrada, 2+ = permitir DCA en SMART_GUARD).</p>
                       </div>
                       
                       <div className="space-y-2">
