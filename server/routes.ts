@@ -713,6 +713,25 @@ export async function registerRoutes(
             : `Posición ${pair} cerrada exitosamente`,
         });
       } else {
+        // Caso DUST: devolver 200 con flag isDust para que UI ofrezca "Eliminar huérfana"
+        if (closeResult.isDust) {
+          await botLogger.warn("MANUAL_CLOSE_DUST", `Posición DUST detectada - no se puede cerrar`, {
+            correlationId,
+            pair,
+            lotId: positionLotId,
+            error: closeResult.error,
+          });
+          
+          return res.json({
+            success: false,
+            correlationId,
+            error: "DUST_POSITION",
+            isDust: true,
+            lotId: positionLotId,
+            message: closeResult.error || "Balance real menor al mínimo de Kraken",
+          });
+        }
+        
         await botLogger.error("MANUAL_CLOSE_FAILED", `Error al cerrar posición manualmente`, {
           correlationId,
           pair,
@@ -756,6 +775,77 @@ export async function registerRoutes(
         error: "INTERNAL_ERROR",
         message: `Error al procesar cierre: ${error.message}`,
         stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+      });
+    }
+  });
+
+  // === ELIMINAR POSICIÓN HUÉRFANA (DUST) ===
+  // Solo elimina el registro interno de DB/memoria, NO envía orden a Kraken
+  app.delete("/api/positions/:pair/orphan", async (req, res) => {
+    try {
+      const pair = req.params.pair.replace("-", "/");
+      const { lotId } = req.body || {};
+      
+      if (!lotId) {
+        return res.status(400).json({
+          success: false,
+          error: "MISSING_LOT_ID",
+          message: "Se requiere lotId para eliminar posición huérfana",
+        });
+      }
+      
+      // Verificar que la posición existe en DB
+      const dbPosition = await storage.getOpenPositionByLotId(lotId);
+      if (!dbPosition) {
+        return res.status(404).json({
+          success: false,
+          error: "POSITION_NOT_FOUND",
+          message: `No se encontró posición con lotId: ${lotId}`,
+        });
+      }
+      
+      // Eliminar de DB
+      await storage.deleteOpenPositionByLotId(lotId);
+      
+      // Eliminar de memoria del trading engine
+      if (tradingEngine) {
+        const positions = tradingEngine.getOpenPositions();
+        positions.delete(lotId);
+      }
+      
+      await botLogger.info("ORPHAN_POSITION_DELETED", `Posición huérfana eliminada manualmente`, {
+        pair,
+        lotId,
+        amount: dbPosition.amount,
+        entryPrice: dbPosition.entryPrice,
+      });
+      
+      // Notificar por Telegram
+      if (telegramService?.isInitialized()) {
+        await telegramService.sendMessage(`
+🗑️ *Posición Huérfana Eliminada*
+
+*Par:* ${pair}
+*Lot:* ${lotId}
+*Cantidad:* ${dbPosition.amount}
+
+_Eliminada manualmente desde dashboard (sin orden a Kraken)_
+        `.trim());
+      }
+      
+      res.json({
+        success: true,
+        message: `Posición huérfana ${lotId} eliminada de BD`,
+        pair,
+        lotId,
+      });
+      
+    } catch (error: any) {
+      console.error("[api/positions/orphan] Error:", error.message);
+      res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: error.message,
       });
     }
   });
