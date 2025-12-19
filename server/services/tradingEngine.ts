@@ -46,6 +46,23 @@ const KRAKEN_MINIMUMS: Record<string, number> = {
   "ETH/BTC": 0.01,
 };
 
+const KRAKEN_STEP_SIZES: Record<string, number> = {
+  "BTC/USD": 0.00000001, // 8 decimals
+  "ETH/USD": 0.00000001, // 8 decimals
+  "SOL/USD": 0.00000001, // 8 decimals
+  "XRP/USD": 0.00000001, // 8 decimals
+  "TON/USD": 0.00001,    // 5 decimals
+  "ETH/BTC": 0.00000001, // 8 decimals
+};
+
+const DUST_THRESHOLD_USD = 5; // Minimum USD value to attempt selling
+
+function normalizeVolume(pair: string, volume: number): number {
+  const stepSize = KRAKEN_STEP_SIZES[pair] || 0.00000001;
+  const decimals = Math.abs(Math.log10(stepSize));
+  return Math.floor(volume * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
 // Kraken fee structure (taker fees for market orders)
@@ -1993,20 +2010,51 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        const availableToSell = existingPosition?.amount || assetBalance;
-        const sellVolume = Math.min(availableToSell, availableToSell * 0.5);
+        // === FIX: Vender lote completo, no 50% ===
+        // Usar min(lot.amount, realAssetBalance) para evitar insufficient funds
+        // Si no hay lot trackeado, usar balance real del wallet
+        const lotAmount = existingPosition?.amount ?? assetBalance;
+        const realAssetBalance = assetBalance;
+        const rawSellVolume = Math.min(lotAmount, realAssetBalance);
+        
+        // Normalizar al stepSize de Kraken para evitar errores de precisión
+        const sellVolume = normalizeVolume(pair, rawSellVolume);
+        
         const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
+        const sellValueUsd = sellVolume * currentPrice;
 
+        // === DUST DETECTION: No intentar vender si es dust ===
         if (sellVolume < minVolumeSell) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - volumen < mínimo`, {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mínimo)`, {
             pair,
             signal: "SELL",
-            reason: "VOLUME_BELOW_MINIMUM",
-            calculatedVolume: sellVolume,
+            reason: "DUST_POSITION",
+            lotAmount,
+            realAssetBalance,
+            sellVolume,
             minVolume: minVolumeSell,
+            sellValueUsd,
+            signalReason: signal.reason,
           });
           return;
         }
+        
+        if (sellValueUsd < DUST_THRESHOLD_USD) {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (valor < $${DUST_THRESHOLD_USD})`, {
+            pair,
+            signal: "SELL",
+            reason: "DUST_POSITION",
+            lotAmount,
+            realAssetBalance,
+            sellVolume,
+            sellValueUsd,
+            dustThresholdUsd: DUST_THRESHOLD_USD,
+            signalReason: signal.reason,
+          });
+          return;
+        }
+
+        log(`${pair}: SELL signal - vendiendo ${sellVolume.toFixed(8)} (lot: ${lotAmount.toFixed(8)}, balance: ${realAssetBalance.toFixed(8)}, value: $${sellValueUsd.toFixed(2)})`, "trading");
 
         const sellContext = existingPosition 
           ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }
@@ -2268,21 +2316,48 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        const availableToSell = existingPosition?.amount || assetBalance;
-        const sellVolume = Math.min(availableToSell, availableToSell * 0.5);
+        // === FIX: Vender lote completo, no 50% ===
+        // Si no hay lot trackeado, usar balance real del wallet
+        const lotAmount = existingPosition?.amount ?? assetBalance;
+        const realAssetBalance = assetBalance;
+        const rawSellVolume = Math.min(lotAmount, realAssetBalance);
+        const sellVolume = normalizeVolume(pair, rawSellVolume);
+        
         const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
+        const sellValueUsd = sellVolume * currentPrice;
 
+        // === DUST DETECTION ===
         if (sellVolume < minVolumeSell) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - volumen < mínimo`, {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mínimo)`, {
             pair,
             signal: "SELL",
-            reason: "VOLUME_BELOW_MINIMUM",
-            calculatedVolume: sellVolume,
+            reason: "DUST_POSITION",
+            lotAmount,
+            realAssetBalance,
+            sellVolume,
             minVolume: minVolumeSell,
+            sellValueUsd,
             strategyId,
           });
           return;
         }
+        
+        if (sellValueUsd < DUST_THRESHOLD_USD) {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (valor < $${DUST_THRESHOLD_USD})`, {
+            pair,
+            signal: "SELL",
+            reason: "DUST_POSITION",
+            lotAmount,
+            realAssetBalance,
+            sellVolume,
+            sellValueUsd,
+            dustThresholdUsd: DUST_THRESHOLD_USD,
+            strategyId,
+          });
+          return;
+        }
+
+        log(`${pair}: SELL signal [${strategyId}] - vendiendo ${sellVolume.toFixed(8)} (value: $${sellValueUsd.toFixed(2)})`, "trading");
 
         const sellContext = existingPosition 
           ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }

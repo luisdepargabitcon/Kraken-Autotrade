@@ -57,7 +57,8 @@ export type EventType =
   // Manual close events
   | "MANUAL_CLOSE_INITIATED"
   | "MANUAL_CLOSE_SUCCESS"
-  | "MANUAL_CLOSE_FAILED";
+  | "MANUAL_CLOSE_FAILED"
+  | "MANUAL_CLOSE_EXCEPTION";
 
 interface LogMeta {
   [key: string]: any;

@@ -1,0 +1,91 @@
+OK, entendido. Mantengo vuestro análisis y lo convierto en checklist accionable (con referencias).
+
+========================
+BUG 1 — ERROR 500 cierre manual
+"kr.isReplitEnvironment is not a function"
+========================
+
+Vuestro hallazgo:
+- Se buscó isReplitEnvironment() con paréntesis y NO existe en el código actual.
+- Los usos son correctos: this.isReplitEnvironment (boolean) o environment.isReplit.
+- forceClosePosition (≈ línea 3292+) usa this.dryRunMode correctamente.
+
+Acciones que os pido (obligatorias para cerrar el bug):
+1) Confirmación de versión real en NAS (posible container desactualizado)
+   - En NAS, dentro del contenedor:
+     - imprimir commit hash / build timestamp si existe
+     - o al menos el contenido exacto de:
+       server/services/tradingEngine.ts en la zona de forceClosePosition (≈ 3292+)
+   - Objetivo: demostrar que NAS está ejecutando el mismo código que el repo.
+
+2) Logging con stacktrace completo para ubicar la línea EXACTA
+   - Archivo: server/routes.ts
+   - Endpoint: POST /api/positions/:pair/close (≈ líneas 569–722)
+   - En el catch final (≈ línea 714+), además de error.message, loggear:
+     - error.stack completo
+     - correlationId
+     - pair, lotId, isDryRun
+   - Ejemplo: console.error("[api/positions/close] stack:", error.stack)
+
+3) Buscar “kr.” y “isReplitEnvironment” en runtime
+   - Aunque en el código no exista “kr.”, el error lo menciona:
+     - puede venir de un objeto importado o nombre minificado / transpiled
+   - Tras añadir stacktrace, el log debe señalar la línea exacta del bundle (dist) o TS.
+   - Si apunta a dist/, mapear al TS correspondiente.
+
+Criterio de cierre:
+- Ejecutar un cierre manual real por lotId en NAS y confirmar:
+  - HTTP 200
+  - NO vuelve a aparecer el error
+  - stacktrace ya no muestra la ruta problemática
+
+
+========================
+BUG 2 — SELL "Insufficient funds" + minVolume
+========================
+
+Vuestro hallazgo confirmado:
+- En tradingEngine.ts (≈ líneas 1996–2014) existe:
+  const availableToSell = existingPosition?.amount || assetBalance;
+  const sellVolume = Math.min(availableToSell, availableToSell * 0.5); // vende solo 50% ⚠️
+
+Problemas:
+- vende solo 50% (provoca cierres parciales y residuos/dust)
+- no valida contra realAssetBalance real del exchange antes de placeOrder
+- no normaliza/round a stepSize
+- si queda dust, puede intentar vender y acabar en TRADE_FAILED / insufficient funds
+
+Os pido aplicar (mínimo) Opción B (recomendada):
+A) Corregir SELL para vender lote completo (o amountRemaining) y no *0.5
+   - Archivo: server/services/tradingEngine.ts
+   - Bloque SELL: ≈ 1996–2014 y donde se invoque executeTrade(..., "sell", ...)
+   - Nuevo criterio:
+     sellAmount = min(lot.amountRemaining, realAssetBalance)
+     (o min(existingPosition.amount, realAssetBalance) si no hay lot en ese path)
+
+B) DUST detection antes de ejecutar orden:
+   - Si sellAmount < minVolume OR sellAmount*price < minNotional (o umbral fijo tipo $5)
+     => no enviar orden, marcar como DUST / UN-CLOSEABLE
+     => loggear evento claro: "SELL skipped - dust position"
+
+C) Normalización/rounding:
+   - Redondear sellAmount al stepSize de Kraken por par
+   - Ideal: helper normalizeVolume(pair, amount) en server/services/kraken.ts
+   - Si no hay stepSize real, al menos truncar con decimales correctos por par
+     (pero preferible stepSize real)
+
+Pruebas / validación que os pido:
+- Test unitario o integración (aunque sea simple) de:
+  1) SELL con balance real menor que amountRemaining => usa min() y no falla
+  2) SELL dust => no llama a placeOrder, genera log/evento “DUST”
+  3) SELL normal => llama a placeOrder con volumen normalizado
+
+========================
+Resumen de lo que necesito ver en vuestra entrega
+========================
+- PR/commit con:
+  - stacktrace logging en /api/positions/:pair/close (routes.ts)
+  - fix de SELL (quitar *0.5, min con realAssetBalance, dust check, normalize)
+- Evidencia:
+  - logs NAS demostrando cierre manual OK
+  - logs de 1 sell correcto y 1 sell dust skip (sin TRADE_FAILED)
