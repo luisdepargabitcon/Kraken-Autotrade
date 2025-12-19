@@ -27,8 +27,20 @@ import {
   Layers,
   Square,
   X,
-  Loader2
+  Loader2,
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface OpenPosition {
@@ -83,6 +95,10 @@ export default function Terminal() {
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("positions");
   const [closingKey, setClosingKey] = useState<string | null>(null);
+  const [deletingOrphanKey, setDeletingOrphanKey] = useState<string | null>(null);
+  const [orphanDialogOpen, setOrphanDialogOpen] = useState(false);
+  const [orphanToDelete, setOrphanToDelete] = useState<{ lotId: string; pair: string; amount: string } | null>(null);
+  const [dustPositions, setDustPositions] = useState<Set<string>>(new Set());
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -171,7 +187,7 @@ export default function Terminal() {
   };
 
   const closePositionMutation = useMutation({
-    mutationFn: async ({ pair, lotId }: { pair: string; lotId?: string | null }) => {
+    mutationFn: async ({ pair, lotId, amount }: { pair: string; lotId?: string | null; amount?: string }) => {
       const pairEncoded = pair.replace("/", "-");
       const body: { reason: string; lotId?: string } = { reason: "Cierre manual desde dashboard" };
       if (lotId) body.lotId = lotId;
@@ -180,16 +196,32 @@ export default function Terminal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json();
+      // Check for DUST response (comes as 200 with isDust flag)
+      if (data.isDust && lotId) {
+        return { ...data, _isDust: true, _lotId: lotId, _pair: pair, _amount: amount };
+      }
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.message || "Error al cerrar posición");
       }
-      return res.json();
+      return data;
     },
     onMutate: ({ pair, lotId }) => {
       setClosingKey(getPositionKey(pair, lotId));
     },
     onSuccess: (data) => {
+      // Handle DUST position - show dialog to delete orphan
+      if (data._isDust && data._lotId) {
+        setDustPositions(prev => new Set(prev).add(data._lotId));
+        setOrphanToDelete({ lotId: data._lotId, pair: data._pair, amount: data._amount || "?" });
+        setOrphanDialogOpen(true);
+        toast({
+          title: "Posición DUST",
+          description: data.message || "Balance real menor al mínimo de Kraken",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: data.message?.includes("DRY_RUN") ? "Cierre Simulado" : "Posición Cerrada",
         description: `${data.pair}: PnL ${parseFloat(data.realizedPnlUsd) >= 0 ? '+' : ''}$${data.realizedPnlUsd} (${parseFloat(data.realizedPnlPct) >= 0 ? '+' : ''}${data.realizedPnlPct}%)`,
@@ -209,10 +241,64 @@ export default function Terminal() {
     },
   });
 
-  const handleClosePosition = (pair: string, lotId?: string | null) => {
+  // Mutation for deleting orphan DUST positions
+  const deleteOrphanMutation = useMutation({
+    mutationFn: async ({ lotId }: { lotId: string }) => {
+      const res = await fetch(`/api/positions/${lotId}/orphan`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "orphan_dust_cleanup" }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Error al eliminar posición huérfana");
+      }
+      return res.json();
+    },
+    onMutate: ({ lotId }) => {
+      setDeletingOrphanKey(lotId);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Posición Huérfana Eliminada",
+        description: `${data.pair}: Registro interno eliminado (sin orden a Kraken)`,
+      });
+      setDustPositions(prev => {
+        const next = new Set(prev);
+        next.delete(data.lotId);
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["openPositions"] });
+      setOrphanDialogOpen(false);
+      setOrphanToDelete(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setDeletingOrphanKey(null);
+    },
+  });
+
+  const handleClosePosition = (pair: string, lotId?: string | null, amount?: string) => {
     const displayId = lotId ? lotId.substring(0, 8) : pair;
     if (confirm(`¿Cerrar ${lotId ? `lote ${displayId}` : `posición`} de ${pair}? Esta acción no se puede deshacer.`)) {
-      closePositionMutation.mutate({ pair, lotId });
+      closePositionMutation.mutate({ pair, lotId, amount });
+    }
+  };
+
+  const handleDeleteOrphan = (lotId: string, pair: string, amount: string) => {
+    setOrphanToDelete({ lotId, pair, amount });
+    setOrphanDialogOpen(true);
+  };
+
+  const confirmDeleteOrphan = () => {
+    if (orphanToDelete) {
+      deleteOrphanMutation.mutate({ lotId: orphanToDelete.lotId });
     }
   };
 
@@ -552,21 +638,40 @@ export default function Terminal() {
                                   </div>
                                 </div>
                               </div>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => handleClosePosition(pos.pair, pos.lotId)}
-                                disabled={closingKey === getPositionKey(pos.pair, pos.lotId)}
-                                className="shrink-0"
-                                data-testid={`button-close-position-${pos.lotId || pos.id}`}
-                              >
-                                {closingKey === getPositionKey(pos.pair, pos.lotId) ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <X className="h-4 w-4" />
+                              <div className="flex gap-2 shrink-0">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => handleClosePosition(pos.pair, pos.lotId, pos.amount)}
+                                  disabled={closingKey === getPositionKey(pos.pair, pos.lotId)}
+                                  data-testid={`button-close-position-${pos.lotId || pos.id}`}
+                                >
+                                  {closingKey === getPositionKey(pos.pair, pos.lotId) ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <X className="h-4 w-4" />
+                                  )}
+                                  <span className="hidden sm:inline ml-1">Cerrar</span>
+                                </Button>
+                                {pos.lotId && (dustPositions.has(pos.lotId) || true) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleDeleteOrphan(pos.lotId!, pos.pair, pos.amount)}
+                                    disabled={deletingOrphanKey === pos.lotId}
+                                    className="text-orange-400 border-orange-400/50 hover:bg-orange-400/10"
+                                    data-testid={`button-delete-orphan-${pos.lotId}`}
+                                    title="Eliminar registro interno sin enviar orden a Kraken"
+                                  >
+                                    {deletingOrphanKey === pos.lotId ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                    <span className="hidden lg:inline ml-1">Huérfana</span>
+                                  </Button>
                                 )}
-                                <span className="hidden sm:inline ml-1">Cerrar</span>
-                              </Button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -735,6 +840,50 @@ export default function Terminal() {
           </Tabs>
         </main>
       </div>
+
+      {/* Dialog de confirmación para eliminar posición huérfana */}
+      <AlertDialog open={orphanDialogOpen} onOpenChange={setOrphanDialogOpen}>
+        <AlertDialogContent className="bg-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-orange-400">
+              <AlertTriangle className="h-5 w-5" />
+              Eliminar Posición Huérfana
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Esta acción <strong>solo elimina el registro interno</strong> del bot (base de datos).
+                <strong> NO envía ninguna orden a Kraken.</strong>
+              </p>
+              {orphanToDelete && (
+                <div className="bg-muted/30 rounded-md p-3 font-mono text-sm">
+                  <div><span className="text-muted-foreground">Par:</span> {orphanToDelete.pair}</div>
+                  <div><span className="text-muted-foreground">Lote:</span> {orphanToDelete.lotId.substring(0, 12)}...</div>
+                  <div><span className="text-muted-foreground">Cantidad:</span> {parseFloat(orphanToDelete.amount).toFixed(8)}</div>
+                </div>
+              )}
+              <p className="text-orange-400 text-sm">
+                Úsalo cuando el balance real en Kraken sea menor al mínimo (posición DUST) 
+                o cuando ya vendiste manualmente fuera del bot.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteOrphan}
+              className="bg-orange-500 hover:bg-orange-600"
+              disabled={deleteOrphanMutation.isPending}
+            >
+              {deleteOrphanMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Eliminar de BD
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

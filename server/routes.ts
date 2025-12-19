@@ -781,18 +781,10 @@ export async function registerRoutes(
 
   // === ELIMINAR POSICIÓN HUÉRFANA (DUST) ===
   // Solo elimina el registro interno de DB/memoria, NO envía orden a Kraken
-  app.delete("/api/positions/:pair/orphan", async (req, res) => {
+  app.delete("/api/positions/:lotId/orphan", async (req, res) => {
     try {
-      const pair = req.params.pair.replace("-", "/");
-      const { lotId } = req.body || {};
-      
-      if (!lotId) {
-        return res.status(400).json({
-          success: false,
-          error: "MISSING_LOT_ID",
-          message: "Se requiere lotId para eliminar posición huérfana",
-        });
-      }
+      const lotId = req.params.lotId;
+      const { reason } = req.body || {};
       
       // Verificar que la posición existe en DB
       const dbPosition = await storage.getOpenPositionByLotId(lotId);
@@ -803,6 +795,8 @@ export async function registerRoutes(
           message: `No se encontró posición con lotId: ${lotId}`,
         });
       }
+      
+      const pair = dbPosition.pair;
       
       // Eliminar de DB
       await storage.deleteOpenPositionByLotId(lotId);
@@ -818,6 +812,8 @@ export async function registerRoutes(
         lotId,
         amount: dbPosition.amount,
         entryPrice: dbPosition.entryPrice,
+        reason: reason || "orphan_dust_cleanup",
+        env: environment.isReplit ? "REPLIT" : "NAS",
       });
       
       // Notificar por Telegram
@@ -826,7 +822,7 @@ export async function registerRoutes(
 🗑️ *Posición Huérfana Eliminada*
 
 *Par:* ${pair}
-*Lot:* ${lotId}
+*Lot:* \`${lotId.substring(0, 8)}...\`
 *Cantidad:* ${dbPosition.amount}
 
 _Eliminada manualmente desde dashboard (sin orden a Kraken)_
@@ -835,9 +831,10 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       res.json({
         success: true,
-        message: `Posición huérfana ${lotId} eliminada de BD`,
-        pair,
         lotId,
+        pair,
+        deleted: true,
+        message: `Posición huérfana eliminada de BD`,
       });
       
     } catch (error: any) {
