@@ -1,0 +1,32 @@
+Antes de cambiar nada más, necesito que me confirméis EXACTAMENTE cómo está implementada la regla de entrada en SMART_GUARD.
+
+Objetivo funcional (lo que queremos):
+1) Si hay saldo USD disponible >= sgMinEntryUsd (ej 100$) => el bot debe entrar con mínimo sgMinEntryUsd (o el sizing que corresponda pero nunca por debajo del mínimo, salvo que el sizing sea mayor).
+2) Si saldo USD disponible < sgMinEntryUsd y sgAllowUnderMin = true => el bot debe poder entrar con “todo lo disponible” (respetando mínimos de Kraken: minVolume/minNotional/stepSize).
+3) Si sgAllowUnderMin = false => NO debe entrar por debajo de sgMinEntryUsd.
+
+Dudas actuales:
+- Estamos viendo TRADE_SKIPPED por EXPOSURE_ZERO y por SMART_GUARD_MAX_LOTS_REACHED.
+- Queremos saber si se está bloqueando por exposición (maxPair/maxTotal) incluso en SMART_GUARD, y en qué orden se evalúan: slots vs exposición vs mínimos.
+
+Por favor, pasadme:
+A) El flujo exacto (orden) de validaciones para BUY en SMART_GUARD:
+   - cálculo de usdDisponible
+   - cálculo tradeAmountUSD
+   - validación sgMinEntryUsd / sgAllowUnderMin
+   - validación max lots (sgMaxOpenLotsPerPair)
+   - validación exposición (maxPairExposurePct / maxTotalExposurePct) -> si aplica o NO aplica en SMART_GUARD
+
+B) Pegad el bloque de código completo (o funciones completas) donde se decide BUY para SMART_GUARD.
+   - tradingEngine.ts: la(s) función(es) que calculan orderUsdFinal/tradeAmountUSD y emiten TRADE_SKIPPED (con reason EXPOSURE_ZERO / MIN_ORDER / etc.)
+   - cualquier helper (getAvailableExposure, getSmartGuardParams, etc.) que influya en esa decisión
+
+C) Añadid logs (solo a nivel INFO/DEBUG) con estas variables en cada BUY evaluado:
+   - positionMode, sgMinEntryUsd, sgAllowUnderMin
+   - usdBalance, usdDisponible
+   - tradeAmountUSD (antes y después de mínimos)
+   - exposure.maxAllowed / maxPairAvailable / maxTotalAvailable
+   - currentOpenLots / sgMaxOpenLotsPerPair
+   - reason final de bloqueo si se bloquea
+
+Con esto os digo exactamente si está cumpliendo la regla o dónde está el gap.
