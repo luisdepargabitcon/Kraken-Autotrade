@@ -273,6 +273,52 @@ export class KrakenService {
     };
     return pairMap[pair] || pair;
   }
+
+  /**
+   * Normalize volume to Kraken's step size for the given pair.
+   * Kraken uses different decimal precision per asset.
+   * Returns the volume truncated (not rounded) to avoid exceeding balance.
+   */
+  normalizeVolume(pair: string, volume: number): string {
+    const decimalsMap: Record<string, number> = {
+      "BTC/USD": 8,
+      "ETH/USD": 8,
+      "SOL/USD": 8,
+      "XRP/USD": 8,
+      "TON/USD": 5,
+      "ETH/BTC": 8,
+    };
+    const decimals = decimalsMap[pair] ?? 8;
+    const factor = Math.pow(10, decimals);
+    const truncated = Math.floor(volume * factor) / factor;
+    return truncated.toFixed(decimals);
+  }
+
+  /**
+   * Check if a volume is dust (below minimum tradeable).
+   * Returns { isDust, reason } for logging.
+   */
+  isDustVolume(pair: string, volume: number, price: number): { isDust: boolean; reason?: string } {
+    const minVolumes: Record<string, number> = {
+      "BTC/USD": 0.0001,
+      "ETH/USD": 0.004,
+      "SOL/USD": 0.02,
+      "XRP/USD": 10,
+      "TON/USD": 1,
+    };
+    const minVolume = minVolumes[pair] ?? 0.01;
+    const minNotionalUsd = 5; // Kraken typically requires ~$5 minimum order value
+    
+    const valueUsd = volume * price;
+    
+    if (volume < minVolume) {
+      return { isDust: true, reason: `volume ${volume.toFixed(8)} < minVolume ${minVolume}` };
+    }
+    if (valueUsd < minNotionalUsd) {
+      return { isDust: true, reason: `valueUsd $${valueUsd.toFixed(2)} < minNotional $${minNotionalUsd}` };
+    }
+    return { isDust: false };
+  }
 }
 
 export const krakenService = new KrakenService();

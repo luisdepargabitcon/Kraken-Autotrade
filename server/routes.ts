@@ -712,11 +712,31 @@ export async function registerRoutes(
       }
       
     } catch (error: any) {
-      console.error("[api/positions/close] Error:", error.message);
+      const pair = req.params.pair?.replace("-", "/") || "UNKNOWN";
+      const { lotId } = req.body || {};
+      const botConfig = await storage.getBotConfig().catch(() => null);
+      const isDryRun = botConfig?.dryRunMode || environment.isReplit;
+      
+      console.error("[api/positions/close] FULL ERROR DETAILS:");
+      console.error("  - pair:", pair);
+      console.error("  - lotId:", lotId || "not_specified");
+      console.error("  - isDryRun:", isDryRun);
+      console.error("  - error.message:", error.message);
+      console.error("  - error.stack:", error.stack);
+      
+      await botLogger.error("MANUAL_CLOSE_EXCEPTION", `Excepción en cierre manual`, {
+        pair,
+        lotId: lotId || "not_specified",
+        isDryRun,
+        errorMessage: error.message,
+        errorStack: error.stack,
+      });
+      
       res.status(500).json({
         success: false,
         error: "INTERNAL_ERROR",
         message: `Error al procesar cierre: ${error.message}`,
+        stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
       });
     }
   });
