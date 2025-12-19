@@ -37,31 +37,7 @@ const RISK_LEVELS: Record<string, RiskConfig> = {
   },
 };
 
-const KRAKEN_MINIMUMS: Record<string, number> = {
-  "BTC/USD": 0.0001,
-  "ETH/USD": 0.01,
-  "SOL/USD": 0.1,
-  "XRP/USD": 10,
-  "TON/USD": 1,
-  "ETH/BTC": 0.01,
-};
-
-const KRAKEN_STEP_SIZES: Record<string, number> = {
-  "BTC/USD": 0.00000001, // 8 decimals
-  "ETH/USD": 0.00000001, // 8 decimals
-  "SOL/USD": 0.00000001, // 8 decimals
-  "XRP/USD": 0.00000001, // 8 decimals
-  "TON/USD": 0.00001,    // 5 decimals
-  "ETH/BTC": 0.00000001, // 8 decimals
-};
-
 const DUST_THRESHOLD_USD = 5; // Minimum USD value to attempt selling
-
-function normalizeVolume(pair: string, volume: number): number {
-  const stepSize = KRAKEN_STEP_SIZES[pair] || 0.00000001;
-  const decimals = Math.abs(Math.log10(stepSize));
-  return Math.floor(volume * Math.pow(10, decimals)) / Math.pow(10, decimals);
-}
 
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
@@ -263,6 +239,40 @@ export class TradingEngine {
   
   // Tracking para Momentum (Velas) - última vela evaluada por par+timeframe
   private lastEvaluatedCandle: Map<string, number> = new Map();
+  
+  // Fallback minimums (only used if Kraken API fails)
+  private readonly FALLBACK_MINIMUMS: Record<string, number> = {
+    "BTC/USD": 0.0001,
+    "ETH/USD": 0.01,
+    "SOL/USD": 0.02,
+    "XRP/USD": 1.65,
+    "TON/USD": 1,
+    "ETH/BTC": 0.01,
+  };
+
+  private normalizeVolume(pair: string, volume: number): number {
+    const stepSize = this.krakenService.getStepSize(pair);
+    if (stepSize === null) {
+      log(`[WARNING] No step size for ${pair}, using 8 decimal fallback`, "trading");
+      const fallbackDecimals = 8;
+      return Math.floor(volume * Math.pow(10, fallbackDecimals)) / Math.pow(10, fallbackDecimals);
+    }
+    const decimals = Math.abs(Math.log10(stepSize));
+    return Math.floor(volume * Math.pow(10, decimals)) / Math.pow(10, decimals);
+  }
+
+  private getOrderMin(pair: string): number {
+    const orderMin = this.krakenService.getOrderMin(pair);
+    if (orderMin === null) {
+      log(`[WARNING] No orderMin for ${pair}, using fallback`, "trading");
+      return this.FALLBACK_MINIMUMS[pair] || 0.01;
+    }
+    return orderMin;
+  }
+
+  private hasPairMetadata(pair: string): boolean {
+    return this.krakenService.hasMetadata(pair);
+  }
   
   // Timeframe en segundos para calcular cierre de vela
   private readonly TIMEFRAME_SECONDS: Record<string, number> = {
@@ -838,6 +848,21 @@ _${extra.reason}_
       return;
     }
 
+    // Load dynamic pair metadata from Kraken API (step sizes, order minimums)
+    const activePairs = config.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD"];
+    try {
+      await this.krakenService.loadPairMetadata(activePairs);
+      // Verify all active pairs have metadata
+      const missingPairs = activePairs.filter(p => !this.krakenService.hasMetadata(p));
+      if (missingPairs.length > 0) {
+        log(`[CRITICAL] Missing metadata for pairs: ${missingPairs.join(", ")}. Using fallback values.`, "trading");
+      }
+      this.krakenService.startMetadataRefresh(activePairs);
+    } catch (error: any) {
+      log(`[CRITICAL] Failed to load pair metadata: ${error.message}. Trading will use fallback values.`, "trading");
+      // Continue with fallbacks - don't block trading entirely for API failures
+    }
+
     if (!this.telegramService.isInitialized()) {
       log("Telegram no está configurado, continuando sin notificaciones", "trading");
     }
@@ -1282,7 +1307,7 @@ El bot de trading autónomo está activo.
     }
 
     if (shouldSell) {
-      const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+      const minVolume = this.getOrderMin(pair);
       const sellAmount = position.amount;
 
       if (sellAmount < minVolume) {
@@ -1557,7 +1582,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
     
     // Execute sell if needed
     if (shouldSellFull || shouldScaleOut) {
-      const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+      const minVolume = this.getOrderMin(pair);
       let sellAmount = shouldScaleOut 
         ? position.amount * (scaleOutPct / 100)
         : position.amount;
@@ -1759,7 +1784,7 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
           return;
         }
 
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolume = this.getOrderMin(pair);
         const minRequiredUSD = minVolume * currentPrice;
         const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
 
@@ -2018,9 +2043,9 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const rawSellVolume = Math.min(lotAmount, realAssetBalance);
         
         // Normalizar al stepSize de Kraken para evitar errores de precisión
-        const sellVolume = normalizeVolume(pair, rawSellVolume);
+        const sellVolume = this.normalizeVolume(pair, rawSellVolume);
         
-        const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolumeSell = this.getOrderMin(pair);
         const sellValueUsd = sellVolume * currentPrice;
 
         // === DUST DETECTION: No intentar vender si es dust ===
@@ -2194,7 +2219,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        const minVolume = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolume = this.getOrderMin(pair);
         const minRequiredUSD = minVolume * currentPrice;
         const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
 
@@ -2321,9 +2346,9 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const lotAmount = existingPosition?.amount ?? assetBalance;
         const realAssetBalance = assetBalance;
         const rawSellVolume = Math.min(lotAmount, realAssetBalance);
-        const sellVolume = normalizeVolume(pair, rawSellVolume);
+        const sellVolume = this.normalizeVolume(pair, rawSellVolume);
         
-        const minVolumeSell = KRAKEN_MINIMUMS[pair] || 0.01;
+        const minVolumeSell = this.getOrderMin(pair);
         const sellValueUsd = sellVolume * currentPrice;
 
         // === DUST DETECTION ===

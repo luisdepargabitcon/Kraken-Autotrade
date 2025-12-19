@@ -9,18 +9,98 @@ interface KrakenConfig {
   apiSecret: string;
 }
 
+export interface PairMetadata {
+  lotDecimals: number;
+  orderMin: number;
+  pairDecimals: number;
+  stepSize: number;
+}
+
 const NONCE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [500, 1000, 2000];
+const METADATA_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 export class KrakenService {
   private client: any | null = null;
   private publicClient: any;
   private lastNonceAlertTime: number = 0;
   private lastNonce: number = 0;
+  private pairMetadataCache: Map<string, PairMetadata> = new Map();
+  private metadataLastRefresh: number = 0;
+  private metadataRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.publicClient = new Kraken();
+  }
+
+  async loadPairMetadata(pairs: string[]): Promise<void> {
+    try {
+      console.log(`[kraken] Loading pair metadata for: ${pairs.join(", ")}`);
+      const response = await this.publicClient.assetPairs();
+      
+      for (const pair of pairs) {
+        const krakenPair = this.formatPair(pair);
+        const pairData = response[krakenPair];
+        
+        if (pairData) {
+          const lotDecimals = pairData.lot_decimals || 8;
+          const orderMin = parseFloat(pairData.ordermin) || 0.01;
+          const pairDecimals = pairData.pair_decimals || 5;
+          const stepSize = Math.pow(10, -lotDecimals);
+          
+          this.pairMetadataCache.set(pair, {
+            lotDecimals,
+            orderMin,
+            pairDecimals,
+            stepSize,
+          });
+          
+          console.log(`[kraken] ${pair}: lotDecimals=${lotDecimals}, orderMin=${orderMin}, stepSize=${stepSize}`);
+        } else {
+          console.warn(`[kraken] No metadata found for ${pair} (${krakenPair})`);
+        }
+      }
+      
+      this.metadataLastRefresh = Date.now();
+      console.log(`[kraken] Pair metadata loaded successfully for ${this.pairMetadataCache.size} pairs`);
+    } catch (error: any) {
+      console.error(`[kraken] Failed to load pair metadata: ${error.message}`);
+      if (this.pairMetadataCache.size === 0) {
+        console.error(`[kraken] CRITICAL: No pair metadata available - trades will be skipped`);
+      }
+    }
+  }
+
+  startMetadataRefresh(pairs: string[]): void {
+    if (this.metadataRefreshTimer) {
+      clearInterval(this.metadataRefreshTimer);
+    }
+    
+    this.metadataRefreshTimer = setInterval(async () => {
+      console.log(`[kraken] Refreshing pair metadata...`);
+      await this.loadPairMetadata(pairs);
+    }, METADATA_REFRESH_INTERVAL_MS);
+    
+    console.log(`[kraken] Metadata refresh scheduled every ${METADATA_REFRESH_INTERVAL_MS / 3600000}h`);
+  }
+
+  getPairMetadata(pair: string): PairMetadata | null {
+    return this.pairMetadataCache.get(pair) || null;
+  }
+
+  getStepSize(pair: string): number | null {
+    const metadata = this.pairMetadataCache.get(pair);
+    return metadata ? metadata.stepSize : null;
+  }
+
+  getOrderMin(pair: string): number | null {
+    const metadata = this.pairMetadataCache.get(pair);
+    return metadata ? metadata.orderMin : null;
+  }
+
+  hasMetadata(pair: string): boolean {
+    return this.pairMetadataCache.has(pair);
   }
 
   initialize(config: KrakenConfig) {
