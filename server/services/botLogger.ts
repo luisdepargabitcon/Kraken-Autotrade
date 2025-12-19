@@ -58,7 +58,9 @@ export type EventType =
   | "MANUAL_CLOSE_INITIATED"
   | "MANUAL_CLOSE_SUCCESS"
   | "MANUAL_CLOSE_FAILED"
-  | "MANUAL_CLOSE_EXCEPTION";
+  | "MANUAL_CLOSE_EXCEPTION"
+  | "MANUAL_CLOSE_DUST"
+  | "ORPHAN_POSITION_DELETED";
 
 interface LogMeta {
   [key: string]: any;
