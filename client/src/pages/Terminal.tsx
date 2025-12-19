@@ -269,6 +269,7 @@ export default function Terminal() {
         return next;
       });
       queryClient.invalidateQueries({ queryKey: ["openPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["closedTrades"] });
       setOrphanDialogOpen(false);
       setOrphanToDelete(null);
     },
@@ -653,7 +654,7 @@ export default function Terminal() {
                                   )}
                                   <span className="hidden sm:inline ml-1">Cerrar</span>
                                 </Button>
-                                {pos.lotId && (dustPositions.has(pos.lotId) || true) && (
+                                {pos.lotId && dustPositions.has(pos.lotId) && (
                                   <Button
                                     variant="outline"
                                     size="sm"
