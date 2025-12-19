@@ -1,0 +1,38 @@
+Tenemos problemas reales en NAS/PROD y también en REPLIT/DEV.
+Por favor, investigad y arregladlo en el repo (no solo “patch rápido”), y dejad tests o logs que demuestren el fix.
+
+Necesito que reviséis y arregléis 2 cosas en NAS/PROD (docker):
+
+1) ERROR 500 en cierre manual
+- Endpoint: POST /api/positions/:pair/close (server/routes.ts ~569)
+- Error real en logs:
+  "Error al procesar cierre: kr.isReplitEnvironment is not a function"
+- En routes.ts NO se llama a kr.isReplitEnvironment(). El handler llama a:
+  tradingEngine.forceClosePosition(pair, currentPrice, correlationId, reason, lotId)
+- Por tanto el bug está dentro de server/services/tradingEngine.ts (forceClosePosition o algo que llama).
+- En tradingEngine.ts existe:
+  private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
+  => es BOOLEAN, no función.
+✅ Fix: buscar cualquier uso tipo *.isReplitEnvironment() (con paréntesis) y cambiarlo a boolean
+   (this.isReplitEnvironment o environment.isReplit) SIN paréntesis.
+✅ Mientras se corrige, loggear stacktrace completo (error.stack) para identificar la línea exacta.
+✅ Añadir test/manual-check: cierre manual por lotId en NAS/PROD y verificar que ya no devuelve 500.
+
+2) Problemas de SELL (EOrder:Insufficient funds) + muchos TRADE_SKIPPED por minVolume
+- Tenemos TRADE_FAILED sell con: ["EOrder:Insufficient funds"] (ej SOL/USD)
+- Y muchos TRADE_SKIPPED: volumen < mínimo (BTC/ETH/XRP)
+✅ Fix mínimo imprescindible:
+  - En SELL NO recalcular “sizing” como si fuera BUY.
+  - Vender por lotId:
+      sellAmount = min(lot.amountRemaining, realAssetBalance)
+  - Normalizar/round al stepSize del exchange (y evitar oversell por redondeo).
+  - Validar mínimos reales:
+      si sellAmount < minVolume  OR  (sellAmount*price) < minNotional/minRequiredUSD
+      => marcar como DUST/UN-CLOSEABLE y NO intentar vender (solo log/alert).
+
+Archivos a tocar (prioridad):
+- server/services/tradingEngine.ts (forceClosePosition + lógica SELL)
+- server/routes.ts solo para confirmar que pasa lotId correcto (parece bien)
+- server/services/kraken.ts solo si falta normalización/rounding del volumen
+
+Por favor: además de aplicar el fix, localizad la línea exacta donde se llama mal a isReplitEnvironment() y dejad comentario/commit message con la causa + evidencia (log/test).

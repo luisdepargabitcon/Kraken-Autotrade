@@ -1,0 +1,34 @@
+Tenemos problemas reales en NAS/PROD y también en REPLIT/DEV.
+Por favor, investigad y arregladlo en el repo (no solo “patch rápido”), y dejad tests o logs que demuestren el fix.
+
+Necesito que revises y arregles 2 cosas en el NAS/PROD (docker):
+
+1) ERROR 500 en cierre manual
+- Endpoint: POST /api/positions/:pair/close (server/routes.ts ~569)
+- Error real en logs:
+  "Error al procesar cierre: kr.isReplitEnvironment is not a function"
+- En routes.ts NO se llama a kr.isReplitEnvironment(). El handler llama a:
+  tradingEngine.forceClosePosition(pair, currentPrice, correlationId, reason, lotId)
+- Por tanto el bug está dentro de server/services/tradingEngine.ts (forceClosePosition o algo que llama).
+- En tradingEngine.ts existe:
+  private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
+  => es BOOLEAN, no función.
+✅ Fix: buscar cualquier uso tipo kr.isReplitEnvironment() / something.isReplitEnvironment() y cambiarlo a boolean
+   (this.isReplitEnvironment o environment.isReplit) SIN paréntesis.
+✅ Añadir un test: cierre manual de una posición por lotId en NAS/PROD y verificar que ya no devuelve 500.
+
+2) Problemas de SELL (EOrder:Insufficient funds) + TRADE_SKIPPED por minVolume
+- Tenemos TRADE_FAILED sell con: ["EOrder:Insufficient funds"] (ej SOL/USD)
+- Y muchos TRADE_SKIPPED: volumen < mínimo (BTC/ETH/XRP)
+✅ Fix mínimo imprescindible:
+  - En SELL NO recalcular “sizing” como si fuera BUY.
+  - Vender por lotId: sellAmount = min(lot.amountRemaining, realAssetBalance)
+  - Redondear al stepSize/tick del exchange
+  - Si sellAmount < minVolume/minNotional => marcar como DUST/UN-CLOSEABLE y NO intentar vender (solo log/alert).
+
+Archivos a tocar (prioridad):
+- server/services/tradingEngine.ts (forceClosePosition + lógica de sell)
+- server/routes.ts solo para confirmar que pasa lotId correcto (ya parece bien)
+- server/services/kraken.ts solo si hay normalización/rounding del volumen
+
+Por favor: además de aplicar el fix, localiza la línea exacta donde se llama mal a isReplitEnvironment y deja comentario/commit message con la causa.
