@@ -2977,6 +2977,106 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
     return 0;
   }
 
+  // === HELPER: Validar cantidad de venta antes de enviar orden ===
+  // Solo para flujo SELL/cierre. NO afecta BUY ni sizing global.
+  private async validateSellAmount(
+    pair: string,
+    lotId: string,
+    requestedAmount: number
+  ): Promise<{
+    canSell: boolean;
+    sellAmountFinal: number;
+    reason: string;
+    isDust: boolean;
+    realAssetBalance: number;
+    orderMin: number;
+    stepSize: number;
+    needsPositionAdjust: boolean;
+  }> {
+    const stepSize = this.krakenService.getStepSize(pair) || 0.00000001;
+    const orderMin = this.getOrderMin(pair);
+    
+    // 1) Obtener balance real del asset base
+    let freshBalances: any;
+    try {
+      freshBalances = await this.krakenService.getBalance();
+    } catch (error: any) {
+      log(`[MANUAL_CLOSE_EVAL] ${pair} ${lotId}: ERROR getBalance - ${error.message}`, "trading");
+      return {
+        canSell: false,
+        sellAmountFinal: 0,
+        reason: `Error obteniendo balance de Kraken: ${error.message}`,
+        isDust: false,
+        realAssetBalance: 0,
+        orderMin,
+        stepSize,
+        needsPositionAdjust: false,
+      };
+    }
+    
+    const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+    
+    // 2) Calcular sellAmount seguro = min(requested, realBalance)
+    let sellAmountRaw = Math.min(requestedAmount, realAssetBalance);
+    
+    // 3) Normalizar al stepSize (truncar, no redondear)
+    const decimals = Math.abs(Math.log10(stepSize));
+    const sellAmountFinal = Math.floor(sellAmountRaw * Math.pow(10, decimals)) / Math.pow(10, decimals);
+    
+    // 4) Caso DUST: balance real < orderMin
+    if (realAssetBalance < orderMin) {
+      const logMsg = `[MANUAL_CLOSE_EVAL] ${pair} ${lotId} | lotAmount=${requestedAmount.toFixed(8)} realBalance=${realAssetBalance.toFixed(8)} orderMin=${orderMin} stepSize=${stepSize} sellFinal=0 decision=DUST`;
+      log(logMsg, "trading");
+      
+      return {
+        canSell: false,
+        sellAmountFinal: 0,
+        reason: `Balance real (${realAssetBalance.toFixed(8)}) menor al mínimo de Kraken (${orderMin}). Posición marcada como DUST.`,
+        isDust: true,
+        realAssetBalance,
+        orderMin,
+        stepSize,
+        needsPositionAdjust: false,
+      };
+    }
+    
+    // 5) Verificar si sellAmountFinal queda por debajo del mínimo tras normalizar
+    if (sellAmountFinal < orderMin) {
+      const logMsg = `[MANUAL_CLOSE_EVAL] ${pair} ${lotId} | lotAmount=${requestedAmount.toFixed(8)} realBalance=${realAssetBalance.toFixed(8)} orderMin=${orderMin} stepSize=${stepSize} sellFinal=${sellAmountFinal.toFixed(8)} decision=BELOW_MIN_AFTER_NORMALIZE`;
+      log(logMsg, "trading");
+      
+      return {
+        canSell: false,
+        sellAmountFinal: 0,
+        reason: `Cantidad normalizada (${sellAmountFinal.toFixed(8)}) menor al mínimo de Kraken (${orderMin}).`,
+        isDust: true,
+        realAssetBalance,
+        orderMin,
+        stepSize,
+        needsPositionAdjust: false,
+      };
+    }
+    
+    // 6) Detectar discrepancia: position.amount > realAssetBalance
+    const needsPositionAdjust = requestedAmount > realAssetBalance * 1.005; // tolerancia 0.5%
+    
+    const logMsg = `[MANUAL_CLOSE_EVAL] ${pair} ${lotId} | lotAmount=${requestedAmount.toFixed(8)} realBalance=${realAssetBalance.toFixed(8)} orderMin=${orderMin} stepSize=${stepSize} sellFinal=${sellAmountFinal.toFixed(8)} decision=CAN_SELL${needsPositionAdjust ? " (adjusted)" : ""}`;
+    log(logMsg, "trading");
+    
+    return {
+      canSell: true,
+      sellAmountFinal,
+      reason: needsPositionAdjust 
+        ? `Cantidad ajustada de ${requestedAmount.toFixed(8)} a ${sellAmountFinal.toFixed(8)} (balance real)` 
+        : "OK",
+      isDust: false,
+      realAssetBalance,
+      orderMin,
+      stepSize,
+      needsPositionAdjust,
+    };
+  }
+
   private async executeTrade(
     pair: string,
     type: "buy" | "sell",
@@ -3437,6 +3537,7 @@ _KrakenBot.AI_
     pnlPct?: number;
     dryRun?: boolean;
     lotId?: string;
+    isDust?: boolean; // Flag para indicar que la posición es DUST y no se puede cerrar
   }> {
     try {
       // Find the position to close
@@ -3514,12 +3615,55 @@ _⚠️ Modo simulación - NO se envió orden real_
         };
       }
 
+      // === VALIDACIÓN PRE-SELL: Verificar balance real y detectar DUST ===
+      const validation = await this.validateSellAmount(pair, positionLotId, amount);
+      
+      if (!validation.canSell) {
+        // Caso DUST: no se puede vender, devolver error con flag isDust
+        if (validation.isDust) {
+          // Enviar alerta Telegram
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendMessage(`
+⚠️ *Posición DUST Detectada*
+
+*Par:* ${pair}
+*Lot:* ${positionLotId}
+*Cantidad registrada:* ${amount.toFixed(8)}
+*Balance real:* ${validation.realAssetBalance.toFixed(8)}
+*Mínimo Kraken:* ${validation.orderMin}
+
+_No se puede cerrar - usar "Eliminar huérfana" en UI_
+            `.trim());
+          }
+        }
+        
+        return {
+          success: false,
+          error: validation.reason,
+          lotId: positionLotId,
+          isDust: validation.isDust,
+        };
+      }
+      
+      // Si hubo ajuste de cantidad, actualizar posición interna
+      const sellAmountFinal = validation.sellAmountFinal;
+      if (validation.needsPositionAdjust) {
+        log(`[MANUAL_CLOSE] Ajustando posición ${pair} (${positionLotId}) de ${amount} a ${sellAmountFinal}`, "trading");
+        position.amount = sellAmountFinal;
+        this.openPositions.set(positionLotId, position);
+        await this.savePositionToDB(pair, position);
+      }
+      
+      // Recalcular PnL con cantidad real
+      const actualPnlUsd = (currentPrice - entryPrice) * sellAmountFinal;
+      const actualPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+
       // PRODUCCIÓN: Ejecutar orden real de venta
       const order = await this.krakenService.placeOrder({
         pair,
         type: "sell",
         ordertype: "market",
-        volume: amount.toFixed(8),
+        volume: sellAmountFinal.toFixed(8),
       });
 
       const txid = order.txid?.[0];
@@ -3541,39 +3685,39 @@ _⚠️ Modo simulación - NO se envió orden real_
         pair,
         type: "sell",
         price: currentPrice.toString(),
-        amount: amount.toFixed(8),
+        amount: sellAmountFinal.toFixed(8),
         status: "filled",
         krakenOrderId: txid,
         entryPrice: entryPrice.toString(),
-        realizedPnlUsd: pnlUsd.toString(),
-        realizedPnlPct: pnlPct.toString(),
+        realizedPnlUsd: actualPnlUsd.toString(),
+        realizedPnlPct: actualPnlPct.toString(),
         executedAt: new Date(),
       });
 
       // Notificar por Telegram
       if (this.telegramService.isInitialized()) {
-        const pnlEmoji = pnlUsd >= 0 ? "🟢" : "🔴";
+        const pnlEmoji = actualPnlUsd >= 0 ? "🟢" : "🔴";
         await this.telegramService.sendMessage(`
 ${pnlEmoji} *Cierre Manual Ejecutado*
 
 *Par:* ${pair}
-*Cantidad:* ${amount.toFixed(8)}
+*Cantidad:* ${sellAmountFinal.toFixed(8)}
 *Precio entrada:* $${entryPrice.toFixed(2)}
 *Precio salida:* $${currentPrice.toFixed(2)}
-*PnL:* ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)
+*PnL:* ${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toFixed(2)} (${actualPnlPct >= 0 ? "+" : ""}${actualPnlPct.toFixed(2)}%)
 *Order ID:* \`${txid}\`
 
 _Cierre solicitado manualmente desde dashboard_
         `.trim());
       }
 
-      log(`[MANUAL_CLOSE] Cierre exitoso ${pair} (${positionLotId}) - Order: ${txid}, PnL: $${pnlUsd.toFixed(2)}`, "trading");
+      log(`[MANUAL_CLOSE] Cierre exitoso ${pair} (${positionLotId}) - Order: ${txid}, PnL: $${actualPnlUsd.toFixed(2)}`, "trading");
 
       return {
         success: true,
         orderId: txid,
-        pnlUsd,
-        pnlPct,
+        pnlUsd: actualPnlUsd,
+        pnlPct: actualPnlPct,
         dryRun: false,
         lotId: positionLotId,
       };
