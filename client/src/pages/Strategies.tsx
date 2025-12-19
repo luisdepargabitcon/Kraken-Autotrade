@@ -413,7 +413,7 @@ export default function Strategies() {
                   value={[parseFloat(config?.riskPerTradePct || "15")]}
                   onValueChange={(value) => updateMutation.mutate({ riskPerTradePct: value[0].toString() } as any)}
                   min={5}
-                  max={50}
+                  max={100}
                   step={5}
                   className="[&>span]:bg-blue-500"
                   data-testid="slider-risk-per-trade"
@@ -454,7 +454,7 @@ export default function Strategies() {
                     value={[parseFloat(config?.maxPairExposurePct || "25")]}
                     onValueChange={(value) => updateMutation.mutate({ maxPairExposurePct: value[0].toString() } as any)}
                     min={5}
-                    max={50}
+                    max={100}
                     step={5}
                     className="[&>span]:bg-orange-500"
                     data-testid="slider-max-pair-exposure"

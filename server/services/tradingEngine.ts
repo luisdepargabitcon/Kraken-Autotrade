@@ -1156,6 +1156,15 @@ El bot de trading autónomo está activo.
       const isCandleMode = signalTimeframe !== "cycle" && config.strategy === "momentum";
 
       for (const pair of config.activePairs) {
+        // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
+        if (!this.lastScanResults.has(pair)) {
+          this.lastScanResults.set(pair, {
+            signal: "NONE",
+            reason: "Sin señal en este ciclo",
+            exposureAvailable: this.getAvailableExposure(pair, config, this.currentUsdBalance),
+          });
+        }
+        
         if (isCandleMode) {
           const candle = await this.getLastClosedCandle(pair, signalTimeframe);
           if (!candle) continue;
@@ -3666,10 +3675,21 @@ _Cierre solicitado manualmente desde dashboard_
         const hasPosition = !!(position && position.amount > 0);
         const exposure = this.getAvailableExposure(pair, config, this.currentUsdBalance);
         
+        // Determinar razón basada en el estado real
+        let razon = "Bot inactivo - actívalo para escanear";
+        if (this.isRunning) {
+          if (this.lastScanTime > 0) {
+            // El bot ha escaneado pero este par no tiene resultado (puede ser por filtro u otra razón)
+            razon = "Sin señal activa";
+          } else {
+            razon = "Esperando primer escaneo...";
+          }
+        }
+        
         pairs.push({
           pair,
           signal: "NONE",
-          razon: this.isRunning ? "Esperando primer escaneo..." : "Bot inactivo - actívalo para escanear",
+          razon,
           cooldownSec: this.getCooldownRemainingSec(pair),
           exposureAvailable: exposure,
           hasPosition,

@@ -535,6 +535,10 @@ export default function Settings() {
                       Configuración SMART_GUARD
                     </h4>
                     
+                    <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/50" data-testid="text-sg-global-limits-note">
+                      Los límites globales de Riesgo por Trade y Exposición están en "Tamaño de Trade" y "Control de Exposición" (página Estrategias).
+                    </p>
+                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="text-sm">Mínimo por operación (USD)</Label>

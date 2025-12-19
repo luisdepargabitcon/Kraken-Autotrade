@@ -1,0 +1,52 @@
+Necesito 2 ajustes (UI + validación) relacionados con límites globales vs SMART_GUARD:
+
+1) Aclaración UX (SMART_GUARD)
+Confirmad que estos campos son GLOBALES (no específicos de SMART_GUARD) y por eso no aparecen en el bloque “Configuración SMART_GUARD”:
+- riskPerTradePct
+- maxPairExposurePct
+- maxTotalExposurePct
+
+Si es así, añadid en el bloque SMART_GUARD un texto/tooltip visible que diga:
+“Los límites globales de Riesgo por Trade y Exposición están en ‘Tamaño de Trade’ y ‘Control de Exposición’.”
+
+2) Arreglo sliders/rangos (0–100)
+En el dashboard, los sliders de:
+- riskPerTradePct (Riesgo por Trade)
+- maxPairExposurePct (Máx. Exposición por Par)
+parecen estar capados a 50%.
+
+Necesito que TODOS estos porcentajes sean configurables 0–100 (UI) y validados 0–100 en backend:
+- riskPerTradePct
+- maxPairExposurePct
+- maxTotalExposurePct
+
+Revisad:
+- max del slider/input (p.ej. max={50} → max={100})
+- schema/validación (DB/API) para que no recorte o rechace >50
+- asegurar que el valor guardado se refleja al recargar /api/config y en la UI.
+
+Caso de verificación:
+EJEMPLO: Quiero poder poner riskPerTradePct=80 y con balance 300 USD el bot proponga ~240 USD (siempre respetando maxTotalExposurePct).
+Dejad un log o test mínimo que demuestre que se guarda y aplica.
+Además, cuando terminéis de revisar lo anterior, hay otro punto a comprobar:
+
+3) Diagnóstico / Monitor – estado de escaneo
+
+En la pestaña Monitor → Diagnóstico aparece en varios pares:
+“Esperando primer escaneo…”
+
+Sin embargo, el bot YA está escaneando correctamente:
+- Hay ENGINE_TICK cada ~30s
+- Hay lastScanAt actualizado
+- Hay señales evaluadas y TRADE_SKIPPED / TRADE_EXECUTED
+- El motor está activo en NAS/PROD
+
+Por tanto, el mensaje del diagnóstico es confuso o incorrecto.
+
+Necesito que reviséis:
+- La lógica que decide mostrar “Esperando primer escaneo…”
+- Si está usando una condición antigua (por ejemplo: primer candle, primer scan global, flag no actualizado, etc.)
+- Que el estado del diagnóstico refleje correctamente:
+  “Escaneando activo” / “Último escaneo: <timestamp>”
+Objetivo:
+Que Monitor → Diagnóstico no muestre “esperando escaneo” cuando el engine ya está corriendo y evaluando señales.

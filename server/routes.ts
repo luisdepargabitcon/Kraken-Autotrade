@@ -123,7 +123,24 @@ export async function registerRoutes(
 
   app.post("/api/config", async (req, res) => {
     try {
-      const updated = await storage.updateBotConfig(req.body);
+      const body = { ...req.body };
+      
+      // Validar y clampar porcentajes a rango 0-100
+      const pctFields = ["riskPerTradePct", "maxPairExposurePct", "maxTotalExposurePct"];
+      for (const field of pctFields) {
+        if (body[field] !== undefined) {
+          const val = parseFloat(body[field]);
+          if (isNaN(val)) {
+            return res.status(400).json({ error: `${field} debe ser un número válido` });
+          }
+          if (val < 0 || val > 100) {
+            return res.status(400).json({ error: `${field} debe estar entre 0 y 100 (valor recibido: ${val})` });
+          }
+          body[field] = val.toFixed(2);
+        }
+      }
+      
+      const updated = await storage.updateBotConfig(body);
       
       if (req.body.isActive !== undefined && tradingEngine) {
         if (req.body.isActive) {
