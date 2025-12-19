@@ -1,0 +1,40 @@
+racias, con vuestro desglose ya se ve el problema real:
+
+1) GAP PRINCIPAL: sgMinEntryUsd hoy es VALIDACIÓN, no SIZING.
+Necesitamos que en SMART_GUARD sea también tamaño mínimo cuando haya saldo.
+
+Requisito exacto:
+- Si usdDisponible >= sgMinEntryUsd:
+    orderUsdFinal = max(orderUsdProposed, sgMinEntryUsd)
+    (respetando maxTradeUSD si aplica y sin pasar de usdDisponible)
+- Si usdDisponible < sgMinEntryUsd y sgAllowUnderMin=true:
+    orderUsdFinal = usdDisponible (siempre que >= SG_ABSOLUTE_MIN_USD)
+- Si sgAllowUnderMin=false:
+    bloquear si orderUsdFinal < sgMinEntryUsd (como ya hacéis)
+
+2) CONTRADICCIÓN: estamos viendo EXPOSURE_ZERO con balances altos.
+En scan/diagnostic y en algunos TRADE_SKIPPED aparece exposureAvailable=0 porque currentTotalExposure > maxTotalExposureUsd.
+Aunque decís que SMART_GUARD “no aplica exposición”, hay algún punto donde se está usando getAvailableExposure() para bloquear o para reportar.
+
+Necesito que:
+- Unifiquéis el criterio: o SMART_GUARD ignora exposición (y entonces NO debe salir EXPOSURE_ZERO en SMART_GUARD),
+  o SMART_GUARD sí respeta al menos maxTotalExposurePct (recomendado para no sobreapalancar el balance).
+- Indicad explícitamente en código cuál es la política final.
+
+3) Implementad logs [BUY_EVAL] que propusisteis (no hace falta aprobación):
+- justo antes de decidir skipReason final, para ver:
+  mode, usdBalance, usdDisponible, orderUsdProposed, orderUsdFinal,
+  exposure.maxAllowed/maxTotalAvailable, effectiveMaxAllowed,
+  currentOpenLots/maxLots, skipReason final.
+
+4) Entregable: un test o script reproducible (NAS/PROD y REPLIT/DEV) que demuestre:
+- Caso A: balance=199, sgMinEntryUsd=100, allowUnderMin=true → compra mínima = 100
+- Caso B: balance=70, allowUnderMin=true → compra = ~70 (>=20)
+- Caso C: balance=70, allowUnderMin=false → bloqueo MIN_ORDER_USD
+- Caso D: maxTotalExposure alcanzada → comportamiento según política elegida (bloqueo o no)
+
+// Además de los 5 logs BUY_EVAL, añadid uno más con el veredicto final:
+log(`[BUY_EVAL] ${pair}: DECISION skipReason=${skipReason ?? "NONE"} msg=${skipMessage ?? ""}`, "trading");
+
+// Importante: que estos logs se emitan SOLO cuando se vaya a hacer TRADE_SKIPPED
+// (o bajo flag DEBUG), para no spamear NAS/PROD.

@@ -1821,21 +1821,35 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         const usdDisponible = freshUsdBalance * 0.95;
         
         if (positionMode === "SMART_GUARD") {
-          // SMART_GUARD: Calcular sizing basado en riesgo, LUEGO validar mínimo
-          // El sizing = min(riskPerTradePct * balance, usdDisponible)
+          // SMART_GUARD: sgMinEntryUsd es tanto SIZING (piso) como VALIDACIÓN
+          // Calcular sizing basado en riesgo
           const riskBasedAmount = freshUsdBalance * (riskPerTradePct / 100);
           const maxByRisk = Math.min(riskBasedAmount, riskConfig.maxTradeUSD);
           
-          // orderUsdProposed = el menor entre lo que permite el riesgo y lo disponible
+          // orderUsdProposed = sizing base por riesgo
           const orderUsdProposed = Math.min(maxByRisk, usdDisponible);
           originalAmount = orderUsdProposed;
           
-          // El sizing final es lo propuesto (sgMinEntryUsd es solo VALIDACIÓN, no sizing)
-          tradeAmountUSD = orderUsdProposed;
+          // === SIZING RULE (sgMinEntryUsd como PISO, no solo validación) ===
+          // Si hay saldo >= sgMinEntryUsd: orderUsdFinal = max(orderUsdProposed, sgMinEntryUsd)
+          // Si saldo < sgMinEntryUsd y sgAllowUnderMin=true: usar todo disponible
+          // Si sgAllowUnderMin=false: bloquear en validateMinimumsOrSkip()
+          if (usdDisponible >= sgMinEntryUsd) {
+            // Caso A: Hay saldo suficiente - sizing mínimo es sgMinEntryUsd
+            tradeAmountUSD = Math.max(orderUsdProposed, sgMinEntryUsd);
+            // Respetar límite máximo
+            tradeAmountUSD = Math.min(tradeAmountUSD, usdDisponible, riskConfig.maxTradeUSD);
+          } else if (sgAllowUnderMin) {
+            // Caso B: Saldo insuficiente pero permitido - usar todo disponible
+            tradeAmountUSD = usdDisponible;
+          } else {
+            // Caso C: Saldo insuficiente y NO permitido - se bloqueará en validateMinimumsOrSkip()
+            tradeAmountUSD = usdDisponible;
+          }
           
-          log(`SMART_GUARD ${pair}: Sizing calculado $${tradeAmountUSD.toFixed(2)} (riskPct=${riskPerTradePct}%, disponible $${usdDisponible.toFixed(2)}, minRequerido $${sgMinEntryUsd.toFixed(2)})`, "trading");
+          log(`SMART_GUARD ${pair}: Sizing calculado $${tradeAmountUSD.toFixed(2)} (riskPropuesto=$${orderUsdProposed.toFixed(2)}, disponible=$${usdDisponible.toFixed(2)}, minRequerido=$${sgMinEntryUsd.toFixed(2)}, allowUnder=${sgAllowUnderMin})`, "trading");
           
-          // La validación de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
+          // La validación final de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
         } else {
           // Modos SINGLE/DCA: lógica original con exposure limits
           
@@ -1879,10 +1893,11 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
 
         const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
         const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
-        // SMART_GUARD no aplica límites de exposición (ya validó el mínimo arriba)
+        // POLÍTICA UNIFICADA: SMART_GUARD SÍ respeta maxTotalExposurePct para evitar sobreapalancamiento
+        // Pero NO aplica maxPairExposurePct (permite concentración en un par si hay señal fuerte)
         const effectiveMaxAllowed = positionMode === "SMART_GUARD" 
-          ? maxByBalance 
-          : Math.min(exposure.maxAllowed, maxByBalance);
+          ? Math.min(exposure.maxTotalAvailable, maxByBalance)  // Solo limita por exposición TOTAL
+          : Math.min(exposure.maxAllowed, maxByBalance);  // SINGLE/DCA limita por par Y total
         
         if (effectiveMaxAllowed < minRequiredUSD) {
           log(`${pair}: Sin exposición disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, Mínimo: $${minRequiredUSD.toFixed(2)}`, "trading");
@@ -1955,6 +1970,9 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         // Se ejecuta ANTES de executeTrade() para REAL y DRY_RUN
         const orderUsdFinal = tradeAmountUSD;
         const envPrefix = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+        const currentOpenLotsForLog = this.countLotsForPair(pair);
+        const sgMaxLotsPerPairConfig = botConfig?.sgMaxOpenLotsPerPair ?? 1;
+        const maxLotsForModeConfig = positionMode === "SMART_GUARD" ? sgMaxLotsPerPairConfig : 1;
         
         const validationResult = validateMinimumsOrSkip({
           positionMode,
@@ -1970,6 +1988,13 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         });
         
         if (!validationResult.valid) {
+          // === [BUY_EVAL] LOGS: Solo cuando hay TRADE_SKIPPED ===
+          log(`[BUY_EVAL] ${pair}: mode=${positionMode}, sgMinEntryUsd=${sgMinEntryUsd.toFixed(2)}, sgAllowUnderMin=${sgAllowUnderMin}`, "trading");
+          log(`[BUY_EVAL] ${pair}: usdBalance=${freshUsdBalance.toFixed(2)}, usdDisponible=${usdDisponible.toFixed(2)}`, "trading");
+          log(`[BUY_EVAL] ${pair}: orderUsdProposed=${(originalAmount || tradeAmountUSD).toFixed(2)}, orderUsdFinal=${orderUsdFinal.toFixed(2)}`, "trading");
+          log(`[BUY_EVAL] ${pair}: exposure.maxPairAvailable=${exposure.maxPairAvailable.toFixed(2)}, exposure.maxTotalAvailable=${exposure.maxTotalAvailable.toFixed(2)}, effectiveMaxAllowed=${effectiveMaxAllowed.toFixed(2)}`, "trading");
+          log(`[BUY_EVAL] ${pair}: currentOpenLots=${currentOpenLotsForLog}/${maxLotsForModeConfig}`, "trading");
+          log(`[BUY_EVAL] ${pair}: DECISION skipReason=${validationResult.skipReason} msg=${validationResult.message}`, "trading");
           log(`[FINAL CHECK] ${pair}: SKIP - ${validationResult.message}`, "trading");
           
           this.lastScanResults.set(pair, {
@@ -1989,7 +2014,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
         
-        // Log de decisión final antes de ejecutar
+        // Log de decisión final antes de ejecutar (solo para casos especiales)
         if (positionMode === "SMART_GUARD" && sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
           log(`[FINAL CHECK] ${pair}: ALLOWED UNDER MIN - orderUsdFinal $${orderUsdFinal.toFixed(2)} < sgMinEntryUsd $${sgMinEntryUsd.toFixed(2)} (sgAllowUnderMin=ON)`, "trading");
         }
