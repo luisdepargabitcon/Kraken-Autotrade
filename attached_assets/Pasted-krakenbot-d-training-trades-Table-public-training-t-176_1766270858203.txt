@@ -1,0 +1,33 @@
+krakenbot=# \d training_trades
+                                            Table "public.training_trades"
+      Column       |            Type             | Collation | Nullable |                   Default
+-------------------+-----------------------------+-----------+----------+---------------------------------------------
+ id                | integer                     |           | not null | nextval('training_trades_id_seq'::regclass)
+ pair              | text                        |           | not null |
+ strategy_id       | text                        |           |          |
+ buy_txid          | text                        |           | not null |
+ sell_txid         | text                        |           |          |
+ entry_price       | numeric(18,8)               |           | not null |
+ exit_price        | numeric(18,8)               |           |          |
+ entry_amount      | numeric(18,8)               |           | not null |
+ exit_amount       | numeric(18,8)               |           |          |
+ entry_fee         | numeric(18,8)               |           | not null | '0'::numeric
+ exit_fee          | numeric(18,8)               |           |          |
+ cost_usd          | numeric(18,8)               |           | not null |
+ revenue_usd       | numeric(18,8)               |           |          |
+ pnl_gross         | numeric(18,8)               |           |          |
+ pnl_net           | numeric(18,8)               |           |          |
+ pnl_pct           | numeric(10,4)               |           |          |
+ hold_time_minutes | integer                     |           |          |
+ label_win         | integer                     |           |          |
+ features_json     | jsonb                       |           |          |
+ discard_reason    | text                        |           |          |
+ is_closed         | boolean                     |           | not null | false
+ is_labeled        | boolean                     |           | not null | false
+ entry_ts          | timestamp without time zone |           | not null |
+ exit_ts           | timestamp without time zone |           |          |
+ created_at        | timestamp without time zone |           | not null | now()
+ sell_txids_json   | jsonb                       |           |          |
+ qty_remaining     | numeric(18,8)               |           |          |
+Indexes:
+    "training_trades_pkey" PRIMARY KEY, btree (id)
