@@ -1876,5 +1876,105 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // ============================================================
+  // TEST ENDPOINT: Simular sizing SMART_GUARD v2
+  // Para validar la lógica: 469→200, 250→200, 150→150, 25→25, 19→block
+  // ============================================================
+  app.post("/api/test/sg-sizing", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      if (envInfo.isNAS && !dryRun) {
+        return res.status(403).json({ error: "FORBIDDEN" });
+      }
+      
+      const schema = z.object({
+        availableUsd: z.number().min(0),
+        sgMinEntryUsd: z.number().positive().default(200),
+        minOrderExchangeUsd: z.number().positive().default(10), // mínimo del exchange en USD
+        feeCushionPct: z.number().min(0).default(0),
+      });
+      
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: parsed.error.issues });
+      }
+      
+      const { availableUsd, sgMinEntryUsd, minOrderExchangeUsd, feeCushionPct } = parsed.data;
+      
+      // Constantes
+      const SG_ABSOLUTE_MIN_USD = 20;
+      
+      // SMART_GUARD v2: sin buffer de slippage para sizing exacto
+      const usdDisponible = availableUsd;
+      
+      // floorUsd = max(minOrderExchangeUsd, MIN_ORDER_ABSOLUTE_USD)
+      const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minOrderExchangeUsd);
+      
+      // Fee cushion
+      const cushionAmount = availableUsd * (feeCushionPct / 100);
+      const availableAfterCushion = usdDisponible - cushionAmount;
+      
+      // === SMART_GUARD v2 SIZING LOGIC ===
+      let orderUsd: number;
+      let reasonCode: string;
+      let blocked = false;
+      
+      if (availableAfterCushion >= sgMinEntryUsd) {
+        // Caso A: Saldo suficiente → usar sgMinEntryUsd EXACTO
+        orderUsd = sgMinEntryUsd;
+        reasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
+        
+      } else if (availableAfterCushion >= floorUsd) {
+        // Caso B: Fallback automático → usar saldo disponible
+        orderUsd = availableAfterCushion;
+        reasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
+        
+      } else if (usdDisponible >= floorUsd && availableAfterCushion < floorUsd) {
+        // Caso C: Fee cushion lo baja de floorUsd → BLOCKED
+        orderUsd = availableAfterCushion;
+        reasonCode = "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION";
+        blocked = true;
+        
+      } else {
+        // Caso D: Saldo < floorUsd → BLOCKED
+        orderUsd = usdDisponible;
+        reasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
+        blocked = true;
+      }
+      
+      res.json({
+        success: true,
+        blocked,
+        reasonCode,
+        orderUsd: parseFloat(orderUsd.toFixed(2)),
+        details: {
+          input: {
+            availableUsd,
+            sgMinEntryUsd,
+            minOrderExchangeUsd,
+            feeCushionPct,
+          },
+          calculated: {
+            usdDisponible: parseFloat(usdDisponible.toFixed(2)),
+            floorUsd,
+            cushionAmount: parseFloat(cushionAmount.toFixed(2)),
+            availableAfterCushion: parseFloat(availableAfterCushion.toFixed(2)),
+          },
+          thresholds: {
+            SG_ABSOLUTE_MIN_USD,
+            minOrderExchangeUsd,
+            floorUsd,
+          },
+        },
+      });
+      
+    } catch (error: any) {
+      res.status(500).json({ error: "SG_SIZING_TEST_ERROR", message: error.message });
+    }
+  });
+
   return httpServer;
 }

@@ -45,16 +45,26 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 
 ### SMART_GUARD Mode
 - **Purpose**: Intelligent capital protection with strict entry validation.
-- **Entry Validation**: Minimum entry USD per trade (sgMinEntryUsd), $20 absolute minimum threshold.
-- **Final Order Validation**: Before executeTrade(), validates orderUsdFinal against sgMinEntryUsd. Blocks trade if below minimum and sgAllowUnderMin=false.
-- **Reduced Entry**: If sgAllowUnderMin=true and available >= $20, allows entry with available balance.
+- **Sizing v2 (Auto Fallback)**:
+  - `sgMinEntryUsd` es un "objetivo preferido", no un bloqueo.
+  - Si `availableUsd >= sgMinEntryUsd` → orden = `sgMinEntryUsd` exacto (no más).
+  - Si `availableUsd < sgMinEntryUsd` → orden = saldo disponible (fallback automático).
+  - `floorUsd = max(minOrderExchangeUsd, $20)` → mínimo absoluto (hard block).
+  - Si `availableUsd < floorUsd` → trade bloqueado.
+  - **Fee Cushion**: Si `sgFeeCushionPct` o `sgFeeCushionAuto` activo, resta reserva para fees antes de sizing.
+  - **sgAllowUnderMin DEPRECATED**: Ya no afecta el comportamiento (siempre fallback automático).
+- **Reason Codes**:
+  - `SMART_GUARD_ENTRY_USING_CONFIG_MIN`: Saldo suficiente, usa sgMinEntryUsd.
+  - `SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE`: Saldo insuficiente, usa saldo disponible.
+  - `SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN`: Saldo < floorUsd (hard block).
+  - `SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION`: Fee cushion reduce saldo por debajo de floorUsd.
 - **Break-Even Protection**: Moves stop-loss to entry price + fees when profit reaches sgBeAtPct.
 - **Trailing Stop**: Activates at sgTrailStartPct profit, follows at sgTrailDistancePct, updates at sgTrailStepPct steps.
 - **Fixed Take-Profit**: Optional sgTpFixedPct for guaranteed profit capture.
 - **Scale-Out**: Optional partial profit taking at sgScaleOutPct before fixed TP.
 - **Per-Pair Overrides**: sgPairOverrides allows customizing parameters per trading pair via API and UI.
-- **Sizing**: Uses available balance directly (ignores exposure limits) with sgMinEntryUsd as target.
 - **Diagnostic Endpoint**: GET /api/scan/diagnostic provides scan results with Spanish reasons.
+- **Test Endpoint**: POST /api/test/sg-sizing para simular sizing v2 (solo en dev/dryRun).
 - **Telegram Alerts**: Notifications for key events (Break-Even activation, Trailing Stop activation/updates, Scale-Out execution) with 5-min throttle on trailing updates.
 - **Override API**: GET/PUT/DELETE /api/config/sg-overrides/:pair for managing per-pair parameters.
 - **Event Types**: SG_BREAK_EVEN_ACTIVATED, SG_TRAILING_ACTIVATED, SG_TRAILING_STOP_UPDATED, SG_SCALE_OUT_EXECUTED, CONFIG_OVERRIDE_UPDATED.

@@ -61,6 +61,13 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
 const SG_ABSOLUTE_MIN_USD = 20;
 
 // === VALIDACIÓN CENTRALIZADA DE MÍNIMOS (fuente única de verdad) ===
+// Reason codes para SMART_GUARD sizing
+type SmartGuardReasonCode = 
+  | "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN"   // saldo < floorUsd (hard block)
+  | "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION"    // availableAfterCushion < floorUsd
+  | "SMART_GUARD_ENTRY_USING_CONFIG_MIN"       // saldo >= sgMinEntryUsd, usando sgMinEntryUsd
+  | "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE"; // saldo < sgMinEntryUsd, usando saldo disponible
+
 interface MinimumValidationParams {
   positionMode: string;
   orderUsdFinal: number;
@@ -69,14 +76,17 @@ interface MinimumValidationParams {
   exposureAvailable: number;
   pair: string;
   sgMinEntryUsd?: number;
-  sgAllowUnderMin?: boolean;
+  sgAllowUnderMin?: boolean; // DEPRECATED - se ignora (siempre auto fallback)
   dryRun?: boolean;
   env?: string;
+  floorUsd?: number;
+  availableAfterCushion?: number;
 }
 
 interface MinimumValidationResult {
   valid: boolean;
-  skipReason?: "MIN_ORDER_ABSOLUTE" | "MIN_ORDER_USD";
+  skipReason?: SmartGuardReasonCode | "MIN_ORDER_ABSOLUTE" | "MIN_ORDER_USD";
+  reasonCode?: SmartGuardReasonCode;
   message?: string;
   meta?: Record<string, any>;
 }
@@ -90,10 +100,14 @@ function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidat
     exposureAvailable,
     pair,
     sgMinEntryUsd = 100,
-    sgAllowUnderMin = true,
+    sgAllowUnderMin = true, // DEPRECATED - ignorado
     dryRun = false,
     env = "UNKNOWN",
+    floorUsd,
+    availableAfterCushion,
   } = params;
+
+  const effectiveFloor = floorUsd ?? SG_ABSOLUTE_MIN_USD;
 
   const meta = {
     pair,
@@ -101,29 +115,43 @@ function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidat
     orderUsdProposed,
     orderUsdFinal,
     sgMinEntryUsd,
-    sgAllowUnderMin,
+    sgAllowUnderMin_DEPRECATED: sgAllowUnderMin,
     exposureAvailable,
     env,
     dryRun,
     absoluteMinUsd: SG_ABSOLUTE_MIN_USD,
+    floorUsd: effectiveFloor,
+    availableAfterCushion,
   };
 
-  // REGLA B: Mínimo ABSOLUTO del exchange (siempre, en todos los modos)
+  // REGLA 1: Hard block - si orderUsdFinal < floorUsd (exchange min + absoluto)
+  if (orderUsdFinal < effectiveFloor) {
+    return {
+      valid: false,
+      skipReason: "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN",
+      reasonCode: "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN",
+      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < floorUsd $${effectiveFloor.toFixed(2)} (mín exchange + absoluto)`,
+      meta,
+    };
+  }
+
+  // REGLA 2: Hard block - si availableAfterCushion < floorUsd (fee cushion applied)
+  if (availableAfterCushion !== undefined && availableAfterCushion < effectiveFloor) {
+    return {
+      valid: false,
+      skipReason: "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION",
+      reasonCode: "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION",
+      message: `Trade bloqueado: availableAfterCushion $${availableAfterCushion.toFixed(2)} < floorUsd $${effectiveFloor.toFixed(2)}`,
+      meta,
+    };
+  }
+
+  // Fallback para modos no-SMART_GUARD
   if (orderUsdFinal < SG_ABSOLUTE_MIN_USD) {
     return {
       valid: false,
       skipReason: "MIN_ORDER_ABSOLUTE",
       message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`,
-      meta,
-    };
-  }
-
-  // REGLA A: Mínimo CONFIGURABLE (solo SMART_GUARD con sgAllowUnderMin=false)
-  if (positionMode === "SMART_GUARD" && !sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
-    return {
-      valid: false,
-      skipReason: "MIN_ORDER_USD",
-      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < sgMinEntryUsd $${sgMinEntryUsd.toFixed(2)} (sgAllowUnderMin=OFF)`,
       meta,
     };
   }
@@ -1824,57 +1852,70 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
         // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) ===
-        // sgMinEntryUsd es un UMBRAL mínimo (PISO), NO un target
-        // El sizing se calcula con lógica normal, luego se valida contra el mínimo
+        // SMART_GUARD v2: sgMinEntryUsd es un "objetivo preferido", no un bloqueo
+        // - Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd exactamente (no más)
+        // - Si saldo < sgMinEntryUsd → fallback automático a saldo disponible
+        // - floorUsd = max(exchangeMin, absoluteMin) → hard block si saldo < floorUsd
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
+        let sgReasonCode: SmartGuardReasonCode | undefined;
         
         // Para SMART_GUARD: calcular orderUsdProposed por lógica normal, luego validar mínimos
         const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, botConfig) : null;
         const sgMinEntryUsd = sgParams?.sgMinEntryUsd || 100;
-        const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true;
+        const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true; // DEPRECATED - se ignora
+        const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
+        const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
         
-        // usdDisponible = saldo real disponible (95% para dejar margen)
-        const usdDisponible = freshUsdBalance * 0.95;
+        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT)
+        const effectiveCushionPct = sgFeeCushionAuto ? (KRAKEN_FEE_PCT * 2) : sgFeeCushionPct;
         
-        // === PISO EFECTIVO: El mayor de todos los mínimos aplicables ===
-        // 1. SG_ABSOLUTE_MIN_USD ($20) - mínimo absoluto del sistema
-        // 2. minRequiredUSD - mínimo del exchange en USD (minVolume * precio)
-        // 3. sgMinEntryUsd - mínimo configurable del usuario
-        const pisoEfectivo = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD, sgMinEntryUsd);
+        // usdDisponible = saldo real disponible (sin buffer en SMART_GUARD v2 para sizing exacto)
+        const usdDisponible = freshUsdBalance;
+        
+        // === NUEVA LÓGICA SMART_GUARD v2 ===
+        // floorUsd = max(minOrderExchangeUsd, MIN_ORDER_ABSOLUTE_USD) - HARD BLOCK
+        const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD);
+        
+        // availableAfterCushion = saldo menos reserva para fees
+        const cushionAmount = freshUsdBalance * (effectiveCushionPct / 100);
+        const availableAfterCushion = usdDisponible - cushionAmount;
         
         if (positionMode === "SMART_GUARD") {
-          // SMART_GUARD: pisoEfectivo es el PISO ABSOLUTO cuando hay saldo suficiente
-          // Calcular sizing basado en riesgo
-          const riskBasedAmount = freshUsdBalance * (riskPerTradePct / 100);
-          const maxByRisk = Math.min(riskBasedAmount, riskConfig.maxTradeUSD);
+          // === SMART_GUARD v2 SIZING ===
+          // Regla 1: sgMinEntryUsd es "objetivo preferido"
+          // Regla 2: Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd EXACTO
+          // Regla 3: Si saldo < sgMinEntryUsd → fallback a saldo disponible (si >= floorUsd)
+          // Regla 4: Si saldo < floorUsd → BLOQUEAR
           
-          // orderUsdProposed = sizing base por riesgo
-          const orderUsdProposed = Math.min(maxByRisk, usdDisponible);
-          originalAmount = orderUsdProposed;
+          originalAmount = sgMinEntryUsd; // El objetivo propuesto siempre es sgMinEntryUsd
           
-          // === NUEVA LÓGICA DE SIZING SMART_GUARD ===
-          // pisoEfectivo = MAX(absoluteMin, exchangeMin, sgMinEntryUsd)
-          // Si hay saldo >= pisoEfectivo: trade SIEMPRE >= pisoEfectivo (intocable)
-          // Si saldo < pisoEfectivo y sgAllowUnderMin=true: usar todo disponible (si >= $20)
-          // Si sgAllowUnderMin=false y saldo < pisoEfectivo: bloquear
-          if (usdDisponible >= pisoEfectivo) {
-            // Caso A: Hay saldo suficiente - sizing mínimo es pisoEfectivo
-            // NINGÚN ajuste posterior puede reducirlo por debajo de pisoEfectivo
-            tradeAmountUSD = Math.max(orderUsdProposed, pisoEfectivo);
-            // Respetar límite máximo (pero nunca bajar de pisoEfectivo)
-            const maxAllowed = Math.min(usdDisponible, riskConfig.maxTradeUSD);
-            tradeAmountUSD = Math.max(Math.min(tradeAmountUSD, maxAllowed), pisoEfectivo);
-          } else if (sgAllowUnderMin && usdDisponible >= SG_ABSOLUTE_MIN_USD) {
-            // Caso B: Saldo insuficiente pero permitido - usar todo disponible
-            tradeAmountUSD = usdDisponible;
+          if (availableAfterCushion >= sgMinEntryUsd) {
+            // Caso A: Saldo suficiente → usar sgMinEntryUsd EXACTO (no más)
+            tradeAmountUSD = sgMinEntryUsd;
+            sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
+            
+          } else if (availableAfterCushion >= floorUsd) {
+            // Caso B: Saldo insuficiente para config, pero >= floorUsd → fallback automático
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
+            
+          } else if (usdDisponible >= floorUsd && availableAfterCushion < floorUsd) {
+            // Caso C: Fee cushion lo baja de floorUsd → se bloqueará en validación
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION";
+            
           } else {
-            // Caso C: Saldo insuficiente y NO permitido - se bloqueará en validateMinimumsOrSkip()
+            // Caso D: Saldo < floorUsd → se bloqueará en validación
             tradeAmountUSD = usdDisponible;
+            sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
           }
           
-          log(`SMART_GUARD ${pair}: Sizing calculado $${tradeAmountUSD.toFixed(2)} (riskPropuesto=$${orderUsdProposed.toFixed(2)}, disponible=$${usdDisponible.toFixed(2)}, pisoEfectivo=$${pisoEfectivo.toFixed(2)} [abs=$${SG_ABSOLUTE_MIN_USD}, exch=$${minRequiredUSD.toFixed(2)}, cfg=$${sgMinEntryUsd.toFixed(2)}], allowUnder=${sgAllowUnderMin})`, "trading");
+          log(`SMART_GUARD ${pair}: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
+          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
+          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  → sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
           
           // La validación final de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
         } else {
@@ -2001,9 +2042,6 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const sgMaxLotsPerPairConfig = botConfig?.sgMaxOpenLotsPerPair ?? 1;
         const maxLotsForModeConfig = positionMode === "SMART_GUARD" ? sgMaxLotsPerPairConfig : 1;
         
-        // SMART_GUARD usa pisoEfectivo como el mínimo real (incluye exchange + absoluto + config)
-        const minForValidation = positionMode === "SMART_GUARD" ? pisoEfectivo : sgMinEntryUsd;
-        
         const validationResult = validateMinimumsOrSkip({
           positionMode,
           orderUsdFinal,
@@ -2011,18 +2049,19 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           usdDisponible: freshUsdBalance,
           exposureAvailable: effectiveMaxAllowed,
           pair,
-          sgMinEntryUsd: minForValidation,
-          sgAllowUnderMin,
+          sgMinEntryUsd,
+          sgAllowUnderMin, // DEPRECATED - se ignora en validación
           dryRun: this.dryRunMode,
           env: envPrefix,
+          floorUsd: positionMode === "SMART_GUARD" ? floorUsd : undefined,
+          availableAfterCushion: positionMode === "SMART_GUARD" ? availableAfterCushion : undefined,
         });
         
         if (!validationResult.valid) {
-          // === [BUY_EVAL] LOGS: Solo cuando hay TRADE_SKIPPED ===
-          log(`[BUY_EVAL] ${pair}: mode=${positionMode}, pisoEfectivo=${pisoEfectivo.toFixed(2)}, sgAllowUnderMin=${sgAllowUnderMin}`, "trading");
-          log(`[BUY_EVAL] ${pair}: usdBalance=${freshUsdBalance.toFixed(2)}, usdDisponible=${usdDisponible.toFixed(2)}`, "trading");
-          log(`[BUY_EVAL] ${pair}: orderUsdProposed=${(originalAmount || tradeAmountUSD).toFixed(2)}, orderUsdFinal=${orderUsdFinal.toFixed(2)}`, "trading");
-          log(`[BUY_EVAL] ${pair}: exposure.maxPairAvailable=${exposure.maxPairAvailable.toFixed(2)}, exposure.maxTotalAvailable=${exposure.maxTotalAvailable.toFixed(2)}, effectiveMaxAllowed=${effectiveMaxAllowed.toFixed(2)}`, "trading");
+          // === [BUY_EVAL] LOGS v2: Valores detallados para auditoría ===
+          log(`[BUY_EVAL] ${pair}: mode=${positionMode}, sgReasonCode=${sgReasonCode}`, "trading");
+          log(`[BUY_EVAL] ${pair}: availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
+          log(`[BUY_EVAL] ${pair}: orderUsd=$${orderUsdFinal.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
           log(`[BUY_EVAL] ${pair}: currentOpenLots=${currentOpenLotsForLog}/${maxLotsForModeConfig}`, "trading");
           log(`[BUY_EVAL] ${pair}: DECISION skipReason=${validationResult.skipReason} msg=${validationResult.message}`, "trading");
           log(`[FINAL CHECK] ${pair}: SKIP - ${validationResult.message}`, "trading");
@@ -2037,6 +2076,7 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             pair,
             signal: "BUY",
             reason: validationResult.skipReason,
+            sgReasonCode,
             ...validationResult.meta,
           });
           
@@ -2044,9 +2084,9 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
         
-        // Log de decisión final antes de ejecutar (solo para casos especiales)
-        if (positionMode === "SMART_GUARD" && sgAllowUnderMin && orderUsdFinal < pisoEfectivo) {
-          log(`[FINAL CHECK] ${pair}: ALLOWED UNDER MIN - orderUsdFinal $${orderUsdFinal.toFixed(2)} < pisoEfectivo $${pisoEfectivo.toFixed(2)} (sgAllowUnderMin=ON)`, "trading");
+        // Log de decisión final antes de ejecutar (con nuevo reason code)
+        if (positionMode === "SMART_GUARD" && sgReasonCode) {
+          log(`[FINAL CHECK] ${pair}: ALLOWED - ${sgReasonCode} orderUsd=$${orderUsdFinal.toFixed(2)}`, "trading");
         }
 
         if (wasAdjusted) {
@@ -2061,14 +2101,17 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           adjustedAmountUsd: tradeAmountUSD
         } : undefined;
         
-        // Meta completa para trazabilidad (usa pisoEfectivo para SMART_GUARD)
+        // Meta completa para trazabilidad v2
         const executionMeta = {
           mode: positionMode,
           usdDisponible: freshUsdBalance,
           orderUsdProposed: originalAmount || tradeAmountUSD,
           orderUsdFinal,
-          minOrderUsd: positionMode === "SMART_GUARD" ? pisoEfectivo : sgMinEntryUsd,
-          allowUnderMin: sgAllowUnderMin,
+          sgMinEntryUsd,
+          floorUsd,
+          availableAfterCushion,
+          sgReasonCode,
+          sgAllowUnderMin_DEPRECATED: sgAllowUnderMin,
           dryRun: this.dryRunMode,
           env: envPrefix,
         };
