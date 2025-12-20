@@ -2339,35 +2339,81 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        const profitCheck = this.isProfitableAfterFees(takeProfitPct);
-        if (!profitCheck.isProfitable) {
-          log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
-            pair,
-            signal: "BUY",
-            reason: "LOW_PROFITABILITY",
-            takeProfitPct,
-            roundTripFees: profitCheck.roundTripFees,
-            minProfitRequired: profitCheck.minProfitRequired,
-            strategyId,
-          });
-          return;
-        }
+        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) - UNIFICADO CON analyzePairAndTrade ===
+        let tradeAmountUSD: number;
+        let wasAdjusted = false;
+        let originalAmount: number;
+        let sgReasonCode: SmartGuardReasonCode | undefined;
         
-        let tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
-        tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
+        // SMART_GUARD: obtener parámetros
+        const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, botConfig) : null;
+        const sgMinEntryUsd = sgParams?.sgMinEntryUsd || 100;
+        const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true;
+        const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
+        const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
+        
+        const effectiveCushionPct = sgFeeCushionAuto ? (KRAKEN_FEE_PCT * 2) : sgFeeCushionPct;
+        const usdDisponible = freshUsdBalance;
+        const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD);
+        const cushionAmount = freshUsdBalance * (effectiveCushionPct / 100);
+        const availableAfterCushion = usdDisponible - cushionAmount;
+        
+        if (positionMode === "SMART_GUARD") {
+          // === SMART_GUARD v2 SIZING (mismo que analyzePairAndTrade) ===
+          originalAmount = sgMinEntryUsd;
+          
+          if (availableAfterCushion >= sgMinEntryUsd) {
+            tradeAmountUSD = sgMinEntryUsd;
+            sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
+          } else if (availableAfterCushion >= floorUsd) {
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
+          } else if (usdDisponible >= floorUsd && availableAfterCushion < floorUsd) {
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION";
+          } else {
+            tradeAmountUSD = usdDisponible;
+            sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
+          }
+          
+          log(`SMART_GUARD ${pair} [${strategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
+          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
+        } else {
+          // Modos SINGLE/DCA: lógica original
+          const profitCheck = this.isProfitableAfterFees(takeProfitPct);
+          if (!profitCheck.isProfitable) {
+            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
+              pair,
+              signal: "BUY",
+              reason: "LOW_PROFITABILITY",
+              takeProfitPct,
+              roundTripFees: profitCheck.roundTripFees,
+              minProfitRequired: profitCheck.minProfitRequired,
+              strategyId,
+            });
+            return;
+          }
+          
+          tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
+          tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
 
-        const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
-        tradeAmountUSD = tradeAmountUSD * confidenceFactor;
+          const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
+          tradeAmountUSD = tradeAmountUSD * confidenceFactor;
 
-        if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
-          const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
-          tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
+          if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
+            const smallAccountAmount = freshUsdBalance * SMALL_ACCOUNT_FACTOR;
+            tradeAmountUSD = Math.min(smallAccountAmount, riskConfig.maxTradeUSD);
+          }
+          
+          originalAmount = tradeAmountUSD;
         }
 
         const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
         const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
-        const effectiveMaxAllowed = Math.min(exposure.maxAllowed, maxByBalance);
+        const effectiveMaxAllowed = positionMode === "SMART_GUARD"
+          ? Math.min(exposure.maxTotalAvailable, maxByBalance)
+          : Math.min(exposure.maxAllowed, maxByBalance);
         
         if (effectiveMaxAllowed < minRequiredUSD) {
           log(`${pair}: Sin exposición disponible`, "trading");
@@ -2382,10 +2428,8 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
           return;
         }
 
-        let wasAdjusted = false;
-        let originalAmount = tradeAmountUSD;
-        
-        if (tradeAmountUSD > effectiveMaxAllowed) {
+        // Ajustar por límite de exposición (solo para SINGLE/DCA)
+        if (positionMode !== "SMART_GUARD" && tradeAmountUSD > effectiveMaxAllowed) {
           originalAmount = tradeAmountUSD;
           tradeAmountUSD = effectiveMaxAllowed;
           wasAdjusted = true;
