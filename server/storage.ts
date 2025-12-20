@@ -325,6 +325,19 @@ export class DatabaseStorage implements IStorage {
     return trades[0];
   }
 
+  // Check for duplicate trade by characteristics (pair + amount + type + timestamp within 60 seconds)
+  async findDuplicateTrade(pair: string, amount: string, type: string, executedAt: Date): Promise<Trade | undefined> {
+    const trades = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.pair, pair),
+        eq(tradesTable.amount, amount),
+        eq(tradesTable.type, type),
+        sql`ABS(EXTRACT(EPOCH FROM (${tradesTable.executedAt} - ${executedAt}))) < 60`
+      ))
+      .limit(1);
+    return trades[0];
+  }
+
   async getTradeByLotId(lotId: string): Promise<Trade | undefined> {
     // lotId typically equals krakenOrderId for synced trades
     const trades = await db.select().from(tradesTable)

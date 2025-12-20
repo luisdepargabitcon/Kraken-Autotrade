@@ -1227,21 +1227,34 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         }
         
         try {
-          // === FIX DUPLICADOS: Verificar tanto fill ID como order ID ===
-          // El bot guarda con ORDER ID (de placeOrder), sync recibe FILL ID (de tradesHistory)
-          // ordertxid es el ID de la orden que generó este fill
+          // === FIX DUPLICADOS v2: Triple verificación ===
           const ordertxid = t.ordertxid;
+          const executedAt = new Date(t.time * 1000);
           
-          // Primero verificar si ya existe por ORDER ID (lo que guardó el bot)
+          // 1. Verificar por ORDER ID (lo que guardó el bot)
           if (ordertxid) {
             const existingByOrderId = await storage.getTradeByKrakenOrderId(ordertxid);
             if (existingByOrderId) {
               skipped++;
-              continue; // Ya existe, saltar
+              continue;
             }
           }
           
-          // Luego verificar por FILL ID (para idempotencia del sync)
+          // 2. Verificar por FILL ID (sync previo)
+          const existingByFillId = await storage.getTradeByKrakenOrderId(txid);
+          if (existingByFillId) {
+            skipped++;
+            continue;
+          }
+          
+          // 3. Verificar por características (pair + amount + type + timestamp < 60s)
+          const existingByTraits = await storage.findDuplicateTrade(pair, t.vol, t.type, executedAt);
+          if (existingByTraits) {
+            skipped++;
+            continue;
+          }
+          
+          // No existe duplicado, insertar
           const result = await storage.upsertTradeByKrakenId({
             tradeId: `KRAKEN-${txid}`,
             pair,
@@ -1250,7 +1263,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             amount: t.vol,
             status: "filled",
             krakenOrderId: txid,
-            executedAt: new Date(t.time * 1000),
+            executedAt,
           });
           
           if (result.inserted) {
