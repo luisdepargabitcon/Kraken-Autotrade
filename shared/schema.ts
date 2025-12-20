@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -120,6 +120,8 @@ export const openPositions = pgTable("open_positions", {
   pair: text("pair").notNull(), // Removed unique constraint for multi-lot support
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
   amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  qtyRemaining: decimal("qty_remaining", { precision: 18, scale: 8 }), // Cantidad pendiente de vender (null = amount)
+  qtyFilled: decimal("qty_filled", { precision: 18, scale: 8 }).default("0"), // Cantidad ya vendida
   highestPrice: decimal("highest_price", { precision: 18, scale: 8 }).notNull(),
   tradeId: text("trade_id"),
   krakenOrderId: text("kraken_order_id"),
@@ -137,6 +139,38 @@ export const openPositions = pgTable("open_positions", {
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// Trade fills from Kraken (granular level for partial fills)
+export const tradeFills = pgTable("trade_fills", {
+  id: serial("id").primaryKey(),
+  txid: text("txid").notNull().unique(), // Kraken fill txid (UNIQUE para evitar duplicados)
+  orderId: text("order_id").notNull(), // Kraken ordertxid (puede tener múltiples fills)
+  pair: text("pair").notNull(),
+  type: text("type").notNull(), // buy/sell
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  cost: decimal("cost", { precision: 18, scale: 8 }).notNull(),
+  fee: decimal("fee", { precision: 18, scale: 8 }).notNull(),
+  matched: boolean("matched").notNull().default(false), // Flag para evitar re-procesar
+  executedAt: timestamp("executed_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Lot matches for FIFO matching (audit trail)
+export const lotMatches = pgTable("lot_matches", {
+  id: serial("id").primaryKey(),
+  sellFillTxid: text("sell_fill_txid").notNull(), // Fill txid del SELL
+  lotId: text("lot_id").notNull(), // ID del lot (open_position)
+  matchedQty: decimal("matched_qty", { precision: 18, scale: 8 }).notNull(),
+  buyPrice: decimal("buy_price", { precision: 18, scale: 8 }).notNull(),
+  sellPrice: decimal("sell_price", { precision: 18, scale: 8 }).notNull(),
+  buyFeeAllocated: decimal("buy_fee_allocated", { precision: 18, scale: 8 }).notNull(),
+  sellFeeAllocated: decimal("sell_fee_allocated", { precision: 18, scale: 8 }).notNull(),
+  pnlNet: decimal("pnl_net", { precision: 18, scale: 8 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  sellLotUnique: unique().on(table.sellFillTxid, table.lotId), // UNIQUE(sellFillTxid, lotId) para idempotencia
+}));
 
 export const aiTradeSamples = pgTable("ai_trade_samples", {
   id: serial("id").primaryKey(),
@@ -225,6 +259,8 @@ export const insertAiTradeSampleSchema = createInsertSchema(aiTradeSamples).omit
 export const insertAiShadowDecisionSchema = createInsertSchema(aiShadowDecisions).omit({ id: true, ts: true });
 export const insertAiConfigSchema = createInsertSchema(aiConfig).omit({ id: true, updatedAt: true });
 export const insertTrainingTradeSchema = createInsertSchema(trainingTrades).omit({ id: true, createdAt: true });
+export const insertTradeFillSchema = createInsertSchema(tradeFills).omit({ id: true, createdAt: true });
+export const insertLotMatchSchema = createInsertSchema(lotMatches).omit({ id: true, createdAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -234,6 +270,8 @@ export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
 export type BotEvent = typeof botEvents.$inferSelect;
 export type OpenPosition = typeof openPositions.$inferSelect;
+export type TradeFill = typeof tradeFills.$inferSelect;
+export type LotMatch = typeof lotMatches.$inferSelect;
 export type AiTradeSample = typeof aiTradeSamples.$inferSelect;
 export type AiShadowDecision = typeof aiShadowDecisions.$inferSelect;
 export type AiConfig = typeof aiConfig.$inferSelect;
@@ -247,6 +285,8 @@ export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
 export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
 export type InsertBotEvent = z.infer<typeof insertBotEventSchema>;
 export type InsertOpenPosition = z.infer<typeof insertOpenPositionSchema>;
+export type InsertTradeFill = z.infer<typeof insertTradeFillSchema>;
+export type InsertLotMatch = z.infer<typeof insertLotMatchSchema>;
 export type InsertAiTradeSample = z.infer<typeof insertAiTradeSampleSchema>;
 export type InsertAiShadowDecision = z.infer<typeof insertAiShadowDecisionSchema>;
 export type InsertAiConfig = z.infer<typeof insertAiConfigSchema>;
