@@ -1,0 +1,35 @@
+[~] # cd /share/ZFS37_DATA/share/Container/krakenbot && git pull && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+remote: Enumerating objects: 7, done.
+remote: Counting objects: 100% (7/7), done.
+remote: Compressing objects: 100% (3/3), done.
+remote: Total 5 (delta 2), reused 5 (delta 2), pack-reused 0 (from 0)
+Unpacking objects: 100% (5/5), 177.18 KiB | 1.21 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+   6b52ab2..0dfa871  main       -> origin/main
+Updating 6b52ab2..0dfa871
+Fast-forward
+ attached_assets/Captura_de_pantalla_(223)_1766235346027.png                 | Bin 0 -> 198100 bytes
+ ...scanTime-2025-12-20T12-50-09-328Z-12-51-09-PM-express-_1766235339950.txt | 200 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 200 insertions(+)
+ create mode 100644 attached_assets/Captura_de_pantalla_(223)_1766235346027.png
+ create mode 100644 attached_assets/Pasted--scanTime-2025-12-20T12-50-09-328Z-12-51-09-PM-express-_1766235339950.txt
+WARN[0000] /share/ZFS37_DATA/share/Container/krakenbot/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Running 2/2
+ ✔ Container kraken-bot-db   Healthy                                                                              30.2s
+ ✔ Container kraken-bot-app  Started                                                                              26.3s
+[/share/ZFS37_DATA/share/Container/krakenbot] # git log -1
+commit 0dfa8712f6bb14ab292f174a207d2ea39d2ec2ad (HEAD -> main, origin/main, origin/HEAD)
+Author: chester1983 <51041801-chester1983@users.noreply.replit.com>
+Date:   Sat Dec 20 12:56:14 2025 +0000
+
+    Update trading logic to ensure minimum trade size is configurable
+
+    Update the SMART_GUARD logic to use a configurable minimum trade entry size, preventing trades from falling below the configured threshold.
+
+    Replit-Commit-Author: Agent
+    Replit-Commit-Session-Id: b78fb110-ec2d-4d76-8fe7-3bbf48c759ad
+    Replit-Commit-Checkpoint-Type: full_checkpoint
+    Replit-Commit-Event-Id: ed725b18-368e-446f-b921-38b0573a4e64
+    Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/f2f0b80a-bd4e-47c7-b631-dbdb9559c027/b78fb110-ec2d-4d76-8fe7-3bbf48c759ad/2Q2ba81
+    Replit-Helium-Checkpoint-Created: true
+[/share/ZFS37_DATA/share/Container/krakenbot] #
