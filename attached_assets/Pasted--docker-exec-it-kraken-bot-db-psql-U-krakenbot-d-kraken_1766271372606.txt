@@ -1,0 +1,28 @@
+
+[~] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "
+> SELECT
+>   id, pair,
+>   entry_price, exit_price,
+>   entry_amount, exit_amount,
+>   cost_usd, revenue_usd,
+>   pnl_net, pnl_pct,
+>   hold_time_minutes,
+t_ts,
+  buy_txid>   entry_ts, exit_ts,
+>   buy_txid, sell_txid
+> FROM training_trades
+> WHERE pnl_pct < -50
+> ORDER BY pnl_pct ASC
+> LIMIT 5;
+> "
+ id  |  pair   |  entry_price   |   exit_price   | entry_amount | exit_amount |   cost_usd   | revenue_usd |   pnl_net    |  pnl_pct  | hold_time_minutes |        entry_ts         |         exit_ts         |      buy_txid       |      sell_txid
+-----+---------+----------------+----------------+--------------+-------------+--------------+-------------+--------------+-----------+-------------------+-------------------------+-------------------------+---------------------+---------------------
+ 119 | BTC/USD | 88166.80000000 |   124.21132554 |   0.00085082 |  0.00085082 |  75.01407678 |  0.10568148 | -75.20887434 | -100.2597 |               105 | 2025-12-20 13:45:23.366 | 2025-12-20 15:30:19.063 | TKUOXY-ZWNQY-72PMDR | TGFE45-BSKEB-FV3CVE
+  73 | TON/USD |     1.49600000 |     0.02332812 |  66.84491979 | 66.84491979 | 100.00000001 |  1.55936664 | -98.84687083 |  -98.8469 |                19 | 2025-12-16 01:18:26.17  | 2025-12-16 01:37:26.068 | OMN3SO-7KPSK-QKQPZU | OVTA75-BF7JE-NP25RJ
+ 107 | BTC/USD | 87053.60000000 |  2210.72323104 |   0.00059597 |  0.00059597 |  51.88133399 |  1.31752472 | -50.77660470 |  -97.8707 |               533 | 2025-12-19 06:45:13.43  | 2025-12-19 15:38:17.566 | OQBQUD-MPANW-L6ETAP | OHTGH2-MLDY5-4ITHAC
+ 105 | XRP/USD |     1.81495000 |     0.04708966 |  41.32345244 | 41.32345244 |  75.00000001 |  1.94590735 | -73.36187629 |  -97.8158 |              1113 | 2025-12-18 21:15:06.381 | 2025-12-19 15:48:08.272 | ODMCO7-B5IYS-ZQLC5O | OPILVH-GWP3U-VYAUN5
+  72 | BTC/USD | 86048.00000000 | 10731.14593422 |   0.00116214 |  0.00116214 |  99.99982272 | 12.47109394 | -87.97861245 |  -87.9788 |                57 | 2025-12-16 02:50:55.732 | 2025-12-16 03:48:18.767 | OLGRLG-6N66Q-MADMMP | OH274O-TJH5W-7MONUR
+(5 rows)
+
+[~] #
+[~] #
