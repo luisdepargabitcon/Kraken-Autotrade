@@ -1,0 +1,60 @@
+[~] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot
+psql (16.11)
+Type "help" for help.
+
+krakenbot=# BEGIN;
+BEGIN
+krakenbot=*#
+krakenbot=*# -- Ver duplicados por amount + pair + timestamp cercano
+SELECT t1.id as id_borrar, t1.trade_id, t2.id as id_mantener, t2krakenbot=*# SELECT t1.id as id_borrar, t1.trade_id, t2.id as id_mantener, t2.trade_id as trade_mantener
+krakenbot-*# FROM trades t1
+type
+  AND t1.idkrakenbot-*# JOIN trades t2 ON t1.pair = t2.pair
+krakenbot-*#   AND t1.amount = t2.amount
+krakenbot-*#   AND t1.type = t2.type
+krakenbot-*#   AND t1.id > t2.id
+krakenbot-*#   AND ABS(EXTRACT(EPOCH FROM (t1.executed_at - t2.executed_at))) < 60;
+
+-- Borrar los duplicados (mantener el más antiguo)
+DELETE FROM trades
+WHERE id IN (
+  SELECT t1.id
+  FROM trades t1
+  JOIN trades t2 ON t1.pair = t2.pair
+    AND t1.amount = t2.amount
+    AND t1.type = t2.type
+    AND t1.id > t2.id
+    AND ABS(EXTRACT(EPOCH FROM (t1.executed_at - t2.executed_at))) < 60
+);
+
+COMMIT; id_borrar |          trade_id          | id_mantener |    trade_mantener
+-----------+----------------------------+-------------+----------------------
+        82 | K-TOYD7Z-Q                 |          80 | K-T2FCXF-S
+        91 | K-TCYKXJ-U                 |          90 | K-T4KZUM-E
+        94 | K-TPN7VL-L                 |          93 | K-TRS7HG-3
+        98 | K-TILBM5-I                 |          97 | K-TJDJPH-Z
+       344 | KRAKEN-TDFHX3-5FYXR-26DBAB |         341 | AUTO-1766265327744
+       343 | KRAKEN-TRTRKT-GL4GS-6Y74ZL |         342 | AUTO-1766265901677
+        81 | K-TI5DQR-V                 |          79 | K-T3JXEY-F
+        88 | K-TIAQFN-L                 |          87 | K-T4JYBE-L
+       320 | KRAKEN-TQQ6JO-AMUPV-HMA6YJ |         283 | MANUAL-1766158697566
+       319 | KRAKEN-TKMFNY-MB2U7-EKBI5M |         284 | MANUAL-1766159288272
+(10 rows)
+
+krakenbot=*#
+krakenbot=*# -- Borrar los duplicados (mantener el más antiguo)
+krakenbot=*# DELETE FROM trades
+krakenbot-*# WHERE id IN (
+krakenbot(*#   SELECT t1.id
+krakenbot(*#   FROM trades t1
+krakenbot(*#   JOIN trades t2 ON t1.pair = t2.pair
+krakenbot(*#     AND t1.amount = t2.amount
+krakenbot(*#     AND t1.type = t2.type
+krakenbot(*#     AND t1.id > t2.id
+krakenbot(*#     AND ABS(EXTRACT(EPOCH FROM (t1.executed_at - t2.executed_at))) < 60
+krakenbot(*# );
+DELETE 10
+krakenbot=*#
+krakenbot=*# COMMIT;
+COMMIT
+krakenbot=#
