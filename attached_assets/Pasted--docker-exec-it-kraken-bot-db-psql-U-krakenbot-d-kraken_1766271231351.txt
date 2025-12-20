@@ -1,0 +1,158 @@
+[~] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "
+> SELECT
+>   (SELECT COUNT(*) FROM training_trades) as total_training,
+>   (SELECT COUNT(*) FROM training_trades WHERE is_closed = true) as cerrados,
+>   (SELECT COUNT(*) FROM training_trades WHERE is_closed = false) as abiertos;
+> "
+ total_training | cerrados | abiertos
+----------------+----------+----------
+            131 |      128 |        3
+(1 row)
+
+[~] #
+[~] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot
+psql (16.11)
+Type "help" for help.
+
+krakenbot=# BEGIN;
+BEGIN
+krakenbot=*#
+krakenbot=*# -- Ver duplicados etiquetados (por pair + buy_price + amount en misma ventana de tiempo)
+ COUNT(*) as coukrakenbot=*# SELECT pair, buy_price, amount, COUNT(*) as count
+krakenbot-*# FROM training_trades
+AND pnl_usd IS NOT NULL
+GROUP BY pair, buy_price, amount
+HAVING COUNT(*) > 1;
+
+-krakenbot-*# WHERE is_closed = true AND pnl_usd IS NOT NULL
+ FROM training_tkrakenbot-*# GROUP BY pair, buy_price, amount
+krakenbot-*# HAVING COUNT(*) > 1;
+.pair
+AND a.buy_price = b.buy_price
+AND a.amount = b.amount
+AND a.is_closed = true
+AND b.is_closed = true;
+
+-- Verificar cuántos etiquetados queERROR:  column "buy_price" does not exist
+LINE 1: SELECT pair, buy_price, amount, COUNT(*) as count
+                     ^
+krakenbot=!#
+krakenbot=!# -- Borrar duplicados etiquetados (mantener el más antiguo)
+krakenbot=!# DELETE FROM training_trades a
+krakenbot-!# USING training_trades b
+krakenbot-!# WHERE a.id > b.id
+krakenbot-!# AND a.pair = b.pair
+krakenbot-!# AND a.buy_price = b.buy_price
+krakenbot-!# AND a.amount = b.amount
+krakenbot-!# AND a.is_closed = true
+krakenbot-!# AND b.is_closed = true;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+krakenbot=!#
+krakenbot=!# -- Verificar cuántos etiquetados quedan
+krakenbot=!# SELECT COUNT(*) as etiquetados_restantes
+krakenbot-!# FROM training_trades
+krakenbot-!# WHERE is_closed = true AND pnl_usd IS NOT NULL;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+krakenbot=!#
+krakenbot=!# COMMIT;ROLLBACK;
+ROLLBACK
+WARNING:  there is no transaction in progress
+ROLLBACK
+krakenbot=# \d training_trades
+                                            Table "public.training_trades"
+      Column       |            Type             | Collation | Nullable |                   Default
+-------------------+-----------------------------+-----------+----------+---------------------------------------------
+ id                | integer                     |           | not null | nextval('training_trades_id_seq'::regclass)
+ pair              | text                        |           | not null |
+ strategy_id       | text                        |           |          |
+ buy_txid          | text                        |           | not null |
+ sell_txid         | text                        |           |          |
+ entry_price       | numeric(18,8)               |           | not null |
+ exit_price        | numeric(18,8)               |           |          |
+ entry_amount      | numeric(18,8)               |           | not null |
+ exit_amount       | numeric(18,8)               |           |          |
+ entry_fee         | numeric(18,8)               |           | not null | '0'::numeric
+ exit_fee          | numeric(18,8)               |           |          |
+ cost_usd          | numeric(18,8)               |           | not null |
+ revenue_usd       | numeric(18,8)               |           |          |
+ pnl_gross         | numeric(18,8)               |           |          |
+ pnl_net           | numeric(18,8)               |           |          |
+ pnl_pct           | numeric(10,4)               |           |          |
+ hold_time_minutes | integer                     |           |          |
+ label_win         | integer                     |           |          |
+ features_json     | jsonb                       |           |          |
+ discard_reason    | text                        |           |          |
+ is_closed         | boolean                     |           | not null | false
+ is_labeled        | boolean                     |           | not null | false
+ entry_ts          | timestamp without time zone |           | not null |
+ exit_ts           | timestamp without time zone |           |          |
+ created_at        | timestamp without time zone |           | not null | now()
+ sell_txids_json   | jsonb                       |           |          |
+ qty_remaining     | numeric(18,8)               |           |          |
+Indexes:
+    "training_trades_pkey" PRIMARY KEY, btree (id)
+
+krakenbot=# BEGIN;
+BEGIN
+krakenbot=*#
+krakenbot=*# -- Ver duplicados etiquetados (por pair + entry_price + entry_amount)
+krakenbot=*# SELECT pair, entry_price, entry_amount, COUNT(*) as count
+krakenbot-*# FROM training_trades
+krakenbot-*# WHERE is_closed = true AND pnl_net IS NOT NULL
+krakenbot-*# GROUP BY pair, entry_price, entry_amount
+krakenbot-*# HAVING COUNT(*) > 1;
+OM training_trades a
+USING training_trades b
+WHE  pair   |  entry_price   | entry_amount | count
+---------+----------------+--------------+-------
+ TONUSDC |     3.32000000 |   0.80000000 |     2
+ BTC/USD | 87053.60000000 |   0.00059597 |     2
+ BTC/USD | 88076.70000000 |   0.00085153 |     2
+ BTC/USD | 90248.60000000 |   0.00021183 |     2
+ SOL/USD |   127.06000000 |   0.59027231 |     2
+ BTC/USD | 90245.70000000 |   0.00018102 |     2
+ BTC/USD | 89660.10000000 |   0.00111532 |     2
+ TONUSDC |     3.28000000 |   0.80000000 |     2
+ BTC/USD | 90361.40000000 |   0.00014628 |     2
+(9 rows)
+
+krakenbot=*#
+krakenbot=*# -- Borrar duplicados etiquetados (mantener el más antiguo)
+krakenbot=*# DELETE FROM training_trades a
+krakenbot-*# USING training_trades b
+krakenbot-*# WHERE a.id > b.id
+krakenbot-*# AND a.pair = b.pair
+krakenbot-*# AND a.entry_price = b.entry_price
+krakenbot-*# AND a.entry_amount = b.entry_amount
+krakenbot-*# AND a.is_closed = true
+krakenbot-*# AND b.is_closed = true;
+iquetados quedan
+SELECT COUNT(*) as etiquetados_restantes
+FROM DELETE 9
+krakenbot=*#
+krakenbot=*# -- Verificar cuántos etiquetados quedan
+krakenbot=*# SELECT COUNT(*) as etiquetados_restantes
+krakenbot-*# FROM training_trades
+krakenbot-*# WHERE is_closed = true AND pnl_net IS NOT NULL;
+ etiquetados_restantes
+-----------------------
+                   119
+(1 row)
+
+krakenbot=*#
+krakenbot=*# COMMIT;
+COMMIT
+krakenbot=# docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "
+krakenbot"# SELECT
+krakenbot"#   COUNT(*) as total,
+es,
+  ROUND(AVG(pnl_pct)::numeric, 2) as pnl_promedio_pct,
+  ROUkrakenbot"#   COUNT(CASE WHEN label_win = 1 THEN 1 END) as ganadores,
+krakenbot"#   COUNT(CASE WHEN label_win = 0 THEN 1 END) as perdedores,
+krakenbot"#   ROUND(AVG(pnl_pct)::numeric, 2) as pnl_promedio_pct,
+krakenbot"#   ROUND(MIN(pnl_pct)::numeric, 2) as pnl_min_pct,
+krakenbot"#   ROUND(MAX(pnl_pct)::numeric, 2) as pnl_max_pct
+krakenbot"# FROM training_trades
+krakenbot"# WHERE is_closed = true AND is_labeled = true;
+krakenbot"# "
+krakenbot-#
