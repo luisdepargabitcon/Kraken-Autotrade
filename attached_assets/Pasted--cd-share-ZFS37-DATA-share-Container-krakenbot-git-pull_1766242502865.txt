@@ -1,0 +1,36 @@
+[~] # cd /share/ZFS37_DATA/share/Container/krakenbot && git pull && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+remote: Enumerating objects: 47, done.
+remote: Counting objects: 100% (47/47), done.
+remote: Compressing objects: 100% (19/19), done.
+remote: Total 34 (delta 21), reused 28 (delta 15), pack-reused 0 (from 0)
+Unpacking objects: 100% (34/34), 1.74 MiB | 4.10 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+   0dfa871..89cacb7  main       -> origin/main
+Updating 0dfa871..89cacb7
+Fast-forward
+ attached_assets/Captura_de_pantalla_(224)_1766235855620.png                 | Bin 0 -> 512967 bytes
+ attached_assets/Captura_de_pantalla_(225)_1766235855619.png                 | Bin 0 -> 424224 bytes
+ attached_assets/Captura_de_pantalla_(226)_1766235855618.png                 | Bin 0 -> 199769 bytes
+ ...cd-share-ZFS37-DATA-share-Container-krakenbot-git-pull_1766236026891.txt |  35 +++++++++++++++++
+ ...-19-49-PM-express-GET-api-dashboard-200-in-530ms-krake_1766236873001.txt |  75 ++++++++++++++++++++++++++++++++++++
+ attached_assets/Screenshot_20251220-152426_1766240802493.png                | Bin 0 -> 344750 bytes
+ attached_assets/Screenshot_20251220-152450_1766240791796.png                | Bin 0 -> 120501 bytes
+ attached_assets/image_1766235842466.png                                     | Bin 0 -> 267755 bytes
+ client/public/opengraph.jpg                                                 | Bin 80842 -> 81579 bytes
+ client/src/components/dashboard/EnvironmentBadge.tsx                        |   3 +-
+ server/routes.ts                                                            |  17 ++++++++
+ server/services/tradingEngine.ts                                            |  13 ++++++-
+ 12 files changed, 140 insertions(+), 3 deletions(-)
+ create mode 100644 attached_assets/Captura_de_pantalla_(224)_1766235855620.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(225)_1766235855619.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(226)_1766235855618.png
+ create mode 100644 attached_assets/Pasted--cd-share-ZFS37-DATA-share-Container-krakenbot-git-pull_1766236026891.txt
+ create mode 100644 attached_assets/Pasted-1-19-49-PM-express-GET-api-dashboard-200-in-530ms-krake_1766236873001.txt
+ create mode 100644 attached_assets/Screenshot_20251220-152426_1766240802493.png
+ create mode 100644 attached_assets/Screenshot_20251220-152450_1766240791796.png
+ create mode 100644 attached_assets/image_1766235842466.png
+WARN[0000] /share/ZFS37_DATA/share/Container/krakenbot/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Running 2/2
+ ✔ Container kraken-bot-db   Healthy                                                                              31.8s
+ ✔ Container kraken-bot-app  Started                                                                              27.6s
+[/share/ZFS37_DATA/share/Container/krakenbot] #

@@ -2,13 +2,16 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat git
 
 COPY package.json package-lock.json* ./
 
 RUN npm install
 
 COPY . .
+
+# Create VERSION file with git commit hash (if .git exists)
+RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi
 
 RUN npm run build
 
