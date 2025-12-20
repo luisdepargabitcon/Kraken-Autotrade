@@ -1227,7 +1227,21 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         }
         
         try {
-          // Usar upsert para evitar duplicados (idempotente)
+          // === FIX DUPLICADOS: Verificar tanto fill ID como order ID ===
+          // El bot guarda con ORDER ID (de placeOrder), sync recibe FILL ID (de tradesHistory)
+          // ordertxid es el ID de la orden que generó este fill
+          const ordertxid = t.ordertxid;
+          
+          // Primero verificar si ya existe por ORDER ID (lo que guardó el bot)
+          if (ordertxid) {
+            const existingByOrderId = await storage.getTradeByKrakenOrderId(ordertxid);
+            if (existingByOrderId) {
+              skipped++;
+              continue; // Ya existe, saltar
+            }
+          }
+          
+          // Luego verificar por FILL ID (para idempotencia del sync)
           const result = await storage.upsertTradeByKrakenId({
             tradeId: `KRAKEN-${txid}`,
             pair,
