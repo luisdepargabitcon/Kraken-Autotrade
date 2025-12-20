@@ -94,6 +94,11 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
   - `POST /api/fifo/process-sells`: Process all unmatched sell fills.
   - `POST /api/fifo/ingest-fill`: Ingest a new fill and trigger FIFO matching.
   - `GET /api/fifo/open-lots`: Get lots with qtyRemaining > 0.
+- **Auto-Integration**: After each real sell execution in `executeTrade()`, the trading engine automatically:
+  1. Creates a TradeFill record with txid, pair, price, amount, and estimated fee
+  2. Triggers `fifoMatcher.processSellFill()` to match against open buy lots
+  3. Logs matching results (lots closed, P&L, orphan qty)
+  4. Only runs for real trades (DRY_RUN mode is safely bypassed with triple guard)
 - **Transaction Safety**: All operations (lot select, match insert, qty update, fill mark) run within same tx handle.
 
 ### AI Filter Module
