@@ -1,0 +1,600 @@
+ker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+> -- 1. ANTES: Contar registros
+> SELECT 'ANTES - Total trades:' as info, COUNT(*) FROM trades;
+> SELECT 'ANTES - Registros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'AUTO-%';
+> SELECT 'ANTES - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+>
+> -- 2. ELIMINAR los AUTO-* (son las órdenes, no los fills reales)
+> DELETE FROM trades WHERE trade_id LIKE 'AUTO-%';
+>
+> -- 3. DESPUÉS: Verificar resultado
+> SELECT 'DESPUÉS - Total trades:' as info, COUNT(*) FROM trades;
+> SELECT 'DESPUÉS - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+>
+> -- 4. Verificar últimos trades
+> SELECT pair, type, price, amount, executed_at, trade_id
+> FROM trades
+> ORDER BY executed_at DESC
+> LIMIT 10;
+> EOFdocker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+> -- 1. ANTES: Contar registros
+> SELECT 'ANTES - Total trades:' as info, COUNT(*) FROM trades;
+> SELECT 'ANTES - Registros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'AUTO-%';
+> SELECT 'ANTES - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+>
+> -- 2. ELIMINAR los AUTO-* (son las órdenes, no los fills reales)
+> DELETE FROM trades WHERE trade_id LIKE 'AUTO-%';
+>
+> -- 3. DESPUÉS: Verificar resultado
+> SELECT 'DESPUÉS - Total trades:' as info, COUNT(*) FROM trades;
+> SELECT 'DESPUÉS - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+>
+> -- 4. Verificar últimos trades
+> SELECT pair, type, price, amount, executed_at, trade_id
+> FROM trades
+> ORDER BY executed_at DESC
+> LIMIT 10;
+> EOF
+         info          | count
+-----------------------+-------
+ ANTES - Total trades: |   340
+(1 row)
+
+          info           | count
+-------------------------+-------
+ ANTES - Registros AUTO: |   149
+(1 row)
+
+           info            | count
+---------------------------+-------
+ ANTES - Registros KRAKEN: |   124
+(1 row)
+
+DELETE 149
+          info           | count
+-------------------------+-------
+ DESPUÉS - Total trades: |   191
+(1 row)
+
+            info             | count
+-----------------------------+-------
+ DESPUÉS - Registros KRAKEN: |   124
+(1 row)
+
+  pair   | type |     price      |   amount   |       executed_at       |          trade_id
+---------+------+----------------+------------+-------------------------+----------------------------
+ ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+ BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+ ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+ BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+ BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+ BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+ BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+ ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+ ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+ BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+(10 rows)
+
+ERROR:  syntax error at or near "EOFdocker"
+LINE 1: EOFdocker exec -i kraken-bot-db psql -U krakenbot -d krakenb...
+        ^
+          info           | count
+-------------------------+-------
+ ANTES - Registros AUTO: |     0
+(1 row)
+
+           info            | count
+---------------------------+-------
+ ANTES - Registros KRAKEN: |   124
+(1 row)
+
+DELETE 0
+          info           | count
+-------------------------+-------
+ DESPUÉS - Total trades: |   191
+(1 row)
+
+            info             | count
+-----------------------------+-------
+ DESPUÉS - Registros KRAKEN: |   124
+(1 row)
+
+  pair   | type |     price      |   amount   |       executed_at       |          trade_id
+---------+------+----------------+------------+-------------------------+----------------------------
+ ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+ BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+ ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+ BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+ BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+ BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+ BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+ ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+ ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+ BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+(10 rows)
+
+[~] # 2
+-sh: 2: command not found
+[~] # ] # docker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+-sh: ]: command not found
+[~] # > -- 1. ANTES: Contar registros
+tros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'A-sh: 1.: command not found
+[~] # > SELECT 'ANTES - Total trades:' as info, COUNT(*) FROM trades;
+-sh: syntax error near unexpected token `('
+[~] # > SELECT 'ANTES - Registros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'AUTO-%';
+-sh: syntax error near unexpected token `('
+[~] # > SELECT 'ANTES - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+-sh: syntax error near unexpected token `('
+[~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 2. ELIMINAR los AUTO-* (son las órdenes, no los fills reales)
+-sh: syntax error near unexpected token `('
+[~] # > DELETE FROM trades WHERE trade_id LIKE 'AUTO-%';
+tar registros
+> SELECT 'ANTES - Total trades:' as info, COUNT(*)-sh: FROM: command not found
+ FROM trades;
+> [~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 3. DESPUÉS: Verificar resultado
+-sh: 3.: command not found
+[~] # > SELECT 'DESPUÉS - Total trades:' as info, COUNT(*) FROM trades;
+-sh: syntax error near unexpected token `('
+' as info, COUNT[~] # > SELECT 'DESPUÉS - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+-sh: syntax error near unexpected token `('
+[~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 4. Verificar últimos trades
+. DESPUÉS: Verificar resultado
+>-sh: 4.: command not found
+ SELECT 'DESPUÉS - Total trades:[~] # > SELECT pair, type, price, amount, executed_at, trade_id
+RAKEN:' as info, COUNT(*) FROM trades WHERE trad-sh: pair,: command not found
+e_id LIKE 'KRAKE[~] # > FROM trades
+-sh: trades: command not found
+[~] # > ORDER BY executed_at DESC
+s trades
+> SELECT pair, type, price, amount, executed_at, trade_id
+> FROM trades
+> ORDER BY executed_at DESC
+> L-sh: BY: command not found
+IMIT 10;
+> EOF
+         info          | count
+--[~] # > LIMIT 10;
+-----+-------
+ A-sh: 10: command not found
+NTES - Total trades: |   340
+(1 [~] # > EOFdocker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+> > -- 1. ANTES: Contar registros
+> > SELECT 'ANTES - Total trades:' as info, COUNT(*) FROM trades;
+> > SELECT 'ANTES - Registros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'AUTO-%';
+> > SELECT 'ANTES - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+> >
+> > -- 2. ELIMINAR los AUTO-* (son las órdenes, no los fills reales)
+> > DELETE FROM trades WHERE trade_id LIKE 'AUTO-%';
+> >
+> > -- 3. DESPUÉS: Verificar resultado
+> > SELECT 'DESPUÉS - Total trades:' as info, COUNT(*) FROM trades;
+> > SELECT 'DESPUÉS - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+> >
+> > -- 4. Verificar últimos trades
+> > SELECT pair, type, price, amount, executed_at, trade_id
+> > FROM trades
+> > ORDER BY executed_at DESC
+> > LIMIT 10;
+> > EOF
+>          info          | count
+> -----------------------+-------
+>  ANTES - Total trades: |   340
+> (1 row)
+>
+>           info           | count
+> -------------------------+-------
+>  ANTES - Registros AUTO: |   149
+5-12-20 16:45:19.156 | KRAKEN-TZ> (1 row)
+>
+>            info            | count
+> ---------------------------+-------
+>  ANTES - Registros KRAKEN: |   124
+> (1 row)
+>
+> DELETE 149
+>           info           | count
+> -------------------------+-------
+ KRAKEN-TKUOXY-Z>  DESPUÉS - Total trades: |   191
+> (1 row)
+>
+>             info             | count
+> -----------------------------+-------
+>  DESPUÉS - Registros KRAKEN: |   124
+> (1 row)
+>
+>   pair   | type |     price      |   amount   |       executed_at       |          trade_id
+ntax error at or> ---------+------+----------------+------------+-------------------------+----------------------------
+>  ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+>  BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+>  ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+>  BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+>  BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+>  BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+>  BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+>  ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+>  ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+>  BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+> (10 rows)
+>
+> ERROR:  syntax error at or near "EOFdocker"
+> LINE 1: EOFdocker exec -i kraken-bot-db psql -U krakenbot -d krakenb...
+>         ^
+>           info           | count
+> -------------------------+-------
+>  ANTES - Registros AUTO: |     0
+> (1 row)
+>
+>            info            | count
+> ---------------------------+-------
+>  ANTES - Registros KRAKEN: |   124
+> (1 row)
+>
+> DELETE 0
+>           info           | count
+> -------------------------+-------
+>  DESPUÉS - Total trades: |   191
+> (1 row)
+>
+>             info             | count
+> -----------------------------+-------
+>  DESPUÉS - Registros KRAKEN: |   124
+> (1 row)
+>
+>   pair   | type |     price      |   amount   |       executed_at       |          trade_id
+> ---------+------+----------------+------------+-------------------------+----------------------------
+>  ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+>  BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+>  ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+>  BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+>  BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+>  BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+>  BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+>  ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+>  ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+>  BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+> (10 rows)
+>
+> [~] #2
+> docker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+> -- Añadir columnas FIFO
+UMN IF NOT EXIST> ALTER TABLE open_positions
+> ADD COLUMN IF NOT EXISTS qty_remaining VARCHAR(50),
+> ADD COLUMN IF NOT EXISTS qty_filled VARCHAR(50) DEFAULT '0';
+>
+> -- Inicializar qty_remaining = amount
+> UPDATE open_positions SET qty_remaining = amount WHERE qty_remaining IS NULL;
+>
+> -- Verificar
+> SELECT lot_id, pair, amount, qty_remaining FROM open_positions;
+> EOF
+-sh: exec: -i: invalid option
+exec: usage: exec [-cl] [-a name] file [redirection ...]
+[~] # > -- 1. ANTES: Contar registros
+-sh: 1.: command not found
+[~] # > SELECT 'ANTES - Total trades:' as info, COUNT(*) FROM trades;
+-sh: syntax error near unexpected token `('
+[~] # > SELECT 'ANTES - Registros AUTO:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'AUTO-%';
+-sh: syntax error near unexpected token `('
+[~] # > SELECT 'ANTES - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+-sh: syntax error near unexpected token `('
+[~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 2. ELIMINAR los AUTO-* (son las órdenes, no los fills reales)
+-sh: syntax error near unexpected token `('
+[~] # > DELETE FROM trades WHERE trade_id LIKE 'AUTO-%';
+-sh: FROM: command not found
+[~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 3. DESPUÉS: Verificar resultado
+-sh: 3.: command not found
+[~] # > SELECT 'DESPUÉS - Total trades:' as info, COUNT(*) FROM trades;
+-sh: syntax error near unexpected token `('
+[~] # > SELECT 'DESPUÉS - Registros KRAKEN:' as info, COUNT(*) FROM trades WHERE trade_id LIKE 'KRAKEN-%';
+-sh: syntax error near unexpected token `('
+[~] # >
+-sh: syntax error near unexpected token `newline'
+[~] # > -- 4. Verificar últimos trades
+-sh: 4.: command not found
+[~] # > SELECT pair, type, price, amount, executed_at, trade_id
+-sh: pair,: command not found
+[~] # > FROM trades
+-sh: trades: command not found
+[~] # > ORDER BY executed_at DESC
+-sh: BY: command not found
+[~] # > LIMIT 10;
+-sh: 10: command not found
+[~] # > EOF
+[~] #          info          | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -----------------------+-------
+-sh: -----------------------+-------: command not found
+[~] #  ANTES - Total trades: |   340
+-sh: ANTES: command not found
+-sh: 340: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #           info           | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -------------------------+-------
+-sh: -------------------------+-------: command not found
+[~] #  ANTES - Registros AUTO: |   149
+-sh: ANTES: command not found
+-sh: 149: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #            info            | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # ---------------------------+-------
+-sh: ---------------------------+-------: command not found
+[~] #  ANTES - Registros KRAKEN: |   124
+-sh: ANTES: command not found
+-sh: 124: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] # DELETE 149
+-sh: DELETE: command not found
+[~] #           info           | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -------------------------+-------
+-sh: -------------------------+-------: command not found
+[~] #  DESPUÉS - Total trades: |   191
+-sh: DESPUÉS: command not found
+-sh: 191: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #             info             | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -----------------------------+-------
+-sh: -----------------------------+-------: command not found
+[~] #  DESPUÉS - Registros KRAKEN: |   124
+-sh: DESPUÉS: command not found
+-sh: 124: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #   pair   | type |     price      |   amount   |       executed_at       |          trade_id
+-sh: pair: command not found
+-sh: price: command not found
+-sh: amount: command not found
+-sh: executed_at: command not found
+-sh: trade_id: command not found
+[~] # ---------+------+----------------+------------+-------------------------+----------------------------
+-sh: ---------+------+----------------+------------+-------------------------+----------------------------: command not found
+[~] #  ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+-sh: ETH/USD: No such file or directory
+-sh: buy: command not found
+-sh: 2979.35000000: command not found
+-sh: KRAKEN-TP6REN-PNHBG-N3V4GE: command not found
+-sh: 2025-12-20: command not found
+-sh: 0.02517328: command not found
+[~] #  BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 88237.00000000: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TVGVXA-EXTMB-ICKOZ7: command not found
+-sh: 0.00084998: command not found
+[~] #  ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+-sh: ETH/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.02517961: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-T2HMMV-ONBL6-QQV3TD: command not found
+-sh: 2978.60000000: command not found
+[~] #  BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 88224.10000000: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TG6LWY-GW2UP-KPBJF4: command not found
+-sh: 0.00085011: command not found
+[~] #  BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+-sh: BTC/USD: No such file or directory
+-sh: sell: command not found
+-sh: 0.00085022: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TZJPYU-OFG4D-AXWCOD: command not found
+-sh: 88094.70490000: command not found
+[~] #  BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+-sh: BTC/USD: No such file or directory
+-sh: sell: command not found
+-sh: 0.00085022: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TGFE45-BSKEB-FV3CVE: command not found
+-sh: 88067.90000000: command not found
+[~] #  BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 88166.80000000: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TKUOXY-ZWNQY-72PMDR: command not found
+-sh: 0.00085082: command not found
+[~] #  ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+-sh: ETH/USD: No such file or directory
+-sh: sell: command not found
+-sh: 0.02510326: command not found
+-sh: 2025-12-20: command not found
+-sh: 2976.01000000: command not found
+-sh: KRAKEN-TLWJT4-VLDWW-O7ZV5G: command not found
+[~] #  ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+-sh: ETH/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.02510326: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TRZTEV-X3MGP-Y4IFSZ: command not found
+-sh: 2987.70678000: command not found
+[~] #  BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.00085022: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TWLRFE-ZS6MH-CYRTND: command not found
+-sh: 88212.09805000: command not found
+[~] # (10 rows)
+-sh: 10: command not found
+[~] #
+[~] # ERROR:  syntax error at or near "EOFdocker"
+-sh: ERROR:: command not found
+[~] # LINE 1: EOFdocker exec -i kraken-bot-db psql -U krakenbot -d krakenb...
+-sh: LINE: command not found
+[~] #         ^
+-sh: ^: command not found
+[~] #           info           | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -------------------------+-------
+-sh: -------------------------+-------: command not found
+[~] #  ANTES - Registros AUTO: |     0
+-sh: ANTES: command not found
+-sh: 0: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #            info            | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # ---------------------------+-------
+-sh: ---------------------------+-------: command not found
+[~] #  ANTES - Registros KRAKEN: |   124
+-sh: ANTES: command not found
+-sh: 124: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] # DELETE 0
+-sh: DELETE: command not found
+[~] #           info           | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -------------------------+-------
+-sh: -------------------------+-------: command not found
+[~] #  DESPUÉS - Total trades: |   191
+-sh: DESPUÉS: command not found
+-sh: 191: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #             info             | count
+-sh: info: command not found
+-sh: count: command not found
+[~] # -----------------------------+-------
+-sh: -----------------------------+-------: command not found
+[~] #  DESPUÉS - Registros KRAKEN: |   124
+-sh: DESPUÉS: command not found
+-sh: 124: command not found
+[~] # (1 row)
+-sh: 1: command not found
+[~] #
+[~] #   pair   | type |     price      |   amount   |       executed_at       |          trade_id
+-sh: pair: command not found
+-sh: amount: command not found
+-sh: executed_at: command not found
+-sh: trade_id: command not found
+-sh: price: command not found
+[~] # ---------+------+----------------+------------+-------------------------+----------------------------
+-sh: ---------+------+----------------+------------+-------------------------+----------------------------: command not found
+[~] #  ETH/USD | buy  |  2979.35000000 | 0.02517328 | 2025-12-20 20:20:38.252 | KRAKEN-TP6REN-PNHBG-N3V4GE
+-sh: ETH/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.02517328: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TP6REN-PNHBG-N3V4GE: command not found
+-sh: 2979.35000000: command not found
+[~] #  BTC/USD | buy  | 88237.00000000 | 0.00084998 | 2025-12-20 20:20:37.742 | KRAKEN-TVGVXA-EXTMB-ICKOZ7
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 88237.00000000: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TVGVXA-EXTMB-ICKOZ7: command not found
+-sh: 0.00084998: command not found
+[~] #  ETH/USD | buy  |  2978.60000000 | 0.02517961 | 2025-12-20 20:15:15.682 | KRAKEN-T2HMMV-ONBL6-QQV3TD
+-sh: ETH/USD: No such file or directory
+-sh: buy: command not found
+-sh: 2978.60000000: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-T2HMMV-ONBL6-QQV3TD: command not found
+-sh: 0.02517961: command not found
+[~] #  BTC/USD | buy  | 88224.10000000 | 0.00085011 | 2025-12-20 20:15:14.873 | KRAKEN-TG6LWY-GW2UP-KPBJF4
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.00085011: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TG6LWY-GW2UP-KPBJF4: command not found
+-sh: 88224.10000000: command not found
+[~] #  BTC/USD | sell | 88094.70490000 | 0.00085022 | 2025-12-20 16:45:19.156 | KRAKEN-TZJPYU-OFG4D-AXWCOD
+-sh: BTC/USD: No such file or directory
+-sh: sell: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TZJPYU-OFG4D-AXWCOD: command not found
+-sh: 0.00085022: command not found
+-sh: 88094.70490000: command not found
+[~] #  BTC/USD | sell | 88067.90000000 | 0.00085022 | 2025-12-20 15:30:19.063 | KRAKEN-TGFE45-BSKEB-FV3CVE
+-sh: BTC/USD: No such file or directory
+-sh: sell: command not found
+-sh: 0.00085022: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TGFE45-BSKEB-FV3CVE: command not found
+-sh: 88067.90000000: command not found
+[~] #  BTC/USD | buy  | 88166.80000000 | 0.00085082 | 2025-12-20 13:45:23.366 | KRAKEN-TKUOXY-ZWNQY-72PMDR
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 88166.80000000: command not found
+-sh: 0.00085082: command not found
+-sh: 2025-12-20: command not found
+-sh: KRAKEN-TKUOXY-ZWNQY-72PMDR: command not found
+[~] #  ETH/USD | sell |  2976.01000000 | 0.02510326 | 2025-12-20 13:15:23.465 | KRAKEN-TLWJT4-VLDWW-O7ZV5G
+-sh: ETH/USD: No such file or directory
+-sh: sell: command not found
+-sh: 0.02510326: command not found
+-sh: 2025-12-20: command not found
+-sh: 2976.01000000: command not found
+-sh: KRAKEN-TLWJT4-VLDWW-O7ZV5G: command not found
+[~] #  ETH/USD | buy  |  2987.70678000 | 0.02510326 | 2025-12-20 13:00:23.381 | KRAKEN-TRZTEV-X3MGP-Y4IFSZ
+-sh: ETH/USD: No such file or directory
+-sh: 2025-12-20: command not found
+-sh: buy: command not found
+-sh: KRAKEN-TRZTEV-X3MGP-Y4IFSZ: command not found
+-sh: 2987.70678000: command not found
+-sh: 0.02510326: command not found
+[~] #  BTC/USD | buy  | 88212.09805000 | 0.00085022 | 2025-12-20 11:30:26.035 | KRAKEN-TWLRFE-ZS6MH-CYRTND
+-sh: BTC/USD: No such file or directory
+-sh: buy: command not found
+-sh: 0.00085022: command not found
+-sh: KRAKEN-TWLRFE-ZS6MH-CYRTND: command not found
+-sh: 2025-12-20: command not found
+-sh: 88212.09805000: command not found
+[~] # (10 rows)
+-sh: 10: command not found
+[~] #
+[~] # [~] #2
+-sh: [~]: command not found
+[~] # docker exec -i kraken-bot-db psql -U krakenbot -d krakenbot << 'EOF'
+> -- Añadir columnas FIFO
+> ALTER TABLE open_positions
+> ADD COLUMN IF NOT EXISTS qty_remaining VARCHAR(50),
+> ADD COLUMN IF NOT EXISTS qty_filled VARCHAR(50) DEFAULT '0';
+>
+> -- Inicializar qty_remaining = amount
+> UPDATE open_positions SET qty_remaining = amount WHERE qty_remaining IS NULL;
+>
+> -- Verificar
+> SELECT lot_id, pair, amount, qty_remaining FROM open_positions;
+> NOTICE:  column "qty_remaining" of relation "open_positions" already exists, skipping
+NOTICE:  column "qty_filled" of relation "open_positions" already exists, skipping
+[~] # logout
+Connection to 192.168.1.104 closed.
