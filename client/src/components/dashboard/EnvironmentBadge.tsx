@@ -9,6 +9,7 @@ interface EnvironmentData {
   isReplit: boolean;
   isNAS: boolean;
   dryRun: boolean;
+  gitCommit?: string;
 }
 
 export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
@@ -89,7 +90,7 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
             )}
           </div>
           <p className="text-xs text-muted-foreground font-mono">
-            ID: {data.instanceId}
+            ID: {data.instanceId} {data.gitCommit && <span className="opacity-60">· v{data.gitCommit}</span>}
           </p>
         </div>
       </div>
