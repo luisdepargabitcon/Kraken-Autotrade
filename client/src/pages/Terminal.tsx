@@ -285,6 +285,49 @@ export default function Terminal() {
     },
   });
 
+  // Mutation for reconciling positions with Kraken
+  const reconcileMutation = useMutation({
+    mutationFn: async ({ autoClean }: { autoClean: boolean }) => {
+      const res = await fetch("/api/positions/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoClean }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Error al reconciliar");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.cleaned > 0) {
+        toast({
+          title: "Reconciliación Completada",
+          description: `${data.cleaned} posiciones huérfanas eliminadas`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["openPositions"] });
+      } else if (data.orphans?.length > 0) {
+        toast({
+          title: "Huérfanas Detectadas",
+          description: `${data.orphans.length} posiciones huérfanas encontradas`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Todo OK",
+          description: "No hay posiciones huérfanas",
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleClosePosition = (pair: string, lotId?: string | null, amount?: string) => {
     const displayId = lotId ? lotId.substring(0, 8) : pair;
     if (confirm(`¿Cerrar ${lotId ? `lote ${displayId}` : `posición`} de ${pair}? Esta acción no se puede deshacer.`)) {
@@ -300,6 +343,12 @@ export default function Terminal() {
   const confirmDeleteOrphan = () => {
     if (orphanToDelete) {
       deleteOrphanMutation.mutate({ lotId: orphanToDelete.lotId });
+    }
+  };
+
+  const handleReconcile = () => {
+    if (confirm("¿Reconciliar posiciones con Kraken? Esto eliminará automáticamente las posiciones huérfanas (sin balance real).")) {
+      reconcileMutation.mutate({ autoClean: true });
     }
   };
 
@@ -551,9 +600,27 @@ export default function Terminal() {
                       <Zap className="h-4 w-4 text-cyan-400" />
                       POSICIONES ABIERTAS
                     </CardTitle>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {openPositions?.length || 0} activa{openPositions?.length !== 1 ? 's' : ''}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {openPositions?.length || 0} activa{openPositions?.length !== 1 ? 's' : ''}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleReconcile}
+                        disabled={reconcileMutation.isPending}
+                        className="h-7 text-[10px] font-mono border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
+                        data-testid="button-reconcile"
+                        title="Compara balances reales de Kraken y elimina posiciones huérfanas"
+                      >
+                        {reconcileMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                        )}
+                        RECONCILIAR
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">

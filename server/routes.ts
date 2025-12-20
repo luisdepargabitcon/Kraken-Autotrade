@@ -847,6 +847,143 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // === RECONCILIAR POSICIONES CON KRAKEN ===
+  // Compara balances reales con posiciones en BD y elimina huérfanas
+  app.post("/api/positions/reconcile", async (req, res) => {
+    try {
+      if (!krakenService) {
+        return res.status(503).json({ 
+          success: false, 
+          error: "Kraken service not initialized" 
+        });
+      }
+
+      // Obtener todas las posiciones abiertas de BD
+      const openPositions = await storage.getOpenPositions();
+      if (openPositions.length === 0) {
+        return res.json({
+          success: true,
+          message: "No hay posiciones abiertas en BD",
+          reconciled: 0,
+          orphans: [],
+        });
+      }
+
+      // Obtener balances reales de Kraken
+      const balances = await krakenService.getBalance() as Record<string, string>;
+      
+      // Mínimos de orden por par (hardcoded ya que getAssetPairs es para todos los pares)
+      const orderMinMap: Record<string, number> = {
+        "BTC/USD": 0.0001,
+        "ETH/USD": 0.004,
+        "SOL/USD": 0.2,
+        "XRP/USD": 10,
+        "TON/USD": 10,
+      };
+      
+      // Obtener mínimos de orden por par
+      const orphanPositions: Array<{ lotId: string; pair: string; amount: string; reason: string }> = [];
+      const validPositions: Array<{ lotId: string; pair: string; amount: string }> = [];
+      
+      for (const pos of openPositions) {
+        const assetMap: Record<string, string> = {
+          "BTC/USD": "XXBT",
+          "ETH/USD": "XETH",
+          "SOL/USD": "SOL",
+          "XRP/USD": "XXRP",
+          "TON/USD": "TON",
+        };
+        const assetKey = assetMap[pos.pair];
+        if (!assetKey) {
+          // Par desconocido, marcar como huérfana
+          orphanPositions.push({
+            lotId: pos.lotId,
+            pair: pos.pair,
+            amount: pos.amount,
+            reason: "Par no reconocido",
+          });
+          continue;
+        }
+
+        const realBalance = parseFloat(balances[assetKey] || "0");
+        const positionAmount = parseFloat(pos.amount);
+        
+        // Obtener mínimo de orden para este par
+        const orderMin = orderMinMap[pos.pair] || 0.0001;
+        
+        // Si el balance real es menor al mínimo de orden, es huérfana
+        if (realBalance < orderMin) {
+          orphanPositions.push({
+            lotId: pos.lotId,
+            pair: pos.pair,
+            amount: pos.amount,
+            reason: `Balance real (${realBalance.toFixed(8)}) < mínimo (${orderMin})`,
+          });
+        } else {
+          validPositions.push({
+            lotId: pos.lotId,
+            pair: pos.pair,
+            amount: pos.amount,
+          });
+        }
+      }
+
+      // Auto-limpiar huérfanas si se solicita
+      const autoClean = req.body?.autoClean === true;
+      let cleaned = 0;
+      
+      if (autoClean && orphanPositions.length > 0) {
+        for (const orphan of orphanPositions) {
+          try {
+            await storage.deleteOpenPositionByLotId(orphan.lotId);
+            if (tradingEngine) {
+              tradingEngine.getOpenPositions().delete(orphan.lotId);
+            }
+            cleaned++;
+          } catch (err) {
+            console.error(`Error limpiando huérfana ${orphan.lotId}:`, err);
+          }
+        }
+        
+        await botLogger.info("ORPHAN_POSITION_DELETED", `Reconciliación completada`, {
+          total: openPositions.length,
+          orphans: orphanPositions.length,
+          cleaned,
+          valid: validPositions.length,
+        });
+        
+        if (telegramService?.isInitialized()) {
+          await telegramService.sendMessage(`
+🔄 *Reconciliación Completada*
+
+*Total posiciones:* ${openPositions.length}
+*Huérfanas eliminadas:* ${cleaned}
+*Válidas:* ${validPositions.length}
+          `.trim());
+        }
+      }
+
+      res.json({
+        success: true,
+        total: openPositions.length,
+        orphans: orphanPositions,
+        valid: validPositions,
+        cleaned,
+        message: autoClean 
+          ? `Reconciliación completada: ${cleaned} huérfanas eliminadas`
+          : `Encontradas ${orphanPositions.length} posiciones huérfanas`,
+      });
+      
+    } catch (error: any) {
+      console.error("[api/positions/reconcile] Error:", error.message);
+      res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: error.message,
+      });
+    }
+  });
+
   app.get("/api/trades/closed", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 10;
