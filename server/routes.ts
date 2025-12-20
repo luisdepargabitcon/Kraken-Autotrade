@@ -1192,36 +1192,176 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
       // Obtener todo el historial de trades con paginación
       const tradesHistory = await krakenService.getTradesHistory({ fetchAll: true });
-      const trades = tradesHistory.trades || {};
+      const krakenTrades = tradesHistory.trades || {};
       
       let synced = 0;
-      for (const [txid, trade] of Object.entries(trades)) {
+      let skipped = 0;
+      const errors: string[] = [];
+      
+      // Agrupar trades por par para cálculo de P&L
+      const tradesByPair: Record<string, { buys: any[]; sells: any[] }> = {};
+      
+      for (const [txid, trade] of Object.entries(krakenTrades)) {
         const t = trade as any;
+        const pair = krakenService.formatPairReverse(t.pair);
+        
+        if (!tradesByPair[pair]) {
+          tradesByPair[pair] = { buys: [], sells: [] };
+        }
+        
+        const tradeData = {
+          txid,
+          pair,
+          type: t.type,
+          price: parseFloat(t.price),
+          amount: parseFloat(t.vol),
+          cost: parseFloat(t.cost),
+          fee: parseFloat(t.fee),
+          time: new Date(t.time * 1000),
+        };
+        
+        if (t.type === 'buy') {
+          tradesByPair[pair].buys.push(tradeData);
+        } else {
+          tradesByPair[pair].sells.push(tradeData);
+        }
+        
         try {
-          // Buscar directamente por krakenOrderId en DB (eficiente)
-          const existingTrade = await storage.getTradeByKrakenOrderId(txid);
+          // Usar upsert para evitar duplicados (idempotente)
+          const result = await storage.upsertTradeByKrakenId({
+            tradeId: `KRAKEN-${txid}`,
+            pair,
+            type: t.type,
+            price: t.price,
+            amount: t.vol,
+            status: "filled",
+            krakenOrderId: txid,
+            executedAt: new Date(t.time * 1000),
+          });
           
-          if (!existingTrade) {
-            await storage.createTrade({
-              tradeId: `KRAKEN-${txid}`, // Usar txid completo para evitar colisiones
-              pair: krakenService.formatPairReverse(t.pair),
-              type: t.type,
-              price: t.price,
-              amount: t.vol,
-              status: "filled",
-              krakenOrderId: txid,
-              executedAt: new Date(t.time * 1000),
-            });
+          if (result.inserted) {
             synced++;
+          } else {
+            skipped++;
           }
-        } catch (e) {
-          console.error("Error syncing trade:", txid, e);
+        } catch (e: any) {
+          errors.push(`${txid}: ${e.message}`);
+        }
+      }
+      
+      // Calcular P&L para SELLs emparejándolos con BUYs (FIFO)
+      let pnlCalculated = 0;
+      for (const [pair, trades] of Object.entries(tradesByPair)) {
+        // Ordenar por tiempo
+        trades.buys.sort((a, b) => a.time.getTime() - b.time.getTime());
+        trades.sells.sort((a, b) => a.time.getTime() - b.time.getTime());
+        
+        let buyIndex = 0;
+        let buyRemaining = trades.buys[0]?.amount || 0;
+        
+        for (const sell of trades.sells) {
+          let sellRemaining = sell.amount;
+          let totalCost = 0;
+          let totalAmount = 0;
+          let totalBuyFees = 0; // Accumulated buy-side fees for matched portion
+          
+          // Emparejar con BUYs (FIFO)
+          while (sellRemaining > 0 && buyIndex < trades.buys.length) {
+            const buy = trades.buys[buyIndex];
+            const matchAmount = Math.min(buyRemaining, sellRemaining);
+            
+            // Pro-rate buy fee based on matched portion
+            const buyFeeForMatch = (matchAmount / buy.amount) * buy.fee;
+            
+            totalCost += matchAmount * buy.price;
+            totalAmount += matchAmount;
+            totalBuyFees += buyFeeForMatch;
+            
+            sellRemaining -= matchAmount;
+            buyRemaining -= matchAmount;
+            
+            if (buyRemaining <= 0.00000001) {
+              buyIndex++;
+              buyRemaining = trades.buys[buyIndex]?.amount || 0;
+            }
+          }
+          
+          // Only calculate P&L for matched portion
+          if (totalAmount > 0) {
+            const avgEntryPrice = totalCost / totalAmount;
+            // Use totalAmount (matched) not sell.amount for revenue calculation
+            const revenue = totalAmount * sell.price;
+            const cost = totalCost;
+            // Include both buy and sell fees in net P&L
+            const totalFees = totalBuyFees + sell.fee;
+            const pnlGross = revenue - cost;
+            const pnlNet = pnlGross - totalFees;
+            const pnlPct = cost > 0 ? (pnlGross / cost) * 100 : 0;
+            
+            // Actualizar el trade SELL con P&L
+            const existingSell = await storage.getTradeByKrakenOrderId(sell.txid);
+            if (existingSell && (!existingSell.realizedPnlUsd || existingSell.realizedPnlUsd === null)) {
+              await storage.updateTradePnl(
+                existingSell.id,
+                avgEntryPrice.toFixed(8),
+                pnlNet.toFixed(8),  // Use net P&L (after all fees)
+                pnlPct.toFixed(4)
+              );
+              pnlCalculated++;
+            }
+          }
         }
       }
 
-      res.json({ success: true, synced, total: Object.keys(trades).length });
+      // Nota: El cierre automático de posiciones abiertas requiere tracking de volumen
+      // acumulado (parciales) y se manejará via endpoints separados o manualmente.
+      // El sync solo registra trades y calcula P&L.
+
+      res.json({ 
+        success: true, 
+        synced, 
+        skipped,
+        pnlCalculated,
+        total: Object.keys(krakenTrades).length,
+        errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to sync trades" });
+    }
+  });
+
+  // Endpoint para limpiar duplicados existentes
+  app.post("/api/trades/cleanup-duplicates", async (req, res) => {
+    try {
+      const duplicates = await storage.getDuplicateTradesByKrakenId();
+      
+      if (duplicates.length === 0) {
+        return res.json({ success: true, message: "No hay duplicados", deleted: 0 });
+      }
+      
+      const deleted = await storage.deleteDuplicateTrades();
+      
+      res.json({ 
+        success: true, 
+        duplicatesFound: duplicates.length,
+        deleted,
+        details: duplicates.slice(0, 20),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to cleanup duplicates" });
+    }
+  });
+
+  // Endpoint para ver duplicados sin eliminar
+  app.get("/api/trades/duplicates", async (req, res) => {
+    try {
+      const duplicates = await storage.getDuplicateTradesByKrakenId();
+      res.json({ 
+        count: duplicates.length,
+        duplicates: duplicates.slice(0, 50),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get duplicates" });
     }
   });
 
@@ -1372,6 +1512,41 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Endpoint para limpiar duplicados en training_trades
+  app.post("/api/ai/cleanup-duplicates", async (req, res) => {
+    try {
+      const duplicates = await storage.getDuplicateTrainingTradesByBuyTxid();
+      
+      if (duplicates.length === 0) {
+        return res.json({ success: true, message: "No hay duplicados en training_trades", deleted: 0 });
+      }
+      
+      const deleted = await storage.deleteDuplicateTrainingTrades();
+      
+      res.json({ 
+        success: true, 
+        duplicatesFound: duplicates.length,
+        deleted,
+        details: duplicates.slice(0, 20),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to cleanup training trades duplicates" });
+    }
+  });
+
+  // Endpoint para ver duplicados en training_trades sin eliminar
+  app.get("/api/ai/duplicates", async (req, res) => {
+    try {
+      const duplicates = await storage.getDuplicateTrainingTradesByBuyTxid();
+      res.json({ 
+        count: duplicates.length,
+        duplicates: duplicates.slice(0, 50),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get training trades duplicates" });
     }
   });
 

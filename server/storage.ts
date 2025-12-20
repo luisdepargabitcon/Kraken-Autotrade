@@ -48,6 +48,13 @@ export interface IStorage {
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
+  getTradeByLotId(lotId: string): Promise<Trade | undefined>;
+  getSellMatchingBuy(pair: string, buyLotId: string): Promise<Trade | undefined>;
+  upsertTradeByKrakenId(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }>;
+  getDuplicateTradesByKrakenId(): Promise<{ krakenOrderId: string; count: number; ids: number[] }[]>;
+  deleteDuplicateTrades(): Promise<number>;
+  updateTradePnl(id: number, entryPrice: string, realizedPnlUsd: string, realizedPnlPct: string): Promise<void>;
+  getUnmatchedBuys(pair: string): Promise<Trade[]>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
   getUnsentNotifications(): Promise<Notification[]>;
@@ -90,6 +97,8 @@ export interface IStorage {
   updateTrainingTrade(id: number, updates: Partial<InsertTrainingTrade>): Promise<TrainingTrade | undefined>;
   getTrainingTradeByBuyTxid(buyTxid: string): Promise<TrainingTrade | undefined>;
   getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]>;
+  getDuplicateTrainingTradesByBuyTxid(): Promise<{ buyTxid: string; count: number; ids: number[] }[]>;
+  deleteDuplicateTrainingTrades(): Promise<number>;
   getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean; hasOpenLots?: boolean }): Promise<number>;
   getDiscardReasonsDataset(): Promise<Record<string, number>>;
   getAllTradesForBackfill(): Promise<Trade[]>;
@@ -169,6 +178,82 @@ export class DatabaseStorage implements IStorage {
     return newTrade;
   }
 
+  // Upsert trade - inserta solo si no existe (por krakenOrderId)
+  async upsertTradeByKrakenId(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }> {
+    if (!trade.krakenOrderId) {
+      const [newTrade] = await db.insert(tradesTable).values(trade).returning();
+      return { inserted: true, trade: newTrade };
+    }
+    
+    // Verificar si existe
+    const existing = await this.getTradeByKrakenOrderId(trade.krakenOrderId);
+    if (existing) {
+      return { inserted: false, trade: existing };
+    }
+    
+    try {
+      const [newTrade] = await db.insert(tradesTable).values(trade).returning();
+      return { inserted: true, trade: newTrade };
+    } catch (e: any) {
+      // Handle unique constraint violation gracefully
+      if (e.code === '23505') {
+        return { inserted: false };
+      }
+      throw e;
+    }
+  }
+
+  // Obtener duplicados por krakenOrderId para limpieza
+  async getDuplicateTradesByKrakenId(): Promise<{ krakenOrderId: string; count: number; ids: number[] }[]> {
+    const result = await db.execute(sql`
+      SELECT kraken_order_id, COUNT(*) as count, ARRAY_AGG(id ORDER BY id) as ids
+      FROM trades
+      WHERE kraken_order_id IS NOT NULL
+      GROUP BY kraken_order_id
+      HAVING COUNT(*) > 1
+    `);
+    return (result.rows as any[]).map(row => ({
+      krakenOrderId: row.kraken_order_id,
+      count: parseInt(row.count),
+      ids: row.ids,
+    }));
+  }
+
+  // Eliminar duplicados manteniendo el más antiguo (menor id)
+  async deleteDuplicateTrades(): Promise<number> {
+    const duplicates = await this.getDuplicateTradesByKrakenId();
+    let deleted = 0;
+    
+    for (const dup of duplicates) {
+      // Mantener el primer id (más antiguo), eliminar el resto
+      const idsToDelete = dup.ids.slice(1);
+      for (const id of idsToDelete) {
+        await db.delete(tradesTable).where(eq(tradesTable.id, id));
+        deleted++;
+      }
+    }
+    
+    return deleted;
+  }
+
+  // Actualizar P&L de un trade
+  async updateTradePnl(id: number, entryPrice: string, realizedPnlUsd: string, realizedPnlPct: string): Promise<void> {
+    await db.update(tradesTable)
+      .set({ entryPrice, realizedPnlUsd, realizedPnlPct })
+      .where(eq(tradesTable.id, id));
+  }
+
+  // Obtener trades BUY sin emparejar para un par (para calcular P&L)
+  async getUnmatchedBuys(pair: string): Promise<Trade[]> {
+    return await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.pair, pair),
+        eq(tradesTable.type, 'buy'),
+        eq(tradesTable.status, 'filled')
+      ))
+      .orderBy(tradesTable.executedAt);
+  }
+
   async getTrades(limit: number = 50): Promise<Trade[]> {
     return await db.select().from(tradesTable).orderBy(desc(tradesTable.createdAt)).limit(limit);
   }
@@ -218,6 +303,38 @@ export class DatabaseStorage implements IStorage {
       .where(eq(tradesTable.krakenOrderId, krakenOrderId))
       .limit(1);
     return trades[0];
+  }
+
+  async getTradeByLotId(lotId: string): Promise<Trade | undefined> {
+    // lotId typically equals krakenOrderId for synced trades
+    const trades = await db.select().from(tradesTable)
+      .where(eq(tradesTable.krakenOrderId, lotId))
+      .limit(1);
+    return trades[0];
+  }
+
+  async getSellMatchingBuy(pair: string, buyLotId: string): Promise<Trade | undefined> {
+    // Find the BUY trade first to get its timestamp (case-insensitive)
+    const buyTrade = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.krakenOrderId, buyLotId),
+        sql`UPPER(${tradesTable.type}) = 'BUY'`
+      ))
+      .limit(1);
+    
+    if (!buyTrade[0]) return undefined;
+    
+    // Find any SELL for the same pair that happened after this BUY (case-insensitive)
+    const sellTrades = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.pair, pair),
+        sql`UPPER(${tradesTable.type}) = 'SELL'`,
+        gt(tradesTable.executedAt, buyTrade[0].executedAt!)
+      ))
+      .orderBy(tradesTable.executedAt)
+      .limit(1);
+    
+    return sellTrades[0];
   }
 
   async createNotification(notification: InsertNotification): Promise<Notification> {
@@ -459,6 +576,37 @@ export class DatabaseStorage implements IStorage {
       .where(eq(trainingTradesTable.buyTxid, buyTxid))
       .limit(1);
     return trades[0];
+  }
+
+  // Obtener duplicados por buyTxid para limpieza de training_trades
+  async getDuplicateTrainingTradesByBuyTxid(): Promise<{ buyTxid: string; count: number; ids: number[] }[]> {
+    const result = await db.execute(sql`
+      SELECT buy_txid, COUNT(*) as count, ARRAY_AGG(id ORDER BY id) as ids
+      FROM training_trades
+      GROUP BY buy_txid
+      HAVING COUNT(*) > 1
+    `);
+    return (result.rows as any[]).map(row => ({
+      buyTxid: row.buy_txid,
+      count: parseInt(row.count),
+      ids: row.ids,
+    }));
+  }
+
+  // Eliminar duplicados en training_trades manteniendo el más antiguo
+  async deleteDuplicateTrainingTrades(): Promise<number> {
+    const duplicates = await this.getDuplicateTrainingTradesByBuyTxid();
+    let deleted = 0;
+    
+    for (const dup of duplicates) {
+      const idsToDelete = dup.ids.slice(1);
+      for (const id of idsToDelete) {
+        await db.delete(trainingTradesTable).where(eq(trainingTradesTable.id, id));
+        deleted++;
+      }
+    }
+    
+    return deleted;
   }
 
   async getTrainingTrades(options?: { closed?: boolean; labeled?: boolean; limit?: number }): Promise<TrainingTrade[]> {

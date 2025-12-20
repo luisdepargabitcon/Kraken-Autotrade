@@ -66,7 +66,7 @@ export const trades = pgTable("trades", {
   price: decimal("price", { precision: 18, scale: 8 }).notNull(),
   amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
   status: text("status").notNull().default("pending"),
-  krakenOrderId: text("kraken_order_id"),
+  krakenOrderId: text("kraken_order_id").unique(), // UNIQUE para evitar duplicados en sync
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }),
   realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 8 }),
   realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
@@ -170,7 +170,7 @@ export const trainingTrades = pgTable("training_trades", {
   id: serial("id").primaryKey(),
   pair: text("pair").notNull(),
   strategyId: text("strategy_id"),
-  buyTxid: text("buy_txid").notNull(),
+  buyTxid: text("buy_txid").notNull().unique(), // UNIQUE para evitar duplicados en backfill
   sellTxid: text("sell_txid"),
   sellTxidsJson: jsonb("sell_txids_json"),
   entryPrice: decimal("entry_price", { precision: 18, scale: 8 }).notNull(),
