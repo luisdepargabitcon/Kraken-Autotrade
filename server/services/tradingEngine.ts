@@ -3786,11 +3786,23 @@ _Cierre solicitado manualmente desde dashboard_
       positionUsd?: number;
     }> = [];
 
+    // Helper: buscar posiciones por par (openPositions usa lotId como clave, no pair)
+    const getPositionsForPair = (targetPair: string): OpenPosition[] => {
+      const positions: OpenPosition[] = [];
+      this.openPositions.forEach((pos) => {
+        if (pos.pair === targetPair && pos.amount > 0) {
+          positions.push(pos);
+        }
+      });
+      return positions;
+    };
+
     // Si hay datos de escaneo, usar esos
     if (this.lastScanResults.size > 0) {
       this.lastScanResults.forEach((result, pair) => {
-        const position = this.openPositions.get(pair);
-        const hasPosition = !!(position && position.amount > 0);
+        const pairPositions = getPositionsForPair(pair);
+        const hasPosition = pairPositions.length > 0;
+        const totalPositionUsd = pairPositions.reduce((sum, p) => sum + (p.amount * p.entryPrice), 0);
         
         // Traducir la razón
         let razon = result.reason;
@@ -3801,22 +3813,26 @@ _Cierre solicitado manualmente desde dashboard_
           }
         }
 
+        // Obtener cooldown si no viene en el resultado
+        const cooldownSec = result.cooldownSec ?? this.getCooldownRemainingSec(pair);
+
         pairs.push({
           pair,
           signal: result.signal,
           razon,
-          cooldownSec: result.cooldownSec,
+          cooldownSec: cooldownSec > 0 ? cooldownSec : undefined,
           exposureAvailable: result.exposureAvailable,
           hasPosition,
-          positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+          positionUsd: hasPosition ? totalPositionUsd : undefined,
         });
       });
     } else {
       // Si no hay datos de escaneo, mostrar pares activos con info básica
       const activePairs = config?.activePairs || [];
       for (const pair of activePairs) {
-        const position = this.openPositions.get(pair);
-        const hasPosition = !!(position && position.amount > 0);
+        const pairPositions = getPositionsForPair(pair);
+        const hasPosition = pairPositions.length > 0;
+        const totalPositionUsd = pairPositions.reduce((sum, p) => sum + (p.amount * p.entryPrice), 0);
         const exposure = this.getAvailableExposure(pair, config, this.currentUsdBalance);
         
         // Determinar razón basada en el estado real
@@ -3830,14 +3846,15 @@ _Cierre solicitado manualmente desde dashboard_
           }
         }
         
+        const cooldownSec = this.getCooldownRemainingSec(pair);
         pairs.push({
           pair,
           signal: "NONE",
           razon,
-          cooldownSec: this.getCooldownRemainingSec(pair),
+          cooldownSec: cooldownSec > 0 ? cooldownSec : undefined,
           exposureAvailable: exposure,
           hasPosition,
-          positionUsd: hasPosition ? position!.amount * position!.entryPrice : undefined,
+          positionUsd: hasPosition ? totalPositionUsd : undefined,
         });
       }
     }
