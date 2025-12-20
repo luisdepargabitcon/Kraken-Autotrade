@@ -3408,39 +3408,6 @@ _⚠️ Modo simulación - NO se envió orden real_
           log(`[WARN] Sell ejecutado sin sellContext para ${pair} - P&L no registrado. Todos los sell deben proporcionar sellContext.`, "trading");
         }
         // Position deletion is handled by the caller (checkSinglePositionSLTP, checkSmartGuardExit, etc.)
-        
-        // FIFO Matcher: Ingest sell fill and trigger automatic matching
-        try {
-          const fee = volumeNum * price * 0.004; // Estimate 0.4% taker fee
-          await storage.upsertTradeFill({
-            txid,
-            pair,
-            type: "sell",
-            price: price.toString(),
-            amount: volume,
-            fee: fee.toFixed(8),
-            matched: false,
-          });
-          
-          // Get the fill and process FIFO matching
-          const sellFill = await storage.getTradeFillByTxid(txid);
-          if (sellFill) {
-            const matchResult = await fifoMatcher.processSellFill(sellFill);
-            log(`[FIFO] Auto-matched sell ${txid}: matched=${matchResult.totalMatched.toFixed(8)}, lots_closed=${matchResult.lotsClosed}, pnl=$${matchResult.pnlNet.toFixed(2)}`, "trading");
-            
-            if (matchResult.lotsClosed > 0) {
-              await botLogger.info("FIFO_LOTS_CLOSED", `FIFO cerró ${matchResult.lotsClosed} lotes automáticamente`, {
-                pair,
-                sellTxid: txid,
-                matchedQty: matchResult.totalMatched,
-                lotsClosed: matchResult.lotsClosed,
-                pnlNet: matchResult.pnlNet,
-              });
-            }
-          }
-        } catch (fifoErr: any) {
-          log(`[FIFO] Error procesando sell ${txid}: ${fifoErr.message}`, "trading");
-        }
       }
 
       const emoji = type === "buy" ? "🟢" : "🔴";
@@ -3490,6 +3457,43 @@ _KrakenBot.AI - Trading Autónomo_
         timeframe: strategyMeta?.timeframe || "cycle",
         confidence: strategyMeta?.confidence,
       });
+      
+      // FIFO Matcher: Ingest real sell fill and trigger automatic matching
+      // Only runs for real sells - DRY_RUN returns early at line ~3161
+      // Triple guard: check dryRunMode AND executionMeta.dryRun for belt-and-suspenders safety
+      const isSimulation = this.dryRunMode || (executionMeta?.dryRun ?? false);
+      if (type === "sell" && !isSimulation) {
+        try {
+          const fee = volumeNum * price * (KRAKEN_FEE_PCT / 100); // Use existing fee constant
+          await storage.upsertTradeFill({
+            txid,
+            pair,
+            type: "sell",
+            price: price.toString(),
+            amount: volume,
+            fee: fee.toFixed(8),
+            matched: false,
+          });
+          
+          const sellFill = await storage.getTradeFillByTxid(txid);
+          if (sellFill) {
+            const matchResult = await fifoMatcher.processSellFill(sellFill);
+            log(`[FIFO] Auto-matched sell ${txid}: matched=${matchResult.totalMatched.toFixed(8)}, lots_closed=${matchResult.lotsClosed}, pnl=$${matchResult.pnlNet.toFixed(2)}`, "trading");
+            
+            if (matchResult.lotsClosed > 0) {
+              await botLogger.info("FIFO_LOTS_CLOSED", `FIFO cerró ${matchResult.lotsClosed} lotes automáticamente`, {
+                pair,
+                sellTxid: txid,
+                matchedQty: matchResult.totalMatched,
+                lotsClosed: matchResult.lotsClosed,
+                pnlNet: matchResult.pnlNet,
+              });
+            }
+          }
+        } catch (fifoErr: any) {
+          log(`[FIFO] Error procesando sell ${txid}: ${fifoErr.message}`, "trading");
+        }
+      }
       
       return true;
     } catch (error: any) {
