@@ -1,0 +1,394 @@
+cd /share/ZFS37_DATA/share/Container/krakenbot && git pull && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+remote: Enumerating objects: 50, done.
+remote: Counting objects: 100% (50/50), done.
+remote: Compressing objects: 100% (13/13), done.
+remote: Total 41 (delta 28), reused 41 (delta 28), pack-reused 0 (from 0)
+Unpacking objects: 100% (41/41), 605.70 KiB | 2.14 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+   06491ff..9d837d1  main       -> origin/main
+Updating 06491ff..9d837d1
+Fast-forward
+ attached_assets/Captura_de_pantalla_(236)_1766264018859.png                                      | Bin 0 -> 571902 bytes
+ attached_assets/Pasted--docker-exec-i-kraken-bot-db-psql-U-krakenbot-d-krakenb_1766264641583.txt | 263 +++++++++++++++++++++++++++++
+ attached_assets/Pasted--docker-logs-f-kraken-bot-app-tail-50-migrate-Migration_1766264857423.txt |  69 ++++++++
+ attached_assets/Pasted--share-ZFS37-DATA-share-Container-krakenbot-docker-exec_1766264283924.txt |  54 ++++++
+ attached_assets/Pasted-ker-exec-i-kraken-bot-db-psql-U-krakenbot-d-krakenbot-E_1766264692622.txt | 600 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ attached_assets/Pasted-ostgreSQL-Database-directory-appears-to-contain-a-datab_1766262443712.txt |  51 ++++++
+ attached_assets/Pasted-t-process-processTicksAndRejections-node-internal-proce_1766262485991.txt | 253 ++++++++++++++++++++++++++++
+ client/public/opengraph.jpg                                                                      | Bin 81910 -> 81213 bytes
+ replit.md                                                                                        |   5 +
+ server/services/tradingEngine.ts                                                                 |  38 +++++
+ 10 files changed, 1333 insertions(+)
+ create mode 100644 attached_assets/Captura_de_pantalla_(236)_1766264018859.png
+ create mode 100644 attached_assets/Pasted--docker-exec-i-kraken-bot-db-psql-U-krakenbot-d-krakenb_1766264641583.txt
+ create mode 100644 attached_assets/Pasted--docker-logs-f-kraken-bot-app-tail-50-migrate-Migration_1766264857423.txt
+ create mode 100644 attached_assets/Pasted--share-ZFS37-DATA-share-Container-krakenbot-docker-exec_1766264283924.txt
+ create mode 100644 attached_assets/Pasted-ker-exec-i-kraken-bot-db-psql-U-krakenbot-d-krakenbot-E_1766264692622.txt
+ create mode 100644 attached_assets/Pasted-ostgreSQL-Database-directory-appears-to-contain-a-datab_1766262443712.txt
+ create mode 100644 attached_assets/Pasted-t-process-processTicksAndRejections-node-internal-proce_1766262485991.txt
+WARN[0000] /share/ZFS37_DATA/share/Container/krakenbot/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Running 2/2
+ ✔ Container kraken-bot-db   Healthy                                                                                                                                 30.0s
+ ✔ Container kraken-bot-app  Started                                                                                                                                 25.9s
+[/share/ZFS37_DATA/share/Container/krakenbot] # SELECT sg_min_entry_usd FROM bot_config LIMIT 1;)
+-sh: syntax error near unexpected token `)'
+[/share/ZFS37_DATA/share/Container/krakenbot] # cd /share/ZFS37_DATA/share/Container/krakenbot && git pull && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+remote: Enumerating objects: 18, done.
+remote: Counting objects: 100% (18/18), done.
+remote: Compressing objects: 100% (3/3), done.
+remote: Total 13 (delta 10), reused 13 (delta 10), pack-reused 0 (from 0)
+Unpacking objects: 100% (13/13), 328.83 KiB | 1.64 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+   9d837d1..d1bae0e  main       -> origin/main
+Updating 9d837d1..d1bae0e
+Fast-forward
+ attached_assets/Captura_de_pantalla_(239)_1766265736388.png | Bin 0 -> 194970 bytes
+ attached_assets/Captura_de_pantalla_(241)_1766266388073.png | Bin 0 -> 189310 bytes
+ server/services/tradingEngine.ts                            |  96 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++--------------------------
+ 3 files changed, 70 insertions(+), 26 deletions(-)
+ create mode 100644 attached_assets/Captura_de_pantalla_(239)_1766265736388.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(241)_1766266388073.png
+WARN[0000] /share/ZFS37_DATA/share/Container/krakenbot/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Running 2/2
+ ✔ Container kraken-bot-db   Healthy                                                                                                                                 31.0s
+ ✔ Container kraken-bot-app  Started                                                                                                                                 26.9s
+[/share/ZFS37_DATA/share/Container/krakenbot] # -- Ver duplicados
+-sh: --: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # SELECT kraken_order_id, COUNT(*) as count
+IS NOT NULL
+GRO-sh: syntax error near unexpected token `('
+UP BY kraken_order_id
+HAVING COUNT(*) > 1;
+
+-- Borrar duplicado[/share/ZFS37_DATA/share/Container/krakenbot] # FROM trades
+-sh: FROM: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # WHERE kraken_order_id IS NOT NULL
+-sh: WHERE: command not found
+_order_id = b.kraken_order_id;[/share/ZFS37_DATA/share/Container/krakenbot] # GROUP BY kraken_order_id
+-sh: GROUP: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # HAVING COUNT(*) > 1;
+-sh: syntax error near unexpected token `('
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # -- Borrar duplicados (mantener el más antiguo)
+-sh: syntax error near unexpected token `('
+[/share/ZFS37_DATA/share/Container/krakenbot] # DELETE FROM trades a USING trades b
+-sh: DELETE: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # WHERE a.id > b.id
+-sh: WHERE: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # AND a.kraken_order_id = b.kraken_order_id;
+-sh: AND: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "
+> SELECT COUNT(*) as duplicados FROM (
+>   SELECT kraken_order_id
+>   FROM trades
+>   WHERE kraken_order_id IS NOT NULL
+>   GROUP BY kraken_order_id
+>   HAVING COUNT(*) > 1
+> ) t;"
+ duplicados
+------------
+          0
+(1 row)
+
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot
+psql (16.11)
+Type "help" for help.
+
+krakenbot=# BEGIN;
+BEGIN
+krakenbot=*#
+krakenbot=*# -- Cuántos kraken_order_id están duplicados
+(*) as duplicados FROM (
+  SELECkrakenbot=*# SELECT COUNT(*) as duplicados FROM (
+krakenbot(*#   SELECT kraken_order_id
+krakenbot(*#   FROM trades
+krakenbot(*#   WHERE kraken_order_id IS NOT NULL
+raken_order_id
+ krakenbot(*#   GROUP BY kraken_order_id
+krakenbot(*#   HAVING COUNT(*) > 1
+krakenbot(*# ) t;
+s a
+USING trades b
+WHERE a.id > b.id
+  AND a.kraken_order_id IS NOT NULL
+  AND a.kraken_order_id = b.kraken_order_id;
+
+-- Comprueba que ya no quedan duplicados
+SELECT COUNT(*) as duplicados_despues FROM (
+  SELECT kraken_order_id
+  FROM trades
+  WHERE kraken_order_id IS NOT NULL
+  GROUP BY kraken_order_id
+  HAVING COUNT(*) > 1
+) t;
+
+-- Si todo está bien:
+COMMIT;
+
+-- Si NO está bien:
+-- ROLLBACK;
+ duplicados
+------------
+          0
+(1 row)
+
+krakenbot=*#
+krakenbot=*# -- Borra duplicados
+krakenbot=*# DELETE FROM trades a
+krakenbot-*# USING trades b
+krakenbot-*# WHERE a.id > b.id
+krakenbot-*#   AND a.kraken_order_id IS NOT NULL
+krakenbot-*#   AND a.kraken_order_id = b.kraken_order_id;
+DELETE 0
+krakenbot=*#
+krakenbot=*# -- Comprueba que ya no quedan duplicados
+krakenbot=*# SELECT COUNT(*) as duplicados_despues FROM (
+krakenbot(*#   SELECT kraken_order_id
+krakenbot(*#   FROM trades
+krakenbot(*#   WHERE kraken_order_id IS NOT NULL
+krakenbot(*#   GROUP BY kraken_order_id
+krakenbot(*#   HAVING COUNT(*) > 1
+krakenbot(*# ) t;
+ duplicados_despues
+--------------------
+                  0
+(1 row)
+
+krakenbot=*#
+krakenbot=*# -- Si todo está bien:
+krakenbot=*# COMMIT;
+COMMIT
+krakenbot=#
+krakenbot=# -- Si NO está bien:
+krakenbot=# -- ROLLBACK;
+krakenbot=#
+krakenbot=# SELECT COUNT(*) as duplicados FROM (
+krakenbot(#   SELECT kraken_order_id FROM trades
+krakenbot(#   WHERE kraken_order_id IS NOT NULL
+krakenbot(#   GROUP BY kraken_order_id HAVING COUNT(*) > 1
+krakenbot(# ) t;
+ duplicados
+------------
+          0
+(1 row)
+
+krakenbot=# [/share/ZFS37_DATA/share/Container/krakenbot] # git pull origin main
+ose restartFrom https://github.com/luisdepargabitcon/Kraken-Autotrade
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker-compose restart
+-sh: docker-compose: command not found
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Reinicia la app
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker restart kraken-bot-app
+kraken-bot-app
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Reinicia la base de datos
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker restart kraken-bot-db
+kraken-bot-db
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker ps --filter "name=kraken-bot" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+NAMES            STATUS                    PORTS
+kraken-bot-app   Up 20 seconds             0.0.0.0:3000->5000/tcp
+kraken-bot-db    Up 20 seconds (healthy)   5432/tcp
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs -f --tail=200 kraken-bot-app
+
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T21:59:45.882Z",
+  "loopLatencyMs": 30006,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:00:16 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-20T21:45:00.000Z
+10:00:16 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-20T21:45:00.000Z
+[2025-12-20T22:01:15.888Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T22:00:45.882Z",
+  "loopLatencyMs": 30006,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:01:41 PM [express] GET /api/environment 304 in 15ms :: {"env":"NAS/PROD","instanceId":"d85473ad0335-129-144ae4bc","isReplit":false,"isNAS":true,"dryRun":false,"gitCommit":"639feb5"}
+10:01:45 PM [express] GET /api/scan/diagnostic 200 in 2ms :: {"pairs":[{"pair":"BTC/USD","signal":"NONE","razon":"Sin señal activa","exposureAvailable":{"maxPairAvailable":233.07511034900003,"maxTotalAvailable":233.07511034900003,"maxAllowed":233.07511034900003},"hasPosition":true,"positionUsd":75.000189651},{"pair":"ETH/USD","signal":"NONE","razon":"Sin señal activa","exposureAvailable":{"maxPairAvailable":308.0753,"maxTotalAvailable":233.07511034900003,"maxAllowed":233.07511034900003},"hasPosition":false}],"positionMode":"SMART_GUARD","usdBalance":308.0753,"totalOpenPositions":1,"lastScanAt":"2025-12-20T22:01:45.872Z"}
+10:01:49 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:01:50 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+10:01:52 PM [websocket] [WS-LOGS] Iniciando fuente docker_compose: docker compose logs -f --tail=200
+10:01:52 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+10:01:52 PM [websocket] [WS-LOGS] Proceso terminado (docker_compose): código 125
+10:01:53 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+[2025-12-20T22:02:15.889Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T22:01:45.872Z",
+  "loopLatencyMs": 30017,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:03:14 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:03:14 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+[2025-12-20T22:03:15.887Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T22:02:45.884Z",
+  "loopLatencyMs": 30003,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:03:16 PM [express] GET /api/open-positions 200 in 63ms :: [{"id":24,"lotId":"LOT-BTCUSD-1766261714737-e0dswz","pair":"BTC/USD","entryPrice":"88224.10000000","amount":"0.00085011","qtyRemaining":"0.00085011","qtyFilled":"0","highestPrice":"88369.90000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":200,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":false,"sgFeeCushionPct":0.45,"sgTrailStartPct":4,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-20T20:15:14.828Z","updatedAt":"2025-12-20T21:20:26.788Z","currentPrice":"88187","unrealizedPnlUsd":"-0.03","unrealizedPnlPct":"-0.04","entryValueUsd":"75.00","currentValueUsd":"74.97"}]
+10:03:18 PM [express] GET /api/open-positions 200 in 73ms :: [{"id":24,"lotId":"LOT-BTCUSD-1766261714737-e0dswz","pair":"BTC/USD","entryPrice":"88224.10000000","amount":"0.00085011","qtyRemaining":"0.00085011","qtyFilled":"0","highestPrice":"88369.90000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":200,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":false,"sgFeeCushionPct":0.45,"sgTrailStartPct":4,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-20T20:15:14.828Z","updatedAt":"2025-12-20T21:20:26.788Z","currentPrice":"88186.9","unrealizedPnlUsd":"-0.03","unrealizedPnlPct":"-0.04","entryValueUsd":"75.00","currentValueUsd":"74.97"}]
+10:03:18 PM [express] GET /api/open-positions 304 in 67ms :: [{"id":24,"lotId":"LOT-BTCUSD-1766261714737-e0dswz","pair":"BTC/USD","entryPrice":"88224.10000000","amount":"0.00085011","qtyRemaining":"0.00085011","qtyFilled":"0","highestPrice":"88369.90000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":200,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":false,"sgFeeCushionPct":0.45,"sgTrailStartPct":4,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-20T20:15:14.828Z","updatedAt":"2025-12-20T21:20:26.788Z","currentPrice":"88186.9","unrealizedPnlUsd":"-0.03","unrealizedPnlPct":"-0.04","entryValueUsd":"75.00","currentValueUsd":"74.97"}]
+10:03:29 PM [express] GET /api/scan/diagnostic 200 in 40ms :: {"pairs":[{"pair":"BTC/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":{"maxPairAvailable":233.07511034900003,"maxTotalAvailable":233.07511034900003,"maxAllowed":233.07511034900003},"hasPosition":true,"positionUsd":75.000189651},{"pair":"ETH/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":{"maxPairAvailable":308.0753,"maxTotalAvailable":233.07511034900003,"maxAllowed":233.07511034900003},"hasPosition":false}],"positionMode":"SMART_GUARD","usdBalance":308.0753,"totalOpenPositions":1,"lastScanAt":"2025-12-20T22:03:15.889Z"}
+10:03:38 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:03:39 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:03:49 PM [express] GET /api/dashboard 200 in 378ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"momentum","activePairs":["BTC/USD","ETH/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000000","XXBT":"0.0017269408","XXRP":"0.54307332","ZEUR":"0.0000","ZUSD":"308.0753"},"prices":{"XXBTZUSD":{"price":"88187.00000","change":"0.09"},"XETHZUSD":{"price":"2978.57000","change":"0.02"},"SOLUSD":{"price":"126.31000","change":"0.08"},"XXRPZUSD":{"price":"1.93200000","change":"1.26"},"TONUSD":{"price":"1.4940000","change":"0.40"}},"recentTrades":[{"id":344,"tradeId":"KRAKEN-TDFHX3-5FYXR-26DBAB","pair":"ETH/USD","type":"sell","price":"2982.41000000","amount":"0.02517961","status":"filled","krakenOrderId":"TDFHX3-5FYXR-26DBAB","entryPrice":"2984.08798687","realizedPnlUsd":"-0.64318695","realizedPnlPct":"-0.0562","executedAt":"2025-12-20T21:15:27.930Z","createdAt":"2025-12-20T21:29:07.192Z"},{"id":343,"tradeId":"KRAKEN-TRTRKT-GL4GS-6Y74ZL","pair":"ETH/USD","type":"sell","price":"2981.66000000","amount":"0.02517328","status":"filled","krakenOrderId":"TRTRKT-GL4GS-6Y74ZL","entryPrice":"2978.89791648","realizedPnlUsd":"-0.53065384","realizedPnlPct":"0.0927","executedAt":"2025-12-20T21:25:01.868Z","createdAt":"2025-12-20T21:29:07.189Z"},{"id":342,"tradeId":"AUTO-1766265901677","pair":"ETH/USD","type":"sell","price":"2981.61000000","amount":"0.02517328","status":"filled","krakenOrderId":"O2CDZH-Z3RDZ-DCXS5R","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T21:25:01.677Z","createdAt":"2025-12-20T21:25:01.678Z"},{"id":341,"tradeId":"AUTO-1766265327744","pair":"ETH/USD","type":"sell","price":"2982.41000000","amount":"0.02517961","status":"filled","krakenOrderId":"OBCCRY-UZTLG-AJQLM6","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T21:15:27.744Z","createdAt":"2025-12-20T21:15:27.744Z"},{"id":340,"tradeId":"KRAKEN-TG6LWY-GW2UP-KPBJF4","pair":"BTC/USD","type":"buy","price":"88224.10000000","amount":"0.00085011","status":"filled","krakenOrderId":"TG6LWY-GW2UP-KPBJF4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:14.873Z","createdAt":"2025-12-20T20:21:06.611Z"},{"id":339,"tradeId":"KRAKEN-T2HMMV-ONBL6-QQV3TD","pair":"ETH/USD","type":"buy","price":"2978.60000000","amount":"0.02517961","status":"filled","krakenOrderId":"T2HMMV-ONBL6-QQV3TD","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:15.682Z","createdAt":"2025-12-20T20:21:06.608Z"},{"id":338,"tradeId":"KRAKEN-TVGVXA-EXTMB-ICKOZ7","pair":"BTC/USD","type":"buy","price":"88237.00000000","amount":"0.00084998","status":"filled","krakenOrderId":"TVGVXA-EXTMB-ICKOZ7","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:37.742Z","createdAt":"2025-12-20T20:21:06.605Z"},{"id":337,"tradeId":"KRAKEN-TP6REN-PNHBG-N3V4GE","pair":"ETH/USD","type":"buy","price":"2979.35000000","amount":"0.02517328","status":"filled","krakenOrderId":"TP6REN-PNHBG-N3V4GE","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:38.252Z","createdAt":"2025-12-20T20:21:06.602Z"},{"id":332,"tradeId":"KRAKEN-TZTRQO-DKEHH-CAO7O5","pair":"ETH/USD","type":"buy","price":"2844.79000000","amount":"0.01383878","status":"filled","krakenOrderId":"TZTRQO-DKEHH-CAO7O5","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-18T09:30:06.086Z","createdAt":"2025-12-20T19:26:52.315Z"},{"id":331,"tradeId":"KRAKEN-TWBCZT-PLFRN-Z63BB7","pair":"SOL/USD","type":"sell","price":"126.14000000","amount":"0.15151515","status":"filled","krakenOrderId":"TWBCZT-PLFRN-Z63BB7","entryPrice":"123.72000000","realizedPnlUsd":"0.21523416","realizedPnlPct":"1.9560","executedAt":"2025-12-18T16:27:42.316Z","createdAt":"2025-12-20T19:26:52.313Z"}]}
+[2025-12-20T22:04:15.890Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T22:03:45.887Z",
+  "loopLatencyMs": 30003,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[2025-12-20T22:05:15.885Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz"
+  ],
+  "lastScanAt": "2025-12-20T22:04:45.887Z",
+  "loopLatencyMs": 29998,
+  "balanceUsd": 308.0753,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+OK: 53 MiB in 33 packages
+
+up to date, audited 609 packages in 5s
+
+104 packages are looking for funding
+  run `npm fund` for details
+
+12 vulnerabilities (2 low, 8 moderate, 2 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+building client...
+vite v7.1.12 building for production...
+transforming...
+✓ 2506 modules transformed.
+rendering chunks...
+[meta-images] no Replit deployment domain found, skipping meta tag updates
+computing gzip size...
+../dist/public/index.html                                                1.48 kB │ gzip:   0.61 kB
+../dist/public/assets/dark_digital_hex_grid_background-CH-7zMzl.png  1,414.45 kB
+../dist/public/assets/index-b2p_KN3q.css                               109.62 kB │ gzip:  18.43 kB
+../dist/public/assets/index-BGe-Dc74.js                              1,063.57 kB │ gzip: 299.78 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 9.38s
+building server...
+
+  dist/index.cjs  2.2mb ⚠️
+
+⚡ Done in 245ms
+[migrate] Starting non-interactive database migration...
+[migrate] Applying bot_config migrations...
+[migrate] Applying open_positions migrations...
+[migrate] Backfilling lot_id for existing positions...
+[migrate] Checking lot_id uniqueness...
+[migrate] lot_id unique constraint already exists
+[migrate] Migration completed successfully!
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+10:05:49 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+10:05:49 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: true)
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+[telegram] Heartbeat iniciado (cada 12h)
+[startup] Starting trading engine...
+10:05:49 PM [express] serving on port 5000
+[kraken] Loading pair metadata for: BTC/USD, ETH/USD
+[kraken] BTC/USD: lotDecimals=8, orderMin=0.00005, stepSize=1e-8
+[kraken] ETH/USD: lotDecimals=8, orderMin=0.001, stepSize=1e-8
+[kraken] Pair metadata loaded successfully for 2 pairs
+[kraken] Metadata refresh scheduled every 6h
+10:05:50 PM [websocket] [WS] Cliente conectado. Total: 1
+10:05:50 PM [trading] Balance inicial USD: $308.08
+10:05:50 PM [trading] Motor de trading iniciado
+10:05:50 PM [trading] Posición recuperada: BTC/USD (LOT-BTCUSD-1766261714737-e0dswz) - 0.00085011 @ $88224.10000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+10:05:50 PM [trading] 1 posiciones abiertas (1 lotes) cargadas desde la base de datos
+[2025-12-20T22:05:50.663Z] [INFO] [BOT_STARTED] Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "balanceUsd": 308.0753,
+  "openPositions": 1,
+  "dryRunMode": false,
+  "isReplitEnvironment": false
+}
+10:05:50 PM [trading] Nuevo día de trading: 2025-12-20. Balance inicial: $308.08
+[2025-12-20T22:05:50.865Z] [INFO] [DAILY_LIMIT_RESET] Nuevo día de trading: 2025-12-20
+  Meta: {
+  "date": "2025-12-20",
+  "previousDayPnL": 0,
+  "startBalance": 308.0753
+}
+10:05:51 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-20T21:45:00.000Z
+10:05:51 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-20T21:45:00.000Z
