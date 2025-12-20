@@ -21,6 +21,10 @@ import {
   type InsertAiShadowDecision,
   type InsertAiConfig,
   type InsertTrainingTrade,
+  type TradeFill,
+  type LotMatch,
+  type InsertTradeFill,
+  type InsertLotMatch,
   botConfig as botConfigTable,
   trades as tradesTable,
   notifications as notificationsTable,
@@ -28,6 +32,8 @@ import {
   apiConfig as apiConfigTable,
   telegramChats as telegramChatsTable,
   openPositions as openPositionsTable,
+  tradeFills as tradeFillsTable,
+  lotMatches as lotMatchesTable,
   aiTradeSamples as aiTradeSamplesTable,
   aiShadowDecisions as aiShadowDecisionsTable,
   aiConfig as aiConfigTable,
@@ -80,6 +86,20 @@ export interface IStorage {
   updateOpenPositionLotId(id: number, lotId: string): Promise<void>;
   deleteOpenPosition(pair: string): Promise<void>;
   deleteOpenPositionByLotId(lotId: string): Promise<void>;
+  getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]>;
+  updateOpenPositionQty(lotId: string, qtyRemaining: string, qtyFilled: string): Promise<void>;
+  initializeQtyRemainingForAll(): Promise<number>;
+  
+  // Trade fills
+  upsertTradeFill(fill: InsertTradeFill): Promise<{ inserted: boolean; fill?: TradeFill }>;
+  getTradeFillByTxid(txid: string): Promise<TradeFill | undefined>;
+  getUnmatchedSellFills(pair: string): Promise<TradeFill[]>;
+  markFillAsMatched(txid: string): Promise<void>;
+  
+  // Lot matches (FIFO matcher audit trail)
+  createLotMatch(match: InsertLotMatch): Promise<LotMatch>;
+  getLotMatchesByLotId(lotId: string): Promise<LotMatch[]>;
+  getLotMatchBySellFillAndLot(sellFillTxid: string, lotId: string): Promise<LotMatch | undefined>;
   
   saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample>;
   updateAiSample(sampleId: number, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
@@ -474,6 +494,100 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOpenPositionByLotId(lotId: string): Promise<void> {
     await db.delete(openPositionsTable).where(eq(openPositionsTable.lotId, lotId));
+  }
+
+  async getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]> {
+    // Returns only positions with qtyRemaining > 0 (or null which means not yet initialized)
+    return await db.select().from(openPositionsTable)
+      .where(sql`${openPositionsTable.qtyRemaining} > 0 OR ${openPositionsTable.qtyRemaining} IS NULL`)
+      .orderBy(openPositionsTable.openedAt);
+  }
+
+  async updateOpenPositionQty(lotId: string, qtyRemaining: string, qtyFilled: string): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({ qtyRemaining, qtyFilled, updatedAt: new Date() })
+      .where(eq(openPositionsTable.lotId, lotId));
+  }
+
+  async initializeQtyRemainingForAll(): Promise<number> {
+    // Initialize qtyRemaining = amount for all positions where qtyRemaining is null
+    const result = await db.execute(sql`
+      UPDATE open_positions 
+      SET qty_remaining = amount, qty_filled = '0'
+      WHERE qty_remaining IS NULL
+    `);
+    return Number(result.rowCount || 0);
+  }
+
+  // Trade fills
+  async upsertTradeFill(fill: InsertTradeFill): Promise<{ inserted: boolean; fill?: TradeFill }> {
+    const existing = await this.getTradeFillByTxid(fill.txid);
+    if (existing) {
+      return { inserted: false, fill: existing };
+    }
+    try {
+      const [newFill] = await db.insert(tradeFillsTable).values(fill).returning();
+      return { inserted: true, fill: newFill };
+    } catch (error: any) {
+      if (error.code === '23505') { // Unique violation
+        const existingFill = await this.getTradeFillByTxid(fill.txid);
+        return { inserted: false, fill: existingFill };
+      }
+      throw error;
+    }
+  }
+
+  async getTradeFillByTxid(txid: string): Promise<TradeFill | undefined> {
+    const fills = await db.select().from(tradeFillsTable)
+      .where(eq(tradeFillsTable.txid, txid))
+      .limit(1);
+    return fills[0];
+  }
+
+  async getUnmatchedSellFills(pair: string): Promise<TradeFill[]> {
+    return await db.select().from(tradeFillsTable)
+      .where(and(
+        eq(tradeFillsTable.pair, pair),
+        sql`UPPER(${tradeFillsTable.type}) = 'SELL'`,
+        eq(tradeFillsTable.matched, false)
+      ))
+      .orderBy(tradeFillsTable.executedAt);
+  }
+
+  async markFillAsMatched(txid: string): Promise<void> {
+    await db.update(tradeFillsTable)
+      .set({ matched: true })
+      .where(eq(tradeFillsTable.txid, txid));
+  }
+
+  // Lot matches
+  async createLotMatch(match: InsertLotMatch): Promise<LotMatch> {
+    try {
+      const [newMatch] = await db.insert(lotMatchesTable).values(match).returning();
+      return newMatch;
+    } catch (error: any) {
+      if (error.code === '23505') { // Unique violation - already exists
+        const existing = await this.getLotMatchBySellFillAndLot(match.sellFillTxid, match.lotId);
+        if (existing) return existing;
+      }
+      throw error;
+    }
+  }
+
+  async getLotMatchesByLotId(lotId: string): Promise<LotMatch[]> {
+    return await db.select().from(lotMatchesTable)
+      .where(eq(lotMatchesTable.lotId, lotId))
+      .orderBy(lotMatchesTable.createdAt);
+  }
+
+  async getLotMatchBySellFillAndLot(sellFillTxid: string, lotId: string): Promise<LotMatch | undefined> {
+    const matches = await db.select().from(lotMatchesTable)
+      .where(and(
+        eq(lotMatchesTable.sellFillTxid, sellFillTxid),
+        eq(lotMatchesTable.lotId, lotId)
+      ))
+      .limit(1);
+    return matches[0];
   }
 
   async saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample> {

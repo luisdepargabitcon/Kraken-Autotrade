@@ -1365,6 +1365,84 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // FIFO Matcher endpoints
+  app.post("/api/fifo/init-lots", async (req, res) => {
+    try {
+      const { fifoMatcher } = await import("./services/fifoMatcher");
+      const initialized = await fifoMatcher.initializeLots();
+      res.json({ success: true, lotsInitialized: initialized });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to initialize lots" });
+    }
+  });
+
+  app.post("/api/fifo/process-sells", async (req, res) => {
+    try {
+      const { fifoMatcher } = await import("./services/fifoMatcher");
+      const result = await fifoMatcher.processAllUnmatchedSells();
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to process sells" });
+    }
+  });
+
+  app.post("/api/fifo/ingest-fill", async (req, res) => {
+    try {
+      const { txid, orderId, pair, type, price, amount, cost, fee, executedAt } = req.body;
+      
+      if (!txid || !pair || !type || !price || !amount) {
+        return res.status(400).json({ error: "Missing required fields: txid, pair, type, price, amount" });
+      }
+
+      const fillResult = await storage.upsertTradeFill({
+        txid,
+        orderId: orderId || txid,
+        pair,
+        type: type.toLowerCase(),
+        price: price.toString(),
+        amount: amount.toString(),
+        cost: (cost || parseFloat(price) * parseFloat(amount)).toString(),
+        fee: (fee || 0).toString(),
+        matched: false,
+        executedAt: new Date(executedAt || Date.now()),
+      });
+
+      if (!fillResult.inserted) {
+        return res.json({ success: true, message: "Fill already exists", fill: fillResult.fill });
+      }
+
+      if (type.toUpperCase() === "SELL") {
+        const { fifoMatcher } = await import("./services/fifoMatcher");
+        const matchResult = await fifoMatcher.processSellFill(fillResult.fill!);
+        return res.json({ success: true, fill: fillResult.fill, matchResult });
+      }
+
+      res.json({ success: true, fill: fillResult.fill });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to ingest fill" });
+    }
+  });
+
+  app.get("/api/fifo/open-lots", async (req, res) => {
+    try {
+      const lots = await storage.getOpenPositionsWithQtyRemaining();
+      res.json({
+        count: lots.length,
+        lots: lots.map(l => ({
+          lotId: l.lotId,
+          pair: l.pair,
+          entryPrice: l.entryPrice,
+          amount: l.amount,
+          qtyRemaining: l.qtyRemaining || l.amount,
+          qtyFilled: l.qtyFilled || "0",
+          openedAt: l.openedAt,
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get open lots" });
+    }
+  });
+
   app.get("/api/kraken/trades", async (req, res) => {
     try {
       if (!krakenService.isInitialized()) {
