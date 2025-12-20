@@ -1,0 +1,69 @@
+[~] # docker logs -f kraken-bot-app --tail=50
+[migrate] Migration completed successfully!
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+9:06:25 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:06:25 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: true)
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+[telegram] Heartbeat iniciado (cada 12h)
+[startup] Starting trading engine...
+9:06:25 PM [express] serving on port 5000
+[kraken] Loading pair metadata for: BTC/USD, ETH/USD, XRP/USD
+[kraken] BTC/USD: lotDecimals=8, orderMin=0.00005, stepSize=1e-8
+[kraken] ETH/USD: lotDecimals=8, orderMin=0.001, stepSize=1e-8
+[kraken] XRP/USD: lotDecimals=8, orderMin=1.65, stepSize=1e-8
+[kraken] Pair metadata loaded successfully for 3 pairs
+[kraken] Metadata refresh scheduled every 6h
+9:06:26 PM [trading] Balance inicial USD: $158.52
+9:06:26 PM [trading] Motor de trading iniciado
+9:06:26 PM [trading] Posición recuperada: BTC/USD (LOT-BTCUSD-1766261714737-e0dswz) - 0.00085011 @ $88224.10000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+9:06:26 PM [trading] Posición recuperada: ETH/USD (LOT-ETHUSD-1766261715545-jp6j2n) - 0.02517961 @ $2978.60000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+9:06:26 PM [trading] 2 posiciones abiertas (2 lotes) cargadas desde la base de datos
+9:06:26 PM [websocket] [WS] Cliente conectado. Total: 1
+[2025-12-20T21:06:26.412Z] [INFO] [BOT_STARTED] Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "balanceUsd": 158.5218,
+  "openPositions": 2,
+  "dryRunMode": false,
+  "isReplitEnvironment": false
+}
+9:06:26 PM [trading] Nuevo día de trading: 2025-12-20. Balance inicial: $158.52
+[2025-12-20T21:06:26.879Z] [INFO] [DAILY_LIMIT_RESET] Nuevo día de trading: 2025-12-20
+  Meta: {
+  "date": "2025-12-20",
+  "previousDayPnL": 0,
+  "startBalance": 158.5218
+}
+9:06:27 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-20T20:45:00.000Z
+9:06:27 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-20T20:45:00.000Z
+9:06:27 PM [trading] Nueva vela cerrada XRP/USD/15m @ 2025-12-20T20:45:00.000Z
+9:06:28 PM [websocket] [WS] Cliente conectado. Total: 2
+[2025-12-20T21:07:26.589Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766261714737-e0dswz",
+    "LOT-ETHUSD-1766261715545-jp6j2n"
+  ],
+  "lastScanAt": "2025-12-20T21:06:56.585Z",
+  "loopLatencyMs": 30004,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
