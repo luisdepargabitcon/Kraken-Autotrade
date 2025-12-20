@@ -1639,13 +1639,22 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
       }
       
       if (success) {
-        if (shouldSellFull || position.amount <= 0) {
+        // Reduce position amount by what was sold
+        position.amount -= sellAmount;
+        
+        // Use epsilon comparison for floating-point safety (treat < 0.00000001 as zero)
+        const EPSILON = 1e-8;
+        const positionIsEmpty = shouldSellFull || position.amount < EPSILON;
+        
+        if (positionIsEmpty) {
           this.openPositions.delete(lotId);
           await this.deletePositionFromDBByLotId(lotId);
+          log(`SMART_GUARD ${pair} (${lotId}): Posición cerrada completamente`, "trading");
         } else {
-          // Partial sell (scale-out)
+          // Partial sell (scale-out) - save reduced position
           this.openPositions.set(lotId, position);
           await this.savePositionToDB(pair, position);
+          log(`SMART_GUARD ${pair} (${lotId}): Venta parcial, restante: ${position.amount.toFixed(8)}`, "trading");
         }
         this.lastTradeTime.set(pair, Date.now());
       }
