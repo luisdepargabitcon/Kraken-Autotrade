@@ -1,0 +1,253 @@
+t process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async j2.getOpenPositions (/app/dist/index.cjs:76:2810)
+    at async /app/dist/index.cjs:648:11952 {
+  length: 113,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '57',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+[api/open-positions] Error: error: column "qty_remaining" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async j2.getOpenPositions (/app/dist/index.cjs:76:2810)
+    at async /app/dist/index.cjs:648:11952 {
+  length: 113,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '57',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+8:22:49 PM [express] GET /api/open-positions 500 in 22ms :: {"error":"Failed to get open positions"}
+8:22:49 PM [express] GET /api/trades/closed 304 in 24ms :: {"trades":[{"id":337,"tradeId":"KRAKEN-TP6REN-PNHBG-N3V4GE","pair":"ETH/USD","type":"buy","price":"2979.35000000","amount":"0.02517328","status":"filled","krakenOrderId":"TP6REN-PNHBG-N3V4GE","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:38.252Z","createdAt":"2025-12-20T20:21:06.602Z","totalUsd":"75.00","entryValueUsd":null},{"id":336,"tradeId":"AUTO-1766262038106","pair":"ETH/USD","type":"buy","price":"2979.35000000","amount":"0.02517328","status":"filled","krakenOrderId":"O44CSM-NNBFL-KJ5NNA","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:38.106Z","createdAt":"2025-12-20T20:20:38.107Z","totalUsd":"75.00","entryValueUsd":null},{"id":338,"tradeId":"KRAKEN-TVGVXA-EXTMB-ICKOZ7","pair":"BTC/USD","type":"buy","price":"88237.00000000","amount":"0.00084998","status":"filled","krakenOrderId":"TVGVXA-EXTMB-ICKOZ7","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:37.742Z","createdAt":"2025-12-20T20:21:06.605Z","totalUsd":"75.00","entryValueUsd":null},{"id":335,"tradeId":"AUTO-1766262037597","pair":"BTC/USD","type":"buy","price":"88237.00000000","amount":"0.00084998","status":"filled","krakenOrderId":"OXS3ZW-QUBBS-ZYSARK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:37.597Z","createdAt":"2025-12-20T20:20:37.598Z","totalUsd":"75.00","entryValueUsd":null},{"id":339,"tradeId":"KRAKEN-T2HMMV-ONBL6-QQV3TD","pair":"ETH/USD","type":"buy","price":"2978.60000000","amount":"0.02517961","status":"filled","krakenOrderId":"T2HMMV-ONBL6-QQV3TD","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:15.682Z","createdAt":"2025-12-20T20:21:06.608Z","totalUsd":"75.00","entryValueUsd":null},{"id":334,"tradeId":"AUTO-1766261715543","pair":"ETH/USD","type":"buy","price":"2978.60000000","amount":"0.02517961","status":"filled","krakenOrderId":"O2Q2YP-5OROB-L37DL2","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:15.543Z","createdAt":"2025-12-20T20:15:15.543Z","totalUsd":"75.00","entryValueUsd":null},{"id":340,"tradeId":"KRAKEN-TG6LWY-GW2UP-KPBJF4","pair":"BTC/USD","type":"buy","price":"88224.10000000","amount":"0.00085011","status":"filled","krakenOrderId":"TG6LWY-GW2UP-KPBJF4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:14.873Z","createdAt":"2025-12-20T20:21:06.611Z","totalUsd":"75.00","entryValueUsd":null},{"id":333,"tradeId":"AUTO-1766261714733","pair":"BTC/USD","type":"buy","price":"88224.10000000","amount":"0.00085011","status":"filled","krakenOrderId":"OOY2HQ-XPL5U-ZENUZP","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:14.733Z","createdAt":"2025-12-20T20:15:14.734Z","totalUsd":"75.00","entryValueUsd":null},{"id":301,"tradeId":"AUTO-1766249119189","pair":"BTC/USD","type":"sell","price":"88094.80000000","amount":"0.00085022","status":"filled","krakenOrderId":"OJGYZW-GYGGF-ZDGFOM","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T16:45:19.189Z","createdAt":"2025-12-20T16:45:19.190Z","totalUsd":"74.90","entryValueUsd":null},{"id":302,"tradeId":"KRAKEN-TZJPYU-OFG4D-AXWCOD","pair":"BTC/USD","type":"sell","price":"88094.70490000","amount":"0.00085022","status":"filled","krakenOrderId":"TZJPYU-OFG4D-AXWCOD","entryPrice":"88200.70203947","realizedPnlUsd":"-0.69","realizedPnlPct":"-0.12","executedAt":"2025-12-20T16:45:19.156Z","createdAt":"2025-12-20T19:26:52.233Z","totalUsd":"74.90","entryValueUsd":"74.99"}],"total":340,"limit":10,"offset":0}
+8:22:52 PM [express] GET /api/open-positions 500 in 3ms :: {"error":"Failed to get open positions"}
+8:22:52 PM [express] GET /api/config 304 in 5ms :: {"id":1,"isActive":true,"strategy":"momentum","signalTimeframe":"15m","riskLevel":"high","activePairs":["BTC/USD","ETH/USD","XRP/USD"],"stopLossPercent":"13.50","takeProfitPercent":"4.00","trailingStopEnabled":true,"trailingStopPercent":"10.00","nonceErrorAlertsEnabled":true,"dailyLossLimitEnabled":true,"dailyLossLimitPercent":"10.00","maxPairExposurePct":"100.00","maxTotalExposurePct":"100.00","riskPerTradePct":"100.00","tradingHoursEnabled":false,"tradingHoursStart":"0","tradingHoursEnd":"23","positionMode":"SMART_GUARD","sgMinEntryUsd":"200.00","sgAllowUnderMin":false,"sgBeAtPct":"2.50","sgFeeCushionPct":"0.45","sgFeeCushionAuto":true,"sgTrailStartPct":"4.00","sgTrailDistancePct":"2.50","sgTrailStepPct":"0.60","sgTpFixedEnabled":true,"sgTpFixedPct":"7.00","sgScaleOutEnabled":false,"sgScaleOutPct":"-30.00","sgMinPartUsd":"50.00","sgScaleOutThreshold":"80.00","sgMaxOpenLotsPerPair":2,"sgPairOverrides":null,"dryRunMode":false,"updatedAt":"2025-12-20T19:54:04.490Z"}
+8:22:52 PM [express] GET /api/trades/closed 304 in 16ms :: {"trades":[{"id":337,"tradeId":"KRAKEN-TP6REN-PNHBG-N3V4GE","pair":"ETH/USD","type":"buy","price":"2979.35000000","amount":"0.02517328","status":"filled","krakenOrderId":"TP6REN-PNHBG-N3V4GE","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:38.252Z","createdAt":"2025-12-20T20:21:06.602Z","totalUsd":"75.00","entryValueUsd":null},{"id":336,"tradeId":"AUTO-1766262038106","pair":"ETH/USD","type":"buy","price":"2979.35000000","amount":"0.02517328","status":"filled","krakenOrderId":"O44CSM-NNBFL-KJ5NNA","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:38.106Z","createdAt":"2025-12-20T20:20:38.107Z","totalUsd":"75.00","entryValueUsd":null},{"id":338,"tradeId":"KRAKEN-TVGVXA-EXTMB-ICKOZ7","pair":"BTC/USD","type":"buy","price":"88237.00000000","amount":"0.00084998","status":"filled","krakenOrderId":"TVGVXA-EXTMB-ICKOZ7","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:37.742Z","createdAt":"2025-12-20T20:21:06.605Z","totalUsd":"75.00","entryValueUsd":null},{"id":335,"tradeId":"AUTO-1766262037597","pair":"BTC/USD","type":"buy","price":"88237.00000000","amount":"0.00084998","status":"filled","krakenOrderId":"OXS3ZW-QUBBS-ZYSARK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:20:37.597Z","createdAt":"2025-12-20T20:20:37.598Z","totalUsd":"75.00","entryValueUsd":null},{"id":339,"tradeId":"KRAKEN-T2HMMV-ONBL6-QQV3TD","pair":"ETH/USD","type":"buy","price":"2978.60000000","amount":"0.02517961","status":"filled","krakenOrderId":"T2HMMV-ONBL6-QQV3TD","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:15.682Z","createdAt":"2025-12-20T20:21:06.608Z","totalUsd":"75.00","entryValueUsd":null},{"id":334,"tradeId":"AUTO-1766261715543","pair":"ETH/USD","type":"buy","price":"2978.60000000","amount":"0.02517961","status":"filled","krakenOrderId":"O2Q2YP-5OROB-L37DL2","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:15.543Z","createdAt":"2025-12-20T20:15:15.543Z","totalUsd":"75.00","entryValueUsd":null},{"id":340,"tradeId":"KRAKEN-TG6LWY-GW2UP-KPBJF4","pair":"BTC/USD","type":"buy","price":"88224.10000000","amount":"0.00085011","status":"filled","krakenOrderId":"TG6LWY-GW2UP-KPBJF4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:14.873Z","createdAt":"2025-12-20T20:21:06.611Z","totalUsd":"75.00","entryValueUsd":null},{"id":333,"tradeId":"AUTO-1766261714733","pair":"BTC/USD","type":"buy","price":"88224.10000000","amount":"0.00085011","status":"filled","krakenOrderId":"OOY2HQ-XPL5U-ZENUZP","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T20:15:14.733Z","createdAt":"2025-12-20T20:15:14.734Z","totalUsd":"75.00","entryValueUsd":null},{"id":301,"tradeId":"AUTO-1766249119189","pair":"BTC/USD","type":"sell","price":"88094.80000000","amount":"0.00085022","status":"filled","krakenOrderId":"OJGYZW-GYGGF-ZDGFOM","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-20T16:45:19.189Z","createdAt":"2025-12-20T16:45:19.190Z","totalUsd":"74.90","entryValueUsd":null},{"id":302,"tradeId":"KRAKEN-TZJPYU-OFG4D-AXWCOD","pair":"BTC/USD","type":"sell","price":"88094.70490000","amount":"0.00085022","status":"filled","krakenOrderId":"TZJPYU-OFG4D-AXWCOD","entryPrice":"88200.70203947","realizedPnlUsd":"-0.69","realizedPnlPct":"-0.12","executedAt":"2025-12-20T16:45:19.156Z","createdAt":"2025-12-20T19:26:52.233Z","totalUsd":"74.90","entryValueUsd":"74.99"}],"total":340,"limit":10,"offset":0}
+8:23:07 PM [trading] Error actualizando highestPrice LOT-BTCUSD-1766262037602-qvmgip: column "qty_remaining" does not exist
+[36m[2025-12-20T20:23:37.095Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766262037602-qvmgip",
+    "LOT-ETHUSD-1766262038112-q5muo4"
+  ],
+  "lastScanAt": "2025-12-20T20:23:07.095Z",
+  "loopLatencyMs": 30000,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+8:23:37 PM [trading] Error actualizando highestPrice LOT-BTCUSD-1766262037602-qvmgip: column "qty_remaining" does not exist
+8:23:37 PM [trading] Error actualizando highestPrice LOT-ETHUSD-1766262038112-q5muo4: column "qty_remaining" does not exist
+8:24:07 PM [trading] Error actualizando highestPrice LOT-ETHUSD-1766262038112-q5muo4: column "qty_remaining" does not exist
+[36m[2025-12-20T20:24:37.097Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766262037602-qvmgip",
+    "LOT-ETHUSD-1766262038112-q5muo4"
+  ],
+  "lastScanAt": "2025-12-20T20:24:07.093Z",
+  "loopLatencyMs": 30004,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[kraken] Nonce error on 'getBalance', retrying (1/3)...
+[36m[2025-12-20T20:25:37.094Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766262037602-qvmgip",
+    "LOT-ETHUSD-1766262038112-q5muo4"
+  ],
+  "lastScanAt": "2025-12-20T20:25:07.098Z",
+  "loopLatencyMs": 29996,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-20T20:25:37.097Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52211474000002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52178823200002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 158.5218,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    }
+  },
+  "scanTime": "2025-12-20T20:25:07.098Z"
+}
+8:26:07 PM [trading] Error actualizando highestPrice LOT-BTCUSD-1766262037602-qvmgip: column "qty_remaining" does not exist
+[36m[2025-12-20T20:26:37.095Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766262037602-qvmgip",
+    "LOT-ETHUSD-1766262038112-q5muo4"
+  ],
+  "lastScanAt": "2025-12-20T20:26:07.096Z",
+  "loopLatencyMs": 29999,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-20T20:26:37.097Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52211474000002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52178823200002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 158.5218,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    }
+  },
+  "scanTime": "2025-12-20T20:26:07.096Z"
+}
+8:26:59 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+8:27:07 PM [trading] Error actualizando highestPrice LOT-BTCUSD-1766262037602-qvmgip: column "qty_remaining" does not exist
+8:27:07 PM [trading] Error actualizando highestPrice LOT-ETHUSD-1766262038112-q5muo4: column "qty_remaining" does not exist
+8:27:17 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+8:27:17 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+[36m[2025-12-20T20:27:37.097Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766262037602-qvmgip",
+    "LOT-ETHUSD-1766262038112-q5muo4"
+  ],
+  "lastScanAt": "2025-12-20T20:27:07.098Z",
+  "loopLatencyMs": 29999,
+  "balanceUsd": 158.5218,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-20T20:27:37.099Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52211474000002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 83.52178823200002,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": {
+        "maxPairAvailable": 158.5218,
+        "maxTotalAvailable": 8.522102972000027,
+        "maxAllowed": 8.522102972000027
+      }
+    }
+  },
+  "scanTime": "2025-12-20T20:27:07.098Z"
+}
+8:27:37 PM [trading] Error actualizando highestPrice LOT-BTCUSD-1766262037602-qvmgip: column "qty_remaining" does not exist
+8:27:37 PM [trading] Error actualizando highestPrice LOT-ETHUSD-1766262038112-q5muo4: column "qty_remaining" does not exist
