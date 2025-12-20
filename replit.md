@@ -76,6 +76,26 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Simulation**: In DRY_RUN, executeTrade() logs events and sends "[DRY_RUN] Trade Simulado" Telegram messages without touching Kraken.
 - **Production Safety**: NAS is the source of truth for production trading; Replit is development/testing only.
 
+### FIFO Position Matching
+- **Purpose**: Automatic position closing with partial fills tracking to eliminate "phantom positions."
+- **Tables**:
+  - `trade_fills`: Individual fills with UNIQUE(txid), matched flag for idempotency.
+  - `lot_matches`: FIFO matching audit trail with UNIQUE(sellFillTxid, lotId).
+  - `open_positions.qtyRemaining/qtyFilled`: Track partial consumption of buy lots.
+- **FIFO Logic**:
+  - Sell fills match against oldest buy lots first (ORDER BY openedAt ASC).
+  - Uses SELECT FOR UPDATE within transaction to prevent concurrent double-consumption.
+  - Pro-rates buy/sell fees based on matched quantity for accurate P&L.
+- **Orphan Handling**: 
+  - Fills only marked `matched=true` when fully processed (sellRemaining ≈ 0).
+  - Orphan fills (no matching lots) remain unmatched for future retry.
+- **API Endpoints**:
+  - `POST /api/fifo/init-lots`: Initialize qtyRemaining = amount for existing lots.
+  - `POST /api/fifo/process-sells`: Process all unmatched sell fills.
+  - `POST /api/fifo/ingest-fill`: Ingest a new fill and trigger FIFO matching.
+  - `GET /api/fifo/open-lots`: Get lots with qtyRemaining > 0.
+- **Transaction Safety**: All operations (lot select, match insert, qty update, fill mark) run within same tx handle.
+
 ### AI Filter Module
 - **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
 - **Phases**: Red (data collection), Yellow (ready to train), Green (filter active).
