@@ -1,7 +1,11 @@
 import { db } from "../db";
 import { storage } from "../storage";
-import { sql } from "drizzle-orm";
-import { openPositions as openPositionsTable } from "@shared/schema";
+import { sql, eq, and } from "drizzle-orm";
+import { 
+  openPositions as openPositionsTable,
+  lotMatches as lotMatchesTable,
+  tradeFills as tradeFillsTable
+} from "@shared/schema";
 import type { TradeFill, OpenPosition, LotMatch } from "@shared/schema";
 
 export interface MatchResult {
@@ -14,6 +18,7 @@ export interface MatchResult {
   matchesCreated: LotMatch[];
   orphanQty: number;
   pnlNet: number;
+  fullyMatched: boolean;
 }
 
 export class FifoMatcher {
@@ -28,6 +33,7 @@ export class FifoMatcher {
       matchesCreated: [],
       orphanQty: 0,
       pnlNet: 0,
+      fullyMatched: false,
     };
 
     const sellQty = parseFloat(sellFill.amount);
@@ -35,7 +41,7 @@ export class FifoMatcher {
     const sellFeeTotal = parseFloat(sellFill.fee);
     let sellRemaining = sellQty;
 
-    // Use transaction with row-level locking
+    // Use transaction with row-level locking - ALL operations inside tx
     await db.transaction(async (tx) => {
       // SELECT FOR UPDATE to lock lots for this pair
       const openLots = await tx.select().from(openPositionsTable)
@@ -45,7 +51,7 @@ export class FifoMatcher {
         .for("update");
       
       if (openLots.length === 0) {
-        console.log(`[FifoMatcher] No open lots for ${sellFill.pair}, marking as orphan`);
+        console.log(`[FifoMatcher] No open lots for ${sellFill.pair}, orphan qty=${sellRemaining.toFixed(8)}`);
         result.orphanQty = sellRemaining;
         result.remainingUnmatched = sellRemaining;
         return;
@@ -59,11 +65,16 @@ export class FifoMatcher {
         
         const matchQty = Math.min(sellRemaining, lotQtyRemaining);
         
-        // Check for existing match (idempotency)
-        const existingMatch = await storage.getLotMatchBySellFillAndLot(sellFill.txid, lot.lotId);
-        if (existingMatch) {
+        // Check for existing match WITHIN TRANSACTION (idempotency)
+        const existingMatches = await tx.select().from(lotMatchesTable)
+          .where(and(
+            eq(lotMatchesTable.sellFillTxid, sellFill.txid),
+            eq(lotMatchesTable.lotId, lot.lotId)
+          ));
+        
+        if (existingMatches.length > 0) {
+          const existingMatch = existingMatches[0];
           console.log(`[FifoMatcher] Match already exists for ${sellFill.txid} + ${lot.lotId}, adjusting sellRemaining`);
-          // Existing match means this qty was already processed, deduct it
           sellRemaining -= parseFloat(existingMatch.matchedQty);
           result.totalMatched += parseFloat(existingMatch.matchedQty);
           result.pnlNet += parseFloat(existingMatch.pnlNet);
@@ -71,7 +82,6 @@ export class FifoMatcher {
         }
 
         const buyPrice = parseFloat(lot.entryPrice);
-        // Use actual fee from configSnapshot if available, else estimate
         const buyFeeTotal = this.getBuyFee(lot);
         const buyFeeAllocated = (matchQty / parseFloat(lot.amount)) * buyFeeTotal;
         const sellFeeAllocated = (matchQty / sellQty) * sellFeeTotal;
@@ -85,7 +95,8 @@ export class FifoMatcher {
         const newQtyFilled = parseFloat(lot.qtyFilled || "0") + matchQty;
 
         try {
-          const match = await storage.createLotMatch({
+          // Create lot match WITHIN TRANSACTION
+          const [match] = await tx.insert(lotMatchesTable).values({
             sellFillTxid: sellFill.txid,
             lotId: lot.lotId,
             matchedQty: matchQty.toFixed(8),
@@ -94,19 +105,24 @@ export class FifoMatcher {
             buyFeeAllocated: buyFeeAllocated.toFixed(8),
             sellFeeAllocated: sellFeeAllocated.toFixed(8),
             pnlNet: pnlNet.toFixed(8),
-          });
+          }).returning();
+          
           result.matchesCreated.push(match);
           result.pnlNet += pnlNet;
           sellRemaining -= matchQty;
           result.totalMatched += matchQty;
         } catch (error: any) {
           if (error.code === '23505') {
-            // Duplicate - match already exists, reconcile
-            const existing = await storage.getLotMatchBySellFillAndLot(sellFill.txid, lot.lotId);
-            if (existing) {
-              sellRemaining -= parseFloat(existing.matchedQty);
-              result.totalMatched += parseFloat(existing.matchedQty);
-              result.pnlNet += parseFloat(existing.pnlNet);
+            // Duplicate - race condition, reconcile within tx
+            const existing = await tx.select().from(lotMatchesTable)
+              .where(and(
+                eq(lotMatchesTable.sellFillTxid, sellFill.txid),
+                eq(lotMatchesTable.lotId, lot.lotId)
+              ));
+            if (existing.length > 0) {
+              sellRemaining -= parseFloat(existing[0].matchedQty);
+              result.totalMatched += parseFloat(existing[0].matchedQty);
+              result.pnlNet += parseFloat(existing[0].pnlNet);
             }
             continue;
           }
@@ -121,27 +137,33 @@ export class FifoMatcher {
             qtyFilled: newQtyFilled.toFixed(8),
             updatedAt: new Date() 
           })
-          .where(sql`${openPositionsTable.lotId} = ${lot.lotId}`);
+          .where(eq(openPositionsTable.lotId, lot.lotId));
         result.lotsUpdated++;
 
         if (newQtyRemaining <= 0.00000001) {
           await tx.delete(openPositionsTable)
-            .where(sql`${openPositionsTable.lotId} = ${lot.lotId}`);
+            .where(eq(openPositionsTable.lotId, lot.lotId));
           result.lotsClosed++;
           console.log(`[FifoMatcher] Lot ${lot.lotId} fully closed`);
         }
+      }
+
+      // Only mark fill as matched if fully processed (sellRemaining ≈ 0)
+      if (sellRemaining <= 0.00000001) {
+        await tx.update(tradeFillsTable)
+          .set({ matched: true })
+          .where(eq(tradeFillsTable.txid, sellFill.txid));
+        result.fullyMatched = true;
       }
     });
 
     result.remainingUnmatched = sellRemaining;
     if (sellRemaining > 0.00000001) {
       result.orphanQty = sellRemaining;
-      console.log(`[FifoMatcher] ${sellRemaining.toFixed(8)} qty unmatched (no more open lots)`);
+      console.log(`[FifoMatcher] ${sellRemaining.toFixed(8)} qty unmatched (no more open lots) - fill NOT marked as matched for retry`);
     }
-
-    await storage.markFillAsMatched(sellFill.txid);
     
-    console.log(`[FifoMatcher] Processed ${sellFill.txid}: matched=${result.totalMatched.toFixed(8)}, lots_closed=${result.lotsClosed}, pnl=${result.pnlNet.toFixed(2)}`);
+    console.log(`[FifoMatcher] Processed ${sellFill.txid}: matched=${result.totalMatched.toFixed(8)}, lots_closed=${result.lotsClosed}, pnl=${result.pnlNet.toFixed(2)}, fullyMatched=${result.fullyMatched}`);
     
     return result;
   }
