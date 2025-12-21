@@ -1,0 +1,57 @@
+OBJETIVO (PUNTO 3)
+Hacer que los SELL automáticos (incluyendo SMART_GUARD exits) registren P&L realizado inmediatamente (entryPrice + realizedPnlUsd/pct) y evitar duplicados AUTO vs KRAKEN en sync.
+
+CONTEXTO
+Ahora mismo existen casos donde se crea un trade AUTO-* sin entry_price / realized_pnl_* y la UI muestra “-”.
+Luego el sync desde Kraken puede insertar otro trade KRAKEN-* o intentar recalcular P&L por FIFO, dejando duplicados o P&L tardío.
+
+CAMBIOS REQUERIDOS
+
+A) Guardar P&L en el momento del SELL automático (server/services/tradingEngine.ts)
+A1) Identificar TODOS los puntos donde se ejecuta un SELL automático:
+- SMART_GUARD risk exits (stop-loss emergency, take-profit, trailing, break-even, scale-out)
+- Cierres automáticos por el engine (si quedan)
+NOTA: ya se bloqueó SELL por señal, así que el volumen principal son risk exits.
+
+A2) Asegurar que todos esos SELL construyen sellContext (ya lo validáis salvo emergency exits).
+- sellContext debe incluir entryPrice (y aiSampleId/lotId si aplica).
+- Si existe posición abierta/lote, entryPrice debe venir de ahí.
+
+A3) En el momento de llamar a storage.createTrade() para el SELL, rellenar:
+- entryPrice: sellContext.entryPrice
+- realizedPnlUsd: (sellPrice - entryPrice) * soldAmount - fees
+- realizedPnlPct: (sellPrice - entryPrice) / entryPrice * 100
+- (si hay fees separados) incluirlas en el cálculo neto; si no, al menos calcular gross.
+IMPORTANTE: usar la misma fórmula/patrón ya existente en el cierre manual (forceClosePosition) para no duplicar lógica.
+
+A4) Resultado esperado: cualquier SELL automático que cierre total/parcial debe aparecer en DB con realized_pnl_usd/pct no nulos.
+
+B) Evitar duplicados AUTO vs KRAKEN en sync (server/routes.ts + storage)
+B1) En POST /api/trades/sync (o el servicio que importa trades de Kraken):
+- Cuando se obtiene una orden de Kraken con ordertxid (kraken_order_id), antes de “insertar trade nuevo”:
+  - buscar en DB si ya existe un trade con kraken_order_id = ese id
+  - si existe:
+      - actualizar ese trade (updateTradePnl / updateTradeFields) con:
+        entryPrice, realizedPnlUsd, realizedPnlPct, executedAt, fee, etc.
+      - NO crear uno nuevo KRAKEN-*
+  - si no existe:
+      - insertar como nuevo (caso normal)
+
+B2) Si hoy no se guarda kraken_order_id en AUTO trades, entonces:
+- en executeTrade(), al recibir respuesta de Kraken, persistir siempre krakenOrderId en el trade AUTO
+  (parece que ya lo tenéis en muchos casos; verificar).
+
+C) Verificación (criterios de aceptación)
+1) Ejecutar un trade en dry-run y/o real:
+   - BUY crea posición
+   - Activar un risk exit (ej. take-profit o trailing) que haga SELL automático
+   - En UI/DB, ese SELL debe tener P&L (no “-”).
+2) Ejecutar /api/trades/sync tras existir un trade AUTO con kraken_order_id:
+   - No debe aparecer un segundo trade KRAKEN para la misma orden.
+   - El trade existente debe actualizarse/rellenarse, no duplicarse.
+
+DELIVERABLE
+- PR con:
+  - tradingEngine.ts: SELL automáticos guardan entryPrice + realized_pnl_usd/pct
+  - sync: upsert por kraken_order_id (update si existe, insert si no)
+  - (si aplica) storage method adicional updateTradeByKrakenOrderId(...)
