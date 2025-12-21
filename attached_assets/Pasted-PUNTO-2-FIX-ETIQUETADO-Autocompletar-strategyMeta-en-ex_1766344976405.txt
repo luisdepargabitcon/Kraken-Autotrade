@@ -1,0 +1,64 @@
+PUNTO 2 (FIX ETIQUETADO) — Autocompletar strategyMeta en executeTrade() con soporte multi-lot (SMART_GUARD)
+
+PROBLEMA
+SELL se etiqueta como “Momentum (Ciclos)” cuando strategyMeta llega vacío, aunque la posición se abrió con “Momentum (Velas 15m)”.
+
+OBJETIVO
+En executeTrade(), si strategyMeta falta o está incompleto, rellenarlo desde la posición/lote real que se está cerrando:
+- Prioridad 1: sellContext (si trae lotId / entryStrategyId / entrySignalTf)
+- Prioridad 2: buscar posiciones por par y elegir la correcta (multi-lot)
+- Fallback: mantener comportamiento actual
+
+CAMBIO CONCRETO (server/services/tradingEngine.ts)
+En executeTrade(pair, type, ..., strategyMeta?, sellContext?):
+
+1) Insertar al inicio (antes de construir labels/mensajes):
+   if (!strategyMeta?.strategyId || !strategyMeta?.timeframe) {
+     // 1) Prioridad: sellContext (si indica el lote/posición)
+     const ctxStrategyId = sellContext?.entryStrategyId;
+     const ctxTf = sellContext?.entrySignalTf;
+     const ctxConf = sellContext?.signalConfidence;
+
+     if (ctxStrategyId || ctxTf) {
+       strategyMeta = {
+         strategyId: ctxStrategyId ?? strategyMeta?.strategyId ?? "unknown",
+         timeframe: ctxTf ?? strategyMeta?.timeframe ?? "cycle",
+         confidence: ctxConf ?? strategyMeta?.confidence,
+       };
+     } else {
+       // 2) Multi-lot: resolver posición por par (y por lotId si existe)
+       const positions = this.getPositionsByPair(pair); // o método equivalente existente
+       let pos = null;
+
+       // Si sellContext trae lotId, escoger ese lote
+       if (sellContext?.lotId) {
+         pos = positions.find(p => p.lotId === sellContext.lotId) ?? null;
+       }
+
+       // Si no, escoger la más antigua (o la “principal” según vuestro criterio)
+       if (!pos && positions.length > 0) {
+         pos = positions[0];
+       }
+
+       if (pos) {
+         strategyMeta = {
+           strategyId: pos.entryStrategyId ?? strategyMeta?.strategyId ?? "unknown",
+           timeframe: pos.entrySignalTf ?? strategyMeta?.timeframe ?? "cycle",
+           confidence: pos.signalConfidence ?? strategyMeta?.confidence,
+         };
+       }
+     }
+   }
+
+2) Label final:
+   - timeframe !== "cycle" => “Momentum (Velas ${timeframe})”
+   - timeframe === "cycle" => “Momentum (Ciclos)”
+
+ACEPTACIÓN / TEST
+1) Abrir 2 lots en el mismo par con Momentum Velas 15m (SMART_GUARD multi-lot).
+2) Cerrar uno de los lots (risk exit o cierre).
+3) El SELL debe etiquetarse como “Momentum (Velas 15m)” heredado del lote correcto.
+4) Si no hay posición/lote (caso extremo), fallback mantiene comportamiento actual.
+
+ENTREGABLE
+PR pequeño + nota en replit.md.
