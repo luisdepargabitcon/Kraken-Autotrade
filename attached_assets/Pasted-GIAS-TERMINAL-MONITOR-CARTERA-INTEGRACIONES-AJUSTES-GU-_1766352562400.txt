@@ -1,0 +1,165 @@
+GIAS
+TERMINAL
+MONITOR
+CARTERA
+INTEGRACIONES
+AJUSTES
+GUÍA
+
+Monitor
+Eventos
+Terminal
+Diagnóstico
+Conectado
+
+KrakenBot Container
+Detener
+Líneas: 145
+Último: 22:29:06
+
+
+( 1/15) Installing ca-certificates (20251003-r0)
+( 2/15) Installing docker-cli (29.1.3-r0)
+( 3/15) Installing brotli-libs (1.2.0-r0)
+( 4/15) Installing c-ares (1.34.6-r0)
+( 5/15) Installing libunistring (1.4.1-r0)
+( 6/15) Installing libidn2 (2.3.8-r0)
+( 7/15) Installing nghttp2-libs (1.68.0-r0)
+( 8/15) Installing nghttp3 (1.13.1-r0)
+( 9/15) Installing libpsl (0.21.5-r3)
+(10/15) Installing zstd-libs (1.5.7-r2)
+(11/15) Installing libcurl (8.17.0-r1)
+(12/15) Installing libexpat (2.7.3-r0)
+(13/15) Installing pcre2 (10.47-r0)
+(14/15) Installing git (2.52.0-r0)
+(15/15) Installing git-init-template (2.52.0-r0)
+Executing busybox-1.37.0-r29.trigger
+Executing ca-certificates-20251003-r0.trigger
+OK: 53 MiB in 33 packages
+up to date, audited 611 packages in 4s
+105 packages are looking for funding
+  run `npm fund` for details
+12 vulnerabilities (2 low, 8 moderate, 2 critical)
+To address issues that do not require attention, run:
+  npm audit fix
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+Run `npm audit` for details.
+building client...
+vite v7.1.12 building for production...
+transforming...
+✓ 2506 modules transformed.
+rendering chunks...
+[meta-images] no Replit deployment domain found, skipping meta tag updates
+computing gzip size...
+../dist/public/index.html                                                1.48 kB │ gzip:   0.61 kB
+../dist/public/assets/dark_digital_hex_grid_background-CH-7zMzl.png  1,414.45 kB
+../dist/public/assets/index-VTO8O1gk.css                               109.87 kB │ gzip:  18.46 kB
+../dist/public/assets/index-bfTRPYvk.js                              1,065.19 kB │ gzip: 300.06 kB
+✓ built in 9.98s
+building server...
+[migrate] Starting non-interactive database migration...
+[migrate] Applying bot_config migrations...
+[migrate] Applying open_positions migrations...
+[migrate] Backfilling lot_id for existing positions...
+[migrate] Checking lot_id uniqueness...
+[migrate] lot_id unique constraint already exists
+[migrate] Migration completed successfully!
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+9:26:06 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:26:06 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: true)
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+[storage] Schema issue detected, attempting auto-migration...
+[schema] Migration completed. Columns added: bot_config.sg_max_open_lots_per_pair, bot_config.sg_pair_overrides, bot_config.dry_run_mode, bot_config.sg_min_entry_usd, bot_config.sg_allow_under_min, bot_config.sg_be_at_pct, bot_config.sg_trail_start_pct, bot_config.sg_trail_distance_pct, bot_config.sg_trail_step_pct, bot_config.sg_tp_fixed_enabled, bot_config.sg_tp_fixed_pct, bot_config.sg_scale_out_enabled, bot_config.sg_scale_out_pct, bot_config.sg_min_part_usd, bot_config.sg_scale_out_threshold, bot_config.sg_fee_cushion_pct, bot_config.sg_fee_cushion_auto, open_positions.lot_id, open_positions.sg_break_even_activated, open_positions.sg_trailing_activated, open_positions.sg_current_stop_price, open_positions.sg_scale_out_done, open_positions.config_snapshot_json
+[storage] Auto-migration successful, retrying getBotConfig...
+9:26:07 PM [express] serving on port 5000
+9:26:41 PM [websocket] [WS] Cliente conectado. Total: 1
+9:26:41 PM [express] GET /api/dashboard 500 in 49ms :: {"error":"Failed to get dashboard data"}
+9:26:41 PM [express] GET /api/environment 500 in 51ms :: {"error":"column \"exposure_base\" does not exist"}
+9:26:41 PM [express] GET /api/config 500 in 48ms :: {"error":"Failed to get config"}
+9:26:41 PM [express] GET /api/performance 304 in 69ms :: {"curve":[{"time":"2025-05-14T13:04:36.433Z","equity":1000},{"time":"2025-05-15T08:38:15.916Z","equity":999.9128,"pnl":-0.0872},{"time":"2025-05-18T14:06:33.464Z","equity":999.912795,"pnl":-0.000004999999999563443},{"time":"2025-05-18T14:30:58.621Z","equity":999.91279,"pnl":-0.000005000000000291038},{"time":"2025-05-18T14:33:56.647Z","equity":999.912785,"pnl":-0.000004999999999563443},{"time":"2025-05-18T14:37:16.809Z","equity":999.91278,"pnl":-0.000004999999999563443},{"time":"2025-12-12T22:24:38.756Z","equity":999.97717605,"pnl":0.06439605000000097},{"time":"2025-12-13T13:18:58.898Z","equity":999.983781766113,"pnl":0.006605716112999661},{"time":"2025-12-13T13:50:39.764Z","equity":999.987957332113,"pnl":0.004175566000001008},{"time":"2025-12-13T15:31:45.732Z","equity":999.969300206113,"pnl":-0.018657126000001682},{"time":"2025-12-13T16:46:15.959Z","equity":999.964036050533,"pnl":-0.005264155580001597},{"time":"2025-12-13T19:42:21.200Z","equity":999.980150338533,"pnl":0.01611428800000184},{"time":"2025-12-13T20:10:21.321Z","equity":999.974093888533,"pnl":-0.006056450000000678},{"time":"2025-12-13T21:01:22.172Z","equity":999.9470557285331,"pnl":-0.027038160000000023},{"time":"2025-12-13T21:19:52.260Z","equity":999.9381081085331,"pnl":-0.008947619999999677},{"time":"2025-12-14T01:10:11.747Z","equity":999.9364258885331,"pnl":-0.00168222},{"time":"2025-12-14T08:45:28.499Z","equity":999.9406987285331,"pnl":0.00427284},{"time":"2025-12-14T14:30:01.451Z","equity":999.900235694718,"pnl":-0.04046303381509571},{"time":"2025-12-14T16:45:13.986Z","equity":999.6650449707181,"pnl":-0.23519072399999397},{"time":"2025-12-14T16:45:14.638Z","equity":999.2462569028996,"pnl":-0.41878806781841194},{"time":"2025-12-14T19:45:15.336Z","equity":998.8304237228996,"pnl":-0.41583318000000036},{"time":"2025-12-14T22:58:13.189Z","equity":998.7526444428996,"pnl":-0.07777928000000008},{"time":"2025-12-15T01:50:23.596Z","equity":998.8359055174349,"pnl":0.08326107453519624},{"time":"2025-12-15T02:04:24.001Z","equity":998.9284363693855,"pnl":0.09253085195060244},{"time":"2025-12-15T03:54:34.364Z","equity":998.9068509493856,"pnl":-0.021585420000000285},{"time":"2025-12-15T04:18:33.872Z","equity":998.8440637193855,"pnl":-0.062787229999996},{"time":"2025-12-15T04:33:03.740Z","equity":998.806757318889,"pnl":-0.03730640049653374},{"time":"2025-12-15T04:33:03.989Z","equity":998.794332696889,"pnl":-0.012424621999998789},{"time":"2025-12-15T06:34:05.074Z","equity":998.743055876889,"pnl":-0.05127682000000212},{"time":"2025-12-15T07:33:05.735Z","equity":998.874062234889,"pnl":0.13100635800000052},{"time":"2025-12-15T08:05:36.980Z","equity":999.039056005089,"pnl":0.16499377020000308},{"time":"2025-12-15T09:18:06.534Z","equity":999.0856794892362,"pnl":0.04662348414719532},{"time":"2025-12-15T09:25:36.679Z","equity":999.1118489098362,"pnl":0.026169420600000992},{"time":"2025-12-15T10:05:07.110Z","equity":999.1869795786156,"pnl":0.07513066877940267},{"time":"2025-12-15T10:05:08.086Z","equity":999.3793309266156,"pnl":0.19235134800000556},{"time":"2025-12-15T12:25:38.374Z","equity":998.9972731924947,"pnl":-0.3820577341208467},{"time":"2025-12-15T15:00:25.773Z","equity":998.6201264825271,"pnl":-0.3771467099676001},{"time":"2025-12-15T16:37:51.147Z","equity":992.5326186425272,"pnl":-6.087507839999992},{"time":"2025-12-16T01:37:26.536Z","equity":992.3989288425272,"pnl":-0.1336898000000001},{"time":"2025-12-16T02:24:56.377Z","equity":992.5418386393839,"pnl":0.14290979685670077},{"time":"2025-12-16T03:48:18.775Z","equity":992.4282939238857,"pnl":-0.11354471549819352},{"time":"2025-12-16T03:54:48.876Z","equity":991.9484288763776,"pnl":-0.4798650475080046},{"time":"2025-12-16T13:45:16.418Z","equity":992.7785075213056,"pnl":0.8300786449280015},{"time":"2025-12-18T01:15:18.415Z","equity":992.6759831723824,"pnl":-0.10252434892317744},{"time":"2025-12-18T03:30:20.899Z","equity":992.5305346889884,"pnl":-0.14544848339399927},{"time":"2025-12-18T18:30:13.567Z","equity":991.2525951161883,"pnl":-1.2779395727999994},{"time":"2025-12-19T04:00:15.641Z","equity":991.8278077961884,"pnl":0.5752126800000005},{"time":"2025-12-19T15:38:17.550Z","equity":992.0011175021884,"pnl":0.17330970599999873},{"time":"2025-12-19T15:48:08.277Z","equity":992.8377319396794,"pnl":0.8366144374910003},{"time":"2025-12-19T18:00:25.902Z","equity":992.5159960829963,"pnl":-0.32173585668319693},{"time":"2025-12-19T20:00:04.261Z","equity":992.5783339196795,"pnl":0.06233783668320128},{"time":"2025-12-20T04:00:24.543Z","equity":992.6694476296794,"pnl":0.09111371},{"time":"2025-12-20T10:30:26.010Z","equity":992.7588468661794,"pnl":0.08939923649999493},{"time":"2025-12-20T13:15:23.465Z","equity":992.4652195566766,"pnl":-0.29362730950279403},{"time":"2025-12-20T15:30:19.063Z","equity":992.3811327986766,"pnl":-0.08408675800000742},{"time":"2025-12-20T21:15:27.930Z","equity":992.4581630354766,"pnl":0.07703023679999862},{"time":"2025-12-21T01:15:22.105Z","equity":992.5472545634766,"pnl":0.08909152800000247},{"time":"2025-12-21T08:15:20.341Z","equity":992.5842036404766,"pnl":0.03694907699998167},{"time":"2025-12-21T15:18:37.972Z","equity":990.9775565564767,"pnl":-1.6066470840000098}],"summary":{"startingEquity":1000,"endingEquity":990.9775565564767,"totalPnlUsd":-9.022443443523567,"totalPnlPct":-0.9022443443523567,"maxDrawdownPct":0.9022443443523342,"winRatePct":41.37931034482759,"totalTrades":58,"wins":24,"losses":34}}
+9:26:41 PM [express] GET /api/dashboard 500 in 44ms :: {"error":"Failed to get dashboard data"}
+9:26:41 PM [express] GET /api/kraken/trades 304 in 189ms :: [{"id":"TJQITF-QJU","krakenOrderId":"TJQITF-QJUAT-4ETAWO","pair":"ETH/USD","type":"buy","price":"2977.44000","amount":"0.05037885","cost":"150.00000","fee":"0.60000","time":"2025-12-21T18:30:08.451Z","status":"filled"},{"id":"TA623F-PVW","krakenOrderId":"TA623F-PVWO2-WZBGZ2","pair":"BTC/USD","type":"sell","price":"87799.70000","amount":"0.00169014","cost":"148.39378","fee":"0.59358","time":"2025-12-21T15:18:37.972Z","status":"filled"},{"id":"TZE7OB-KUX","krakenOrderId":"TZE7OB-KUXUS-ZD2S3G","pair":"BTC/USD","type":"buy","price":"88750.30000","amount":"0.00169014","cost":"150.00043","fee":"0.60000","time":"2025-12-21T12:15:21.326Z","status":"filled"},{"id":"TZOVMU-C2D","krakenOrderId":"TZOVMU-C2D7T-IHSKT4","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","cost":"150.00000000","fee":"0.60000000","time":"2025-12-21T11:30:21.396Z","status":"filled"},{"id":"TEP3B4-H2N","krakenOrderId":"TEP3B4-H2NIG-FKPCRM","pair":"BTC/USD","type":"sell","price":"88570.80000","amount":"0.00059458","cost":"52.66243","fee":"0.21065","time":"2025-12-21T10:36:13.413Z","status":"filled"},{"id":"TDMIZQ-DRW","krakenOrderId":"TDMIZQ-DRWRD-DWQC67","pair":"BTC/USD","type":"sell","price":"88768.70000","amount":"0.00085011","cost":"75.46316","fee":"0.30185","time":"2025-12-21T10:15:20.822Z","status":"filled"},{"id":"TBOGLZ-DIS","krakenOrderId":"TBOGLZ-DIS7C-ZNJW3C","pair":"ETH/USD","type":"sell","price":"2977.62000","amount":"0.06718014","cost":"200.03693","fee":"0.80015","time":"2025-12-21T08:15:20.341Z","status":"filled"},{"id":"TIVYYU-XS6","krakenOrderId":"TIVYYU-XS67E-JYBTR5","pair":"ETH/USD","type":"buy","price":"2977.07000","amount":"0.06718015","cost":"200.00001","fee":"0.80000","time":"2025-12-21T07:30:19.948Z","status":"filled"},{"id":"TX7MVU-5SV","krakenOrderId":"TX7MVU-5SV4I-YNKBNR","pair":"BTC/USD","type":"sell","price":"88082.60108","amount":"0.00085011","cost":"74.87990","fee":"0.29952","time":"2025-12-21T05:45:19.215Z","status":"filled"},{"id":"TAJ5HK-PHH","krakenOrderId":"TAJ5HK-PHH2Q-SQQQJO","pair":"BTC/USD","type":"sell","price":"88049.49948","amount":"0.00085011","cost":"74.85176","fee":"0.29941","time":"2025-12-21T01:45:22.129Z","status":"filled"},{"id":"TEEHIS-THU","krakenOrderId":"TEEHIS-THU4J-PEN6M5","pair":"BTC/USD","type":"sell","price":"88285.00000","amount":"0.00085011","cost":"75.05196","fee":"0.30021","time":"2025-12-21T01:15:22.105Z","status":"filled"},{"id":"TYYKY4-SPI","krakenOrderId":"TYYKY4-SPI4T-N3772P","pair":"BTC/USD","type":"buy","price":"88180.20000","amount":"0.00226808","cost":"199.99975","fee":"0.80000","time":"2025-12-20T22:30:18.385Z","status":"filled"},{"id":"TRTRKT-GL4","krakenOrderId":"TRTRKT-GL4GS-6Y74ZL","pair":"ETH/USD","type":"sell","price":"2981.66000","amount":"0.02517328","cost":"75.05816","fee":"0.30023","time":"2025-12-20T21:25:01.868Z","status":"filled"},{"id":"TDFHX3-5FY","krakenOrderId":"TDFHX3-5FYXR-26DBAB","pair":"ETH/USD","type":"sell","price":"2982.41000","amount":"0.02517961","cost":"75.09592","fee":"0.30038","time":"2025-12-20T21:15:27.930Z","status":"filled"},{"id":"TP6REN-PNH","krakenOrderId":"TP6REN-PNHBG-N3V4GE","pair":"ETH/USD","type":"buy","price":"2979.35000","amount":"0.02517328","cost":"75.00001","fee":"0.30000","time":"2025-12-20T20:20:38.252Z","status":"filled"},{"id":"TVGVXA-EXT","krakenOrderId":"TVGVXA-EXTMB-ICKOZ7","pair":"BTC/USD","type":"buy","price":"88237.00000","amount":"0.00084998","cost":"74.99969","fee":"0.30000","time":"2025-12-20T20:20:37.742Z","status":"filled"},{"id":"T2HMMV-ONB","krakenOrderId":"T2HMMV-ONBL6-QQV3TD","pair":"ETH/USD","type":"buy","price":"2978.60000","amount":"0.02517961","cost":"74.99999","fee":"0.30000","time":"2025-12-20T20:15:15.682Z","status":"filled"},{"id":"TG6LWY-GW2","krakenOrderId":"TG6LWY-GW2UP-KPBJF4","pair":"BTC/USD","type":"buy","price":"88224.10000","amount":"0.00085011","cost":"75.00019","fee":"0.30000","time":"2025-12-20T20:15:14.873Z","status":"filled"},{"id":"TZJPYU-OFG","krakenOrderId":"TZJPYU-OFG4D-AXWCOD","pair":"BTC/USD","type":"sell","price":"88094.70490","amount":"0.00085022","cost":"74.89988","fee":"0.29960","time":"2025-12-20T16:45:19.156Z","status":"filled"},{"id":"TGFE45-BSK","krakenOrderId":"TGFE45-BSKEB-FV3CVE","pair":"BTC/USD","type":"sell","price":"88067.90000","amount":"0.00085022","cost":"74.87709","fee":"0.29951","time":"2025-12-20T15:30:19.063Z","status":"filled"},{"id":"TKUOXY-ZWN","krakenOrderId":"TKUOXY-ZWNQY-72PMDR","pair":"BTC/USD","type":"buy","price":"88166.80000","amount":"0.00085082","cost":"75.01408","fee":"0.30006","time":"2025-12-20T13:45:23.366Z","status":"filled"},{"id":"TLWJT4-VLD","krakenOrderId":"TLWJT4-VLDWW-O7ZV5G","pair":"ETH/USD","type":"sell","price":"2976.01000","amount":"0.02510326","cost":"74.70755","fee":"0.29883","time":"2025-12-20T13:15:23.465Z","status":"filled"},{"id":"TRZTEV-X3M","krakenOrderId":"TRZTEV-X3MGP-Y4IFSZ","pair":"ETH/USD","type":"buy","price":"2987.70678","amount":"0.02510326","cost":"75.00118","fee":"0.30001","time":"2025-12-20T13:00:23.381Z","status":"filled"},{"id":"TWLRFE-ZS6","krakenOrderId":"TWLRFE-ZS6MH-CYRTND","pair":"BTC/USD","type":"buy","price":"88212.09805","amount":"0.00085022","cost":"74.99969","fee":"0.30000","time":"2025-12-20T11:30:26.035Z","status":"filled"},{"id":"T56IPX-JYZ","krakenOrderId":"T56IPX-JYZI6-2XEBWZ","pair":"SOL/USD","type":"sell","price":"126.05000","amount":"0.59599491","cost":"75.12516","fee":"0.30050","time":"2025-12-20T10:30:26.010Z","status":"filled"},{"id":"TFP4UP-BHG","krakenOrderId":"TFP4UP-BHGFL-GOJQLY","pair":"BTC/USD","type":"sell","price":"88183.70000","amount":"0.00085153","cost":"75.09107","fee":"0.30036","time":"2025-12-20T04:00:24.543Z","status":"filled"},{"id":"TXLB2V-YUN","krakenOrderId":"TXLB2V-YUNTK-4BKZEJ","pair":"BTC/USD","type":"buy","price":"88076.70000","amount":"0.00085153","cost":"74.99995","fee":"0.30000","time":"2025-12-20T02:30:08.778Z","status":"filled"},{"id":"TRRHRP-47K","krakenOrderId":"TRRHRP-47KQP-7R4OCY","pair":"SOL/USD","type":"buy","price":"125.90000","amount":"0.59599491","cost":"75.03576","fee":"0.30014","time":"2025-12-20T00:15:08.729Z","status":"filled"},{"id":"T4X5QH-R6D","krakenOrderId":"T4X5QH-R6DKB-BGKH22","pair":"XRP/USD","type":"sell","price":"1.90538000","amount":"41.32345243","cost":"78.73687979","fee":"0.31494752","time":"2025-12-19T21:30:07.844Z","status":"filled"},{"id":"TR6Z6S-YM6","krakenOrderId":"TR6Z6S-YM6K6-7PCFOC","pair":"ETH/USD","type":"sell","price":"2984.65000","amount":"0.00646352","cost":"19.29134","fee":"0.07717","time":"2025-12-19T21:15:07.449Z","status":"filled"},{"id":"TVJWCB-IFS","krakenOrderId":"TVJWCB-IFS7N-QTA7TQ","pair":"XRP/USD","type":"sell","price":"1.90717000","amount":"41.32345243","cost":"78.81084877","fee":"0.31524340","time":"2025-12-19T20:00:04.261Z","status":"filled"},{"id":"T53L42-RDP","krakenOrderId":"T53L42-RDPSO-2PH5GP","pair":"ETH/USD","type":"sell","price":"2944.01000","amount":"0.01684920","cost":"49.60421","fee":"0.19842","time":"2025-12-19T18:00:25.902Z","status":"filled"},{"id":"TBZDKI-3ME","krakenOrderId":"TBZDKI-3MER4-3M2BRD","pair":"XRP/USD","type":"buy","price":"1.90309000","amount":"15.27888154","cost":"29.07708667","fee":"0.11630835","time":"2025-12-19T17:15:26.416Z","status":"filled"},{"id":"TXYHIJ-NDD","krakenOrderId":"TXYHIJ-NDDNU-E42O73","pair":"ETH/USD","type":"buy","price":"2985.26538","amount":"0.00779864","cost":"23.28101","fee":"0.09312","time":"2025-12-19T16:15:26.238Z","status":"filled"},{"id":"TXSZU2-LHT","krakenOrderId":"TXSZU2-LHTHO-T6MG7D","pair":"BTC/USD","type":"sell","price":"88349.70000","amount":"0.00059597","cost":"52.65377","fee":"0.21062","time":"2025-12-19T16:15:25.651Z","status":"filled"},{"id":"TKMFNY-MB2","krakenOrderId":"TKMFNY-MB2U7-EKBI5M","pair":"XRP/USD","type":"sell","price":"1.87646000","amount":"13.42880317","cost":"25.19861200","fee":"0.10079445","time":"2025-12-19T15:48:08.277Z","status":"filled"},{"id":"TQQ6JO-AMU","krakenOrderId":"TQQ6JO-AMUPV-HMA6YJ","pair":"BTC/USD","type":"sell","price":"88246.70000","amount":"0.00014526","cost":"12.81872","fee":"0.05127","time":"2025-12-19T15:38:17.550Z","status":"filled"},{"id":"TFUCCK-XJH","krakenOrderId":"TFUCCK-XJHTZ-4S5VAY","pair":"BTC/USD","type":"buy","price":"87053.60000","amount":"0.00059597","cost":"51.88133","fee":"0.20753","time":"2025-12-19T06:45:13.560Z","status":"filled"},{"id":"THTJPK-K5E","krakenOrderId":"THTJPK-K5EF3-7M6WS3","pair":"TON/USD","type":"sell","price":"1.4380000","amount":"31.95632","cost":"45.9531882","fee":"0.1838128","time":"2025-12-19T05:11:13.174Z","status":"filled"},{"id":"TINKTG-MVK","krakenOrderId":"TINKTG-MVKWQ-WDC4P3","pair":"SOL/USD","type":"sell","price":"121.85000","amount":"0.14756807","cost":"17.98117","fee":"0.07192","time":"2025-12-19T04:30:15.043Z","status":"filled"},{"id":"THD6CL-AIK","krakenOrderId":"THD6CL-AIKOV-D4WXOF","pair":"TON/USD","type":"sell","price":"1.4520000","amount":"31.95626","cost":"46.4004895","fee":"0.1856020","time":"2025-12-19T04:00:15.641Z","status":"filled"},{"id":"TTK253-HLM","krakenOrderId":"TTK253-HLMQ6-QDZELC","pair":"SOL/USD","type":"sell","price":"119.46000","amount":"0.14756807","cost":"17.62848","fee":"0.07051","time":"2025-12-18T23:30:06.784Z","status":"filled"},{"id":"TIJPHS-MUU","krakenOrderId":"TIJPHS-MUUJJ-IVPRRU","pair":"TON/USD","type":"buy","price":"1.4340000","amount":"63.91252","cost":"91.6505537","fee":"0.3666022","time":"2025-12-18T21:15:07.339Z","status":"filled"},{"id":"TZL7AV-QFR","krakenOrderId":"TZL7AV-QFR76-KIQ7NY","pair":"XRP/USD","type":"buy","price":"1.81416000","amount":"41.32345244","cost":"74.96735448","fee":"0.29986942","time":"2025-12-18T21:15:06.641Z","status":"filled"},{"id":"T5IRSK-W5L","krakenOrderId":"T5IRSK-W5L7U-IY5HDU","pair":"TON/USD","type":"sell","price":"1.4290000","amount":"1.04445","cost":"1.4925191","fee":"0.0059701","time":"2025-12-18T20:50:42.557Z","status":"filled"},{"id":"TGFY5Q-YKF","krakenOrderId":"TGFY5Q-YKFC2-HMF2M3","pair":"SOL/USD","type":"sell","price":"122.73000","amount":"0.29513616","cost":"36.22206","fee":"0.14489","time":"2025-12-18T18:30:13.567Z","status":"filled"},{"id":"TYAAAL-T5X","krakenOrderId":"TYAAAL-T5XYO-ODXF5G","pair":"SOL/USD","type":"buy","price":"127.06000","amount":"0.59027231","cost":"75.00000","fee":"0.30000","time":"2025-12-18T16:45:12.990Z","status":"filled"},{"id":"TWBCZT-PLF","krakenOrderId":"TWBCZT-PLFRN-Z63BB7","pair":"SOL/USD","type":"sell","price":"126.14000","amount":"0.15151515","cost":"19.11212","fee":"0.07645","time":"2025-12-18T16:27:42.316Z","status":"filled"},{"id":"TZTRQO-DKE","krakenOrderId":"TZTRQO-DKEHH-CAO7O5","pair":"ETH/USD","type":"buy","price":"2844.79000","amount":"0.01383878","cost":"39.36842","fee":"0.15747","time":"2025-12-18T09:30:06.086Z","status":"filled"},{"id":"TKO75M-FLX","krakenOrderId":"TKO75M-FLXN5-PMUB3A","pair":"BTC/USD","type":"sell","price":"86849.80000","amount":"0.00017152","cost":"14.89648","fee":"0.05959","time":"2025-12-18T09:08:20.952Z","status":"filled"}]
+9:26:50 PM [express] GET /api/config 500 in 3ms :: {"error":"Failed to get config"}
+9:26:50 PM [express] GET /api/trades/closed 304 in 20ms :: {"trades":[{"id":368,"tradeId":"AUTO-1766341808305","pair":"ETH/USD","type":"buy","price":"2977.44000000","amount":"0.05037885","status":"filled","krakenOrderId":"O7TWLJ-5LMYW-ZZOCJ4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T18:30:08.451Z","createdAt":"2025-12-21T18:30:08.306Z","totalUsd":"150.00","entryValueUsd":null},{"id":367,"tradeId":"AUTO-1766330317989","pair":"BTC/USD","type":"sell","price":"87799.70000000","amount":"0.00169014","status":"filled","krakenOrderId":"OLHPZX-TWOA2-OVAFNW","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T15:18:37.972Z","createdAt":"2025-12-21T15:18:37.992Z","totalUsd":"148.39","entryValueUsd":null},{"id":366,"tradeId":"AUTO-1766319320912","pair":"BTC/USD","type":"buy","price":"88750.30000000","amount":"0.00169014","status":"filled","krakenOrderId":"O2PNJP-DSJZ4-5KMN2B","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T12:15:21.326Z","createdAt":"2025-12-21T12:15:20.913Z","totalUsd":"150.00","entryValueUsd":null},{"id":365,"tradeId":"AUTO-1766316621017","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","status":"filled","krakenOrderId":"OML4KG-LRBQ7-HON64T","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T11:30:21.396Z","createdAt":"2025-12-21T11:30:21.018Z","totalUsd":"150.00","entryValueUsd":null},{"id":364,"tradeId":"MANUAL-1766313373079","pair":"BTC/USD","type":"sell","price":"88570.80000000","amount":"0.00059458","status":"filled","krakenOrderId":"OOFBW7-H3KOU-XTLVPW","entryPrice":"88180.20000000","realizedPnlUsd":"0.23","realizedPnlPct":"0.44","executedAt":"2025-12-21T10:36:13.413Z","createdAt":"2025-12-21T10:36:13.079Z","totalUsd":"52.66","entryValueUsd":"52.43"},{"id":363,"tradeId":"AUTO-1766312120502","pair":"BTC/USD","type":"sell","price":"88768.70000000","amount":"0.00085011","status":"filled","krakenOrderId":"O2YYYH-LSAKY-QE4NBX","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T10:15:20.822Z","createdAt":"2025-12-21T10:15:20.503Z","totalUsd":"75.46","entryValueUsd":null},{"id":362,"tradeId":"AUTO-1766304920117","pair":"ETH/USD","type":"sell","price":"2977.62000000","amount":"0.06718014","status":"filled","krakenOrderId":"O4PD7U-AVVU7-2VOPJ6","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T08:15:20.341Z","createdAt":"2025-12-21T08:15:20.117Z","totalUsd":"200.04","entryValueUsd":null},{"id":361,"tradeId":"AUTO-1766302219760","pair":"ETH/USD","type":"buy","price":"2977.07000000","amount":"0.06718015","status":"filled","krakenOrderId":"OHEVL7-3B2LS-T5D4YK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T07:30:19.948Z","createdAt":"2025-12-21T07:30:19.761Z","totalUsd":"200.00","entryValueUsd":null},{"id":360,"tradeId":"AUTO-1766295919115","pair":"BTC/USD","type":"sell","price":"88082.60108000","amount":"0.00085011","status":"filled","krakenOrderId":"ODJKKE-3MHVI-TKVCO2","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T05:45:19.215Z","createdAt":"2025-12-21T05:45:19.116Z","totalUsd":"74.88","entryValueUsd":null},{"id":359,"tradeId":"AUTO-1766281521722","pair":"BTC/USD","type":"sell","price":"88049.49948000","amount":"0.00085011","status":"filled","krakenOrderId":"OMN3RI-JNJZD-HSRGQH","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T01:45:22.129Z","createdAt":"2025-12-21T01:45:21.722Z","totalUsd":"74.85","entryValueUsd":null}],"total":197,"limit":10,"offset":0}
+9:26:50 PM [express] GET /api/open-positions 200 in 132ms :: [{"id":28,"lotId":"LOT-XRPUSD-1766316621021-po6gjs","pair":"XRP/USD","entryPrice":"1.93483000","amount":"77.52619093","qtyRemaining":null,"qtyFilled":"0","highestPrice":"1.93796000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-21T11:30:21.027Z","updatedAt":"2025-12-21T12:21:50.672Z","currentPrice":"1.91594","unrealizedPnlUsd":"-1.46","unrealizedPnlPct":"-0.98","entryValueUsd":"150.00","currentValueUsd":"148.54"},{"id":30,"lotId":"LOT-ETHUSD-1766341808309-9nicx1","pair":"ETH/USD","entryPrice":"2977.44000000","amount":"0.05037885","qtyRemaining":null,"qtyFilled":"0","highestPrice":"2994.61000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Volumen alto alcista (4.2x) | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":false,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-21T18:30:08.345Z","updatedAt":"2025-12-21T19:00:08.737Z","currentPrice":"2987.95","unrealizedPnlUsd":"0.53","unrealizedPnlPct":"0.35","entryValueUsd":"150.00","currentValueUsd":"150.53"}]
+9:26:52 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+9:26:54 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+9:26:57 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+9:26:57 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+9:26:59 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+9:26:59 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+9:26:59 PM [express] GET /api/scan/diagnostic 500 in 4ms :: {"error":"Error obteniendo diagnóstico del scan"}
+9:27:04 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+9:27:05 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+9:27:07 PM [express] GET /api/config 500 in 33ms :: {"error":"Failed to get config"}
+9:27:07 PM [express] GET /api/dashboard 500 in 36ms :: {"error":"Failed to get dashboard data"}
+9:27:08 PM [express] GET /api/environment 500 in 21ms :: {"error":"column \"exposure_base\" does not exist"}
+9:27:08 PM [express] GET /api/dashboard 500 in 25ms :: {"error":"Failed to get dashboard data"}
+9:27:08 PM [express] GET /api/config 500 in 22ms :: {"error":"Failed to get config"}
+9:27:08 PM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+9:27:09 PM [express] GET /api/environment 500 in 23ms :: {"error":"column \"exposure_base\" does not exist"}
+9:27:09 PM [express] GET /api/config 500 in 27ms :: {"error":"Failed to get config"}
+9:27:09 PM [express] GET /api/ai/status 304 in 34ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":90,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":false,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+9:27:09 PM [express] GET /api/ai/diagnostic 500 in 53ms :: {"error":"column \"exposure_base\" does not exist"}
+9:27:15 PM [express] GET /api/config/api 304 in 2ms :: {"krakenConnected":true,"telegramConnected":true,"hasKrakenKeys":true,"hasTelegramKeys":true}
+9:27:15 PM [express] GET /api/telegram/chats 304 in 3ms :: [{"id":1,"name":"KRAKEN  2","chatId":"-1002588266564","alertTrades":true,"alertErrors":true,"alertSystem":true,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-11T15:49:12.653Z"}]
+9:27:55 PM [express] POST /api/config/kraken 200 in 159ms :: {"success":true,"message":"Kraken connected successfully","balance":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0503788600","XXBT":"0.0000000008","XXRP":"78.06926425","ZEUR":"0.0000","ZUSD":"153.2097"}}
+9:27:57 PM [express] POST /api/config/kraken 200 in 69ms :: {"success":true,"message":"Kraken connected successfully","balance":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0503788600","XXBT":"0.0000000008","XXRP":"78.06926425","ZEUR":"0.0000","ZUSD":"153.2097"}}
+9:27:58 PM [express] GET /api/dashboard 500 in 4ms :: {"error":"Failed to get dashboard data"}
+9:27:58 PM [express] GET /api/environment 500 in 14ms :: {"error":"column \"exposure_base\" does not exist"}
+9:27:58 PM [express] GET /api/config 500 in 18ms :: {"error":"Failed to get config"}
+9:27:58 PM [express] GET /api/dashboard 500 in 21ms :: {"error":"Failed to get dashboard data"}
+9:28:04 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+9:28:05 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+9:28:17 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+9:28:17 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+9:28:17 PM [express] GET /api/dashboard 500 in 20ms :: {"error":"Failed to get dashboard data"}
+9:28:17 PM [express] GET /api/environment 500 in 23ms :: {"error":"column \"exposure_base\" does not exist"}
+9:28:17 PM [express] GET /api/config 500 in 23ms :: {"error":"Failed to get config"}
+9:28:17 PM [express] GET /api/dashboard 500 in 16ms :: {"error":"Failed to get dashboard data"}
+9:29:00 PM [express] GET /api/config 500 in 12ms :: {"error":"Failed to get config"}
+9:29:05 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+9:29:07 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+npm notice
+npm notice New major version of npm available! 10.8.2 -> 11.7.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.7.0
+npm notice To update run: npm install -g npm@11.7.0
+npm notice
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+  dist/index.cjs  2.2mb ⚠️
+⚡ Done in 251ms
+[startup] Error loading API credentials: error: column "exposure_base" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async P2.getBotConfig (/app/dist/index.cjs:70:31894)
+    at async GY (/app/dist/index.cjs:714:3095)
+    at async /app/dist/index.cjs:748:4389 {
+  length: 114,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '320',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+[scan/diagnostic] Error: column "exposure_base" does not exist
