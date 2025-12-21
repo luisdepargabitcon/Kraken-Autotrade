@@ -45,6 +45,11 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 
 ### SMART_GUARD Mode
 - **Purpose**: Intelligent capital protection with strict entry validation.
+- **Signal SELL Blocking (A1/A2)**: SMART_GUARD bloquea ventas por señal de estrategia. Solo risk exits (SL/TP/trailing) pueden vender. Excepción: orphan cleanup cuando wallet balance > 0 sin posición trackeada.
+- **MTF Entry Filter (B1)**: Señales de velas requieren que 2/3 timeframes (5m, 1h, 4h) confirmen tendencia.
+- **Anti-FOMO Filter (B2)**: Bloquea BUY cuando RSI>65 + BollingerB>85 + bodyRatio>0.7 simultáneamente.
+- **Min Signals Threshold (B3)**: Requiere ≥5 señales para BUY en SMART_GUARD mode.
+- **sellContext Validation (C1)**: Todas las ventas requieren sellContext para trazabilidad de P&L excepto emergency exits (stop-loss/emergencia).
 - **Sizing v2 (Auto Fallback)**:
   - `sgMinEntryUsd` es un "objetivo preferido", no un bloqueo.
   - Si `availableUsd >= sgMinEntryUsd` → orden = `sgMinEntryUsd` exacto (no más).
