@@ -113,6 +113,13 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Scale-Out**: Comparación y logs usan `toConfidencePct()` para mostrar "78%" no "0.78%".
 - **AI Dataset**: Features siempre en 0..100 para consistencia del modelo.
 
+### Strategy Meta Inheritance (SELL Labeling)
+- **Purpose**: SELL trades inherit strategy metadata from the original position to ensure consistent labeling.
+- **Autocompletion**: If `strategyMeta` is missing or incomplete in `executeTrade()`, it's auto-populated from the open position.
+- **Multi-Lot Support**: Uses `getPositionsByPair()` and selects the oldest position (FIFO) for metadata.
+- **Fields Inherited**: `entryStrategyId`, `entrySignalTf`, `signalConfidence` from the position.
+- **Result**: SELL labeled as "Momentum (Velas 15m)" matches the BUY origin, not generic "Ciclos".
+
 ### P&L Tracking (Immediate SELL)
 - **Purpose**: Every automatic SELL trade stores P&L at execution time, not just after sync.
 - **executeTrade()**: Calculates and stores entryPrice, realizedPnlUsd, realizedPnlPct when sellContext.entryPrice is available.
