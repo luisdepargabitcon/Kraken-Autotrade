@@ -54,6 +54,7 @@ export interface IStorage {
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
+  updateTradeByKrakenOrderId(krakenOrderId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined>;
   getTradeByLotId(lotId: string): Promise<Trade | undefined>;
   getSellMatchingBuy(pair: string, buyLotId: string): Promise<Trade | undefined>;
   upsertTradeByKrakenId(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }>;
@@ -323,6 +324,17 @@ export class DatabaseStorage implements IStorage {
       .where(eq(tradesTable.krakenOrderId, krakenOrderId))
       .limit(1);
     return trades[0];
+  }
+
+  // B1: Update trade by krakenOrderId with partial patch
+  async updateTradeByKrakenOrderId(krakenOrderId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined> {
+    if (!krakenOrderId) return undefined;
+    
+    const [updated] = await db.update(tradesTable)
+      .set(patch)
+      .where(eq(tradesTable.krakenOrderId, krakenOrderId))
+      .returning();
+    return updated;
   }
 
   // Check for duplicate trade by characteristics (pair + amount + type + timestamp within 60 seconds)

@@ -3418,6 +3418,32 @@ _⚠️ Modo simulación - NO se envió orden real_
       }
 
       const tradeId = `AUTO-${Date.now()}`;
+      
+      // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
+      let tradeEntryPrice: string | null = null;
+      let tradeRealizedPnlUsd: string | null = null;
+      let tradeRealizedPnlPct: string | null = null;
+      let reasonWithContext = reason;
+      
+      if (type === "sell") {
+        const entryPrice = sellContext?.entryPrice ?? null;
+        
+        if (entryPrice != null && entryPrice > 0) {
+          // A2: Calcular P&L con entryPrice disponible
+          const grossPnlUsd = (price - entryPrice) * volumeNum;
+          const pnlPct = ((price - entryPrice) / entryPrice) * 100;
+          // Fee no disponible en este scope - guardar gross P&L
+          tradeEntryPrice = entryPrice.toString();
+          tradeRealizedPnlUsd = grossPnlUsd.toFixed(8);
+          tradeRealizedPnlPct = pnlPct.toFixed(4);
+          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} → PnL=$${grossPnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)`, "trading");
+        } else {
+          // A3: Orphan/emergency sin entryPrice - permitir pero marcar
+          reasonWithContext = `${reason} | SELL_NO_ENTRYPRICE`;
+          log(`[WARN] SELL ${pair} sin entryPrice - P&L no calculado (orphan/emergency)`, "trading");
+        }
+      }
+      
       await storage.createTrade({
         tradeId,
         pair,
@@ -3427,6 +3453,9 @@ _⚠️ Modo simulación - NO se envió orden real_
         status: "filled",
         krakenOrderId: txid,
         executedAt: new Date(),
+        entryPrice: tradeEntryPrice,
+        realizedPnlUsd: tradeRealizedPnlUsd,
+        realizedPnlPct: tradeRealizedPnlPct,
       });
 
       // volumeNum ya declarado arriba

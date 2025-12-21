@@ -113,6 +113,15 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Scale-Out**: Comparación y logs usan `toConfidencePct()` para mostrar "78%" no "0.78%".
 - **AI Dataset**: Features siempre en 0..100 para consistencia del modelo.
 
+### P&L Tracking (Immediate SELL)
+- **Purpose**: Every automatic SELL trade stores P&L at execution time, not just after sync.
+- **executeTrade()**: Calculates and stores entryPrice, realizedPnlUsd, realizedPnlPct when sellContext.entryPrice is available.
+- **Orphan Handling**: Emergency/orphan SELLs (no entryPrice) allowed but marked with `SELL_NO_ENTRYPRICE` and P&L fields = NULL.
+- **Sync Upsert**: `/api/trades/sync` uses UPSERT by kraken_order_id:
+  - If trade exists → UPDATE (preserving existing P&L, never overwriting)
+  - If not exists → INSERT
+- **Anti-Duplicates**: UNIQUE partial index on `trades.kraken_order_id WHERE NOT NULL`.
+
 ### AI Filter Module
 - **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
 - **Phases**: Red (data collection), Yellow (ready to train), Green (filter active).

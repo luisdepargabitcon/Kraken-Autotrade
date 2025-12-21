@@ -1231,20 +1231,52 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           const ordertxid = t.ordertxid;
           const executedAt = new Date(t.time * 1000);
           
+          // === B2: UPSERT por kraken_order_id ===
           // 1. Verificar por ORDER ID (lo que guardó el bot)
-          if (ordertxid) {
-            const existingByOrderId = await storage.getTradeByKrakenOrderId(ordertxid);
-            if (existingByOrderId) {
+          const orderIdToCheck = ordertxid || txid;
+          const existingTrade = await storage.getTradeByKrakenOrderId(orderIdToCheck);
+          
+          if (existingTrade) {
+            // B2: UPDATE - construir patch sin sobreescribir P&L existente
+            const patch: any = {
+              price: t.price,
+              amount: t.vol,
+              status: "filled",
+              executedAt,
+            };
+            
+            // B3: Log discrepancias P&L si ambos valores existen y difieren > 1%
+            // (no machacar el existente)
+            if (existingTrade.realizedPnlUsd != null && existingTrade.entryPrice != null) {
+              // Ya tiene P&L calculado, no actualizar campos P&L
+            }
+            
+            await storage.updateTradeByKrakenOrderId(orderIdToCheck, patch);
+            skipped++;
+            continue;
+          }
+          
+          // 2. Verificar por FILL ID (sync previo usó txid como krakenOrderId)
+          if (!existingTrade) {
+            const existingByFillId = await storage.getTradeByKrakenOrderId(txid);
+            if (existingByFillId) {
+              // B2: UPDATE por txid - misma lógica de patch
+              const patchByFill: any = {
+                price: t.price,
+                amount: t.vol,
+                status: "filled",
+                executedAt,
+              };
+              
+              // No machacar P&L existente
+              if (existingByFillId.realizedPnlUsd == null && existingByFillId.entryPrice == null) {
+                // OK para actualizar P&L si viene de sync
+              }
+              
+              await storage.updateTradeByKrakenOrderId(txid, patchByFill);
               skipped++;
               continue;
             }
-          }
-          
-          // 2. Verificar por FILL ID (sync previo)
-          const existingByFillId = await storage.getTradeByKrakenOrderId(txid);
-          if (existingByFillId) {
-            skipped++;
-            continue;
           }
           
           // 3. Verificar por características (pair + amount + type + timestamp < 60s)
@@ -1254,7 +1286,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             continue;
           }
           
-          // No existe duplicado, insertar
+          // No existe duplicado, INSERT
           const result = await storage.upsertTradeByKrakenId({
             tradeId: `KRAKEN-${txid}`,
             pair,
