@@ -769,7 +769,26 @@ _${extra.reason}_
     }
     
     const closedCandles = candles.slice(0, -1);
-    return this.momentumCandlesStrategy(pair, closedCandles, candle.close);
+    
+    // B1: Aplicar filtro MTF a Momentum Velas (igual que en ciclos)
+    const mtfData = await this.getMultiTimeframeData(pair);
+    const mtfAnalysis = mtfData ? this.analyzeMultiTimeframe(mtfData) : null;
+    
+    let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close);
+    
+    // Aplicar filtro MTF si hay señal activa
+    if (mtfAnalysis && signal.action !== "hold") {
+      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis);
+      if (mtfBoost.filtered) {
+        return { action: "hold", pair, confidence: 0.3, reason: `Señal filtrada por MTF: ${mtfBoost.reason}` };
+      }
+      signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
+      if (mtfBoost.confidenceBoost > 0) {
+        signal.reason += ` | ${mtfBoost.reason}`;
+      }
+    }
+    
+    return signal;
   }
 
   private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
@@ -842,7 +861,19 @@ _${extra.reason}_
 
     const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.07));
     
+    // B2: Filtro anti-FOMO - bloquear BUY en condiciones de entrada tardía
+    const isAntifomoTriggered = rsi > 65 && bollinger.percentB > 85 && bodyRatio > 0.7;
+    
     if (buySignals >= 4 && buySignals > sellSignals && rsi < 70) {
+      // B2: Verificar anti-FOMO antes de emitir señal BUY
+      if (isAntifomoTriggered) {
+        return {
+          action: "hold",
+          pair,
+          confidence: 0.4,
+          reason: `Anti-FOMO: RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)} bodyRatio=${bodyRatio.toFixed(2)} | Señales: ${buySignals}/${sellSignals}`,
+        };
+      }
       return {
         action: "buy",
         pair,
@@ -1790,6 +1821,25 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
           return;
         }
 
+        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
+        if (positionMode === "SMART_GUARD") {
+          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
+          if (signalCountMatch) {
+            const buySignalCount = parseInt(signalCountMatch[1], 10);
+            if (buySignalCount < 5) {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < 5)`, {
+                pair,
+                signal: "BUY",
+                reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
+                buySignalCount,
+                requiredSignals: 5,
+                signalReason: signal.reason,
+              });
+              return;
+            }
+          }
+        }
+
         // MEJORA 4: Verificar cooldown post stop-loss
         if (this.isPairInStopLossCooldown(pair)) {
           const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
@@ -2123,6 +2173,22 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         }
 
       } else if (signal.action === "sell") {
+        // A1: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
+        // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
+        const botConfigSell = await storage.getBotConfig();
+        const positionModeSell = botConfigSell?.positionMode || "SINGLE";
+        const isOrphanCleanup = assetBalance > 0 && (!existingPosition || existingPosition.amount <= 0);
+        
+        if (positionModeSell === "SMART_GUARD" && !isOrphanCleanup) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
+            pair,
+            signal: "SELL",
+            reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
+            signalReason: signal.reason,
+          });
+          return;
+        }
+
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
           await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
             pair,
@@ -2277,6 +2343,25 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
             exposureAvailable: 0,
           });
           return;
+        }
+
+        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
+        if (positionMode === "SMART_GUARD") {
+          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
+          if (signalCountMatch) {
+            const buySignalCount = parseInt(signalCountMatch[1], 10);
+            if (buySignalCount < 5) {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < 5)`, {
+                pair,
+                signal: "BUY",
+                reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
+                buySignalCount,
+                requiredSignals: 5,
+                signalReason: signal.reason,
+              });
+              return;
+            }
+          }
         }
 
         if (this.isPairInStopLossCooldown(pair)) {
@@ -2472,6 +2557,23 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
         }
 
       } else if (signal.action === "sell") {
+        // A2: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
+        // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
+        const botConfigSellCandles = await storage.getBotConfig();
+        const positionModeSellCandles = botConfigSellCandles?.positionMode || "SINGLE";
+        const isOrphanCleanupCandles = assetBalance > 0 && (!existingPosition || existingPosition.amount <= 0);
+        
+        if (positionModeSellCandles === "SMART_GUARD" && !isOrphanCleanupCandles) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
+            pair,
+            signal: "SELL",
+            reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
+            strategyId,
+            signalReason: signal.reason,
+          });
+          return;
+        }
+
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
           await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
             pair,
@@ -3276,6 +3378,25 @@ _⚠️ Modo simulación - NO se envió orden real_
         return true; // Simular éxito para flujo normal
       }
       
+      // C1: Validar sellContext ANTES de ejecutar orden real (excepto emergency exits)
+      if (type === "sell" && !sellContext) {
+        const isEmergencyExit = reason.toLowerCase().includes("stop-loss") || 
+                                 reason.toLowerCase().includes("emergencia") ||
+                                 reason.toLowerCase().includes("emergency");
+        if (!isEmergencyExit) {
+          log(`[ERROR] SELL BLOQUEADO sin sellContext para ${pair} - violación de trazabilidad. Razón: ${reason}`, "trading");
+          await botLogger.warn("SELL_BLOCKED_NO_CONTEXT", `SELL bloqueado - sin sellContext`, {
+            pair,
+            type,
+            volume,
+            price,
+            reason,
+          });
+          return false;
+        }
+        log(`[WARN] Emergency SELL sin sellContext para ${pair} - permitido. Razón: ${reason}`, "trading");
+      }
+      
       log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)}`, "trading");
       
       const order = await this.krakenService.placeOrder({
@@ -3448,8 +3569,9 @@ _⚠️ Modo simulación - NO se envió orden real_
             }
           }
         } else {
-          // No sellContext provided - this is a bug, log warning
-          log(`[WARN] Sell ejecutado sin sellContext para ${pair} - P&L no registrado. Todos los sell deben proporcionar sellContext.`, "trading");
+          // C1: sellContext no proporcionado - ya validado antes de ejecutar orden
+          // Si llegamos aquí, es emergency exit permitido (P&L no registrado)
+          log(`[WARN] Emergency SELL completado sin sellContext para ${pair} - P&L no registrado.`, "trading");
         }
         // Position deletion is handled by the caller (checkSinglePositionSLTP, checkSmartGuardExit, etc.)
       }
