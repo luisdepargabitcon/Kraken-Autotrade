@@ -106,6 +106,13 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
   4. Only runs for real trades (DRY_RUN mode is safely bypassed with triple guard)
 - **Transaction Safety**: All operations (lot select, match insert, qty update, fill mark) run within same tx handle.
 
+### Confidence Normalization
+- **Convention**: Interno (signals/positions) usa escala 0..1, Display (UI/Telegram/logs) y ML usa 0..100.
+- **Helper**: `server/utils/confidence.ts` con `toConfidencePct()` y `toConfidenceUnit()`.
+- **DB Loading**: Posiciones cargadas con `toConfidenceUnit()` para normalizar valores históricos.
+- **Scale-Out**: Comparación y logs usan `toConfidencePct()` para mostrar "78%" no "0.78%".
+- **AI Dataset**: Features siempre en 0..100 para consistencia del modelo.
+
 ### AI Filter Module
 - **Purpose**: Machine learning filter to approve/reject trade signals based on historical performance.
 - **Phases**: Red (data collection), Yellow (ready to train), Green (filter active).
