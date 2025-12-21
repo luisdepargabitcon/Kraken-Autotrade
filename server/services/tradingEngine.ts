@@ -2002,7 +2002,9 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 
           tradeAmountUSD = tradeAmountUSD * confidenceFactor;
           
           if (confidenceFactor < 1.0) {
-            log(`${pair}: Sizing ajustado por confianza (${(signal.confidence * 100).toFixed(0)}%): $${originalBeforeConfidence.toFixed(2)} -> $${tradeAmountUSD.toFixed(2)} (${(confidenceFactor * 100).toFixed(0)}%)`, "trading");
+            const confPct = toConfidencePct(signal.confidence, 0);
+            const factorPct = Math.round(confidenceFactor * 100);
+            log(`${pair}: Sizing ajustado por confianza (${confPct.toFixed(0)}%): $${originalBeforeConfidence.toFixed(2)} -> $${tradeAmountUSD.toFixed(2)} (${factorPct}%)`, "trading");
           }
 
           if (tradeAmountUSD < minRequiredUSD && freshUsdBalance >= minRequiredUSD) {
@@ -3593,7 +3595,7 @@ _⚠️ Modo simulación - NO se envió orden real_
             `Momentum (Velas ${strategyMeta.timeframe})` : 
             "Momentum (Ciclos)") : 
           "Momentum (Ciclos)";
-        const confidenceLabel = strategyMeta?.confidence ? ` | Confianza: ${(strategyMeta.confidence * 100).toFixed(0)}%` : "";
+        const confidenceLabel = strategyMeta?.confidence ? ` | Confianza: ${toConfidencePct(strategyMeta.confidence, 0).toFixed(0)}%` : "";
         
         await this.telegramService.sendMessage(`
 ${emoji} *Operación Automática Ejecutada*
