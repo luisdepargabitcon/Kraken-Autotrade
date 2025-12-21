@@ -72,6 +72,7 @@ export interface IStorage {
   
   getTelegramChats(): Promise<TelegramChat[]>;
   getActiveTelegramChats(): Promise<TelegramChat[]>;
+  getTelegramChatByChatId(chatId: string): Promise<TelegramChat | undefined>;
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat>;
   deleteTelegramChat(id: number): Promise<void>;
@@ -420,6 +421,13 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(telegramChatsTable)
       .where(eq(telegramChatsTable.isActive, true))
       .orderBy(desc(telegramChatsTable.createdAt));
+  }
+
+  async getTelegramChatByChatId(chatId: string): Promise<TelegramChat | undefined> {
+    const chats = await db.select().from(telegramChatsTable)
+      .where(eq(telegramChatsTable.chatId, chatId))
+      .limit(1);
+    return chats[0];
   }
 
   async createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat> {

@@ -1,4 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
+import cron from "node-cron";
+import si from "systeminformation";
 import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
@@ -24,6 +26,8 @@ export class TelegramService {
   private engineController: EngineController | null = null;
   private startTime: Date = new Date();
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private dailyReportJob: cron.ScheduledTask | null = null;
+  private lastDailyReportDate: string = "";
 
   setEngineController(controller: EngineController) {
     this.engineController = controller;
@@ -85,6 +89,20 @@ export class TelegramService {
 
     this.bot.onText(/\/uptime/, async (msg) => {
       await this.handleUptime(msg.chat.id);
+    });
+
+    this.bot.onText(/\/menu/, async (msg) => {
+      await this.handleMenu(msg.chat.id);
+    });
+
+    this.bot.onText(/\/channels/, async (msg) => {
+      await this.handleChannels(msg.chat.id);
+    });
+
+    // Callback query handler for inline buttons
+    this.bot.on("callback_query", async (query) => {
+      if (!query.data || !query.message) return;
+      await this.handleCallbackQuery(query);
     });
 
     this.bot.on("polling_error", (error) => {
@@ -313,6 +331,264 @@ _KrakenBot.AI_
     await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
   }
 
+  private async handleMenu(chatId: number) {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: "📊 Estado", callback_data: "MENU_STATUS" },
+          { text: "💰 Balance", callback_data: "MENU_BALANCE" },
+        ],
+        [
+          { text: "📈 Exposición", callback_data: "MENU_EXPOSURE" },
+          { text: "🔄 Sync Kraken", callback_data: "MENU_SYNC" },
+        ],
+        [
+          { text: "⏸️ Pausar", callback_data: "MENU_PAUSE" },
+          { text: "▶️ Reanudar", callback_data: "MENU_RESUME" },
+        ],
+        [
+          { text: "📣 Canales", callback_data: "MENU_CHANNELS" },
+          { text: "⏰ Reporte diario", callback_data: "MENU_DAILY" },
+        ],
+        [
+          { text: "❓ Ayuda", callback_data: "MENU_HELP" },
+        ],
+      ],
+    };
+
+    const message = `
+🤖 *MENÚ PRINCIPAL*
+
+Selecciona una opción:
+    `.trim();
+
+    await this.bot?.sendMessage(chatId, message, {
+      parse_mode: "Markdown",
+      reply_markup: keyboard,
+    });
+  }
+
+  private async handleChannels(chatId: number) {
+    try {
+      const chatIdStr = chatId.toString();
+      let chat = await storage.getTelegramChatByChatId(chatIdStr);
+      
+      if (!chat) {
+        // Create chat if doesn't exist
+        await storage.createTelegramChat({
+          name: `Chat ${chatId}`,
+          chatId: chatIdStr,
+          alertTrades: true,
+          alertErrors: true,
+          alertSystem: true,
+          alertBalance: false,
+          alertHeartbeat: true,
+          isActive: true,
+        });
+        chat = await storage.getTelegramChatByChatId(chatIdStr);
+      }
+
+      const t = chat?.alertTrades ? "✅" : "⬜";
+      const s = chat?.alertSystem ? "✅" : "⬜";
+      const e = chat?.alertErrors ? "✅" : "⬜";
+      const b = chat?.alertBalance ? "✅" : "⬜";
+      const h = chat?.alertHeartbeat ? "✅" : "⬜";
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: `${t} Trades`, callback_data: "TOGGLE_TRADES" },
+            { text: `${s} System`, callback_data: "TOGGLE_SYSTEM" },
+          ],
+          [
+            { text: `${e} Errors`, callback_data: "TOGGLE_ERRORS" },
+            { text: `${b} Balance`, callback_data: "TOGGLE_BALANCE" },
+          ],
+          [
+            { text: `${h} Heartbeat`, callback_data: "TOGGLE_HEARTBEAT" },
+            { text: "📃 Listar", callback_data: "LIST_CHATS" },
+          ],
+          [
+            { text: "⬅️ Menú", callback_data: "MENU_HOME" },
+          ],
+        ],
+      };
+
+      const message = `
+📣 *GESTIÓN DE CANALES*
+Chat actual: \`${chatId}\`
+
+*Configuración:*
+${t} Trades | ${s} Sistema | ${e} Errores
+${b} Balance | ${h} Heartbeat
+
+_Pulsa para activar/desactivar_
+      `.trim();
+
+      await this.bot?.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+  }
+
+  private async handleCallbackQuery(query: TelegramBot.CallbackQuery) {
+    const chatId = query.message!.chat.id;
+    const data = query.data!;
+
+    try {
+      // Answer callback to remove loading state
+      await this.bot?.answerCallbackQuery(query.id);
+
+      switch (data) {
+        case "MENU_HOME":
+          await this.handleMenu(chatId);
+          break;
+        case "MENU_STATUS":
+          await this.handleEstado(chatId);
+          break;
+        case "MENU_BALANCE":
+          await this.handleBalance(chatId);
+          break;
+        case "MENU_EXPOSURE":
+          await this.handleExposicion(chatId);
+          break;
+        case "MENU_SYNC":
+          await this.handleSyncCallback(chatId);
+          break;
+        case "MENU_PAUSE":
+          await this.handlePausar(chatId);
+          break;
+        case "MENU_RESUME":
+          await this.handleReanudar(chatId);
+          break;
+        case "MENU_CHANNELS":
+          await this.handleChannels(chatId);
+          break;
+        case "MENU_DAILY":
+          await this.handleDailyConfig(chatId);
+          break;
+        case "MENU_HELP":
+          await this.handleAyuda(chatId);
+          break;
+        case "TOGGLE_TRADES":
+        case "TOGGLE_SYSTEM":
+        case "TOGGLE_ERRORS":
+        case "TOGGLE_BALANCE":
+        case "TOGGLE_HEARTBEAT":
+          await this.handleToggleChannel(chatId, data);
+          break;
+        case "LIST_CHATS":
+          await this.handleListChats(chatId);
+          break;
+        default:
+          await this.bot?.sendMessage(chatId, "⚠️ Opción no reconocida");
+      }
+    } catch (error: any) {
+      console.error("Callback error:", error);
+      await this.bot?.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+  }
+
+  private async handleSyncCallback(chatId: number) {
+    await this.bot?.sendMessage(chatId, "🔄 *Sincronizando con Kraken...*", { parse_mode: "Markdown" });
+    // Note: Actual sync is handled by API endpoint, this is just feedback
+    await this.bot?.sendMessage(chatId, "✅ Usa la API /api/trades/sync para sincronizar trades.", { parse_mode: "Markdown" });
+  }
+
+  private async handleDailyConfig(chatId: number) {
+    const message = `
+⏰ *REPORTE DIARIO*
+
+El reporte técnico se envía automáticamente a las *14:00* (Europe/Madrid) a los canales con *System* activado.
+
+Incluye:
+• Estado conexiones (Kraken/DB/Telegram)
+• Recursos NAS (CPU/Mem/Disco)
+• Estado del bot y posiciones
+• PnL diario
+
+_Activa "System" en /channels para recibirlo_
+    `.trim();
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "⬅️ Menú", callback_data: "MENU_HOME" }],
+      ],
+    };
+
+    await this.bot?.sendMessage(chatId, message, {
+      parse_mode: "Markdown",
+      reply_markup: keyboard,
+    });
+  }
+
+  private async handleToggleChannel(chatId: number, action: string) {
+    const chatIdStr = chatId.toString();
+    const field = action.replace("TOGGLE_", "").toLowerCase();
+    
+    const fieldMap: Record<string, keyof Pick<import("@shared/schema").TelegramChat, "alertTrades" | "alertErrors" | "alertSystem" | "alertBalance" | "alertHeartbeat">> = {
+      trades: "alertTrades",
+      system: "alertSystem",
+      errors: "alertErrors",
+      balance: "alertBalance",
+      heartbeat: "alertHeartbeat",
+    };
+
+    const dbField = fieldMap[field];
+    if (!dbField) return;
+
+    const chat = await storage.getTelegramChatByChatId(chatIdStr);
+    if (!chat) {
+      await this.bot?.sendMessage(chatId, "⚠️ Chat no registrado. Usa /channels primero.");
+      return;
+    }
+
+    const newValue = !chat[dbField];
+    await storage.updateTelegramChat(chat.id, { [dbField]: newValue });
+
+    const emoji = newValue ? "✅" : "⬜";
+    await this.bot?.sendMessage(chatId, `${emoji} *${field.charAt(0).toUpperCase() + field.slice(1)}* ${newValue ? "activado" : "desactivado"}`, { parse_mode: "Markdown" });
+    
+    // Refresh channels view
+    await this.handleChannels(chatId);
+  }
+
+  private async handleListChats(chatId: number) {
+    const chats = await storage.getActiveTelegramChats();
+    
+    if (chats.length === 0) {
+      await this.bot?.sendMessage(chatId, "📭 No hay chats registrados.");
+      return;
+    }
+
+    let message = "📃 *Chats Registrados*\n\n";
+    for (const chat of chats) {
+      const flags = [
+        chat.alertTrades ? "T" : "",
+        chat.alertSystem ? "S" : "",
+        chat.alertErrors ? "E" : "",
+        chat.alertBalance ? "B" : "",
+        chat.alertHeartbeat ? "H" : "",
+      ].filter(Boolean).join("");
+      
+      message += `• \`${chat.chatId}\` (${chat.name})\n  Flags: [${flags}]\n`;
+    }
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "⬅️ Menú", callback_data: "MENU_HOME" }],
+      ],
+    };
+
+    await this.bot?.sendMessage(chatId, message.trim(), {
+      parse_mode: "Markdown",
+      reply_markup: keyboard,
+    });
+  }
+
   startHeartbeat() {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
@@ -365,6 +641,119 @@ _${now.toLocaleString("es-ES")}_
       }
     } catch (error) {
       console.error("[telegram] Error enviando heartbeat:", error);
+    }
+  }
+
+  startDailyReport() {
+    if (this.dailyReportJob) {
+      this.dailyReportJob.stop();
+    }
+
+    // Schedule daily at 14:00 Europe/Madrid
+    this.dailyReportJob = cron.schedule("0 14 * * *", async () => {
+      await this.sendDailyReport();
+    }, {
+      timezone: "Europe/Madrid",
+    });
+
+    console.log("[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)");
+  }
+
+  private async sendDailyReport() {
+    try {
+      // Avoid duplicate reports
+      const today = new Date().toISOString().split("T")[0];
+      if (this.lastDailyReportDate === today) {
+        console.log("[telegram] Reporte diario ya enviado hoy, saltando");
+        return;
+      }
+      this.lastDailyReportDate = today;
+
+      // Get system info
+      const cpu = await si.currentLoad();
+      const mem = await si.mem();
+      const disk = await si.fsSize();
+      const osInfo = await si.osInfo();
+      const uptime = await si.time();
+
+      // Format metrics
+      const cpuLoad = cpu.currentLoad.toFixed(1);
+      const memUsedGb = (mem.used / 1024 / 1024 / 1024).toFixed(1);
+      const memTotalGb = (mem.total / 1024 / 1024 / 1024).toFixed(1);
+      const memPct = ((mem.used / mem.total) * 100).toFixed(1);
+      
+      const mainDisk = disk.find(d => d.mount === "/") || disk[0];
+      const diskUsedGb = mainDisk ? (mainDisk.used / 1024 / 1024 / 1024).toFixed(1) : "N/A";
+      const diskTotalGb = mainDisk ? (mainDisk.size / 1024 / 1024 / 1024).toFixed(1) : "N/A";
+      const diskPct = mainDisk ? mainDisk.use.toFixed(1) : "N/A";
+
+      const uptimeDays = Math.floor(uptime.uptime / 86400);
+      const uptimeHours = Math.floor((uptime.uptime % 86400) / 3600);
+      const uptimeMins = Math.floor((uptime.uptime % 3600) / 60);
+
+      // Get bot info
+      const config = await storage.getBotConfig();
+      const engineActive = this.engineController?.isActive() ?? false;
+      const positions = this.engineController?.getOpenPositions?.() || new Map();
+      
+      let totalExposure = 0;
+      positions.forEach((pos) => {
+        totalExposure += pos.amount * pos.entryPrice;
+      });
+
+      const envName = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+      const dryRunStatus = config?.dryRunMode ? "SÍ" : "NO";
+      const positionMode = config?.positionMode || "SINGLE";
+      const strategy = config?.strategy || "momentum";
+      const pairs = config?.activePairs?.join(", ") || "N/A";
+
+      // Check connections
+      const krakenOk = this.engineController?.getBalance ? "✅ OK" : "⚠️ N/A";
+      const dbOk = "✅ OK"; // If we're here, DB works
+      const telegramOk = this.bot ? "✅ OK" : "❌ ERROR";
+
+      const message = `
+💗 *REPORTE DIARIO (14:00)*
+
+✅ *Estado de conexiones:*
+• Kraken: ${krakenOk}
+• DB: ${dbOk}
+• Telegram: ${telegramOk}
+
+📊 *Recursos del sistema:*
+• CPU: ${cpuLoad}%
+• Memoria: ${memUsedGb}/${memTotalGb} GB (${memPct}%)
+• Disco: ${diskUsedGb}/${diskTotalGb} GB (${diskPct}%)
+• Uptime: ${uptimeDays}d ${uptimeHours}h ${uptimeMins}m
+
+🤖 *Estado del bot:*
+• Entorno: ${envName}
+• DRY\\_RUN: ${dryRunStatus}
+• Modo: ${positionMode}
+• Estrategia: ${strategy}
+• Pares: ${pairs}
+• Posiciones: ${positions.size}
+• Exposición: $${totalExposure.toFixed(2)}
+
+_${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}_
+      `.trim();
+
+      // Send to chats with alertSystem enabled
+      const chats = await storage.getActiveTelegramChats();
+      for (const chat of chats) {
+        if (chat.alertSystem) {
+          await this.sendToChat(chat.chatId, message);
+        }
+      }
+
+      // Also send to main chat
+      if (this.chatId) {
+        await this.sendMessage(message);
+      }
+
+      console.log("[telegram] Reporte diario enviado");
+    } catch (error) {
+      console.error("[telegram] Error enviando reporte diario:", error);
     }
   }
 

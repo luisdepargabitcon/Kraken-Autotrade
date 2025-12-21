@@ -3305,6 +3305,20 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
     sellContext?: { entryPrice: number; aiSampleId?: number } // For sells: pass entry price for correct P&L calculation
   ): Promise<boolean> {
     try {
+      // === VALIDACIÓN: Bloquear pares no-USD ===
+      const allowedQuotes = ["USD"];
+      const pairQuote = pair.split("/")[1];
+      if (!allowedQuotes.includes(pairQuote)) {
+        log(`[BLOCKED] Par ${pair} rechazado: quote "${pairQuote}" no permitido (solo ${allowedQuotes.join(", ")})`, "trading");
+        await botLogger.warn("PAIR_NOT_ALLOWED_QUOTE", `Trade bloqueado: par ${pair} no tiene quote USD`, {
+          pair,
+          type,
+          quote: pairQuote,
+          allowedQuotes,
+        });
+        return false;
+      }
+      
       const volumeNum = parseFloat(volume);
       const totalUSD = volumeNum * price;
       
