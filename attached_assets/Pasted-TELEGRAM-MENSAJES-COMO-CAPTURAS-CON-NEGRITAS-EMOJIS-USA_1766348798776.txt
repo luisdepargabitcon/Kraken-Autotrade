@@ -1,0 +1,180 @@
+TELEGRAM: MENSAJES “COMO CAPTURAS” CON NEGRITAS + EMOJIS (USAR parse_mode HTML)
+
+PROBLEMA
+Los mensajes salen sin negrita porque se envían como texto plano. Quiero el estilo de las capturas:
+- Títulos y secciones en NEGRITA
+- Emojis/bullets como antes (✅ 📌 📊 🧠 💗 🟢 🔴 🟠 etc.)
+- Mismo “diseño” visual, NO el formato minimalista
+
+SOLUCIÓN
+1) Enviar TODOS los mensajes con parse_mode="HTML".
+2) Usar <b>...</b> para títulos y encabezados de sección.
+3) Escapar HTML en valores dinámicos (pair, reason, ids) para evitar que rompa el markup.
+
+CAMBIO 1 — Helper de escape HTML (OBLIGATORIO)
+En server/services/telegram.ts (o archivo util):
+function escapeHtml(s: unknown): string {
+  const str = String(s ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+CAMBIO 2 — Wrapper de envío que SIEMPRE use HTML
+Centralizar el envío (para no olvidarlo en cada sitio):
+async function sendTelegram(chatId: string, text: string, extra?: any) {
+  return bot.telegram.sendMessage(chatId, text, {
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    ...extra,
+  });
+}
+
+Asegurar que sendAlertToMultipleChats() usa sendTelegram() internamente.
+
+CAMBIO 3 — Plantillas “como capturas” (HTML)
+Crear funciones builder (en telegram.ts o telegramTemplates.ts):
+
+A) BOT INICIADO (como tu canal KRAKEN)
+function buildBotStartedMessageHTML(ctx: { env; strategy; risk; pairs; balanceUsd; mode; }): string {
+  return [
+    `<b>${escapeHtml(ctx.env)} 🟢 KrakenBot Iniciado</b>`,
+    ``,
+    `El bot de trading autónomo está activo.`,
+    `<b>Estrategia:</b> ${escapeHtml(ctx.strategy)}`,
+    `<b>Nivel de riesgo:</b> ${escapeHtml(ctx.risk)}`,
+    `<b>Pares activos:</b> ${escapeHtml(ctx.pairs.join(", "))}`,
+    `<b>Balance USD:</b> $${escapeHtml(ctx.balanceUsd)}`,
+    `⚠️ <b>Modo:</b> ${escapeHtml(ctx.mode)}`
+  ].join("\n");
+}
+
+B) HEARTBEAT / VERIFICACIÓN OPERATIVIDAD (como tus capturas “SISTEMA OPERATIVO”)
+function buildHeartbeatMessageHTML(ctx: { title; channelName; ts; cpu; mem; disk; uptime; conns; tasks; }): string {
+  return [
+    `<b>🟥 SISTEMA OPERATIVO</b>`,
+    `<b>✅ VERIFICACIÓN DE OPERATIVIDAD ${escapeHtml(ctx.title)} - CANAL ${escapeHtml(ctx.channelName)} 📌</b>`,
+    ``,
+    `Este mensaje confirma que el bot de trading está activo y`,
+    `monitorizando el mercado.`,
+    ``,
+    `<b>📊 Estado del sistema:</b>`,
+    `CPU: ${escapeHtml(ctx.cpu)} | Memoria: ${escapeHtml(ctx.mem)} | Disco: ${escapeHtml(ctx.disk)}`,
+    `Tiempo activo: ${escapeHtml(ctx.uptime)}`,
+    ``,
+    `<b>✅ Conexiones:</b>`,
+    `${ctx.conns.kraken ? "✅" : "❌"} Kraken`,
+    `${ctx.conns.telegram ? "✅" : "❌"} Telegram`,
+    `${ctx.conns.db ? "✅" : "❌"} DB`,
+    ``,
+    `<b>📌 Canal:</b> ${escapeHtml(ctx.channelName)}`,
+    `<b>🕒 Hora:</b> ${escapeHtml(ctx.ts)}`,
+    ``,
+    `✅ Sistema operativo 24x7 - Verificación automática de funcionamiento`
+  ].join("\n");
+}
+
+C) SEÑAL (como tus capturas “🟢 SEÑAL: COMPRAR SOL”)
+function buildSignalMessageHTML(ctx: { side; symbol; price; investPct; rsi; macd; adx; regime; ts; }): string {
+  const sideEmoji = ctx.side === "BUY" ? "🟢" : "🔴";
+  const sideText  = ctx.side === "BUY" ? "COMPRAR" : "VENDER";
+  return [
+    `<b>${sideEmoji} SEÑAL: ${sideText} ${escapeHtml(ctx.symbol)} ${sideEmoji}</b>`,
+    ``,
+    `📌 Precio: ${escapeHtml(ctx.price)}`,
+    `💰 Inversión recomendada: ${escapeHtml(ctx.investPct)}%`,
+    ``,
+    `<b>📊 Indicadores técnicos:</b>`,
+    `• RSI: ${escapeHtml(ctx.rsi)}`,
+    `• MACD: ${escapeHtml(ctx.macd)}`,
+    `• ADX: ${escapeHtml(ctx.adx)}`,
+    ``,
+    `🧭 Régimen de mercado: ${escapeHtml(ctx.regime)}`,
+    `🕒 ${escapeHtml(ctx.ts)}`
+  ].join("\n");
+}
+
+D) OPERACIÓN EJECUTADA (BUY) — estilo “Operación Automática Ejecutada” pero con negritas
+function buildTradeBuyExecutedHTML(ctx: { env; pair; amount; price; total; orderId; strategyLabel; confPct; reason; signalsSummary; mode; }): string {
+  return [
+    `<b>${escapeHtml(ctx.env)} 🟢 Operación Automática Ejecutada</b>`,
+    ``,
+    `<b>📌 Tipo:</b> BUY`,
+    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
+    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
+    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
+    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
+    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>🧠 Estrategia:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
+    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`,
+    ctx.signalsSummary ? `<b>📊 Señales:</b> ${escapeHtml(ctx.signalsSummary)}` : ``,
+    ``,
+    `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`
+  ].filter(Boolean).join("\n");
+}
+
+E) OPERACIÓN EJECUTADA (SELL) — con PnL cierre USD en NEGRITA (lo que pediste)
+function buildTradeSellExecutedHTML(ctx: { env; pair; amount; price; total; orderId; exitType; trigger; pnlUsd; pnlPct; feeUsd; strategyLabel; confPct; reason; mode; }): string {
+  const pnlSign = Number(ctx.pnlUsd) >= 0 ? "+" : "";
+  const pnlUsdTxt = (ctx.pnlUsd === null || ctx.pnlUsd === undefined)
+    ? "N/A (sin entryPrice)"
+    : `${pnlSign}$${Number(ctx.pnlUsd).toFixed(2)}${(ctx.pnlPct !== null && ctx.pnlPct !== undefined) ? ` (${Number(ctx.pnlPct).toFixed(2)}%)` : ""}`;
+
+  const feeTxt = (ctx.feeUsd === null || ctx.feeUsd === undefined) ? "N/A" : `$${Number(ctx.feeUsd).toFixed(2)}`;
+
+  return [
+    `<b>${escapeHtml(ctx.env)} 🔴 Operación Automática Ejecutada</b>`,
+    ``,
+    `<b>📌 Tipo:</b> SELL`,
+    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
+    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
+    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
+    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
+    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>💰 Resultado del cierre:</b>`,
+    `• <b>PnL cierre:</b> <b>${escapeHtml(pnlUsdTxt)}</b>`,
+    `• <b>Fee:</b> ${escapeHtml(feeTxt)}`,
+    ``,
+    `<b>🛡️ Salida (SMART_GUARD):</b>`,
+    `• <b>Tipo:</b> ${escapeHtml(ctx.exitType)}`,
+    ctx.trigger ? `• <b>Trigger:</b> ${escapeHtml(ctx.trigger)}` : ``,
+    ``,
+    `<b>🧠 Estrategia origen:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
+    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`,
+    ``,
+    `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`
+  ].filter(Boolean).join("\n");
+}
+
+F) ORPHAN (como antes, con negritas)
+function buildOrphanSellHTML(ctx: { env; assetOrPair; amount; price; total; orderId; reasonCode; }): string {
+  return [
+    `<b>${escapeHtml(ctx.env)} 🟠 LIQUIDACIÓN HUÉRFANA</b>`,
+    ``,
+    `<b>📌 Operación:</b>`,
+    `• Par/Activo: ${escapeHtml(ctx.assetOrPair)}`,
+    `• Cantidad: ${escapeHtml(ctx.amount)}`,
+    `• Precio: ${escapeHtml(ctx.price)}`,
+    `• Total: ${escapeHtml(ctx.total)}`,
+    `• ID: <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>⚠️ Resultado:</b>`,
+    `• <b>PnL cierre:</b> N/A (sin entryPrice)`,
+    `• Reason: ${escapeHtml(ctx.reasonCode)}`
+  ].join("\n");
+}
+
+CAMBIO 4 — Aplicar estas plantillas en los puntos reales (trades, heartbeat, signals, comandos)
+- Reemplazar los textos actuales por builders HTML.
+- Asegurar que cada sendMessage usa parse_mode="HTML".
+- Para comandos (/estado, /balance, /exposicion, etc.) usar el mismo estilo: títulos <b>...</b> y secciones.
+
+CRITERIOS DE ACEPTACIÓN
+1) En Telegram se ven negritas en títulos y encabezados (como en tus capturas).
+2) Se mantienen los emoticonos/bullets (✅ 📌 📊 💗 etc.).
+3) No se rompe el mensaje por caracteres especiales (escapeHtml aplicado).
