@@ -1,0 +1,45 @@
+ÚLTIMO AJUSTE ANTES DE IMPLEMENTAR PUNTO 3: VERIFICAR/ASEGURAR SCHEMA + MIGRACIÓN + UNIQUE INDEX
+
+OBJETIVO
+Antes de tocar lógica de P&L y sync upsert, asegurar que la tabla trades tiene los campos necesarios y que existe un índice único por kraken_order_id (cuando no sea null).
+
+PASO 0 — Verificar schema actual
+0.1) Revisar definición de tabla trades (shared/schema.ts o server/db/schema o donde esté Drizzle):
+    - Confirmar existencia/nombres exactos de:
+      - kraken_order_id (string nullable)
+      - entry_price (numeric/float nullable)
+      - realized_pnl_usd (numeric/float nullable)
+      - realized_pnl_pct (numeric/float nullable)
+    Si los nombres difieren (ej. krakenOrderId camelcase en Drizzle), mapearlos.
+
+0.2) Verificar en DB (psql) que existen columnas reales:
+    \d+ trades
+    (o query a information_schema.columns)
+
+PASO 1 — Si faltan columnas, añadirlas (Drizzle)
+1.1) Añadir columnas a schema (nullable):
+    - entry_price numeric
+    - realized_pnl_usd numeric
+    - realized_pnl_pct numeric
+    - kraken_order_id text (si no existe)
+1.2) Aplicar migración:
+    - npm run db:push (o drizzle-kit push) en Replit
+
+PASO 2 — BONUS: UNIQUE INDEX en kraken_order_id cuando no sea null
+2.1) Crear índice único parcial en Postgres:
+    CREATE UNIQUE INDEX IF NOT EXISTS trades_kraken_order_id_uq
+    ON trades (kraken_order_id)
+    WHERE kraken_order_id IS NOT NULL;
+
+2.2) Integrarlo vía migración SQL (si tenéis carpeta migrations) o mediante script post-migrate.
+
+PASO 3 — Implementación PUNTO 3 (A+B+C) (usar especificación ya aprobada)
+3.1) tradingEngine.ts: SELL automático con entry_price + realized_pnl_*
+3.2) storage.ts: findTradeByKrakenOrderId + updateTradeByKrakenOrderId
+3.3) routes.ts sync: UPSERT por kraken_order_id (UPDATE si existe, INSERT si no)
+3.4) logs discrepancias PNL (no machacar)
+3.5) verificación C1/C2/C3 + doc breve
+
+CRITERIO DE ACEPTACIÓN ADICIONAL (schema)
+- Después del push/migración, \d+ trades muestra las columnas P&L y kraken_order_id.
+- El índice único parcial existe (pg_indexes) y evita insertar duplicados con mismo kraken_order_id.
