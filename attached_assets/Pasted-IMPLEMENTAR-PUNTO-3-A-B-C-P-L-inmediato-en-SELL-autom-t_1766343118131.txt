@@ -1,0 +1,43 @@
+IMPLEMENTAR PUNTO 3 (A+B+C): P&L inmediato en SELL automático + anti-duplicados en sync por kraken_order_id
+
+OBJETIVO
+1) Cada SELL automático (SMART_GUARD exits) debe guardarse con:
+   entry_price + realized_pnl_usd + realized_pnl_pct (si hay entryPrice fiable).
+2) El sync de Kraken NO debe crear duplicados (AUTO-* + KRAKEN-*). Debe hacer UPDATE si ya existe el kraken_order_id.
+3) Mantener excepción: orphan cleanup/emergency exits pueden vender aunque falte entryPrice, pero esos trades se marcan y NO tienen P&L.
+
+A) P&L inmediato en SELL automático (tradingEngine.ts)
+A1) Identificar el punto central donde se persiste el trade de SELL tras executeTrade (storage.createTrade o equivalente).
+A2) Si type==="sell" y existe sellContext.entryPrice:
+    - Guardar entryPrice = sellContext.entryPrice
+    - Calcular realizedPnlPct = ((sellPrice - entryPrice) / entryPrice) * 100
+    - Calcular realizedPnlUsd (neto si hay fees, o gross si no; usar la misma lógica que forceClosePosition para no duplicar reglas)
+    - Persistir realizedPnlUsd/realizedPnlPct en la fila del SELL.
+A3) Si es SELL pero NO hay entryPrice fiable (orphan liquidation / emergency path):
+    - Permitir la venta (por seguridad)
+    - Guardar realized_pnl_* = NULL
+    - Añadir reason/flag claro: "ORPHAN_LIQUIDATION" o "SELL_NO_ENTRYPRICE"
+    - Asegurar que estos trades se excluyen del entrenamiento IA (si ya tenéis esa mecánica).
+
+B) Anti-duplicados: upsert por kraken_order_id en sync (routes.ts / service sync)
+B1) En /api/trades/sync (o servicio que importa de Kraken):
+    - Para cada operación importada con kraken_order_id (ordertxid):
+      - Buscar trade existente por kraken_order_id.
+      - Si existe: UPDATE de campos (price, volume, cost, fee, executedAt, side, pair, etc.).
+        - Si realized_pnl_* ya existe y no es null, NO lo sobreescribas salvo que sea null o haya una discrepancia clara (loggear discrepancia).
+      - Si no existe: INSERT normal.
+B2) Si no hay método en storage, crear:
+    - storage.findTradeByKrakenOrderId(orderId)
+    - storage.updateTradeByKrakenOrderId(orderId, fieldsToUpdate)
+
+C) Verificación
+C1) Ejecutar un SELL automático (SMART_GUARD exit) con sellContext.entryPrice:
+    - En UI/DB el SELL debe mostrar P&L (no "-").
+C2) Ejecutar /api/trades/sync después:
+    - No deben aparecer trades duplicados para el mismo kraken_order_id.
+    - El trade existente debe actualizarse (UPDATE), no insertarse uno nuevo.
+C3) Orphan liquidation:
+    - Debe poder vender, pero dejar realized_pnl_* NULL y reason claro.
+
+ENTREGABLE
+PR con cambios en tradingEngine.ts + sync + storage methods + (opcional) documentación corta.
