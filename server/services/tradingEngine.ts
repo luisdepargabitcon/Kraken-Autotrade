@@ -2241,6 +2241,23 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
             signalReason: signal.reason,
           });
+          
+          // Notificar a Telegram
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🛡️ <b>Señal SELL Bloqueada</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Modo: <code>SMART_GUARD</code>
+
+⚠️ Solo risk exits (SL/TP/Trailing) permiten vender.
+
+ℹ️ <i>${signal.reason}</i>
+━━━━━━━━━━━━━━━━━━━`, "system");
+          }
+          
           return;
         }
 
