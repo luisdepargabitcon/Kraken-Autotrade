@@ -1,0 +1,139 @@
+TELEGRAM V2 (COMANDOS + BOTONES + GESTIÓN DE CANALES) + REPORTE TÉCNICO DIARIO NAS (14:00)
+
+OBJETIVOS
+1) Actualizar TODOS los mensajes de comandos (/start, /stop, /status, /sync, etc.) al mismo “diseño” de tus capturas (bloques con secciones, emojis, checks).
+2) Actualizar “botones” (inline keyboard) para que reflejen las opciones nuevas:
+   - SMART_GUARD always-on (no SELL por señal)
+   - Sync UPSERT por kraken_order_id
+   - Orphan cleanup
+   - Gestión de canales (Trading / Sistema / Errores / Noticias)
+   - Daily report ON/OFF y hora
+3) Añadir un “Reporte Técnico Diario” (NAS + bot) a las 14:00 hora local, como en tus imágenes:
+   - Estado conexiones (Kraken/DB/Telegram)
+   - Recursos NAS (CPU/Mem/Disk/Uptime)
+   - Estado bot (modo, estrategia, pares, posiciones, exposición, PnL diario)
+   - Enviar a canal “Sistema” (y opcionalmente a “Trading”)
+
+ASUNCIONES (si algo no existe, crearlo)
+- Ya existe tabla/config de chats Telegram (telegram_chats) o equivalente.
+- Ya existe servicio Telegram (server/services/telegram.ts) con sendMessage y callback queries.
+- El servidor corre en Node/TS.
+
+CAMBIOS REQUERIDOS
+
+A) MENÚ PRINCIPAL CON BOTONES (INLINE KEYBOARD)
+1) Implementar comando /menu (y también botón “Menú” en respuestas) que envíe un mensaje con inline keyboard:
+
+Botones (2 columnas recomendado):
+- 📊 Estado (/status)
+- 🔄 Sync Kraken (/sync)
+- 🛡️ Modo SMART_GUARD (info + reglas)
+- 📈 Trading (pares/estrategia)
+- 📣 Canales (gestión)
+- 🧹 Orphan cleanup
+- ⏰ Reporte diario (config)
+- 🟢 Start / 🔴 Stop
+
+2) Implementar handlers de callback_query para cada botón:
+   - callback_data: "MENU_STATUS", "MENU_SYNC", "MENU_CHANNELS", "MENU_DAILY", etc.
+   - Cada callback responde editando el mensaje o enviando uno nuevo (evitar spam).
+
+B) GESTIÓN DE CANALES (BOTONES + COMANDOS)
+Objetivo: poder configurar a qué chatId(s) se envía cada tipo de mensaje.
+
+Tipos de canal (mínimo):
+- TRADING: operaciones BUY/SELL y señales relevantes
+- SYSTEM: heartbeat, daily report, status técnico
+- ERRORS: errores/alertas críticas (opcional)
+- NEWS: noticias (si existe)
+
+3) Comandos mínimos:
+- /channels  -> muestra configuración actual y botones
+- /set_trading_here -> marca el chat actual como canal TRADING
+- /set_system_here  -> marca el chat actual como canal SYSTEM
+- /unset_here       -> desregistra el chat actual
+- /list_channels     -> lista todos los chats registrados y sus roles
+
+4) UI con botones en /channels:
+📣 GESTIÓN DE CANALES
+- ✅ TRADING: <chatId o nombre>
+- ✅ SYSTEM: <chatId o nombre>
+- ⬜ ERRORS: <…>
+- ⬜ NEWS: <…>
+
+Botones:
+- “✅ Usar este chat como TRADING”
+- “✅ Usar este chat como SYSTEM”
+- “❌ Quitar este chat”
+- “📃 Listar”
+- “⬅️ Menú”
+
+Implementación:
+- En DB: tabla telegram_channels o reutilizar telegram_chats con columna "roles" (array/text) o flags boolean.
+- Permitir varios chats por rol si quieres (ej. TRADING en canal + grupo); si no, imponer 1 por rol (más simple).
+
+C) COMANDOS: MENSAJES “DISEÑO CAPTURAS”, DETALLADOS PERO BREVES
+5) Estandarizar respuestas de comandos con el mismo layout (sin MarkdownV2, plain text):
+- /start: confirma arranque + modo + dry_run/real + estrategia + pares + canales destino
+- /stop: confirma parada + timestamp
+- /status: bloque tipo “💗 HEARTBEAT / SISTEMA OPERATIVO” como capturas
+- /sync: “🔄 SYNC KRAKEN” + contadores: updated/inserted/skipped + duración
+- /orphan_cleanup: “🧹 ORPHAN CLEANUP” + qué hizo + advertencia PnL N/A
+- /help: lista breve de comandos + botón “Menú”
+
+D) REPORTE TÉCNICO DIARIO NAS (14:00)
+6) Añadir scheduler diario a las 14:00 (hora local) que envíe un reporte al canal SYSTEM.
+- Usar node-cron (recomendado) o scheduler existente (si ya tenéis heartbeat jobs).
+- Cron: "0 14 * * *"
+- TZ: usar process.env.TZ si existe; si no, setear "Europe/Madrid" o el timezone del sistema.
+- Evitar duplicados si se reinicia: guardar lastDailyReportDate (YYYY-MM-DD) en DB/config y no reenviar si ya se mandó hoy.
+
+7) Datos que debe incluir el Daily Report (similar a tus imágenes):
+💗 HEARTBEAT AUTOMÁTICO (REPORTE DIARIO 14:00)
+
+✅ Estado del sistema:
+• Kraken: OK/ERROR
+• DB: OK/ERROR
+• Telegram: OK/ERROR
+
+📊 Recursos NAS:
+• CPU: xx.x%  | Load: x.xx
+• Memoria: used/total (xx.x%)
+• Disco: used/total (xx.x%)  (usar "/" o la ruta del volumen principal)
+• Uptime: Xd Yh Zm
+
+🤖 Estado del bot:
+• Entorno: NAS/PROD o REPLIT/DEV
+• Modo: SMART_GUARD (ON) | DRY_RUN: true/false
+• Estrategia: Momentum (Velas 15m)  (o la activa)
+• Pares activos: BTC/USD, ETH/USD, …
+• Posiciones: abiertas=N | exposición USD=… | max lots/pair=…
+• PnL día: $…  (si existe dailyPnL)
+• Última operación: <tipo> <par> <hora> (opcional)
+
+📣 Canales:
+• TRADING: <…>
+• SYSTEM: <…>
+
+8) Implementación de métricas:
+- CPU/Mem/Uptime: usar librería "systeminformation" (npm i systeminformation) o fallback a "os".
+- Disco: systeminformation.fsSize() o fallback "df -h /" via child_process.
+- Estado conexiones: funciones existentes ping/health (Kraken/DB) o checks ligeros.
+- Bot: usar estado ya disponible (config snapshot + open positions + dailyPnL).
+
+E) MENSAJES DE TRADES (BUY/SELL) MANTENIENDO “DISEÑO CAPTURAS”
+9) Mantener el formato tipo capturas para BUY/SELL (ya definido), y asegurarse:
+- SELL incluye “💰 Resultado del cierre: PnL cierre: +/- $X.XX”
+- SELL muestra “🛡️ Salida (SMART_GUARD): Tipo: TP/TRAIL/BE/SL/SCALE-OUT/EMERGENCY”
+- Strategy/timeframe heredado (ya implementado) para evitar “Ciclos” incorrecto.
+
+ACEPTACIÓN / TEST
+1) /menu muestra botones correctos y cada botón funciona.
+2) /channels permite setear este chat como TRADING o SYSTEM y persiste en DB.
+3) /status devuelve mensaje estilo capturas con recursos y estado.
+4) Daily report: se envía 1 vez al día a las 14:00 al canal SYSTEM (no duplica con reinicios).
+5) BUY/SELL siguen enviándose al canal TRADING con el mismo diseño, y SELL incluye PnL cierre USD.
+6) SMART_GUARD: no se ejecutan SELL por señal; si se produce intento, solo log o mensaje “SELL ignorado”.
+
+ENTREGABLE
+- PR con: scheduler daily report + comandos/menú + gestión canales + mensajes actualizados + docs en replit.md con ejemplos y lista de comandos/botones.
