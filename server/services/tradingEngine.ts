@@ -3308,6 +3308,27 @@ _Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min. Se reintentará automática
       const volumeNum = parseFloat(volume);
       const totalUSD = volumeNum * price;
       
+      // === PUNTO 2: Autocompletar strategyMeta desde posición si falta ===
+      if (!strategyMeta?.strategyId || !strategyMeta?.timeframe) {
+        // Buscar posiciones por par para heredar meta de la posición original
+        const positions = this.getPositionsByPair(pair);
+        let pos: OpenPosition | null = null;
+        
+        // Si hay múltiples posiciones, usar la más antigua (FIFO)
+        if (positions.length > 0) {
+          pos = positions[0];
+        }
+        
+        if (pos) {
+          strategyMeta = {
+            strategyId: pos.entryStrategyId ?? strategyMeta?.strategyId ?? "unknown",
+            timeframe: pos.entrySignalTf ?? strategyMeta?.timeframe ?? "cycle",
+            confidence: pos.signalConfidence ?? strategyMeta?.confidence ?? 0,
+          };
+          log(`[META] Autocompletado strategyMeta desde posición ${pos.lotId}: ${strategyMeta.strategyId}/${strategyMeta.timeframe}`, "trading");
+        }
+      }
+      
       // === DRY_RUN MODE: Simular sin enviar orden real ===
       if (this.dryRunMode) {
         const envPrefix = environment.isReplit ? "[REPLIT/DEV][DRY\\_RUN]" : "[NAS/PROD][DRY\\_RUN]";
