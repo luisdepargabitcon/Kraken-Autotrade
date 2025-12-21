@@ -138,9 +138,18 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 
 ### Telegram Integration
 - **Functionality**: Sends notifications for bot status, trade executions, risk management triggers, and errors.
-- **Commands (Docker/NAS)**: Supports commands like `/estado`, `/pausar`, `/reanudar`.
+- **Commands (Docker/NAS)**: `/estado`, `/pausar`, `/reanudar`, `/balance`, `/config`, `/exposicion`, `/uptime`, `/ultimas`, `/ayuda`, `/menu`, `/channels`.
 - **Modes**: Polling for Docker/NAS deployments (commands), disabled for Replit (notifications only).
-- **Features**: Rate limiting to prevent spam and multi-chat support.
+- **Features**: Rate limiting, multi-chat support, inline keyboard buttons.
+- **Menu (/menu)**: Interactive buttons for Estado, Balance, Exposición, Sync, Pausar/Reanudar, Canales, Reporte diario, Ayuda.
+- **Channel Management (/channels)**: Toggle alerts per chat (Trades, System, Errors, Balance, Heartbeat).
+- **Daily Report**: Scheduled at 14:00 Europe/Madrid with system metrics (CPU/Mem/Disk/Uptime) and bot status.
+
+### Quote Currency Validation
+- **Purpose**: Block trades on non-USD pairs to prevent accidental cross-pair operations.
+- **Allowed Quotes**: Only "USD" pairs are allowed (e.g., BTC/USD, ETH/USD).
+- **Blocked**: Pairs like ETH/BTC, XRP/EUR are rejected with log `PAIR_NOT_ALLOWED_QUOTE`.
+- **Location**: Validation in `executeTrade()` before any order execution.
 
 ## External Dependencies
 

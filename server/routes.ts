@@ -102,6 +102,9 @@ export async function registerRoutes(
     // Start heartbeat for Telegram notifications
     telegramService.startHeartbeat();
     
+    // Start daily report scheduler (14:00 Europe/Madrid)
+    telegramService.startDailyReport();
+    
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();
     if (botConfig?.isActive && krakenService.isInitialized()) {
