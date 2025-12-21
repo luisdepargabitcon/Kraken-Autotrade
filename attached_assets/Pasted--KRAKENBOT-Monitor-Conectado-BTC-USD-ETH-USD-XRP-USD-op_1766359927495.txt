@@ -1,0 +1,205 @@
+
+
+KRAKENBOT
+Monitor
+Conectado
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1766316621021-po6gjs",
+    "LOT-ETHUSD-1766341808309-9nicx1"
+  ],
+  "lastScanAt": "2025-12-21T23:22:17.150Z",
+  "loopLatencyMs": 29980,
+  "balanceUsd": 153.2097,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-21T23:22:47.132Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    }
+  },
+  "scanTime": "2025-12-21T23:22:17.150Z"
+}
+11:23:34 PM [websocket] [WS] Cliente desconectado. Total: 0
+11:23:35 PM [websocket] [WS] Cliente conectado. Total: 1
+[36m[2025-12-21T23:23:47.134Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1766316621021-po6gjs",
+    "LOT-ETHUSD-1766341808309-9nicx1"
+  ],
+  "lastScanAt": "2025-12-21T23:23:17.155Z",
+  "loopLatencyMs": 29979,
+  "balanceUsd": 153.2097,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-21T23:23:47.137Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    }
+  },
+  "scanTime": "2025-12-21T23:23:17.155Z"
+}
+11:24:09 PM [websocket] [WS] Cliente desconectado. Total: 0
+[36m[2025-12-21T23:24:47.133Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1766316621021-po6gjs",
+    "LOT-ETHUSD-1766341808309-9nicx1"
+  ],
+  "lastScanAt": "2025-12-21T23:24:17.157Z",
+  "loopLatencyMs": 29976,
+  "balanceUsd": 153.2097,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-21T23:24:47.136Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    }
+  },
+  "scanTime": "2025-12-21T23:24:17.157Z"
+}
+[36m[2025-12-21T23:25:47.137Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1766316621021-po6gjs",
+    "LOT-ETHUSD-1766341808309-9nicx1"
+  ],
+  "lastScanAt": "2025-12-21T23:25:17.158Z",
+  "loopLatencyMs": 29979,
+  "balanceUsd": 153.2097,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-21T23:25:47.139Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    }
+  },
+  "scanTime": "2025-12-21T23:25:17.158Z"
+}
+[36m[2025-12-21T23:26:47.144Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1766316621021-po6gjs",
+    "LOT-ETHUSD-1766341808309-9nicx1"
+  ],
+  "lastScanAt": "2025-12-21T23:26:17.163Z",
+  "loopLatencyMs": 29981,
+  "balanceUsd": 153.2097,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-21T23:26:47.146Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 153.2097
+    }
+  },
+  "scanTime": "2025-12-21T23:26:17.163Z"
+}
+11:26:48 PM [websocket] [WS] Cliente conectado. Total: 1
+11:26:53 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+11:26:55 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+11:27:01 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+11:27:01 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
