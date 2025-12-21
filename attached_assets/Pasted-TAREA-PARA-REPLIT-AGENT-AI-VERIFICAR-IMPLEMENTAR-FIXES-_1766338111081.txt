@@ -1,0 +1,123 @@
+TAREA PARA REPLIT (AGENT / AI) — VERIFICAR + IMPLEMENTAR FIXES EN EL BOT
+
+Contexto:
+Tengo un bot de trading y un checklist de gaps. Antes de tocar nada, DEBES verificar en el código qué está realmente implementado, qué está parcial y qué falta. Si algo “ya funciona” pero está incompleto o mal integrado, arréglalo y actualiza el checklist con evidencia (archivo + función + línea aproximada o snippet corto).
+
+Objetivo:
+1) Auditoría rápida del repo actual (búsqueda de funciones/flags).
+2) Confirmar el estado REAL de cada item.
+3) Implementar lo que falte con cambios mínimos, sin meter “paja” ni opciones extra.
+4) Añadir pruebas/sanity checks (aunque sean básicos) para validar que los cambios no rompen.
+5) Entregar un resumen final: cambios hechos, archivos tocados, checklist actualizado, y pasos para validar.
+
+IMPORTANTE (reglas de ejecución):
+- No inventes. Si afirmas “✅ ya funciona”, debes señalar dónde está (archivo + función) y qué condición exacta cubre.
+- Si algo está “⚠️ parcial”, explica por qué y qué faltaba para ser ✅.
+- Mantén el estilo de arquitectura existente. No rehagas todo el bot.
+- No añadas 100 parámetros nuevos. Solo lo estrictamente necesario.
+- Respeta el motor de riesgo y la lógica de notificaciones actuales.
+- Si hay tests existentes, ejecútalos y ajústalos. Si no hay, añade un sanity test mínimo (unitario o script) que cubra los nuevos casos.
+
+Checklist actualizado tras verificación (ESTADO INICIAL REPORTADO; DEBES CONFIRMARLO EN CÓDIGO):
+
+Parte | Descripción | Estado | Tiempo
+A1 | Early-return SELL por señal en analyzePairAndTrade | ❌ NO implementado | 15 min
+A2 | Early-return SELL por señal en analyzePairAndTradeWithCandles | ❌ NO implementado | 15 min
+A3 | Risk exits SMART_GUARD funcionan | ✅ Ya funciona | 0 min
+B1 | MTF filter en Momentum Velas | ⚠️ PARCIAL (existe pero no se aplica en velas) | 20 min
+B2 | Filtro anti-FOMO (RSI+Bollinger+bodyRatio) | ❌ NO implementado | 20 min
+B3 | Umbral BUY ≥5 señales en SMART_GUARD | ❌ NO implementado | 10 min
+B4 | Sizing dinámico por confianza | ✅ Ya funciona | 0 min
+C1 | Bloquear SELL sin sellContext | ⚠️ PARCIAL (solo warning, no bloquea) | 15 min
+
+Resumen inicial:
+- Ya implementado: 2 items (A3, B4)
+- Parcialmente implementado: 2 items (B1, C1)
+- Por implementar: 5 items (A1, A2, B2, B3, C1-fix)
+- Tiempo real estimado: ~1.5 horas
+
+PASOS OBLIGATORIOS (en orden):
+
+0) INVENTARIO / BÚSQUEDA
+- Localiza exactamente dónde están:
+  - analyzePairAndTrade
+  - analyzePairAndTradeWithCandles
+  - SMART_GUARD (reglas, señales, risk exits)
+  - Momentum Velas y su MTF filter (si existe)
+  - sellContext (dónde se genera, pasa y consume)
+  - sizing dinámico por confianza (dónde se calcula/aplica)
+- Devuelve un mini-mapa: archivo → funciones clave.
+
+1) VERIFICACIÓN ITEM POR ITEM (ANTES DE IMPLEMENTAR)
+Para cada item A1..C1:
+- Confirma si existe o no.
+- Si existe: describe condición y ruta de ejecución (cuándo se dispara).
+- Si no existe: indica el punto exacto donde se debe insertar y por qué.
+- Actualiza el checklist con ESTADO REAL y evidencia.
+
+2) IMPLEMENTACIÓN (SOLO LO QUE FALTA / FIXES)
+A1) Early-return SELL por señal en analyzePairAndTrade
+- Requisito: si la señal final es SELL (o equivalente en tu sistema), debe ejecutarse la lógica de salida y retornar sin pasar por lógica de BUY o sin duplicar acciones.
+- Debe manejar:
+  - Si no hay posición abierta: no vender; registrar motivo (pero sin spam).
+  - Si hay posición abierta: aplicar la salida (market/limit según tu estándar) y notificar.
+- Evita dobles ejecuciones en el mismo ciclo.
+
+A2) Early-return SELL por señal en analyzePairAndTradeWithCandles
+- Mismo criterio que A1, pero en la ruta “with candles”.
+- Asegura coherencia: no debe haber divergencia de comportamiento entre ambas funciones.
+
+A3) Risk exits SMART_GUARD funcionan (verificar)
+- Confirma que los exits por riesgo realmente se disparan en runtime y no solo están definidos.
+- Si detectas gaps (por ejemplo, no se llama a la rutina, o está detrás de un flag muerto), corrígelo y entonces marca ✅ con evidencia.
+
+B1) MTF filter en Momentum Velas (completar)
+- Si el MTF filter existe, aplícalo efectivamente en la lógica de Momentum basada en velas.
+- Si hay dos rutas (momentum “normal” vs “velas”), deben usar el mismo filtro MTF o una lógica equivalente.
+- Mantén el cálculo eficiente y coherente con timeframes.
+
+B2) Filtro anti-FOMO (RSI + Bollinger + bodyRatio)
+- Implementa un filtro anti-FOMO que bloquee BUY cuando se detecta entrada “tarde”:
+  - RSI alto (define umbral razonable por defecto)
+  - Precio estirado hacia banda superior de Bollinger o fuera de banda
+  - bodyRatio (cuerpo/vela) grande y “parabólico” (define bodyRatio y umbral)
+- Debe ser una condición simple, sin añadir decenas de parámetros.
+- Debe generar un motivo claro en logs/telegram (solo si bloquea una operación).
+
+B3) Umbral BUY ≥ 5 señales en SMART_GUARD
+- Requisito: SMART_GUARD solo permite BUY si el conteo de señales favorables >= 5.
+- Define claramente:
+  - Qué cuenta como “señal”
+  - Dónde se calcula el conteo
+  - Cómo se integra sin romper el sizing por confianza (B4)
+- Si ya hay un score/confianza, integra el umbral con el score de forma limpia.
+
+B4) Sizing dinámico por confianza (verificar)
+- Confirma que el sizing realmente escala el tamaño y no solo calcula un número sin aplicarlo.
+- Verifica que respeta mínimos/máximos del exchange (min order size / min notional), si existe esa validación.
+- Si falla esa validación o no está aplicada en el punto real de envío de órdenes, corrígelo.
+
+C1) Bloquear SELL sin sellContext (hacerlo estricto)
+- Actualmente está “solo warning”. Debe BLOQUEAR/ABORTAR el SELL si no existe sellContext válido.
+- Excepción: risk exit de emergencia (si tu diseño lo contempla) debe poder salir aunque falte contexto; en ese caso, genera un sellContext mínimo “EMERGENCY_EXIT”.
+- Resultado: no debe haber SELL “huérfanos” sin trazabilidad.
+
+3) PRUEBAS / VALIDACIÓN
+- Añade (o actualiza) un sanity test o script que cubra:
+  - Caso: señal SELL con posición abierta → ejecuta salida y retorna (A1/A2)
+  - Caso: señal SELL sin posición → no vende (A1/A2)
+  - Caso: anti-FOMO bloquea BUY (B2)
+  - Caso: SMART_GUARD con 4 señales → bloquea BUY, con 5+ → permite (B3)
+  - Caso: SELL sin sellContext → bloquea; y en emergencia → permite con contexto mínimo (C1)
+- Si hay modo paper, usa paper; si no, crea mocks/stubs del exchange.
+
+4) ENTREGA FINAL (FORMATO OBLIGATORIO)
+Devuelve:
+- “Cambios realizados” (bullet list)
+- “Archivos modificados” (lista)
+- “Checklist FINAL actualizado” con estados ✅/⚠️/❌ y notas
+- “Evidencia breve” por cada ✅ (archivo + función + snippet corto)
+- “Cómo validar” (comandos exactos en Replit)
+
+PREGUNTA FINAL (mantenerla):
+¿Apruebas que comience la implementación?
