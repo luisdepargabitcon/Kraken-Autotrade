@@ -25,6 +25,7 @@ interface BotConfig {
   trailingStopPercent: string;
   maxPairExposurePct: string;
   maxTotalExposurePct: string;
+  exposureBase: string;
   riskPerTradePct: string;
 }
 
@@ -483,11 +484,49 @@ export default function Strategies() {
                 </div>
               </div>
 
+              <div className="space-y-3 mt-4">
+                <Label className="flex items-center gap-2 text-sm">
+                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  Base de Cálculo
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => updateMutation.mutate({ exposureBase: "cash" } as any)}
+                    className={`p-3 rounded-lg border text-left transition-all ${
+                      config?.exposureBase !== "portfolio"
+                        ? "border-blue-500 bg-blue-500/10"
+                        : "border-border hover:border-blue-500/50"
+                    }`}
+                    data-testid="btn-exposure-base-cash"
+                  >
+                    <div className="font-medium text-sm">Solo Cash</div>
+                    <div className="text-xs text-muted-foreground">% sobre USD disponible</div>
+                  </button>
+                  <button
+                    onClick={() => updateMutation.mutate({ exposureBase: "portfolio" } as any)}
+                    className={`p-3 rounded-lg border text-left transition-all ${
+                      config?.exposureBase === "portfolio"
+                        ? "border-blue-500 bg-blue-500/10"
+                        : "border-border hover:border-blue-500/50"
+                    }`}
+                    data-testid="btn-exposure-base-portfolio"
+                  >
+                    <div className="font-medium text-sm">Portfolio Total</div>
+                    <div className="text-xs text-muted-foreground">% sobre cash + posiciones</div>
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  <strong>Cash:</strong> Los límites se calculan sobre el saldo USD disponible.
+                  <br /><strong>Portfolio:</strong> Los límites se calculan sobre el valor total (cash + inversiones).
+                </p>
+              </div>
+
               <div className="bg-muted/30 rounded-lg p-4 mt-4">
                 <h4 className="font-medium text-sm mb-2">Ejemplo con balance de $100:</h4>
                 <p className="text-xs text-muted-foreground">
                   • <span className="text-orange-500">Por par:</span> Máximo ${parseFloat(config?.maxPairExposurePct || "25")} en cada par individual
                   <br />• <span className="text-purple-500">Total:</span> Máximo ${parseFloat(config?.maxTotalExposurePct || "60")} en todas las posiciones combinadas
+                  <br />• <span className="text-blue-500">Base:</span> {config?.exposureBase === "portfolio" ? "Portfolio total (cash + posiciones)" : "Solo cash disponible"}
                   <br />• Si se alcanza algún límite, el bot NO abrirá nuevas posiciones y te notificará.
                 </p>
               </div>
