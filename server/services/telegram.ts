@@ -19,6 +19,26 @@ function escapeHtml(s: unknown): string {
 }
 
 // ============================================================
+// SPANISH DATE FORMATTER - Formato profesional de fecha/hora
+// ============================================================
+function formatSpanishDate(dateInput?: string | Date): string {
+  try {
+    const date = dateInput ? new Date(dateInput) : new Date();
+    return date.toLocaleString("es-ES", { 
+      timeZone: "Europe/Madrid",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  } catch {
+    return new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+  }
+}
+
+// ============================================================
 // TELEGRAM MESSAGE TEMPLATES (HTML format)
 // ============================================================
 
@@ -34,16 +54,22 @@ interface BotStartedContext {
 
 function buildBotStartedHTML(ctx: BotStartedContext): string {
   return [
-    `<b>${escapeHtml(ctx.env)} 🟢 KrakenBot Iniciado</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `✅ <b>Bot Iniciado</b>`,
     ``,
-    `El bot de trading autónomo está activo.`,
-    `<b>Estrategia:</b> ${escapeHtml(ctx.strategy)}`,
-    `<b>Nivel de riesgo:</b> ${escapeHtml(ctx.risk)}`,
-    `<b>Pares activos:</b> ${escapeHtml(ctx.pairs.join(", "))}`,
-    `<b>Balance USD:</b> $${escapeHtml(ctx.balanceUsd)}`,
-    `<b>Posiciones abiertas:</b> ${ctx.positionCount}`,
+    `📊 <b>Configuración:</b>`,
+    `   • Estrategia: <code>${escapeHtml(ctx.strategy)}</code>`,
+    `   • Riesgo: <code>${escapeHtml(ctx.risk)}</code>`,
+    `   • Pares: <code>${escapeHtml(ctx.pairs.join(", "))}</code>`,
     ``,
-    `⚠️ <b>Modo:</b> ${escapeHtml(ctx.mode)}`
+    `💰 <b>Estado:</b>`,
+    `   • Balance: <code>$${escapeHtml(ctx.balanceUsd)}</code>`,
+    `   • Posiciones: <code>${ctx.positionCount}</code>`,
+    ``,
+    `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
+    `🏷️ <b>Entorno:</b> <code>${escapeHtml(ctx.env)}</code>`,
+    `━━━━━━━━━━━━━━━━━━━`
   ].join("\n");
 }
 
@@ -61,24 +87,24 @@ interface HeartbeatContext {
 
 function buildHeartbeatHTML(ctx: HeartbeatContext): string {
   return [
-    `<b>💗 VERIFICACIÓN DE OPERATIVIDAD</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `✅ <b>Sistema operativo 24x7</b>`,
+    `Verificación automática de funcionamiento`,
     ``,
-    `Este mensaje confirma que el bot está activo y monitorizando.`,
+    `📊 <b>Recursos del sistema:</b>`,
+    `   • CPU: <code>${escapeHtml(ctx.cpu)}</code>`,
+    `   • Memoria: <code>${escapeHtml(ctx.mem)}</code>`,
+    `   • Disco: <code>${escapeHtml(ctx.disk)}</code>`,
+    `   • Uptime: <code>${escapeHtml(ctx.uptime)}</code>`,
     ``,
-    `<b>📊 Estado del sistema:</b>`,
-    `• CPU: ${escapeHtml(ctx.cpu)}`,
-    `• Memoria: ${escapeHtml(ctx.mem)}`,
-    `• Disco: ${escapeHtml(ctx.disk)}`,
-    `• Uptime: ${escapeHtml(ctx.uptime)}`,
+    `🔌 <b>Conexiones:</b>`,
+    `   ${ctx.krakenOk ? "✅" : "❌"} Kraken`,
+    `   ${ctx.telegramOk ? "✅" : "❌"} Telegram`,
+    `   ${ctx.dbOk ? "✅" : "❌"} Base de datos`,
     ``,
-    `<b>✅ Conexiones:</b>`,
-    `${ctx.krakenOk ? "✅" : "❌"} Kraken`,
-    `${ctx.telegramOk ? "✅" : "❌"} Telegram`,
-    `${ctx.dbOk ? "✅" : "❌"} DB`,
-    ``,
-    `<b>🕒 Hora:</b> ${escapeHtml(ctx.ts)}`,
-    ``,
-    `✅ Sistema operativo 24x7`
+    `📅 ${formatSpanishDate(ctx.ts)}`,
+    `━━━━━━━━━━━━━━━━━━━`
   ].join("\n");
 }
 
@@ -102,29 +128,34 @@ interface DailyReportContext {
 
 function buildDailyReportHTML(ctx: DailyReportContext): string {
   return [
-    `<b>💗 REPORTE DIARIO (14:00)</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `📋 <b>REPORTE DIARIO (14:00)</b>`,
     ``,
-    `<b>✅ Estado de conexiones:</b>`,
-    `• Kraken: ${ctx.krakenOk ? "✅ OK" : "❌ ERROR"}`,
-    `• DB: ${ctx.dbOk ? "✅ OK" : "❌ ERROR"}`,
-    `• Telegram: ${ctx.telegramOk ? "✅ OK" : "❌ ERROR"}`,
+    `🔌 <b>Estado de conexiones:</b>`,
+    `   ${ctx.krakenOk ? "✅" : "❌"} Kraken`,
+    `   ${ctx.dbOk ? "✅" : "❌"} Base de datos`,
+    `   ${ctx.telegramOk ? "✅" : "❌"} Telegram`,
     ``,
-    `<b>📊 Recursos del sistema:</b>`,
-    `• CPU: ${escapeHtml(ctx.cpu)}`,
-    `• Memoria: ${escapeHtml(ctx.mem)}`,
-    `• Disco: ${escapeHtml(ctx.disk)}`,
-    `• Uptime: ${escapeHtml(ctx.uptime)}`,
+    `📊 <b>Recursos del sistema:</b>`,
+    `   • CPU: <code>${escapeHtml(ctx.cpu)}</code>`,
+    `   • Memoria: <code>${escapeHtml(ctx.mem)}</code>`,
+    `   • Disco: <code>${escapeHtml(ctx.disk)}</code>`,
+    `   • Uptime: <code>${escapeHtml(ctx.uptime)}</code>`,
     ``,
-    `<b>🤖 Estado del bot:</b>`,
-    `• Entorno: ${escapeHtml(ctx.env)}`,
-    `• DRY_RUN: ${ctx.dryRun ? "SÍ" : "NO"}`,
-    `• Modo: ${escapeHtml(ctx.mode)}`,
-    `• Estrategia: ${escapeHtml(ctx.strategy)}`,
-    `• Pares: ${escapeHtml(ctx.pairs)}`,
-    `• Posiciones: ${ctx.positionCount}`,
-    `• Exposición: $${escapeHtml(ctx.exposureUsd)}`,
+    `🤖 <b>Estado del bot:</b>`,
+    `   • Entorno: <code>${escapeHtml(ctx.env)}</code>`,
+    `   • DRY_RUN: <code>${ctx.dryRun ? "SÍ" : "NO"}</code>`,
+    `   • Modo: <code>${escapeHtml(ctx.mode)}</code>`,
+    `   • Estrategia: <code>${escapeHtml(ctx.strategy)}</code>`,
+    `   • Pares: <code>${escapeHtml(ctx.pairs)}</code>`,
     ``,
-    `<i>${escapeHtml(ctx.ts)}</i>`
+    `💰 <b>Portfolio:</b>`,
+    `   • Posiciones: <code>${ctx.positionCount}</code>`,
+    `   • Exposición: <code>$${escapeHtml(ctx.exposureUsd)}</code>`,
+    ``,
+    `📅 ${formatSpanishDate(ctx.ts)}`,
+    `━━━━━━━━━━━━━━━━━━━`
   ].join("\n");
 }
 
@@ -144,22 +175,34 @@ interface TradeBuyContext {
 
 function buildTradeBuyHTML(ctx: TradeBuyContext): string {
   const lines = [
-    `<b>${escapeHtml(ctx.env)} 🟢 Operación Automática Ejecutada</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🟢 <b>SEÑAL: COMPRAR ${escapeHtml(ctx.pair)}</b> 🟢`,
     ``,
-    `<b>📌 Tipo:</b> BUY`,
-    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
-    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
-    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
-    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
-    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
-    ``,
-    `<b>🧠 Estrategia:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
-    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`
+    `💵 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
+    `📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.amount)}</code>`,
+    `💰 <b>Total:</b> <code>$${escapeHtml(ctx.total)}</code>`,
+    ``
   ];
+  
   if (ctx.signalsSummary) {
-    lines.push(`<b>📊 Señales:</b> ${escapeHtml(ctx.signalsSummary)}`);
+    lines.push(
+      `📊 <b>Indicadores Técnicos:</b>`,
+      `${escapeHtml(ctx.signalsSummary)}`,
+      ``
+    );
   }
-  lines.push(``, `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`);
+  
+  lines.push(
+    `🧠 <b>Estrategia:</b> ${escapeHtml(ctx.strategyLabel)}`,
+    `📈 <b>Confianza:</b> <code>${escapeHtml(ctx.confPct)}%</code>`,
+    ``,
+    `🛡️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
+    `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `📅 ${formatSpanishDate()}`,
+    `━━━━━━━━━━━━━━━━━━━`
+  );
   return lines.join("\n");
 }
 
@@ -183,37 +226,45 @@ interface TradeSellContext {
 
 function buildTradeSellHTML(ctx: TradeSellContext): string {
   const pnlSign = (ctx.pnlUsd !== null && ctx.pnlUsd >= 0) ? "+" : "";
+  const pnlEmoji = (ctx.pnlUsd !== null && ctx.pnlUsd >= 0) ? "📈" : "📉";
   const pnlUsdTxt = (ctx.pnlUsd === null || ctx.pnlUsd === undefined)
-    ? "N/A (sin entryPrice)"
-    : `${pnlSign}$${ctx.pnlUsd.toFixed(2)}${(ctx.pnlPct !== null && ctx.pnlPct !== undefined) ? ` (${ctx.pnlPct.toFixed(2)}%)` : ""}`;
+    ? "N/A"
+    : `${pnlSign}$${ctx.pnlUsd.toFixed(2)}`;
+  const pnlPctTxt = (ctx.pnlPct !== null && ctx.pnlPct !== undefined)
+    ? `${pnlSign}${ctx.pnlPct.toFixed(2)}%`
+    : "";
   const feeTxt = (ctx.feeUsd === null || ctx.feeUsd === undefined) ? "N/A" : `$${ctx.feeUsd.toFixed(2)}`;
 
   const lines = [
-    `<b>${escapeHtml(ctx.env)} 🔴 Operación Automática Ejecutada</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🔴 <b>SEÑAL: VENDER ${escapeHtml(ctx.pair)}</b> 🔴`,
     ``,
-    `<b>📌 Tipo:</b> SELL`,
-    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
-    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
-    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
-    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
-    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    `💵 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
+    `📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.amount)}</code>`,
+    `💰 <b>Total:</b> <code>$${escapeHtml(ctx.total)}</code>`,
     ``,
-    `<b>💰 Resultado del cierre:</b>`,
-    `• <b>PnL cierre:</b> <b>${escapeHtml(pnlUsdTxt)}</b>`,
-    `• <b>Fee:</b> ${escapeHtml(feeTxt)}`,
+    `${pnlEmoji} <b>Resultado:</b>`,
+    `   • PnL: <code>${escapeHtml(pnlUsdTxt)}</code> ${pnlPctTxt ? `(<code>${escapeHtml(pnlPctTxt)}</code>)` : ""}`,
+    `   • Fee: <code>${escapeHtml(feeTxt)}</code>`,
     ``,
-    `<b>🛡️ Salida:</b>`,
-    `• <b>Tipo:</b> ${escapeHtml(ctx.exitType)}`
+    `🛡️ <b>Tipo de salida:</b> <code>${escapeHtml(ctx.exitType)}</code>`
   ];
+  
   if (ctx.trigger) {
-    lines.push(`• <b>Trigger:</b> ${escapeHtml(ctx.trigger)}`);
+    lines.push(`⚡ <b>Trigger:</b> <code>${escapeHtml(ctx.trigger)}</code>`);
   }
+  
   lines.push(
     ``,
-    `<b>🧠 Estrategia origen:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
-    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`,
+    `🧠 <b>Estrategia:</b> ${escapeHtml(ctx.strategyLabel)}`,
+    `📈 <b>Confianza:</b> <code>${escapeHtml(ctx.confPct)}%</code>`,
     ``,
-    `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`
+    `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
+    `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `📅 ${formatSpanishDate()}`,
+    `━━━━━━━━━━━━━━━━━━━`
   );
   return lines.join("\n");
 }
@@ -230,18 +281,24 @@ interface OrphanSellContext {
 
 function buildOrphanSellHTML(ctx: OrphanSellContext): string {
   return [
-    `<b>${escapeHtml(ctx.env)} 🟠 LIQUIDACIÓN HUÉRFANA</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🟠 <b>LIQUIDACIÓN HUÉRFANA</b> 🟠`,
     ``,
-    `<b>📌 Operación:</b>`,
-    `• Par/Activo: ${escapeHtml(ctx.assetOrPair)}`,
-    `• Cantidad: ${escapeHtml(ctx.amount)}`,
-    `• Precio: ${escapeHtml(ctx.price)}`,
-    `• Total: ${escapeHtml(ctx.total)}`,
-    `• ID: <code>${escapeHtml(ctx.orderId)}</code>`,
+    `📦 <b>Operación:</b>`,
+    `   • Par/Activo: <code>${escapeHtml(ctx.assetOrPair)}</code>`,
+    `   • Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
+    `   • Precio: <code>${escapeHtml(ctx.price)}</code>`,
+    `   • Total: <code>${escapeHtml(ctx.total)}</code>`,
     ``,
-    `<b>⚠️ Resultado:</b>`,
-    `• <b>PnL cierre:</b> N/A (sin entryPrice)`,
-    `• Reason: ${escapeHtml(ctx.reasonCode)}`
+    `⚠️ <b>Resultado:</b>`,
+    `   • PnL cierre: <code>N/A (sin entryPrice)</code>`,
+    `   • Razón: <code>${escapeHtml(ctx.reasonCode)}</code>`,
+    ``,
+    `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `📅 ${formatSpanishDate()}`,
+    `━━━━━━━━━━━━━━━━━━━`
   ].join("\n");
 }
 
@@ -261,19 +318,33 @@ function buildSignalHTML(ctx: SignalContext): string {
   const sideEmoji = ctx.side === "BUY" ? "🟢" : "🔴";
   const sideText = ctx.side === "BUY" ? "COMPRAR" : "VENDER";
   const lines = [
-    `<b>${sideEmoji} SEÑAL: ${sideText} ${escapeHtml(ctx.symbol)} ${sideEmoji}</b>`,
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `${sideEmoji} <b>SEÑAL: ${sideText} ${escapeHtml(ctx.symbol)}</b> ${sideEmoji}`,
     ``,
-    `📌 Precio: ${escapeHtml(ctx.price)}`
+    `💵 <b>Precio:</b> <code>${escapeHtml(ctx.price)} USDT</code>`
   ];
-  if (ctx.investPct) lines.push(`💰 Inversión recomendada: ${escapeHtml(ctx.investPct)}%`);
-  if (ctx.rsi || ctx.macd || ctx.adx) {
-    lines.push(``, `<b>📊 Indicadores técnicos:</b>`);
-    if (ctx.rsi) lines.push(`• RSI: ${escapeHtml(ctx.rsi)}`);
-    if (ctx.macd) lines.push(`• MACD: ${escapeHtml(ctx.macd)}`);
-    if (ctx.adx) lines.push(`• ADX: ${escapeHtml(ctx.adx)}`);
+  
+  if (ctx.investPct) {
+    lines.push(`💰 <b>Inversión recomendada:</b> <code>${escapeHtml(ctx.investPct)}%</code>`);
   }
-  if (ctx.regime) lines.push(``, `🧭 Régimen: ${escapeHtml(ctx.regime)}`);
-  lines.push(`🕒 ${escapeHtml(ctx.ts)}`);
+  
+  if (ctx.rsi || ctx.macd || ctx.adx) {
+    lines.push(``, `📊 <b>Indicadores Técnicos:</b>`);
+    if (ctx.rsi) lines.push(`   • RSI: <code>${escapeHtml(ctx.rsi)}</code>`);
+    if (ctx.macd) lines.push(`   • MACD: <code>${escapeHtml(ctx.macd)}</code>`);
+    if (ctx.adx) lines.push(`   • ADX: <code>${escapeHtml(ctx.adx)}</code>`);
+  }
+  
+  if (ctx.regime) {
+    lines.push(``, `🧭 <b>Régimen de mercado:</b> <code>${escapeHtml(ctx.regime)}</code>`);
+  }
+  
+  lines.push(
+    ``,
+    `📅 ${formatSpanishDate(ctx.ts)}`,
+    `━━━━━━━━━━━━━━━━━━━`
+  );
   return lines.join("\n");
 }
 
