@@ -1,0 +1,100 @@
+OBJETIVO
+1) En modo SMART_GUARD (siempre-on): NO ejecutar jamás SELL originado por señales de estrategia (momentum/velas/etc).
+   - Solo permitir SELL por “risk exits” de SMART_GUARD (stop-loss emergencia, take-profit, break-even, trailing, scale-out) y cierres manuales.
+2) Mejorar calidad de entradas (especialmente Momentum Velas 15m) para evitar comprar “arriba” y mejorar PnL esperado.
+3) Evitar SELL automáticos sin sellContext (entryPrice/aiSampleId) para no romper PnL.
+
+ARCHIVOS A TOCAR
+- server/services/tradingEngine.ts (principal)
+- (opcional) replit.md (documentar el comportamiento)
+
+PARTE A — BLOQUEAR SELL POR SEÑAL EN SMART_GUARD
+A1) En tradingEngine.ts, en el path principal de análisis por estrategia (analyzePairAndTrade o equivalente),
+    localiza el bloque:
+      } else if (signal.action === "sell") { ... executeTrade(... "sell" ...) }
+    Inserta al principio del bloque:
+      if (positionMode === "SMART_GUARD") {
+        // NO vender por señal en SMART_GUARD
+        await botLogger.info("TRADE_SKIPPED", "SMART_GUARD: SELL por señal ignorada (solo risk exits)", {
+          pair,
+          signal: "SELL",
+          reason: "SMART_GUARD_SELL_SIGNAL_IGNORED",
+          signalReason: signal.reason,
+          strategy: config.strategy,
+          positionMode,
+        });
+        // Para que la UI/diagnóstico refleje algo útil:
+        this.lastScanResults.set(pair, {
+          signal: "SELL_IGNORED",
+          reason: `SMART_GUARD: ignorado SELL por señal. Motivo: ${signal.reason}`,
+        });
+        return;
+      }
+
+A2) En el análisis de velas (analyzePairAndTradeWithCandles o equivalente),
+    localiza el bloque donde hace:
+      log(`${pair}: SELL signal [${strategyId}] ...`);
+      const success = await this.executeTrade(... "sell" ...);
+    Antes de log/executeTrade, añade el mismo early-return si positionMode==="SMART_GUARD"
+    con botLogger + lastScanResults.
+
+A3) Asegúrate de que los “risk exits” SMART_GUARD siguen funcionando:
+    - NO tocar checkSmartGuardExit / checkSinglePositionSLTP excepto lo indicado en Parte C.
+    - Verificar que las ventas por stop-loss/tp/trailing/scale-out siguen llamando executeTrade.
+
+PARTE B — ENTRADAS “MÁS RENTABLES” (FOCO: Momentum Velas 15m)
+B1) Aplicar filtro MTF (1h/4h) también a Momentum Velas:
+    Ahora mismo applyMTFFilter se aplica en analyzeWithStrategy (ciclo), pero Momentum Velas puede no usar MTF.
+    Implementa en analyzeWithCandleStrategy (o justo después de generar signal en analyzePairAndTradeWithCandles):
+      - Obtener mtfData = await this.getMultiTimeframeData(pair)
+      - mtfAnalysis = mtfData ? this.analyzeMultiTimeframe(mtfData) : null
+      - Si mtfAnalysis y signal.action !== "hold":
+          const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis)
+          si mtfBoost.filtered => convertir a HOLD con reason “Señal filtrada por MTF…”
+          si no, sumar confidenceBoost y concatenar resumen MTF al reason
+    Objetivo práctico:
+      - En BUY, si 1h+4h bearish => filtrar (evita “comprar cuchillos”).
+      - En SELL (aunque en SMART_GUARD lo ignoramos por señal), esto mantiene consistencia para modos no SMART_GUARD.
+
+B2) Filtro anti-FOMO (solo SMART_GUARD) para Momentum Velas:
+    Dentro de momentumCandlesStrategy (donde ya calculas RSI, Bollinger, bodyRatio, etc),
+    justo antes de devolver action:"buy", añade:
+      - Si la vela actual es “muy extendida” (ej: isBullishCandle && bodyRatio > 0.6)
+        y además (rsi >= 60) y (bollinger.percentB >= 70):
+            devolver HOLD con reason tipo:
+              "Entrada filtrada (SMART_GUARD): sobre-extensión (evitar FOMO). Esperar pullback."
+    Esto reduce compras en el pico de una vela fuerte que suele retroceder.
+
+B3) Subir ligeramente el umbral de BUY en SMART_GUARD (solo para velas):
+    Donde decides buySignals >= 4:
+      - Si positionMode==="SMART_GUARD", exigir buySignals >= 5 (o 4 pero con condición extra: MACD alcista O volumen alto alcista).
+    Mantén el umbral normal para otros modos.
+
+B4) Mantener sizing dinámico por confianza (ya existe):
+    Si el filtro B2/B3 convierte señales borderline en HOLD, el bot hará menos trades mediocres.
+
+PARTE C — NO EJECUTAR SELL AUTO SIN sellContext (seguridad PnL)
+C1) En executeTrade() o en el punto justo antes de llamar executeTrade para SELL AUTOMÁTICO:
+    - Si action==="sell" y el sellContext es undefined/null:
+        - loggear ERROR (botLogger.error o warn) con code "SELL_CONTEXT_MISSING"
+        - NO ejecutar orden
+    EXCEPCIÓN:
+      - cierres manuales (si los tienes) pueden construir sellContext desde DB/posición; si no, al menos que queden marcados como manual y lo registres.
+
+NOTAS IMPORTANTES
+- Con Parte A, en SMART_GUARD desaparecerán los “SELL por señal” que provocan cierres inmediatos a pérdida por ruido.
+- Las salidas de SMART_GUARD (stop-loss/tp/trailing/scale-out) seguirán vendiendo.
+- Con Parte C, evitas trades sin PnL por falta de entryPrice/aiSampleId.
+
+CRITERIOS DE ACEPTACIÓN / TEST RÁPIDO (DRY_RUN)
+1) Config: positionMode=SMART_GUARD, strategy=momentum_candles_15m (o “Momentum (Velas) 15m”), dryRun=true.
+2) Forzar una situación donde la estrategia generaría SELL por señal:
+   - Resultado esperado: TRADE_SKIPPED con reason SMART_GUARD_SELL_SIGNAL_IGNORED y lastScanResults “SELL_IGNORED”.
+   - NO debe salir ninguna orden SELL.
+3) Simular evento de risk exit (stop-loss/trailing/tp/scale-out):
+   - Resultado esperado: se ejecuta SELL (dry-run) normalmente.
+4) Verificar que ningún SELL automático se ejecuta sin sellContext (debe loggear SELL_CONTEXT_MISSING y bloquear).
+
+ENTREGABLE
+- PR con cambios en server/services/tradingEngine.ts
+- (opcional) actualizar replit.md explicando: “En SMART_GUARD no se venden posiciones por señales; solo por risk exits”.
