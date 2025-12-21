@@ -1,0 +1,115 @@
+IMPLEMENTAR PUNTO 3 COMPLETO (A+B+C) — P&L inmediato en SELL + UPSERT por kraken_order_id
+
+OBJETIVO
+1) Cada SELL automático (SMART_GUARD exits) que tenga sellContext.entryPrice debe guardarse con:
+   - entry_price
+   - realized_pnl_usd
+   - realized_pnl_pct
+2) /api/trades/sync debe hacer UPSERT por kraken_order_id:
+   - si existe trade con ese kraken_order_id → UPDATE (no INSERT)
+   - si no existe → INSERT
+3) Excepción: orphan liquidation / emergency path sin entryPrice:
+   - permitir SELL
+   - realized_pnl_* = NULL
+   - reason/flag claro (ORPHAN_LIQUIDATION o SELL_NO_ENTRYPRICE)
+   - asegurar exclusión de training (ya existe discardReason/filters)
+
+ARCHIVOS
+- server/services/tradingEngine.ts
+- server/storage.ts
+- server/routes.ts (o donde esté /api/trades/sync)
+- (si aplica) shared/schema.ts para typings (solo si necesario)
+
+A) P&L inmediato en SELL automático (tradingEngine.ts)
+A1) En executeTrade(), en el bloque donde se llama a storage.createTrade(...) para registrar la operación:
+    - Detectar type === "sell"
+    - Determinar entryPrice:
+        const entryPrice = sellContext?.entryPrice ?? null
+
+A2) Si entryPrice != null:
+    - Calcular pnlPct y pnlUsd con el mismo patrón que forceClosePosition:
+        const grossPnlUsd = (price - entryPrice) * volume
+        const pnlPct = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : null
+      Si tienes fees disponibles en ese scope (fee en USD), calcula net:
+        const netPnlUsd = grossPnlUsd - (feeUsd ?? 0)
+      Si no tienes feeUsd disponible, guarda gross y deja log "FEE_UNKNOWN_GROSS_PNL".
+    - Pasar a createTrade:
+        entryPrice,
+        realizedPnlUsd: netPnlUsd (o grossPnlUsd),
+        realizedPnlPct: pnlPct
+
+A3) Si entryPrice == null (orphan/emergency):
+    - NO bloquear la venta
+    - createTrade con:
+        entryPrice: null,
+        realizedPnlUsd: null,
+        realizedPnlPct: null,
+      y reason marcado:
+        reason: existingReason + " | SELL_NO_ENTRYPRICE"
+      (o un campo/flag si existe)
+    - Confirmar que tu lógica de exclusión de IA ya descarta trades sin P&L.
+
+B) UPSERT por kraken_order_id en sync
+B1) En server/storage.ts crear 2 métodos:
+
+1) findTradeByKrakenOrderId(orderId: string)
+   - SELECT * FROM trades WHERE kraken_order_id = $1 LIMIT 1
+
+2) updateTradeByKrakenOrderId(orderId: string, patch: Partial<Trade>)
+   - UPDATE trades SET ... WHERE kraken_order_id = $1
+   - Debe actualizar solo campos presentes en patch
+   - IMPORTANTE: no permitir null accidental si patch no lo trae
+
+B2) Modificar /api/trades/sync (routes.ts o servicio que lo implementa):
+    - Cuando iteras trades/ledgers de Kraken y vas a persistir:
+      if (krakenOrderId) {
+        const existing = await storage.findTradeByKrakenOrderId(krakenOrderId);
+
+        if (existing) {
+          // Construir patch con campos de Kraken
+          // Regla: NO sobreescribir realized_pnl_* si existing ya tiene valores no-null.
+          const patch: any = {
+            // side/pair/price/amount/totalUsd/fee/executedAt/status/etc
+          };
+
+          if (existing.realizedPnlUsd == null && incoming.realizedPnlUsd != null) {
+            patch.realizedPnlUsd = incoming.realizedPnlUsd;
+          }
+          if (existing.realizedPnlPct == null && incoming.realizedPnlPct != null) {
+            patch.realizedPnlPct = incoming.realizedPnlPct;
+          }
+          if (existing.entryPrice == null && incoming.entryPrice != null) {
+            patch.entryPrice = incoming.entryPrice;
+          }
+
+          await storage.updateTradeByKrakenOrderId(krakenOrderId, patch);
+          continue; // NO INSERT
+        }
+      }
+
+      // Si no existe, INSERT normal
+      await storage.createTrade(...)
+
+B3) Loggear discrepancias:
+    - Si existing.realizedPnlUsd != null y incoming.realizedPnlUsd != null y difieren > 1%:
+        log WARN "PNL_MISMATCH_SYNC" con orderId y valores
+      (pero NO machacar el existente).
+
+C) Verificación (aceptación)
+C1) Ejecutar un SELL automático (SMART_GUARD exit) con entryPrice disponible:
+    - UI debe mostrar P&L (no "-")
+    - DB: realized_pnl_usd/pct no null
+C2) Ejecutar /api/trades/sync después:
+    - No se crea segundo trade con mismo kraken_order_id
+    - El existente se actualiza
+C3) Orphan liquidation:
+    - SELL se ejecuta
+    - realized_pnl_* quedan NULL
+    - reason contiene SELL_NO_ENTRYPRICE o ORPHAN_LIQUIDATION
+
+BONUS (si es fácil, recomendado):
+- Añadir índice/constraint UNIQUE en trades.kraken_order_id WHERE NOT NULL
+  para garantizar que no haya duplicados nunca más.
+
+ENTREGABLE
+PR con cambios + pequeño resumen en replit.md.
