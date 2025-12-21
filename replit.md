@@ -42,6 +42,9 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Kraken Compliance**: Adherence to Kraken minimum trade volumes and real balance verification.
 - **Position Persistence**: Open positions are stored in the database.
 - **Configuration Snapshot**: New positions store a snapshot of trading parameters at entry.
+- **Exposure Base**: Configurable via `exposureBase` ("cash" or "portfolio"):
+  - `cash`: Limits calculated on available USD only (conservative, default).
+  - `portfolio`: Limits calculated on total portfolio value (cash + open positions).
 
 ### SMART_GUARD Mode
 - **Purpose**: Intelligent capital protection with strict entry validation.

@@ -1231,10 +1231,11 @@ El bot de trading autónomo está activo.
       for (const pair of config.activePairs) {
         // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
         if (!this.lastScanResults.has(pair)) {
+          const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
           this.lastScanResults.set(pair, {
             signal: "NONE",
             reason: "Sin señal en este ciclo",
-            exposureAvailable: this.getAvailableExposure(pair, config, this.currentUsdBalance),
+            exposureAvailable: expDefault.maxAllowed,
           });
         }
         
@@ -4201,7 +4202,7 @@ _Cierre solicitado manualmente desde dashboard_
           signal: "NONE",
           razon,
           cooldownSec: cooldownSec > 0 ? cooldownSec : undefined,
-          exposureAvailable: exposure,
+          exposureAvailable: exposure.maxAllowed,
           hasPosition,
           positionUsd: hasPosition ? totalPositionUsd : undefined,
         });
