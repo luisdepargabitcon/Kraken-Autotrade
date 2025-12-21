@@ -144,6 +144,9 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Menu (/menu)**: Interactive buttons for Estado, Balance, Exposición, Sync, Pausar/Reanudar, Canales, Reporte diario, Ayuda.
 - **Channel Management (/channels)**: Toggle alerts per chat (Trades, System, Errors, Balance, Heartbeat).
 - **Daily Report**: Scheduled at 14:00 Europe/Madrid with system metrics (CPU/Mem/Disk/Uptime) and bot status.
+- **HTML Formatting**: All messages use HTML parse_mode with `<b>`, `<i>`, `<code>` tags instead of Markdown.
+- **Security**: `escapeHtml()` helper prevents markup injection from dynamic data (pairs, prices, errors).
+- **Templates**: Centralized `buildXxxHTML()` functions in `server/services/telegram.ts` for consistent formatting.
 
 ### Quote Currency Validation
 - **Purpose**: Block trades on non-USD pairs to prevent accidental cross-pair operations.

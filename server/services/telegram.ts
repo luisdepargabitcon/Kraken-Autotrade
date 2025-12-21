@@ -5,6 +5,290 @@ import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
 
+// ============================================================
+// HTML ESCAPE HELPER - Previene markup roto en mensajes
+// ============================================================
+function escapeHtml(s: unknown): string {
+  const str = String(s ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// ============================================================
+// TELEGRAM MESSAGE TEMPLATES (HTML format)
+// ============================================================
+
+interface BotStartedContext {
+  env: string;
+  strategy: string;
+  risk: string;
+  pairs: string[];
+  balanceUsd: string;
+  mode: string;
+  positionCount: number;
+}
+
+function buildBotStartedHTML(ctx: BotStartedContext): string {
+  return [
+    `<b>${escapeHtml(ctx.env)} 🟢 KrakenBot Iniciado</b>`,
+    ``,
+    `El bot de trading autónomo está activo.`,
+    `<b>Estrategia:</b> ${escapeHtml(ctx.strategy)}`,
+    `<b>Nivel de riesgo:</b> ${escapeHtml(ctx.risk)}`,
+    `<b>Pares activos:</b> ${escapeHtml(ctx.pairs.join(", "))}`,
+    `<b>Balance USD:</b> $${escapeHtml(ctx.balanceUsd)}`,
+    `<b>Posiciones abiertas:</b> ${ctx.positionCount}`,
+    ``,
+    `⚠️ <b>Modo:</b> ${escapeHtml(ctx.mode)}`
+  ].join("\n");
+}
+
+interface HeartbeatContext {
+  env: string;
+  cpu: string;
+  mem: string;
+  disk: string;
+  uptime: string;
+  krakenOk: boolean;
+  telegramOk: boolean;
+  dbOk: boolean;
+  ts: string;
+}
+
+function buildHeartbeatHTML(ctx: HeartbeatContext): string {
+  return [
+    `<b>💗 VERIFICACIÓN DE OPERATIVIDAD</b>`,
+    ``,
+    `Este mensaje confirma que el bot está activo y monitorizando.`,
+    ``,
+    `<b>📊 Estado del sistema:</b>`,
+    `• CPU: ${escapeHtml(ctx.cpu)}`,
+    `• Memoria: ${escapeHtml(ctx.mem)}`,
+    `• Disco: ${escapeHtml(ctx.disk)}`,
+    `• Uptime: ${escapeHtml(ctx.uptime)}`,
+    ``,
+    `<b>✅ Conexiones:</b>`,
+    `${ctx.krakenOk ? "✅" : "❌"} Kraken`,
+    `${ctx.telegramOk ? "✅" : "❌"} Telegram`,
+    `${ctx.dbOk ? "✅" : "❌"} DB`,
+    ``,
+    `<b>🕒 Hora:</b> ${escapeHtml(ctx.ts)}`,
+    ``,
+    `✅ Sistema operativo 24x7`
+  ].join("\n");
+}
+
+interface DailyReportContext {
+  env: string;
+  cpu: string;
+  mem: string;
+  disk: string;
+  uptime: string;
+  krakenOk: boolean;
+  telegramOk: boolean;
+  dbOk: boolean;
+  dryRun: boolean;
+  mode: string;
+  strategy: string;
+  pairs: string;
+  positionCount: number;
+  exposureUsd: string;
+  ts: string;
+}
+
+function buildDailyReportHTML(ctx: DailyReportContext): string {
+  return [
+    `<b>💗 REPORTE DIARIO (14:00)</b>`,
+    ``,
+    `<b>✅ Estado de conexiones:</b>`,
+    `• Kraken: ${ctx.krakenOk ? "✅ OK" : "❌ ERROR"}`,
+    `• DB: ${ctx.dbOk ? "✅ OK" : "❌ ERROR"}`,
+    `• Telegram: ${ctx.telegramOk ? "✅ OK" : "❌ ERROR"}`,
+    ``,
+    `<b>📊 Recursos del sistema:</b>`,
+    `• CPU: ${escapeHtml(ctx.cpu)}`,
+    `• Memoria: ${escapeHtml(ctx.mem)}`,
+    `• Disco: ${escapeHtml(ctx.disk)}`,
+    `• Uptime: ${escapeHtml(ctx.uptime)}`,
+    ``,
+    `<b>🤖 Estado del bot:</b>`,
+    `• Entorno: ${escapeHtml(ctx.env)}`,
+    `• DRY_RUN: ${ctx.dryRun ? "SÍ" : "NO"}`,
+    `• Modo: ${escapeHtml(ctx.mode)}`,
+    `• Estrategia: ${escapeHtml(ctx.strategy)}`,
+    `• Pares: ${escapeHtml(ctx.pairs)}`,
+    `• Posiciones: ${ctx.positionCount}`,
+    `• Exposición: $${escapeHtml(ctx.exposureUsd)}`,
+    ``,
+    `<i>${escapeHtml(ctx.ts)}</i>`
+  ].join("\n");
+}
+
+interface TradeBuyContext {
+  env: string;
+  pair: string;
+  amount: string;
+  price: string;
+  total: string;
+  orderId: string;
+  strategyLabel: string;
+  confPct: string;
+  reason: string;
+  signalsSummary?: string;
+  mode: string;
+}
+
+function buildTradeBuyHTML(ctx: TradeBuyContext): string {
+  const lines = [
+    `<b>${escapeHtml(ctx.env)} 🟢 Operación Automática Ejecutada</b>`,
+    ``,
+    `<b>📌 Tipo:</b> BUY`,
+    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
+    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
+    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
+    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
+    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>🧠 Estrategia:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
+    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`
+  ];
+  if (ctx.signalsSummary) {
+    lines.push(`<b>📊 Señales:</b> ${escapeHtml(ctx.signalsSummary)}`);
+  }
+  lines.push(``, `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`);
+  return lines.join("\n");
+}
+
+interface TradeSellContext {
+  env: string;
+  pair: string;
+  amount: string;
+  price: string;
+  total: string;
+  orderId: string;
+  exitType: string;
+  trigger?: string;
+  pnlUsd: number | null;
+  pnlPct: number | null;
+  feeUsd?: number | null;
+  strategyLabel: string;
+  confPct: string;
+  reason: string;
+  mode: string;
+}
+
+function buildTradeSellHTML(ctx: TradeSellContext): string {
+  const pnlSign = (ctx.pnlUsd !== null && ctx.pnlUsd >= 0) ? "+" : "";
+  const pnlUsdTxt = (ctx.pnlUsd === null || ctx.pnlUsd === undefined)
+    ? "N/A (sin entryPrice)"
+    : `${pnlSign}$${ctx.pnlUsd.toFixed(2)}${(ctx.pnlPct !== null && ctx.pnlPct !== undefined) ? ` (${ctx.pnlPct.toFixed(2)}%)` : ""}`;
+  const feeTxt = (ctx.feeUsd === null || ctx.feeUsd === undefined) ? "N/A" : `$${ctx.feeUsd.toFixed(2)}`;
+
+  const lines = [
+    `<b>${escapeHtml(ctx.env)} 🔴 Operación Automática Ejecutada</b>`,
+    ``,
+    `<b>📌 Tipo:</b> SELL`,
+    `<b>📌 Par:</b> ${escapeHtml(ctx.pair)}`,
+    `<b>📌 Cantidad:</b> ${escapeHtml(ctx.amount)}`,
+    `<b>📌 Precio:</b> $${escapeHtml(ctx.price)}`,
+    `<b>📌 Total:</b> $${escapeHtml(ctx.total)}`,
+    `<b>🔗 ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>💰 Resultado del cierre:</b>`,
+    `• <b>PnL cierre:</b> <b>${escapeHtml(pnlUsdTxt)}</b>`,
+    `• <b>Fee:</b> ${escapeHtml(feeTxt)}`,
+    ``,
+    `<b>🛡️ Salida:</b>`,
+    `• <b>Tipo:</b> ${escapeHtml(ctx.exitType)}`
+  ];
+  if (ctx.trigger) {
+    lines.push(`• <b>Trigger:</b> ${escapeHtml(ctx.trigger)}`);
+  }
+  lines.push(
+    ``,
+    `<b>🧠 Estrategia origen:</b> ${escapeHtml(ctx.strategyLabel)} | <b>Confianza:</b> ${escapeHtml(ctx.confPct)}%`,
+    `<b>📝 Razón:</b> ${escapeHtml(ctx.reason)}`,
+    ``,
+    `<b>🛡️ Modo:</b> ${escapeHtml(ctx.mode)}`
+  );
+  return lines.join("\n");
+}
+
+interface OrphanSellContext {
+  env: string;
+  assetOrPair: string;
+  amount: string;
+  price: string;
+  total: string;
+  orderId: string;
+  reasonCode: string;
+}
+
+function buildOrphanSellHTML(ctx: OrphanSellContext): string {
+  return [
+    `<b>${escapeHtml(ctx.env)} 🟠 LIQUIDACIÓN HUÉRFANA</b>`,
+    ``,
+    `<b>📌 Operación:</b>`,
+    `• Par/Activo: ${escapeHtml(ctx.assetOrPair)}`,
+    `• Cantidad: ${escapeHtml(ctx.amount)}`,
+    `• Precio: ${escapeHtml(ctx.price)}`,
+    `• Total: ${escapeHtml(ctx.total)}`,
+    `• ID: <code>${escapeHtml(ctx.orderId)}</code>`,
+    ``,
+    `<b>⚠️ Resultado:</b>`,
+    `• <b>PnL cierre:</b> N/A (sin entryPrice)`,
+    `• Reason: ${escapeHtml(ctx.reasonCode)}`
+  ].join("\n");
+}
+
+interface SignalContext {
+  side: "BUY" | "SELL";
+  symbol: string;
+  price: string;
+  investPct?: string;
+  rsi?: string;
+  macd?: string;
+  adx?: string;
+  regime?: string;
+  ts: string;
+}
+
+function buildSignalHTML(ctx: SignalContext): string {
+  const sideEmoji = ctx.side === "BUY" ? "🟢" : "🔴";
+  const sideText = ctx.side === "BUY" ? "COMPRAR" : "VENDER";
+  const lines = [
+    `<b>${sideEmoji} SEÑAL: ${sideText} ${escapeHtml(ctx.symbol)} ${sideEmoji}</b>`,
+    ``,
+    `📌 Precio: ${escapeHtml(ctx.price)}`
+  ];
+  if (ctx.investPct) lines.push(`💰 Inversión recomendada: ${escapeHtml(ctx.investPct)}%`);
+  if (ctx.rsi || ctx.macd || ctx.adx) {
+    lines.push(``, `<b>📊 Indicadores técnicos:</b>`);
+    if (ctx.rsi) lines.push(`• RSI: ${escapeHtml(ctx.rsi)}`);
+    if (ctx.macd) lines.push(`• MACD: ${escapeHtml(ctx.macd)}`);
+    if (ctx.adx) lines.push(`• ADX: ${escapeHtml(ctx.adx)}`);
+  }
+  if (ctx.regime) lines.push(``, `🧭 Régimen: ${escapeHtml(ctx.regime)}`);
+  lines.push(`🕒 ${escapeHtml(ctx.ts)}`);
+  return lines.join("\n");
+}
+
+// Export templates for use in tradingEngine
+export const telegramTemplates = {
+  escapeHtml,
+  buildBotStartedHTML,
+  buildHeartbeatHTML,
+  buildDailyReportHTML,
+  buildTradeBuyHTML,
+  buildTradeSellHTML,
+  buildOrphanSellHTML,
+  buildSignalHTML,
+};
+
 interface TelegramConfig {
   token: string;
   chatId: string;
@@ -128,20 +412,20 @@ export class TelegramService {
         : "Sin chats adicionales";
 
       const message = `
-📊 *Estado del Bot*
+<b>📊 Estado del Bot</b>
 
-*Estado:* ${status}
-*Estrategia:* ${strategy}
-*Nivel de riesgo:* ${riskLevel}
-*Pares activos:* ${pairs}
-*Chats Telegram:* ${chatsInfo}
+<b>Estado:</b> ${escapeHtml(status)}
+<b>Estrategia:</b> ${escapeHtml(strategy)}
+<b>Nivel de riesgo:</b> ${escapeHtml(riskLevel)}
+<b>Pares activos:</b> ${escapeHtml(pairs)}
+<b>Chats Telegram:</b> ${escapeHtml(chatsInfo)}
 
-_Usa /ayuda para ver los comandos disponibles_
+<i>Usa /ayuda para ver los comandos disponibles</i>
       `.trim();
 
-      await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error obteniendo estado: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo estado: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -153,9 +437,9 @@ _Usa /ayuda para ver los comandos disponibles_
         await this.engineController.stop();
       }
       
-      await this.bot?.sendMessage(chatId, "⏸️ *Bot pausado correctamente*\n\nEl motor de trading se ha detenido.\nUsa /reanudar para volver a activarlo.", { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, "<b>⏸️ Bot pausado correctamente</b>\n\nEl motor de trading se ha detenido.\nUsa /reanudar para volver a activarlo.", { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error pausando bot: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error pausando bot: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -167,9 +451,9 @@ _Usa /ayuda para ver los comandos disponibles_
         await this.engineController.start();
       }
       
-      await this.bot?.sendMessage(chatId, "✅ *Bot activado correctamente*\n\nEl motor de trading ha comenzado a analizar el mercado.", { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, "<b>✅ Bot activado correctamente</b>\n\nEl motor de trading ha comenzado a analizar el mercado.", { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error activando bot: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error activando bot: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -182,43 +466,45 @@ _Usa /ayuda para ver los comandos disponibles_
         return;
       }
 
-      let message = "📈 *Últimas operaciones:*\n\n";
+      let message = "<b>📈 Últimas operaciones:</b>\n\n";
       
       for (const trade of trades) {
         const emoji = trade.type === "buy" ? "🟢" : "🔴";
         const tipo = trade.type === "buy" ? "Compra" : "Venta";
         const fecha = trade.executedAt ? new Date(trade.executedAt).toLocaleDateString("es-ES") : "Pendiente";
         
-        message += `${emoji} *${tipo}* ${trade.pair}\n`;
+        message += `${emoji} <b>${tipo}</b> ${escapeHtml(trade.pair)}\n`;
         message += `   Precio: $${parseFloat(trade.price).toFixed(2)}\n`;
-        message += `   Cantidad: ${trade.amount}\n`;
+        message += `   Cantidad: ${escapeHtml(trade.amount)}\n`;
         message += `   Fecha: ${fecha}\n\n`;
       }
 
-      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error obteniendo operaciones: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo operaciones: ${escapeHtml(error.message)}`);
     }
   }
 
   private async handleAyuda(chatId: number) {
     const message = `
-🤖 *Comandos disponibles:*
+<b>🤖 Comandos disponibles:</b>
 
 /estado - Ver estado del bot
 /balance - Ver balance actual
 /config - Ver configuración de riesgo
 /exposicion - Ver exposición por par
 /uptime - Ver tiempo encendido
+/menu - Menú interactivo con botones
+/channels - Configurar alertas por chat
 /pausar - Pausar el bot
 /reanudar - Activar el bot
 /ultimas - Ver últimas operaciones
 /ayuda - Ver esta ayuda
 
-_KrakenBot.AI - Trading Autónomo_
+<i>KrakenBot.AI - Trading Autónomo</i>
     `.trim();
 
-    await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
   }
 
   private async handleBalance(chatId: number) {
@@ -234,19 +520,19 @@ _KrakenBot.AI - Trading Autónomo_
       const sol = parseFloat(balances?.SOL || "0");
 
       const message = `
-💰 *Balance Actual*
+<b>💰 Balance Actual</b>
 
-*USD:* $${usd.toFixed(2)}
-*BTC:* ${btc.toFixed(6)}
-*ETH:* ${eth.toFixed(6)}
-*SOL:* ${sol.toFixed(4)}
+<b>USD:</b> $${usd.toFixed(2)}
+<b>BTC:</b> ${btc.toFixed(6)}
+<b>ETH:</b> ${eth.toFixed(6)}
+<b>SOL:</b> ${sol.toFixed(4)}
 
-_Actualizado: ${new Date().toLocaleString("es-ES")}_
+<i>Actualizado: ${new Date().toLocaleString("es-ES")}</i>
       `.trim();
 
-      await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error obteniendo balance: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo balance: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -261,21 +547,21 @@ _Actualizado: ${new Date().toLocaleString("es-ES")}_
       const riskTrade = parseFloat(config?.riskPerTradePct?.toString() || "15");
 
       const message = `
-⚙️ *Configuración de Riesgo*
+<b>⚙️ Configuración de Riesgo</b>
 
-🛑 *Stop-Loss:* ${sl}%
-🎯 *Take-Profit:* ${tp}%
-📉 *Trailing Stop:* ${trailing}
-💵 *Riesgo por trade:* ${riskTrade}%
-🔸 *Exp. por par:* ${pairExp}%
-🔹 *Exp. total:* ${totalExp}%
+🛑 <b>Stop-Loss:</b> ${sl}%
+🎯 <b>Take-Profit:</b> ${tp}%
+📉 <b>Trailing Stop:</b> ${escapeHtml(trailing)}
+💵 <b>Riesgo por trade:</b> ${riskTrade}%
+🔸 <b>Exp. por par:</b> ${pairExp}%
+🔹 <b>Exp. total:</b> ${totalExp}%
 
-_Estrategia: ${config?.strategy || "momentum"}_
+<i>Estrategia: ${escapeHtml(config?.strategy || "momentum")}</i>
       `.trim();
 
-      await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error obteniendo configuración: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo configuración: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -284,27 +570,26 @@ _Estrategia: ${config?.strategy || "momentum"}_
       const positions = this.engineController?.getOpenPositions?.() || new Map();
       
       if (positions.size === 0) {
-        await this.bot?.sendMessage(chatId, "📊 *Sin posiciones abiertas*\n\nNo hay exposición actual.", { parse_mode: "Markdown" });
+        await this.bot?.sendMessage(chatId, "<b>📊 Sin posiciones abiertas</b>\n\nNo hay exposición actual.", { parse_mode: "HTML" });
         return;
       }
 
-      let message = "📊 *Exposición Actual*\n\n";
+      let message = "<b>📊 Exposición Actual</b>\n\n";
       let totalExp = 0;
 
       positions.forEach((pos, pair) => {
         const exposure = pos.amount * pos.entryPrice;
         totalExp += exposure;
-        const pnl = "N/A";
-        message += `*${pair}:* $${exposure.toFixed(2)}\n`;
+        message += `<b>${escapeHtml(pair)}:</b> $${exposure.toFixed(2)}\n`;
         message += `   Entrada: $${pos.entryPrice.toFixed(2)}\n`;
         message += `   Cantidad: ${pos.amount.toFixed(6)}\n\n`;
       });
 
-      message += `*Total expuesto:* $${totalExp.toFixed(2)}`;
+      message += `<b>Total expuesto:</b> $${totalExp.toFixed(2)}`;
 
-      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "Markdown" });
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error obteniendo exposición: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo exposición: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -319,16 +604,16 @@ _Estrategia: ${config?.strategy || "momentum"}_
     const status = engineActive ? "✅ Motor activo" : "⏸️ Motor pausado";
 
     const message = `
-⏱️ *Uptime del Bot*
+<b>⏱️ Uptime del Bot</b>
 
-*Tiempo encendido:* ${days}d ${hours}h ${minutes}m
-*Estado:* ${status}
-*Iniciado:* ${this.startTime.toLocaleString("es-ES")}
+<b>Tiempo encendido:</b> ${days}d ${hours}h ${minutes}m
+<b>Estado:</b> ${status}
+<b>Iniciado:</b> ${this.startTime.toLocaleString("es-ES")}
 
-_KrakenBot.AI_
+<i>KrakenBot.AI</i>
     `.trim();
 
-    await this.bot?.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
   }
 
   private async handleMenu(chatId: number) {
@@ -357,13 +642,13 @@ _KrakenBot.AI_
     };
 
     const message = `
-🤖 *MENÚ PRINCIPAL*
+<b>🤖 MENÚ PRINCIPAL</b>
 
 Selecciona una opción:
     `.trim();
 
     await this.bot?.sendMessage(chatId, message, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       reply_markup: keyboard,
     });
   }
@@ -415,22 +700,22 @@ Selecciona una opción:
       };
 
       const message = `
-📣 *GESTIÓN DE CANALES*
-Chat actual: \`${chatId}\`
+<b>📣 GESTIÓN DE CANALES</b>
+Chat actual: <code>${chatId}</code>
 
-*Configuración:*
+<b>Configuración:</b>
 ${t} Trades | ${s} Sistema | ${e} Errores
 ${b} Balance | ${h} Heartbeat
 
-_Pulsa para activar/desactivar_
+<i>Pulsa para activar/desactivar</i>
       `.trim();
 
       await this.bot?.sendMessage(chatId, message, {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         reply_markup: keyboard,
       });
     } catch (error: any) {
-      await this.bot?.sendMessage(chatId, `❌ Error: ${error.message}`);
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
     }
   }
 
@@ -493,16 +778,15 @@ _Pulsa para activar/desactivar_
   }
 
   private async handleSyncCallback(chatId: number) {
-    await this.bot?.sendMessage(chatId, "🔄 *Sincronizando con Kraken...*", { parse_mode: "Markdown" });
-    // Note: Actual sync is handled by API endpoint, this is just feedback
-    await this.bot?.sendMessage(chatId, "✅ Usa la API /api/trades/sync para sincronizar trades.", { parse_mode: "Markdown" });
+    await this.bot?.sendMessage(chatId, "<b>🔄 Sincronizando con Kraken...</b>", { parse_mode: "HTML" });
+    await this.bot?.sendMessage(chatId, "✅ Usa la API /api/trades/sync para sincronizar trades.", { parse_mode: "HTML" });
   }
 
   private async handleDailyConfig(chatId: number) {
     const message = `
-⏰ *REPORTE DIARIO*
+<b>⏰ REPORTE DIARIO</b>
 
-El reporte técnico se envía automáticamente a las *14:00* (Europe/Madrid) a los canales con *System* activado.
+El reporte técnico se envía automáticamente a las <b>14:00</b> (Europe/Madrid) a los canales con <b>System</b> activado.
 
 Incluye:
 • Estado conexiones (Kraken/DB/Telegram)
@@ -510,7 +794,7 @@ Incluye:
 • Estado del bot y posiciones
 • PnL diario
 
-_Activa "System" en /channels para recibirlo_
+<i>Activa "System" en /channels para recibirlo</i>
     `.trim();
 
     const keyboard = {
@@ -520,7 +804,7 @@ _Activa "System" en /channels para recibirlo_
     };
 
     await this.bot?.sendMessage(chatId, message, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       reply_markup: keyboard,
     });
   }
@@ -550,7 +834,7 @@ _Activa "System" en /channels para recibirlo_
     await storage.updateTelegramChat(chat.id, { [dbField]: newValue });
 
     const emoji = newValue ? "✅" : "⬜";
-    await this.bot?.sendMessage(chatId, `${emoji} *${field.charAt(0).toUpperCase() + field.slice(1)}* ${newValue ? "activado" : "desactivado"}`, { parse_mode: "Markdown" });
+    await this.bot?.sendMessage(chatId, `${emoji} <b>${field.charAt(0).toUpperCase() + field.slice(1)}</b> ${newValue ? "activado" : "desactivado"}`, { parse_mode: "HTML" });
     
     // Refresh channels view
     await this.handleChannels(chatId);
@@ -564,7 +848,7 @@ _Activa "System" en /channels para recibirlo_
       return;
     }
 
-    let message = "📃 *Chats Registrados*\n\n";
+    let message = "<b>📃 Chats Registrados</b>\n\n";
     for (const chat of chats) {
       const flags = [
         chat.alertTrades ? "T" : "",
@@ -574,7 +858,7 @@ _Activa "System" en /channels para recibirlo_
         chat.alertHeartbeat ? "H" : "",
       ].filter(Boolean).join("");
       
-      message += `• \`${chat.chatId}\` (${chat.name})\n  Flags: [${flags}]\n`;
+      message += `• <code>${escapeHtml(chat.chatId)}</code> (${escapeHtml(chat.name)})\n  Flags: [${flags}]\n`;
     }
 
     const keyboard = {
@@ -584,7 +868,7 @@ _Activa "System" en /channels para recibirlo_
     };
 
     await this.bot?.sendMessage(chatId, message.trim(), {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       reply_markup: keyboard,
     });
   }
@@ -618,15 +902,15 @@ _Activa "System" en /channels para recibirlo_
       const recentOps = trades.length > 0 ? `${trades.length} recientes` : "Sin operaciones";
 
       const message = `
-💓 *Heartbeat - KrakenBot*
+<b>💓 Heartbeat - KrakenBot</b>
 
-*Estado:* ${status}
-*Uptime:* ${days}d ${hours}h
-*Estrategia:* ${config?.strategy || "momentum"}
-*Pares:* ${config?.activePairs?.join(", ") || "N/A"}
-*Ops recientes:* ${recentOps}
+<b>Estado:</b> ${status}
+<b>Uptime:</b> ${days}d ${hours}h
+<b>Estrategia:</b> ${escapeHtml(config?.strategy || "momentum")}
+<b>Pares:</b> ${escapeHtml(config?.activePairs?.join(", ") || "N/A")}
+<b>Ops recientes:</b> ${escapeHtml(recentOps)}
 
-_${now.toLocaleString("es-ES")}_
+<i>${now.toLocaleString("es-ES")}</i>
       `.trim();
 
       const chats = await storage.getActiveTelegramChats();
@@ -712,31 +996,23 @@ _${now.toLocaleString("es-ES")}_
       const dbOk = "✅ OK"; // If we're here, DB works
       const telegramOk = this.bot ? "✅ OK" : "❌ ERROR";
 
-      const message = `
-💗 *REPORTE DIARIO (14:00)*
-
-✅ *Estado de conexiones:*
-• Kraken: ${krakenOk}
-• DB: ${dbOk}
-• Telegram: ${telegramOk}
-
-📊 *Recursos del sistema:*
-• CPU: ${cpuLoad}%
-• Memoria: ${memUsedGb}/${memTotalGb} GB (${memPct}%)
-• Disco: ${diskUsedGb}/${diskTotalGb} GB (${diskPct}%)
-• Uptime: ${uptimeDays}d ${uptimeHours}h ${uptimeMins}m
-
-🤖 *Estado del bot:*
-• Entorno: ${envName}
-• DRY\\_RUN: ${dryRunStatus}
-• Modo: ${positionMode}
-• Estrategia: ${strategy}
-• Pares: ${pairs}
-• Posiciones: ${positions.size}
-• Exposición: $${totalExposure.toFixed(2)}
-
-_${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}_
-      `.trim();
+      const message = buildDailyReportHTML({
+        env: envName,
+        cpu: `${cpuLoad}%`,
+        mem: `${memUsedGb}/${memTotalGb} GB (${memPct}%)`,
+        disk: `${diskUsedGb}/${diskTotalGb} GB (${diskPct}%)`,
+        uptime: `${uptimeDays}d ${uptimeHours}h ${uptimeMins}m`,
+        krakenOk: !!this.engineController?.getBalance,
+        telegramOk: !!this.bot,
+        dbOk: true,
+        dryRun: config?.dryRunMode ?? false,
+        mode: positionMode,
+        strategy,
+        pairs,
+        positionCount: positions.size,
+        exposureUsd: totalExposure.toFixed(2),
+        ts: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" }),
+      });
 
       // Send to chats with alertSystem enabled
       const chats = await storage.getActiveTelegramChats();
@@ -761,20 +1037,35 @@ _${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}_
     return this.bot !== null && this.chatId !== "";
   }
 
-  async sendMessage(message: string, options?: { skipPrefix?: boolean }): Promise<boolean> {
+  async sendMessage(message: string, options?: { skipPrefix?: boolean; parseMode?: "HTML" | "Markdown" }): Promise<boolean> {
     if (!this.bot || !this.chatId) {
       console.warn("Telegram not initialized, skipping notification");
       return false;
     }
 
     try {
-      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefix();
+      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefixHTML();
       const fullMessage = prefix + message;
-      await this.bot.sendMessage(this.chatId, fullMessage, { parse_mode: "Markdown" });
+      await this.bot.sendMessage(this.chatId, fullMessage, { 
+        parse_mode: options?.parseMode ?? "HTML",
+        disable_web_page_preview: true 
+      });
       return true;
     } catch (error) {
       console.error("Failed to send Telegram message:", error);
       return false;
+    }
+  }
+
+  private async getMessagePrefixHTML(): Promise<string> {
+    try {
+      const config = await storage.getBotConfig();
+      const dryRun = config?.dryRunMode ?? false;
+      const envLabel = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+      const dryLabel = dryRun ? "[DRY_RUN]" : "";
+      return `<b>[${envLabel}]${dryLabel}</b> `;
+    } catch {
+      return "<b>[UNKNOWN]</b> ";
     }
   }
 
@@ -788,16 +1079,19 @@ _${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}_
     }
   }
 
-  async sendToChat(chatId: string, message: string, options?: { skipPrefix?: boolean }): Promise<boolean> {
+  async sendToChat(chatId: string, message: string, options?: { skipPrefix?: boolean; parseMode?: "HTML" | "Markdown" }): Promise<boolean> {
     if (!this.bot) {
       console.warn("Telegram bot not initialized");
       return false;
     }
 
     try {
-      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefix();
+      const prefix = options?.skipPrefix ? "" : await this.getMessagePrefixHTML();
       const fullMessage = prefix + message;
-      await this.bot.sendMessage(chatId, fullMessage, { parse_mode: "Markdown" });
+      await this.bot.sendMessage(chatId, fullMessage, { 
+        parse_mode: options?.parseMode ?? "HTML",
+        disable_web_page_preview: true 
+      });
       return true;
     } catch (error) {
       console.error(`Failed to send message to chat ${chatId}:`, error);
