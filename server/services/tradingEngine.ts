@@ -476,16 +476,26 @@ _${extra.reason}_
     maxPairAvailable: number; 
     maxTotalAvailable: number; 
     maxAllowed: number;
+    exposureBaseUsed: string;
+    baseValueUsd: number;
   } {
     const maxPairExposurePct = parseFloat(config.maxPairExposurePct?.toString() || "25");
     const maxTotalExposurePct = parseFloat(config.maxTotalExposurePct?.toString() || "60");
+    const exposureBase = config.exposureBase || "cash";
 
     const currentPairExposure = this.calculatePairExposure(pair);
     const currentTotalExposure = this.calculateTotalExposure();
 
     const usdBalance = freshUsdBalance ?? this.currentUsdBalance;
-    const maxPairExposureUsd = usdBalance * (maxPairExposurePct / 100);
-    const maxTotalExposureUsd = usdBalance * (maxTotalExposurePct / 100);
+    
+    // Calculate base value depending on exposureBase setting
+    // "cash" = solo USD disponible, "portfolio" = cash + posiciones abiertas
+    const baseValueUsd = exposureBase === "portfolio" 
+      ? usdBalance + currentTotalExposure 
+      : usdBalance;
+    
+    const maxPairExposureUsd = baseValueUsd * (maxPairExposurePct / 100);
+    const maxTotalExposureUsd = baseValueUsd * (maxTotalExposurePct / 100);
 
     const maxPairAvailable = Math.max(0, maxPairExposureUsd - currentPairExposure);
     const maxTotalAvailable = Math.max(0, maxTotalExposureUsd - currentTotalExposure);
@@ -493,7 +503,9 @@ _${extra.reason}_
     return {
       maxPairAvailable,
       maxTotalAvailable,
-      maxAllowed: Math.min(maxPairAvailable, maxTotalAvailable)
+      maxAllowed: Math.min(maxPairAvailable, maxTotalAvailable),
+      exposureBaseUsed: exposureBase,
+      baseValueUsd,
     };
   }
 

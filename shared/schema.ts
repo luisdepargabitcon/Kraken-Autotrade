@@ -19,6 +19,7 @@ export const botConfig = pgTable("bot_config", {
   dailyLossLimitPercent: decimal("daily_loss_limit_percent", { precision: 5, scale: 2 }).notNull().default("10.00"),
   maxPairExposurePct: decimal("max_pair_exposure_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
   maxTotalExposurePct: decimal("max_total_exposure_pct", { precision: 5, scale: 2 }).notNull().default("60.00"),
+  exposureBase: text("exposure_base").notNull().default("cash"),
   riskPerTradePct: decimal("risk_per_trade_pct", { precision: 5, scale: 2 }).notNull().default("15.00"),
   tradingHoursEnabled: boolean("trading_hours_enabled").notNull().default(true),
   tradingHoursStart: decimal("trading_hours_start", { precision: 2, scale: 0 }).notNull().default("8"),
