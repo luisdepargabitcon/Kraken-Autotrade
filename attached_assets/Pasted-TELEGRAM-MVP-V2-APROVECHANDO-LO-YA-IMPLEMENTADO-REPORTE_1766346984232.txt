@@ -1,0 +1,74 @@
+TELEGRAM MVP V2 (APROVECHANDO LO YA IMPLEMENTADO) + REPORTE DIARIO NAS 14:00 + BLOQUEO PARES NO-USD (MITIGACIÓN PUNTO 4)
+
+CONTEXTO (YA EXISTE):
+- telegram_chats con flags/roles: alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat
+- routing: sendAlertToMultipleChats() + shouldSendToChat()
+- comandos: /estado /pausar /reanudar /ultimas /ayuda /balance /config /exposicion /uptime
+- heartbeat cada 12h
+- NAS polling activo en NAS y desactivado en Replit
+
+OBJETIVO A (ALTO VALOR): REPORTE DIARIO 14:00 (NAS + BOT) AL CANAL SYSTEM
+1) Añadir scheduler diario a las 14:00 hora local (Europe/Madrid o TZ del sistema):
+   - Preferible: node-cron con TZ
+   - Alternativa: job interno que chequea hora y evita duplicado por fecha.
+2) Evitar duplicados: guardar lastDailyReportDate (YYYY-MM-DD) en DB/config.
+3) Métricas:
+   - NAS: CPU%, load, memoria (used/total y %), disco (used/total y %), uptime
+   - Bot: entorno, DRY_RUN, modo SMART_GUARD, estrategia/timeframe activo, pares activos,
+          posiciones abiertas, exposición USD (si existe), dailyPnL (si existe), última operación (opcional)
+4) Formato “estilo capturas” (plain text, secciones, emojis, checks).
+5) Enviar usando sendAlertToMultipleChats() a chats con alertSystem=true (y opcional toggle para también enviarlo a trading).
+
+OBJETIVO B (MVP): /menu con BOTONES (INLINE KEYBOARD) + handlers básicos
+1) Implementar comando /menu que envía mensaje “MENÚ PRINCIPAL” con botones:
+   - 📊 Estado (callback: MENU_STATUS) -> responde con el mismo bloque que /estado
+   - 💰 Balance (MENU_BALANCE) -> mismo que /balance
+   - 📈 Exposición (MENU_EXPOSURE) -> mismo que /exposicion
+   - 🔄 Sync Kraken (MENU_SYNC) -> llama sync, responde con updated/inserted/skipped
+   - ⏸️ Pausar / ▶️ Reanudar (MENU_PAUSE / MENU_RESUME) -> igual que comandos
+   - 📣 Canales (MENU_CHANNELS) -> pantalla de toggles roles del chat actual (ver objetivo C)
+   - ⏰ Reporte diario (MENU_DAILY) -> ON/OFF + hora actual
+   - ❓ Ayuda (MENU_HELP)
+2) Implementar callback_query handler:
+   - switch/case por callback_data
+   - responder con sendMessage (MVP) y un botón “⬅️ Menú” (callback MENU_HOME)
+   - opcional: editMessageText para no spamear (no obligatorio en MVP)
+
+OBJETIVO C (MVP): GESTIÓN DE CANALES “VISUAL” PARA EL CHAT ACTUAL
+1) Implementar /channels (y botón desde /menu) que muestre:
+   “📣 GESTIÓN DE CANALES (chat actual: <id>)”
+   y los flags actuales:
+   - Trades: ON/OFF
+   - System: ON/OFF
+   - Errors: ON/OFF
+   - Balance: ON/OFF
+   - Heartbeat: ON/OFF
+2) Inline keyboard con toggles para el chat actual:
+   - ✅/⬜ Trades (TOGGLE_TRADES)
+   - ✅/⬜ System (TOGGLE_SYSTEM)
+   - ✅/⬜ Errors (TOGGLE_ERRORS)
+   - ✅/⬜ Balance (TOGGLE_BALANCE)
+   - ✅/⬜ Heartbeat (TOGGLE_HEARTBEAT)
+   - 📃 Listar chats (LIST_CHATS) -> muestra todos los chats y flags (resumen breve)
+   - ⬅️ Menú
+3) Implementación: update telegram_chats set alertX = !alertX where chatId = currentChatId.
+
+OBJETIVO D (MITIGACIÓN PUNTO 4): BLOQUEAR PARES NO-USD EN SERVER
+1) En el motor/validador de trades (antes de cualquier orden real), bloquear si el quote no es USD (o allowlist):
+   allowQuotes = ["USD"] (opcional: ["USD","USDT","EUR"] según config)
+2) Si detecta par cruzado (ej ETH/BTC):
+   - no ejecutar trade
+   - log reason “PAIR_NOT_ALLOWED_QUOTE”
+   - opcional: alertErrors al canal errors/system (una sola vez por X tiempo para evitar spam)
+
+ACEPTACIÓN
+- A) A las 14:00 se envía 1 mensaje diario al canal SYSTEM con métricas NAS + estado bot (formato capturas).
+- B) /menu muestra botones y funcionan (callback_query ok).
+- C) /channels permite activar/desactivar flags del chat actual y persiste.
+- D) El bot no opera pares no USD aunque estén activados en UI por error.
+
+ENTREGABLE
+PR + replit.md con:
+- lista de botones y comandos
+- ejemplo de reporte diario
+- explicación del bloqueo de pares no USD
