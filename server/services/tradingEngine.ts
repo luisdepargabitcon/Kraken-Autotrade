@@ -6,6 +6,7 @@ import { log } from "../index";
 import { aiService, AiFeatures } from "./aiService";
 import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";
+import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
 
 interface PriceData {
   price: number;
@@ -1038,7 +1039,7 @@ El bot de trading autónomo está activo.
           openedAt: new Date(pos.openedAt).getTime(),
           entryStrategyId: pos.entryStrategyId || "momentum_cycle",
           entrySignalTf: pos.entrySignalTf || "cycle",
-          signalConfidence: pos.signalConfidence ? parseFloat(pos.signalConfidence) : undefined,
+          signalConfidence: pos.signalConfidence ? toConfidenceUnit(pos.signalConfidence) : undefined,
           signalReason: pos.signalReason || undefined,
           entryMode: pos.entryMode || undefined,
           configSnapshot,
@@ -1622,10 +1623,12 @@ ${pnlEmoji} *P&L:* ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ?
     if (!shouldSellFull && scaleOutEnabled && !position.sgScaleOutDone) {
       // Only scale out if signal confidence >= threshold and part is worth selling
       const partValue = position.amount * currentPrice * (scaleOutPct / 100);
-      if (position.signalConfidence && position.signalConfidence >= scaleOutThreshold && partValue >= minPartUsd) {
+      const confPct = toConfidencePct(position.signalConfidence, 0);
+      const thresholdPct = toConfidencePct(scaleOutThreshold, 80);
+      if (confPct >= thresholdPct && partValue >= minPartUsd) {
         if (priceChange >= trailStartPct) { // Only scale out in profit
           shouldScaleOut = true;
-          sellReason = `Scale-out SMART_GUARD (${scaleOutPct}% @ +${priceChange.toFixed(2)}%, conf=${position.signalConfidence}%) [${paramsSource}]`;
+          sellReason = `Scale-out SMART_GUARD (${scaleOutPct}% @ +${priceChange.toFixed(2)}%, conf=${confPct.toFixed(0)}%) [${paramsSource}]`;
           emoji = "📊";
           position.sgScaleOutDone = true;
           positionModified = true;
@@ -3518,7 +3521,7 @@ _⚠️ Modo simulación - NO se envió orden real_
           try {
             const features = aiService.extractFeatures({
               rsi: 50, // Will be enriched from actual indicators in future
-              confidence: signalConfidence ?? 50,
+              confidence: toConfidencePct(signalConfidence, 50),
             });
             const sampleTradeId = `SAMPLE-${Date.now()}-${pair}`;
             const sample = await storage.saveAiSample({

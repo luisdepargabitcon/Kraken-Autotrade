@@ -2087,7 +2087,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           timestamp: new Date().toISOString(),
           lotId,
           strategy: "test",
-          signalConfidence: 80,
+          signalConfidence: 0.8,
           // SMART_GUARD flags
           sgBreakEvenActivated: false,
           sgTrailingActivated: false,
