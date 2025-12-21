@@ -1,0 +1,91 @@
+OBJETIVO
+Normalizar el manejo de "confidence" en TODO el sistema para eliminar incoherencias 0–1 vs 0–100.
+- Internamente (signals/positions): usar confidence en escala 0..1
+- Para UI/Telegram/logs y para features del dataset IA: usar confidence en 0..100
+Esto corrige:
+- Scale-out SMART_GUARD (comparación umbral y texto)
+- Dataset/entrenamiento IA (feature confidence coherente)
+- Endpoints de test que hoy crean posiciones con confidence=80 (rompe expectativas)
+
+ARCHIVOS
+- server/services/tradingEngine.ts
+- server/routes.ts (o donde esté el endpoint /api/test/create-position)
+- (nuevo) server/utils/confidence.ts
+- (opcional) client (si hay lugares mostrando confidence como % sin convertir)
+
+PASO 1 — Crear helper único de conversión
+Crear archivo: server/utils/confidence.ts
+
+Contenido:
+export function toConfidencePct(value: unknown, fallback = 50): number {
+  if (value === null || value === undefined) return fallback;
+  const n = typeof value === "number" ? value : parseFloat(String(value));
+  if (!Number.isFinite(n)) return fallback;
+  const pct = n <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, pct));
+}
+
+export function toConfidenceUnit(value: unknown, fallback = 0): number {
+  if (value === null || value === undefined) return fallback;
+  const n = typeof value === "number" ? value : parseFloat(String(value));
+  if (!Number.isFinite(n)) return fallback;
+  const unit = n > 1 ? n / 100 : n;
+  return Math.max(0, Math.min(1, unit));
+}
+
+PASO 2 — Arreglar SMART_GUARD scale-out (comparación y texto)
+En server/services/tradingEngine.ts, dentro del bloque SCALE-OUT de checkSmartGuardExit (donde compara position.signalConfidence con scaleOutThreshold y construye sellReason):
+- Importar helper:
+  import { toConfidencePct } from "../utils/confidence";
+
+- Reemplazar el uso directo de position.signalConfidence y scaleOutThreshold por conversiones consistentes:
+  const confPct = toConfidencePct(position.signalConfidence, 0);
+  const thresholdPct = toConfidencePct(scaleOutThreshold, 80);
+
+- Cambiar la condición:
+  ANTES: if (position.signalConfidence >= scaleOutThreshold && partValue >= minPartUsd) { ... }
+  DESPUÉS: if (confPct >= thresholdPct && partValue >= minPartUsd) { ... }
+
+- Cambiar el texto:
+  ANTES: conf=${position.signalConfidence}%
+  DESPUÉS: conf=${confPct.toFixed(0)}%
+
+Objetivo: si signalConfidence="0.78" y threshold=80 -> comparar 78 >= 80 (correcto) y log "78%".
+
+PASO 3 — Corregir AI sample collection (dataset limpio)
+En server/services/tradingEngine.ts, en el bloque donde se guardan las muestras IA al abrir BUY (AI Sample collection / aiService.extractFeatures):
+- Importar helper (si no está ya):
+  import { toConfidencePct } from "../utils/confidence";
+
+- Donde hoy haces:
+  confidence: signalConfidence ?? 50
+  Cambiar a:
+  confidence: toConfidencePct(signalConfidence, 50)
+
+Objetivo: no guardar confidence como 0.78 en el dataset; guardar 78.
+
+PASO 4 — Corregir endpoint de test que crea posiciones con confidence=80
+Buscar en server/routes.ts (o archivo equivalente) el endpoint:
+  POST /api/test/create-position
+Actualmente setea:
+  signalConfidence: 80
+Cambiarlo a:
+  signalConfidence: 0.8
+Alternativa: si quieres seguir pasando 80 desde test, usar helper:
+  signalConfidence: toConfidenceUnit(80)
+
+PASO 5 — Verificación rápida
+1) En logs/telegram donde se imprima confidence como %, debe verse 78% y no 0.78%.
+2) En AI samples / training dataset, el campo confidence debe estar en rango 0..100, no decimales.
+3) (Si sgScaleOutEnabled se activa en el futuro) la comparación de threshold debe funcionar.
+
+NOTAS
+- No cambiar la lógica de sizing que ya usa signal.confidence como 0..1; mantenerla así.
+- Cualquier sitio que muestre confidence al usuario debe usar toConfidencePct.
+- Cualquier umbral en UI que esté en % debe convertirse a unidad si se usa para lógica interna.
+
+ENTREGABLE
+PR con:
+- server/utils/confidence.ts
+- modificaciones en tradingEngine.ts (scale-out + ai sample)
+- modificación en /api/test/create-position (confidence=0.8)
