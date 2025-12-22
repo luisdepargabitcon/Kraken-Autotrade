@@ -26,7 +26,7 @@ export function Nav() {
           <Button 
             variant="ghost" 
             size="icon" 
-            className="md:hidden text-muted-foreground"
+            className="md:hidden text-muted-foreground h-11 w-11 touch-target"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             data-testid="button-mobile-menu"
           >
@@ -62,9 +62,9 @@ export function Nav() {
         </div>
 
         <div className="flex items-center gap-2 md:gap-4">
-          <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground h-8 w-8 md:h-10 md:w-10">
-            <Bell className="h-4 w-4 md:h-5 md:w-5" />
-            <span className="absolute top-1.5 right-1.5 md:top-2 md:right-2 h-2 w-2 bg-red-500 rounded-full animate-pulse" />
+          <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground h-11 w-11 touch-target">
+            <Bell className="h-5 w-5" />
+            <span className="absolute top-2 right-2 h-2 w-2 bg-red-500 rounded-full animate-pulse" />
           </Button>
           <div className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 border border-white/10" />
         </div>
@@ -85,7 +85,7 @@ export function Nav() {
                   href={link.href}
                   onClick={() => setMobileMenuOpen(false)}
                   className={cn(
-                    "px-4 py-3 rounded-lg text-sm font-mono transition-colors flex items-center gap-3",
+                    "px-4 py-3 min-h-[44px] rounded-lg text-sm font-mono transition-colors flex items-center gap-3 touch-target",
                     location === link.href 
                       ? "bg-primary/10 text-primary border border-primary/20" 
                       : "text-muted-foreground hover:text-foreground hover:bg-white/5 border border-transparent"
