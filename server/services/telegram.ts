@@ -39,6 +39,43 @@ function formatSpanishDate(dateInput?: string | Date): string {
 }
 
 // ============================================================
+// DURATION FORMATTER - Tiempo transcurrido desde apertura
+// ============================================================
+function formatDuration(openedAt: string | Date | null | undefined): string {
+  if (!openedAt) return "N/A";
+  try {
+    const opened = new Date(openedAt);
+    const now = new Date();
+    const diffMs = now.getTime() - opened.getTime();
+    if (diffMs < 0) return "0m";
+    
+    const minutes = Math.floor(diffMs / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      return `${days}d ${remainingHours}h`;
+    }
+    if (hours > 0) {
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    }
+    return `${minutes}m`;
+  } catch {
+    return "N/A";
+  }
+}
+
+// ============================================================
+// PANEL URL FOOTER - Añade enlace al panel en cada mensaje
+// ============================================================
+function buildPanelUrlFooter(): string {
+  const url = environment.panelUrl;
+  return `\n🔗 <a href="${url}">Ver Panel</a>`;
+}
+
+// ============================================================
 // TELEGRAM MESSAGE TEMPLATES (HTML format)
 // ============================================================
 
@@ -69,7 +106,8 @@ function buildBotStartedHTML(ctx: BotStartedContext): string {
     ``,
     `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
     `🏷️ <b>Entorno:</b> <code>${escapeHtml(ctx.env)}</code>`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   ].join("\n");
 }
 
@@ -104,7 +142,8 @@ function buildHeartbeatHTML(ctx: HeartbeatContext): string {
     `   ${ctx.dbOk ? "✅" : "❌"} Base de datos`,
     ``,
     `📅 ${formatSpanishDate(ctx.ts)}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   ].join("\n");
 }
 
@@ -155,7 +194,8 @@ function buildDailyReportHTML(ctx: DailyReportContext): string {
     `   • Exposición: <code>$${escapeHtml(ctx.exposureUsd)}</code>`,
     ``,
     `📅 ${formatSpanishDate(ctx.ts)}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   ].join("\n");
 }
 
@@ -201,7 +241,8 @@ function buildTradeBuyHTML(ctx: TradeBuyContext): string {
     `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
     ``,
     `📅 ${formatSpanishDate()}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   );
   return lines.join("\n");
 }
@@ -222,6 +263,7 @@ interface TradeSellContext {
   confPct: string;
   reason: string;
   mode: string;
+  openedAt?: string | Date | null;
 }
 
 function buildTradeSellHTML(ctx: TradeSellContext): string {
@@ -234,6 +276,7 @@ function buildTradeSellHTML(ctx: TradeSellContext): string {
     ? `${pnlSign}${ctx.pnlPct.toFixed(2)}%`
     : "";
   const feeTxt = (ctx.feeUsd === null || ctx.feeUsd === undefined) ? "N/A" : `$${ctx.feeUsd.toFixed(2)}`;
+  const durationTxt = formatDuration(ctx.openedAt);
 
   const lines = [
     `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
@@ -243,6 +286,7 @@ function buildTradeSellHTML(ctx: TradeSellContext): string {
     `💵 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
     `📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.amount)}</code>`,
     `💰 <b>Total:</b> <code>$${escapeHtml(ctx.total)}</code>`,
+    `⏱️ <b>Duración:</b> <code>${escapeHtml(durationTxt)}</code>`,
     ``,
     `${pnlEmoji} <b>Resultado:</b>`,
     `   • PnL: <code>${escapeHtml(pnlUsdTxt)}</code> ${pnlPctTxt ? `(<code>${escapeHtml(pnlPctTxt)}</code>)` : ""}`,
@@ -264,7 +308,8 @@ function buildTradeSellHTML(ctx: TradeSellContext): string {
     `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
     ``,
     `📅 ${formatSpanishDate()}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   );
   return lines.join("\n");
 }
@@ -298,7 +343,8 @@ function buildOrphanSellHTML(ctx: OrphanSellContext): string {
     `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
     ``,
     `📅 ${formatSpanishDate()}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   ].join("\n");
 }
 
@@ -343,14 +389,16 @@ function buildSignalHTML(ctx: SignalContext): string {
   lines.push(
     ``,
     `📅 ${formatSpanishDate(ctx.ts)}`,
-    `━━━━━━━━━━━━━━━━━━━`
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
   );
   return lines.join("\n");
 }
 
-// Export templates for use in tradingEngine
+// Export templates and utilities for use in tradingEngine
 export const telegramTemplates = {
   escapeHtml,
+  formatDuration,
   buildBotStartedHTML,
   buildHeartbeatHTML,
   buildDailyReportHTML,

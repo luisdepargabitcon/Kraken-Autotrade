@@ -1509,11 +1509,16 @@ El bot ha pausado las operaciones de COMPRA.
       const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
       const pnlPercent = priceChange;
 
-      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId };
+      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId, openedAt: position.openedAt };
       const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
         const pnlEmoji = pnl >= 0 ? "📈" : "📉";
+        const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
+        const durationMins = Math.floor(durationMs / 60000);
+        const durationHours = Math.floor(durationMins / 60);
+        const durationDays = Math.floor(durationHours / 24);
+        const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
         await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ${emoji} <b>${reason}</b>
@@ -1524,8 +1529,11 @@ ${emoji} <b>${reason}</b>
    • Precio entrada: <code>$${position.entryPrice.toFixed(2)}</code>
    • Precio actual: <code>$${currentPrice.toFixed(2)}</code>
    • Cantidad vendida: <code>${actualSellAmount.toFixed(8)}</code>
+   • Duración: <code>${durationTxt}</code>
 
 ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)</code>
+
+🔗 <a href="${environment.panelUrl}">Ver Panel</a>
 ━━━━━━━━━━━━━━━━━━━`, "trades");
       }
 
@@ -1729,11 +1737,16 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
       log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
       
       const pnl = (currentPrice - position.entryPrice) * sellAmount;
-      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId };
+      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId, openedAt: position.openedAt };
       const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
         const pnlEmoji = pnl >= 0 ? "📈" : "📉";
+        const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
+        const durationMins = Math.floor(durationMs / 60000);
+        const durationHours = Math.floor(durationMins / 60);
+        const durationDays = Math.floor(durationHours / 24);
+        const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
         await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ${emoji} <b>${sellReason}</b>
@@ -1744,8 +1757,11 @@ ${emoji} <b>${sellReason}</b>
    • Precio entrada: <code>$${position.entryPrice.toFixed(2)}</code>
    • Precio actual: <code>$${currentPrice.toFixed(2)}</code>
    • Cantidad vendida: <code>${sellAmount.toFixed(8)}</code>
+   • Duración: <code>${durationTxt}</code>
 
 ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)</code>
+
+🔗 <a href="${environment.panelUrl}">Ver Panel</a>
 ━━━━━━━━━━━━━━━━━━━`, "trades");
       }
       
@@ -2319,7 +2335,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         log(`${pair}: SELL signal - vendiendo ${sellVolume.toFixed(8)} (lot: ${lotAmount.toFixed(8)}, balance: ${realAssetBalance.toFixed(8)}, value: $${sellValueUsd.toFixed(2)})`, "trading");
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason, undefined, undefined, undefined, sellContext);
         if (success) {
@@ -2702,7 +2718,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         log(`${pair}: SELL signal [${strategyId}] - vendiendo ${sellVolume.toFixed(8)} (value: $${sellValueUsd.toFixed(2)})`, "trading");
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${strategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
@@ -3369,7 +3385,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
     strategyMeta?: { strategyId: string; timeframe: string; confidence: number },
     executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean },
-    sellContext?: { entryPrice: number; aiSampleId?: number } // For sells: pass entry price for correct P&L calculation
+    sellContext?: { entryPrice: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and openedAt for P&L and duration tracking
   ): Promise<boolean> {
     try {
       // === VALIDACIÓN: Bloquear pares no-USD ===
