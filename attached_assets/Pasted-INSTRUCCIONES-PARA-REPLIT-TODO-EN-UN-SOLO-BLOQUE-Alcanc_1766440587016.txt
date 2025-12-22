@@ -1,0 +1,173 @@
+INSTRUCCIONES PARA REPLIT (TODO EN UN SOLO BLOQUE)
+Alcance: (1) Dashboard “mobile-compatible” (no solo responsive), (2) Telegram incluye URL del panel, (3) Alertas Break-Even con precios de salida calculados, (4) Alerta de venta/cierre incluye PnL si ya existe (sin tocar la lógica de trading), (5) Validación/QA rápida.
+
+──────────────────────────────────────────────────────────────────────────────
+0) CONFIG GLOBAL (UNIFICAR URL DEL PANEL PARA TELEGRAM)
+OBJETIVO: No hardcodear “http://192.168.1.104:3000/” en strings sueltos.
+
+0.1 Añadir ENV:
+- PUBLIC_BOT_URL="http://192.168.1.104:3000/"
+
+0.2 Centralizar config en un único módulo (si ya existe, reutilizar):
+- server/config.ts (o equivalente)
+  export const PUBLIC_BOT_URL = process.env.PUBLIC_BOT_URL || "";
+
+0.3 Crear helper reutilizable para anexar la URL al final de cualquier mensaje:
+- server/services/notifications/telegramFormat.ts (o dentro del telegram service)
+  function appendPanelUrl(msg: string): string {
+    return PUBLIC_BOT_URL ? `${msg}\n\nPanel: ${PUBLIC_BOT_URL}` : msg;
+  }
+
+Criterio: Todas las alertas críticas de Telegram terminan con “Panel: …” cuando PUBLIC_BOT_URL existe.
+
+──────────────────────────────────────────────────────────────────────────────
+1) DASHBOARD “MOBILE-COMPATIBLE” (NO SOLO RESPONSIVE)
+OBJETIVO: En móvil, navegación usable (una mano), tab bar inferior, listas en cards, safe-area correcta.
+
+1.1 Viewport correcto (frontend):
+- client/index.html (o donde esté el template)
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+1.2 Layout separado móvil vs desktop:
+- Crear:
+  - client/src/layout/MobileLayout.tsx
+  - client/src/layout/DesktopLayout.tsx
+- En el layout principal:
+  - Desktop visible desde md+ (hidden en móvil)
+  - Mobile visible solo en móvil (hidden md)
+
+1.3 Navegación móvil con Bottom Tab Bar:
+- En MobileLayout:
+  - Barra inferior fija (mínimo 56px alto) con 4–5 tabs:
+    Monitor / Posiciones / Trades / Diagnóstico / Config
+  - Cada tab navega a rutas existentes.
+  - Header “sticky” arriba con título y botón para abrir “Sheet” (menú secundario).
+
+1.4 Tablas → Cards en móvil:
+- Para posiciones, trades, logs:
+  - En móvil renderizar como cards.
+  - Acciones (Cerrar/Detalles) con botones h-11 (44px) y separación suficiente.
+
+1.5 Safe-area iOS/Android:
+- En contenedor principal móvil:
+  - padding-bottom: calc(env(safe-area-inset-bottom) + alturaTabBar)
+  - usar 100dvh / min-h-[100dvh] (evitar 100vh puro).
+
+1.6 Rendimiento en móvil:
+- Logs: limitar a últimas 50–200 líneas + paginación.
+- Listas largas: virtualización opcional si crecen mucho.
+
+Criterio: En móvil no hay zoom para operar; navegación principal siempre accesible; botones táctiles correctos.
+
+──────────────────────────────────────────────────────────────────────────────
+2) TELEGRAM: INCLUIR SIEMPRE LA URL DEL BOT/PANEL EN LOS MENSAJES
+OBJETIVO: Cualquier alerta (BUY/SELL/BE/ERROR) debe incluir “Panel: …”.
+
+2.1 Localizar envío Telegram:
+En terminal:
+  rg -n "telegram|sendMessage|sendTelegram|notify|alert" server
+
+2.2 En el punto donde se llama a sendMessage(chatId, text):
+- Asegurar que SIEMPRE se hace:
+  text = appendPanelUrl(text)
+
+2.3 Evitar duplicados:
+- appendPanelUrl debe anexar solo una vez (opcional):
+  - si msg ya contiene “Panel: ”, no volver a anexar.
+
+Criterio: No hay alertas sin URL cuando PUBLIC_BOT_URL está definido.
+
+──────────────────────────────────────────────────────────────────────────────
+3) ALERTA BREAK-EVEN: MOSTRAR PRECIOS DE SALIDA SEGÚN PARÁMETROS
+OBJETIVO: Cuando se activa Break-Even, el mensaje debe incluir el nuevo stop y los precios de salida “si retrocede ahora”, y estado de trailing.
+
+3.1 Localizar el punto de alerta BE:
+  rg -n "break.?even|BREAK_EVEN|BE activ|stop movido" server
+  rg -n "notify.*break|alert.*break" server
+
+3.2 En el formatter del mensaje BE (sin cambiar lógica de trading):
+Añadir campos calculados SOLO para informar (no afecta ejecución):
+- Datos base:
+  Par, LotId, Entry, Precio actual (al momento de activar BE)
+- Parámetros (los ya configurados):
+  breakEvenTriggerPct
+  breakEvenOffsetPct (si existe)
+  trailingStartPct
+  trailingDistancePct
+- Cálculos informativos (LONG / spot):
+  beStop = entry * (1 + breakEvenOffsetPct/100)   (si offset no existe -> 0)
+  trailingActivationPrice = entry * (1 + trailingStartPct/100)
+  trailingStopNow = current * (1 - trailingDistancePct/100)  (solo si trailing activo)
+  effectiveStopNow = max(beStop, trailingStopNow)            (si trailing activo)
+- Texto sugerido:
+  “Nuevo Stop (BE): X”
+  “Salida si retrocede ahora: X”   (usar effectiveStopNow si trailing activo; si no, beStop)
+  “Trailing: ACTIVO (distancia D%) / AÚN NO ACTIVO (se activa a Y)”
+
+3.3 Nota:
+- Si manejáis SHORT, añadir variante:
+  beStop = entry * (1 - offsetPct/100)
+  trailingStopNow = current * (1 + trailingDistancePct/100)
+  effectiveStopNow = min(beStop, trailingStopNow)
+(Implementar solo si vuestro bot opera short; si es spot long, omitir.)
+
+Criterio: Cada alerta Break-Even incluye valores numéricos de salida y trailing status + Panel URL.
+
+──────────────────────────────────────────────────────────────────────────────
+4) ALERTA DE VENTA/CIERRE: INCLUIR PnL SI YA EXISTE (SIN TOCAR TRADING)
+OBJETIVO: Si el cierre ya produce/guarda PnL, que el mensaje lo imprima. Si no existe, no romper ni bloquear.
+
+4.1 Localizar mensaje de cierre/venta:
+  rg -n "POSITION_CLOSED|TRADE_CLOSED|POSICIÓN CERRADA|CLOSED|SELL executed|Venta ejecutada" server
+  rg -n "notify.*(close|closed|sell)|alert.*(close|closed|sell)" server
+
+4.2 Modificar SOLO el “builder” del mensaje:
+- Tras Entry/Exit/Qty, añadir bloque condicional:
+  if (typeof realizedPnlUsd === "number") {
+    msg += `PnL: ${realizedPnlUsd >= 0 ? "+" : ""}${realizedPnlUsd.toFixed(2)} USD`;
+    if (typeof realizedPnlPct === "number") msg += ` (${realizedPnlPct >= 0 ? "+" : ""}${realizedPnlPct.toFixed(2)}%)`;
+    msg += "\n";
+  }
+- Opcional (solo si ya existe):
+  if (typeof feesUsd === "number") msg += `Fees: ${feesUsd.toFixed(2)} USD\n`;
+
+4.3 Si el PnL NO llega en el payload del notifier pero “ya está en BD”:
+- SIN recalcular: hacer un SELECT ligero dentro del notifier (no engine):
+  SELECT realized_pnl_usd, realized_pnl_pct, fees_usd FROM ... WHERE lot_id = ? AND status='CLOSED' LIMIT 1
+- try/catch: si falla, enviar mensaje igual pero sin PnL.
+- Luego aplicar el bloque condicional de 4.2 con lo leído.
+
+4.4 Anexar Panel URL al final:
+- msg = appendPanelUrl(msg)
+
+Criterio: Cuando BD/payload tenga PnL, aparece en Telegram; si no, el mensaje llega igual.
+
+──────────────────────────────────────────────────────────────────────────────
+5) QA / VALIDACIÓN RÁPIDA (ACEPTACIÓN)
+5.1 Móvil:
+- Abrir dashboard en iPhone/Android (o devtools mobile).
+- Confirmar:
+  - Tab bar inferior visible y usable.
+  - Posiciones/Trades visibles como cards.
+  - Botones ≥ 44px alto, sin solaparse con safe-area.
+
+5.2 Telegram URL:
+- Disparar una alerta (cualquiera).
+- Confirmar que termina con “Panel: http://192.168.1.104:3000/”.
+
+5.3 Break-Even:
+- Forzar BE en test (o con simulación interna si tenéis endpoint).
+- Confirmar que el mensaje incluye:
+  - Nuevo Stop (BE)
+  - Salida si retrocede ahora
+  - Trailing activo/no activo y precio de activación
+  - Panel URL
+
+5.4 Cierre con PnL:
+- Cerrar una posición real pequeña o test.
+- Confirmar que en el mensaje aparece “PnL: … USD (…%)” si ya existe en payload/BD.
+- Confirmar que si PnL no existe, el mensaje se envía igual (sin errores).
+
+NOTA DE SEGURIDAD (ALCANCE):
+- No se modifica lógica de entradas/salidas del motor.
+- Solo UI móvil + formateo/lectura informativa en notificaciones.
