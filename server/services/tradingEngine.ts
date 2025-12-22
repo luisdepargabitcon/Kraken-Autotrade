@@ -241,6 +241,54 @@ interface TrendAnalysis {
   summary: string;
 }
 
+// === MARKET REGIME DETECTION ===
+type MarketRegime = "TREND" | "RANGE" | "TRANSITION";
+
+interface RegimeAnalysis {
+  regime: MarketRegime;
+  adx: number;
+  emaAlignment: number; // -1 to 1 (bearish to bullish alignment)
+  bollingerWidth: number; // Percentage width of bands
+  confidence: number;
+  reason: string;
+}
+
+interface RegimePreset {
+  sgBeAtPct: number;
+  sgTrailDistancePct: number;
+  sgTrailStepPct: number;
+  sgTpFixedPct: number;
+  minSignals: number;
+  pauseEntries: boolean;
+}
+
+const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
+  TREND: {
+    sgBeAtPct: 2.5,        // Break-even más tarde (dejar correr)
+    sgTrailDistancePct: 2.0, // Trailing más amplio
+    sgTrailStepPct: 0.5,   // Steps más grandes
+    sgTpFixedPct: 8.0,     // TP más ambicioso
+    minSignals: 5,         // Mantener 5 señales (no bajar)
+    pauseEntries: false,
+  },
+  RANGE: {
+    sgBeAtPct: 1.0,        // Break-even rápido (asegurar)
+    sgTrailDistancePct: 1.0, // Trailing ajustado
+    sgTrailStepPct: 0.2,   // Steps pequeños
+    sgTpFixedPct: 3.0,     // TP conservador
+    minSignals: 6,         // Más exigente en lateral
+    pauseEntries: false,
+  },
+  TRANSITION: {
+    sgBeAtPct: 1.5,        // Valores base (sin cambio)
+    sgTrailDistancePct: 1.5,
+    sgTrailStepPct: 0.25,
+    sgTpFixedPct: 5.0,
+    minSignals: 5,
+    pauseEntries: true,    // Pausar nuevas entradas
+  },
+};
+
 export class TradingEngine {
   private krakenService: KrakenService;
   private telegramService: TelegramService;
@@ -325,6 +373,11 @@ export class TradingEngine {
   // DRY_RUN mode: audit without sending real orders
   private dryRunMode: boolean = false;
   private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
+
+  // Market Regime Detection
+  private regimeCache: Map<string, { regime: RegimeAnalysis; timestamp: number }> = new Map();
+  private readonly REGIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private lastRegime: Map<string, MarketRegime> = new Map(); // Track last regime for change alerts
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -1985,17 +2038,59 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
+        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION
         if (positionMode === "SMART_GUARD") {
+          const regimeEnabled = botConfigCheck?.regimeDetectionEnabled ?? false;
+          let requiredSignals = 5; // Base SMART_GUARD requirement
+          let regimeInfo = "";
+          
+          if (regimeEnabled) {
+            try {
+              const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+              
+              // TRANSITION: Pause new entries
+              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled)) {
+                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
+                  pair,
+                  signal: "BUY",
+                  reason: "REGIME_TRANSITION_PAUSE",
+                  regime: regimeAnalysis.regime,
+                  adx: regimeAnalysis.adx,
+                  regimeReason: regimeAnalysis.reason,
+                  signalReason: signal.reason,
+                });
+                this.lastScanResults.set(pair, {
+                  signal: "BUY",
+                  reason: `REGIME_PAUSE: ${regimeAnalysis.reason}`,
+                });
+                return;
+              }
+              
+              // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+              regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
+            } catch (regimeError: any) {
+              // On regime detection error, fallback to base SMART_GUARD (5 signals)
+              log(`${pair}: Error en detección de régimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
+              // Update scan results to reflect the error state
+              this.lastScanResults.set(pair, {
+                signal: "BUY",
+                reason: `REGIME_ERROR: Fallback a base SMART_GUARD`,
+              });
+            }
+          }
+          
           const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
-            if (buySignalCount < 5) {
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < 5)`, {
+            if (buySignalCount < requiredSignals) {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
                 buySignalCount,
-                requiredSignals: 5,
+                requiredSignals,
+                regimeEnabled,
                 signalReason: signal.reason,
               });
               return;
@@ -2530,17 +2625,59 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
+        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION
         if (positionMode === "SMART_GUARD") {
+          const regimeEnabled = botConfigCheck?.regimeDetectionEnabled ?? false;
+          let requiredSignals = 5; // Base SMART_GUARD requirement
+          let regimeInfo = "";
+          
+          if (regimeEnabled) {
+            try {
+              const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+              
+              // TRANSITION: Pause new entries
+              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled)) {
+                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
+                  pair,
+                  signal: "BUY",
+                  reason: "REGIME_TRANSITION_PAUSE",
+                  regime: regimeAnalysis.regime,
+                  adx: regimeAnalysis.adx,
+                  regimeReason: regimeAnalysis.reason,
+                  signalReason: signal.reason,
+                });
+                this.lastScanResults.set(pair, {
+                  signal: "BUY",
+                  reason: `REGIME_PAUSE: ${regimeAnalysis.reason}`,
+                });
+                return;
+              }
+              
+              // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+              regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
+            } catch (regimeError: any) {
+              // On regime detection error, fallback to base SMART_GUARD (5 signals)
+              log(`${pair}: Error en detección de régimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
+              // Update scan results to reflect the error state
+              this.lastScanResults.set(pair, {
+                signal: "BUY",
+                reason: `REGIME_ERROR: Fallback a base SMART_GUARD`,
+              });
+            }
+          }
+          
           const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
-            if (buySignalCount < 5) {
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < 5)`, {
+            if (buySignalCount < requiredSignals) {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
                 buySignalCount,
-                requiredSignals: 5,
+                requiredSignals,
+                regimeEnabled,
                 signalReason: signal.reason,
               });
               return;
@@ -3326,6 +3463,342 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const direction = priceChange > 0 ? "bullish" : priceChange < 0 ? "bearish" : "neutral";
     
     return { isAbnormal, ratio, direction };
+  }
+
+  // === MARKET REGIME DETECTION ===
+  
+  // Wilder's smoothing helper (used in ADX calculation)
+  private wilderSmooth(values: number[], period: number): number[] {
+    if (values.length < period) return [];
+    
+    const result: number[] = [];
+    // First value is simple sum of first N periods
+    let sum = 0;
+    for (let i = 0; i < period; i++) {
+      sum += values[i];
+    }
+    result.push(sum);
+    
+    // Subsequent values use Wilder's smoothing: prev - (prev/N) + current
+    for (let i = period; i < values.length; i++) {
+      const smoothed = result[result.length - 1] - (result[result.length - 1] / period) + values[i];
+      result.push(smoothed);
+    }
+    
+    return result;
+  }
+  
+  private calculateADX(candles: OHLCCandle[], period: number = 14): number {
+    // Require enough candles for proper ADX calculation (need 2*period for ADX smoothing)
+    if (!candles || candles.length < period * 2 + 1) return 25; // Default neutral value
+    
+    try {
+      const dmPlus: number[] = [];
+      const dmMinus: number[] = [];
+      const trueRanges: number[] = [];
+      
+      // Calculate DM and TR for each period (starts at index 1)
+      for (let i = 1; i < candles.length; i++) {
+        const current = candles[i];
+        const prev = candles[i - 1];
+        
+        // Validate candle data
+        if (!current || !prev || 
+            typeof current.high !== 'number' || typeof current.low !== 'number' ||
+            typeof prev.high !== 'number' || typeof prev.low !== 'number' ||
+            typeof prev.close !== 'number' ||
+            !isFinite(current.high) || !isFinite(current.low) ||
+            !isFinite(prev.high) || !isFinite(prev.low) || !isFinite(prev.close)) {
+          // Push zeros to maintain array alignment
+          dmPlus.push(0);
+          dmMinus.push(0);
+          trueRanges.push(0);
+          continue;
+        }
+        
+        const highDiff = current.high - prev.high;
+        const lowDiff = prev.low - current.low;
+        
+        // +DM: higher high movement (only if > lower low movement and > 0)
+        // -DM: lower low movement (only if > higher high movement and > 0)
+        const plusDM = (highDiff > lowDiff && highDiff > 0) ? highDiff : 0;
+        const minusDM = (lowDiff > highDiff && lowDiff > 0) ? lowDiff : 0;
+        dmPlus.push(plusDM);
+        dmMinus.push(minusDM);
+        
+        // True Range: max of (H-L, |H-prevC|, |L-prevC|)
+        const tr = Math.max(
+          current.high - current.low,
+          Math.abs(current.high - prev.close),
+          Math.abs(current.low - prev.close)
+        );
+        trueRanges.push(isFinite(tr) ? tr : 0);
+      }
+      
+      if (trueRanges.length < period * 2) return 25;
+      
+      // Apply Wilder's smoothing to TR, +DM, -DM
+      const smoothedTR = this.wilderSmooth(trueRanges, period);
+      const smoothedDMPlus = this.wilderSmooth(dmPlus, period);
+      const smoothedDMMinus = this.wilderSmooth(dmMinus, period);
+      
+      if (smoothedTR.length < period || smoothedDMPlus.length < period || smoothedDMMinus.length < period) {
+        return 25;
+      }
+      
+      // Calculate DI+ and DI- for each smoothed period, then DX
+      const dxValues: number[] = [];
+      for (let i = 0; i < smoothedTR.length; i++) {
+        const tr = smoothedTR[i];
+        if (tr <= 0 || !isFinite(tr)) continue;
+        
+        const diPlus = (smoothedDMPlus[i] / tr) * 100;
+        const diMinus = (smoothedDMMinus[i] / tr) * 100;
+        
+        if (!isFinite(diPlus) || !isFinite(diMinus)) continue;
+        
+        const diSum = diPlus + diMinus;
+        if (diSum <= 0) continue;
+        
+        const dx = (Math.abs(diPlus - diMinus) / diSum) * 100;
+        if (isFinite(dx)) {
+          dxValues.push(dx);
+        }
+      }
+      
+      if (dxValues.length < period) return 25;
+      
+      // ADX is Wilder-smoothed DX
+      const adxSmoothed = this.wilderSmooth(dxValues, period);
+      if (adxSmoothed.length === 0) return 25;
+      
+      // Return the latest ADX value, divided by period since Wilder stores sums
+      const rawAdx = adxSmoothed[adxSmoothed.length - 1] / period;
+      
+      if (!isFinite(rawAdx)) return 25;
+      
+      return Math.min(100, Math.max(0, rawAdx));
+    } catch (error) {
+      return 25; // Safe default on any error
+    }
+  }
+
+  private detectMarketRegime(candles: OHLCCandle[]): RegimeAnalysis {
+    const defaultResult: RegimeAnalysis = {
+      regime: "TRANSITION",
+      adx: 25,
+      emaAlignment: 0,
+      bollingerWidth: 2,
+      confidence: 0.3,
+      reason: "Datos insuficientes para detección de régimen",
+    };
+    
+    if (!candles || candles.length < 50) {
+      return defaultResult;
+    }
+    
+    try {
+      const closes = candles.map(c => c.close).filter(c => isFinite(c));
+      if (closes.length < 50) {
+        return defaultResult;
+      }
+      
+      const currentPrice = closes[closes.length - 1];
+      if (!isFinite(currentPrice) || currentPrice <= 0) {
+        return defaultResult;
+      }
+      
+      // 1. Calculate ADX (trend strength) - safely coerced
+      let adx = this.calculateADX(candles, 14);
+      if (!isFinite(adx)) adx = 25;
+      
+      // 2. Calculate EMA alignment (20, 50, 200) - safely coerced
+      let ema20 = this.calculateEMA(closes.slice(-20), 20);
+      let ema50 = this.calculateEMA(closes.slice(-50), 50);
+      let ema200 = candles.length >= 200 ? this.calculateEMA(closes, 200) : ema50;
+      
+      if (!isFinite(ema20)) ema20 = currentPrice;
+      if (!isFinite(ema50)) ema50 = currentPrice;
+      if (!isFinite(ema200)) ema200 = ema50;
+      
+      let emaAlignment = 0;
+      if (ema20 > 0) { // Guard against division by zero
+        if (currentPrice > ema20 && ema20 > ema50 && ema50 > ema200) {
+          emaAlignment = 1; // Perfect bullish alignment
+        } else if (currentPrice < ema20 && ema20 < ema50 && ema50 < ema200) {
+          emaAlignment = -1; // Perfect bearish alignment
+        } else if (Math.abs(currentPrice - ema20) / ema20 < 0.01) {
+          emaAlignment = 0; // Price stuck near EMA20
+        } else {
+          emaAlignment = 0.5 * Math.sign(currentPrice - ema50);
+        }
+      }
+      
+      // 3. Calculate Bollinger Band width (volatility indicator) - safely coerced
+      const bollinger = this.calculateBollingerBands(closes);
+      let bollingerWidth = bollinger.middle > 0 
+        ? ((bollinger.upper - bollinger.lower) / bollinger.middle) * 100 
+        : 2;
+      if (!isFinite(bollingerWidth)) bollingerWidth = 2;
+      
+      // 4. Determine regime
+      let regime: MarketRegime;
+      let confidence: number;
+      let reason: string;
+      
+      if (adx > 25 && Math.abs(emaAlignment) >= 0.5) {
+        // Strong trend: ADX high + EMAs aligned
+        regime = "TREND";
+        confidence = Math.min(0.95, 0.6 + (adx - 25) / 50 + Math.abs(emaAlignment) * 0.2);
+        const direction = emaAlignment > 0 ? "alcista" : "bajista";
+        reason = `Tendencia ${direction} (ADX=${adx.toFixed(0)}, EMAs alineadas)`;
+      } else if (adx < 20 && bollingerWidth < 4) {
+        // Range: ADX low + narrow bands
+        regime = "RANGE";
+        confidence = Math.min(0.9, 0.5 + (20 - adx) / 40 + (4 - bollingerWidth) / 8);
+        reason = `Mercado lateral (ADX=${adx.toFixed(0)}, BB width=${bollingerWidth.toFixed(1)}%)`;
+      } else {
+        // Transition: between regimes
+        regime = "TRANSITION";
+        confidence = 0.5;
+        reason = `Transición (ADX=${adx.toFixed(0)}, esperando confirmación)`;
+      }
+      
+      if (!isFinite(confidence)) confidence = 0.5;
+      
+      return {
+        regime,
+        adx,
+        emaAlignment,
+        bollingerWidth,
+        confidence,
+        reason,
+      };
+    } catch (error) {
+      return defaultResult;
+    }
+  }
+
+  private getRegimeAdjustedParams(
+    baseParams: { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number },
+    regime: MarketRegime,
+    regimeEnabled: boolean
+  ): { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number } {
+    if (!regimeEnabled) {
+      return baseParams;
+    }
+    
+    const preset = REGIME_PRESETS[regime];
+    
+    // Apply regime adjustments (blend base with preset)
+    return {
+      sgBeAtPct: preset.sgBeAtPct,
+      sgTrailDistancePct: preset.sgTrailDistancePct,
+      sgTrailStepPct: preset.sgTrailStepPct,
+      sgTpFixedPct: preset.sgTpFixedPct,
+    };
+  }
+
+  private async getMarketRegimeWithCache(pair: string): Promise<RegimeAnalysis> {
+    const cached = this.regimeCache.get(pair);
+    if (cached && Date.now() - cached.timestamp < this.REGIME_CACHE_TTL_MS) {
+      return cached.regime;
+    }
+    
+    // Get 1h candles for regime detection (most stable timeframe)
+    try {
+      const candles = await this.krakenService.getOHLC(pair, 60); // 1h candles
+      if (!candles || candles.length < 50) {
+        return {
+          regime: "TRANSITION",
+          adx: 25,
+          emaAlignment: 0,
+          bollingerWidth: 2,
+          confidence: 0.3,
+          reason: "Datos insuficientes",
+        };
+      }
+      
+      const analysis = this.detectMarketRegime(candles);
+      
+      // Cache result
+      this.regimeCache.set(pair, { regime: analysis, timestamp: Date.now() });
+      
+      // Check for regime change and alert
+      const lastRegime = this.lastRegime.get(pair);
+      if (lastRegime && lastRegime !== analysis.regime) {
+        await this.sendRegimeChangeAlert(pair, lastRegime, analysis);
+      }
+      this.lastRegime.set(pair, analysis.regime);
+      
+      return analysis;
+    } catch (error: any) {
+      log(`Error obteniendo régimen para ${pair}: ${error.message}`, "trading");
+      return {
+        regime: "TRANSITION",
+        adx: 25,
+        emaAlignment: 0,
+        bollingerWidth: 2,
+        confidence: 0.3,
+        reason: "Error en detección",
+      };
+    }
+  }
+
+  private async sendRegimeChangeAlert(pair: string, fromRegime: MarketRegime, analysis: RegimeAnalysis) {
+    const regimeEmoji: Record<MarketRegime, string> = {
+      TREND: "📈",
+      RANGE: "↔️",
+      TRANSITION: "⏳",
+    };
+    
+    const regimeDescriptions: Record<MarketRegime, string> = {
+      TREND: "Tendencia fuerte",
+      RANGE: "Mercado lateral",
+      TRANSITION: "Transición (pausa entradas)",
+    };
+    
+    const preset = REGIME_PRESETS[analysis.regime];
+    const presetInfo = analysis.regime === "TRANSITION" 
+      ? "Entradas pausadas hasta confirmación"
+      : `BE: ${preset.sgBeAtPct}%, Trail: ${preset.sgTrailDistancePct}%, TP: ${preset.sgTpFixedPct}%, MinSig: ${preset.minSignals}`;
+    
+    const message = `
+━━━━━━━━━━━━━━━━━━━
+${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Antes: <code>${fromRegime}</code> → Ahora: <code>${analysis.regime}</code>
+   • ADX: <code>${analysis.adx.toFixed(0)}</code>
+   • Razón: <code>${analysis.reason}</code>
+
+⚙️ <b>Parámetros ajustados:</b>
+   ${presetInfo}
+
+🔗 <a href="${environment.panelUrl}">Ver Panel</a>
+━━━━━━━━━━━━━━━━━━━`;
+
+    await this.telegramService.sendMessage(message, "system");
+    await botLogger.info("REGIME_CHANGE", `Régimen cambiado en ${pair}: ${fromRegime} → ${analysis.regime}`, {
+      pair,
+      fromRegime,
+      toRegime: analysis.regime,
+      adx: analysis.adx,
+      confidence: analysis.confidence,
+      reason: analysis.reason,
+    });
+  }
+
+  getRegimeMinSignals(regime: MarketRegime, baseMinSignals: number): number {
+    const preset = REGIME_PRESETS[regime];
+    // Never go below the stricter of base config or regime preset
+    return Math.max(baseMinSignals, preset.minSignals);
+  }
+
+  shouldPauseEntriesDueToRegime(regime: MarketRegime, regimeEnabled: boolean): boolean {
+    if (!regimeEnabled) return false;
+    return REGIME_PRESETS[regime].pauseEntries;
   }
 
   private updatePriceHistory(pair: string, data: PriceData) {

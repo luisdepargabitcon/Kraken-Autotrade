@@ -45,6 +45,8 @@ export const botConfig = pgTable("bot_config", {
   sgPairOverrides: jsonb("sg_pair_overrides"),
   // DRY_RUN mode: audit/verify without sending real orders to exchange
   dryRunMode: boolean("dry_run_mode").notNull().default(false),
+  // Market Regime Detection: automatically adjust SMART_GUARD exit params based on market conditions
+  regimeDetectionEnabled: boolean("regime_detection_enabled").notNull().default(false),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

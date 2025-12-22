@@ -75,7 +75,30 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange. I
 - **Test Endpoint**: POST /api/test/sg-sizing para simular sizing v2 (solo en dev/dryRun).
 - **Telegram Alerts**: Notifications for key events (Break-Even activation, Trailing Stop activation/updates, Scale-Out execution) with 5-min throttle on trailing updates.
 - **Override API**: GET/PUT/DELETE /api/config/sg-overrides/:pair for managing per-pair parameters.
-- **Event Types**: SG_BREAK_EVEN_ACTIVATED, SG_TRAILING_ACTIVATED, SG_TRAILING_STOP_UPDATED, SG_SCALE_OUT_EXECUTED, CONFIG_OVERRIDE_UPDATED.
+- **Event Types**: SG_BREAK_EVEN_ACTIVATED, SG_TRAILING_ACTIVATED, SG_TRAILING_STOP_UPDATED, SG_SCALE_OUT_EXECUTED, CONFIG_OVERRIDE_UPDATED, REGIME_CHANGE.
+
+### Market Regime Detection
+- **Purpose**: Automatically adjust SMART_GUARD exit parameters based on detected market conditions.
+- **Toggle**: `regimeDetectionEnabled` in bot_config (default: false, opt-in feature).
+- **Detection Method**:
+  - ADX (Average Directional Index) for trend strength
+  - EMA alignment (20/50/200) for trend direction
+  - Bollinger Band width for volatility
+- **Regimes**:
+  - **TREND** (ADX>25 + EMAs aligned): Wider exits, let profits run
+    - sgBeAtPct: 2.5%, sgTrailDistancePct: 2%, sgTpFixedPct: 8%, minSignals: 5
+  - **RANGE** (ADX<20 + narrow BB): Tight exits, quick profit capture
+    - sgBeAtPct: 1%, sgTrailDistancePct: 1%, sgTpFixedPct: 3%, minSignals: 6
+  - **TRANSITION** (ADX 20-25 or mixed): Pause new entries until confirmation
+    - No new entries allowed, existing positions use base params
+- **Entry Filtering**:
+  - minSignals never goes below 5 (base SMART_GUARD requirement)
+  - RANGE mode requires 6 signals (more cautious in lateral markets)
+  - TRANSITION mode pauses all new BUY entries
+- **Exit Param Adjustment**: Only affects sgBeAtPct, sgTrailDistancePct, sgTpFixedPct (exit timing)
+- **Priority**: sgPairOverrides > regime adjustments > base config
+- **Caching**: Regime analysis cached for 5 minutes per pair
+- **Telegram Alerts**: Notifications when regime changes with new params info
 
 ### Environment Safety
 - **DRY_RUN Mode**: Prevents real orders from being sent to exchange.
