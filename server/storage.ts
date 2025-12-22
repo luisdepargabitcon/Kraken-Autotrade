@@ -1150,6 +1150,7 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'sg_scale_out_threshold', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_scale_out_threshold DECIMAL(5,2) DEFAULT 80.00' },
         { table: 'bot_config', column: 'sg_fee_cushion_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_pct DECIMAL(5,2) DEFAULT 0.45' },
         { table: 'bot_config', column: 'sg_fee_cushion_auto', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_auto BOOLEAN DEFAULT true' },
+        { table: 'bot_config', column: 'regime_detection_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS regime_detection_enabled BOOLEAN DEFAULT false' },
         
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },

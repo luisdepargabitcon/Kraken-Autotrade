@@ -1,0 +1,40 @@
+HMF2M3","pair":"SOL/USD","type":"sell","price":"122.73000","amount":"0.29513616","cost":"36.22206","fee":"0.14489","time":"2025-12-18T18:30:13.567Z","status":"filled"},{"id":"TYAAAL-T5X","krakenOrderId":"TYAAAL-T5XYO-ODXF5G","pair":"SOL/USD","type":"buy","price":"127.06000","amount":"0.59027231","cost":"75.00000","fee":"0.30000","time":"2025-12-18T16:45:12.990Z","status":"filled"}]
+11:48:54 PM [express] GET /api/dashboard 500 in 4ms :: {"error":"Failed to get dashboard data"}
+11:48:54 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+11:48:55 PM [express] GET /api/scan/diagnostic 500 in 12ms :: {"error":"Error obteniendo diagnóstico del scan"}
+11:48:56 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+11:48:58 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+11:48:59 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+11:48:59 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+  dist/index.cjs  2.2mb ⚠️
+⚡ Done in 245ms
+[startup] Error loading API credentials: error: column "regime_detection_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async O2.getBotConfig (/app/dist/index.cjs:70:31894)
+    at async KY (/app/dist/index.cjs:754:3095)
+    at async /app/dist/index.cjs:788:4389 {
+  length: 125,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '813',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+[scan/diagnostic] Error: column "regime_detection_enabled" does not exist
