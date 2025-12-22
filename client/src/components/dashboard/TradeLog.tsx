@@ -31,7 +31,7 @@ function MobileTradeCard({ trade, formatPrice, formatAmount, formatTime }: {
   formatTime: (t: string) => string;
 }) {
   return (
-    <div className="mobile-card" data-testid={`mobile-trade-${trade.id}`}>
+    <div className="mobile-card" data-testid={`trade-row-${trade.id}`}>
       <div className="mobile-card-header">
         <div className="flex items-center gap-2">
           <Badge 
