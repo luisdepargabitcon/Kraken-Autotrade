@@ -112,3 +112,58 @@
 .animate-ticker {
   animation: ticker-scroll 60s linear infinite;
 }
+
+/* Safe Area Support for iOS/Android */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-left {
+  padding-left: env(safe-area-inset-left);
+}
+
+.safe-area-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Mobile-specific utilities */
+.mobile-content-padding {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .mobile-content-padding {
+    padding-bottom: 0;
+  }
+}
+
+/* Touch-friendly button sizes */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Mobile card styles */
+.mobile-card {
+  @apply p-4 rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm;
+}
+
+.mobile-card-header {
+  @apply flex items-center justify-between mb-3;
+}
+
+.mobile-card-row {
+  @apply flex items-center justify-between py-1.5 text-sm;
+}
+
+.mobile-card-label {
+  @apply text-muted-foreground text-xs;
+}
+
+.mobile-card-value {
+  @apply font-mono text-sm;
+}

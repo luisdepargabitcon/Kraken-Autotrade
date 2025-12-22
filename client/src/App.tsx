@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { EventsWebSocketProvider } from "@/context/EventsWebSocketContext";
+import { MobileTabBar } from "@/components/mobile/MobileTabBar";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
 import Terminal from "@/pages/Terminal";
@@ -37,7 +38,10 @@ function App() {
       <TooltipProvider>
         <EventsWebSocketProvider>
           <Toaster />
-          <Router />
+          <div className="mobile-content-padding">
+            <Router />
+          </div>
+          <MobileTabBar />
         </EventsWebSocketProvider>
       </TooltipProvider>
     </QueryClientProvider>
