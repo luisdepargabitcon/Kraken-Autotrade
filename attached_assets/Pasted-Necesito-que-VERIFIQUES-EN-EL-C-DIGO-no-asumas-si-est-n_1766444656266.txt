@@ -1,0 +1,61 @@
+Necesito que VERIFIQUES EN EL CÓDIGO (no asumas) si están implementados estos puntos. Para cada punto:
+
+1) Indica: ✅ Implementado / ❌ No implementado / ⚠️ Parcial
+2) Da evidencia exacta: archivo(s), función(es), y el fragmento relevante (o una descripción precisa de la condición/return).
+3) Si falta o es parcial: aplica el cambio mínimo y seguro, sin romper comportamiento existente. Añade logs claros con un reasonCode.
+
+Checklist a verificar:
+
+A1) Early-return SELL por señal en analyzePairAndTrade
+- Objetivo: si analyzePairAndTrade detecta señal SELL, debe “hacer return” antes de intentar lógica BUY / abrir posición / sizing / etc.
+- Verifica función exacta: analyzePairAndTrade (y dónde se llama).
+- Resultado esperado: SELL se procesa y se sale del flujo sin pasar por BUY.
+
+A2) Early-return SELL por señal en analyzePairAndTradeWithCandles
+- Igual que A1 pero en analyzePairAndTradeWithCandles.
+- Verifica que el flujo con velas no ignora SELL o continúa a BUY.
+
+A3) Risk exits SMART_GUARD funcionan
+- Verifica que los exits por SMART_GUARD se ejecutan aunque la señal global sea NONE.
+- Evidencia: funciones de evaluación de BE/trailing/TP/scaleout y condiciones de activación.
+- Confirmar que se evalúan para lotes abiertos (open positions) de forma continua.
+
+B1) MTF filter en Momentum Velas
+- Estado previo: existe pero NO se aplica en velas.
+- Verifica si el filtro MTF se aplica dentro de momentum_candles_15m (o equivalente).
+- Resultado esperado: si timeframe mayor contradice, bloquear BUY y registrar reasonCode (ej: MTF_BLOCK).
+
+B2) Filtro anti-FOMO (RSI + Bollinger + bodyRatio)
+- Verifica si existe un filtro que bloquee compras cuando:
+  - RSI alto (sobrecompra) y/o
+  - Precio fuera/pegado a banda superior de Bollinger y/o
+  - bodyRatio (cuerpo de vela / rango) indica vela “FOMO”
+- Si no existe: implementa un filtro mínimo antes de emitir BUY en momentum_candles_15m.
+- Añadir reasonCode: ANTI_FOMO_BLOCK con detalle (rsi, bbPos, bodyRatio).
+
+B3) Umbral BUY ≥ 5 señales en SMART_GUARD
+- Verifica si para SMART_GUARD la compra exige al menos 5 “sub-señales” (confluence).
+- Actualmente veo logs tipo “Señales: 4/1”, por lo que probablemente NO está.
+- Si no está: añadir umbral configurable por defecto = 5 SOLO para entryMode SMART_GUARD (no afectar otros modos).
+- reasonCode: SMART_GUARD_MIN_SIGNALS_NOT_MET con “got/required”.
+
+B4) Sizing dinámico por confianza
+- Verifica que el sizing se ajusta por signalConfidence (ej 0.78) y que está activo en ambos caminos: sin velas y con velas.
+- Evidencia: fórmula usada y dónde se aplica.
+
+C1) Bloquear SELL sin sellContext
+- Estado previo: solo warning, no bloquea.
+- Verifica el punto exacto donde se genera SELL y si se ejecuta la orden sin sellContext.
+- Objetivo: si sellContext está null/undefined, NO ejecutar SELL (salvo “risk exit” explícito SMART_GUARD con reason).
+- Añadir reasonCode: SELL_BLOCKED_NO_CONTEXT.
+- Importante: no romper risk exits (BE/trailing/TP) que sí deben poder vender con su propio contexto.
+
+Entrega final:
+- Un reporte en tabla con A1..C1 (estado + evidencia + archivos).
+- PR/commit con los cambios mínimos si hay faltantes/parciales.
+- Tests mínimos o al menos 2 llamadas a /api/test/signal que demuestren:
+  - SELL early-return (A1/A2)
+  - MTF bloquea (B1)
+  - Anti-FOMO bloquea (B2)
+  - Umbral min señales (B3)
+  - SELL bloqueado sin contexto (C1) pero risk-exit permitido
