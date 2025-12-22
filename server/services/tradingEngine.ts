@@ -385,12 +385,28 @@ export class TradingEngine {
     eventType: "SG_BREAK_EVEN_ACTIVATED" | "SG_TRAILING_ACTIVATED" | "SG_TRAILING_STOP_UPDATED" | "SG_SCALE_OUT_EXECUTED",
     position: OpenPosition,
     currentPrice: number,
-    extra: { stopPrice?: number; profitPct: number; reason: string }
+    extra: { 
+      stopPrice?: number; 
+      profitPct: number; 
+      reason: string;
+      takeProfitPrice?: number;
+      trailingStatus?: { active: boolean; startPct: number; distancePct: number; stepPct: number };
+    }
   ) {
-    const { lotId, pair, entryPrice } = position;
+    const { lotId, pair, entryPrice, openedAt } = position;
     const shortLotId = lotId.substring(0, 12);
-    const envPrefix = environment.getMessagePrefix(this.dryRunMode);
     const envInfo = environment.getInfo();
+
+    // Calculate duration
+    const durationMs = openedAt ? Date.now() - openedAt : 0;
+    const durationMins = Math.floor(durationMs / 60000);
+    const durationHours = Math.floor(durationMins / 60);
+    const durationDays = Math.floor(durationHours / 24);
+    const durationTxt = durationDays > 0 
+      ? `${durationDays}d ${durationHours % 24}h` 
+      : durationHours > 0 
+        ? `${durationHours}h ${durationMins % 60}m` 
+        : `${durationMins}m`;
 
     // Emit event for /api/events
     await botLogger.info(eventType, `${eventType} en ${pair}`, {
@@ -399,7 +415,9 @@ export class TradingEngine {
       entryPrice,
       currentPrice,
       stopPrice: extra.stopPrice,
+      takeProfitPrice: extra.takeProfitPrice,
       profitPct: extra.profitPct,
+      trailingStatus: extra.trailingStatus,
       env: envInfo.env,
       instanceId: envInfo.instanceId,
       reason: extra.reason,
@@ -429,25 +447,54 @@ export class TradingEngine {
           break;
       }
 
-      const stopLine = extra.stopPrice ? `   • Nuevo Stop: <code>$${extra.stopPrice.toFixed(4)}</code>` : '';
-      const profitEmoji = extra.profitPct >= 0 ? "📈" : "📉";
+      // Build exit prices section - use dynamic decimals based on price magnitude
+      const formatPrice = (price: number) => {
+        if (price >= 100) return price.toFixed(2);
+        if (price >= 1) return price.toFixed(4);
+        return price.toFixed(6);
+      };
+      
+      const exitLines: string[] = [];
+      if (extra.stopPrice) {
+        exitLines.push(`   • 📉 Salida por abajo: <code>$${formatPrice(extra.stopPrice)}</code>`);
+      }
+      if (extra.takeProfitPrice) {
+        exitLines.push(`   • 📈 Salida por arriba: <code>$${formatPrice(extra.takeProfitPrice)}</code>`);
+      }
+      const exitSection = exitLines.length > 0 
+        ? `\n🎯 <b>Salidas configuradas:</b>\n${exitLines.join('\n')}` 
+        : '';
+
+      // Build trailing status section
+      let trailingSection = '';
+      if (extra.trailingStatus) {
+        const ts = extra.trailingStatus;
+        const statusTxt = ts.active 
+          ? `Activo (distancia ${ts.distancePct}%)` 
+          : `Pendiente (activa a +${ts.startPct}%)`;
+        trailingSection = `\n🔄 <b>Trailing:</b> ${statusTxt}
+   • Distancia: <code>${ts.distancePct}%</code>
+   • Step: <code>${ts.stepPct}%</code>`;
+      }
       
       const message = `🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ${emoji} <b>${title}</b>
 
-📦 <b>Detalles:</b>
+📦 <b>Estado actual:</b>
    • Par: <code>${pair}</code>
    • Lote: <code>${shortLotId}</code>
-   • Entry: <code>$${entryPrice.toFixed(2)}</code>
-   • Actual: <code>$${currentPrice.toFixed(2)}</code>
+   • Entrada: <code>$${formatPrice(entryPrice)}</code>
+   • Actual: <code>$${formatPrice(currentPrice)}</code>
    • Profit: <code>${extra.profitPct >= 0 ? '+' : ''}${extra.profitPct.toFixed(2)}%</code>
-${stopLine}
+   • Duración: <code>${durationTxt}</code>${exitSection}${trailingSection}
 
 ℹ️ ${extra.reason}
+
+🔗 <a href="${environment.panelUrl}">Ver Panel</a>
 ━━━━━━━━━━━━━━━━━━━`;
 
-      await this.telegramService.sendAlertToMultipleChats(message, "status");
+      await this.telegramService.sendAlertToMultipleChats(message, "trades");
     }
   }
 
@@ -1609,10 +1656,22 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
       
       // Send alert (only once per lot, no throttle needed as flag prevents re-entry)
       if (this.shouldSendSgAlert(position.lotId, "SG_BREAK_EVEN_ACTIVATED")) {
+        // Calculate take-profit price if enabled
+        const takeProfitPrice = tpFixedEnabled 
+          ? position.entryPrice * (1 + tpFixedPct / 100) 
+          : undefined;
+        
         await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
           stopPrice: breakEvenPrice,
           profitPct: priceChange,
           reason: `Profit +${beAtPct}% alcanzado, stop movido a break-even + comisiones`,
+          takeProfitPrice,
+          trailingStatus: {
+            active: false,
+            startPct: trailStartPct,
+            distancePct: trailDistancePct,
+            stepPct: trailStepPct,
+          },
         });
       }
     }
@@ -1630,10 +1689,22 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
       
       // Send alert (only once per lot)
       if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_ACTIVATED")) {
+        // Calculate take-profit price if enabled
+        const takeProfitPrice = tpFixedEnabled 
+          ? position.entryPrice * (1 + tpFixedPct / 100) 
+          : undefined;
+        
         await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
           stopPrice: position.sgCurrentStopPrice,
           profitPct: priceChange,
           reason: `Profit +${trailStartPct}% alcanzado, trailing stop iniciado a ${trailDistancePct}% del máximo`,
+          takeProfitPrice,
+          trailingStatus: {
+            active: true,
+            startPct: trailStartPct,
+            distancePct: trailDistancePct,
+            stepPct: trailStepPct,
+          },
         });
       }
     }
@@ -1652,10 +1723,22 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
         
         // Send alert with throttle (max 1 per 5 min)
         if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_STOP_UPDATED", this.SG_TRAIL_UPDATE_THROTTLE_MS)) {
+          // Calculate take-profit price if enabled
+          const takeProfitPrice = tpFixedEnabled 
+            ? position.entryPrice * (1 + tpFixedPct / 100) 
+            : undefined;
+          
           await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
             stopPrice: newTrailStop,
             profitPct: priceChange,
             reason: `Stop actualizado: $${oldStop.toFixed(2)} → $${newTrailStop.toFixed(2)}`,
+            takeProfitPrice,
+            trailingStatus: {
+              active: true,
+              startPct: trailStartPct,
+              distancePct: trailDistancePct,
+              stepPct: trailStepPct,
+            },
           });
         }
       }
@@ -1689,9 +1772,22 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
           
           // Send alert (only once as sgScaleOutDone flag prevents re-entry)
           if (this.shouldSendSgAlert(position.lotId, "SG_SCALE_OUT_EXECUTED")) {
+            // Calculate take-profit price if enabled
+            const takeProfitPrice = tpFixedEnabled 
+              ? position.entryPrice * (1 + tpFixedPct / 100) 
+              : undefined;
+            
             await this.sendSgEventAlert("SG_SCALE_OUT_EXECUTED", position, currentPrice, {
+              stopPrice: position.sgCurrentStopPrice,
               profitPct: priceChange,
               reason: `Vendido ${scaleOutPct}% de posición ($${partValue.toFixed(2)}) a +${priceChange.toFixed(2)}%`,
+              takeProfitPrice,
+              trailingStatus: position.sgTrailingActivated ? {
+                active: true,
+                startPct: trailStartPct,
+                distancePct: trailDistancePct,
+                stepPct: trailStepPct,
+              } : undefined,
             });
           }
         }
