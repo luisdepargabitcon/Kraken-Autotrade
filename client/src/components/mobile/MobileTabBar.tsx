@@ -1,10 +1,11 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Activity, Monitor, Wallet, Settings } from "lucide-react";
+import { LayoutDashboard, Activity, Monitor, Wallet, Settings, BarChart3 } from "lucide-react";
 
 const tabs = [
   { href: "/", label: "Panel", icon: LayoutDashboard },
   { href: "/strategies", label: "Estrategias", icon: Activity },
+  { href: "/terminal", label: "Terminal", icon: BarChart3 },
   { href: "/monitor", label: "Monitor", icon: Monitor },
   { href: "/wallet", label: "Cartera", icon: Wallet },
   { href: "/settings", label: "Ajustes", icon: Settings },
