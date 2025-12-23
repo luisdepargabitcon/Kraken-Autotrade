@@ -4203,6 +4203,31 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
             configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
             configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
+            
+            // Apply regime-based adjustments if enabled
+            const regimeEnabled = currentConfig?.regimeDetectionEnabled ?? false;
+            if (regimeEnabled) {
+              try {
+                const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+                const regimeAdjusted = this.getRegimeAdjustedParams(
+                  {
+                    sgBeAtPct: configSnapshot.sgBeAtPct!,
+                    sgTrailDistancePct: configSnapshot.sgTrailDistancePct!,
+                    sgTrailStepPct: configSnapshot.sgTrailStepPct!,
+                    sgTpFixedPct: configSnapshot.sgTpFixedPct!,
+                  },
+                  regimeAnalysis.regime,
+                  true
+                );
+                configSnapshot.sgBeAtPct = regimeAdjusted.sgBeAtPct;
+                configSnapshot.sgTrailDistancePct = regimeAdjusted.sgTrailDistancePct;
+                configSnapshot.sgTrailStepPct = regimeAdjusted.sgTrailStepPct;
+                configSnapshot.sgTpFixedPct = regimeAdjusted.sgTpFixedPct;
+                log(`[REGIME] ${pair}: Snapshot ajustado para ${regimeAnalysis.regime} (BE=${regimeAdjusted.sgBeAtPct}%, Trail=${regimeAdjusted.sgTrailDistancePct}%, TP=${regimeAdjusted.sgTpFixedPct}%)`, "trading");
+              } catch (regimeErr: any) {
+                log(`[REGIME] ${pair}: Error ajustando snapshot, usando params base: ${regimeErr.message}`, "trading");
+              }
+            }
           }
           
           newPosition = { 
