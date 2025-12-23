@@ -4804,14 +4804,19 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
       exposureAvailable?: number;
       hasPosition: boolean;
       positionUsd?: number;
+      regime?: string;
+      regimeReason?: string;
+      requiredSignals?: number;
     }>;
     positionMode: string;
     usdBalance: number;
     totalOpenPositions: number;
     lastScanAt: string | null;
+    regimeDetectionEnabled: boolean;
   }> {
     const config = await storage.getBotConfig();
     const positionMode = config?.positionMode || "SINGLE";
+    const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
     
     // Mapeo de razones a español (según documento SMART_GUARD)
     const reasonTranslations: Record<string, string> = {
@@ -4843,6 +4848,9 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
       exposureAvailable?: number;
       hasPosition: boolean;
       positionUsd?: number;
+      regime?: string;
+      regimeReason?: string;
+      requiredSignals?: number;
     }> = [];
 
     // Helper: buscar posiciones por par (openPositions usa lotId como clave, no pair)
@@ -4858,7 +4866,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
 
     // Si hay datos de escaneo, usar esos
     if (this.lastScanResults.size > 0) {
-      this.lastScanResults.forEach((result, pair) => {
+      for (const [pair, result] of this.lastScanResults.entries()) {
         const pairPositions = getPositionsForPair(pair);
         const hasPosition = pairPositions.length > 0;
         const totalPositionUsd = pairPositions.reduce((sum, p) => sum + (p.amount * p.entryPrice), 0);
@@ -4875,6 +4883,23 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
         // Obtener cooldown si no viene en el resultado
         const cooldownSec = result.cooldownSec ?? this.getCooldownRemainingSec(pair);
 
+        // Obtener régimen si está habilitado
+        let regime: string | undefined;
+        let regimeReason: string | undefined;
+        let requiredSignals: number | undefined;
+        
+        if (regimeDetectionEnabled) {
+          try {
+            const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+            regime = regimeAnalysis.regime;
+            regimeReason = regimeAnalysis.reason;
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+          } catch (err) {
+            regime = "ERROR";
+            regimeReason = "Error obteniendo régimen";
+          }
+        }
+
         pairs.push({
           pair,
           signal: result.signal,
@@ -4883,8 +4908,11 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
           exposureAvailable: result.exposureAvailable,
           hasPosition,
           positionUsd: hasPosition ? totalPositionUsd : undefined,
+          regime,
+          regimeReason,
+          requiredSignals,
         });
-      });
+      }
     } else {
       // Si no hay datos de escaneo, mostrar pares activos con info básica
       const activePairs = config?.activePairs || [];
@@ -4898,7 +4926,6 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
         let razon = "Bot inactivo - actívalo para escanear";
         if (this.isRunning) {
           if (this.lastScanTime > 0) {
-            // El bot ha escaneado pero este par no tiene resultado (puede ser por filtro u otra razón)
             razon = "Sin señal activa";
           } else {
             razon = "Esperando primer escaneo...";
@@ -4906,6 +4933,24 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
         }
         
         const cooldownSec = this.getCooldownRemainingSec(pair);
+        
+        // Obtener régimen si está habilitado (mismo que rama principal)
+        let regime: string | undefined;
+        let regimeReason: string | undefined;
+        let requiredSignals: number | undefined;
+        
+        if (regimeDetectionEnabled) {
+          try {
+            const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+            regime = regimeAnalysis.regime;
+            regimeReason = regimeAnalysis.reason;
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+          } catch (err) {
+            regime = "ERROR";
+            regimeReason = "Error obteniendo régimen";
+          }
+        }
+        
         pairs.push({
           pair,
           signal: "NONE",
@@ -4914,6 +4959,9 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
           exposureAvailable: exposure.maxAllowed,
           hasPosition,
           positionUsd: hasPosition ? totalPositionUsd : undefined,
+          regime,
+          regimeReason,
+          requiredSignals,
         });
       }
     }
@@ -4924,6 +4972,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toF
       usdBalance: this.currentUsdBalance,
       totalOpenPositions: this.openPositions.size,
       lastScanAt: this.lastScanTime > 0 ? new Date(this.lastScanTime).toISOString() : null,
+      regimeDetectionEnabled,
     };
   }
 }

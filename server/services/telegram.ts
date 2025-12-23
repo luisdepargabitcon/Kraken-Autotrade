@@ -395,6 +395,59 @@ function buildSignalHTML(ctx: SignalContext): string {
   return lines.join("\n");
 }
 
+// ============================================================
+// ENTRY INTENT TEMPLATE - Mensaje "Entraría con $X porque..."
+// ============================================================
+interface EntryIntentContext {
+  pair: string;
+  amountUsd: string;
+  price: string;
+  strategyLabel: string;
+  signalReason: string;
+  confidence: number;
+  regime?: string;
+  regimeReason?: string;
+  requiredSignals?: number;
+  currentSignals?: number;
+}
+
+function buildEntryIntentHTML(ctx: EntryIntentContext): string {
+  const lines = [
+    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `💡 <b>INTENCIÓN DE ENTRADA</b> 💡`,
+    ``,
+    `📊 <b>Par:</b> <code>${escapeHtml(ctx.pair)}</code>`,
+    `💵 <b>Entraría con:</b> <code>$${escapeHtml(ctx.amountUsd)}</code>`,
+    `📈 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
+    ``,
+    `🧠 <b>Estrategia:</b> <code>${escapeHtml(ctx.strategyLabel)}</code>`,
+    `📈 <b>Confianza:</b> <code>${ctx.confidence.toFixed(0)}%</code>`,
+  ];
+
+  if (ctx.currentSignals !== undefined && ctx.requiredSignals !== undefined) {
+    lines.push(`📊 <b>Señales:</b> <code>${ctx.currentSignals}/${ctx.requiredSignals}</code>`);
+  }
+
+  if (ctx.regime) {
+    lines.push(`🧭 <b>Régimen:</b> <code>${escapeHtml(ctx.regime)}</code>`);
+    if (ctx.regimeReason) {
+      lines.push(`   ↳ ${escapeHtml(ctx.regimeReason)}`);
+    }
+  }
+
+  lines.push(
+    ``,
+    `💬 <b>Motivo:</b>`,
+    `<i>${escapeHtml(ctx.signalReason.substring(0, 300))}</i>`,
+    ``,
+    `📅 ${formatSpanishDate()}`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    buildPanelUrlFooter()
+  );
+  return lines.join("\n");
+}
+
 // Export templates and utilities for use in tradingEngine
 export const telegramTemplates = {
   escapeHtml,
@@ -406,6 +459,7 @@ export const telegramTemplates = {
   buildTradeSellHTML,
   buildOrphanSellHTML,
   buildSignalHTML,
+  buildEntryIntentHTML,
 };
 
 interface TelegramConfig {
@@ -431,6 +485,10 @@ export class TelegramService {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private dailyReportJob: cron.ScheduledTask | null = null;
   private lastDailyReportDate: string = "";
+  
+  // Entry Intent dedupe cache: key = "pair:signal:candleBucket" -> timestamp
+  private entryIntentCache: Map<string, number> = new Map();
+  private readonly ENTRY_INTENT_DEDUPE_MS = 15 * 60 * 1000; // 15 minutos (una vela)
 
   setEngineController(controller: EngineController) {
     this.engineController = controller;
@@ -1243,6 +1301,67 @@ Incluye:
     } catch (error) {
       console.error("Error sending to multiple chats:", error);
     }
+  }
+
+  // ============================================================
+  // ENTRY INTENT NOTIFICATION - Con dedupe por vela 15m
+  // ============================================================
+  async sendEntryIntent(ctx: {
+    pair: string;
+    amountUsd: number;
+    price: number;
+    strategyLabel: string;
+    signalReason: string;
+    confidence: number;
+    regime?: string;
+    regimeReason?: string;
+    requiredSignals?: number;
+    currentSignals?: number;
+  }): Promise<boolean> {
+    // Generate dedupe key: pair + 15-min bucket
+    const now = Date.now();
+    const candleBucket = Math.floor(now / this.ENTRY_INTENT_DEDUPE_MS);
+    const dedupeKey = `${ctx.pair}:BUY:${candleBucket}`;
+
+    // Check if already sent in this candle period
+    const lastSent = this.entryIntentCache.get(dedupeKey);
+    if (lastSent && (now - lastSent) < this.ENTRY_INTENT_DEDUPE_MS) {
+      console.log(`[telegram] Entry intent deduped for ${ctx.pair} (key: ${dedupeKey})`);
+      return false;
+    }
+
+    // Clean old cache entries (older than 1 hour)
+    const oneHourAgo = now - (60 * 60 * 1000);
+    const keysToDelete: string[] = [];
+    this.entryIntentCache.forEach((ts, key) => {
+      if (ts < oneHourAgo) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => this.entryIntentCache.delete(key));
+
+    // Build and send the message
+    const message = buildEntryIntentHTML({
+      pair: ctx.pair,
+      amountUsd: ctx.amountUsd.toFixed(2),
+      price: ctx.price.toFixed(4),
+      strategyLabel: ctx.strategyLabel,
+      signalReason: ctx.signalReason,
+      confidence: ctx.confidence,
+      regime: ctx.regime,
+      regimeReason: ctx.regimeReason,
+      requiredSignals: ctx.requiredSignals,
+      currentSignals: ctx.currentSignals,
+    });
+
+    const sent = await this.sendMessage(message, { skipPrefix: true });
+    
+    if (sent) {
+      this.entryIntentCache.set(dedupeKey, now);
+      console.log(`[telegram] Entry intent sent for ${ctx.pair} (key: ${dedupeKey})`);
+    }
+
+    return sent;
   }
 
   private shouldSendToChat(chat: TelegramChat, alertType: AlertType): boolean {

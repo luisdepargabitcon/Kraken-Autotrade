@@ -32,17 +32,32 @@ class EventsWebSocketServer {
 
     this.wss.on("connection", async (ws: WebSocket, req) => {
       const client = ws as WsClient;
+      const clientIp = req.socket.remoteAddress || "unknown";
+      const origin = req.headers.origin || "no-origin";
+      
       const url = new URL(req.url || "", `http://${req.headers.host}`);
-      const token = url.searchParams.get("token");
+      const queryToken = url.searchParams.get("token");
+      const authHeader = req.headers.authorization;
+      const headerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      const token = queryToken || headerToken;
+      const tokenSource = queryToken ? "query" : (headerToken ? "header" : "none");
+      
       const expectedToken = process.env.WS_ADMIN_TOKEN;
 
       if (!expectedToken) {
-        log(`[WS] WS_ADMIN_TOKEN no configurado - conexión sin autenticación permitida (desarrollo)`, "websocket");
-      } else if (token !== expectedToken) {
-        log(`[WS] Conexión rechazada - token inválido desde ${req.socket.remoteAddress}`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "Token inválido" } });
-        client.close(4001, "Unauthorized");
+        log(`[WS] WS_ADMIN_TOKEN no configurado - conexión sin autenticación permitida (desarrollo) desde ${clientIp}`, "websocket");
+      } else if (!token) {
+        log(`[WS] Conexión rechazada - token ausente (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token ausente", reason: "MISSING_TOKEN" } });
+        client.close(4001, "Unauthorized - Missing Token");
         return;
+      } else if (token !== expectedToken) {
+        log(`[WS] Conexión rechazada - token incorrecto (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token incorrecto", reason: "INVALID_TOKEN" } });
+        client.close(4001, "Unauthorized - Invalid Token");
+        return;
+      } else {
+        log(`[WS] Token válido (source: ${tokenSource}, ip: ${clientIp})`, "websocket");
       }
 
       client.isAlive = true;

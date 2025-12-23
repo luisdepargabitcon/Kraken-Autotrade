@@ -71,23 +71,40 @@ class TerminalWebSocketServer {
 
     this.wss.on("connection", async (ws: WebSocket, req) => {
       const client = ws as WsClient;
+      const clientIp = req.socket.remoteAddress || "unknown";
+      const origin = req.headers.origin || "no-origin";
+      
       const url = new URL(req.url || "", `http://${req.headers.host}`);
-      const token = url.searchParams.get("token");
+      const queryToken = url.searchParams.get("token");
+      const authHeader = req.headers.authorization;
+      const headerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      const token = queryToken || headerToken;
+      const tokenSource = queryToken ? "query" : (headerToken ? "header" : "none");
+      
       const expectedToken = process.env.TERMINAL_TOKEN;
 
       if (!expectedToken) {
-        log(`[WS-LOGS] TERMINAL_TOKEN no configurado - conexión rechazada`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "TERMINAL_TOKEN no configurado" } });
+        log(`[WS-LOGS] TERMINAL_TOKEN no configurado - conexión rechazada (ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "TERMINAL_TOKEN no configurado", reason: "TOKEN_NOT_CONFIGURED" } });
         client.close(4001, "Unauthorized");
+        return;
+      }
+
+      if (!token) {
+        log(`[WS-LOGS] Conexión rechazada - token ausente (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token ausente", reason: "MISSING_TOKEN" } });
+        client.close(4001, "Unauthorized - Missing Token");
         return;
       }
 
       if (token !== expectedToken) {
-        log(`[WS-LOGS] Conexión rechazada - token inválido desde ${req.socket.remoteAddress}`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "Token inválido" } });
-        client.close(4001, "Unauthorized");
+        log(`[WS-LOGS] Conexión rechazada - token incorrecto (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token incorrecto", reason: "INVALID_TOKEN" } });
+        client.close(4001, "Unauthorized - Invalid Token");
         return;
       }
+      
+      log(`[WS-LOGS] Token válido (source: ${tokenSource}, ip: ${clientIp})`, "websocket");
 
       client.isAlive = true;
       client.connectedAt = new Date();
