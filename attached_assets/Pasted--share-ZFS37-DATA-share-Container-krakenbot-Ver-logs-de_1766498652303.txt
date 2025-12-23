@@ -1,0 +1,192 @@
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Ver logs del cron
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat /var/log/cron.log | tail -20
+ontab actual
+crontab -l
+
+# Ver si hay algún scricat: /var/log/cron.log: No such file or directory
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # # O ver crontab actual
+[/share/ZFS37_DATA/share/Container/krakenbot] # crontab -l
+pt de webhook
+ls -la /opt/krakenbot/*.sh# m h dom m dow cmd
+0 2 * * * /sbin/qfstrim
+0-59/20 3 * * * /sbin/adjust_time
+0 1 * * * /etc/init.d/flush_memory.sh >/dev/null 2>&1
+0 4 * * * /sbin/hwclock -s
+0 3 * * * /sbin/clean_reset_pwd
+0-59/15 * * * * /etc/init.d/nss2_dusg.sh
+30 7 * * * /sbin/clean_upload_file
+0-59/10 * * * * /etc/init.d/storage_usage.sh
+0 0-23/12 * * * /sbin/zfs_storage_util --pool_update_op_wearing pool_id=-1
+30 3 * * * /sbin/notice_log_tool -v -R
+*/10 * * * * /sbin/config_cache_util 0
+*/5 * * * * /usr/local/bin/python /sbin/zfs_callhome_recovery_read.py
+51 22 * * * /usr/local/bin/python /sbin/zfs_callhome_regular_event.py
+0 0 * * * /sbin/user_cmd -C 1>/dev/null 2>&1
+0 3 * * * /etc/init.d/wcl_backup.sh
+30 * * * * /etc/init.d/wcl_check.sh
+43 9,21 * * * /sbin/notify_update --nc 1>/dev/null 2>&1
+10 15 * * * /usr/bin/power_clean -c 2>/dev/null
+00 03 * * * sh /share/ZFS530_DATA/.qpkg/MalwareRemover/MalwareRemover.sh scan;#_QSC_:MalwareRemover:malware_remover_schedule:None:d::
+22 * * * * /sbin/qddns_check 2>/dev/null
+0 23 */1 * * /sbin/qpkg_cli -U  1>/dev/null 2>/dev/null
+14 6 * * * /share/ZFS530_DATA/.qpkg/HybridBackup/rr2/scripts/insight/insight.sh -runall >/dev/null 2>&1
+0 3 * * 0 /etc/init.d/idmap.sh dump
+30 3 * * * /sbin/storage_util --ironwolf_disk_health_test dev_id=00000004
+30 00 * * * /tmp/.malware_remover/bin/Upgrade;#_QSC_:MalwareRemover:malware_remover_upgrade_2:None:d::
+0 * * * * /share/ZFS37_DATA/share/Container/krakenbot/update.sh >> /share/ZFS37_DATA/share/Container/krakenbot/update.log 2>&1
+47 7 * * * /bin/sh /etc/init.d/disk_data_collection.sh
+0 16 * * 2 /etc/init.d/reboot
+* * * * * /var/cache/netmgr/lock_timer.sh
+0 12 * * * /mnt/ext/opt/LicenseCenter/bin/qlicense_tool local_check
+0 0 * * * /usr/local/sbin/qulog-archive local_event retention 0 >/dev/null 2>&1
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Ver el contenido del script
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat /share/ZFS37_DATA/share/Container/krakenbot/update.sh
+log | tail -50
+
+# Verificar que el script es ejecutable
+ls -la /share/ZFS37_DATA/share/Container#!/bin/bash
+cd /share/ZFS37_DATA/share/Container/krakenbot
+git fetch origin main
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+if [ "$LOCAL" != "$REMOTE" ]; then
+  echo "$(date): Actualizando bot..."
+  git pull
+  /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+  echo "$(date): Actualización completada"
+else
+  echo "$(date): Sin cambios"
+fi
+/krakenbot/updat[/share/ZFS37_DATA/share/Container/krakenbot] #
+e.sh[/share/ZFS37_DATA/share/Container/krakenbot] # # Ver el log de actualizaciones
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat /share/ZFS37_DATA/share/Container/krakenbot/update.log | tail -50
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 03:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 04:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 05:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 06:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 07:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 08:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 09:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 10:00:01 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 11:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 12:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 13:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 14:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 15:00:00 CET 2025: Sin cambios
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Verificar que el script es ejecutable
+[/share/ZFS37_DATA/share/Container/krakenbot] # ls -la /share/ZFS37_DATA/share/Container/krakenbot/update.sh
+-rwxrwxrwx 1 admin administrators 406 2025-12-09 22:29 /share/ZFS37_DATA/share/Container/krakenbot/update.sh*
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Ver el contenido del script
+t /share/ZFS37_DATA/share/Container/krakenbot/up[/share/ZFS37_DATA/share/Container/krakenbot] # cat /share/ZFS37_DATA/share/Container/krakenbot/update.sh
+hare/Container/krakenbot/update.log | tail -50
+
+#!/bin/bash
+cd /share/ZFS37_DATA/share/Container/krakenbot
+git fetch origin main
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+if [ "$LOCAL" != "$REMOTE" ]; then
+  echo "$(date): Actualizando bot..."
+  git pull
+  /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+  echo "$(date): Actualización completada"
+else
+  echo "$(date): Sin cambios"
+fi
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+# Verificar que [/share/ZFS37_DATA/share/Container/krakenbot] # # Ver el log de actualizaciones
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat /share/ZFS37_DATA/share/Container/krakenbot/update.log | tail -50
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 03:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 04:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 05:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 06:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 07:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 08:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 09:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 10:00:01 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 11:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 12:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 13:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 14:00:00 CET 2025: Sin cambios
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 3: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 4: git: command not found
+/share/ZFS37_DATA/share/Container/krakenbot/update.sh: line 5: git: command not found
+Tue Dec 23 15:00:00 CET 2025: Sin cambios
+[/share/ZFS37_DATA/share/Container/krakenbot] #
+[/share/ZFS37_DATA/share/Container/krakenbot] # # Verificar que el script es ejecutable
+[/share/ZFS37_DATA/share/Container/krakenbot] # ls -la /share/ZFS37_DATA/share/Container/krakenbot/update.sh
+-rwxrwxrwx 1 admin administrators 406 2025-12-09 22:29 /share/ZFS37_DATA/share/Container/krakenbot/update.sh*
+[/share/ZFS37_DATA/share/Container/krakenbot] #
