@@ -1,0 +1,68 @@
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat > /share/ZFS37_DATA/share/Container/krakenbot/update.sh << 'EOF'
+hare/CACHEDEV1_D> #!/bin/bash
+> export PATH=/usr/bin:/usr/local/bin:/opt/bin:/share/CACHEDEV1_DATA/.qpkg/git/bin:$PATH
+> cd /share/ZFS37_DATA/share/Container/krakenbot
+>
+> GIT=$(which git)
+> if [ -z "$GIT" ]; then
+>   echo "$(date): ERROR - git no encontrado"
+>   exit 1
+> fi
+>
+> $GIT fetch origin main
+> LOCAL=$($GIT rev-parse HEAD)
+> REMOTE=$($GIT rev-parse origin/main)
+>
+> if [ "$LOCAL" != "$REMOTE" ]; then
+>   echo "$(date): Actualizando bot..."
+>   $GIT pull origin main
+>   /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat > /share/ZFS37_DATA/share/Container/krakenbot/update.sh << 'EOF'
+
+export PATH=/us> #!/bin/bash
+> export PATH=/usr/bin:/usr/local/bin:/opt/bin:/share/CACHEDEV1_DATA/.qpkg/git/bin:$PATH
+> cd /share/ZFS37_DATA/share/Container/krakenbot
+>
+> GIT=$(which git)
+> if [ -z "$GIT" ]; then
+>   echo "$(date): ERROR - git no encontrado"
+>   exit 1
+> fi
+tch origin main
+LOCAL=$($GIT rev>
+> $GIT fetch origin main
+> LOCAL=$($GIT rev-parse HEAD)
+> REMOTE=$($GIT rev-parse origin/main)
+>
+> if [ "$LOCAL" != "$REMOTE" ]; then
+>   echo "$(date): Actualizando bot..."
+>   $GIT pull origin main
+>   /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+>   echo "$(date): Actualización completada"
+> else
+>   echo "$(date): Sin cambios"
+> fi
+> EOF
+[/share/ZFS37_DATA/share/Container/krakenbot] # cat > /share/ZFS37_DATA/share/Container/krakenbot/update.sh << 'EOF'
+> #!/bin/bash
+> export PATH=/usr/bin:/usr/local/bin:/opt/bin:/share/CACHEDEV1_DATA/.qpkg/git/bin:$PATH
+> cd /share/ZFS37_DATA/share/Container/krakenbot
+>
+> GIT=$(which git)
+> if [ -z "$GIT" ]; then
+>   echo "$(date): ERROR - git no encontrado"
+>   exit 1
+> fi
+>
+> $GIT fetch origin main
+> LOCAL=$($GIT rev-parse HEAD)
+> REMOTE=$($GIT rev-parse origin/main)
+>
+> if [ "$LOCAL" != "$REMOTE" ]; then
+>   echo "$(date): Actualizando bot..."
+>   $GIT pull origin main
+>   /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --build --force-recreate
+>   echo "$(date): Actualización completada"
+> else
+>   echo "$(date): Sin cambios"
+> fi
