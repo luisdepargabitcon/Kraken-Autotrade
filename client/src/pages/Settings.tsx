@@ -90,6 +90,7 @@ interface BotConfig {
   sgScaleOutThreshold: string;
   sgMaxOpenLotsPerPair: number;
   sgPairOverrides: Record<string, unknown> | null;
+  regimeDetectionEnabled: boolean;
 }
 
 export default function Settings() {
@@ -538,6 +539,29 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/50" data-testid="text-sg-global-limits-note">
                       Los límites globales de Riesgo por Trade y Exposición están en "Tamaño de Trade" y "Control de Exposición" (página Estrategias).
                     </p>
+                    
+                    <div className="p-3 border border-purple-500/30 rounded-lg bg-purple-500/5 space-y-2" data-testid="panel-regime-detection">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Layers className="h-4 w-4 text-purple-400" />
+                          <Label className="text-sm font-medium text-purple-400">Detección de Régimen de Mercado</Label>
+                        </div>
+                        <Switch
+                          checked={config?.regimeDetectionEnabled || false}
+                          onCheckedChange={(checked) => updateMutation.mutate({ regimeDetectionEnabled: checked })}
+                          data-testid="switch-regime-detection"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground" data-testid="text-regime-detection-desc">
+                        Ajusta automáticamente los parámetros de salida según el tipo de mercado detectado (TREND/RANGE/TRANSITION). 
+                        Usa ADX, EMAs y Bollinger Bands para identificar las condiciones.
+                      </p>
+                      {config?.regimeDetectionEnabled && (
+                        <div className="text-xs bg-purple-500/10 p-2 rounded border border-purple-500/20 mt-2">
+                          <strong>Activo:</strong> TREND = exits amplios (BE 2.5%, TP 8%), RANGE = exits ajustados (BE 1%, TP 3%), TRANSITION = pausa entradas nuevas.
+                        </div>
+                      )}
+                    </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
