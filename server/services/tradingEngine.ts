@@ -604,11 +604,17 @@ ${emoji} <b>${title}</b>
 
     const maxPairAvailable = Math.max(0, maxPairExposureUsd - currentPairExposure);
     const maxTotalAvailable = Math.max(0, maxTotalExposureUsd - currentTotalExposure);
+    const maxAllowed = Math.min(maxPairAvailable, maxTotalAvailable);
+    
+    // Instrumentación: log detallado cuando maxAllowed = 0
+    if (maxAllowed === 0) {
+      log(`[EXPOSURE] ${pair}: EXPOSURE_LIMIT_REACHED | exposureBase=${exposureBase} baseValueUsd=$${baseValueUsd.toFixed(2)} usdBalance=$${usdBalance.toFixed(2)} | pairExp=$${currentPairExposure.toFixed(2)} totalExp=$${currentTotalExposure.toFixed(2)} | maxPairPct=${maxPairExposurePct}% maxTotalPct=${maxTotalExposurePct}% | maxPairUsd=$${maxPairExposureUsd.toFixed(2)} maxTotalUsd=$${maxTotalExposureUsd.toFixed(2)} | maxPairAvail=$${maxPairAvailable.toFixed(2)} maxTotalAvail=$${maxTotalAvailable.toFixed(2)} maxAllowed=$${maxAllowed.toFixed(2)}`, "trading");
+    }
     
     return {
       maxPairAvailable,
       maxTotalAvailable,
-      maxAllowed: Math.min(maxPairAvailable, maxTotalAvailable),
+      maxAllowed,
       exposureBaseUsed: exposureBase,
       baseValueUsd,
     };
@@ -2083,18 +2089,36 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
+            // Extraer nombre de régimen limpio para analytics
+            const regimeMatch = regimeInfo.match(/Régimen:\s*(\w+)/);
+            const regimeName = regimeMatch ? regimeMatch[1] : (regimeEnabled ? "BASE" : "DISABLED");
+            
+            log(`[B3] ${pair}: Parsed señales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
             if (buySignalCount < requiredSignals) {
               await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
-                buySignalCount,
-                requiredSignals,
+                got: buySignalCount,
+                required: requiredSignals,
+                regime: regimeName,
                 regimeEnabled,
                 signalReason: signal.reason,
               });
               return;
             }
+          } else {
+            // B3 Fallback: regex no matcheó - fail-closed en SMART_GUARD
+            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear señales (fail-closed)`, {
+              pair,
+              signal: "BUY",
+              reason: "B3_REGEX_NO_MATCH",
+              signalReason: signal.reason,
+              strategyId: "momentum",
+              entryMode: "SMART_GUARD",
+            });
+            log(`[B3] ${pair}: BLOQUEADO - regex no matcheó reason: "${signal.reason}"`, "trading");
+            return;
           }
         }
 
@@ -2670,18 +2694,36 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
+            // Extraer nombre de régimen limpio para analytics
+            const regimeMatch = regimeInfo.match(/Régimen:\s*(\w+)/);
+            const regimeName = regimeMatch ? regimeMatch[1] : (regimeEnabled ? "BASE" : "DISABLED");
+            
+            log(`[B3] ${pair}: Parsed señales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
             if (buySignalCount < requiredSignals) {
               await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
-                buySignalCount,
-                requiredSignals,
+                got: buySignalCount,
+                required: requiredSignals,
+                regime: regimeName,
                 regimeEnabled,
                 signalReason: signal.reason,
               });
               return;
             }
+          } else {
+            // B3 Fallback: regex no matcheó - fail-closed en SMART_GUARD
+            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear señales (fail-closed)`, {
+              pair,
+              signal: "BUY",
+              reason: "B3_REGEX_NO_MATCH",
+              signalReason: signal.reason,
+              strategyId: strategyId,
+              entryMode: "SMART_GUARD",
+            });
+            log(`[B3] ${pair}: BLOQUEADO - regex no matcheó reason: "${signal.reason}"`, "trading");
+            return;
           }
         }
 
@@ -3080,7 +3122,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "buy",
         pair,
         confidence,
-        reason: `Momentum alcista: ${reasons.join(", ")} | Señales: ${buySignals} compra vs ${sellSignals} venta`,
+        reason: `Momentum alcista: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
       };
     }
     
@@ -3089,11 +3131,11 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "sell",
         pair,
         confidence,
-        reason: `Momentum bajista: ${reasons.join(", ")} | Señales: ${sellSignals} venta vs ${buySignals} compra`,
+        reason: `Momentum bajista: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara (${buySignals} compra / ${sellSignals} venta)` };
+    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara | Señales: ${buySignals}/${sellSignals}` };
   }
 
   private meanReversionStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {

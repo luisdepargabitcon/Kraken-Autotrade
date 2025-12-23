@@ -2291,5 +2291,103 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // ============================================================
+  // TEST ENDPOINT: Probar filtro B3 (min señales SMART_GUARD)
+  // Solo disponible en REPLIT/DEV o cuando dryRun=true
+  // ============================================================
+  app.post("/api/test/b3", async (req, res) => {
+    try {
+      const envInfo = environment.getInfo();
+      const botConfig = await storage.getBotConfig();
+      const dryRun = botConfig?.dryRunMode ?? true;
+      
+      if (!envInfo.isReplit && !dryRun) {
+        return res.status(403).json({ 
+          error: "TEST_NOT_ALLOWED", 
+          message: "Test endpoint solo disponible en Replit o con dryRunMode=true" 
+        });
+      }
+      
+      const { buySignals, sellSignals, regime, reasonFormat } = req.body;
+      
+      // Validar inputs
+      const bSignals = parseInt(buySignals?.toString() || "4", 10);
+      const sSignals = parseInt(sellSignals?.toString() || "1", 10);
+      const testRegime = regime || "BASE"; // BASE, TREND, RANGE, TRANSITION
+      
+      // Determinar requiredSignals según régimen
+      let requiredSignals = 5; // Base SMART_GUARD
+      if (testRegime === "RANGE") requiredSignals = 6;
+      else if (testRegime === "TREND") requiredSignals = 5;
+      else if (testRegime === "TRANSITION") requiredSignals = 5; // pero pauseEntries = true
+      
+      // Simular formato de reason
+      let testReason: string;
+      if (reasonFormat === "old") {
+        // Formato antiguo (no matchea regex)
+        testReason = `Momentum alcista: RSI bajo | Señales: ${bSignals} compra vs ${sSignals} venta`;
+      } else if (reasonFormat === "broken") {
+        // Formato roto (deliberadamente no parseable)
+        testReason = `Señal sin formato estándar`;
+      } else {
+        // Formato unificado (matchea regex)
+        testReason = `Momentum Velas COMPRA: RSI bajo | Señales: ${bSignals}/${sSignals}`;
+      }
+      
+      // Probar regex
+      const regex = /Señales:\s*(\d+)\/(\d+)/;
+      const match = testReason.match(regex);
+      
+      let decision: string;
+      let reasonCode: string;
+      let parsedBuySignals: number | null = null;
+      
+      if (match) {
+        parsedBuySignals = parseInt(match[1], 10);
+        if (testRegime === "TRANSITION") {
+          decision = "BLOCKED";
+          reasonCode = "REGIME_TRANSITION_PAUSE";
+        } else if (parsedBuySignals < requiredSignals) {
+          decision = "BLOCKED";
+          reasonCode = "SMART_GUARD_INSUFFICIENT_SIGNALS";
+        } else {
+          decision = "ALLOWED";
+          reasonCode = "B3_PASSED";
+        }
+      } else {
+        // Fallback fail-closed en SMART_GUARD
+        decision = "BLOCKED";
+        reasonCode = "B3_REGEX_NO_MATCH";
+        parsedBuySignals = null;
+      }
+      
+      res.json({
+        success: true,
+        test: "B3_MIN_SIGNALS",
+        input: {
+          buySignals: bSignals,
+          sellSignals: sSignals,
+          regime: testRegime,
+          reasonFormat: reasonFormat || "unified",
+        },
+        simulation: {
+          testReason,
+          regexUsed: regex.toString(),
+          regexMatched: !!match,
+          parsedBuySignals,
+          requiredSignals,
+          decision,
+          reasonCode,
+        },
+        explanation: decision === "BLOCKED" 
+          ? `BUY bloqueado: ${reasonCode} (got=${parsedBuySignals ?? 'N/A'}, required=${requiredSignals}, regime=${testRegime})`
+          : `BUY permitido: señales suficientes (${parsedBuySignals} >= ${requiredSignals})`,
+      });
+      
+    } catch (error: any) {
+      res.status(500).json({ error: "B3_TEST_ERROR", message: error.message });
+    }
+  });
+
   return httpServer;
 }
