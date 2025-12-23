@@ -47,17 +47,17 @@ class EventsWebSocketServer {
       if (!expectedToken) {
         log(`[WS] WS_ADMIN_TOKEN no configurado - conexión sin autenticación permitida (desarrollo) desde ${clientIp}`, "websocket");
       } else if (!token) {
-        log(`[WS] Conexión rechazada - token ausente (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "Token ausente", reason: "MISSING_TOKEN" } });
+        log(`[WS] Conexión rechazada - token ausente (path: ${WS_PATH}, source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token ausente", reason: "MISSING_TOKEN", path: WS_PATH } });
         client.close(4001, "Unauthorized - Missing Token");
         return;
       } else if (token !== expectedToken) {
-        log(`[WS] Conexión rechazada - token incorrecto (source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "Token incorrecto", reason: "INVALID_TOKEN" } });
+        log(`[WS] Conexión rechazada - token incorrecto (path: ${WS_PATH}, source: ${tokenSource}, origin: ${origin}, ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "Token incorrecto", reason: "INVALID_TOKEN", path: WS_PATH } });
         client.close(4001, "Unauthorized - Invalid Token");
         return;
       } else {
-        log(`[WS] Token válido (source: ${tokenSource}, ip: ${clientIp})`, "websocket");
+        log(`[WS] Token válido (path: ${WS_PATH}, source: ${tokenSource}, ip: ${clientIp})`, "websocket");
       }
 
       client.isAlive = true;

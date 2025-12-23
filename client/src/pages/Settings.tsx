@@ -127,7 +127,13 @@ export default function Settings() {
       localStorage.removeItem("TERMINAL_TOKEN");
       setTerminalTokenSaved(false);
     }
-    toast.success("Tokens guardados. Recarga la página para aplicar cambios.");
+    
+    // Dispatch custom event for same-tab WebSocket reconnection
+    window.dispatchEvent(new CustomEvent("ws-tokens-updated", {
+      detail: { wsToken: !!wsAdminToken, terminalToken: !!terminalToken }
+    }));
+    
+    toast.success("Tokens guardados. Los WebSockets se reconectarán automáticamente.");
   };
 
   const { data: config } = useQuery<BotConfig>({

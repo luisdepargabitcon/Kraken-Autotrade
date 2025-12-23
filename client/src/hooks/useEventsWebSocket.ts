@@ -9,7 +9,7 @@ export interface BotEvent {
   meta?: Record<string, any> | null;
 }
 
-type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
+type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting" | "needsAuth";
 
 interface WsState {
   events: BotEvent[];
@@ -37,6 +37,7 @@ class EventsWebSocketSingleton {
   private refCount = 0;
   private lastConnectTime = 0;
   private connectLock = false;
+  private storageListenerAdded = false;
 
   static getInstance(): EventsWebSocketSingleton {
     if (!window.__eventsWsSingleton) {
@@ -49,7 +50,14 @@ class EventsWebSocketSingleton {
     this.listeners.add(listener);
     this.refCount++;
     
-    if (this.refCount === 1 && this.state.status === "disconnected") {
+    // Add storage listener to auto-reconnect when token is saved
+    if (!this.storageListenerAdded) {
+      this.storageListenerAdded = true;
+      window.addEventListener("storage", this.handleStorageChange);
+      window.addEventListener("ws-tokens-updated", this.handleTokensUpdated);
+    }
+    
+    if (this.refCount === 1 && (this.state.status === "disconnected" || this.state.status === "needsAuth")) {
       this.connect();
     }
     
@@ -58,6 +66,23 @@ class EventsWebSocketSingleton {
       this.refCount--;
     };
   }
+
+  private handleStorageChange = (e: StorageEvent): void => {
+    if (e.key === "WS_ADMIN_TOKEN" && e.newValue && this.state.status === "needsAuth") {
+      console.log("[WS-EVENTS] Token detectado en storage (cross-tab), intentando reconectar...");
+      this.reconnectAttempts = 0;
+      this.connect();
+    }
+  };
+
+  private handleTokensUpdated = (e: Event): void => {
+    const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
+    if (customEvent.detail?.wsToken && this.state.status === "needsAuth") {
+      console.log("[WS-EVENTS] Token actualizado (same-tab), intentando reconectar...");
+      this.reconnectAttempts = 0;
+      this.connect();
+    }
+  };
 
   getSnapshot(): WsState {
     return this.state;
@@ -72,10 +97,15 @@ class EventsWebSocketSingleton {
     this.notify();
   }
 
+  private getAuthToken(): string | null {
+    const token = localStorage.getItem("WS_ADMIN_TOKEN");
+    return token && token.trim() ? token.trim() : null;
+  }
+
   private getWsUrl(): string {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const token = localStorage.getItem("WS_ADMIN_TOKEN") || "";
-    return `${protocol}//${window.location.host}/ws/events${token ? `?token=${token}` : ""}`;
+    const token = this.getAuthToken();
+    return `${protocol}//${window.location.host}/ws/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   }
 
   private flushBuffer = (): void => {
@@ -100,6 +130,17 @@ class EventsWebSocketSingleton {
           this.connect();
         }, 2000 - (now - this.lastConnectTime));
       }
+      return;
+    }
+
+    // Check token BEFORE connecting
+    const token = this.getAuthToken();
+    const hasToken = !!token;
+    console.log(`[WS-EVENTS] connect -> hasToken=${hasToken}`);
+    
+    if (!hasToken) {
+      console.warn("[WS-EVENTS] No hay token configurado. Ve a Ajustes para configurar WS_ADMIN_TOKEN.");
+      this.setState({ status: "needsAuth", error: "Token no configurado - ve a Ajustes" });
       return;
     }
 
@@ -145,9 +186,18 @@ class EventsWebSocketSingleton {
           this.flushInterval = null;
         }
 
-        if (event.code !== 4001 && event.code !== 1000 && this.refCount > 0) {
+        // 4001 = auth error, 1000 = normal close - don't reconnect
+        if (event.code === 4001) {
+          console.warn("[WS-EVENTS] Conexión rechazada por token inválido/ausente. No se reintentará.");
+          this.setState({ status: "needsAuth", error: "Token rechazado por el servidor" });
+          return;
+        }
+
+        if (event.code !== 1000 && this.refCount > 0) {
+          // Exponential backoff: 2s, 4s, 8s, 16s, 30s max
           const delay = Math.max(2000, Math.min(2000 * Math.pow(2, this.reconnectAttempts), 30000));
           this.reconnectAttempts++;
+          console.log(`[WS-EVENTS] Reconectando en ${delay / 1000}s (intento ${this.reconnectAttempts})`);
           this.setState({ status: "reconnecting" });
           
           this.reconnectTimeout = setTimeout(() => {
