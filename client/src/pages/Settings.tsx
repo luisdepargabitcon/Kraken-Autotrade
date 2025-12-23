@@ -104,36 +104,49 @@ export default function Settings() {
   const [terminalTokenSaved, setTerminalTokenSaved] = useState(false);
 
   useEffect(() => {
-    const savedWsToken = localStorage.getItem("WS_ADMIN_TOKEN") || "";
-    const savedTerminalToken = localStorage.getItem("TERMINAL_TOKEN") || "";
-    setWsAdminToken(savedWsToken);
-    setTerminalToken(savedTerminalToken);
-    setWsTokenSaved(!!savedWsToken);
-    setTerminalTokenSaved(!!savedTerminalToken);
+    try {
+      const savedWsToken = localStorage.getItem("WS_ADMIN_TOKEN") || "";
+      const savedTerminalToken = localStorage.getItem("TERMINAL_TOKEN") || "";
+      setWsAdminToken(savedWsToken);
+      setTerminalToken(savedTerminalToken);
+      setWsTokenSaved(!!savedWsToken);
+      setTerminalTokenSaved(!!savedTerminalToken);
+    } catch (e) {
+      console.warn("localStorage no disponible:", e);
+    }
   }, []);
 
   const handleSaveTokens = () => {
-    if (wsAdminToken) {
-      localStorage.setItem("WS_ADMIN_TOKEN", wsAdminToken);
-      setWsTokenSaved(true);
-    } else {
-      localStorage.removeItem("WS_ADMIN_TOKEN");
-      setWsTokenSaved(false);
+    try {
+      if (wsAdminToken) {
+        localStorage.setItem("WS_ADMIN_TOKEN", wsAdminToken);
+        setWsTokenSaved(true);
+      } else {
+        localStorage.removeItem("WS_ADMIN_TOKEN");
+        setWsTokenSaved(false);
+      }
+      if (terminalToken) {
+        localStorage.setItem("TERMINAL_TOKEN", terminalToken);
+        setTerminalTokenSaved(true);
+      } else {
+        localStorage.removeItem("TERMINAL_TOKEN");
+        setTerminalTokenSaved(false);
+      }
+      
+      // Dispatch custom event for same-tab WebSocket reconnection (cross-browser compatible)
+      try {
+        window.dispatchEvent(new CustomEvent("ws-tokens-updated", {
+          detail: { wsToken: !!wsAdminToken, terminalToken: !!terminalToken }
+        }));
+      } catch (eventErr) {
+        console.warn("CustomEvent dispatch failed:", eventErr);
+      }
+      
+      toast.success("Tokens guardados. Los WebSockets se reconectarán automáticamente.");
+    } catch (e) {
+      console.error("Error guardando tokens:", e);
+      toast.error("Error al guardar tokens. localStorage podría no estar disponible.");
     }
-    if (terminalToken) {
-      localStorage.setItem("TERMINAL_TOKEN", terminalToken);
-      setTerminalTokenSaved(true);
-    } else {
-      localStorage.removeItem("TERMINAL_TOKEN");
-      setTerminalTokenSaved(false);
-    }
-    
-    // Dispatch custom event for same-tab WebSocket reconnection
-    window.dispatchEvent(new CustomEvent("ws-tokens-updated", {
-      detail: { wsToken: !!wsAdminToken, terminalToken: !!terminalToken }
-    }));
-    
-    toast.success("Tokens guardados. Los WebSockets se reconectarán automáticamente.");
   };
 
   const { data: config } = useQuery<BotConfig>({

@@ -40,8 +40,13 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
   const storageListenerRef = useRef(false);
 
   const getAuthToken = useCallback((): string | null => {
-    const token = localStorage.getItem("TERMINAL_TOKEN");
-    return token && token.trim() ? token.trim() : null;
+    try {
+      const token = localStorage.getItem("TERMINAL_TOKEN");
+      return token && token.trim() ? token.trim() : null;
+    } catch (e) {
+      console.warn("[WS-LOGS] localStorage no disponible:", e);
+      return null;
+    }
   }, []);
 
   const getWsUrl = useCallback(() => {
@@ -194,11 +199,15 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
     };
     
     const handleTokensUpdated = (e: Event) => {
-      const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
-      if (customEvent.detail?.terminalToken && status === "needsAuth") {
-        console.log("[WS-LOGS] Token actualizado (same-tab), intentando reconectar...");
-        reconnectAttemptsRef.current = 0;
-        connect();
+      try {
+        const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
+        if (customEvent.detail?.terminalToken && status === "needsAuth") {
+          console.log("[WS-LOGS] Token actualizado (same-tab), intentando reconectar...");
+          reconnectAttemptsRef.current = 0;
+          connect();
+        }
+      } catch (err) {
+        console.warn("[WS-LOGS] Error en handleTokensUpdated:", err);
       }
     };
     

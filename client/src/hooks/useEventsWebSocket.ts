@@ -76,11 +76,15 @@ class EventsWebSocketSingleton {
   };
 
   private handleTokensUpdated = (e: Event): void => {
-    const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
-    if (customEvent.detail?.wsToken && this.state.status === "needsAuth") {
-      console.log("[WS-EVENTS] Token actualizado (same-tab), intentando reconectar...");
-      this.reconnectAttempts = 0;
-      this.connect();
+    try {
+      const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
+      if (customEvent.detail?.wsToken && this.state.status === "needsAuth") {
+        console.log("[WS-EVENTS] Token actualizado (same-tab), intentando reconectar...");
+        this.reconnectAttempts = 0;
+        this.connect();
+      }
+    } catch (err) {
+      console.warn("[WS-EVENTS] Error en handleTokensUpdated:", err);
     }
   };
 
@@ -98,8 +102,13 @@ class EventsWebSocketSingleton {
   }
 
   private getAuthToken(): string | null {
-    const token = localStorage.getItem("WS_ADMIN_TOKEN");
-    return token && token.trim() ? token.trim() : null;
+    try {
+      const token = localStorage.getItem("WS_ADMIN_TOKEN");
+      return token && token.trim() ? token.trim() : null;
+    } catch (e) {
+      console.warn("[WS-EVENTS] localStorage no disponible:", e);
+      return null;
+    }
   }
 
   private getWsUrl(): string {
