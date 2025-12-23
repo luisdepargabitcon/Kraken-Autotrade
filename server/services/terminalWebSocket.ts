@@ -83,10 +83,11 @@ class TerminalWebSocketServer {
       
       const expectedToken = process.env.TERMINAL_TOKEN;
 
+      // TERMINAL_TOKEN is required for terminal websocket (security: can execute commands and view sensitive logs)
       if (!expectedToken) {
-        log(`[WS-LOGS] TERMINAL_TOKEN no configurado - conexión rechazada (ip: ${clientIp})`, "websocket");
-        this.sendMessage(client, { type: "ERROR", payload: { message: "TERMINAL_TOKEN no configurado", reason: "TOKEN_NOT_CONFIGURED" } });
-        client.close(4001, "Unauthorized");
+        log(`[WS-LOGS] TERMINAL_TOKEN no configurado - conexión rechazada. Configura TERMINAL_TOKEN en variables de entorno. (ip: ${clientIp})`, "websocket");
+        this.sendMessage(client, { type: "ERROR", payload: { message: "TERMINAL_TOKEN no configurado en el servidor", reason: "TOKEN_NOT_CONFIGURED" } });
+        client.close(4001, "Unauthorized - Token not configured on server");
         return;
       }
 
@@ -103,7 +104,7 @@ class TerminalWebSocketServer {
         client.close(4001, "Unauthorized - Invalid Token");
         return;
       }
-      
+
       log(`[WS-LOGS] Token válido (path: ${WS_PATH}, source: ${tokenSource}, ip: ${clientIp})`, "websocket");
 
       client.isAlive = true;
