@@ -1,0 +1,61 @@
+APROBACIÓN DE ACCIONES Y DECISIONES (VERSIÓN FINAL)
+
+0) Nota de coherencia (objetivo)
+Queremos que B3 (min señales SMART_GUARD) sea CONSISTENTE en TODOS los caminos (con velas y sin velas) y que el ajuste por RÉGIMEN (p.ej. RANGE => requiredSignals=6) sea observable en logs. Esto NO tiene que ver con exposure caps; eso se instrumenta aparte.
+
+1) A1 / A2 – Política SELL en SMART_GUARD (DECISIÓN CERRADA)
+Confirmo explícitamente:
+- En modo SMART_GUARD, las ventas por señal de estrategia deben estar BLOQUEADAS.
+- Solo los risk exits (stop-loss, take-profit, break-even, trailing, emergencias) pueden ejecutar SELL.
+➡️ Por tanto, A1/A2 deben permanecer como SELL_BLOCKED en SMART_GUARD. No cambiar.
+
+2) B3 – Umbral mínimo de señales (BUG CONFIRMADO)
+Apruebo la corrección del bug detectado y sus garantías:
+
+2.1 Unificación de formato (opción preferida)
+- Unificar el formato del reason en TODAS las estrategias momentum (velas y no velas) a:
+  "Señales: {buySignals}/{sellSignals}"
+- Mantener el regex actual: /Señales:\s*(\d+)\/(\d+)/
+
+2.2 Fallback y logging (obligatorio)
+- Si el regex NO matchea, NO se debe “pasar sin filtro” silenciosamente.
+  Debe:
+  a) log reasonCode: B3_REGEX_NO_MATCH (incluye reason original, strategyId, entryMode)
+  b) aplicar comportamiento seguro: BLOQUEAR BUY en SMART_GUARD si no se puede parsear el count
+     (fail-closed solo para SMART_GUARD; fuera de SMART_GUARD mantener comportamiento actual).
+
+2.3 Reglas B3 (confirmación)
+- requiredSignals = 5 base en SMART_GUARD
+- Si régimen de mercado == RANGE => requiredSignals = 6
+- Si buySignals < requiredSignals => bloquear con reasonCode: SMART_GUARD_INSUFFICIENT_SIGNALS e incluir got/required/regime.
+
+3) Tests de verificación B3 (obligatorio)
+Añadir prueba reproducible (unit o /api/test/signal) que cubra:
+- Camino velas: "Señales: 4/1" => BLOQUEADO, "Señales: 5/1" => PERMITIDO, y en RANGE "Señales: 6/1" => PERMITIDO.
+- Camino sin velas: mismas pruebas (asegurar formato unificado).
+Registrar en logs: parsedBuySignals, requiredSignals, regime, decision.
+
+4) Exposición – Instrumentación (sin cambiar lógica)
+Apruebo añadir logs detallados cuando maxAllowed === 0 en getAvailableExposure():
+- exposureBase
+- baseValueUsd
+- usdBalance
+- currentPairExposure
+- currentTotalExposure
+- maxPairExposurePct / maxPairExposureUsd
+- maxTotalExposurePct / maxTotalExposureUsd
+- maxPairAvailable / maxTotalAvailable / maxAllowed
+- reasonCode: EXPOSURE_LIMIT_REACHED
+No modificar la fórmula actual, solo instrumentar.
+
+5) Régimen de mercado – Observabilidad (solo logs)
+Añadir logging por ciclo/pair cuando se compute requiredSignals:
+- regime, regimeConfidence, requiredSignals
+Y cuando B3 bloquee:
+- reasonCode: B3_BLOCKED_BY_REGIME (si aplica)
+- incluir got/required/regime.
+
+Restricciones:
+- No introducir nuevos parámetros de configuración.
+- Cambios mínimos y seguros.
+- No romper SMART_GUARD ni risk exits.
