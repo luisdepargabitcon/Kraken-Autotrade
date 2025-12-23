@@ -370,6 +370,10 @@ export class TradingEngine {
   private sgAlertThrottle: Map<string, number> = new Map();
   private readonly SG_TRAIL_UPDATE_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between trailing stop updates
   
+  // Regime change alert throttle: key = "pair:fromRegime:toRegime", value = timestamp
+  private regimeAlertThrottle: Map<string, number> = new Map();
+  private readonly REGIME_ALERT_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes between same regime change alerts
+  
   // DRY_RUN mode: audit without sending real orders
   private dryRunMode: boolean = false;
   private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
@@ -784,13 +788,29 @@ ${emoji} <b>${title}</b>
       // Emitir MARKET_SCAN_SUMMARY si hay resultados
       if (this.lastScanResults.size > 0) {
         const scanSummary: Record<string, any> = {};
-        this.lastScanResults.forEach((result, pair) => {
-          scanSummary[pair] = result;
-        });
+        const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
+        
+        for (const [pair, result] of this.lastScanResults) {
+          const pairData: Record<string, any> = { ...result };
+          
+          if (regimeDetectionEnabled) {
+            try {
+              const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+              pairData.regime = regimeAnalysis.regime;
+              pairData.regimeReason = regimeAnalysis.reason;
+            } catch (err) {
+              pairData.regime = "ERROR";
+              pairData.regimeReason = "Error obteniendo régimen";
+            }
+          }
+          
+          scanSummary[pair] = pairData;
+        }
 
         await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
           pairs: scanSummary,
           scanTime: new Date(this.lastScanTime).toISOString(),
+          regimeDetectionEnabled,
         });
       }
     } catch (error: any) {
@@ -3788,16 +3808,30 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
   }
 
   private async sendRegimeChangeAlert(pair: string, fromRegime: MarketRegime, analysis: RegimeAnalysis) {
+    // Dedupe: prevent spam for same regime transition
+    const throttleKey = `${pair}:${fromRegime}:${analysis.regime}`;
+    const now = Date.now();
+    const lastSent = this.regimeAlertThrottle.get(throttleKey);
+    
+    if (lastSent && now - lastSent < this.REGIME_ALERT_THROTTLE_MS) {
+      log(`[TELEGRAM] RegimeChanged THROTTLED pair=${pair} from=${fromRegime} to=${analysis.regime} (last sent ${Math.floor((now - lastSent) / 1000)}s ago)`, "trading");
+      return;
+    }
+    
+    // Cleanup old throttle entries (older than 1 hour)
+    const oneHourAgo = now - 60 * 60 * 1000;
+    for (const [key, timestamp] of this.regimeAlertThrottle.entries()) {
+      if (timestamp < oneHourAgo) {
+        this.regimeAlertThrottle.delete(key);
+      }
+    }
+    
+    this.regimeAlertThrottle.set(throttleKey, now);
+    
     const regimeEmoji: Record<MarketRegime, string> = {
       TREND: "📈",
       RANGE: "↔️",
       TRANSITION: "⏳",
-    };
-    
-    const regimeDescriptions: Record<MarketRegime, string> = {
-      TREND: "Tendencia fuerte",
-      RANGE: "Mercado lateral",
-      TRANSITION: "Transición (pausa entradas)",
     };
     
     const preset = REGIME_PRESETS[analysis.regime];
@@ -3822,6 +3856,10 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
 ━━━━━━━━━━━━━━━━━━━`;
 
     await this.telegramService.sendMessage(message, "system");
+    
+    // Explicit log for observability
+    log(`[TELEGRAM] RegimeChanged pair=${pair} from=${fromRegime} to=${analysis.regime}`, "trading");
+    
     await botLogger.info("REGIME_CHANGE", `Régimen cambiado en ${pair}: ${fromRegime} → ${analysis.regime}`, {
       pair,
       fromRegime,
