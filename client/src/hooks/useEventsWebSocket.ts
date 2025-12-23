@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
 export interface BotEvent {
   id?: number;
@@ -29,59 +29,89 @@ class EventsWebSocketSingleton {
   private ws: WebSocket | null = null;
   private state: WsState = { events: [], status: "disconnected", error: null };
   private listeners: Set<Listener> = new Set();
-  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
-  private flushInterval: NodeJS.Timeout | null = null;
+  private flushInterval: ReturnType<typeof setInterval> | null = null;
   private eventBuffer: BotEvent[] = [];
   private maxEvents = 500;
   private refCount = 0;
   private lastConnectTime = 0;
   private connectLock = false;
   private storageListenerAdded = false;
+  private lastConnectedToken: string | null = null; // Track last successfully connected token
 
   static getInstance(): EventsWebSocketSingleton {
-    if (!window.__eventsWsSingleton) {
-      window.__eventsWsSingleton = new EventsWebSocketSingleton();
+    try {
+      if (!window.__eventsWsSingleton) {
+        window.__eventsWsSingleton = new EventsWebSocketSingleton();
+      }
+      return window.__eventsWsSingleton;
+    } catch (e) {
+      console.error("[WS-EVENTS] Error creando singleton:", e);
+      return new EventsWebSocketSingleton();
     }
-    return window.__eventsWsSingleton;
   }
 
   subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    this.refCount++;
-    
-    // Add storage listener to auto-reconnect when token is saved
-    if (!this.storageListenerAdded) {
-      this.storageListenerAdded = true;
-      window.addEventListener("storage", this.handleStorageChange);
-      window.addEventListener("ws-tokens-updated", this.handleTokensUpdated);
-    }
-    
-    if (this.refCount === 1 && (this.state.status === "disconnected" || this.state.status === "needsAuth")) {
-      this.connect();
+    try {
+      this.listeners.add(listener);
+      this.refCount++;
+      
+      // Add storage listener to auto-reconnect when token is saved
+      if (!this.storageListenerAdded) {
+        this.storageListenerAdded = true;
+        try {
+          window.addEventListener("storage", this.handleStorageChange);
+          window.addEventListener("ws-tokens-updated", this.handleTokensUpdated);
+        } catch (e) {
+          console.warn("[WS-EVENTS] Error añadiendo listeners:", e);
+        }
+      }
+      
+      // Only auto-connect from subscribe if status is "disconnected" (not "needsAuth")
+      // The useEffect in the hook handles initial connection attempt
+      if (this.refCount === 1 && this.state.status === "disconnected") {
+        this.connect();
+      }
+    } catch (e) {
+      console.error("[WS-EVENTS] Error en subscribe:", e);
     }
     
     return () => {
-      this.listeners.delete(listener);
-      this.refCount--;
+      try {
+        this.listeners.delete(listener);
+        this.refCount--;
+      } catch (e) {
+        console.warn("[WS-EVENTS] Error en unsubscribe:", e);
+      }
     };
   }
 
   private handleStorageChange = (e: StorageEvent): void => {
-    if (e.key === "WS_ADMIN_TOKEN" && e.newValue && this.state.status === "needsAuth") {
-      console.log("[WS-EVENTS] Token detectado en storage (cross-tab), intentando reconectar...");
-      this.reconnectAttempts = 0;
-      this.connect();
+    // Only reconnect if: key is our token, there's a new non-empty value, and we need auth
+    if (e.key === "WS_ADMIN_TOKEN" && e.newValue && e.newValue.trim() && this.state.status === "needsAuth") {
+      // Double-check the token actually exists in localStorage AND is different from last attempt
+      const token = this.getAuthToken();
+      if (token && token !== this.lastConnectedToken) {
+        console.log("[WS-EVENTS] Token nuevo detectado en storage (cross-tab), intentando reconectar...");
+        this.reconnectAttempts = 0;
+        this.connect();
+      }
     }
   };
 
   private handleTokensUpdated = (e: Event): void => {
     try {
       const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
+      // Only reconnect if the event says token was saved AND we need auth
       if (customEvent.detail?.wsToken && this.state.status === "needsAuth") {
-        console.log("[WS-EVENTS] Token actualizado (same-tab), intentando reconectar...");
-        this.reconnectAttempts = 0;
-        this.connect();
+        // Double-check the token actually exists in localStorage AND is different from last attempt
+        const token = this.getAuthToken();
+        if (token && token !== this.lastConnectedToken) {
+          console.log("[WS-EVENTS] Token nuevo actualizado (same-tab), intentando reconectar...");
+          this.reconnectAttempts = 0;
+          this.connect();
+        }
       }
     } catch (err) {
       console.warn("[WS-EVENTS] Error en handleTokensUpdated:", err);
@@ -149,6 +179,17 @@ class EventsWebSocketSingleton {
     
     if (!hasToken) {
       console.warn("[WS-EVENTS] No hay token configurado. Ve a Ajustes para configurar WS_ADMIN_TOKEN.");
+      // Update lastConnectTime BEFORE early return to make debounce effective
+      this.lastConnectTime = now;
+      // Clear any pending reconnect timeout when entering needsAuth state
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
+      // Reset reconnect attempts to prevent stale retry logic
+      this.reconnectAttempts = 0;
+      // Clear lastConnectedToken so same token can be used to reconnect later
+      this.lastConnectedToken = null;
       this.setState({ status: "needsAuth", error: "Token no configurado - ve a Ajustes" });
       return;
     }
@@ -165,6 +206,8 @@ class EventsWebSocketSingleton {
         this.connectLock = false;
         this.setState({ status: "connected", error: null });
         this.reconnectAttempts = 0;
+        // Track the token that successfully connected (for change detection)
+        this.lastConnectedToken = this.getAuthToken();
 
         if (this.flushInterval) clearInterval(this.flushInterval);
         this.flushInterval = setInterval(this.flushBuffer, 300);
@@ -198,6 +241,8 @@ class EventsWebSocketSingleton {
         // 4001 = auth error, 1000 = normal close - don't reconnect
         if (event.code === 4001) {
           console.warn("[WS-EVENTS] Conexión rechazada por token inválido/ausente. No se reintentará.");
+          // Clear lastConnectedToken so same token can be retried after fix
+          this.lastConnectedToken = null;
           this.setState({ status: "needsAuth", error: "Token rechazado por el servidor" });
           return;
         }
@@ -253,17 +298,60 @@ interface UseEventsWebSocketOptions {
   autoConnect?: boolean;
 }
 
-export function useEventsWebSocket(_options: UseEventsWebSocketOptions = {}) {
-  const singleton = EventsWebSocketSingleton.getInstance();
+const defaultState: WsState = { events: [], status: "disconnected", error: null };
+
+export function useEventsWebSocket(options: UseEventsWebSocketOptions = {}) {
+  const { autoConnect = true } = options;
+  
+  let singleton: EventsWebSocketSingleton;
+  try {
+    singleton = EventsWebSocketSingleton.getInstance();
+  } catch (e) {
+    console.error("[WS-EVENTS] Error obteniendo singleton:", e);
+    return {
+      events: [],
+      status: "disconnected" as const,
+      error: "Error inicializando WebSocket",
+      connect: () => {},
+      disconnect: () => {},
+      clearEvents: () => {},
+      isConnected: false,
+    };
+  }
   
   const state = useSyncExternalStore(
     (listener) => singleton.subscribe(listener),
-    () => singleton.getSnapshot()
+    () => {
+      try {
+        return singleton.getSnapshot();
+      } catch (e) {
+        console.warn("[WS-EVENTS] Error en getSnapshot:", e);
+        return defaultState;
+      }
+    }
   );
 
-  const connect = useCallback(() => singleton.connect(), [singleton]);
-  const disconnect = useCallback(() => singleton.disconnect(), [singleton]);
-  const clearEvents = useCallback(() => singleton.clearEvents(), [singleton]);
+  const connect = useCallback(() => {
+    try { singleton.connect(); } catch (e) { console.warn("[WS-EVENTS] Error en connect:", e); }
+  }, [singleton]);
+  const disconnect = useCallback(() => {
+    try { singleton.disconnect(); } catch (e) { console.warn("[WS-EVENTS] Error en disconnect:", e); }
+  }, [singleton]);
+  const clearEvents = useCallback(() => {
+    try { singleton.clearEvents(); } catch (e) { console.warn("[WS-EVENTS] Error en clearEvents:", e); }
+  }, [singleton]);
+
+  // Auto-connect only on initial mount (not on re-renders or status changes)
+  const hasAutoConnectedRef = useRef(false);
+  useEffect(() => {
+    if (autoConnect && !hasAutoConnectedRef.current) {
+      hasAutoConnectedRef.current = true;
+      // Only connect if not already connected or connecting
+      if (state.status === "disconnected") {
+        connect();
+      }
+    }
+  }, [autoConnect, connect, state.status]);
 
   return {
     events: state.events,

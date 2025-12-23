@@ -34,10 +34,11 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
   const [lastLineTime, setLastLineTime] = useState<Date | null>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const lineIdRef = useRef(0);
   const storageListenerRef = useRef(false);
+  const lastConnectedTokenRef = useRef<string | null>(null); // Track last successfully connected token
 
   const getAuthToken = useCallback((): string | null => {
     try {
@@ -65,6 +66,15 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
     
     if (!hasToken) {
       console.warn("[WS-LOGS] No hay token configurado. Ve a Ajustes para configurar TERMINAL_TOKEN.");
+      // Clear any pending reconnect timeout when entering needsAuth state
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      // Reset reconnect attempts to prevent stale retry logic
+      reconnectAttemptsRef.current = 0;
+      // Clear lastConnectedToken so same token can be used to reconnect later
+      lastConnectedTokenRef.current = null;
       setStatus("needsAuth");
       setError("Token no configurado - ve a Ajustes");
       return;
@@ -81,6 +91,8 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
         setStatus("connected");
         setError(null);
         reconnectAttemptsRef.current = 0;
+        // Track the token that successfully connected (for change detection)
+        lastConnectedTokenRef.current = getAuthToken();
       };
 
       ws.onmessage = (event) => {
@@ -129,6 +141,8 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
         // 4001 = auth error, 1000 = normal close - don't reconnect
         if (event.code === 4001) {
           console.warn("[WS-LOGS] Conexión rechazada por token inválido/ausente. No se reintentará.");
+          // Clear lastConnectedToken so same token can be retried after fix
+          lastConnectedTokenRef.current = null;
           setStatus("needsAuth");
           setError("Token rechazado por el servidor");
           return;
@@ -191,20 +205,30 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
   // Listen for storage changes and custom events to auto-reconnect when token is saved
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "TERMINAL_TOKEN" && e.newValue && status === "needsAuth") {
-        console.log("[WS-LOGS] Token detectado en storage (cross-tab), intentando reconectar...");
-        reconnectAttemptsRef.current = 0;
-        connect();
+      // Only reconnect if: key is our token, there's a new non-empty value, and we need auth
+      if (e.key === "TERMINAL_TOKEN" && e.newValue && e.newValue.trim() && status === "needsAuth") {
+        // Double-check the token actually exists in localStorage AND is different from last attempt
+        const token = getAuthToken();
+        if (token && token !== lastConnectedTokenRef.current) {
+          console.log("[WS-LOGS] Token nuevo detectado en storage (cross-tab), intentando reconectar...");
+          reconnectAttemptsRef.current = 0;
+          connect();
+        }
       }
     };
     
     const handleTokensUpdated = (e: Event) => {
       try {
         const customEvent = e as CustomEvent<{ wsToken: boolean; terminalToken: boolean }>;
+        // Only reconnect if the event says token was saved AND we need auth
         if (customEvent.detail?.terminalToken && status === "needsAuth") {
-          console.log("[WS-LOGS] Token actualizado (same-tab), intentando reconectar...");
-          reconnectAttemptsRef.current = 0;
-          connect();
+          // Double-check the token actually exists in localStorage AND is different from last attempt
+          const token = getAuthToken();
+          if (token && token !== lastConnectedTokenRef.current) {
+            console.log("[WS-LOGS] Token nuevo actualizado (same-tab), intentando reconectar...");
+            reconnectAttemptsRef.current = 0;
+            connect();
+          }
         }
       } catch (err) {
         console.warn("[WS-LOGS] Error en handleTokensUpdated:", err);
@@ -222,7 +246,7 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
       window.removeEventListener("ws-tokens-updated", handleTokensUpdated);
       storageListenerRef.current = false;
     };
-  }, [status, connect]);
+  }, [status, connect, getAuthToken]);
 
   useEffect(() => {
     if (autoConnect) {
