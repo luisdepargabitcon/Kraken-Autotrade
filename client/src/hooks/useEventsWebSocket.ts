@@ -172,27 +172,9 @@ class EventsWebSocketSingleton {
       return;
     }
 
-    // Check token BEFORE connecting
+    // Get token but don't require it - server may allow unauthenticated connections
     const token = this.getAuthToken();
-    const hasToken = !!token;
-    console.log(`[WS-EVENTS] connect -> hasToken=${hasToken}`);
-    
-    if (!hasToken) {
-      console.warn("[WS-EVENTS] No hay token configurado. Ve a Ajustes para configurar WS_ADMIN_TOKEN.");
-      // Update lastConnectTime BEFORE early return to make debounce effective
-      this.lastConnectTime = now;
-      // Clear any pending reconnect timeout when entering needsAuth state
-      if (this.reconnectTimeout) {
-        clearTimeout(this.reconnectTimeout);
-        this.reconnectTimeout = null;
-      }
-      // Reset reconnect attempts to prevent stale retry logic
-      this.reconnectAttempts = 0;
-      // Clear lastConnectedToken so same token can be used to reconnect later
-      this.lastConnectedToken = null;
-      this.setState({ status: "needsAuth", error: "Token no configurado - ve a Ajustes" });
-      return;
-    }
+    console.log(`[WS-EVENTS] connect -> hasToken=${!!token}`);
 
     this.connectLock = true;
     this.lastConnectTime = now;
@@ -238,12 +220,18 @@ class EventsWebSocketSingleton {
           this.flushInterval = null;
         }
 
-        // 4001 = auth error, 1000 = normal close - don't reconnect
+        // 4001 = auth error - server requires token but we don't have one or it's invalid
         if (event.code === 4001) {
-          console.warn("[WS-EVENTS] Conexión rechazada por token inválido/ausente. No se reintentará.");
+          console.warn("[WS-EVENTS] Conexión rechazada por token inválido/ausente. Configura el token en Ajustes.");
+          // Clear any pending reconnect timeout when entering needsAuth state
+          if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+          }
+          this.reconnectAttempts = 0;
           // Clear lastConnectedToken so same token can be retried after fix
           this.lastConnectedToken = null;
-          this.setState({ status: "needsAuth", error: "Token rechazado por el servidor" });
+          this.setState({ status: "needsAuth", error: "Token rechazado por el servidor - configura en Ajustes" });
           return;
         }
 

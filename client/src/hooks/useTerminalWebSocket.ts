@@ -59,26 +59,9 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    // Check token BEFORE connecting
+    // Get token but don't require it - server may allow unauthenticated connections
     const token = getAuthToken();
-    const hasToken = !!token;
-    console.log(`[WS-LOGS] connect -> hasToken=${hasToken}`);
-    
-    if (!hasToken) {
-      console.warn("[WS-LOGS] No hay token configurado. Ve a Ajustes para configurar TERMINAL_TOKEN.");
-      // Clear any pending reconnect timeout when entering needsAuth state
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      // Reset reconnect attempts to prevent stale retry logic
-      reconnectAttemptsRef.current = 0;
-      // Clear lastConnectedToken so same token can be used to reconnect later
-      lastConnectedTokenRef.current = null;
-      setStatus("needsAuth");
-      setError("Token no configurado - ve a Ajustes");
-      return;
-    }
+    console.log(`[WS-LOGS] connect -> hasToken=${!!token}`);
 
     setStatus("connecting");
     setError(null);
@@ -138,13 +121,19 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
         wsRef.current = null;
         setActiveSource(null);
 
-        // 4001 = auth error, 1000 = normal close - don't reconnect
+        // 4001 = auth error - server requires token but we don't have one or it's invalid
         if (event.code === 4001) {
-          console.warn("[WS-LOGS] Conexión rechazada por token inválido/ausente. No se reintentará.");
+          console.warn("[WS-LOGS] Conexión rechazada por token inválido/ausente. Configura el token en Ajustes.");
+          // Clear any pending reconnect timeout when entering needsAuth state
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+          reconnectAttemptsRef.current = 0;
           // Clear lastConnectedToken so same token can be retried after fix
           lastConnectedTokenRef.current = null;
           setStatus("needsAuth");
-          setError("Token rechazado por el servidor");
+          setError("Token rechazado por el servidor - configura en Ajustes");
           return;
         }
 
