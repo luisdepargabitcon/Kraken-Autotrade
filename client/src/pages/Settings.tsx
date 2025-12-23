@@ -553,12 +553,12 @@ export default function Settings() {
                         />
                       </div>
                       <p className="text-xs text-muted-foreground" data-testid="text-regime-detection-desc">
-                        Ajusta automáticamente los parámetros de salida según el tipo de mercado detectado (TREND/RANGE/TRANSITION). 
+                        Ajusta automáticamente los parámetros de entrada y salida según el tipo de mercado detectado. 
                         Usa ADX, EMAs y Bollinger Bands para identificar las condiciones.
                       </p>
                       {config?.regimeDetectionEnabled && (
                         <div className="text-xs bg-purple-500/10 p-2 rounded border border-purple-500/20 mt-2">
-                          <strong>Activo:</strong> TREND = exits amplios (BE 2.5%, TP 8%), RANGE = exits ajustados (BE 1%, TP 3%), TRANSITION = pausa entradas nuevas.
+                          <strong>Activo:</strong> TREND = 5 señales, exits amplios (BE 2.5%, TP 8%). RANGE = 6 señales, exits ajustados (BE 1%, TP 3%). TRANSITION = pausa entradas.
                         </div>
                       )}
                     </div>
