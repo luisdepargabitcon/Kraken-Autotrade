@@ -1,0 +1,42 @@
+REPLIT — INSTRUCCIÓN ÚNICA (OBLIGATORIA): VERIFICAR PRIMERO LO YA IMPLEMENTADO Y LUEGO PROCEDER
+
+1) NO asumir nada. Antes de cambiar código, VERIFICA en el repo si cada punto ya existe o está parcialmente implementado.
+   - Usa búsqueda: rg / grep (por ejemplo: "regime", "market regime", "sgBreakEvenActivated", "token inválido", "WS", "Authorization", "telegram", "dedupe", "candleStart", "scanTime").
+   - Enumera qué archivos tocas y por qué.
+
+2) Reproduce el problema con evidencia:
+   - Monitor en Chrome vs otros navegadores: capturar consola del navegador + logs servidor.
+   - Confirmar el origen exacto del error: “Conexión rechazada - token inválido”.
+   - Identificar cómo se genera/almacena el token (cookie vs localStorage) y cómo se adjunta al WebSocket.
+
+3) Auditoría rápida de implementación existente (antes de tocar nada):
+   A) Régimen de mercado:
+      - Confirmar que el toggle "regimeDetectionEnabled" funciona (ya aparece true en /api/config).
+      - Confirmar que el filtro RANGE/TRANSITION se aplica realmente en el motor (no solo existe el código).
+      - Ver si el régimen se expone en logs/API/scan diagnostic (probablemente NO).
+
+   B) Telegram:
+      - Confirmar qué mensajes se envían hoy: trades, errores, sistema, heartbeat.
+      - Confirmar si existe deduplicación (para NO enviar mensajes repetitivos).
+      - Confirmar si los mensajes de SELL incluyen realizedPnlUsd/realizedPnlPct cuando existen (tu caso indica que a veces NO llega).
+
+   C) WebSocket (Monitor):
+      - Confirmar el método de auth actual (query token / header / cookie).
+      - Confirmar validación de token en servidor y por qué rechaza.
+
+4) Tras verificar, PROCEDER en este orden (sin romper lo que funciona):
+   PASO 1 — Fix WS cross-browser (token/origin/scheme) + logs de causa de rechazo.
+   PASO 2 — Dedupe de alertas Telegram para evitar repetitivas (por par+señal+vela).
+   PASO 3 — Mensaje “Entraría con $X en PAR porque…” SOLO cuando haya BUY real/intent (deduplicado).
+   PASO 4 — Exponer régimen/tendencia en /api/scan/diagnostic y MARKET_SCAN_SUMMARY + logs de bloqueo (TRANSITION/RANGE).
+   PASO 5 — Telegram BE: incluir precio exacto de stop BE calculado (1 vez por activación).
+   PASO 6 — Telegram SELL: asegurar PnL en resumen si existe realizedPnL (sin tocar la lógica de trading).
+
+5) Entrega final:
+   - Checklist con estado: ✅ implementado / ⚠️ parcial / ❌ no implementado.
+   - PR(s) pequeños y atómicos (ideal: WS primero).
+   - Evidencias: capturas de consola + extractos de logs + endpoint outputs (scan/diagnostic, dashboard).
+
+IMPORTANTE:
+- No generar mensajes nuevos en Telegram en ciclos con signal=NONE.
+- No introducir spam de reconexión WS: si token inválido => parar y pedir refresh/login.

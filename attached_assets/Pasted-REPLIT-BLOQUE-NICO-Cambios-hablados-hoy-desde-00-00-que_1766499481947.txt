@@ -1,0 +1,179 @@
+REPLIT — BLOQUE ÚNICO (Cambios hablados hoy desde 00:00 que NO están implementados / quedan pendientes)
+
+OBJETIVO
+1) Que el Monitor funcione en TODOS los navegadores (ahora falla por “WS token inválido”).
+2) Que el bot explique “entraría con X en Y porque (motivo)” SIN alertas repetitivas.
+3) Que la detección de régimen/tendencia sea VERIFICABLE en UI/logs (ahora no se ve en los logs).
+4) Que Telegram incluya links del panel y detalles completos en BE/SELL (precios salida y PnL).
+
+──────────────────────────────────────────────────────────────────────────────
+A) FIX MONITOR (WebSocket) — “Conexión rechazada - token inválido” (menos Chrome)
+──────────────────────────────────────────────────────────────────────────────
+SÍNTOMA (logs):
+[websocket] [WS] Conexión rechazada - token inválido desde 192.168.1.37
+
+CAUSA PROBABLE:
+- El token no llega al WS en ciertos navegadores por: cookies (SameSite), credenciales CORS, uso de ws:// vs wss://, o porque el cliente no está adjuntando Authorization/param.
+- Chrome “perdona” o coincide con la forma de almacenar/reenviar token; otros no.
+
+CAMBIOS:
+A1) Estandarizar autenticación WS: aceptar token por 2 vías:
+    - Query param: ws://host/ws?token=...
+    - Header: Authorization: Bearer <token>
+    Y en cliente usar UNA sola forma consistente (recomendado: query param si es LAN).
+
+A2) En el frontend del Monitor/Terminal:
+    - Asegurar que el token se obtiene siempre del MISMO sitio (localStorage o cookie) y se pasa al WS.
+    - Si se usan cookies, forzar fetch con credenciales:
+        fetch(..., { credentials: "include" })
+      y revisar SameSite=None;Secure (si hay https).
+    - Si NO hay https (LAN), evitar dependencia de cookies “Secure”.
+
+A3) CORS/WS origin:
+    - Permitir Origin de http://192.168.1.104:3000 (y variantes) en el servidor WS.
+    - Loguear en servidor (nivel INFO) por qué rechaza: “missing token”, “invalid token”, “expired”, etc.
+
+A4) “Mixed content / ws scheme”:
+    - Si la UI corre en https y WS en ws://, algunos navegadores lo bloquean.
+      Solución: mismo esquema (wss:// si UI es https) o servir todo en http en LAN.
+    - En LAN típica: UI http://192.168.1.104:3000 y WS ws://192.168.1.104:3000 (mismo host/puerto).
+
+A5) Reintento limpio del cliente:
+    - Backoff (p.ej. 1s, 2s, 5s) y NO spamear reconexiones cada 1s sin token.
+    - Si token inválido => parar y pedir re-login/refresh token.
+
+ENTREGABLE:
+- PR: “Fix WS auth cross-browser” + prueba en Chrome/Firefox/Samsung/Edge móvil.
+
+──────────────────────────────────────────────────────────────────────────────
+B) “AVISO DE ENTRADA” NO REPETITIVO (Telegram) — “Entraría con tanto en X porque…”
+──────────────────────────────────────────────────────────────────────────────
+REQUISITO:
+- NO queremos alertas repetitivas cada ciclo (cada minuto/15m).
+- Queremos un mensaje SOLO cuando:
+  (1) aparezca una señal real de entrada (BUY) y se vaya a ejecutar, o
+  (2) al menos exista una “señal candidata” fuerte y estable, pero solo una vez por vela/ciclo relevante.
+
+CAMBIOS:
+B1) Implementar “Entry Decision Notification” con deduplicación:
+    - Crear una clave única por evento:
+        key = `${pair}:${signal}:${signalTimeframe}:${candleStartTs || scanTimeBucket}`
+      donde scanTimeBucket puede ser por minuto/por vela de 15m.
+    - Guardar lastNotifiedKey por par (en memoria + opcional persistencia DB “settings/state”).
+    - Enviar Telegram SOLO si key != lastNotifiedKey.
+
+B2) Contenido del mensaje “pre-trade / trade-intent”:
+    - Par, Señal (BUY), StrategyId, TF, Confidence
+    - “Entraría con: $X” (monto calculado real: minEntryUsd/ sizing / exposure)
+    - Motivo resumido (signalReason)
+    - Régimen detectado (TREND/RANGE/TRANSITION) + regla aplicada (p.ej. “RANGE => requiere ≥6 señales”)
+    - Link al panel: http://192.168.1.104:3000/ (y sublinks si quieres)
+
+B3) NO enviar si:
+    - signal = NONE
+    - daily limit reached
+    - sgMaxOpenLotsPerPair reached
+    - exposure no disponible / balance insuficiente
+    En esos casos, si quieres “avisos”, deben ir en modo “debug” y también deduplicados.
+
+B4) Cuándo llegaría el mensaje (tu pregunta):
+    - Solo cuando el motor detecte BUY y vaya a abrir posición
+    - o cuando pase de “NONE” a “BUY” dentro de una nueva vela 15m (dedupe por candleStartTs).
+    Resultado: si está en NONE, NO debe llegar nada.
+
+ENTREGABLE:
+- PR: “Telegram entry-intent (non repetitive) + dedupe by candle”
+
+──────────────────────────────────────────────────────────────────────────────
+C) RÉGIMEN / TENDENCIA — verificación en logs y API (ahora NO se ve)
+──────────────────────────────────────────────────────────────────────────────
+SITUACIÓN ACTUAL:
+- Tenéis implementado “Regime Detection” (filtro entradas, pausa en transition, ajustes salida),
+  pero en los logs que pasaste NO aparece el régimen ni la tendencia.
+
+CAMBIOS:
+C1) Incluir régimen en el resumen de escaneo:
+    - MARKET_SCAN_SUMMARY.meta.pairs[pair] debe incluir:
+        regime: "TREND" | "RANGE" | "TRANSITION"
+        regimeReason: string (opcional)
+        regimeSignalsCount / thresholdUsed (si aplica)
+    - También incluir un bloque global:
+        marketRegimeByPair + timestamp
+
+C2) /api/scan/diagnostic:
+    - Añadir campos:
+        regime, regimeReason, requiredSignals, currentSignals
+      para que desde UI puedas confirmar que está aplicando el filtro de rango/transición.
+
+C3) Logs de decisión:
+    - Cuando bloquea una entrada por régimen (p.ej. TRANSITION), log:
+        “[REGIME] BLOCK entry: TRANSITION pause”
+    - Cuando eleva umbral en RANGE:
+        “[REGIME] RANGE: require 6 signals (had 5) => NO ENTRY”
+    (Esto es clave para auditoría.)
+
+ENTREGABLE:
+- PR: “Expose regime in scan summary + diagnostic + decision logs”
+
+──────────────────────────────────────────────────────────────────────────────
+D) TELEGRAM — detalles de BREAK-EVEN y SELL con PnL en resumen (sin romper lo que funciona)
+──────────────────────────────────────────────────────────────────────────────
+D1) Alerta BREAK-EVEN:
+    - Cuando se active sgBreakEvenActivated:
+      enviar 1 mensaje (deduplicado) que incluya:
+        - Par / lotId
+        - EntryPrice
+        - BE trigger pct (sgBeAtPct)
+        - Precio exacto de stop BE calculado (incluyendo fee cushion si aplica)
+        - “Nuevo stop (BE): $X”
+    - Si vuelve a recalcular el stop, NO spamear: solo si cambia el stop en > un umbral (p.ej. 0.1%).
+
+D2) Alerta SELL (cierre):
+    - Ya existe mensaje, pero asegurar que SI hay realized PnL (como tu caso manual),
+      se incluya SIEMPRE en resumen:
+        PnL USD y PnL %
+        Fees (si están disponibles)
+        EntryPrice y ExitPrice
+        Motivo de salida (TP/TS/BE/manual)
+    - Esto sin tocar la lógica de trading: solo en el builder del mensaje, tomar realizedPnlUsd/realizedPnlPct si existen.
+
+D3) Añadir link del bot en Telegram:
+    - Incluir al pie del mensaje:
+        Panel: http://192.168.1.104:3000/
+        Monitor: http://192.168.1.104:3000/monitor
+        Terminal: http://192.168.1.104:3000/terminal
+      (siempre, o al menos en trades y cambios de régimen)
+
+ENTREGABLE:
+- PR: “Telegram BE details + SELL pnl always + panel links”
+
+──────────────────────────────────────────────────────────────────────────────
+E) VALIDACIÓN RÁPIDA (criterios de aceptación)
+──────────────────────────────────────────────────────────────────────────────
+1) Abrir Monitor en 3 navegadores distintos (Chrome + otro Android + Firefox/Edge):
+   - Sin “token inválido”
+   - WS conectado estable (sin reconexión en bucle)
+
+2) Con señales en NONE:
+   - Telegram NO envía nada (cero spam)
+
+3) Forzar condición de BUY:
+   - Llega 1 mensaje “Entraría con $X en PAR porque…”
+   - No se repite cada tick dentro de la misma vela 15m
+
+4) Ver régimen:
+   - /api/scan/diagnostic muestra regime por par
+   - Logs muestran bloqueos por TRANSITION y umbral en RANGE
+
+5) Activar BE:
+   - Telegram muestra “Nuevo stop BE: $X” (1 vez)
+
+6) Cerrar trade:
+   - Telegram incluye PnL USD/% + entry/exit + motivo + links
+
+──────────────────────────────────────────────────────────────────────────────
+NOTAS IMPORTANTES
+- Los “304” en endpoints (dashboard/trades/scan) son normales: caché, NO error.
+- El problema real del monitor es el WS token/origin/scheme; resolverlo primero.
+
+FIN DEL BLOQUE
