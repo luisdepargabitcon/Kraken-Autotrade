@@ -1,0 +1,64 @@
+APROBACIÓN / INSTRUCCIONES A REPLIT (ANTI-SPAM RÉGIMEN) — SIN CAMBIAR TRADING
+
+OBJETIVO
+Reducir spam de Telegram por “Cambio de Régimen / Parámetros ajustados” sin modificar la lógica de trading:
+- TRANSITION mantiene entradas pausadas (NO se habilitan entradas por tiempo).
+- No tocar sizing, stops, ni reglas de entrada/salida.
+
+FASE 1 — STORAGE (regime_state)
+Implementar almacenamiento por par (DB o cache persistente):
+regime_state:
+  pair
+  currentRegime
+  confirmedAt
+  lastNotifiedAt
+  holdUntil
+  transitionSince
+  candidateRegime
+  candidateCount
+  lastParamsHash
+  lastReasonHash
+
+Si ya existe caché equivalente, reutilizarla; si no, crear tabla ligera `regime_state`.
+
+FASE 2 — ANTI-SPAM CORE (Debounce + Histéresis + Cooldown)
+
+1) COOLDOWN DE NOTIFICACIÓN (hard)
+- Solo enviar notificación si newRegime != currentRegime AND (now - lastNotifiedAt) > 60 min.
+- Además: dedupe por payloadHash (si mismo payload => no enviar).
+
+2) CONFIRMACIÓN (Debounce) — Opción B con fallback A
+B) Confirmar por vela cerrada 15m:
+- Solo aceptar cambio de régimen si se mantiene en el cierre de una vela 15m (candle close).
+- Esto evita flapping intrabar.
+Fallback A) Si no hay OHLCV disponible:
+- Requerir N scans consecutivos del mismo régimen (N=3).
+
+3) HISTÉRESIS + MIN HOLD
+- Entrada a TREND: ADX >= 28 AND EMAs alineadas.
+- Salida de TREND: ADX <= 24 OR EMAs desalineadas durante 2 velas cerradas consecutivas.
+- minHoldMinutes = 30 (configurable).
+- Hard exit permitido si ADX < 20 (cambio inmediato).
+
+4) NOTIFICAR SOLO CAMBIOS “REALES” DE PARÁMETROS
+- Calcular paramsHash con: BE, TrailStart, TrailDistance, TP, MinSig (lo que se imprime).
+- Si paramsHash == lastParamsHash => NO enviar “Parámetros ajustados”.
+
+5) SILENCIO EN TRANSITION (sin re-spam)
+- Si está en TRANSITION, NO reenviar “Entradas pausadas” salvo:
+  a) primer mensaje al entrar (confirmado)
+  b) o reasonHash cambia de forma material
+
+LOGS DE VERIFICACIÓN
+Añadir logs “REGIME_NOTIFY_SKIPPED” con motivo:
+- cooldown / no_confirmed / hysteresis_hold / same_hash
+para validar que no es fallo, sino filtrado.
+
+CRITERIO DE ÉXITO
+- En flapping TREND↔TRANSITION: máximo 1 mensaje por par por hora.
+- No ráfagas repetidas en segundos/minutos.
+- Trading intacto: TRANSITION sigue sin entrar.
+
+NO IMPLEMENTAR AHORA
+- Política de “desbloqueo TRANSITION tras 120 min”
+- Cambios de entrada/sizing por régimen
