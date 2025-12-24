@@ -857,6 +857,7 @@ ${emoji} <b>${title}</b>
         // Only emit if guards passed
         if (shouldEmitSummary) {
           const scanSummary: Record<string, any> = {};
+          const sourcePairs = Array.from(this.lastScanResults.keys());
           
           for (const [pair, result] of this.lastScanResults) {
             const pairData: Record<string, any> = { ...result };
@@ -875,10 +876,18 @@ ${emoji} <b>${title}</b>
             scanSummary[pair] = pairData;
           }
 
+          // Post-build validation
+          const builtPairs = Object.keys(scanSummary);
+          log(`[SCAN_SUMMARY_BUILD] scanId=${scanId} source=${sourcePairs.length} built=${builtPairs.length}`, "trading");
+          if (builtPairs.length !== sourcePairs.length) {
+            log(`[SCAN_SUMMARY_MISMATCH] scanId=${scanId} source=[${sourcePairs.join(",")}] built=[${builtPairs.join(",")}]`, "trading");
+          }
+
           await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
             pairs: scanSummary,
             scanTime: new Date(this.lastScanTime).toISOString(),
             regimeDetectionEnabled,
+            _meta: { sourceCount: sourcePairs.length, builtCount: builtPairs.length, scanId },
           });
         }
       }
