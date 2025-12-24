@@ -390,6 +390,11 @@ export class TradingEngine {
   private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
   
+  // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
+  private scanInProgress: boolean = false;
+  private currentScanId: string = "";
+  private lastScanStartTime: number = 0;
+  
   // SMART_GUARD alert throttle: key = "lotId:eventType", value = timestamp
   private sgAlertThrottle: Map<string, number> = new Map();
   private readonly SG_TRAIL_UPDATE_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between trailing stop updates
@@ -815,33 +820,60 @@ ${emoji} <b>${title}</b>
 
       this.lastTickTime = now;
 
-      // Emitir MARKET_SCAN_SUMMARY si hay resultados
+      // Emitir MARKET_SCAN_SUMMARY si hay resultados (con guards)
       if (this.lastScanResults.size > 0) {
-        const scanSummary: Record<string, any> = {};
+        const activePairs = config?.activePairs || [];
         const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
         
-        for (const [pair, result] of this.lastScanResults) {
-          const pairData: Record<string, any> = { ...result };
-          
-          if (regimeDetectionEnabled) {
-            try {
-              const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
-              pairData.regime = regimeAnalysis.regime;
-              pairData.regimeReason = regimeAnalysis.reason;
-            } catch (err) {
-              pairData.regime = "ERROR";
-              pairData.regimeReason = "Error obteniendo régimen";
-            }
-          }
-          
-          scanSummary[pair] = pairData;
+        let shouldEmitSummary = true;
+        
+        // Guard 1: Skip if scan is in progress
+        if (this.scanInProgress) {
+          log(`[SCAN_SUMMARY_SKIPPED] scanId=${this.currentScanId} reason=scan_in_progress expected=${activePairs.length} got=${this.lastScanResults.size}`, "trading");
+          shouldEmitSummary = false;
         }
+        
+        // Guard 2: Validate completeness (only if not already skipped)
+        if (shouldEmitSummary) {
+          const gotPairs = Array.from(this.lastScanResults.keys());
+          const missingPairs = activePairs.filter((p: string) => !gotPairs.includes(p));
+          
+          log(`[SCAN_SUMMARY_COUNT] scanId=${this.currentScanId} expected=${activePairs.length} got=${gotPairs.length} missing=[${missingPairs.join(",")}]`, "trading");
+          
+          // If incomplete, skip emission (Option A)
+          if (missingPairs.length > 0) {
+            log(`[SCAN_SUMMARY_SKIPPED] scanId=${this.currentScanId} reason=incomplete_results missing=[${missingPairs.join(",")}]`, "trading");
+            shouldEmitSummary = false;
+          }
+        }
+        
+        // Only emit if guards passed
+        if (shouldEmitSummary) {
+          const scanSummary: Record<string, any> = {};
+          
+          for (const [pair, result] of this.lastScanResults) {
+            const pairData: Record<string, any> = { ...result };
+            
+            if (regimeDetectionEnabled) {
+              try {
+                const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+                pairData.regime = regimeAnalysis.regime;
+                pairData.regimeReason = regimeAnalysis.reason;
+              } catch (err) {
+                pairData.regime = "ERROR";
+                pairData.regimeReason = "Error obteniendo régimen";
+              }
+            }
+            
+            scanSummary[pair] = pairData;
+          }
 
-        await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
-          pairs: scanSummary,
-          scanTime: new Date(this.lastScanTime).toISOString(),
-          regimeDetectionEnabled,
-        });
+          await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
+            pairs: scanSummary,
+            scanTime: new Date(this.lastScanTime).toISOString(),
+            regimeDetectionEnabled,
+          });
+        }
       }
     } catch (error: any) {
       log(`Error emitiendo ENGINE_TICK: ${error.message}`, "trading");
@@ -1415,51 +1447,65 @@ El bot ha pausado las operaciones de COMPRA.
       const scannedPairs: string[] = [];
       const failedPairs: string[] = [];
 
-      for (const pair of activePairs) {
-        try {
-          log(`[SCAN_PAIR_START] pair=${pair}`, "trading");
-          
-          // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
-          if (!this.lastScanResults.has(pair)) {
-            const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
-            this.lastScanResults.set(pair, {
-              signal: "NONE",
-              reason: "Sin señal en este ciclo",
-              exposureAvailable: expDefault.maxAllowed,
-            });
-          }
-          
-          if (isCandleMode) {
-            const candle = await this.getLastClosedCandle(pair, signalTimeframe);
-            if (!candle) {
-              log(`[SCAN_PAIR_OK] pair=${pair} result=no_candle`, "trading");
-              scannedPairs.push(pair);
-              continue;
+      // Mark scan as in progress and clear previous results
+      this.scanInProgress = true;
+      this.currentScanId = `scan-${Date.now()}`;
+      this.lastScanStartTime = Date.now();
+      this.lastScanResults.clear(); // Clear stale results from previous scan
+      log(`[SCAN_START] scanId=${this.currentScanId} expectedPairs=[${activePairs.join(",")}]`, "trading");
+
+      try {
+        for (const pair of activePairs) {
+          try {
+            log(`[SCAN_PAIR_START] pair=${pair}`, "trading");
+            
+            // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
+            if (!this.lastScanResults.has(pair)) {
+              const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+              this.lastScanResults.set(pair, {
+                signal: "NONE",
+                reason: "Sin señal en este ciclo",
+                exposureAvailable: expDefault.maxAllowed,
+              });
             }
             
-            if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
-              log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
-              await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+            if (isCandleMode) {
+              const candle = await this.getLastClosedCandle(pair, signalTimeframe);
+              if (!candle) {
+                log(`[SCAN_PAIR_OK] pair=${pair} result=no_candle`, "trading");
+                scannedPairs.push(pair);
+                continue;
+              }
+              
+              if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
+                log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
+                await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+              }
+            } else {
+              await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
             }
-          } else {
-            await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
+            
+            log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
+            scannedPairs.push(pair);
+          } catch (pairError: any) {
+            log(`[SCAN_PAIR_ERR] pair=${pair} error=${pairError.message}`, "trading");
+            failedPairs.push(pair);
+            continue; // Never break the loop - continue to next pair
           }
-          
-          log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
-          scannedPairs.push(pair);
-        } catch (pairError: any) {
-          log(`[SCAN_PAIR_ERR] pair=${pair} error=${pairError.message}`, "trading");
-          failedPairs.push(pair);
-          continue; // Never break the loop - continue to next pair
         }
-      }
 
-      // Validate all pairs were processed
-      if (scannedPairs.length + failedPairs.length !== activePairs.length) {
-        log(`[SCAN_INCOMPLETE] expected=${activePairs.length} scanned=${scannedPairs.length} failed=${failedPairs.length}`, "trading");
-      }
-      if (failedPairs.length > 0) {
-        log(`[SCAN_FAILURES] pairs=${failedPairs.join(",")}`, "trading");
+        // Validate all pairs were processed
+        if (scannedPairs.length + failedPairs.length !== activePairs.length) {
+          log(`[SCAN_INCOMPLETE] expected=${activePairs.length} scanned=${scannedPairs.length} failed=${failedPairs.length}`, "trading");
+        }
+        if (failedPairs.length > 0) {
+          log(`[SCAN_FAILURES] pairs=${failedPairs.join(",")}`, "trading");
+        }
+      } finally {
+        // Always mark scan as complete and log SCAN_END
+        const durationMs = Date.now() - this.lastScanStartTime;
+        this.scanInProgress = false;
+        log(`[SCAN_END] scanId=${this.currentScanId} expected=${activePairs.length} done=${scannedPairs.length} failures=${failedPairs.length} durationMs=${durationMs}`, "trading");
       }
     } catch (error: any) {
       log(`Error en ciclo de trading: ${error.message}`, "trading");
