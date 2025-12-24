@@ -1,0 +1,59 @@
+OBJETIVO
+Corregir MARKET_SCAN_SUMMARY parcial: actualmente se emite desde emitEngineTick() (heartbeat ~60s) leyendo this.lastScanResults mientras el scan loop puede estar en curso. Resultado: Meta.pairs incompleto aunque existan SCAN_PAIR_OK para 4/4.
+
+CAUSA RAÍZ (confirmada)
+- emitEngineTick() puede ejecutarse mientras scanLoop() sigue escaneando pares
+- this.lastScanResults contiene resultados parciales (los pares ya procesados)
+- No hay guard/validación: lastScanResults.size === activePairs.length
+
+CAMBIO PROPUESTO (mínimo y seguro)
+1) Flag de estado
+- Añadir this.scanInProgress (boolean) y this.scanId (opcional) en el engine.
+- Al iniciar un scan loop: this.scanInProgress = true; this.currentScanId = <timestamp/uuid>
+- Al finalizar (finally): this.scanInProgress = false
+
+2) No emitir summary si scan está en curso
+- En emitEngineTick() o en el lugar donde se emite MARKET_SCAN_SUMMARY:
+  if (this.scanInProgress) {
+    log [SCAN_SUMMARY_SKIPPED] reason=scan_in_progress scanId=<id> expected=<activePairsLen> got=<lastScanResultsSize>
+    return;
+  }
+
+3) Validación de completitud antes de emitir MARKET_SCAN_SUMMARY
+- expectedPairs = this.activePairs (o config.activePairs)
+- gotPairs = keys(this.lastScanResults)
+- missing = expectedPairs.filter(p => !gotPairs.includes(p))
+
+- Si missing.length > 0:
+  log [SCAN_SUMMARY_COUNT] expected=N got=M missing=[...] scanId=<id> scanTime=<...>
+  (opción A) NO emitir MARKET_SCAN_SUMMARY
+  (opción B) emitir pero con campo summaryIncomplete=true + missingPairs=[...]
+  Recomendación: opción A (no emitir summary incompleto) para eliminar confusión.
+
+4) Log de fin de scan explícito
+- Al terminar el loop de scan (una vez procesados todos los pares, incluso si alguno falla):
+  log [SCAN_END] scanId=<id> pairsExpected=N pairsDone=M durationMs=... failures=<k>
+  Esto permite correlacionar y auditar.
+
+LOGS GREPABLES REQUERIDOS (exactos)
+- [SCAN_START] scanId=... expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+- [SCAN_END] scanId=... expected=4 done=4 durationMs=...
+- [SCAN_SUMMARY_SKIPPED] scanId=... reason=scan_in_progress expected=4 got=2
+- [SCAN_SUMMARY_COUNT] scanId=... expected=4 got=4 missing=[]
+
+CRITERIOS DE ACEPTACIÓN (PAS/FAIL)
+A) En 50 ciclos consecutivos:
+- Nunca debe aparecer MARKET_SCAN_SUMMARY con got < expected.
+- Si el tick cae en medio del scan, debe aparecer [SCAN_SUMMARY_SKIPPED] (no summary parcial).
+B) Correlación:
+- Tras [SCAN_END] (done=expected) debe aparecer [SCAN_SUMMARY_COUNT expected=got=4 missing=[]] y luego MARKET_SCAN_SUMMARY con 4 pares.
+C) Sin regresión:
+- SCAN_PAIR_START/OK debe seguir saliendo 4/4.
+- Sin cambios en lógica de trading: solo afecta a publicación/diagnóstico.
+
+VERIFICACIÓN RÁPIDA EN NAS (no UI)
+- Seguir logs y filtrar:
+  grep -E "SCAN_START|SCAN_END|SCAN_SUMMARY_|MARKET_SCAN_SUMMARY"
+- Confirmar que:
+  1) No existe summary con menos pares que activePairs
+  2) Los skips ocurren cuando scanInProgress=true
