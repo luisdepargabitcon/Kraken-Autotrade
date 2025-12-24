@@ -394,6 +394,7 @@ export class TradingEngine {
   private scanInProgress: boolean = false;
   private currentScanId: string = "";
   private lastScanStartTime: number = 0;
+  private lastExpectedPairs: string[] = [];
   
   // SMART_GUARD alert throttle: key = "lotId:eventType", value = timestamp
   private sgAlertThrottle: Map<string, number> = new Map();
@@ -822,27 +823,33 @@ ${emoji} <b>${title}</b>
 
       // Emitir MARKET_SCAN_SUMMARY si hay resultados (con guards)
       if (this.lastScanResults.size > 0) {
-        const activePairs = config?.activePairs || [];
         const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
+        
+        // Snapshot scan state to avoid race conditions
+        const scanId = this.currentScanId;
+        const scanInProgress = this.scanInProgress;
+        const expectedPairs = this.lastExpectedPairs.length > 0 
+          ? this.lastExpectedPairs 
+          : (config?.activePairs || []);
         
         let shouldEmitSummary = true;
         
         // Guard 1: Skip if scan is in progress
-        if (this.scanInProgress) {
-          log(`[SCAN_SUMMARY_SKIPPED] scanId=${this.currentScanId} reason=scan_in_progress expected=${activePairs.length} got=${this.lastScanResults.size}`, "trading");
+        if (scanInProgress) {
+          log(`[SCAN_SUMMARY_SKIPPED] scanId=${scanId} reason=scan_in_progress expected=${expectedPairs.length} got=${this.lastScanResults.size}`, "trading");
           shouldEmitSummary = false;
         }
         
         // Guard 2: Validate completeness (only if not already skipped)
         if (shouldEmitSummary) {
           const gotPairs = Array.from(this.lastScanResults.keys());
-          const missingPairs = activePairs.filter((p: string) => !gotPairs.includes(p));
+          const missingPairs = expectedPairs.filter((p: string) => !gotPairs.includes(p));
           
-          log(`[SCAN_SUMMARY_COUNT] scanId=${this.currentScanId} expected=${activePairs.length} got=${gotPairs.length} missing=[${missingPairs.join(",")}]`, "trading");
+          log(`[SCAN_SUMMARY_COUNT] scanId=${scanId} expected=${expectedPairs.length} got=${gotPairs.length} missing=[${missingPairs.join(",")}]`, "trading");
           
           // If incomplete, skip emission (Option A)
           if (missingPairs.length > 0) {
-            log(`[SCAN_SUMMARY_SKIPPED] scanId=${this.currentScanId} reason=incomplete_results missing=[${missingPairs.join(",")}]`, "trading");
+            log(`[SCAN_SUMMARY_SKIPPED] scanId=${scanId} reason=incomplete_results missing=[${missingPairs.join(",")}]`, "trading");
             shouldEmitSummary = false;
           }
         }
@@ -1451,6 +1458,7 @@ El bot ha pausado las operaciones de COMPRA.
       this.scanInProgress = true;
       this.currentScanId = `scan-${Date.now()}`;
       this.lastScanStartTime = Date.now();
+      this.lastExpectedPairs = [...activePairs]; // Snapshot for guard validation
       this.lastScanResults.clear(); // Clear stale results from previous scan
       log(`[SCAN_START] scanId=${this.currentScanId} expectedPairs=[${activePairs.join(",")}]`, "trading");
 
