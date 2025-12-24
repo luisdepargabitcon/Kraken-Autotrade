@@ -293,23 +293,23 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
   },
 };
 
-// === REGIME ANTI-SPAM CONFIGURATION (Phase 2) ===
+// === REGIME ANTI-SPAM CONFIGURATION (Phase 2 - Opción B Híbrida) ===
 const REGIME_CONFIG = {
-  // Hysteresis: ADX thresholds for TREND entry/exit (Phase 2.3)
-  ADX_TREND_ENTRY: 28,      // Entrar TREND: ADX >= 28
-  ADX_TREND_EXIT: 24,       // Salir TREND: ADX <= 24
-  ADX_HARD_EXIT: 20,        // Hard exit (cambio inmediato)
+  // Hysteresis: ADX thresholds for TREND entry/exit
+  ADX_TREND_ENTRY: 27,      // Entrar TREND: ADX >= 27
+  ADX_TREND_EXIT: 23,       // Salir TREND: ADX <= 23
+  ADX_HARD_EXIT: 19,        // Hard exit (cambio inmediato)
   
-  // MinHold: Minimum time before regime can flip (Phase 2.3)
-  MIN_HOLD_MINUTES: 30,
+  // MinHold: Minimum time before regime can flip
+  MIN_HOLD_MINUTES: 20,
   
-  // Cooldown: Minimum time between notifications (Phase 2.1)
+  // Cooldown: Minimum time between notifications
   NOTIFY_COOLDOWN_MS: 60 * 60 * 1000,  // 60 min cooldown per pair
   
-  // Confirmation: Consecutive scans required for debounce (Phase 2.2 fallback)
+  // Confirmation: Consecutive scans required for debounce
   CONFIRM_SCANS_REQUIRED: 3,
   
-  // Hash: Use SHA256 truncated for dedup (Phase 2.1)
+  // Hash: Use SHA256 truncated for dedup
   HASH_LENGTH: 16,
 };
 
@@ -419,6 +419,9 @@ export class TradingEngine {
       this.dryRunMode = true;
       log("[SAFETY] Entorno Replit detectado - DRY_RUN activado automáticamente", "trading");
     }
+    
+    // Log regime parameters at startup
+    log(`[REGIME_PARAMS] enter=${REGIME_CONFIG.ADX_TREND_ENTRY} exit=${REGIME_CONFIG.ADX_TREND_EXIT} hardExit=${REGIME_CONFIG.ADX_HARD_EXIT} confirm=${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} minHold=${REGIME_CONFIG.MIN_HOLD_MINUTES} cooldown=${REGIME_CONFIG.NOTIFY_COOLDOWN_MS / 60000}min`, "trading");
   }
 
   // === MULTI-LOT HELPERS ===
@@ -3890,15 +3893,18 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     // Keep lastRegime map in sync with persistent state
     this.lastRegime.set(pair, currentConfirmed);
     
-    // Phase 2.3: Check MinHold (30 min) - prevent flip unless hard exit
+    // Phase 2.3: Check MinHold - prevent flip unless hard exit
     if (state?.holdUntil && now < state.holdUntil) {
       const isHardExit = rawAnalysis.adx < REGIME_CONFIG.ADX_HARD_EXIT;
+      const remainingMs = state.holdUntil.getTime() - now.getTime();
+      const remainingMin = Math.ceil(remainingMs / 60000);
+      
       if (!isHardExit) {
-        log(`[REGIME] ${pair}: candidate=${rawAnalysis.regime} BLOCKED by holdUntil (${state.holdUntil.toISOString()})`, "trading");
+        log(`[REGIME_HOLD] pair=${pair} skipChange=true remainingMin=${remainingMin} candidate=${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
         log(`[REGIME_NOTIFY] sent=false skipReason=hysteresis_hold pair=${pair}`, "trading");
         return { ...rawAnalysis, regime: currentConfirmed };
       }
-      log(`[REGIME] ${pair}: Hard exit ADX=${rawAnalysis.adx.toFixed(0)} < ${REGIME_CONFIG.ADX_HARD_EXIT}, bypassing hold`, "trading");
+      log(`[REGIME_HARD_EXIT] pair=${pair} adx=${rawAnalysis.adx.toFixed(1)} changeImmediate=true bypassHold=true`, "trading");
     }
     
     // Phase 2.2: Confirmation via consecutive scans (fallback mode)
@@ -3911,7 +3917,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const newCount = candidateCount + 1;
         const confirmed = newCount >= REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
         
-        log(`[REGIME_CONFIRM] mode=scans pair=${pair} candidate=${rawAnalysis.regime} consecutive=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED}`, "trading");
+        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
         
         if (confirmed) {
           // Confirmed! Update state and send alert
@@ -3928,7 +3934,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             lastAdx: rawAnalysis.adx.toString(),
           });
           
-          log(`[REGIME] ${pair}: changed ${currentConfirmed}->${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(0)} holdUntil=${holdUntil.toISOString()}`, "trading");
+          log(`[REGIME_CONFIRM] pair=${pair} from=${currentConfirmed} to=${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(1)} holdUntil=${holdUntil.toISOString()}`, "trading");
           
           // Update lastRegime map with new confirmed regime
           this.lastRegime.set(pair, rawAnalysis.regime);
@@ -3949,7 +3955,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
       } else {
         // Different candidate: reset counter
-        log(`[REGIME] ${pair}: candidate=${rawAnalysis.regime} count=1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} (reset from ${candidateRegime || "none"})`, "trading");
+        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} reset=true prevCandidate=${candidateRegime || "none"} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
         await this.upsertRegimeState(pair, {
           candidateRegime: rawAnalysis.regime,
           candidateCount: 1,
