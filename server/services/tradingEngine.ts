@@ -1411,28 +1411,55 @@ El bot ha pausado las operaciones de COMPRA.
       const signalTimeframe = config.signalTimeframe || "cycle";
       const isCandleMode = signalTimeframe !== "cycle" && config.strategy === "momentum";
 
-      for (const pair of config.activePairs) {
-        // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
-        if (!this.lastScanResults.has(pair)) {
-          const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
-          this.lastScanResults.set(pair, {
-            signal: "NONE",
-            reason: "Sin señal en este ciclo",
-            exposureAvailable: expDefault.maxAllowed,
-          });
-        }
-        
-        if (isCandleMode) {
-          const candle = await this.getLastClosedCandle(pair, signalTimeframe);
-          if (!candle) continue;
+      const activePairs = config.activePairs || [];
+      const scannedPairs: string[] = [];
+      const failedPairs: string[] = [];
+
+      for (const pair of activePairs) {
+        try {
+          log(`[SCAN_PAIR_START] pair=${pair}`, "trading");
           
-          if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
-            log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
-            await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+          // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
+          if (!this.lastScanResults.has(pair)) {
+            const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+            this.lastScanResults.set(pair, {
+              signal: "NONE",
+              reason: "Sin señal en este ciclo",
+              exposureAvailable: expDefault.maxAllowed,
+            });
           }
-        } else {
-          await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
+          
+          if (isCandleMode) {
+            const candle = await this.getLastClosedCandle(pair, signalTimeframe);
+            if (!candle) {
+              log(`[SCAN_PAIR_OK] pair=${pair} result=no_candle`, "trading");
+              scannedPairs.push(pair);
+              continue;
+            }
+            
+            if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
+              log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
+              await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+            }
+          } else {
+            await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
+          }
+          
+          log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
+          scannedPairs.push(pair);
+        } catch (pairError: any) {
+          log(`[SCAN_PAIR_ERR] pair=${pair} error=${pairError.message}`, "trading");
+          failedPairs.push(pair);
+          continue; // Never break the loop - continue to next pair
         }
+      }
+
+      // Validate all pairs were processed
+      if (scannedPairs.length + failedPairs.length !== activePairs.length) {
+        log(`[SCAN_INCOMPLETE] expected=${activePairs.length} scanned=${scannedPairs.length} failed=${failedPairs.length}`, "trading");
+      }
+      if (failedPairs.length > 0) {
+        log(`[SCAN_FAILURES] pairs=${failedPairs.join(",")}`, "trading");
       }
     } catch (error: any) {
       log(`Error en ciclo de trading: ${error.message}`, "trading");
