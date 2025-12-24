@@ -1,0 +1,64 @@
+Replit — aplicar fix MARKET_SCAN_SUMMARY parcial (race con emitEngineTick)
+
+Objetivo: evitar que MARKET_SCAN_SUMMARY salga con pares incompletos cuando el heartbeat (60s) cae mientras el scan está en curso.
+
+Cambios a aplicar (server/services/tradingEngine.ts):
+
+Props nuevas en la clase
+
+// Scan state tracking (for MARKET_SCAN_SUMMARY guard)
+private scanInProgress: boolean = false;
+private currentScanId: string = "";
+private lastScanStartTime: number = 0;
+private lastExpectedPairs: string[] = [];
+
+
+En runTradingLoop / inicio de scan (antes del for de pares)
+
+this.scanInProgress = true;
+this.currentScanId = `scan-${Date.now()}`;
+this.lastScanStartTime = Date.now();
+this.lastExpectedPairs = [...activePairs]; // snapshot expected pairs
+this.lastScanResults.clear();              // clear stale previous results
+log(`[SCAN_START] scanId=${this.currentScanId} expectedPairs=[${activePairs.join(",")}]`, "trading");
+
+
+Asegurar arrays para SCAN_END
+
+Declarar y poblar scannedPairs[] y failedPairs[] dentro del scan.
+
+En finally:
+
+const durationMs = Date.now() - this.lastScanStartTime;
+this.scanInProgress = false;
+log(`[SCAN_END] scanId=${this.currentScanId} expected=${activePairs.length} done=${scannedPairs.length} failures=${failedPairs.length} durationMs=${durationMs}`, "trading");
+
+
+Guards en emitEngineTick (bloque MARKET_SCAN_SUMMARY)
+
+Snapshot local para evitar race:
+
+const scanId = this.currentScanId;
+const scanInProgress = this.scanInProgress;
+const expectedPairs = this.lastExpectedPairs.length > 0 ? this.lastExpectedPairs : (config?.activePairs || []);
+
+
+Guard 1: si scanInProgress → log [SCAN_SUMMARY_SKIPPED] reason=scan_in_progress y NO emitir summary.
+
+Guard 2: si faltan pares → log [SCAN_SUMMARY_COUNT] + [SCAN_SUMMARY_SKIPPED] reason=incomplete_results y NO emitir summary.
+
+Solo si pasa guards → emitir MARKET_SCAN_SUMMARY (resto del código igual).
+
+Criterio de aceptación (verificar en NAS por logs):
+
+Si un tick cae durante scan: aparece [SCAN_SUMMARY_SKIPPED] reason=scan_in_progress y no hay MARKET_SCAN_SUMMARY parcial.
+
+Tras scan completo: secuencia
+
+[SCAN_END] expected=4 done=4 failures=0
+
+[SCAN_SUMMARY_COUNT] expected=4 got=4 missing=[]
+
+MARKET_SCAN_SUMMARY con 4 pares
+
+Si falla un par (simular timeout): [SCAN_END] failures=1 + [SCAN_SUMMARY_SKIPPED] reason=incomplete_results missing=[...] y no hay summary incompleto.
