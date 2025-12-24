@@ -7,6 +7,10 @@ import { aiService, AiFeatures } from "./aiService";
 import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
+import { createHash } from "crypto";
+import { regimeState, type RegimeState } from "@shared/schema";
+import { db } from "../db";
+import { eq } from "drizzle-orm";
 
 interface PriceData {
   price: number;
@@ -289,6 +293,26 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
   },
 };
 
+// === REGIME ANTI-SPAM CONFIGURATION (Phase 2) ===
+const REGIME_CONFIG = {
+  // Hysteresis: ADX thresholds for TREND entry/exit (Phase 2.3)
+  ADX_TREND_ENTRY: 28,      // Entrar TREND: ADX >= 28
+  ADX_TREND_EXIT: 24,       // Salir TREND: ADX <= 24
+  ADX_HARD_EXIT: 20,        // Hard exit (cambio inmediato)
+  
+  // MinHold: Minimum time before regime can flip (Phase 2.3)
+  MIN_HOLD_MINUTES: 30,
+  
+  // Cooldown: Minimum time between notifications (Phase 2.1)
+  NOTIFY_COOLDOWN_MS: 60 * 60 * 1000,  // 60 min cooldown per pair
+  
+  // Confirmation: Consecutive scans required for debounce (Phase 2.2 fallback)
+  CONFIRM_SCANS_REQUIRED: 3,
+  
+  // Hash: Use SHA256 truncated for dedup (Phase 2.1)
+  HASH_LENGTH: 16,
+};
+
 export class TradingEngine {
   private krakenService: KrakenService;
   private telegramService: TelegramService;
@@ -372,7 +396,10 @@ export class TradingEngine {
   
   // Regime change alert throttle: key = "pair:fromRegime:toRegime", value = timestamp
   private regimeAlertThrottle: Map<string, number> = new Map();
-  private readonly REGIME_ALERT_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes between same regime change alerts
+  private readonly REGIME_ALERT_THROTTLE_MS = REGIME_CONFIG.NOTIFY_COOLDOWN_MS; // 60 min cooldown per pair
+  
+  // EMA misalignment tracker for hysteresis (2 consecutive candles)
+  private emaMisalignCount: Map<string, number> = new Map();
   
   // DRY_RUN mode: audit without sending real orders
   private dryRunMode: boolean = false;
@@ -3703,27 +3730,37 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         : 2;
       if (!isFinite(bollingerWidth)) bollingerWidth = 2;
       
-      // 4. Determine regime
+      // 4. Determine regime with hysteresis (Phase 2.3)
+      // TREND entry: ADX >= 28 + EMAs aligned
+      // TREND exit: ADX <= 24 OR EMAs misaligned
+      // Hard exit: ADX < 20 (immediate)
       let regime: MarketRegime;
       let confidence: number;
       let reason: string;
       
-      if (adx > 25 && Math.abs(emaAlignment) >= 0.5) {
-        // Strong trend: ADX high + EMAs aligned
+      const emaMisaligned = Math.abs(emaAlignment) < 0.5;
+      
+      if (adx >= REGIME_CONFIG.ADX_TREND_ENTRY && !emaMisaligned) {
+        // Strong trend: ADX >= 28 + EMAs aligned
         regime = "TREND";
-        confidence = Math.min(0.95, 0.6 + (adx - 25) / 50 + Math.abs(emaAlignment) * 0.2);
+        confidence = Math.min(0.95, 0.6 + (adx - REGIME_CONFIG.ADX_TREND_ENTRY) / 50 + Math.abs(emaAlignment) * 0.2);
         const direction = emaAlignment > 0 ? "alcista" : "bajista";
         reason = `Tendencia ${direction} (ADX=${adx.toFixed(0)}, EMAs alineadas)`;
-      } else if (adx < 20 && bollingerWidth < 4) {
-        // Range: ADX low + narrow bands
+      } else if (adx < REGIME_CONFIG.ADX_HARD_EXIT && bollingerWidth < 4) {
+        // Range: ADX < 20 (hard exit) + narrow bands
         regime = "RANGE";
-        confidence = Math.min(0.9, 0.5 + (20 - adx) / 40 + (4 - bollingerWidth) / 8);
+        confidence = Math.min(0.9, 0.5 + (REGIME_CONFIG.ADX_HARD_EXIT - adx) / 40 + (4 - bollingerWidth) / 8);
         reason = `Mercado lateral (ADX=${adx.toFixed(0)}, BB width=${bollingerWidth.toFixed(1)}%)`;
-      } else {
-        // Transition: between regimes
+      } else if (adx <= REGIME_CONFIG.ADX_TREND_EXIT || emaMisaligned) {
+        // Exit TREND zone but not yet RANGE - TRANSITION
         regime = "TRANSITION";
         confidence = 0.5;
-        reason = `Transición (ADX=${adx.toFixed(0)}, esperando confirmación)`;
+        reason = `Transición (ADX=${adx.toFixed(0)}, ${emaMisaligned ? "EMAs desalineadas" : "esperando confirmación"})`;
+      } else {
+        // ADX between 24-28: maintain current or default to TRANSITION
+        regime = "TRANSITION";
+        confidence = 0.5;
+        reason = `Zona intermedia (ADX=${adx.toFixed(0)}, histéresis activa)`;
       }
       
       if (!isFinite(confidence)) confidence = 0.5;
@@ -3761,72 +3798,207 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     };
   }
 
+  // === PHASE 2: ANTI-SPAM HELPERS ===
+  
+  private computeHash(input: string): string {
+    return createHash("sha256").update(input).digest("hex").substring(0, REGIME_CONFIG.HASH_LENGTH);
+  }
+  
+  private computeParamsHash(regime: MarketRegime): string {
+    const preset = REGIME_PRESETS[regime];
+    const payload = `${preset.sgBeAtPct}|${preset.sgTrailDistancePct}|${preset.sgTpFixedPct}|${preset.minSignals}`;
+    return this.computeHash(payload);
+  }
+  
+  private computeReasonHash(regime: MarketRegime, reason: string): string {
+    return this.computeHash(`${regime}|${reason}`);
+  }
+  
+  private async getRegimeState(pair: string): Promise<RegimeState | null> {
+    try {
+      const [state] = await db.select().from(regimeState).where(eq(regimeState.pair, pair)).limit(1);
+      return state || null;
+    } catch (error) {
+      log(`[REGIME] Error loading state for ${pair}: ${error}`, "trading");
+      return null;
+    }
+  }
+  
+  private async upsertRegimeState(pair: string, updates: Partial<RegimeState>): Promise<void> {
+    try {
+      const existing = await this.getRegimeState(pair);
+      if (existing) {
+        await db.update(regimeState)
+          .set({ ...updates, updatedAt: new Date() })
+          .where(eq(regimeState.pair, pair));
+      } else {
+        await db.insert(regimeState).values({
+          pair,
+          currentRegime: updates.currentRegime || "TRANSITION",
+          candidateCount: updates.candidateCount || 0,
+          ...updates,
+          updatedAt: new Date(),
+        });
+      }
+    } catch (error) {
+      log(`[REGIME] Error saving state for ${pair}: ${error}`, "trading");
+    }
+  }
+
   private async getMarketRegimeWithCache(pair: string): Promise<RegimeAnalysis> {
     const cached = this.regimeCache.get(pair);
     if (cached && Date.now() - cached.timestamp < this.REGIME_CACHE_TTL_MS) {
       return cached.regime;
     }
     
-    // Get 1h candles for regime detection (most stable timeframe)
+    const defaultResult: RegimeAnalysis = {
+      regime: "TRANSITION",
+      adx: 25,
+      emaAlignment: 0,
+      bollingerWidth: 2,
+      confidence: 0.3,
+      reason: "Datos insuficientes",
+    };
+    
     try {
       const candles = await this.krakenService.getOHLC(pair, 60); // 1h candles
       if (!candles || candles.length < 50) {
-        return {
-          regime: "TRANSITION",
-          adx: 25,
-          emaAlignment: 0,
-          bollingerWidth: 2,
-          confidence: 0.3,
-          reason: "Datos insuficientes",
-        };
+        return defaultResult;
       }
       
-      const analysis = this.detectMarketRegime(candles);
+      // Raw detection (without persistence logic)
+      const rawAnalysis = this.detectMarketRegime(candles);
       
-      // Cache result
-      this.regimeCache.set(pair, { regime: analysis, timestamp: Date.now() });
+      // Phase 2.2: Confirmation + Phase 2.3: MinHold + Hysteresis
+      const confirmedAnalysis = await this.applyRegimeConfirmation(pair, rawAnalysis);
       
-      // Check for regime change and alert
-      const lastRegime = this.lastRegime.get(pair);
-      if (lastRegime && lastRegime !== analysis.regime) {
-        await this.sendRegimeChangeAlert(pair, lastRegime, analysis);
-      }
-      this.lastRegime.set(pair, analysis.regime);
+      // Cache confirmed result
+      this.regimeCache.set(pair, { regime: confirmedAnalysis, timestamp: Date.now() });
       
-      return analysis;
+      return confirmedAnalysis;
     } catch (error: any) {
       log(`Error obteniendo régimen para ${pair}: ${error.message}`, "trading");
-      return {
-        regime: "TRANSITION",
-        adx: 25,
-        emaAlignment: 0,
-        bollingerWidth: 2,
-        confidence: 0.3,
-        reason: "Error en detección",
-      };
+      return { ...defaultResult, reason: "Error en detección" };
     }
+  }
+  
+  private async applyRegimeConfirmation(pair: string, rawAnalysis: RegimeAnalysis): Promise<RegimeAnalysis> {
+    const now = new Date();
+    const state = await this.getRegimeState(pair);
+    const currentConfirmed = (state?.currentRegime as MarketRegime) || "TRANSITION";
+    
+    // Keep lastRegime map in sync with persistent state
+    this.lastRegime.set(pair, currentConfirmed);
+    
+    // Phase 2.3: Check MinHold (30 min) - prevent flip unless hard exit
+    if (state?.holdUntil && now < state.holdUntil) {
+      const isHardExit = rawAnalysis.adx < REGIME_CONFIG.ADX_HARD_EXIT;
+      if (!isHardExit) {
+        log(`[REGIME] ${pair}: candidate=${rawAnalysis.regime} BLOCKED by holdUntil (${state.holdUntil.toISOString()})`, "trading");
+        log(`[REGIME_NOTIFY] sent=false skipReason=hysteresis_hold pair=${pair}`, "trading");
+        return { ...rawAnalysis, regime: currentConfirmed };
+      }
+      log(`[REGIME] ${pair}: Hard exit ADX=${rawAnalysis.adx.toFixed(0)} < ${REGIME_CONFIG.ADX_HARD_EXIT}, bypassing hold`, "trading");
+    }
+    
+    // Phase 2.2: Confirmation via consecutive scans (fallback mode)
+    if (rawAnalysis.regime !== currentConfirmed) {
+      const candidateRegime = state?.candidateRegime;
+      const candidateCount = state?.candidateCount || 0;
+      
+      if (rawAnalysis.regime === candidateRegime) {
+        // Same candidate: increment count
+        const newCount = candidateCount + 1;
+        const confirmed = newCount >= REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
+        
+        log(`[REGIME_CONFIRM] mode=scans pair=${pair} candidate=${rawAnalysis.regime} consecutive=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED}`, "trading");
+        
+        if (confirmed) {
+          // Confirmed! Update state and send alert
+          const holdUntil = new Date(now.getTime() + REGIME_CONFIG.MIN_HOLD_MINUTES * 60 * 1000);
+          const transitionSince = rawAnalysis.regime === "TRANSITION" ? now : null;
+          
+          await this.upsertRegimeState(pair, {
+            currentRegime: rawAnalysis.regime,
+            confirmedAt: now,
+            holdUntil,
+            transitionSince,
+            candidateRegime: null,
+            candidateCount: 0,
+            lastAdx: rawAnalysis.adx.toString(),
+          });
+          
+          log(`[REGIME] ${pair}: changed ${currentConfirmed}->${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(0)} holdUntil=${holdUntil.toISOString()}`, "trading");
+          
+          // Update lastRegime map with new confirmed regime
+          this.lastRegime.set(pair, rawAnalysis.regime);
+          
+          // Send alert (with cooldown/dedup)
+          await this.sendRegimeChangeAlert(pair, currentConfirmed, rawAnalysis);
+          
+          return rawAnalysis;
+        } else {
+          // Not yet confirmed, keep accumulating
+          await this.upsertRegimeState(pair, {
+            candidateRegime: rawAnalysis.regime,
+            candidateCount: newCount,
+            lastAdx: rawAnalysis.adx.toString(),
+          });
+          log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
+          return { ...rawAnalysis, regime: currentConfirmed };
+        }
+      } else {
+        // Different candidate: reset counter
+        log(`[REGIME] ${pair}: candidate=${rawAnalysis.regime} count=1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} (reset from ${candidateRegime || "none"})`, "trading");
+        await this.upsertRegimeState(pair, {
+          candidateRegime: rawAnalysis.regime,
+          candidateCount: 1,
+          lastAdx: rawAnalysis.adx.toString(),
+        });
+        log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
+        return { ...rawAnalysis, regime: currentConfirmed };
+      }
+    }
+    
+    // No change in regime
+    await this.upsertRegimeState(pair, { lastAdx: rawAnalysis.adx.toString() });
+    return rawAnalysis;
   }
 
   private async sendRegimeChangeAlert(pair: string, fromRegime: MarketRegime, analysis: RegimeAnalysis) {
-    // Dedupe: prevent spam for same regime transition
-    const throttleKey = `${pair}:${fromRegime}:${analysis.regime}`;
     const now = Date.now();
-    const lastSent = this.regimeAlertThrottle.get(throttleKey);
+    const state = await this.getRegimeState(pair);
     
-    if (lastSent && now - lastSent < this.REGIME_ALERT_THROTTLE_MS) {
-      log(`[TELEGRAM] RegimeChanged THROTTLED pair=${pair} from=${fromRegime} to=${analysis.regime} (last sent ${Math.floor((now - lastSent) / 1000)}s ago)`, "trading");
-      return;
-    }
-    
-    // Cleanup old throttle entries (older than 1 hour)
-    const oneHourAgo = now - 60 * 60 * 1000;
-    for (const [key, timestamp] of this.regimeAlertThrottle.entries()) {
-      if (timestamp < oneHourAgo) {
-        this.regimeAlertThrottle.delete(key);
+    // Phase 2.1: Cooldown check (60 min per pair)
+    if (state?.lastNotifiedAt) {
+      const msSinceNotified = now - state.lastNotifiedAt.getTime();
+      if (msSinceNotified < REGIME_CONFIG.NOTIFY_COOLDOWN_MS) {
+        log(`[REGIME_NOTIFY] sent=false skipReason=cooldown pair=${pair} msSince=${msSinceNotified}`, "trading");
+        return;
       }
     }
     
-    this.regimeAlertThrottle.set(throttleKey, now);
+    // Phase 2.1: Hash dedup (same params + reason = no notify)
+    const paramsHash = this.computeParamsHash(analysis.regime);
+    const reasonHash = this.computeReasonHash(analysis.regime, analysis.reason);
+    
+    if (state?.lastParamsHash === paramsHash && state?.lastReasonHash === reasonHash) {
+      log(`[REGIME_NOTIFY] sent=false skipReason=same_hash pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
+      return;
+    }
+    
+    // Phase 2.4: TRANSITION silence (only first entry or material change)
+    if (analysis.regime === "TRANSITION" && fromRegime === "TRANSITION") {
+      log(`[REGIME_NOTIFY] sent=false skipReason=transition_no_change pair=${pair}`, "trading");
+      return;
+    }
+    
+    // Update state with notification info
+    await this.upsertRegimeState(pair, {
+      lastNotifiedAt: new Date(),
+      lastParamsHash: paramsHash,
+      lastReasonHash: reasonHash,
+    });
     
     const regimeEmoji: Record<MarketRegime, string> = {
       TREND: "📈",
@@ -3855,12 +4027,12 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
 🔗 <a href="${environment.panelUrl}">Ver Panel</a>
 ━━━━━━━━━━━━━━━━━━━`;
 
-    await this.telegramService.sendMessage(message, "system");
+    await this.telegramService.sendMessage(message);
     
-    // Explicit log for observability
     log(`[TELEGRAM] RegimeChanged pair=${pair} from=${fromRegime} to=${analysis.regime}`, "trading");
+    log(`[REGIME_NOTIFY] sent=true pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
     
-    await botLogger.info("REGIME_CHANGE", `Régimen cambiado en ${pair}: ${fromRegime} → ${analysis.regime}`, {
+    await botLogger.info("SYSTEM_ALERT", `Régimen cambiado en ${pair}: ${fromRegime} → ${analysis.regime}`, {
       pair,
       fromRegime,
       toRegime: analysis.regime,
