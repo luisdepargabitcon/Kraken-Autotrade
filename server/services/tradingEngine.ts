@@ -3902,7 +3902,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (!isHardExit) {
         log(`[REGIME_HOLD] pair=${pair} skipChange=true remainingMin=${remainingMin} candidate=${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
         log(`[REGIME_NOTIFY] sent=false skipReason=hysteresis_hold pair=${pair}`, "trading");
-        return { ...rawAnalysis, regime: currentConfirmed };
+        const syncedReason = `Manteniendo ${currentConfirmed} (minHold ${remainingMin}min restantes)`;
+        return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
       }
       log(`[REGIME_HARD_EXIT] pair=${pair} adx=${rawAnalysis.adx.toFixed(1)} changeImmediate=true bypassHold=true`, "trading");
     }
@@ -3951,7 +3952,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             lastAdx: rawAnalysis.adx.toString(),
           });
           log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-          return { ...rawAnalysis, regime: currentConfirmed };
+          const syncedReason = `Manteniendo ${currentConfirmed} (confirmación ${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
+          return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
         }
       } else {
         // Different candidate: reset counter
@@ -3962,7 +3964,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           lastAdx: rawAnalysis.adx.toString(),
         });
         log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-        return { ...rawAnalysis, regime: currentConfirmed };
+        const syncedReason = `Manteniendo ${currentConfirmed} (confirmación 1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
+        return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
       }
     }
     
