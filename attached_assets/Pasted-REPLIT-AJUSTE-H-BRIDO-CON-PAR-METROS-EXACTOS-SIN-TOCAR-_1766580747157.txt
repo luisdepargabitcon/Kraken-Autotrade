@@ -1,0 +1,69 @@
+REPLIT — AJUSTE (HÍBRIDO) CON PARÁMETROS EXACTOS (SIN TOCAR TRANSITION PARA ENTRADAS)
+
+CONTEXTO
+Ya está implementado: regime_state + cooldown 60m + dedupe hash + confirmación + minHold + hard exit + “silencio TRANSITION”.
+Solo hay que AJUSTAR UMBRALES/PARÁMETROS al perfil aprobado (Opción C).
+
+OBJETIVO
+Cambiar los parámetros actuales (28/24/20, confirm=3, hold=30) a:
+- ADX_TREND_ENTER = 27
+- ADX_TREND_EXIT  = 23
+- ADX_HARD_EXIT   = 19
+- CONFIRM_COUNT   = 2
+- MIN_HOLD_MIN    = 20
+Mantener:
+- Cooldown notificaciones: 60 minutos por par
+- Deduplicación por hash
+- TRANSITION sigue bloqueando entradas (sin excepciones)
+
+CAMBIOS REQUERIDOS (FUENTE DE VERDAD)
+1) Localizar el “resolver” de régimen (donde se decide TREND/RANGE/TRANSITION) y actualizar:
+   - Umbral de entrada a TREND: ADX >= 27 (y EMAs alineadas como hoy)
+   - Umbral de salida de TREND: ADX <= 23 (o regla actual de EMAs desalineadas)
+2) Hard exit:
+   - Si ADX < 19 => cambio inmediato de régimen (ignora minHold y confirmCount)
+3) Confirmación:
+   - Cambiar confirmCount de 3 a 2 (mismo mecanismo existente: candidateRegime + candidateCount)
+   - Si existe confirmación por vela cerrada 15m, mantenerla; si es por scans, también vale.
+4) MinHold:
+   - Cambiar minHold de 30 a 20 minutos (holdUntil = confirmedAt + 20m)
+5) IMPORTANTE:
+   - No cambiar la política de entradas en TRANSITION: debe seguir bloqueando entradas.
+
+PERSISTENCIA / DB
+- Si los parámetros están hardcodeados: actualizar constantes.
+- Si están en config (bot_config / env / settings): actualizar valores por defecto y asegurar que NAS/PROD toma los nuevos valores.
+- Si el regime_state guarda holdUntil/candidateCount, NO es necesario migrar; solo se recalcula al siguiente ciclo.
+
+VERIFICACIÓN (OBLIGATORIA) — EVIDENCIA EN LOGS
+Añadir o confirmar que existen logs que muestren los valores efectivos:
+- Al arrancar o al evaluar régimen:
+  [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=2 minHold=20
+Y confirmar los eventos:
+- [REGIME_CANDIDATE] pair=... candidate=... count=...
+- [REGIME_CONFIRM] pair=... from=... to=... holdUntil=...
+- [REGIME_HOLD] skipChange=true remainingMin=...
+- [REGIME_HARD_EXIT] adx=<19 changeImmediate=true
+
+PRUEBAS MÍNIMAS (PEGAR LOGS)
+A) Flapping alrededor de umbral:
+   - ADX oscila 26–28: debe costar confirmar TREND (requiere 2 confirmaciones).
+B) Confirmación TREND:
+   - 2 confirmaciones seguidas => [REGIME_CONFIRM] a TREND y hold 20m.
+C) MinHold:
+   - Intento de cambio antes de 20m => [REGIME_HOLD] (no cambia).
+D) Hard exit:
+   - ADX cae a 18.x => [REGIME_HARD_EXIT] cambio inmediato.
+E) TRANSITION:
+   - Verificar explícitamente: no se ejecutan entradas si currentRegime confirmado == TRANSITION.
+
+COMANDOS DE COMPROBACIÓN (SUGERIDOS)
+- rg "ADX" server -n
+- rg "TREND_ENTER|TREND_EXIT|HARD_EXIT|confirmCount|minHold" server -n
+- rg "\[REGIME_PARAMS\]|\[REGIME_CONFIRM\]|\[REGIME_HARD_EXIT\]" -n
+- Ver DB: tabla regime_state existe y se actualiza (candidateCount, holdUntil, lastNotifiedAt)
+
+ENTREGABLE
+- PR con cambios.
+- Logs A–E pegados.
+- Confirmación escrita: “TRANSITION sigue bloqueando entradas; solo se ajustaron parámetros”.
