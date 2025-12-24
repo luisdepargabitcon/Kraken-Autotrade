@@ -1,0 +1,66 @@
+APROBADO ✅ Implementar anti-spam + estabilidad de régimen (sin tocar la política de TRANSITION)
+
+OBJETIVO
+- Reducir spam de Telegram por “flapping” de régimen.
+- Mantener TRANSITION bloqueando entradas indefinidamente (sin cambios funcionales).
+- Hacer el régimen más estable con histéresis y confirmación.
+
+ORDEN DE IMPLEMENTACIÓN
+
+FASE 1 — Persistencia (regime_state)
+1) Crear tabla `regime_state` (o storage equivalente si ya hay caché persistente):
+   Campos mínimos:
+   - pair (PK)
+   - currentRegime ("TREND"|"RANGE"|"TRANSITION")
+   - confirmedAt (timestamp)
+   - lastNotifiedAt (timestamp)
+   - holdUntil (timestamp)  // MinHold para evitar flip rápido
+   - transitionSince (timestamp|null)
+   - candidateRegime (string|null)
+   - candidateCount (int)
+   - lastParamsHash (string|null)
+   - lastReasonHash (string|null)
+
+FASE 2.1 — Cooldown + Dedup por hash (anti-spam inmediato)
+2) Implementar deduplicación de notificaciones:
+   - Calcular `reasonHash` y `paramsHash` con SHA256 (o MD5) truncado (ej 12-16 chars) del payload a notificar.
+   - No enviar notificación si:
+     a) newRegime == lastRegime (sin cambio real), o
+     b) now - lastNotifiedAt < 60min (cooldown global por par), o
+     c) paramsHash == lastParamsHash AND reasonHash == lastReasonHash (mensaje equivalente)
+
+FASE 2.2 — Confirmación (Debounce) por vela 15m con fallback
+3) Confirmación del cambio de régimen:
+   - Opción primaria: confirmar solo con vela 15m CERRADA (usar timestamp de cierre / closeTime).
+   - Si no se puede obtener closeTime confiable:
+     Fallback: exigir 3 scans consecutivos con el mismo `candidateRegime` antes de confirmar.
+   - Guardar candidateRegime y candidateCount en `regime_state`.
+
+FASE 2.3 — Histéresis ADX 28/24 + MinHold 30 min
+4) Cambiar criterio TREND para reducir ruido:
+   - Entrar TREND: ADX >= 28 + EMAs alineadas.
+   - Salir TREND: ADX <= 24 OR EMAs desalineadas durante 2 velas cerradas (o 2 confirmaciones).
+   - MinHold: 30 min (holdUntil = confirmedAt + 30m) donde NO se permite flip salvo “hard exit”.
+   - Hard exit inmediato: si ADX < 20 (colapso claro), permitir cambio sin esperar hold.
+
+FASE 2.4 — Hash params + silencio TRANSITION (sin cambiar comportamiento)
+5) TRANSITION:
+   - Mantener exactamente como está: BLOQUEAR entradas indefinidamente.
+   - Solo ajustar notificaciones: aplicar dedup/cooldown/batch si existe.
+   - No modificar sizing ni reglas de entrada/salida por TRANSITION en esta fase.
+
+LOGS DE VERIFICACIÓN (obligatorio)
+6) Añadir logs claros y grepables:
+   - [REGIME] candidate=<X> count=N confirmed=<true/false> reason=...
+   - [REGIME] changed <old>-><new> adx=.. emas=.. holdUntil=..
+   - [REGIME_NOTIFY] sent=<true/false> skipReason=<cooldown|dedup|nochange> paramsHash=.. reasonHash=..
+   - Si fallback scans: [REGIME_CONFIRM] mode=scans consecutive=N/3
+
+CRITERIO DE ÉXITO
+- Spam reducido: no más alternancias TREND↔TRANSITION cada pocos minutos en Telegram.
+- TRANSITION sigue sin entrar (cero cambios de lógica de entradas en TRANSITION).
+- Regímenes más estables con ADX 28/24 + MinHold.
+
+NOTA
+- Cambiar ADX>25 actual a 28/24 es aceptado (más conservador).
+- Si no hay acceso fiable a closeTime, aplicar fallback 3 scans y registrar el modo en logs.

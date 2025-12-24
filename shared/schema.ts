@@ -250,6 +250,22 @@ export const aiConfig = pgTable("ai_config", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Regime state for anti-spam and stabilization (Phase 1)
+export const regimeState = pgTable("regime_state", {
+  pair: text("pair").primaryKey(),
+  currentRegime: text("current_regime").notNull().default("TRANSITION"),
+  confirmedAt: timestamp("confirmed_at"),
+  lastNotifiedAt: timestamp("last_notified_at"),
+  holdUntil: timestamp("hold_until"),
+  transitionSince: timestamp("transition_since"),
+  candidateRegime: text("candidate_regime"),
+  candidateCount: integer("candidate_count").notNull().default(0),
+  lastParamsHash: text("last_params_hash"),
+  lastReasonHash: text("last_reason_hash"),
+  lastAdx: decimal("last_adx", { precision: 5, scale: 2 }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true, updatedAt: true });
 export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
@@ -264,6 +280,7 @@ export const insertAiConfigSchema = createInsertSchema(aiConfig).omit({ id: true
 export const insertTrainingTradeSchema = createInsertSchema(trainingTrades).omit({ id: true, createdAt: true });
 export const insertTradeFillSchema = createInsertSchema(tradeFills).omit({ id: true, createdAt: true });
 export const insertLotMatchSchema = createInsertSchema(lotMatches).omit({ id: true, createdAt: true });
+export const insertRegimeStateSchema = createInsertSchema(regimeState).omit({ updatedAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -294,3 +311,5 @@ export type InsertAiTradeSample = z.infer<typeof insertAiTradeSampleSchema>;
 export type InsertAiShadowDecision = z.infer<typeof insertAiShadowDecisionSchema>;
 export type InsertAiConfig = z.infer<typeof insertAiConfigSchema>;
 export type InsertTrainingTrade = z.infer<typeof insertTrainingTradeSchema>;
+export type RegimeState = typeof regimeState.$inferSelect;
+export type InsertRegimeState = z.infer<typeof insertRegimeStateSchema>;
