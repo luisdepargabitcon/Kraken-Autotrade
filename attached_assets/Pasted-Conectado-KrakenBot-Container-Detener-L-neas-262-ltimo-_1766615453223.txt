@@ -1,0 +1,269 @@
+Conectado
+
+KrakenBot Container
+Detener
+Líneas: 262
+Último: 23:30:29
+
+
+}
+[36m[2025-12-24T22:26:30.011Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-24T22:25:59.962Z",
+  "loopLatencyMs": 30049,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:26:36 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+10:26:38 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+10:26:38 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+10:26:52 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+10:26:54 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+10:27:15 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:27:15 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+10:27:15 PM [trading] [REGIME] Error saving state for ETH/USD: error: value too long for type character varying(10)
+10:27:16 PM [trading] [REGIME] Error saving state for XRP/USD: error: value too long for type character varying(10)
+10:27:16 PM [trading] [REGIME_CANDIDATE] pair=SOL/USD candidate=RANGE count=1/3 reset=true prevCandidate=none adx=17.6
+10:27:16 PM [trading] [REGIME] Error saving state for SOL/USD: error: value too long for type character varying(10)
+10:27:16 PM [trading] [REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=SOL/USD
+10:27:16 PM [express] GET /api/scan/diagnostic 200 in 500ms :: {"pairs":[{"pair":"BTC/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":149.892,"hasPosition":true,"positionUsd":150.000157958,"regime":"TRANSITION","regimeReason":"Manteniendo TRANSITION (confirmación 1/3)","requiredSignals":5},{"pair":"ETH/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":149.892,"hasPosition":false,"regime":"TRANSITION","regimeReason":"Transición (ADX=23, EMAs desalineadas)","requiredSignals":5},{"pair":"XRP/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":149.892,"hasPosition":true,"positionUsd":149.9999999970919,"regime":"TRANSITION","regimeReason":"Transición (ADX=25, EMAs desalineadas)","requiredSignals":5},{"pair":"SOL/USD","signal":"NONE","razon":"Sin señal de trading activa","exposureAvailable":149.892,"hasPosition":false,"regime":"TRANSITION","regimeReason":"Manteniendo TRANSITION (confirmación 1/3)","requiredSignals":5}],"positionMode":"SMART_GUARD","usdBalance":149.892,"totalOpenPositions":2,"lastScanAt":"2025-12-24T22:27:00.001Z","regimeDetectionEnabled":true}
+10:27:19 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+10:27:19 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:27:20 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:27:20 PM [websocket] [WS] Token válido (path: /ws/events, source: query, ip: 192.168.1.37)
+10:27:20 PM [websocket] [WS] Cliente conectado. Total: 1
+[36m[2025-12-24T22:27:29.949Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-24T22:27:00.001Z",
+  "loopLatencyMs": 29948,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-24T22:27:29.958Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=23, EMAs desalineadas)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=25, EMAs desalineadas)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    }
+  },
+  "scanTime": "2025-12-24T22:27:00.001Z",
+  "regimeDetectionEnabled": true
+}
+10:27:33 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+10:27:33 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:27:35 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+10:28:11 PM [websocket] [WS] Cliente desconectado. Total: 0
+10:28:11 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:28:11 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+10:28:11 PM [websocket] [WS] Token válido (path: /ws/events, source: query, ip: 192.168.1.37)
+10:28:11 PM [websocket] [WS] Cliente conectado. Total: 1
+10:28:13 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+10:28:13 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:28:15 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+10:28:18 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+10:28:18 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
+[36m[2025-12-24T22:28:29.965Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-24T22:27:59.973Z",
+  "loopLatencyMs": 29992,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-24T22:28:29.976Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=23, EMAs desalineadas)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=25, EMAs desalineadas)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    }
+  },
+  "scanTime": "2025-12-24T22:27:59.973Z",
+  "regimeDetectionEnabled": true
+}
+10:29:26 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+10:29:26 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+[36m[2025-12-24T22:29:29.961Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-24T22:28:59.976Z",
+  "loopLatencyMs": 29985,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+10:29:30 PM [trading] [REGIME_CANDIDATE] pair=BTC/USD candidate=RANGE count=1/3 reset=true prevCandidate=none adx=18.0
+10:29:30 PM [trading] [REGIME] Error saving state for BTC/USD: error: value too long for type character varying(10)
+10:29:30 PM [trading] [REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=BTC/USD
+[36m[2025-12-24T22:29:30.147Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    }
+  },
+  "scanTime": "2025-12-24T22:29:29.982Z",
+  "regimeDetectionEnabled": true
+}
+10:29:34 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+10:29:34 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+10:29:35 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+10:30:00 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-24T22:15:00.000Z
+10:30:00 PM [trading] MTF datos actualizados para BTC/USD: 5m=721, 1h=721, 4h=721
+10:30:00 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-24T22:15:00.000Z
+10:30:00 PM [trading] MTF datos actualizados para ETH/USD: 5m=721, 1h=721, 4h=721
+10:30:01 PM [trading] Nueva vela cerrada XRP/USD/15m @ 2025-12-24T22:15:00.000Z
+10:30:01 PM [trading] MTF datos actualizados para XRP/USD: 5m=721, 1h=721, 4h=721
+10:30:01 PM [trading] Nueva vela cerrada SOL/USD/15m @ 2025-12-24T22:15:00.000Z
+10:30:01 PM [trading] MTF datos actualizados para SOL/USD: 5m=721, 1h=721, 4h=721
+[36m[2025-12-24T22:30:29.963Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-24T22:29:59.976Z",
+  "loopLatencyMs": 29987,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+[36m[2025-12-24T22:30:29.967Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal clara velas (2/3)",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal clara velas (1/3)",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=23, EMAs desalineadas)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal clara velas (2/1)",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=25, EMAs desalineadas)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal clara velas (1/3)",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (confirmación 1/3)"
+    }
+  },
+  "scanTime": "2025-12-24T22:29:59.976Z",
+  "regimeDetectionEnabled": true
