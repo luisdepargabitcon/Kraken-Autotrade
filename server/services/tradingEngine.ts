@@ -391,6 +391,8 @@ export class TradingEngine {
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
   // Snapshot de resultados del último scan completado (para MARKET_SCAN_SUMMARY)
   private lastEmittedResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
+  private lastEmittedScanId: string = "";
+  private lastEmittedScanTime: number = 0;
   
   // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
   private scanInProgress: boolean = false;
@@ -830,7 +832,8 @@ ${emoji} <b>${title}</b>
         // Usar el snapshot de resultados del último scan completado
         const scanResultsSnapshot = new Map(this.lastEmittedResults);
         const sourcePairs = Array.from(scanResultsSnapshot.keys());
-        const scanId = this.currentScanId;
+        const scanId = this.lastEmittedScanId;
+        const scanTime = this.lastEmittedScanTime;
         
         log(`[SCAN_SUMMARY_COUNT] scanId=${scanId} expected=${sourcePairs.length} got=${sourcePairs.length} missing=[]`, "trading");
         
@@ -867,7 +870,7 @@ ${emoji} <b>${title}</b>
 
         await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
           pairs: scanSummary,
-          scanTime: new Date(this.lastScanTime).toISOString(),
+          scanTime: scanTime > 0 ? new Date(scanTime).toISOString() : null,
           regimeDetectionEnabled,
           _meta: { sourceCount: sourcePairs.length, builtCount: builtPairs.length, scanId },
         });
@@ -1507,6 +1510,8 @@ El bot ha pausado las operaciones de COMPRA.
         // Si el scan fue completo (done === expected), crear snapshot para emisión
         if (scannedPairs.length === activePairs.length) {
           this.lastEmittedResults = new Map(this.lastScanResults);
+          this.lastEmittedScanId = this.currentScanId;
+          this.lastEmittedScanTime = this.lastScanTime;
           log(`[SCAN_SNAPSHOT] scanId=${this.currentScanId} pairs=${scannedPairs.length} snapshotted for emission`, "trading");
         }
         
