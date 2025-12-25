@@ -1,0 +1,18 @@
+11:22:28 PM [trading] [SCAN_START] scanId=scan-1766704948303 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:22:28 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:22:28 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704948303","scanTime":"2025-12-25T23:22:28.303Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:22:28 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:22:28 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:22:28 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704948303","scanTime":"2025-12-25T23:22:28.303Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:22:28 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:22:28 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:22:28 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704948303","scanTime":"2025-12-25T23:22:28.303Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:22:28 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:22:28 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:22:28 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704948303","scanTime":"2025-12-25T23:22:28.303Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:22:28 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:22:28 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:22:28 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704948303","scanTime":"2025-12-25T23:22:28.303Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:22:28 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:22:28 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704948303 pairs=5 snapshotted for emission
+11:22:28 PM [trading] [SCAN_END] scanId=scan-1766704948303 expected=5 done=5 failures=0 durationMs=547
