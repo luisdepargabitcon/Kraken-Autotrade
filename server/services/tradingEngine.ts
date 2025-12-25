@@ -808,7 +808,8 @@ ${emoji} <b>${title}</b>
     try {
       const config = await storage.getBotConfig();
       const now = Date.now();
-      const timeSinceLastScanMs = this.lastScanTime > 0 ? now - this.lastScanTime : 0;
+      const lastCompletedScanTime = this.lastEmittedScanTime;
+      const timeSinceLastScanMs = lastCompletedScanTime > 0 ? now - lastCompletedScanTime : 0;
       
       const openPositionsPairs = Array.from(this.openPositions.keys());
       
@@ -816,7 +817,8 @@ ${emoji} <b>${title}</b>
         activePairs: config?.activePairs || [],
         openPositionsCount: this.openPositions.size,
         openPositionsPairs,
-        lastScanAt: this.lastScanTime > 0 ? new Date(this.lastScanTime).toISOString() : null,
+        lastScanAt: lastCompletedScanTime > 0 ? new Date(lastCompletedScanTime).toISOString() : null,
+        lastScanId: this.lastEmittedScanId || null,
         timeSinceLastScanMs,
         balanceUsd: this.currentUsdBalance,
         isDailyLimitReached: this.isDailyLimitReached,
