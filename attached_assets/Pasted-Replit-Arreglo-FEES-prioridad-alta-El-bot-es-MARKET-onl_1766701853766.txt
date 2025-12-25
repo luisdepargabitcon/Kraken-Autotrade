@@ -1,0 +1,55 @@
+Replit — Arreglo FEES (prioridad alta). El bot es MARKET-only, por tanto 100% taker.
+
+Problema actual
+- KRAKEN_FEE_PCT=0.26% y ROUND_TRIP_FEE_PCT=0.52% están hardcodeados.
+- Para Kraken Pro Spot Crypto, el tier base es Maker 0.25% / Taker 0.40% (no 0.26%). Con MARKET-only, el peor caso real es taker.
+- Resultado: el fee cushion auto (0.52%) y el filtro de rentabilidad están infracubriendo costes reales (y el PnL neto parece estar descontando solo una pierna).
+
+Objetivo
+Alinear:
+1) Fee cushion auto (break-even) con round-trip real (entrada+salida) en MARKET-only
+2) Cálculo de PnL neto con fees de ENTRADA + SALIDA
+3) Filtro de rentabilidad (MIN_PROFIT_MULTIPLIER) con round-trip real
+
+Cambios requeridos (mínimos, sin rediseño)
+A) Sustituir hardcode 0.26% por tasa taker correcta:
+- Opción rápida (mínimo cambio): setear KRAKEN_FEE_PCT_DEFAULT = 0.40% para Spot Crypto (tier bajo), ya que el bot usa market y queremos worst-case.
+- Mejor opción (si es factible): derivar la tasa efectiva desde fills reales:
+  - feePctSide = feePaid / notionalExecuted
+  - takerFeePctEffective = promedio (o p90) de las últimas N operaciones
+  - Guardar en DB / cache y usarlo para auto.
+
+B) Fee Cushion Auto (sgFeeCushionAuto=true)
+- Hoy: feeCushionAuto = 2 * KRAKEN_FEE_PCT (0.52%)
+- Debe ser: feeCushionAuto = 2 * takerFeePct + slippageBufferPct
+  - Default slippageBufferPct = 0.20% (configurable)
+  - Ejemplo tier base: 2*0.40% + 0.20% = 1.00%
+
+C) PnL neto
+- Hoy: al cerrar se resta fee = volumen*precio*0.26% (solo 1 pierna).
+- Debe ser: PnL neto = PnL bruto - feeEntry - feeExit
+  - Si no tenemos feeEntry guardada, guardarla al abrir (del fill) y persistirla en el lot/trade.
+  - Ideal: usar fees reales reportadas por Kraken en cada fill.
+
+D) Filtro de rentabilidad (MIN_PROFIT_MULTIPLIER)
+- Hoy compara TP esperado > 2x fees (~1.04%).
+- Debe usar roundTripFeesPct real (2*takerFeePct) + slippageBuffer si aplica:
+  - minExpectedMovePct = MIN_PROFIT_MULTIPLIER * (2*takerFeePct) + slippageBufferPct
+  - Con tier base: 2 * 0.80% + 0.20% = 1.80% si MIN_PROFIT_MULTIPLIER=2 y buffer=0.20
+  - Si esto reduce demasiado el trading, mantener MIN_PROFIT_MULTIPLIER=2 pero buffer solo para BE, no para filtro (decisión a tomar tras ver stats).
+
+Instrumentación (para validar)
+- Añadir al PAIR_DECISION_TRACE / o a un log [FEES_DIAG]:
+  - takerFeePctAssumed/effective
+  - feeCushionPctUsed
+  - feeEntry, feeExit
+  - pnlGross, pnlNet
+  - slippageBufferPct
+
+Criterios de aceptación
+1) Con MARKET-only y tier bajo, feeCushionAuto debe ser ~0.80% + buffer (ej. 1.00%), no 0.52%.
+2) PnL neto descuenta entry+exit fees (verificado en logs).
+3) El filtro de rentabilidad usa el round-trip real (no 0.52%).
+
+Nota
+Si queréis mantener “hardcode” por ahora, al menos cambiad KRAKEN_FEE_PCT a 0.40% para Spot Crypto y corregid PnL neto a dos piernas. Luego iteramos para hacerlo dinámico.
