@@ -857,23 +857,33 @@ ${emoji} <b>${title}</b>
         // Only emit if guards passed
         if (shouldEmitSummary) {
           const scanSummary: Record<string, any> = {};
-          const sourcePairs = Array.from(this.lastScanResults.keys());
           
-          for (const [pair, result] of this.lastScanResults) {
-            const pairData: Record<string, any> = { ...result };
-            
-            if (regimeDetectionEnabled) {
-              try {
-                const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
-                pairData.regime = regimeAnalysis.regime;
-                pairData.regimeReason = regimeAnalysis.reason;
-              } catch (err) {
-                pairData.regime = "ERROR";
-                pairData.regimeReason = "Error obteniendo régimen";
+          // B) Snapshot del Map antes de iterar para evitar mutación durante iteración
+          const scanResultsSnapshot = new Map(this.lastScanResults);
+          const sourcePairs = Array.from(scanResultsSnapshot.keys());
+          
+          for (const [pair, result] of scanResultsSnapshot) {
+            // A) Wrap cada iteración en try/catch individual
+            try {
+              const pairData: Record<string, any> = { ...result };
+              
+              if (regimeDetectionEnabled) {
+                try {
+                  const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+                  pairData.regime = regimeAnalysis.regime;
+                  pairData.regimeReason = regimeAnalysis.reason;
+                } catch (regimeErr) {
+                  pairData.regime = "ERROR";
+                  pairData.regimeReason = "Error obteniendo régimen";
+                }
               }
+              
+              scanSummary[pair] = pairData;
+            } catch (loopErr: any) {
+              log(`[SCAN_SUMMARY_PAIR_ERR] scanId=${scanId} pair=${pair} error=${loopErr.message}`, "trading");
+              // Aún así añadir el par con datos base para no perderlo
+              scanSummary[pair] = { ...result, regime: "ERROR", regimeReason: "Build error" };
             }
-            
-            scanSummary[pair] = pairData;
           }
 
           // Post-build validation
