@@ -66,6 +66,9 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
 // SMART_GUARD: umbral absoluto mínimo para evitar comisiones absurdas
 const SG_ABSOLUTE_MIN_USD = 20;
 
+// MTF Diagnostic: Habilitar para verificar que los timeframes son correctos
+const MTF_DIAG_ENABLED = true;
+
 // === VALIDACIÓN CENTRALIZADA DE MÍNIMOS (fuente única de verdad) ===
 // Reason codes para SMART_GUARD sizing
 type SmartGuardReasonCode = 
@@ -5131,10 +5134,50 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
       this.mtfCache.set(pair, data);
       log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}`, "trading");
+      
+      // MTF Diagnostic: Verificar rangos temporales
+      if (MTF_DIAG_ENABLED && tf5m.length > 0 && tf1h.length > 0 && tf4h.length > 0) {
+        this.emitMTFDiagnostic(pair, tf5m, tf1h, tf4h);
+      }
+      
       return data;
     } catch (error: any) {
       log(`Error obteniendo datos MTF para ${pair}: ${error.message}`, "trading");
       return null;
+    }
+  }
+
+  private emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCandle[], tf4h: OHLCCandle[]): void {
+    const formatTs = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 16);
+    const calcSpanHours = (candles: OHLCCandle[]) => {
+      if (candles.length < 2) return 0;
+      return ((candles[candles.length - 1].time - candles[0].time) / 3600).toFixed(1);
+    };
+    
+    const span5m = calcSpanHours(tf5m);
+    const span1h = calcSpanHours(tf1h);
+    const span4h = calcSpanHours(tf4h);
+    
+    const first5m = tf5m[0]?.time || 0;
+    const first1h = tf1h[0]?.time || 0;
+    const first4h = tf4h[0]?.time || 0;
+    const last5m = tf5m[tf5m.length - 1]?.time || 0;
+    const last1h = tf1h[tf1h.length - 1]?.time || 0;
+    const last4h = tf4h[tf4h.length - 1]?.time || 0;
+    
+    // Detectar posible duplicación (timestamps muy similares entre TFs)
+    const firstTsSame = first5m === first1h || first1h === first4h || first5m === first4h;
+    const lastTsSame = last5m === last1h || last1h === last4h || last5m === last4h;
+    const spansSuspicious = span5m === span1h || span1h === span4h;
+    
+    log(`[MTF_DIAG] ${pair}: ` +
+      `5m: ${tf5m.length} velas [${formatTs(first5m)} -> ${formatTs(last5m)}] span=${span5m}h | ` +
+      `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h | ` +
+      `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h`, "trading");
+    
+    if (firstTsSame || lastTsSame || spansSuspicious) {
+      log(`[MTF_DIAG] ⚠️ WARN ${pair}: Posible duplicación MTF detectada! ` +
+        `firstTsSame=${firstTsSame}, lastTsSame=${lastTsSame}, spansSuspicious=${spansSuspicious}`, "trading");
     }
   }
 
