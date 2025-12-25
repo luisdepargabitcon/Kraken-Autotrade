@@ -389,6 +389,8 @@ export class TradingEngine {
   private lastScanTime: number = 0;
   private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
+  // Snapshot de resultados del último scan completado (para MARKET_SCAN_SUMMARY)
+  private lastEmittedResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
   
   // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
   private scanInProgress: boolean = false;
@@ -821,85 +823,54 @@ ${emoji} <b>${title}</b>
 
       this.lastTickTime = now;
 
-      // Emitir MARKET_SCAN_SUMMARY si hay resultados (con guards)
-      if (this.lastScanResults.size > 0) {
+      // Emitir MARKET_SCAN_SUMMARY usando lastEmittedResults (snapshot del último scan completo)
+      if (this.lastEmittedResults.size > 0) {
         const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
         
-        // Snapshot scan state to avoid race conditions
+        // Usar el snapshot de resultados del último scan completado
+        const scanResultsSnapshot = new Map(this.lastEmittedResults);
+        const sourcePairs = Array.from(scanResultsSnapshot.keys());
         const scanId = this.currentScanId;
-        const scanInProgress = this.scanInProgress;
-        const expectedPairs = this.lastExpectedPairs.length > 0 
-          ? this.lastExpectedPairs 
-          : (config?.activePairs || []);
         
-        let shouldEmitSummary = true;
+        log(`[SCAN_SUMMARY_COUNT] scanId=${scanId} expected=${sourcePairs.length} got=${sourcePairs.length} missing=[]`, "trading");
         
-        // Guard 1: Skip if scan is in progress
-        if (scanInProgress) {
-          log(`[SCAN_SUMMARY_SKIPPED] scanId=${scanId} reason=scan_in_progress expected=${expectedPairs.length} got=${this.lastScanResults.size}`, "trading");
-          shouldEmitSummary = false;
-        }
+        const scanSummary: Record<string, any> = {};
         
-        // Guard 2: Validate completeness (only if not already skipped)
-        if (shouldEmitSummary) {
-          const gotPairs = Array.from(this.lastScanResults.keys());
-          const missingPairs = expectedPairs.filter((p: string) => !gotPairs.includes(p));
-          
-          log(`[SCAN_SUMMARY_COUNT] scanId=${scanId} expected=${expectedPairs.length} got=${gotPairs.length} missing=[${missingPairs.join(",")}]`, "trading");
-          
-          // If incomplete, skip emission (Option A)
-          if (missingPairs.length > 0) {
-            log(`[SCAN_SUMMARY_SKIPPED] scanId=${scanId} reason=incomplete_results missing=[${missingPairs.join(",")}]`, "trading");
-            shouldEmitSummary = false;
-          }
-        }
-        
-        // Only emit if guards passed
-        if (shouldEmitSummary) {
-          const scanSummary: Record<string, any> = {};
-          
-          // B) Snapshot del Map antes de iterar para evitar mutación durante iteración
-          const scanResultsSnapshot = new Map(this.lastScanResults);
-          const sourcePairs = Array.from(scanResultsSnapshot.keys());
-          
-          for (const [pair, result] of scanResultsSnapshot) {
-            // A) Wrap cada iteración en try/catch individual
-            try {
-              const pairData: Record<string, any> = { ...result };
-              
-              if (regimeDetectionEnabled) {
-                try {
-                  const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
-                  pairData.regime = regimeAnalysis.regime;
-                  pairData.regimeReason = regimeAnalysis.reason;
-                } catch (regimeErr) {
-                  pairData.regime = "ERROR";
-                  pairData.regimeReason = "Error obteniendo régimen";
-                }
+        for (const [pair, result] of scanResultsSnapshot) {
+          try {
+            const pairData: Record<string, any> = { ...result };
+            
+            if (regimeDetectionEnabled) {
+              try {
+                const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+                pairData.regime = regimeAnalysis.regime;
+                pairData.regimeReason = regimeAnalysis.reason;
+              } catch (regimeErr) {
+                pairData.regime = "ERROR";
+                pairData.regimeReason = "Error obteniendo régimen";
               }
-              
-              scanSummary[pair] = pairData;
-            } catch (loopErr: any) {
-              log(`[SCAN_SUMMARY_PAIR_ERR] scanId=${scanId} pair=${pair} error=${loopErr.message}`, "trading");
-              // Aún así añadir el par con datos base para no perderlo
-              scanSummary[pair] = { ...result, regime: "ERROR", regimeReason: "Build error" };
             }
+            
+            scanSummary[pair] = pairData;
+          } catch (loopErr: any) {
+            log(`[SCAN_SUMMARY_PAIR_ERR] scanId=${scanId} pair=${pair} error=${loopErr.message}`, "trading");
+            scanSummary[pair] = { ...result, regime: "ERROR", regimeReason: "Build error" };
           }
-
-          // Post-build validation
-          const builtPairs = Object.keys(scanSummary);
-          log(`[SCAN_SUMMARY_BUILD] scanId=${scanId} source=${sourcePairs.length} built=${builtPairs.length}`, "trading");
-          if (builtPairs.length !== sourcePairs.length) {
-            log(`[SCAN_SUMMARY_MISMATCH] scanId=${scanId} source=[${sourcePairs.join(",")}] built=[${builtPairs.join(",")}]`, "trading");
-          }
-
-          await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
-            pairs: scanSummary,
-            scanTime: new Date(this.lastScanTime).toISOString(),
-            regimeDetectionEnabled,
-            _meta: { sourceCount: sourcePairs.length, builtCount: builtPairs.length, scanId },
-          });
         }
+
+        // Post-build validation
+        const builtPairs = Object.keys(scanSummary);
+        log(`[SCAN_SUMMARY_BUILD] scanId=${scanId} source=${sourcePairs.length} built=${builtPairs.length}`, "trading");
+        if (builtPairs.length !== sourcePairs.length) {
+          log(`[SCAN_SUMMARY_MISMATCH] scanId=${scanId} source=[${sourcePairs.join(",")}] built=[${builtPairs.join(",")}]`, "trading");
+        }
+
+        await botLogger.info("MARKET_SCAN_SUMMARY", "Resumen de escaneo de mercado", {
+          pairs: scanSummary,
+          scanTime: new Date(this.lastScanTime).toISOString(),
+          regimeDetectionEnabled,
+          _meta: { sourceCount: sourcePairs.length, builtCount: builtPairs.length, scanId },
+        });
       }
     } catch (error: any) {
       log(`Error emitiendo ENGINE_TICK: ${error.message}`, "trading");
@@ -1532,6 +1503,13 @@ El bot ha pausado las operaciones de COMPRA.
         // Always mark scan as complete and log SCAN_END
         const durationMs = Date.now() - this.lastScanStartTime;
         this.scanInProgress = false;
+        
+        // Si el scan fue completo (done === expected), crear snapshot para emisión
+        if (scannedPairs.length === activePairs.length) {
+          this.lastEmittedResults = new Map(this.lastScanResults);
+          log(`[SCAN_SNAPSHOT] scanId=${this.currentScanId} pairs=${scannedPairs.length} snapshotted for emission`, "trading");
+        }
+        
         log(`[SCAN_END] scanId=${this.currentScanId} expected=${activePairs.length} done=${scannedPairs.length} failures=${failedPairs.length} durationMs=${durationMs}`, "trading");
       }
     } catch (error: any) {
