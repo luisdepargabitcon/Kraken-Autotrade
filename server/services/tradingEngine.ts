@@ -2803,6 +2803,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             finalSignal: "NONE",
             finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
           });
+          this.emitPairDecisionTrace(pair);
           
           // Notificar a Telegram
           if (this.telegramService.isInitialized()) {
@@ -2838,6 +2839,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             finalSignal: "NONE",
             finalReason: "Sin posición para vender",
           });
+          this.emitPairDecisionTrace(pair);
           return;
         }
 
@@ -3333,6 +3335,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             finalSignal: "NONE",
             finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
           });
+          this.emitPairDecisionTrace(pair);
           return;
         }
 
@@ -3352,6 +3355,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             finalSignal: "NONE",
             finalReason: "Sin posición para vender",
           });
+          this.emitPairDecisionTrace(pair);
           return;
         }
 
