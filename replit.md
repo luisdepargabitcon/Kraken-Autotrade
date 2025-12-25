@@ -63,3 +63,22 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 -   **PostgreSQL Database**:
     -   **ORM**: Drizzle ORM.
     -   **Driver**: `pg`.
+
+## Pending Features (FASE 2)
+
+### Regime Router (APROBADO - Pendiente implementación)
+**Objetivo**: Permitir operar en mercados laterales (RANGE) y transición (TRANSITION) donde actualmente el bot no opera.
+
+**Decisiones tomadas (2025-12-25):**
+1. `regimeRouterEnabled` toggle reversible (OFF por defecto)
+2. Routing table:
+   - TREND → momentum_candles_15m (sin cambios)
+   - RANGE → mean_reversion_simple (BB + RSI) - **NUEVA estrategia a implementar**
+   - TRANSITION → momentum_candles_15m + overrides (sizing 50%, cooldown 120min)
+3. 6 parámetros esenciales: rangeCooldownMinutes, transitionSizeFactor, transitionCooldownMinutes, transitionBeAtPct, transitionTrailStartPct, transitionTpPct
+4. Time-stop condicionado: pospuesto a FASE 2
+5. Mean Reversion: RSI ≤35 BUY, RSI ≥65 SELL, Bollinger Bands (20,2)
+
+**Tiempo estimado**: ~4 horas
+**Riesgo**: MEDIO (mitigable con toggle OFF por defecto)
+**Archivo de referencia**: `attached_assets/Pasted-REPLIT-DECISI-N-FINAL-Y-ALCANCE-FASE-1-ROUTER-IMPLEMENT_1766706506460.txt`
