@@ -1,0 +1,218 @@
+Conectado
+
+KrakenBot Container
+Detener
+Líneas: 210
+Último: 01:16:37
+
+
+[kraken] Pair metadata loaded successfully for 4 pairs
+[kraken] Metadata refresh scheduled every 6h
+12:13:06 AM [trading] Balance inicial USD: $149.89
+12:13:06 AM [trading] Motor de trading iniciado
+12:13:06 AM [trading] Posición recuperada: BTC/USD (LOT-BTCUSD-1766387719323-phy3vo) - 0.00168346 @ $89102.30000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+12:13:06 AM [trading] Posición recuperada: XRP/USD (LOT-XRPUSD-1766316621021-po6gjs) - 77.52619093 @ $1.93483000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+12:13:06 AM [trading] 2 posiciones abiertas (2 lotes) cargadas desde la base de datos
+12:13:06 AM [websocket] [WS] Token válido (path: /ws/events, source: query, ip: 192.168.1.37)
+12:13:06 AM [websocket] [WS] Cliente conectado. Total: 1
+[36m[2025-12-25T00:13:06.790Z] [INFO] [BOT_STARTED][0m Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "balanceUsd": 149.892,
+  "openPositions": 2,
+  "dryRunMode": false,
+  "isReplitEnvironment": false
+}
+12:13:06 AM [trading] Nuevo día de trading: 2025-12-25. Balance inicial: $149.89
+[36m[2025-12-25T00:13:06.973Z] [INFO] [DAILY_LIMIT_RESET][0m Nuevo día de trading: 2025-12-25
+  Meta: {
+  "date": "2025-12-25",
+  "previousDayPnL": 0,
+  "startBalance": 149.892
+}
+12:13:07 AM [trading] [SCAN_START] scanId=scan-1766621587098 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:13:07 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:13:07 AM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-24T23:45:00.000Z
+12:13:07 AM [trading] MTF datos actualizados para BTC/USD: 5m=721, 1h=721, 4h=721
+12:13:07 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:13:07 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:13:07 AM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-24T23:45:00.000Z
+12:13:07 AM [trading] MTF datos actualizados para ETH/USD: 5m=721, 1h=721, 4h=721
+12:13:07 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:13:07 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:13:08 AM [trading] Nueva vela cerrada XRP/USD/15m @ 2025-12-24T23:45:00.000Z
+12:13:08 AM [trading] MTF datos actualizados para XRP/USD: 5m=721, 1h=721, 4h=721
+12:13:08 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:13:08 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:13:08 AM [trading] Nueva vela cerrada SOL/USD/15m @ 2025-12-24T23:45:00.000Z
+12:13:08 AM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+12:13:08 AM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+12:13:08 AM [trading] MTF datos actualizados para SOL/USD: 5m=721, 1h=721, 4h=721
+12:13:08 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:13:08 AM [trading] [SCAN_END] scanId=scan-1766621587098 expected=4 done=4 failures=0 durationMs=1760
+12:13:11 AM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+12:13:37 AM [trading] [SCAN_START] scanId=scan-1766621617178 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:13:37 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:13:37 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:13:37 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:13:37 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:13:37 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:13:37 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:13:37 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:13:37 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:13:37 AM [trading] [SCAN_END] scanId=scan-1766621617178 expected=4 done=4 failures=0 durationMs=492
+[36m[2025-12-25T00:14:06.953Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-25T00:13:36.928Z",
+  "timeSinceLastScanMs": 30025,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+12:14:06 AM [trading] [SCAN_SUMMARY_COUNT] scanId=scan-1766621617178 expected=4 got=4 missing=[]
+12:14:07 AM [trading] [SCAN_SUMMARY_BUILD] scanId=scan-1766621617178 source=4 built=1
+12:14:07 AM [trading] [SCAN_SUMMARY_MISMATCH] scanId=scan-1766621617178 source=[BTC/USD,ETH/USD,XRP/USD,SOL/USD] built=[BTC/USD]
+[36m[2025-12-25T00:14:07.147Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=1.5%)"
+    }
+  },
+  "scanTime": "2025-12-25T00:14:06.972Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 4,
+    "builtCount": 1,
+    "scanId": "scan-1766621617178"
+  }
+}
+12:14:07 AM [trading] [SCAN_START] scanId=scan-1766621647192 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:14:07 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:14:07 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:14:07 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:14:07 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:14:07 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:14:07 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:14:07 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:14:07 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:14:07 AM [trading] [SCAN_END] scanId=scan-1766621647192 expected=4 done=4 failures=0 durationMs=379
+12:14:37 AM [trading] [SCAN_START] scanId=scan-1766621677170 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:14:37 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:14:37 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:14:37 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:14:37 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:14:37 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:14:37 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:14:37 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:14:37 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:14:37 AM [trading] [SCAN_END] scanId=scan-1766621677170 expected=4 done=4 failures=0 durationMs=487
+[36m[2025-12-25T00:15:06.934Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-25T00:14:36.928Z",
+  "timeSinceLastScanMs": 30006,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+12:15:07 AM [trading] [SCAN_START] scanId=scan-1766621707208 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:15:07 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:15:07 AM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-25T00:00:00.000Z
+12:15:07 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:15:07 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:15:07 AM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-25T00:00:00.000Z
+12:15:07 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:15:07 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:15:07 AM [trading] Nueva vela cerrada XRP/USD/15m @ 2025-12-25T00:00:00.000Z
+12:15:07 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:15:07 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:15:07 AM [trading] Nueva vela cerrada SOL/USD/15m @ 2025-12-25T00:00:00.000Z
+12:15:08 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:15:08 AM [trading] [SCAN_END] scanId=scan-1766621707208 expected=4 done=4 failures=0 durationMs=897
+12:15:37 AM [trading] [SCAN_START] scanId=scan-1766621737175 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:15:37 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:15:37 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:15:37 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:15:37 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:15:37 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:15:37 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:15:37 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:15:37 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:15:37 AM [trading] [SCAN_END] scanId=scan-1766621737175 expected=4 done=4 failures=0 durationMs=539
+12:16:00 AM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+12:16:00 AM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+[36m[2025-12-25T00:16:06.930Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD"
+  ],
+  "openPositionsCount": 2,
+  "openPositionsPairs": [
+    "LOT-BTCUSD-1766387719323-phy3vo",
+    "LOT-XRPUSD-1766316621021-po6gjs"
+  ],
+  "lastScanAt": "2025-12-25T00:15:36.928Z",
+  "timeSinceLastScanMs": 30002,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+12:16:07 AM [trading] [SCAN_START] scanId=scan-1766621767168 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:16:07 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:16:07 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:16:07 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:16:07 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:16:07 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:16:07 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:16:07 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:16:07 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:16:07 AM [trading] [SCAN_END] scanId=scan-1766621767168 expected=4 done=4 failures=0 durationMs=462
+12:16:15 AM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.37)
+12:16:15 AM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+12:16:18 AM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+12:16:37 AM [trading] [SCAN_START] scanId=scan-1766621797201 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD]
+12:16:37 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+12:16:37 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+12:16:37 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+12:16:37 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+12:16:37 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+12:16:37 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+12:16:37 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+12:16:37 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+12:16:37 AM [trading] [SCAN_END] scanId=scan-1766621797201 expected=4 done=4 failures=0 durationMs=448
