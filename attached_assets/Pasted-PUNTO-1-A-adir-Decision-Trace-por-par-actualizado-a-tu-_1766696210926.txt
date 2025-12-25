@@ -1,0 +1,124 @@
+PUNTO 1 — Añadir “Decision Trace” por par (actualizado a tu configuración actual)
+
+OBJETIVO
+Ahora el resumen solo muestra: signal=NONE / "Sin señal en este ciclo".
+Necesitamos ver EXACTAMENTE por qué se queda en NONE: si es por falta de señal, por sizing < 100 USD, por max lotes por par, por cooldown, etc.
+Esto es requisito previo para optimizar sin adivinar.
+
+QUÉ IMPLEMENTAR
+Emitir 1 log estructurado (JSON) por cada par, en cada scan, con el tag:
+[PAIR_DECISION_TRACE]
+
+DÓNDE TOCAR
+En el pipeline de decisión, justo después de:
+1) detectar régimen (regime)
+2) elegir estrategia (selectedStrategy)
+3) calcular señal “raw” (antes de SMART_GUARD)
+4) aplicar SMART_GUARD (min order, allow smaller, max lots por par, etc.)
+y antes de construir / o junto con MARKET_SCAN_SUMMARY.
+
+CONTRATO DEL LOG (campos mínimos)
+- event: "PAIR_DECISION_TRACE"
+- scanId
+- scanTime
+- pair
+
+Regime:
+- regime
+- regimeReason
+
+Strategy / señales:
+- selectedStrategy              // MOMENTUM | MEAN_REVERSION | SCALPING | GRID | HYBRID
+- rawSignal                     // BUY | SELL | NONE (ANTES de SMART_GUARD)
+- rawReason                     // texto corto del motor de estrategia (si existe)
+- signalsCount                  // nº de señales sumadas en ese ciclo (si aplica)
+- minSignalsRequired            // umbral actual (según régimen/estrategia)
+- signalScore                   // si existe; si no, null
+- topSignals                    // array corto (max 3) con las señales “que contaron” (opcional pero recomendado)
+
+Sizing / gates reales (CRÍTICO EN TU CASO):
+- exposureAvailableUsd
+- computedOrderUsd              // tamaño calculado por el bot para esta entrada
+- minOrderUsd                   // tu config: 100
+- allowSmallerEntries           // tu toggle actual
+- sizingReason                  // p.ej. "confidence=0.42 sizeFactor=0.5" (si existe)
+
+Límites por par:
+- openLotsThisPair
+- maxLotsPerPair                // tu config: 2
+
+SMART_GUARD decisión final:
+- smartGuardDecision            // ALLOW | BLOCK | NOOP
+- blockReasonCode               // ENUM: NO_SIGNAL | MIN_ORDER_USD | MAX_LOTS_PER_PAIR | COOLDOWN | DAILY_LIMIT | etc.
+- blockDetails                  // objeto pequeño con valores relevantes (p.ej. {openLotsThisPair:2,maxLotsPerPair:2} o {computedOrderUsd:72.5,minOrderUsd:100})
+- finalSignal                   // BUY | SELL | NONE (lo que se reporta al summary)
+- finalReason                   // texto corto determinista (ideal para UI/Telegram)
+
+REGLAS DE CALIDAD (obligatorias)
+1) 1 línea por par por scan (no spamear).
+2) Si rawSignal=BUY pero finalSignal=NONE => smartGuardDecision debe ser BLOCK y blockReasonCode no puede ser null.
+3) finalReason debe incluir el motivo principal en 1 frase (ej. "Blocked: orderUsd(72.5) < min(100)").
+4) blockReasonCode debe ser un enum (no texto libre), para poder contar estadísticas.
+
+EJEMPLO 1 (caso probable: bloqueo por mínimo 100 USD)
+{
+  "event":"PAIR_DECISION_TRACE",
+  "scanId":"scan-XXXXX",
+  "scanTime":"2025-12-25T20:45:30.937Z",
+  "pair":"TON/USD",
+  "regime":"TREND",
+  "regimeReason":"Tendencia alcista (ADX=31, EMAs alineadas)",
+  "selectedStrategy":"MOMENTUM",
+  "rawSignal":"BUY",
+  "rawReason":"Momentum threshold met",
+  "signalsCount":5,
+  "minSignalsRequired":5,
+  "signalScore":7.2,
+  "exposureAvailableUsd":149.892,
+  "computedOrderUsd":72.5,
+  "minOrderUsd":100,
+  "allowSmallerEntries":false,
+  "openLotsThisPair":0,
+  "maxLotsPerPair":2,
+  "smartGuardDecision":"BLOCK",
+  "blockReasonCode":"MIN_ORDER_USD",
+  "blockDetails":{"computedOrderUsd":72.5,"minOrderUsd":100},
+  "finalSignal":"NONE",
+  "finalReason":"Blocked: orderUsd(72.5) < min(100)"
+}
+
+EJEMPLO 2 (sin señal: no llega al umbral)
+{
+  "event":"PAIR_DECISION_TRACE",
+  "scanId":"scan-XXXXX",
+  "scanTime":"2025-12-25T20:45:30.937Z",
+  "pair":"XRP/USD",
+  "regime":"RANGE",
+  "regimeReason":"Mercado lateral (ADX=16, BB width=1.2%)",
+  "selectedStrategy":"MEAN_REVERSION",
+  "rawSignal":"NONE",
+  "rawReason":"Not enough signals",
+  "signalsCount":3,
+  "minSignalsRequired":6,
+  "signalScore":null,
+  "exposureAvailableUsd":149.892,
+  "computedOrderUsd":0,
+  "minOrderUsd":100,
+  "allowSmallerEntries":false,
+  "openLotsThisPair":1,
+  "maxLotsPerPair":2,
+  "smartGuardDecision":"NOOP",
+  "blockReasonCode":"NO_SIGNAL",
+  "blockDetails":{"signalsCount":3,"minSignalsRequired":6},
+  "finalSignal":"NONE",
+  "finalReason":"No signal: 3/6"
+}
+
+RESULTADO ESPERADO
+Tras deploy, en 1–2 scans veremos si el bloqueo dominante es:
+- MIN_ORDER_USD (por sizing < 100)
+- MAX_LOTS_PER_PAIR (si ya hay 2 en el par)
+- NO_SIGNAL (umbrales excesivos)
+- COOLDOWN u otros
+
+Con esa evidencia, ajustamos parámetros sin romper SMART_GUARD.
