@@ -438,6 +438,9 @@ export class TradingEngine {
   private lastEmittedScanId: string = "";
   private lastEmittedScanTime: number = 0;
   
+  // PAIR_DECISION_TRACE: Contexto de decisión por par para diagnóstico
+  private pairDecisionTrace: Map<string, DecisionTraceContext> = new Map();
+  
   // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
   private scanInProgress: boolean = false;
   private currentScanId: string = "";
@@ -1499,6 +1502,7 @@ El bot ha pausado las operaciones de COMPRA.
       this.lastScanStartTime = Date.now();
       this.lastExpectedPairs = [...activePairs]; // Snapshot for guard validation
       this.lastScanResults.clear(); // Clear stale results from previous scan
+      this.pairDecisionTrace.clear(); // Clear decision traces for new scan
       log(`[SCAN_START] scanId=${this.currentScanId} expectedPairs=[${activePairs.join(",")}]`, "trading");
 
       try {
@@ -1507,14 +1511,17 @@ El bot ha pausado las operaciones de COMPRA.
             log(`[SCAN_PAIR_START] pair=${pair}`, "trading");
             
             // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
+            const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
             if (!this.lastScanResults.has(pair)) {
-              const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
               this.lastScanResults.set(pair, {
                 signal: "NONE",
                 reason: "Sin señal en este ciclo",
                 exposureAvailable: expDefault.maxAllowed,
               });
             }
+            
+            // Inicializar trace para este par
+            this.initPairTrace(pair, expDefault.maxAllowed);
             
             if (isCandleMode) {
               const candle = await this.getLastClosedCandle(pair, signalTimeframe);
@@ -1531,6 +1538,9 @@ El bot ha pausado las operaciones de COMPRA.
             } else {
               await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
             }
+            
+            // Emitir decision trace para diagnóstico
+            this.emitPairDecisionTrace(pair);
             
             log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
             scannedPairs.push(pair);
@@ -2169,7 +2179,26 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         exposureAvailable: exposure.maxAllowed,
       });
       
+      // Actualizar trace con señal raw
+      this.updatePairTrace(pair, {
+        selectedStrategy: strategy,
+        rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
+        rawReason: signal.reason || null,
+        exposureAvailableUsd: exposure.maxAllowed,
+        finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
+        finalReason: signal.reason || "Sin señal",
+      });
+      
       if (signal.action === "hold" || signal.confidence < 0.6) {
+        if (signal.confidence < 0.6 && signal.action !== "hold") {
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "CONFIDENCE_LOW",
+            blockDetails: { confidence: signal.confidence, minRequired: 0.6 },
+            finalSignal: "NONE",
+            finalReason: `Confianza baja: ${(signal.confidence * 100).toFixed(0)}% < 60%`,
+          });
+        }
         return;
       }
 
@@ -2186,6 +2215,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: "PAIR_COOLDOWN",
             cooldownRemainingSec: cooldownSec,
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "COOLDOWN",
+            blockDetails: { cooldownRemainingSec: cooldownSec },
+            finalSignal: "NONE",
+            finalReason: `Cooldown: ${cooldownSec}s restantes`,
           });
           return;
         }
@@ -2219,6 +2255,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: reasonCode,
             exposureAvailable: 0,
           });
+          this.updatePairTrace(pair, {
+            openLotsThisPair: currentOpenLots,
+            maxLotsPerPair: maxLotsForMode,
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "MAX_LOTS_PER_PAIR",
+            blockDetails: { currentOpenLots, maxLotsForMode },
+            finalSignal: "NONE",
+            finalReason: `Max lotes: ${currentOpenLots}/${maxLotsForMode}`,
+          });
           return;
         }
 
@@ -2248,6 +2293,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   signal: "BUY",
                   reason: `REGIME_PAUSE: ${regimeAnalysis.reason}`,
                 });
+                this.updatePairTrace(pair, {
+                  regime: regimeAnalysis.regime,
+                  regimeReason: regimeAnalysis.reason,
+                  smartGuardDecision: "BLOCK",
+                  blockReasonCode: "REGIME_PAUSE",
+                  blockDetails: { regime: regimeAnalysis.regime, adx: regimeAnalysis.adx },
+                  finalSignal: "NONE",
+                  finalReason: `Régimen TRANSITION: pausa entradas`,
+                });
                 return;
               }
               
@@ -2261,6 +2315,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               this.lastScanResults.set(pair, {
                 signal: "BUY",
                 reason: `REGIME_ERROR: Fallback a base SMART_GUARD`,
+              });
+              this.updatePairTrace(pair, {
+                regime: "ERROR",
+                regimeReason: regimeError.message,
+                blockReasonCode: "REGIME_ERROR",
+                blockDetails: { error: regimeError.message },
               });
             }
           }
@@ -2283,6 +2343,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 regime: regimeName,
                 regimeEnabled,
                 signalReason: signal.reason,
+              });
+              this.updatePairTrace(pair, {
+                signalsCount: buySignalCount,
+                minSignalsRequired: requiredSignals,
+                smartGuardDecision: "BLOCK",
+                blockReasonCode: "SIGNALS_THRESHOLD",
+                blockDetails: { signalsCount: buySignalCount, minSignalsRequired: requiredSignals, regime: regimeName },
+                finalSignal: "NONE",
+                finalReason: `Señales insuficientes: ${buySignalCount}/${requiredSignals}`,
               });
               return;
             }
@@ -2312,6 +2381,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             cooldownRemainingSec: cooldownSec,
             signalReason: signal.reason,
           });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "STOPLOSS_COOLDOWN",
+            blockDetails: { cooldownRemainingSec: cooldownSec },
+            finalSignal: "NONE",
+            finalReason: `SL Cooldown: ${cooldownSec}s restantes`,
+          });
           return;
         }
 
@@ -2326,6 +2402,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             spreadPct: spreadCheck.spreadPct,
             maxSpreadPct: MAX_SPREAD_PCT,
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "SPREAD_TOO_HIGH",
+            blockDetails: { spreadPct: spreadCheck.spreadPct, maxSpreadPct: MAX_SPREAD_PCT },
+            finalSignal: "NONE",
+            finalReason: `Spread alto: ${spreadCheck.spreadPct.toFixed(2)}% > ${MAX_SPREAD_PCT}%`,
           });
           return;
         }
@@ -2588,6 +2671,27 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             exposureAvailable: orderUsdFinal,
           });
           
+          // Determinar blockReasonCode basado en skipReason
+          const traceBlockReason: BlockReasonCode = 
+            validationResult.skipReason === "MIN_ORDER_ABSOLUTE" ? "MIN_ORDER_ABSOLUTE" :
+            validationResult.skipReason === "MIN_ORDER_USD" ? "MIN_ORDER_USD" :
+            validationResult.skipReason?.includes("BLOCKED") ? "MIN_ORDER_USD" : "MIN_ORDER_USD";
+          
+          this.updatePairTrace(pair, {
+            computedOrderUsd: orderUsdFinal,
+            minOrderUsd: sgMinEntryUsd,
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: traceBlockReason,
+            blockDetails: { 
+              computedOrderUsd: orderUsdFinal, 
+              minOrderUsd: sgMinEntryUsd,
+              skipReason: validationResult.skipReason,
+              ...validationResult.meta,
+            },
+            finalSignal: "NONE",
+            finalReason: `Blocked: ${validationResult.message}`,
+          });
+          
           await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - ${validationResult.skipReason}`, {
             pair,
             signal: "BUY",
@@ -2792,6 +2896,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             cooldownRemainingSec: cooldownSec,
             signalReason: signal.reason,
           });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "COOLDOWN",
+            blockDetails: { cooldownRemainingSec: cooldownSec },
+            finalSignal: "NONE",
+            finalReason: `Cooldown: ${cooldownSec}s restantes`,
+          });
           return;
         }
 
@@ -2824,6 +2935,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: reasonCode,
             exposureAvailable: 0,
           });
+          this.updatePairTrace(pair, {
+            openLotsThisPair: currentOpenLots,
+            maxLotsPerPair: maxLotsForMode,
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "MAX_LOTS_PER_PAIR",
+            blockDetails: { currentOpenLots, maxLotsForMode },
+            finalSignal: "NONE",
+            finalReason: `Max lotes: ${currentOpenLots}/${maxLotsForMode}`,
+          });
           return;
         }
 
@@ -2853,6 +2973,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   signal: "BUY",
                   reason: `REGIME_PAUSE: ${regimeAnalysis.reason}`,
                 });
+                this.updatePairTrace(pair, {
+                  regime: regimeAnalysis.regime,
+                  regimeReason: regimeAnalysis.reason,
+                  smartGuardDecision: "BLOCK",
+                  blockReasonCode: "REGIME_PAUSE",
+                  blockDetails: { regime: regimeAnalysis.regime, adx: regimeAnalysis.adx },
+                  finalSignal: "NONE",
+                  finalReason: `Régimen TRANSITION: pausa entradas`,
+                });
                 return;
               }
               
@@ -2866,6 +2995,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               this.lastScanResults.set(pair, {
                 signal: "BUY",
                 reason: `REGIME_ERROR: Fallback a base SMART_GUARD`,
+              });
+              this.updatePairTrace(pair, {
+                regime: "ERROR",
+                regimeReason: regimeError.message,
+                blockReasonCode: "REGIME_ERROR",
+                blockDetails: { error: regimeError.message },
               });
             }
           }
@@ -2888,6 +3023,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 regime: regimeName,
                 regimeEnabled,
                 signalReason: signal.reason,
+              });
+              this.updatePairTrace(pair, {
+                signalsCount: buySignalCount,
+                minSignalsRequired: requiredSignals,
+                smartGuardDecision: "BLOCK",
+                blockReasonCode: "SIGNALS_THRESHOLD",
+                blockDetails: { signalsCount: buySignalCount, minSignalsRequired: requiredSignals, regime: regimeName },
+                finalSignal: "NONE",
+                finalReason: `Señales insuficientes: ${buySignalCount}/${requiredSignals}`,
               });
               return;
             }
@@ -2916,6 +3060,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             cooldownRemainingSec: cooldownSec,
             signalReason: signal.reason,
           });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "STOPLOSS_COOLDOWN",
+            blockDetails: { cooldownRemainingSec: cooldownSec },
+            finalSignal: "NONE",
+            finalReason: `SL Cooldown: ${cooldownSec}s restantes`,
+          });
           return;
         }
 
@@ -2929,6 +3080,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             spreadPct: spreadCheck.spreadPct,
             maxSpreadPct: MAX_SPREAD_PCT,
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "SPREAD_TOO_HIGH",
+            blockDetails: { spreadPct: spreadCheck.spreadPct, maxSpreadPct: MAX_SPREAD_PCT },
+            finalSignal: "NONE",
+            finalReason: `Spread alto: ${spreadCheck.spreadPct.toFixed(2)}% > ${MAX_SPREAD_PCT}%`,
           });
           return;
         }
@@ -4200,6 +4358,65 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     if (history.length > this.PRICE_HISTORY_LENGTH) {
       history.shift();
     }
+  }
+
+  // === PAIR_DECISION_TRACE: Helpers ===
+  private initPairTrace(pair: string, exposureAvailable: number): void {
+    const trace: DecisionTraceContext = {
+      scanId: this.currentScanId,
+      scanTime: new Date(this.lastScanStartTime).toISOString(),
+      pair,
+      regime: null,
+      regimeReason: null,
+      selectedStrategy: null,
+      rawSignal: "NONE",
+      rawReason: null,
+      signalsCount: null,
+      minSignalsRequired: null,
+      exposureAvailableUsd: exposureAvailable,
+      computedOrderUsd: 0,
+      minOrderUsd: 100,
+      allowSmallerEntries: false,
+      openLotsThisPair: this.getOpenLotsForPair(pair),
+      maxLotsPerPair: 2,
+      smartGuardDecision: "NOOP",
+      blockReasonCode: "NO_SIGNAL",
+      blockDetails: null,
+      finalSignal: "NONE",
+      finalReason: "Sin señal en este ciclo",
+    };
+    this.pairDecisionTrace.set(pair, trace);
+  }
+
+  private updatePairTrace(pair: string, updates: Partial<DecisionTraceContext>): void {
+    const existing = this.pairDecisionTrace.get(pair);
+    if (existing) {
+      this.pairDecisionTrace.set(pair, { ...existing, ...updates });
+    }
+  }
+
+  private emitPairDecisionTrace(pair: string): void {
+    const trace = this.pairDecisionTrace.get(pair);
+    if (!trace) return;
+    
+    // Asegurar que finalSignal y finalReason estén definidos
+    const safeTrace: DecisionTraceContext = {
+      ...trace,
+      finalSignal: trace.finalSignal || "NONE",
+      finalReason: trace.finalReason || "Sin señal en este ciclo",
+      blockReasonCode: trace.blockReasonCode || "NO_SIGNAL",
+      smartGuardDecision: trace.smartGuardDecision || "NOOP",
+    };
+    
+    log(`[PAIR_DECISION_TRACE] ${JSON.stringify(safeTrace)}`, "trading");
+  }
+
+  private getOpenLotsForPair(pair: string): number {
+    let count = 0;
+    for (const [lotId, pos] of this.openPositions) {
+      if (pos.pair === pair && pos.amount > 0) count++;
+    }
+    return count;
   }
 
   private formatKrakenPair(pair: string): string {
