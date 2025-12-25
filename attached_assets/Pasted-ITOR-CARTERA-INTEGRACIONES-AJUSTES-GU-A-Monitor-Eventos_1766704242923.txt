@@ -1,0 +1,236 @@
+ITOR
+CARTERA
+INTEGRACIONES
+AJUSTES
+GUÍA
+
+Monitor
+Eventos
+Terminal
+Diagnóstico
+Conectado
+
+KrakenBot Container
+Detener
+Líneas: 218
+Último: 00:10:02
+
+
+11:09:01 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:09:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704141055","scanTime":"2025-12-25T23:09:01.055Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:01 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:09:01 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:09:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704141055","scanTime":"2025-12-25T23:09:01.055Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:01 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:09:01 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:09:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704141055","scanTime":"2025-12-25T23:09:01.055Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:01 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:09:01 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704141055 pairs=5 snapshotted for emission
+11:09:01 PM [trading] [SCAN_END] scanId=scan-1766704141055 expected=5 done=5 failures=0 durationMs=628
+[api/open-positions] Error: error: column "entry_fee" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async R2.getOpenPositions (/app/dist/index.cjs:76:3244)
+    at async /app/dist/index.cjs:755:11969 {
+  length: 182,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "open_positions.entry_mode".',
+  position: '252',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3729',
+  routine: 'errorMissingColumn'
+}
+[api/open-positions] Error: error: column "entry_fee" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async R2.getOpenPositions (/app/dist/index.cjs:76:3244)
+    at async /app/dist/index.cjs:755:11969 {
+  length: 182,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "open_positions.entry_mode".',
+  position: '252',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3729',
+  routine: 'errorMissingColumn'
+}
+[api/open-positions] Error: error: column "entry_fee" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async R2.getOpenPositions (/app/dist/index.cjs:76:3244)
+    at async /app/dist/index.cjs:755:11969 {
+  length: 182,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "open_positions.entry_mode".',
+  position: '252',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3729',
+  routine: 'errorMissingColumn'
+}
+11:09:11 PM [express] GET /api/open-positions 500 in 14ms :: {"error":"Failed to get open positions"}
+11:09:11 PM [express] GET /api/open-positions 500 in 14ms :: {"error":"Failed to get open positions"}
+11:09:11 PM [express] GET /api/open-positions 500 in 13ms :: {"error":"Failed to get open positions"}
+11:09:23 PM [express] GET /api/dashboard 200 in 626ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"momentum","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000100","XXBT":"0.0016834608","XXRP":"78.06926425","ZEUR":"0.0000","ZUSD":"149.8920"},"prices":{"XXBTZUSD":{"price":"87565.80000","change":"-0.05"},"XETHZUSD":{"price":"2918.69000","change":"-0.91"},"SOLUSD":{"price":"121.61000","change":"-0.69"},"XXRPZUSD":{"price":"1.84755000","change":"-0.72"},"TONUSD":{"price":"1.5090000","change":"1.14"}},"recentTrades":[{"id":372,"tradeId":"MANUAL-1766474317011","pair":"BTC/USD","type":"sell","price":"87434.50000000","amount":"0.00169992","status":"filled","krakenOrderId":"OT67VT-R2HS5-BF4FN6","entryPrice":"88239.20000000","realizedPnlUsd":"-1.36792562","realizedPnlPct":"-0.9120","executedAt":"2025-12-23T07:18:37.011Z","createdAt":"2025-12-23T07:18:37.012Z"},{"id":371,"tradeId":"AUTO-1766436313219","pair":"BTC/USD","type":"buy","price":"88239.20000000","amount":"0.00169992","status":"filled","krakenOrderId":"OHEKAJ-ZE2WE-7UEVPO","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T20:45:13.219Z","createdAt":"2025-12-22T20:45:13.220Z"},{"id":370,"tradeId":"AUTO-1766431632922","pair":"ETH/USD","type":"sell","price":"2987.39000000","amount":"0.05037885","status":"filled","krakenOrderId":"OITS7X-3JUM3-XQC7BD","entryPrice":"2977.44000000","realizedPnlUsd":"0.50126956","realizedPnlPct":"0.3342","executedAt":"2025-12-22T19:27:12.922Z","createdAt":"2025-12-22T19:27:12.923Z"},{"id":369,"tradeId":"AUTO-1766387719276","pair":"BTC/USD","type":"buy","price":"89102.30000000","amount":"0.00168346","status":"filled","krakenOrderId":"O24LJJ-IHFBT-CY5ESK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T07:15:19.276Z","createdAt":"2025-12-22T07:15:19.277Z"},{"id":368,"tradeId":"AUTO-1766341808305","pair":"ETH/USD","type":"buy","price":"2977.44000000","amount":"0.05037885","status":"filled","krakenOrderId":"O7TWLJ-5LMYW-ZZOCJ4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T18:30:08.451Z","createdAt":"2025-12-21T18:30:08.306Z"},{"id":367,"tradeId":"AUTO-1766330317989","pair":"BTC/USD","type":"sell","price":"87799.70000000","amount":"0.00169014","status":"filled","krakenOrderId":"OLHPZX-TWOA2-OVAFNW","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T15:18:37.972Z","createdAt":"2025-12-21T15:18:37.992Z"},{"id":366,"tradeId":"AUTO-1766319320912","pair":"BTC/USD","type":"buy","price":"88750.30000000","amount":"0.00169014","status":"filled","krakenOrderId":"O2PNJP-DSJZ4-5KMN2B","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T12:15:21.326Z","createdAt":"2025-12-21T12:15:20.913Z"},{"id":365,"tradeId":"AUTO-1766316621017","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","status":"filled","krakenOrderId":"OML4KG-LRBQ7-HON64T","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T11:30:21.396Z","createdAt":"2025-12-21T11:30:21.018Z"},{"id":364,"tradeId":"MANUAL-1766313373079","pair":"BTC/USD","type":"sell","price":"88570.80000000","amount":"0.00059458","status":"filled","krakenOrderId":"OOFBW7-H3KOU-XTLVPW","entryPrice":"88180.20000000","realizedPnlUsd":"0.23230241","realizedPnlPct":"0.4431","executedAt":"2025-12-21T10:36:13.413Z","createdAt":"2025-12-21T10:36:13.079Z"},{"id":363,"tradeId":"AUTO-1766312120502","pair":"BTC/USD","type":"sell","price":"88768.70000000","amount":"0.00085011","status":"filled","krakenOrderId":"O2YYYH-LSAKY-QE4NBX","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T10:15:20.822Z","createdAt":"2025-12-21T10:15:20.503Z"}]}
+11:09:27 PM [express] GET /api/open-positions 500 in 2ms :: {"error":"Failed to get open positions"}
+[36m[2025-12-25T23:09:30.935Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "openPositionsCount": 0,
+  "openPositionsPairs": [],
+  "lastScanAt": "2025-12-25T23:09:00.926Z",
+  "lastScanId": "scan-1766704141055",
+  "timeSinceLastScanMs": 30009,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+11:09:30 PM [trading] [SCAN_SUMMARY_COUNT] scanId=scan-1766704141055 expected=5 got=5 missing=[]
+11:09:30 PM [trading] [SCAN_SUMMARY_BUILD] scanId=scan-1766704141055 source=5 built=5
+[36m[2025-12-25T23:09:30.954Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=1.2%)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=21, esperando confirmación)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=2.0%)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=20, esperando confirmación)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (minHold 16min restantes)"
+    }
+  },
+  "scanTime": "2025-12-25T23:09:00.926Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1766704141055"
+  }
+}
+11:09:31 PM [trading] [SCAN_START] scanId=scan-1766704171056 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:09:31 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:09:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704171056","scanTime":"2025-12-25T23:09:31.056Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:31 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:09:31 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:09:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704171056","scanTime":"2025-12-25T23:09:31.056Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:31 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:09:31 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:09:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704171056","scanTime":"2025-12-25T23:09:31.056Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:31 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:09:31 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:09:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704171056","scanTime":"2025-12-25T23:09:31.056Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:31 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:09:31 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:09:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704171056","scanTime":"2025-12-25T23:09:31.056Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:09:31 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:09:31 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704171056 pairs=5 snapshotted for emission
+11:09:31 PM [trading] [SCAN_END] scanId=scan-1766704171056 expected=5 done=5 failures=0 durationMs=481
+11:09:49 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.47)
+11:09:49 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+11:09:51 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+[api/open-positions] Error: error: column "entry_fee" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async R2.getOpenPositions (/app/dist/index.cjs:76:3244)
+    at async /app/dist/index.cjs:755:11969 {
+  length: 182,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "open_positions.entry_mode".',
+  position: '252',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3729',
+  routine: 'errorMissingColumn'
+}
+11:10:01 PM [trading] [SCAN_START] scanId=scan-1766704201096 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:10:01 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:10:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704201096","scanTime":"2025-12-25T23:10:01.096Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:10:01 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:10:01 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:10:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704201096","scanTime":"2025-12-25T23:10:01.096Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:10:01 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:10:01 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:10:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704201096","scanTime":"2025-12-25T23:10:01.096Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:10:01 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:10:01 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:10:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704201096","scanTime":"2025-12-25T23:10:01.096Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:10:01 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:10:01 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:10:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704201096","scanTime":"2025-12-25T23:10:01.096Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:10:01 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:10:01 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704201096 pairs=5 snapshotted for emission
+11:10:01 PM [trading] [SCAN_END] scanId=scan-1766704201096 expected=5 done=5 failures=0 durationMs=602
