@@ -2497,8 +2497,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
         const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
         
-        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT)
-        const effectiveCushionPct = sgFeeCushionAuto ? (KRAKEN_FEE_PCT * 2) : sgFeeCushionPct;
+        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT + slippage buffer = 1.00%)
+        const effectiveCushionPct = sgFeeCushionAuto ? ROUND_TRIP_WITH_BUFFER_PCT : sgFeeCushionPct;
         
         // usdDisponible = saldo real disponible (sin buffer en SMART_GUARD v2 para sizing exacto)
         const usdDisponible = freshUsdBalance;
@@ -3200,7 +3200,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
         const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
         
-        const effectiveCushionPct = sgFeeCushionAuto ? (KRAKEN_FEE_PCT * 2) : sgFeeCushionPct;
+        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT + slippage buffer = 1.00%)
+        const effectiveCushionPct = sgFeeCushionAuto ? ROUND_TRIP_WITH_BUFFER_PCT : sgFeeCushionPct;
         const usdDisponible = freshUsdBalance;
         const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD);
         const cushionAmount = freshUsdBalance * (effectiveCushionPct / 100);
