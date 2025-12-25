@@ -1,0 +1,82 @@
+REPLIT — DECISIÓN FINAL Y ALCANCE (FASE 1 ROUTER) — IMPLEMENTAR
+
+DECISIÓN
+1) Proceder con FASE 1 (Router básico) con toggle reversible.
+2) RANGE: implementar Opción A → mean_reversion SIMPLE (BB + RSI). (No existe en codebase ahora.)
+3) TRANSITION: NO crear “hybrid_transition” como estrategia nueva. Reutilizar momentum_candles_15m + overrides (sizing/cooldown/exits) cuando Router ON.
+4) Time-stop: POSPONER a FASE 2.
+
+A) Feature flag + UI (reversible)
+- Añadir regimeRouterEnabled (bool) en DB/config/API. DEFAULT false.
+- Dashboard: toggle “Modo Router (por régimen)”.
+- Router OFF => comportamiento EXACTO actual, sin routing, sin overrides.
+
+B) Routing table (FASE 1)
+Si regimeRouterEnabled=true:
+- TREND  -> selectedStrategyId = momentum_candles_15m (igual que ahora)
+- RANGE  -> selectedStrategyId = mean_reversion_simple (NUEVA estrategia)
+- TRANSITION -> selectedStrategyId = momentum_candles_15m (igual) + APPLY TRANSITION OVERRIDES (ver sección D)
+Si regimeRouterEnabled=false:
+- selectedStrategyId = estrategia global actual (sin cambios)
+
+C) Estrategia nueva: mean_reversion_simple (mínima, conservadora)
+Objetivo: generar señales en RANGE sin “inventar” un framework nuevo.
+Señales (ejemplo conservador, ajustar si ya tenéis helpers):
+- BUY cuando:
+  - precio <= Bollinger lower band (20,2) (o toca banda inferior)
+  - RSI(14) <= 35
+  - (opcional mínimo) vela actual no sea bearish fuerte / o bodyRatio no extremo en contra
+- SELL cuando:
+  - precio >= Bollinger upper band (20,2) y RSI(14) >= 65
+- Retornar SIEMPRE: rawSignal/rawReason/signalsCount/minSignalsRequired para trace.
+Regla de seguridad:
+- mean_reversion_simple solo se evalúa si regime=RANGE (si no, no se ejecuta).
+
+Exits:
+- NO introducir exits nuevos en FASE 1.
+- Dejar que SMART_GUARD gestione BE/TP/Trailing según configuración actual (y/o perfil de RANGE si ya existe en vuestra detección de régimen).
+
+D) TRANSITION overrides (solo cuando Router ON y regime=TRANSITION)
+Objetivo: dejar de “pausar entradas” en TRANSITION, pero de forma conservadora.
+Parámetros esenciales (solo 6, como acordado):
+- rangeCooldownMinutes (default 60)  [solo aplica a RANGE]
+- transitionSizeFactor (default 0.50)
+- transitionCooldownMinutes (default 120)
+- transitionBeAtPct (default 2.00)
+- transitionTrailStartPct (default 2.80)
+- transitionTpPct (default 5.00)
+
+Aplicación:
+- En TRANSITION + Router ON:
+  - orderUsd *= transitionSizeFactor
+  - cooldown por par = transitionCooldownMinutes
+  - overrides de salida: sgBeAtPct=transitionBeAtPct, sgTrailStartPct=transitionTrailStartPct, takeProfitPercent/TP=transitionTpPct
+  - Mantener MTF filter y Anti-FOMO como hoy (no tocar).
+- En TRANSITION + Router OFF:
+  - mantener “pausa entradas” actual (comportamiento legacy).
+
+E) Observabilidad (completar)
+Añadir a PAIR_DECISION_TRACE:
+- regimeRouterEnabled
+- selectedStrategyId
+- feeCushionEffectivePct + feeCushionSource
+- isIntermediateCycle (si aplica)
+
+Importante (bug de coherencia detectado):
+- En tus logs: config muestra sgAllowUnderMin=true pero PAIR_DECISION_TRACE imprime allowSmallerEntries=false.
+=> Alinear el trace para que refleje el valor real de config (sgAllowUnderMin), sin hardcodes.
+
+F) Ciclos intermedios (sin vela 15m cerrada)
+- NO llamadas extra a Kraken.
+- En trace, rellenar regime/regimeReason desde cache.
+- rawReason: “Ciclo intermedio – sin vela 15m cerrada”
+- selectedStrategyId derivado del régimen cacheado (si Router ON).
+
+G) Criterios de aceptación (FASE 1)
+1) Router OFF: resultados idénticos a hoy.
+2) Router ON:
+   - RANGE: aparecen señales de mean_reversion_simple cuando hay condiciones (BB/RSI)
+   - TRANSITION: ya no se “pausa” si hay señal; entra con sizeFactor 0.5 y cooldown 120m + exits override
+3) Trace completo:
+   - se ven selectedStrategyId, regimeRouterEnabled, feeCushionEffectivePct y allowUnderMin coherente
+4) Sin time-stop en esta fase.
