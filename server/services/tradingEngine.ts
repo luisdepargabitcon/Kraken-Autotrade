@@ -79,7 +79,6 @@ type BlockReasonCode =
   | "NO_SIGNAL"               // No hay señal de la estrategia
   | "COOLDOWN"                // Par en cooldown
   | "STOPLOSS_COOLDOWN"       // Cooldown post stop-loss
-  | "DAILY_LIMIT"             // Límite diario alcanzado
   | "MAX_LOTS_PER_PAIR"       // Máximo lotes por par alcanzado
   | "REGIME_PAUSE"            // Régimen TRANSITION - pausa entradas
   | "MIN_ORDER_USD"           // Order < minOrderUsd configurado
@@ -90,6 +89,9 @@ type BlockReasonCode =
   | "SIGNALS_THRESHOLD"       // No alcanza minSignals requerido
   | "CONFIDENCE_LOW"          // Confianza < umbral mínimo
   | "REGIME_ERROR"            // Error detectando régimen
+  | "DAILY_LIMIT"             // Límite de pérdida diaria alcanzado
+  | "SELL_BLOCKED"            // SELL bloqueado por SMART_GUARD
+  | "NO_POSITION"             // Sin posición para vender
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "NOOP";
@@ -1474,6 +1476,19 @@ El bot ha pausado las operaciones de COMPRA.
 
       // No abrir nuevas posiciones si se alcanzó el límite diario
       if (this.isDailyLimitReached) {
+        // Emitir trace para todos los pares activos indicando DAILY_LIMIT
+        const activePairsForTrace = config.activePairs || [];
+        for (const pair of activePairsForTrace) {
+          this.initPairTrace(pair, scanId);
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "DAILY_LIMIT",
+            blockDetails: { dailyPnL: this.dailyPnL, dailyStartBalance: this.dailyStartBalance },
+            finalSignal: "NONE",
+            finalReason: `Límite diario alcanzado: P&L $${this.dailyPnL.toFixed(2)}`,
+          });
+          this.emitPairDecisionTrace(pair);
+        }
         return;
       }
 
@@ -1486,6 +1501,19 @@ El bot ha pausado las operaciones de COMPRA.
       const tradingHoursCheck = this.isWithinTradingHours(config);
       if (!tradingHoursCheck.withinHours) {
         log(`Fuera de horario de trading (${tradingHoursCheck.hourUTC}h UTC). Horario: ${tradingHoursCheck.start}h-${tradingHoursCheck.end}h UTC`, "trading");
+        // Emitir trace para todos los pares activos indicando TRADING_HOURS
+        const activePairsForTrace = config.activePairs || [];
+        for (const pair of activePairsForTrace) {
+          this.initPairTrace(pair, scanId);
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "TRADING_HOURS",
+            blockDetails: { hourUTC: tradingHoursCheck.hourUTC, start: tradingHoursCheck.start, end: tradingHoursCheck.end },
+            finalSignal: "NONE",
+            finalReason: `Fuera de horario: ${tradingHoursCheck.hourUTC}h (${tradingHoursCheck.start}-${tradingHoursCheck.end}h)`,
+          });
+          this.emitPairDecisionTrace(pair);
+        }
         return;
       }
 
@@ -2573,6 +2601,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             exposureAvailable: effectiveMaxAllowed,
             minRequiredUsd: minRequiredUSD,
           });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "EXPOSURE_LIMIT",
+            blockDetails: { exposureAvailable: effectiveMaxAllowed, minRequiredUsd: minRequiredUSD },
+            finalSignal: "NONE",
+            finalReason: `Exposición insuficiente: $${effectiveMaxAllowed.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`,
+          });
           this.setPairCooldown(pair);
           
           if (this.shouldSendExposureAlert(pair)) {
@@ -2739,6 +2774,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, undefined, executionMeta);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "ALLOW",
+            blockReasonCode: "ALLOWED",
+            finalSignal: "BUY",
+            finalReason: `Trade ejecutado: ${tradeVolume.toFixed(8)} @ $${currentPrice.toFixed(2)}`,
+          });
         }
 
       } else if (signal.action === "sell") {
@@ -2754,6 +2795,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             signal: "SELL",
             reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "SELL_BLOCKED",
+            blockDetails: { reason: "SMART_GUARD solo permite risk exits" },
+            finalSignal: "NONE",
+            finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
           });
           
           // Notificar a Telegram
@@ -2782,6 +2830,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: "NO_POSITION",
             assetBalance,
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "NO_POSITION",
+            blockDetails: { assetBalance },
+            finalSignal: "NONE",
+            finalReason: "Sin posición para vender",
           });
           return;
         }
@@ -3271,6 +3326,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             strategyId,
             signalReason: signal.reason,
           });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "SELL_BLOCKED",
+            blockDetails: { reason: "SMART_GUARD solo permite risk exits", strategyId },
+            finalSignal: "NONE",
+            finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
+          });
           return;
         }
 
@@ -3282,6 +3344,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             assetBalance,
             strategyId,
             signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "NO_POSITION",
+            blockDetails: { assetBalance, strategyId },
+            finalSignal: "NONE",
+            finalReason: "Sin posición para vender",
           });
           return;
         }
