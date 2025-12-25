@@ -245,6 +245,7 @@ interface OpenPosition {
   pair: string; // Pair for this position
   amount: number;
   entryPrice: number;
+  entryFee: number; // Fee paid at entry for accurate P&L (two legs)
   highestPrice: number;
   openedAt: number;
   entryStrategyId: string;
@@ -1305,11 +1306,18 @@ El motor de trading ha sido desactivado.
         // Use existing lotId or generate one for legacy positions
         const lotId = pos.lotId || generateLotId(pos.pair);
         
+        // Calculate entryFee for legacy positions that don't have it stored
+        const storedEntryFee = (pos as any).entryFee ? parseFloat((pos as any).entryFee) : 0;
+        const calculatedEntryFee = storedEntryFee > 0 
+          ? storedEntryFee 
+          : parseFloat(pos.amount) * parseFloat(pos.entryPrice) * (KRAKEN_FEE_PCT / 100);
+        
         this.openPositions.set(lotId, {
           lotId,
           pair: pos.pair,
           amount: parseFloat(pos.amount),
           entryPrice: parseFloat(pos.entryPrice),
+          entryFee: calculatedEntryFee,
           highestPrice: parseFloat(pos.highestPrice),
           openedAt: new Date(pos.openedAt).getTime(),
           entryStrategyId: pos.entryStrategyId || "momentum_cycle",
@@ -1363,6 +1371,7 @@ ${positionsList}
         pair,
         entryPrice: position.entryPrice.toString(),
         amount: position.amount.toString(),
+        entryFee: position.entryFee.toString(),
         highestPrice: position.highestPrice.toString(),
         entryStrategyId: position.entryStrategyId,
         entrySignalTf: position.entrySignalTf,
@@ -4853,14 +4862,18 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           // DCA mode: update existing position
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
+          // DCA: accumulate fees from both entries
+          const additionalEntryFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          const totalEntryFee = (existing.entryFee || 0) + additionalEntryFee;
           newPosition = { 
             ...existing,
             amount: totalAmount, 
             entryPrice: avgPrice,
+            entryFee: totalEntryFee,
             highestPrice: Math.max(existing.highestPrice, price),
           };
           this.openPositions.set(existing.lotId, newPosition);
-          log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry`, "trading");
+          log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry, totalFee=$${totalEntryFee.toFixed(4)}`, "trading");
         } else {
           // NEW POSITION: create snapshot of current config with unique lotId
           const lotId = generateLotId(pair);
@@ -4917,11 +4930,15 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             }
           }
           
+          // Calculate entry fee for accurate P&L (two legs)
+          const entryFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          
           newPosition = { 
             lotId,
             pair,
             amount: volumeNum, 
             entryPrice: price,
+            entryFee,
             highestPrice: price,
             openedAt: Date.now(),
             entryStrategyId,

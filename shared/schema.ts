@@ -134,6 +134,8 @@ export const openPositions = pgTable("open_positions", {
   signalReason: text("signal_reason"),
   entryMode: text("entry_mode"),
   configSnapshotJson: jsonb("config_snapshot_json"),
+  // Entry fee for accurate P&L calculation (both legs)
+  entryFee: decimal("entry_fee", { precision: 18, scale: 8 }).default("0"),
   // SMART_GUARD dynamic state
   sgBreakEvenActivated: boolean("sg_break_even_activated").default(false),
   sgCurrentStopPrice: decimal("sg_current_stop_price", { precision: 18, scale: 8 }),
