@@ -1,0 +1,131 @@
+REPLIT — BLOQUE ÚNICO ACTUALIZADO: “Modo Router” (SMART_GUARD) + TRANSITION/HYBRID + salidas optimizadas + fees coherentes
+
+Contexto (NAS/PROD)
+- El bot está sano; no opera porque en RANGE/TRANSITION la estrategia momentum_candles_15m suele dar NONE o queda filtrada por MTF.
+- Objetivo del Router: mantener operativa en laterales sin romper el comportamiento actual.
+- Requisito: Router debe ser reversible desde Dashboard (toggle). Router OFF = exacto comportamiento actual.
+
+A) Feature flag y UI (reversible)
+1) Añadir en config persistida (DB + API):
+   - regimeRouterEnabled: boolean DEFAULT false
+2) Dashboard:
+   - Toggle: “Modo Router (estrategia por régimen)”
+   - Tooltip: “TREND→Momentum | RANGE→Mean Reversion | TRANSITION→Hybrid (solo ajustes ‘de abajo’)”
+3) Cuando regimeRouterEnabled=false:
+   - selectedStrategyId = estrategia global actual (sin cambios).
+   - No aplicar overrides ni routing.
+
+B) Dónde encaja el Router (pipeline exacto)
+- El Router solo “elige estrategia”. No decide trade ni toca SMART_GUARD gates.
+- Orden recomendado por par (cada vela cerrada 15m):
+  1) cargar candles/MTF (si aplica)
+  2) detectar régimen (regime + regimeReason) y cachearlo
+  3) ROUTER: seleccionar estrategia según régimen (si enabled)
+  4) evaluar estrategia seleccionada -> rawSignal/rawReason/signalsCount/minSignalsRequired
+  5) aplicar filtros/gates: MTF filter, Anti-FOMO, minSignals, etc.
+  6) SMART_GUARD: sizing, maxLotsPerPair, minOrderUsd, cooldown, etc.
+  7) emitir PAIR_DECISION_TRACE completo
+
+C) Tabla de ruteo (routing table)
+Si regimeRouterEnabled=true:
+- TREND:
+  - selectedStrategyId = "momentum_candles_15m" (o la estrategia global si ya es candles)
+  - aplicar lógica actual sin overrides (o los existentes de TREND si ya los tenéis)
+- RANGE:
+  - selectedStrategyId = "mean_reversion" (usar estrategia ya existente en codebase)
+- TRANSITION:
+  - selectedStrategyId = "hybrid_transition" (FIXED, sin selector libre)
+  - Nota: HYBRID no es “otra app”; es un modo conservador: misma infraestructura, solo restricciones/overrides.
+
+D) TRANSITION -> HYBRID (qué hace exactamente)
+En régimen TRANSITION con Router ON:
+1) Estrategia:
+   - Puede seguir usando momentum_candles_15m o una híbrida (si existe); la clave es que TRANSITION NO se queda en “pause entradas”.
+   - Mantener MTF filter: si 1h/4h contrarias, se filtra igual.
+2) Restricciones (solo “de abajo”):
+   - reducir tamaño (sizing) y aumentar cooldown
+   - time-stop condicionado para liberar capital sin pagar fees por churn
+
+E) Parámetros configurables (por régimen) — SOLO cuando Router ON
+Añadir en config (DB + API + UI en sección “Router / Régimen”):
+1) RANGE (mean reversion):
+   - rangeCooldownPerPairMinutes (default 60)
+   - rangeMaxEntriesPerDayPerPair (default 2)
+2) TRANSITION (hybrid):
+   - transitionSizeFactor (default 0.50)  // orderUsd *= factor
+   - transitionCooldownPerPairMinutes (default 120)
+   - transitionMaxEntriesPerDayPerPair (default 1)
+
+3) TRANSITION salidas optimizadas (overrides solo en TRANSITION)
+Objetivo: coherentes con MARKET-only + fees realistas.
+Defaults recomendados:
+- transitionFeeCushionPctEffective: 1.00% (ver FEES abajo)
+- transitionBreakEvenTriggerPct: 2.00%
+- transitionTrailStartPct: 2.80%
+- transitionTrailDistancePct: 2.20%
+- transitionTakeProfitPct: 5.00%
+
+NOTA: estos overrides solo aplican en TRANSITION cuando Router ON.
+En TREND/RANGE se mantienen parámetros actuales o los ya existentes.
+
+F) Time-stop en TRANSITION (IMPORTANTE: evita churn de fees)
+- Sí, un time-stop implica fees (SELL a mercado). Por eso debe ser “condicionado”.
+Añadir:
+- transitionTimeStopMinutes (default 480)  // 8h (no 240)
+- transitionTimeStopProgressThresholdPct (default 1.20)
+- transitionTimeStopPnlLowerPct (default -1.20)
+- transitionTimeStopPnlUpperPct (default +0.40)
+
+Regla (solo en TRANSITION, Router ON):
+- Aplicar time-stop SOLO si:
+  1) sgBreakEvenActivated == false AND sgTrailingActivated == false
+  2) maxFavorableMovePct < transitionTimeStopProgressThresholdPct
+  3) pnlPct está entre [transitionTimeStopPnlLowerPct, transitionTimeStopPnlUpperPct]
+- Si BE o trailing ya activaron -> NO time-stop (dejar a los stops gestionar)
+- Emitir log:
+  - [TIME_STOP_EXIT] pair lotId minutesHeld pnlPct mfePct regime=TRANSITION
+
+G) FEES (coherencia obligatoria para que Router/TRANSITION funcione bien)
+- Como el bot usa MARKET-only, el “fee cushion auto” debe reflejar ida+vuelta + buffer slippage.
+Implementar regla:
+- Si sgFeeCushionAuto=true:
+  - feeCushionEffectivePct = (2 * KRAKEN_TAKER_FEE_PCT) + SLIPPAGE_BUFFER_PCT
+  - con KRAKEN_TAKER_FEE_PCT=0.40% y SLIPPAGE_BUFFER_PCT=0.20% => 1.00%
+- Si sgFeeCushionAuto=false:
+  - feeCushionEffectivePct = sgFeeCushionPct (manual)
+
+UI:
+- Con Auto ON: mostrar “Efectivo: 1.00%” y deshabilitar el input manual.
+- Incluir feeCushionEffectivePct en logs/trace.
+
+H) Observabilidad (PAIR_DECISION_TRACE y ciclos intermedios)
+1) Mantener PAIR_DECISION_TRACE como está (Opción A), pero:
+   - Añadir campos:
+     - regimeRouterEnabled
+     - selectedStrategyId
+     - isIntermediateCycle (true/false)
+     - feeCushionEffectivePct (y auto/manual)
+2) Ciclos intermedios (sin nueva vela 15m):
+   - NO hacer llamadas extra a Kraken.
+   - Usar régimen cacheado del último ciclo completo.
+   - Rellenar:
+     - regime/regimeReason (desde cache)
+     - rawReason = “Ciclo intermedio – sin vela 15m cerrada”
+     - selectedStrategyId (según cache + router flag)
+   - Así se evita regime=null y no se incrementa consumo API.
+
+I) Check de coherencia de config (bug de diagnóstico)
+- He visto inconsistencia: /api/config muestra sgAllowUnderMin=true pero el trace a veces muestra allowSmallerEntries=false.
+- Alinear el valor del trace con el valor real efectivo en runtime (tras merges/overrides) para no inducir a error.
+
+J) Criterios de aceptación (QA)
+1) Router OFF:
+   - comportamiento idéntico al actual (estrategia global fija, mismas entradas/salidas/gates)
+2) Router ON:
+   - TREND -> momentum_candles_15m
+   - RANGE -> mean_reversion
+   - TRANSITION -> hybrid_transition + overrides (sizeFactor/cooldown/timeStop condicionado/salidas TRANSITION)
+3) PAIR_DECISION_TRACE:
+   - nunca null en regime/regimeReason en ciclos intermedios (usar cache)
+   - muestra selectedStrategyId + isIntermediateCycle + feeCushionEffectivePct
+4) Sin aumento de llamadas API en ciclos intermedios.
