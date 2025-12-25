@@ -1847,7 +1847,14 @@ El bot ha pausado las operaciones de COMPRA.
       const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
       const pnlPercent = priceChange;
 
-      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId, openedAt: position.openedAt };
+      const sellContext = { 
+        entryPrice: position.entryPrice, 
+        entryFee: position.entryFee,
+        sellAmount: actualSellAmount,
+        positionAmount: position.amount,
+        aiSampleId: position.aiSampleId, 
+        openedAt: position.openedAt 
+      };
       const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
@@ -2123,8 +2130,14 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPer
       
       log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
       
-      const pnl = (currentPrice - position.entryPrice) * sellAmount;
-      const sellContext = { entryPrice: position.entryPrice, aiSampleId: position.aiSampleId, openedAt: position.openedAt };
+      const sellContext = { 
+        entryPrice: position.entryPrice, 
+        entryFee: position.entryFee,
+        sellAmount: sellAmount,
+        positionAmount: position.amount,
+        aiSampleId: position.aiSampleId, 
+        openedAt: position.openedAt 
+      };
       const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
@@ -4997,10 +5010,23 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         this.currentUsdBalance += volumeNum * price;
         
         // Calculate P&L using sellContext if provided (for correct per-lot tracking)
+        // TWO-LEG FEE CALCULATION: pnlNet = pnlGross - entryFee - exitFee
         if (sellContext) {
-          const pnl = (price - sellContext.entryPrice) * volumeNum;
-          this.dailyPnL += pnl;
-          log(`P&L de operación: $${pnl.toFixed(2)} | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
+          const pnlGross = (price - sellContext.entryPrice) * volumeNum;
+          
+          // Calculate fees for this sale (prorate entryFee if partial sell)
+          const exitFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          const sellRatio = (sellContext.sellAmount && sellContext.positionAmount && sellContext.positionAmount > 0) 
+            ? sellContext.sellAmount / sellContext.positionAmount 
+            : 1;
+          const proratedEntryFee = (sellContext.entryFee || 0) * sellRatio;
+          const pnlNet = pnlGross - proratedEntryFee - exitFee;
+          
+          this.dailyPnL += pnlNet;
+          
+          // [FEES_DIAG] Diagnostic log for fee tracking
+          log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${KRAKEN_FEE_PCT}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
+          log(`P&L de operación: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
           
           // AI Sample update: mark sample complete with PnL result
           if (sellContext.aiSampleId) {
@@ -5008,12 +5034,12 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               await storage.updateAiSample(sellContext.aiSampleId, {
                 exitPrice: price.toString(),
                 exitTs: new Date(),
-                pnlGross: pnl.toString(),
-                pnlNet: pnl.toString(),
-                labelWin: pnl > 0 ? 1 : 0,
+                pnlGross: pnlGross.toString(),
+                pnlNet: pnlNet.toString(),
+                labelWin: pnlNet > 0 ? 1 : 0,
                 isComplete: true,
               });
-              log(`[AI] Sample #${sellContext.aiSampleId} actualizado: PnL=${pnl.toFixed(2)} (${pnl > 0 ? 'WIN' : 'LOSS'})`, "trading");
+              log(`[AI] Sample #${sellContext.aiSampleId} actualizado: PnLGross=${pnlGross.toFixed(2)}, PnLNet=${pnlNet.toFixed(2)} (${pnlNet > 0 ? 'WIN' : 'LOSS'})`, "trading");
             } catch (aiErr: any) {
               log(`[AI] Error actualizando sample: ${aiErr.message}`, "trading");
             }
