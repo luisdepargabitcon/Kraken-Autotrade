@@ -127,6 +127,24 @@ interface DecisionTraceContext {
   blockDetails: Record<string, any> | null;
   finalSignal: "BUY" | "SELL" | "NONE";
   finalReason: string;
+  // Campos de diagnóstico para ciclos intermedios
+  isIntermediateCycle?: boolean;
+  lastCandleClosedAt?: string | null;
+  lastFullEvaluationAt?: string | null;
+  lastRegimeUpdateAt?: string | null;
+}
+
+// Cache para datos del último análisis completo por par (sin llamadas API extra)
+interface LastFullAnalysisCache {
+  regime: string;
+  regimeReason: string;
+  selectedStrategy: string;
+  signalsCount: number;
+  minSignalsRequired: number;
+  rawReason: string;
+  candleClosedAt: string;
+  evaluatedAt: string;
+  regimeUpdatedAt: string;
 }
 
 interface MinimumValidationParams {
@@ -478,6 +496,9 @@ export class TradingEngine {
   private regimeCache: Map<string, { regime: RegimeAnalysis; timestamp: number }> = new Map();
   private readonly REGIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   private lastRegime: Map<string, MarketRegime> = new Map(); // Track last regime for change alerts
+  
+  // Cache para último análisis completo por par (evita null en ciclos intermedios)
+  private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -1523,7 +1544,8 @@ El bot ha pausado las operaciones de COMPRA.
         // Emitir trace para todos los pares activos indicando DAILY_LIMIT
         const activePairsForTrace = config.activePairs || [];
         for (const pair of activePairsForTrace) {
-          this.initPairTrace(pair, scanId);
+          const expCheck = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+          this.initPairTrace(pair, expCheck.maxAllowed, true); // Usar cache
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "DAILY_LIMIT",
@@ -1548,7 +1570,8 @@ El bot ha pausado las operaciones de COMPRA.
         // Emitir trace para todos los pares activos indicando TRADING_HOURS
         const activePairsForTrace = config.activePairs || [];
         for (const pair of activePairsForTrace) {
-          this.initPairTrace(pair, scanId);
+          const expCheck = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+          this.initPairTrace(pair, expCheck.maxAllowed, true); // Usar cache
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "TRADING_HOURS",
@@ -1592,22 +1615,33 @@ El bot ha pausado las operaciones de COMPRA.
               });
             }
             
-            // Inicializar trace para este par
-            this.initPairTrace(pair, expDefault.maxAllowed);
+            // Determinar si es ciclo intermedio (sin vela cerrada nueva)
+            let isIntermediateCycle = true;
             
             if (isCandleMode) {
               const candle = await this.getLastClosedCandle(pair, signalTimeframe);
               if (!candle) {
+                // No hay vela, ciclo intermedio con datos cacheados
+                this.initPairTrace(pair, expDefault.maxAllowed, true);
                 log(`[SCAN_PAIR_OK] pair=${pair} result=no_candle`, "trading");
                 scannedPairs.push(pair);
                 continue;
               }
               
               if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
+                // Vela nueva cerrada = análisis completo
+                isIntermediateCycle = false;
+                this.initPairTrace(pair, expDefault.maxAllowed, false);
                 log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
                 await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
+              } else {
+                // No hay vela nueva, ciclo intermedio
+                this.initPairTrace(pair, expDefault.maxAllowed, true);
               }
             } else {
+              // Modo ciclo = siempre análisis completo
+              isIntermediateCycle = false;
+              this.initPairTrace(pair, expDefault.maxAllowed, false);
               await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
             }
             
@@ -3038,6 +3072,21 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         exposureAvailableUsd: exposureScan.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         finalReason: signal.reason || "Sin señal",
+        isIntermediateCycle: false, // Análisis completo
+        lastCandleClosedAt: new Date(candle.time * 1000).toISOString(),
+        lastFullEvaluationAt: new Date().toISOString(),
+        lastRegimeUpdateAt: earlyRegime ? new Date().toISOString() : null,
+      });
+      
+      // Cache para ciclos intermedios (evita null en próximos scans sin vela cerrada)
+      this.cacheFullAnalysis(pair, {
+        regime: earlyRegime || "UNKNOWN",
+        regimeReason: earlyRegimeReason || "No regime data",
+        selectedStrategy: `momentum_candles_${timeframe}`,
+        signalsCount: signal.signalsCount ?? 0,
+        minSignalsRequired: signal.minSignalsRequired ?? 4,
+        rawReason: signal.reason || "Sin señal",
+        candleClosedAt: new Date(candle.time * 1000).toISOString(),
       });
       
       if (signal.action === "hold" || signal.confidence < 0.6) {
@@ -4617,18 +4666,24 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
   }
 
   // === PAIR_DECISION_TRACE: Helpers ===
-  private initPairTrace(pair: string, exposureAvailable: number): void {
+  private initPairTrace(pair: string, exposureAvailable: number, isIntermediateCycle: boolean = true): void {
+    // En ciclos intermedios, usar datos cacheados del último análisis completo
+    const cached = this.lastFullAnalysisCache.get(pair);
+    
     const trace: DecisionTraceContext = {
       scanId: this.currentScanId,
       scanTime: new Date(this.lastScanStartTime).toISOString(),
       pair,
-      regime: null,
-      regimeReason: null,
-      selectedStrategy: null,
+      // Usar cache en ciclos intermedios, null si no hay cache
+      regime: isIntermediateCycle && cached ? cached.regime : null,
+      regimeReason: isIntermediateCycle && cached ? `${cached.regimeReason} (cached)` : null,
+      selectedStrategy: isIntermediateCycle && cached ? cached.selectedStrategy : null,
       rawSignal: "NONE",
-      rawReason: null,
-      signalsCount: null,
-      minSignalsRequired: null,
+      rawReason: isIntermediateCycle 
+        ? (cached ? `Ciclo intermedio - sin vela 15m cerrada (último: ${cached.rawReason})` : "Ciclo intermedio - sin datos previos")
+        : null,
+      signalsCount: isIntermediateCycle && cached ? cached.signalsCount : null,
+      minSignalsRequired: isIntermediateCycle && cached ? cached.minSignalsRequired : null,
       exposureAvailableUsd: exposureAvailable,
       computedOrderUsd: 0,
       minOrderUsd: 100,
@@ -4639,9 +4694,31 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       blockReasonCode: "NO_SIGNAL",
       blockDetails: null,
       finalSignal: "NONE",
-      finalReason: "Sin señal en este ciclo",
+      finalReason: isIntermediateCycle ? "Ciclo intermedio - sin vela 15m cerrada" : "Sin señal en este ciclo",
+      // Campos de diagnóstico para ciclos intermedios
+      isIntermediateCycle,
+      lastCandleClosedAt: cached?.candleClosedAt || null,
+      lastFullEvaluationAt: cached?.evaluatedAt || null,
+      lastRegimeUpdateAt: cached?.regimeUpdatedAt || null,
     };
     this.pairDecisionTrace.set(pair, trace);
+  }
+  
+  // Guardar datos del análisis completo para reutilizar en ciclos intermedios
+  private cacheFullAnalysis(pair: string, data: {
+    regime: string;
+    regimeReason: string;
+    selectedStrategy: string;
+    signalsCount: number;
+    minSignalsRequired: number;
+    rawReason: string;
+    candleClosedAt: string;
+  }): void {
+    this.lastFullAnalysisCache.set(pair, {
+      ...data,
+      evaluatedAt: new Date().toISOString(),
+      regimeUpdatedAt: new Date().toISOString(),
+    });
   }
 
   private updatePairTrace(pair: string, updates: Partial<DecisionTraceContext>): void {
