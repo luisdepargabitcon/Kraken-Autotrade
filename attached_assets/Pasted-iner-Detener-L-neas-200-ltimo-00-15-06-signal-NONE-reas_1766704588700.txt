@@ -1,0 +1,206 @@
+iner
+Detener
+Líneas: 200
+Último: 00:15:06
+
+
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=1.9%)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=20, esperando confirmación)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (minHold 10min restantes)"
+    }
+  },
+  "scanTime": "2025-12-25T23:13:00.930Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1766704381056"
+  }
+}
+11:13:31 PM [trading] [SCAN_START] scanId=scan-1766704411133 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:13:31 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:13:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704411133","scanTime":"2025-12-25T23:13:31.133Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:13:31 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:13:31 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:13:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704411133","scanTime":"2025-12-25T23:13:31.133Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:13:31 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:13:31 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:13:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704411133","scanTime":"2025-12-25T23:13:31.133Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:13:31 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:13:31 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:13:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704411133","scanTime":"2025-12-25T23:13:31.133Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:13:31 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:13:31 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:13:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704411133","scanTime":"2025-12-25T23:13:31.133Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:13:31 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:13:31 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704411133 pairs=5 snapshotted for emission
+11:13:31 PM [trading] [SCAN_END] scanId=scan-1766704411133 expected=5 done=5 failures=0 durationMs=636
+11:13:54 PM [express] GET /api/config 304 in 14ms :: {"id":1,"isActive":true,"strategy":"momentum","signalTimeframe":"15m","riskLevel":"high","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"stopLossPercent":"13.50","takeProfitPercent":"4.00","trailingStopEnabled":true,"trailingStopPercent":"10.00","nonceErrorAlertsEnabled":true,"dailyLossLimitEnabled":true,"dailyLossLimitPercent":"10.00","maxPairExposurePct":"100.00","maxTotalExposurePct":"100.00","exposureBase":"portfolio","riskPerTradePct":"100.00","tradingHoursEnabled":false,"tradingHoursStart":"0","tradingHoursEnd":"23","positionMode":"SMART_GUARD","sgMinEntryUsd":"100.00","sgAllowUnderMin":true,"sgBeAtPct":"2.50","sgFeeCushionPct":"0.45","sgFeeCushionAuto":true,"sgTrailStartPct":"3.00","sgTrailDistancePct":"2.30","sgTrailStepPct":"0.60","sgTpFixedEnabled":false,"sgTpFixedPct":"7.00","sgScaleOutEnabled":false,"sgScaleOutPct":"-30.00","sgMinPartUsd":"50.00","sgScaleOutThreshold":"80.00","sgMaxOpenLotsPerPair":2,"sgPairOverrides":null,"dryRunMode":false,"regimeDetectionEnabled":true,"updatedAt":"2025-12-25T15:34:31.160Z"}
+11:13:54 PM [express] GET /api/open-positions 200 in 131ms :: [{"id":31,"lotId":"LOT-BTCUSD-1766387719323-phy3vo","pair":"BTC/USD","entryPrice":"89102.30000000","amount":"0.00168346","qtyRemaining":null,"qtyFilled":"0","highestPrice":"90500.30000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.95","signalReason":"Momentum Velas COMPRA: MACD alcista, Precio en Bollinger superior, Vela alcista fuerte, Volumen alto alcista (1.8x), Engulfing alcista | Señales: 5/2 | Confirmado por MTF alcista [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":false,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"entryFee":"0.00000000","sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-22T07:15:19.379Z","updatedAt":"2025-12-22T12:33:19.948Z","currentPrice":"87691.7","unrealizedPnlUsd":"-2.37","unrealizedPnlPct":"-1.58","entryValueUsd":"150.00","currentValueUsd":"147.63"},{"id":28,"lotId":"LOT-XRPUSD-1766316621021-po6gjs","pair":"XRP/USD","entryPrice":"1.93483000","amount":"77.52619093","qtyRemaining":null,"qtyFilled":"0","highestPrice":"1.94790000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"entryFee":"0.00000000","sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-21T11:30:21.027Z","updatedAt":"2025-12-22T00:15:17.619Z","currentPrice":"1.84876","unrealizedPnlUsd":"-6.67","unrealizedPnlPct":"-4.45","entryValueUsd":"150.00","currentValueUsd":"143.33"}]
+11:13:58 PM [websocket] [WS] Cliente desconectado. Total: 0
+11:13:58 PM [express] GET /api/config 304 in 3ms :: {"id":1,"isActive":true,"strategy":"momentum","signalTimeframe":"15m","riskLevel":"high","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"stopLossPercent":"13.50","takeProfitPercent":"4.00","trailingStopEnabled":true,"trailingStopPercent":"10.00","nonceErrorAlertsEnabled":true,"dailyLossLimitEnabled":true,"dailyLossLimitPercent":"10.00","maxPairExposurePct":"100.00","maxTotalExposurePct":"100.00","exposureBase":"portfolio","riskPerTradePct":"100.00","tradingHoursEnabled":false,"tradingHoursStart":"0","tradingHoursEnd":"23","positionMode":"SMART_GUARD","sgMinEntryUsd":"100.00","sgAllowUnderMin":true,"sgBeAtPct":"2.50","sgFeeCushionPct":"0.45","sgFeeCushionAuto":true,"sgTrailStartPct":"3.00","sgTrailDistancePct":"2.30","sgTrailStepPct":"0.60","sgTpFixedEnabled":false,"sgTpFixedPct":"7.00","sgScaleOutEnabled":false,"sgScaleOutPct":"-30.00","sgMinPartUsd":"50.00","sgScaleOutThreshold":"80.00","sgMaxOpenLotsPerPair":2,"sgPairOverrides":null,"dryRunMode":false,"regimeDetectionEnabled":true,"updatedAt":"2025-12-25T15:34:31.160Z"}
+11:13:58 PM [express] GET /api/trades/closed 304 in 5ms :: {"trades":[{"id":372,"tradeId":"MANUAL-1766474317011","pair":"BTC/USD","type":"sell","price":"87434.50000000","amount":"0.00169992","status":"filled","krakenOrderId":"OT67VT-R2HS5-BF4FN6","entryPrice":"88239.20000000","realizedPnlUsd":"-1.37","realizedPnlPct":"-0.91","executedAt":"2025-12-23T07:18:37.011Z","createdAt":"2025-12-23T07:18:37.012Z","totalUsd":"148.63","entryValueUsd":"150.00"},{"id":371,"tradeId":"AUTO-1766436313219","pair":"BTC/USD","type":"buy","price":"88239.20000000","amount":"0.00169992","status":"filled","krakenOrderId":"OHEKAJ-ZE2WE-7UEVPO","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T20:45:13.219Z","createdAt":"2025-12-22T20:45:13.220Z","totalUsd":"150.00","entryValueUsd":null},{"id":370,"tradeId":"AUTO-1766431632922","pair":"ETH/USD","type":"sell","price":"2987.39000000","amount":"0.05037885","status":"filled","krakenOrderId":"OITS7X-3JUM3-XQC7BD","entryPrice":"2977.44000000","realizedPnlUsd":"0.50","realizedPnlPct":"0.33","executedAt":"2025-12-22T19:27:12.922Z","createdAt":"2025-12-22T19:27:12.923Z","totalUsd":"150.50","entryValueUsd":"150.00"},{"id":369,"tradeId":"AUTO-1766387719276","pair":"BTC/USD","type":"buy","price":"89102.30000000","amount":"0.00168346","status":"filled","krakenOrderId":"O24LJJ-IHFBT-CY5ESK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T07:15:19.276Z","createdAt":"2025-12-22T07:15:19.277Z","totalUsd":"150.00","entryValueUsd":null},{"id":368,"tradeId":"AUTO-1766341808305","pair":"ETH/USD","type":"buy","price":"2977.44000000","amount":"0.05037885","status":"filled","krakenOrderId":"O7TWLJ-5LMYW-ZZOCJ4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T18:30:08.451Z","createdAt":"2025-12-21T18:30:08.306Z","totalUsd":"150.00","entryValueUsd":null},{"id":367,"tradeId":"AUTO-1766330317989","pair":"BTC/USD","type":"sell","price":"87799.70000000","amount":"0.00169014","status":"filled","krakenOrderId":"OLHPZX-TWOA2-OVAFNW","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T15:18:37.972Z","createdAt":"2025-12-21T15:18:37.992Z","totalUsd":"148.39","entryValueUsd":null},{"id":366,"tradeId":"AUTO-1766319320912","pair":"BTC/USD","type":"buy","price":"88750.30000000","amount":"0.00169014","status":"filled","krakenOrderId":"O2PNJP-DSJZ4-5KMN2B","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T12:15:21.326Z","createdAt":"2025-12-21T12:15:20.913Z","totalUsd":"150.00","entryValueUsd":null},{"id":365,"tradeId":"AUTO-1766316621017","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","status":"filled","krakenOrderId":"OML4KG-LRBQ7-HON64T","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T11:30:21.396Z","createdAt":"2025-12-21T11:30:21.018Z","totalUsd":"150.00","entryValueUsd":null},{"id":364,"tradeId":"MANUAL-1766313373079","pair":"BTC/USD","type":"sell","price":"88570.80000000","amount":"0.00059458","status":"filled","krakenOrderId":"OOFBW7-H3KOU-XTLVPW","entryPrice":"88180.20000000","realizedPnlUsd":"0.23","realizedPnlPct":"0.44","executedAt":"2025-12-21T10:36:13.413Z","createdAt":"2025-12-21T10:36:13.079Z","totalUsd":"52.66","entryValueUsd":"52.43"},{"id":363,"tradeId":"AUTO-1766312120502","pair":"BTC/USD","type":"sell","price":"88768.70000000","amount":"0.00085011","status":"filled","krakenOrderId":"O2YYYH-LSAKY-QE4NBX","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T10:15:20.822Z","createdAt":"2025-12-21T10:15:20.503Z","totalUsd":"75.46","entryValueUsd":null}],"total":201,"limit":10,"offset":0}
+11:13:58 PM [express] GET /api/open-positions 304 in 101ms :: [{"id":31,"lotId":"LOT-BTCUSD-1766387719323-phy3vo","pair":"BTC/USD","entryPrice":"89102.30000000","amount":"0.00168346","qtyRemaining":null,"qtyFilled":"0","highestPrice":"90500.30000000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.95","signalReason":"Momentum Velas COMPRA: MACD alcista, Precio en Bollinger superior, Vela alcista fuerte, Volumen alto alcista (1.8x), Engulfing alcista | Señales: 5/2 | Confirmado por MTF alcista [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":false,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"entryFee":"0.00000000","sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-22T07:15:19.379Z","updatedAt":"2025-12-22T12:33:19.948Z","currentPrice":"87691.7","unrealizedPnlUsd":"-2.37","unrealizedPnlPct":"-1.58","entryValueUsd":"150.00","currentValueUsd":"147.63"},{"id":28,"lotId":"LOT-XRPUSD-1766316621021-po6gjs","pair":"XRP/USD","entryPrice":"1.93483000","amount":"77.52619093","qtyRemaining":null,"qtyFilled":"0","highestPrice":"1.94790000","tradeId":null,"krakenOrderId":null,"entryStrategyId":"momentum_candles_15m","entrySignalTf":"15m","signalConfidence":"0.78","signalReason":"Momentum Velas COMPRA: MACD alcista, Vela alcista fuerte, Engulfing alcista | Señales: 4/1 [momentum_candles_15m]","entryMode":"SMART_GUARD","configSnapshotJson":{"sgBeAtPct":2.5,"positionMode":"SMART_GUARD","sgMinPartUsd":50,"sgTpFixedPct":7,"sgMinEntryUsd":150,"sgScaleOutPct":-30,"sgTrailStepPct":0.6,"sgAllowUnderMin":true,"sgFeeCushionPct":0.45,"sgTrailStartPct":3.5,"stopLossPercent":13.5,"sgFeeCushionAuto":true,"sgTpFixedEnabled":true,"sgScaleOutEnabled":false,"takeProfitPercent":4,"sgTrailDistancePct":2.5,"sgScaleOutThreshold":80,"trailingStopEnabled":true,"trailingStopPercent":10},"entryFee":"0.00000000","sgBreakEvenActivated":false,"sgCurrentStopPrice":null,"sgTrailingActivated":false,"sgScaleOutDone":false,"openedAt":"2025-12-21T11:30:21.027Z","updatedAt":"2025-12-22T00:15:17.619Z","currentPrice":"1.84876","unrealizedPnlUsd":"-6.67","unrealizedPnlPct":"-4.45","entryValueUsd":"150.00","currentValueUsd":"143.33"}]
+11:14:00 PM [trading] [SCAN_START] scanId=scan-1766704440988 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:14:00 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:14:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704440988","scanTime":"2025-12-25T23:14:00.988Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:01 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:14:01 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:14:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704440988","scanTime":"2025-12-25T23:14:00.988Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:01 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:14:01 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:14:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704440988","scanTime":"2025-12-25T23:14:00.988Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:01 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:14:01 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:14:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704440988","scanTime":"2025-12-25T23:14:00.988Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:01 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:14:01 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:14:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704440988","scanTime":"2025-12-25T23:14:00.988Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:01 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:14:01 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704440988 pairs=5 snapshotted for emission
+11:14:01 PM [trading] [SCAN_END] scanId=scan-1766704440988 expected=5 done=5 failures=0 durationMs=525
+11:14:01 PM [websocket] [WS] Token válido (path: /ws/events, source: query, ip: 192.168.1.47)
+11:14:01 PM [websocket] [WS] Cliente conectado. Total: 1
+11:14:02 PM [express] GET /api/dashboard 200 in 375ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"momentum","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000100","XXBT":"0.0016834608","XXRP":"78.06926425","ZEUR":"0.0000","ZUSD":"149.8920"},"prices":{"XXBTZUSD":{"price":"87691.70000","change":"0.09"},"XETHZUSD":{"price":"2924.26000","change":"-0.72"},"SOLUSD":{"price":"121.84000","change":"-0.50"},"XXRPZUSD":{"price":"1.84876000","change":"-0.65"},"TONUSD":{"price":"1.5090000","change":"1.14"}},"recentTrades":[{"id":372,"tradeId":"MANUAL-1766474317011","pair":"BTC/USD","type":"sell","price":"87434.50000000","amount":"0.00169992","status":"filled","krakenOrderId":"OT67VT-R2HS5-BF4FN6","entryPrice":"88239.20000000","realizedPnlUsd":"-1.36792562","realizedPnlPct":"-0.9120","executedAt":"2025-12-23T07:18:37.011Z","createdAt":"2025-12-23T07:18:37.012Z"},{"id":371,"tradeId":"AUTO-1766436313219","pair":"BTC/USD","type":"buy","price":"88239.20000000","amount":"0.00169992","status":"filled","krakenOrderId":"OHEKAJ-ZE2WE-7UEVPO","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T20:45:13.219Z","createdAt":"2025-12-22T20:45:13.220Z"},{"id":370,"tradeId":"AUTO-1766431632922","pair":"ETH/USD","type":"sell","price":"2987.39000000","amount":"0.05037885","status":"filled","krakenOrderId":"OITS7X-3JUM3-XQC7BD","entryPrice":"2977.44000000","realizedPnlUsd":"0.50126956","realizedPnlPct":"0.3342","executedAt":"2025-12-22T19:27:12.922Z","createdAt":"2025-12-22T19:27:12.923Z"},{"id":369,"tradeId":"AUTO-1766387719276","pair":"BTC/USD","type":"buy","price":"89102.30000000","amount":"0.00168346","status":"filled","krakenOrderId":"O24LJJ-IHFBT-CY5ESK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T07:15:19.276Z","createdAt":"2025-12-22T07:15:19.277Z"},{"id":368,"tradeId":"AUTO-1766341808305","pair":"ETH/USD","type":"buy","price":"2977.44000000","amount":"0.05037885","status":"filled","krakenOrderId":"O7TWLJ-5LMYW-ZZOCJ4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T18:30:08.451Z","createdAt":"2025-12-21T18:30:08.306Z"},{"id":367,"tradeId":"AUTO-1766330317989","pair":"BTC/USD","type":"sell","price":"87799.70000000","amount":"0.00169014","status":"filled","krakenOrderId":"OLHPZX-TWOA2-OVAFNW","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T15:18:37.972Z","createdAt":"2025-12-21T15:18:37.992Z"},{"id":366,"tradeId":"AUTO-1766319320912","pair":"BTC/USD","type":"buy","price":"88750.30000000","amount":"0.00169014","status":"filled","krakenOrderId":"O2PNJP-DSJZ4-5KMN2B","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T12:15:21.326Z","createdAt":"2025-12-21T12:15:20.913Z"},{"id":365,"tradeId":"AUTO-1766316621017","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","status":"filled","krakenOrderId":"OML4KG-LRBQ7-HON64T","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T11:30:21.396Z","createdAt":"2025-12-21T11:30:21.018Z"},{"id":364,"tradeId":"MANUAL-1766313373079","pair":"BTC/USD","type":"sell","price":"88570.80000000","amount":"0.00059458","status":"filled","krakenOrderId":"OOFBW7-H3KOU-XTLVPW","entryPrice":"88180.20000000","realizedPnlUsd":"0.23230241","realizedPnlPct":"0.4431","executedAt":"2025-12-21T10:36:13.413Z","createdAt":"2025-12-21T10:36:13.079Z"},{"id":363,"tradeId":"AUTO-1766312120502","pair":"BTC/USD","type":"sell","price":"88768.70000000","amount":"0.00085011","status":"filled","krakenOrderId":"O2YYYH-LSAKY-QE4NBX","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T10:15:20.822Z","createdAt":"2025-12-21T10:15:20.503Z"}]}
+11:14:03 PM [express] GET /api/dashboard 200 in 561ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"momentum","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000100","XXBT":"0.0016834608","XXRP":"78.06926425","ZEUR":"0.0000","ZUSD":"149.8920"},"prices":{"XXBTZUSD":{"price":"87691.70000","change":"0.09"},"XETHZUSD":{"price":"2924.26000","change":"-0.72"},"SOLUSD":{"price":"121.83000","change":"-0.51"},"XXRPZUSD":{"price":"1.84843000","change":"-0.67"},"TONUSD":{"price":"1.5090000","change":"1.14"}},"recentTrades":[{"id":372,"tradeId":"MANUAL-1766474317011","pair":"BTC/USD","type":"sell","price":"87434.50000000","amount":"0.00169992","status":"filled","krakenOrderId":"OT67VT-R2HS5-BF4FN6","entryPrice":"88239.20000000","realizedPnlUsd":"-1.36792562","realizedPnlPct":"-0.9120","executedAt":"2025-12-23T07:18:37.011Z","createdAt":"2025-12-23T07:18:37.012Z"},{"id":371,"tradeId":"AUTO-1766436313219","pair":"BTC/USD","type":"buy","price":"88239.20000000","amount":"0.00169992","status":"filled","krakenOrderId":"OHEKAJ-ZE2WE-7UEVPO","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T20:45:13.219Z","createdAt":"2025-12-22T20:45:13.220Z"},{"id":370,"tradeId":"AUTO-1766431632922","pair":"ETH/USD","type":"sell","price":"2987.39000000","amount":"0.05037885","status":"filled","krakenOrderId":"OITS7X-3JUM3-XQC7BD","entryPrice":"2977.44000000","realizedPnlUsd":"0.50126956","realizedPnlPct":"0.3342","executedAt":"2025-12-22T19:27:12.922Z","createdAt":"2025-12-22T19:27:12.923Z"},{"id":369,"tradeId":"AUTO-1766387719276","pair":"BTC/USD","type":"buy","price":"89102.30000000","amount":"0.00168346","status":"filled","krakenOrderId":"O24LJJ-IHFBT-CY5ESK","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-22T07:15:19.276Z","createdAt":"2025-12-22T07:15:19.277Z"},{"id":368,"tradeId":"AUTO-1766341808305","pair":"ETH/USD","type":"buy","price":"2977.44000000","amount":"0.05037885","status":"filled","krakenOrderId":"O7TWLJ-5LMYW-ZZOCJ4","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T18:30:08.451Z","createdAt":"2025-12-21T18:30:08.306Z"},{"id":367,"tradeId":"AUTO-1766330317989","pair":"BTC/USD","type":"sell","price":"87799.70000000","amount":"0.00169014","status":"filled","krakenOrderId":"OLHPZX-TWOA2-OVAFNW","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T15:18:37.972Z","createdAt":"2025-12-21T15:18:37.992Z"},{"id":366,"tradeId":"AUTO-1766319320912","pair":"BTC/USD","type":"buy","price":"88750.30000000","amount":"0.00169014","status":"filled","krakenOrderId":"O2PNJP-DSJZ4-5KMN2B","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T12:15:21.326Z","createdAt":"2025-12-21T12:15:20.913Z"},{"id":365,"tradeId":"AUTO-1766316621017","pair":"XRP/USD","type":"buy","price":"1.93483000","amount":"77.52619093","status":"filled","krakenOrderId":"OML4KG-LRBQ7-HON64T","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T11:30:21.396Z","createdAt":"2025-12-21T11:30:21.018Z"},{"id":364,"tradeId":"MANUAL-1766313373079","pair":"BTC/USD","type":"sell","price":"88570.80000000","amount":"0.00059458","status":"filled","krakenOrderId":"OOFBW7-H3KOU-XTLVPW","entryPrice":"88180.20000000","realizedPnlUsd":"0.23230241","realizedPnlPct":"0.4431","executedAt":"2025-12-21T10:36:13.413Z","createdAt":"2025-12-21T10:36:13.079Z"},{"id":363,"tradeId":"AUTO-1766312120502","pair":"BTC/USD","type":"sell","price":"88768.70000000","amount":"0.00085011","status":"filled","krakenOrderId":"O2YYYH-LSAKY-QE4NBX","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-21T10:15:20.822Z","createdAt":"2025-12-21T10:15:20.503Z"}]}
+11:14:04 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 192.168.1.47)
+11:14:04 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+11:14:08 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+11:14:16 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+11:14:25 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+[36m[2025-12-25T23:14:30.950Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "openPositionsCount": 0,
+  "openPositionsPairs": [],
+  "lastScanAt": "2025-12-25T23:14:00.926Z",
+  "lastScanId": "scan-1766704440988",
+  "timeSinceLastScanMs": 30024,
+  "balanceUsd": 149.892,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+11:14:30 PM [trading] [SCAN_SUMMARY_COUNT] scanId=scan-1766704440988 expected=5 got=5 missing=[]
+11:14:30 PM [trading] [SCAN_SUMMARY_BUILD] scanId=scan-1766704440988 source=5 built=5
+[36m[2025-12-25T23:14:30.959Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=1.2%)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=21, esperando confirmación)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=17, BB width=1.9%)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=20, esperando confirmación)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 149.892,
+      "regime": "TRANSITION",
+      "regimeReason": "Manteniendo TRANSITION (minHold 10min restantes)"
+    }
+  },
+  "scanTime": "2025-12-25T23:14:00.926Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1766704440988"
+  }
+}
+11:14:31 PM [trading] [SCAN_START] scanId=scan-1766704471073 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:14:31 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:14:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704471073","scanTime":"2025-12-25T23:14:31.073Z","pair":"BTC/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:31 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:14:31 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:14:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704471073","scanTime":"2025-12-25T23:14:31.073Z","pair":"ETH/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:31 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:14:31 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:14:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704471073","scanTime":"2025-12-25T23:14:31.073Z","pair":"XRP/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:31 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:14:31 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:14:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704471073","scanTime":"2025-12-25T23:14:31.073Z","pair":"SOL/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:31 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:14:31 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:14:31 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704471073","scanTime":"2025-12-25T23:14:31.073Z","pair":"TON/USD","regime":null,"regimeReason":null,"selectedStrategy":null,"rawSignal":"NONE","rawReason":null,"signalsCount":null,"minSignalsRequired":null,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal en este ciclo"}
+11:14:31 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:14:31 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704471073 pairs=5 snapshotted for emission
+11:14:31 PM [trading] [SCAN_END] scanId=scan-1766704471073 expected=5 done=5 failures=0 durationMs=576
+11:15:00 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+11:15:01 PM [trading] [SCAN_START] scanId=scan-1766704501127 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:15:01 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:15:01 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2025-12-25T23:00:00.000Z
+11:15:01 PM [trading] MTF datos actualizados para BTC/USD: 5m=721, 1h=721, 4h=721
+11:15:01 PM [trading] [MTF_DIAG] BTC/USD: 5m: 721 velas [2025-12-23T11:15 -> 2025-12-25T23:15] span=60.0h | 1h: 721 velas [2025-11-25T23:00 -> 2025-12-25T23:00] span=720.0h | 4h: 721 velas [2025-08-27T20:00 -> 2025-12-25T20:00] span=2880.0h
+11:15:01 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704501127","scanTime":"2025-12-25T23:15:01.127Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=17, BB width=1.2%)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2"}
+11:15:01 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:15:01 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:15:01 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2025-12-25T23:00:00.000Z
+11:15:01 PM [trading] MTF datos actualizados para ETH/USD: 5m=721, 1h=721, 4h=721
+11:15:01 PM [trading] [MTF_DIAG] ETH/USD: 5m: 721 velas [2025-12-23T11:15 -> 2025-12-25T23:15] span=60.0h | 1h: 721 velas [2025-11-25T23:00 -> 2025-12-25T23:00] span=720.0h | 4h: 721 velas [2025-08-27T20:00 -> 2025-12-25T20:00] span=2880.0h
+11:15:02 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704501127","scanTime":"2025-12-25T23:15:01.127Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Señal filtrada por MTF: Tendencia 1h y 4h bajista","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Señal filtrada por MTF: Tendencia 1h y 4h bajista"}
+11:15:02 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:15:02 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:15:02 PM [trading] Nueva vela cerrada XRP/USD/15m @ 2025-12-25T23:00:00.000Z
+11:15:02 PM [trading] MTF datos actualizados para XRP/USD: 5m=721, 1h=721, 4h=721
+11:15:02 PM [trading] [MTF_DIAG] XRP/USD: 5m: 721 velas [2025-12-23T11:15 -> 2025-12-25T23:15] span=60.0h | 1h: 721 velas [2025-11-25T23:00 -> 2025-12-25T23:00] span=720.0h | 4h: 721 velas [2025-08-27T20:00 -> 2025-12-25T20:00] span=2880.0h
+11:15:02 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704501127","scanTime":"2025-12-25T23:15:01.127Z","pair":"XRP/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=17, BB width=1.9%)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2"}
+11:15:02 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:15:02 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:15:02 PM [trading] Nueva vela cerrada SOL/USD/15m @ 2025-12-25T23:00:00.000Z
+11:15:02 PM [trading] MTF datos actualizados para SOL/USD: 5m=721, 1h=721, 4h=721
+11:15:02 PM [trading] [MTF_DIAG] SOL/USD: 5m: 721 velas [2025-12-23T11:15 -> 2025-12-25T23:15] span=60.0h | 1h: 721 velas [2025-11-25T23:00 -> 2025-12-25T23:00] span=720.0h | 4h: 721 velas [2025-08-27T20:00 -> 2025-12-25T20:00] span=2880.0h
+11:15:02 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704501127","scanTime":"2025-12-25T23:15:01.127Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=20, esperando confirmación)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=2"}
+11:15:02 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:15:02 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:15:02 PM [trading] Nueva vela cerrada TON/USD/15m @ 2025-12-25T23:00:00.000Z
+11:15:03 PM [trading] MTF datos actualizados para TON/USD: 5m=721, 1h=721, 4h=721
+11:15:03 PM [trading] [MTF_DIAG] TON/USD: 5m: 721 velas [2025-12-23T11:15 -> 2025-12-25T23:15] span=60.0h | 1h: 721 velas [2025-11-25T23:00 -> 2025-12-25T23:00] span=720.0h | 4h: 721 velas [2025-08-27T20:00 -> 2025-12-25T20:00] span=2880.0h
+11:15:03 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1766704501127","scanTime":"2025-12-25T23:15:01.127Z","pair":"TON/USD","regime":"TRANSITION","regimeReason":"Manteniendo TRANSITION (minHold 10min restantes)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=2 < minRequired=4 | buy=2/sell=2","signalsCount":2,"minSignalsRequired":4,"exposureAvailableUsd":149.892,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=2 < minRequired=4 | buy=2/sell=2"}
+11:15:03 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:15:03 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1766704501127 pairs=5 snapshotted for emission
+11:15:03 PM [trading] [SCAN_END] scanId=scan-1766704501127 expected=5 done=5 failures=0 durationMs=2104
+11:15:05 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
