@@ -1032,7 +1032,7 @@ ${emoji} <b>${title}</b>
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
     const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
     if (!candles || candles.length < 20) {
-      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas" };
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas", signalsCount: 0, minSignalsRequired: 4 };
     }
     
     const closedCandles = candles.slice(0, -1);
@@ -1047,7 +1047,15 @@ ${emoji} <b>${title}</b>
     if (mtfAnalysis && signal.action !== "hold") {
       const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis);
       if (mtfBoost.filtered) {
-        return { action: "hold", pair, confidence: 0.3, reason: `Señal filtrada por MTF: ${mtfBoost.reason}` };
+        // Preserve signalsCount from original signal for diagnostic trace
+        return { 
+          action: "hold", 
+          pair, 
+          confidence: 0.3, 
+          reason: `Señal filtrada por MTF: ${mtfBoost.reason}`,
+          signalsCount: signal.signalsCount,
+          minSignalsRequired: signal.minSignalsRequired,
+        };
       }
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
       if (mtfBoost.confidenceBoost > 0) {
@@ -1059,8 +1067,10 @@ ${emoji} <b>${title}</b>
   }
 
   private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
+    const minSignalsRequired = 4; // Defined early for early-exit cases
+    
     if (candles.length < 20) {
-      return { action: "hold", pair, confidence: 0, reason: "Historial de velas insuficiente" };
+      return { action: "hold", pair, confidence: 0, reason: "Historial de velas insuficiente", signalsCount: 0, minSignalsRequired };
     }
     
     const closes = candles.map(c => c.close);
@@ -1131,7 +1141,7 @@ ${emoji} <b>${title}</b>
     // B2: Filtro anti-FOMO - bloquear BUY en condiciones de entrada tardía
     const isAntifomoTriggered = rsi > 65 && bollinger.percentB > 85 && bodyRatio > 0.7;
     
-    if (buySignals >= 4 && buySignals > sellSignals && rsi < 70) {
+    if (buySignals >= minSignalsRequired && buySignals > sellSignals && rsi < 70) {
       // B2: Verificar anti-FOMO antes de emitir señal BUY
       if (isAntifomoTriggered) {
         return {
@@ -1139,6 +1149,8 @@ ${emoji} <b>${title}</b>
           pair,
           confidence: 0.4,
           reason: `Anti-FOMO: RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)} bodyRatio=${bodyRatio.toFixed(2)} | Señales: ${buySignals}/${sellSignals}`,
+          signalsCount: buySignals,
+          minSignalsRequired,
         };
       }
       return {
@@ -1146,19 +1158,33 @@ ${emoji} <b>${title}</b>
         pair,
         confidence,
         reason: `Momentum Velas COMPRA: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        signalsCount: buySignals,
+        minSignalsRequired,
       };
     }
     
-    if (sellSignals >= 4 && sellSignals > buySignals && rsi > 30) {
+    if (sellSignals >= minSignalsRequired && sellSignals > buySignals && rsi > 30) {
       return {
         action: "sell",
         pair,
         confidence,
         reason: `Momentum Velas VENTA: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        signalsCount: sellSignals,
+        minSignalsRequired,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara velas (${buySignals}/${sellSignals})` };
+    // No signal: provide diagnostic counts
+    const dominantCount = Math.max(buySignals, sellSignals);
+    const dominantSide = buySignals >= sellSignals ? "buy" : "sell";
+    return { 
+      action: "hold", 
+      pair, 
+      confidence: 0.3, 
+      reason: `Sin señal clara velas: ${dominantSide}Signals=${dominantCount} < minRequired=${minSignalsRequired} | buy=${buySignals}/sell=${sellSignals}`,
+      signalsCount: dominantCount,
+      minSignalsRequired,
+    };
   }
 
   async start() {
@@ -2982,7 +3008,48 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         exposureAvailable: exposureScan.maxAllowed,
       });
       
+      // === EARLY REGIME DETECTION (always, for diagnostic trace in candles mode) ===
+      let earlyRegime: string | null = null;
+      let earlyRegimeReason: string | null = null;
+      const regimeEnabledEarly = botConfigForScan?.regimeDetectionEnabled ?? false;
+      if (regimeEnabledEarly) {
+        try {
+          const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+          earlyRegime = regimeAnalysis.regime;
+          earlyRegimeReason = regimeAnalysis.reason;
+        } catch (regimeErr: any) {
+          earlyRegime = "ERROR";
+          earlyRegimeReason = regimeErr.message;
+        }
+      } else {
+        earlyRegime = "DISABLED";
+        earlyRegimeReason = "Regime detection disabled in config";
+      }
+      
+      // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
+      this.updatePairTrace(pair, {
+        selectedStrategy: `momentum_candles_${timeframe}`,
+        rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
+        rawReason: signal.reason || null,
+        regime: earlyRegime,
+        regimeReason: earlyRegimeReason,
+        signalsCount: signal.signalsCount ?? null,
+        minSignalsRequired: signal.minSignalsRequired ?? null,
+        exposureAvailableUsd: exposureScan.maxAllowed,
+        finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
+        finalReason: signal.reason || "Sin señal",
+      });
+      
       if (signal.action === "hold" || signal.confidence < 0.6) {
+        if (signal.confidence < 0.6 && signal.action !== "hold") {
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "CONFIDENCE_LOW",
+            blockDetails: { confidence: signal.confidence, minRequired: 0.6 },
+            finalSignal: "NONE",
+            finalReason: `Confianza baja: ${(signal.confidence * 100).toFixed(0)}% < 60%`,
+          });
+        }
         return;
       }
 
