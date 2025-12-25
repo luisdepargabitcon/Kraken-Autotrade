@@ -48,8 +48,11 @@ const DUST_THRESHOLD_USD = 5; // Minimum USD value to attempt selling
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
 // Kraken fee structure (taker fees for market orders)
-const KRAKEN_FEE_PCT = 0.26; // 0.26% per trade
-const ROUND_TRIP_FEE_PCT = KRAKEN_FEE_PCT * 2; // ~0.52% for buy + sell
+// NOTA: Bot es MARKET-only = 100% taker. Tier base Kraken Pro = 0.40% taker
+const KRAKEN_FEE_PCT = 0.40; // 0.40% per trade (taker, tier base Kraken Pro)
+const SLIPPAGE_BUFFER_PCT = 0.20; // Buffer adicional para slippage en market orders
+const ROUND_TRIP_FEE_PCT = KRAKEN_FEE_PCT * 2; // 0.80% for buy + sell
+const ROUND_TRIP_WITH_BUFFER_PCT = ROUND_TRIP_FEE_PCT + SLIPPAGE_BUFFER_PCT; // 1.00% total
 const MIN_PROFIT_MULTIPLIER = 2; // Take-profit debe ser al menos 2x las fees
 
 // Defensive improvements
