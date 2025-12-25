@@ -25,6 +25,9 @@ interface TradeSignal {
   pair: string;
   confidence: number;
   reason: string;
+  // Signal count diagnostics (for PAIR_DECISION_TRACE)
+  signalsCount?: number;      // Number of signals in favor of action
+  minSignalsRequired?: number; // Minimum signals required for action
 }
 
 interface RiskConfig {
@@ -2235,11 +2238,33 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         exposureAvailable: exposure.maxAllowed,
       });
       
-      // Actualizar trace con señal raw
+      // === EARLY REGIME DETECTION (always, for diagnostic trace) ===
+      let earlyRegime: string | null = null;
+      let earlyRegimeReason: string | null = null;
+      const regimeEnabledEarly = botConfigForScan?.regimeDetectionEnabled ?? false;
+      if (regimeEnabledEarly) {
+        try {
+          const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+          earlyRegime = regimeAnalysis.regime;
+          earlyRegimeReason = regimeAnalysis.reason;
+        } catch (regimeErr: any) {
+          earlyRegime = "ERROR";
+          earlyRegimeReason = regimeErr.message;
+        }
+      } else {
+        earlyRegime = "DISABLED";
+        earlyRegimeReason = "Regime detection disabled in config";
+      }
+      
+      // Actualizar trace con señal raw + régimen + signalsCount
       this.updatePairTrace(pair, {
         selectedStrategy: strategy,
         rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         rawReason: signal.reason || null,
+        regime: earlyRegime,
+        regimeReason: earlyRegimeReason,
+        signalsCount: signal.signalsCount ?? null,
+        minSignalsRequired: signal.minSignalsRequired ?? null,
         exposureAvailableUsd: exposure.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         finalReason: signal.reason || "Sin señal",
@@ -3555,26 +3580,41 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     else if (trend < -1) sellSignals++;
 
     const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.08));
+    const minSignalsRequired = 4; // Momentum strategy requires 4 signals
     
-    if (buySignals >= 4 && buySignals > sellSignals && rsi < 70) {
+    if (buySignals >= minSignalsRequired && buySignals > sellSignals && rsi < 70) {
       return {
         action: "buy",
         pair,
         confidence,
         reason: `Momentum alcista: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        signalsCount: buySignals,
+        minSignalsRequired,
       };
     }
     
-    if (sellSignals >= 4 && sellSignals > buySignals && rsi > 30) {
+    if (sellSignals >= minSignalsRequired && sellSignals > buySignals && rsi > 30) {
       return {
         action: "sell",
         pair,
         confidence,
         reason: `Momentum bajista: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        signalsCount: sellSignals,
+        minSignalsRequired,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Sin señal clara | Señales: ${buySignals}/${sellSignals}` };
+    // No signal: still provide diagnostic counts
+    const dominantCount = Math.max(buySignals, sellSignals);
+    const dominantSide = buySignals >= sellSignals ? "buy" : "sell";
+    return { 
+      action: "hold", 
+      pair, 
+      confidence: 0.3, 
+      reason: `Sin señal clara: ${dominantSide}Signals=${dominantCount} < minRequired=${minSignalsRequired} | buy=${buySignals}/sell=${sellSignals}`,
+      signalsCount: dominantCount,
+      minSignalsRequired,
+    };
   }
 
   private meanReversionStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
@@ -3589,6 +3629,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     
     const reasons: string[] = [];
     let confidence = 0.6;
+
+    // Mean Reversion uses threshold-based signals, not count-based
+    // signalsCount=1 means threshold triggered, signalsCount=0 means not triggered
+    const minSignalsRequired = 1;
 
     if (zScore < -2 || bollinger.percentB < 5) {
       confidence += 0.15;
@@ -3605,6 +3649,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.95, confidence),
         reason: `Mean Reversion COMPRA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
     
@@ -3617,6 +3663,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.85, confidence),
         reason: `Mean Reversion COMPRA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
     
@@ -3635,6 +3683,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.95, confidence),
         reason: `Mean Reversion VENTA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
     
@@ -3647,15 +3697,27 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.85, confidence),
         reason: `Mean Reversion VENTA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Precio en rango normal (Z=${zScore.toFixed(2)})` };
+    return { 
+      action: "hold", 
+      pair, 
+      confidence: 0.3, 
+      reason: `Precio en rango normal: Z=${zScore.toFixed(2)} (umbral: |Z|>1.5)`,
+      signalsCount: 0,
+      minSignalsRequired,
+    };
   }
 
   private scalpingStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
+    // Scalping uses threshold-based signals
+    const minSignalsRequired = 1;
+    
     if (history.length < 15) {
-      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para scalping" };
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para scalping", signalsCount: 0, minSignalsRequired };
     }
 
     const prices = history.map(h => h.price);
@@ -3675,7 +3737,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
     // Filtro de volatilidad mínima usando ATR
     if (atrPercent < 0.1) {
-      return { action: "hold", pair, confidence: 0.2, reason: `Volatilidad ATR muy baja (${atrPercent.toFixed(2)}%)` };
+      return { action: "hold", pair, confidence: 0.2, reason: `Volatilidad ATR muy baja (${atrPercent.toFixed(2)}%)`, signalsCount: 0, minSignalsRequired };
     }
 
     // Ajustar umbral de entrada basado en ATR
@@ -3707,6 +3769,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.9, confidence),
         reason: `Scalping COMPRA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
     
@@ -3731,15 +3795,27 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.9, confidence),
         reason: `Scalping VENTA: ${reasons.join(", ")}`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Sin oportunidad (cambio: ${priceChange.toFixed(2)}%, ATR: ${atrPercent.toFixed(2)}%)` };
+    return { 
+      action: "hold", 
+      pair, 
+      confidence: 0.3, 
+      reason: `Sin oportunidad: cambio=${priceChange.toFixed(2)}% (umbral=${entryThreshold.toFixed(2)}%), ATR=${atrPercent.toFixed(2)}%`,
+      signalsCount: 0,
+      minSignalsRequired,
+    };
   }
 
   private gridStrategy(pair: string, history: PriceData[], currentPrice: number): TradeSignal {
+    // Grid uses level-based signals
+    const minSignalsRequired = 1;
+    
     if (history.length < 15) {
-      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para grid" };
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para grid", signalsCount: 0, minSignalsRequired };
     }
 
     const prices = history.map(h => h.price);
@@ -3759,7 +3835,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const gridSize = Math.max(atrBasedGridSize, rangeBasedGridSize);
     
     if (gridSize <= 0) {
-      return { action: "hold", pair, confidence: 0, reason: "Grid size inválido" };
+      return { action: "hold", pair, confidence: 0, reason: "Grid size inválido", signalsCount: 0, minSignalsRequired };
     }
     
     // Calcular niveles basados en precio medio
@@ -3790,6 +3866,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.85, confidence),
         reason: `Grid ATR: Precio en soporte $${supportLevel.toFixed(2)} (ATR: ${atrPercent.toFixed(2)}%, nivel: ${levelFromMid})`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
     
@@ -3799,10 +3877,19 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         pair,
         confidence: Math.min(0.85, confidence),
         reason: `Grid ATR: Precio en resistencia $${resistanceLevel.toFixed(2)} (ATR: ${atrPercent.toFixed(2)}%, nivel: ${levelFromMid})`,
+        signalsCount: 1,
+        minSignalsRequired,
       };
     }
 
-    return { action: "hold", pair, confidence: 0.3, reason: `Grid: Nivel ${levelFromMid}, ATR: ${atrPercent.toFixed(2)}%` };
+    return { 
+      action: "hold", 
+      pair, 
+      confidence: 0.3, 
+      reason: `Grid: nivel=${levelFromMid}, ATR=${atrPercent.toFixed(2)}%, precio entre soporte/resistencia`,
+      signalsCount: 0,
+      minSignalsRequired,
+    };
   }
 
   private calculateEMA(prices: number[], period: number): number {
