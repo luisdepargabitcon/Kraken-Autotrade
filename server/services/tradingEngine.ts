@@ -74,6 +74,50 @@ type SmartGuardReasonCode =
   | "SMART_GUARD_ENTRY_USING_CONFIG_MIN"       // saldo >= sgMinEntryUsd, usando sgMinEntryUsd
   | "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE"; // saldo < sgMinEntryUsd, usando saldo disponible
 
+// === PAIR_DECISION_TRACE: Enum y contexto para diagnóstico ===
+type BlockReasonCode = 
+  | "NO_SIGNAL"               // No hay señal de la estrategia
+  | "COOLDOWN"                // Par en cooldown
+  | "STOPLOSS_COOLDOWN"       // Cooldown post stop-loss
+  | "DAILY_LIMIT"             // Límite diario alcanzado
+  | "MAX_LOTS_PER_PAIR"       // Máximo lotes por par alcanzado
+  | "REGIME_PAUSE"            // Régimen TRANSITION - pausa entradas
+  | "MIN_ORDER_USD"           // Order < minOrderUsd configurado
+  | "MIN_ORDER_ABSOLUTE"      // Order < mínimo absoluto ($20)
+  | "EXPOSURE_LIMIT"          // Límite de exposición alcanzado
+  | "SPREAD_TOO_HIGH"         // Spread > máximo permitido
+  | "TRADING_HOURS"           // Fuera de horario de trading
+  | "SIGNALS_THRESHOLD"       // No alcanza minSignals requerido
+  | "CONFIDENCE_LOW"          // Confianza < umbral mínimo
+  | "REGIME_ERROR"            // Error detectando régimen
+  | "ALLOWED";                // Señal permitida (no bloqueada)
+
+type SmartGuardDecision = "ALLOW" | "BLOCK" | "NOOP";
+
+interface DecisionTraceContext {
+  scanId: string;
+  scanTime: string;
+  pair: string;
+  regime: string | null;
+  regimeReason: string | null;
+  selectedStrategy: string | null;
+  rawSignal: "BUY" | "SELL" | "NONE";
+  rawReason: string | null;
+  signalsCount: number | null;
+  minSignalsRequired: number | null;
+  exposureAvailableUsd: number;
+  computedOrderUsd: number;
+  minOrderUsd: number;
+  allowSmallerEntries: boolean;
+  openLotsThisPair: number;
+  maxLotsPerPair: number;
+  smartGuardDecision: SmartGuardDecision;
+  blockReasonCode: BlockReasonCode;
+  blockDetails: Record<string, any> | null;
+  finalSignal: "BUY" | "SELL" | "NONE";
+  finalReason: string;
+}
+
 interface MinimumValidationParams {
   positionMode: string;
   orderUsdFinal: number;
