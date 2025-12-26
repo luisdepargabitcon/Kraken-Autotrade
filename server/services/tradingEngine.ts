@@ -132,6 +132,9 @@ interface DecisionTraceContext {
   lastCandleClosedAt?: string | null;
   lastFullEvaluationAt?: string | null;
   lastRegimeUpdateAt?: string | null;
+  // Campos de observabilidad Router FASE 1
+  regimeRouterEnabled?: boolean | null;
+  feeCushionEffectivePct?: number | null;
 }
 
 // Cache para datos del último análisis completo por par (sin llamadas API extra)
@@ -1203,6 +1206,98 @@ ${emoji} <b>${title}</b>
       pair, 
       confidence: 0.3, 
       reason: `Sin señal clara velas: ${dominantSide}Signals=${dominantCount} < minRequired=${minSignalsRequired} | buy=${buySignals}/sell=${sellSignals}`,
+      signalsCount: dominantCount,
+      minSignalsRequired,
+    };
+  }
+
+  // === MEAN REVERSION SIMPLE (RANGE regime) ===
+  // Strategy for sideways/range markets using Bollinger Bands + RSI
+  private meanReversionSimpleStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
+    const minSignalsRequired = 2; // Simpler strategy: BB touch + RSI confirmation
+    
+    if (candles.length < 20) {
+      return { action: "hold", pair, confidence: 0, reason: "Historial insuficiente para Mean Reversion", signalsCount: 0, minSignalsRequired };
+    }
+    
+    const closes = candles.map(c => c.close);
+    const rsi = this.calculateRSI(closes.slice(-14));
+    const bollinger = this.calculateBollingerBands(closes);
+    
+    const lastCandle = candles[candles.length - 1];
+    const isBullishCandle = lastCandle.close > lastCandle.open;
+    const isBearishCandle = lastCandle.close < lastCandle.open;
+    const candleBody = Math.abs(lastCandle.close - lastCandle.open);
+    const candleRange = lastCandle.high - lastCandle.low;
+    const bodyRatio = candleRange > 0 ? candleBody / candleRange : 0;
+    
+    let buySignals = 0;
+    let sellSignals = 0;
+    const reasons: string[] = [];
+    
+    // BUY: price at/below lower BB + RSI oversold
+    if (currentPrice <= bollinger.lower) {
+      buySignals++;
+      reasons.push(`Precio en BB inferior (${bollinger.lower.toFixed(2)})`);
+    }
+    if (rsi <= 35) {
+      buySignals++;
+      reasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`);
+    }
+    // Extra confirmation: bullish candle (not required but helps)
+    if (isBullishCandle && bodyRatio < 0.8) {
+      // Avoid extreme bearish candles
+      reasons.push("Vela no bajista extrema");
+    } else if (isBearishCandle && bodyRatio > 0.7) {
+      // Strong bearish candle = reduce buy confidence
+      buySignals = Math.max(0, buySignals - 1);
+      reasons.push("Vela bajista fuerte (penalización)");
+    }
+    
+    // SELL: price at/above upper BB + RSI overbought
+    if (currentPrice >= bollinger.upper) {
+      sellSignals++;
+      reasons.push(`Precio en BB superior (${bollinger.upper.toFixed(2)})`);
+    }
+    if (rsi >= 65) {
+      sellSignals++;
+      reasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`);
+    }
+    
+    const confidence = Math.min(0.85, 0.5 + (Math.max(buySignals, sellSignals) * 0.15));
+    
+    if (buySignals >= minSignalsRequired && buySignals > sellSignals) {
+      return {
+        action: "buy",
+        pair,
+        confidence,
+        reason: `Mean Reversion COMPRA: ${reasons.join(", ")} | Señales: ${buySignals}`,
+        signalsCount: buySignals,
+        minSignalsRequired,
+      };
+    }
+    
+    // NOTE: SELL signals are NOT emitted by mean_reversion_simple because
+    // SMART_GUARD only allows risk exits (SL/TP/Trailing) to sell, not strategy signals.
+    // The SELL logic is preserved for future use when router allows strategy-based exits.
+    // if (sellSignals >= minSignalsRequired && sellSignals > buySignals) {
+    //   return {
+    //     action: "sell",
+    //     pair,
+    //     confidence,
+    //     reason: `Mean Reversion VENTA: ${reasons.join(", ")} | Señales: ${sellSignals}`,
+    //     signalsCount: sellSignals,
+    //     minSignalsRequired,
+    //   };
+    // }
+    
+    const dominantCount = Math.max(buySignals, sellSignals);
+    const dominantSide = buySignals >= sellSignals ? "buy" : "sell";
+    return {
+      action: "hold",
+      pair,
+      confidence: 0.3,
+      reason: `Mean Reversion sin señal: ${dominantSide}=${dominantCount} < min=${minSignalsRequired} | RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
@@ -2409,7 +2504,11 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
-        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION
+        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
+        // Store current regime for sizing override
+        let currentRegimeForSizing: string | null = null;
+        const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
+        
         if (positionMode === "SMART_GUARD") {
           const regimeEnabled = botConfigCheck?.regimeDetectionEnabled ?? false;
           let requiredSignals = 5; // Base SMART_GUARD requirement
@@ -2418,9 +2517,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           if (regimeEnabled) {
             try {
               const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+              currentRegimeForSizing = regimeAnalysis.regime;
               
-              // TRANSITION: Pause new entries
-              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled)) {
+              // TRANSITION: If Router enabled, allow with overrides; otherwise block
+              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
                 await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
                   pair,
                   signal: "BUY",
@@ -2444,6 +2544,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   finalReason: `Régimen TRANSITION: pausa entradas`,
                 });
                 return;
+              }
+              
+              // Router TRANSITION: Log that we're allowing entry with overrides
+              if (regimeAnalysis.regime === "TRANSITION" && routerEnabledForSizing) {
+                const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
+                log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
               // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
@@ -2652,6 +2758,21 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
           log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
           log(`  → sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
+          
+          // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
+          this.updatePairTrace(pair, {
+            allowSmallerEntries: true, // SMART_GUARD v2: siempre permite auto fallback
+            computedOrderUsd: tradeAmountUSD,
+            minOrderUsd: floorUsd,
+          });
+          
+          // === ROUTER: Apply TRANSITION sizing factor (50% by default) ===
+          if (currentRegimeForSizing === "TRANSITION" && routerEnabledForSizing) {
+            const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
+            const originalBeforeTransition = tradeAmountUSD;
+            tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+          }
           
           // La validación final de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
         } else {
@@ -2892,6 +3013,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             blockReasonCode: "ALLOWED",
             finalSignal: "BUY",
             finalReason: `Trade ejecutado: ${tradeVolume.toFixed(8)} @ $${currentPrice.toFixed(2)}`,
+            feeCushionEffectivePct: effectiveCushionPct,
           });
         }
 
@@ -3028,24 +3150,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         return;
       }
 
-      const signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
-      const strategyId = `momentum_candles_${timeframe}`;
-      
-      // Registrar resultado del escaneo para candles
-      const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
       const botConfigForScan = await storage.getBotConfig();
       const exposureScan = this.getAvailableExposure(pair, botConfigForScan, this.currentUsdBalance);
-      this.lastScanResults.set(pair, {
-        signal: signalStr,
-        reason: signal.reason || "Sin señal",
-        cooldownSec: this.getCooldownRemainingSec(pair),
-        exposureAvailable: exposureScan.maxAllowed,
-      });
       
       // === EARLY REGIME DETECTION (always, for diagnostic trace in candles mode) ===
       let earlyRegime: string | null = null;
       let earlyRegimeReason: string | null = null;
       const regimeEnabledEarly = botConfigForScan?.regimeDetectionEnabled ?? false;
+      const routerEnabled = (botConfigForScan as any)?.regimeRouterEnabled ?? false;
+      
       if (regimeEnabledEarly) {
         try {
           const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
@@ -3060,9 +3173,55 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         earlyRegimeReason = "Regime detection disabled in config";
       }
       
+      // === ROUTER: Select strategy based on regime ===
+      let selectedStrategyId = `momentum_candles_${timeframe}`;
+      let signal: TradeSignal;
+      let routerApplied = false;
+      
+      if (routerEnabled && regimeEnabledEarly && earlyRegime) {
+        const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
+        const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+        const closedCandles = candles ? candles.slice(0, -1) : [];
+        const currentPrice = candle.close;
+        
+        if (earlyRegime === "RANGE") {
+          // RANGE: Use Mean Reversion Simple strategy
+          selectedStrategyId = "mean_reversion_simple";
+          signal = this.meanReversionSimpleStrategy(pair, closedCandles, currentPrice);
+          routerApplied = true;
+          log(`[ROUTER] ${pair}: RANGE regime → mean_reversion_simple`, "trading");
+        } else if (earlyRegime === "TRANSITION") {
+          // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
+          selectedStrategyId = `momentum_candles_${timeframe}`;
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+          routerApplied = true;
+          log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
+        } else {
+          // TREND or other: Use standard momentum
+          selectedStrategyId = `momentum_candles_${timeframe}`;
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+          if (earlyRegime === "TREND") {
+            routerApplied = true;
+            log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
+          }
+        }
+      } else {
+        // Router disabled: use standard momentum strategy
+        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+      }
+      
+      // Registrar resultado del escaneo para candles
+      const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
+      this.lastScanResults.set(pair, {
+        signal: signalStr,
+        reason: signal.reason || "Sin señal",
+        cooldownSec: this.getCooldownRemainingSec(pair),
+        exposureAvailable: exposureScan.maxAllowed,
+      });
+      
       // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
       this.updatePairTrace(pair, {
-        selectedStrategy: `momentum_candles_${timeframe}`,
+        selectedStrategy: selectedStrategyId,
         rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         rawReason: signal.reason || null,
         regime: earlyRegime,
@@ -3076,13 +3235,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         lastCandleClosedAt: new Date(candle.time * 1000).toISOString(),
         lastFullEvaluationAt: new Date().toISOString(),
         lastRegimeUpdateAt: earlyRegime ? new Date().toISOString() : null,
+        // Router observability
+        regimeRouterEnabled: routerEnabled,
       });
       
       // Cache para ciclos intermedios (evita null en próximos scans sin vela cerrada)
       this.cacheFullAnalysis(pair, {
         regime: earlyRegime || "UNKNOWN",
         regimeReason: earlyRegimeReason || "No regime data",
-        selectedStrategy: `momentum_candles_${timeframe}`,
+        selectedStrategy: selectedStrategyId,
         signalsCount: signal.signalsCount ?? 0,
         minSignalsRequired: signal.minSignalsRequired ?? 4,
         rawReason: signal.reason || "Sin señal",
@@ -3174,7 +3335,11 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
-        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION
+        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
+        // Store current regime for sizing override
+        let currentRegimeForSizing: string | null = null;
+        const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
+        
         if (positionMode === "SMART_GUARD") {
           const regimeEnabled = botConfigCheck?.regimeDetectionEnabled ?? false;
           let requiredSignals = 5; // Base SMART_GUARD requirement
@@ -3183,9 +3348,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           if (regimeEnabled) {
             try {
               const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+              currentRegimeForSizing = regimeAnalysis.regime;
               
-              // TRANSITION: Pause new entries
-              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled)) {
+              // TRANSITION: If Router enabled, allow with overrides; otherwise block
+              if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
                 await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
                   pair,
                   signal: "BUY",
@@ -3209,6 +3375,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   finalReason: `Régimen TRANSITION: pausa entradas`,
                 });
                 return;
+              }
+              
+              // Router TRANSITION: Log that we're allowing entry with overrides
+              if (regimeAnalysis.regime === "TRANSITION" && routerEnabledForSizing) {
+                const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
+                log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
               // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
@@ -3390,6 +3562,22 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           
           log(`SMART_GUARD ${pair} [${strategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
           log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
+          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          
+          // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
+          this.updatePairTrace(pair, {
+            allowSmallerEntries: true,
+            computedOrderUsd: tradeAmountUSD,
+            minOrderUsd: floorUsd,
+          });
+          
+          // === ROUTER: Apply TRANSITION sizing factor (50% by default) ===
+          if (currentRegimeForSizing === "TRANSITION" && routerEnabledForSizing) {
+            const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
+            const originalBeforeTransition = tradeAmountUSD;
+            tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+          }
         } else {
           // Modos SINGLE/DCA: lógica original
           const profitCheck = this.isProfitableAfterFees(takeProfitPct);
@@ -4700,6 +4888,9 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       lastCandleClosedAt: cached?.candleClosedAt || null,
       lastFullEvaluationAt: cached?.evaluatedAt || null,
       lastRegimeUpdateAt: cached?.regimeUpdatedAt || null,
+      // Campos de observabilidad Router FASE 1
+      regimeRouterEnabled: null,
+      feeCushionEffectivePct: null,
     };
     this.pairDecisionTrace.set(pair, trace);
   }

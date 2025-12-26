@@ -91,6 +91,14 @@ interface BotConfig {
   sgMaxOpenLotsPerPair: number;
   sgPairOverrides: Record<string, unknown> | null;
   regimeDetectionEnabled: boolean;
+  // Regime Router fields
+  regimeRouterEnabled: boolean;
+  rangeCooldownMinutes: number;
+  transitionSizeFactor: string;
+  transitionCooldownMinutes: number;
+  transitionBeAtPct: string;
+  transitionTrailStartPct: string;
+  transitionTpPct: string;
 }
 
 export default function Settings() {
@@ -578,6 +586,108 @@ export default function Settings() {
                       {config?.regimeDetectionEnabled && (
                         <div className="text-xs bg-purple-500/10 p-2 rounded border border-purple-500/20 mt-2">
                           <strong>Activo:</strong> TREND = 5 señales, exits amplios (BE 2.5%, TP 8%). RANGE = 6 señales, exits ajustados (BE 1%, TP 3%). TRANSITION = pausa entradas.
+                        </div>
+                      )}
+                      
+                      {/* Regime Router - solo visible si Regime Detection está activo */}
+                      {config?.regimeDetectionEnabled && (
+                        <div className="mt-3 p-3 border border-cyan-500/30 rounded-lg bg-cyan-500/5 space-y-3" data-testid="panel-regime-router">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Cog className="h-4 w-4 text-cyan-400" />
+                              <Label className="text-sm font-medium text-cyan-400">Modo Router (estrategia por régimen)</Label>
+                            </div>
+                            <Switch
+                              checked={config?.regimeRouterEnabled || false}
+                              onCheckedChange={(checked) => updateMutation.mutate({ regimeRouterEnabled: checked })}
+                              data-testid="switch-regime-router"
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground" data-testid="text-regime-router-desc">
+                            TREND → Momentum Candles | RANGE → Mean Reversion (BB+RSI) | TRANSITION → Momentum + overrides conservadores
+                          </p>
+                          
+                          {config?.regimeRouterEnabled && (
+                            <div className="space-y-3 pt-2 border-t border-cyan-500/20">
+                              <div className="text-xs font-medium text-cyan-400">Parámetros RANGE</div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs">Cooldown por par (min)</Label>
+                                  <Input
+                                    type="number"
+                                    min={10}
+                                    max={240}
+                                    value={config.rangeCooldownMinutes || 60}
+                                    onChange={(e) => updateMutation.mutate({ rangeCooldownMinutes: parseInt(e.target.value) || 60 })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-range-cooldown"
+                                  />
+                                </div>
+                              </div>
+                              
+                              <div className="text-xs font-medium text-cyan-400 pt-2">Parámetros TRANSITION</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs">Size Factor</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.1"
+                                    min={0.1}
+                                    max={1.0}
+                                    value={config.transitionSizeFactor || "0.50"}
+                                    onChange={(e) => updateMutation.mutate({ transitionSizeFactor: e.target.value })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-transition-size"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs">Cooldown (min)</Label>
+                                  <Input
+                                    type="number"
+                                    min={30}
+                                    max={480}
+                                    value={config.transitionCooldownMinutes || 120}
+                                    onChange={(e) => updateMutation.mutate({ transitionCooldownMinutes: parseInt(e.target.value) || 120 })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-transition-cooldown"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs">BE at (%)</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.1"
+                                    value={config.transitionBeAtPct || "2.00"}
+                                    onChange={(e) => updateMutation.mutate({ transitionBeAtPct: e.target.value })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-transition-be"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs">Trail Start (%)</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.1"
+                                    value={config.transitionTrailStartPct || "2.80"}
+                                    onChange={(e) => updateMutation.mutate({ transitionTrailStartPct: e.target.value })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-transition-trail"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between col-span-2">
+                                  <Label className="text-xs">Take Profit (%)</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.5"
+                                    value={config.transitionTpPct || "5.00"}
+                                    onChange={(e) => updateMutation.mutate({ transitionTpPct: e.target.value })}
+                                    className="w-20 h-7 text-xs font-mono bg-background/50"
+                                    data-testid="input-transition-tp"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
