@@ -1,0 +1,76 @@
+e recomienda cambiar esos valores por una razón muy concreta: cuando el mercado está en TRANSITION o RANGE, la “señal” es menos fiable, y si mantienes los mismos parámetros que en TREND, el bot tiende a:
+
+entrar demasiado “agresivo” para un mercado sin dirección,
+
+y/o cerrar demasiado pronto “por nada” (churn), pagando comisiones y slippage sin capturar recorrido real.
+
+Lo que hacen esos parámetros es adaptar el comportamiento del bot a un régimen de menor calidad direccional.
+
+Qué aporta cada cambio y por qué es “profesional”
+1) transition_size_factor (p.ej. 0.50)
+
+En TRANSITION hay más “ruido”. El sizing reducido:
+
+limita pérdidas si hay falsa ruptura,
+
+reduce drawdown,
+
+y baja el coste de estar equivocado.
+
+En bots profesionales esto es estándar: menos convicción → menos exposición.
+
+2) transition_cooldown_minutes (p.ej. 120)
+
+En TRANSITION, si permites reentradas rápidas, terminas en “overtrading”:
+
+muchas entradas pequeñas,
+
+muchas salidas cerca del BE,
+
+fees acumulándose.
+
+El cooldown evita esa dinámica y fuerza selectividad.
+
+3) transition_be_at_pct (p.ej. 2.0) y 4) transition_trail_start_pct (p.ej. 2.8)
+
+En TRANSITION el precio suele ir y volver. Si BE/trailing se activa demasiado pronto:
+
+te sacan por micro-movimientos,
+
+vuelves a entrar,
+
+pagas fees repetidamente.
+
+Subir BE y TrailStart hace que solo protejas cuando el trade ya tiene “aire” real.
+
+5) transition_tp_pct (p.ej. 5.0)
+
+En TRANSITION, si tu TP es pequeño:
+
+compites contra fees+slippage,
+
+y cualquier retroceso te barre antes de llegar.
+
+Un TP algo más amplio (pero con sizing menor) busca un “premio” que compense el entorno de ruido.
+
+6) range_cooldown_minutes (p.ej. 60)
+
+En RANGE ocurre lo mismo: si la estrategia mean reversion o la lógica en rango dispara muchas señales, necesitas un freno para no convertirlo en una máquina de comisiones.
+
+La lógica de fondo (la clave)
+
+Con el fix de fees, tu “coste de respirar” (ida/vuelta + slippage) es más alto de lo que creías. Entonces:
+
+si tus umbrales de BE/trailing/TP están demasiado “cerca”, cierras trades que no han pagado aún el coste real,
+
+y eso erosiona el equity aunque “parezca” que el bot opera mucho.
+
+Por eso Replit insiste: ajustar esos valores no es para que opere más, sino para que cuando opere en TRANSITION/RANGE lo haga con un perfil coherente con:
+
+menor edge,
+
+mayor ruido,
+
+y coste real de ejecución.
+
+Si me confirmas qué fee cushion efectivo estás dejando (Auto y cuánto), te digo un set de valores “coherente” (conservador vs agresivo) para TRANSITION.
