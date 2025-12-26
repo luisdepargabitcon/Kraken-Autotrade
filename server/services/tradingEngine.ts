@@ -1376,6 +1376,7 @@ ${emoji} <b>${title}</b>
     
     if (this.telegramService.isInitialized()) {
       const modeText = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE";
+      const routerStatus = config.regimeRouterEnabled ? "ACTIVO" : "INACTIVO";
       await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ✅ <b>Bot Iniciado</b>
@@ -1384,6 +1385,7 @@ ${emoji} <b>${title}</b>
    • Estrategia: <code>${config.strategy}</code>
    • Riesgo: <code>${config.riskLevel}</code>
    • Pares: <code>${config.activePairs.join(", ")}</code>
+   • Router: <code>${routerStatus}</code>
 
 💰 <b>Estado:</b>
    • Balance: <code>$${this.currentUsdBalance.toFixed(2)}</code>
@@ -2505,8 +2507,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
-        // Store current regime for sizing override
+        // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
+        let currentRegimeReasonForTelegram: string | null = null;
         const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
         
         if (positionMode === "SMART_GUARD") {
@@ -2518,6 +2521,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             try {
               const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
               currentRegimeForSizing = regimeAnalysis.regime;
+              currentRegimeReasonForTelegram = regimeAnalysis.reason;
               
               // TRANSITION: If Router enabled, allow with overrides; otherwise block
               if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
@@ -3005,7 +3009,21 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           env: envPrefix,
         };
 
-        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, undefined, executionMeta);
+        // Build strategyMeta with regime info for Telegram notifications
+        const strategyMetaForTrade = currentRegimeForSizing ? {
+          strategyId: "momentum_cycle",
+          timeframe: "cycle",
+          confidence: signal.confidence,
+          regime: currentRegimeForSizing,
+          regimeReason: currentRegimeReasonForTelegram || undefined,
+          routerStrategy: routerEnabledForSizing ? "momentum_cycle" : undefined,
+        } : {
+          strategyId: "momentum_cycle",
+          timeframe: "cycle",
+          confidence: signal.confidence,
+        };
+
+        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
           this.updatePairTrace(pair, {
@@ -3336,8 +3354,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
-        // Store current regime for sizing override
+        // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
+        let currentRegimeReasonForTelegram: string | null = null;
         const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
         
         if (positionMode === "SMART_GUARD") {
@@ -3349,6 +3368,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             try {
               const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
               currentRegimeForSizing = regimeAnalysis.regime;
+              currentRegimeReasonForTelegram = regimeAnalysis.reason;
               
               // TRANSITION: If Router enabled, allow with overrides; otherwise block
               if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
@@ -3657,6 +3677,16 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           adjustedAmountUsd: tradeAmountUSD
         } : undefined;
 
+        // Build strategyMeta with regime info for Telegram notifications
+        const strategyMetaCandles = {
+          strategyId: selectedStrategyId,
+          timeframe,
+          confidence: signal.confidence,
+          regime: currentRegimeForSizing || undefined,
+          regimeReason: currentRegimeReasonForTelegram || undefined,
+          routerStrategy: routerEnabledForSizing ? selectedStrategyId : undefined,
+        };
+
         const success = await this.executeTrade(
           pair, 
           "buy", 
@@ -3664,7 +3694,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           currentPrice, 
           `${signal.reason} [${selectedStrategyId}]`, 
           adjustmentInfo,
-          { strategyId: selectedStrategyId, timeframe, confidence: signal.confidence }
+          strategyMetaCandles
         );
         
         if (success) {
@@ -5083,7 +5113,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     price: number,
     reason: string,
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
-    strategyMeta?: { strategyId: string; timeframe: string; confidence: number },
+    strategyMeta?: { strategyId: string; timeframe: string; confidence: number; regime?: string; regimeReason?: string; routerStrategy?: string },
     executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean },
     sellContext?: { entryPrice: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and openedAt for P&L and duration tracking
   ): Promise<boolean> {
@@ -5486,6 +5516,19 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const confidenceValue = strategyMeta?.confidence ? toConfidencePct(strategyMeta.confidence, 0).toFixed(0) : "N/A";
         const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
         
+        // Build regime info for BUY notifications
+        let regimeSection = "";
+        if (type === "buy" && strategyMeta?.regime) {
+          regimeSection = `\n🧭 <b>Régimen:</b> <code>${strategyMeta.regime}</code>`;
+          if (strategyMeta.regimeReason) {
+            regimeSection += `\n   ↳ <i>${strategyMeta.regimeReason.substring(0, 80)}</i>`;
+          }
+          if (strategyMeta.routerStrategy) {
+            regimeSection += `\n🔄 <b>Router:</b> <code>${strategyMeta.routerStrategy}</code>`;
+          }
+          regimeSection += "\n";
+        }
+        
         await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
@@ -5493,7 +5536,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 💵 <b>Precio:</b> <code>$${price.toFixed(2)}</code>
 📦 <b>Cantidad:</b> <code>${volume}</code>
 💰 <b>Total:</b> <code>$${totalUSDFormatted}</code>
-
+${regimeSection}
 🧠 <b>Estrategia:</b> ${strategyLabel}
 📈 <b>Confianza:</b> <code>${confidenceValue}%</code>
 

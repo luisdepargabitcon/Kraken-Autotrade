@@ -87,9 +87,11 @@ interface BotStartedContext {
   balanceUsd: string;
   mode: string;
   positionCount: number;
+  routerEnabled?: boolean;
 }
 
 function buildBotStartedHTML(ctx: BotStartedContext): string {
+  const routerStatus = ctx.routerEnabled ? "ACTIVO" : "INACTIVO";
   return [
     `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
     `━━━━━━━━━━━━━━━━━━━`,
@@ -99,6 +101,7 @@ function buildBotStartedHTML(ctx: BotStartedContext): string {
     `   • Estrategia: <code>${escapeHtml(ctx.strategy)}</code>`,
     `   • Riesgo: <code>${escapeHtml(ctx.risk)}</code>`,
     `   • Pares: <code>${escapeHtml(ctx.pairs.join(", "))}</code>`,
+    `   • Router: <code>${routerStatus}</code>`,
     ``,
     `💰 <b>Estado:</b>`,
     `   • Balance: <code>$${escapeHtml(ctx.balanceUsd)}</code>`,
@@ -211,6 +214,9 @@ interface TradeBuyContext {
   reason: string;
   signalsSummary?: string;
   mode: string;
+  regime?: string;
+  regimeReason?: string;
+  routerStrategy?: string;
 }
 
 function buildTradeBuyHTML(ctx: TradeBuyContext): string {
@@ -231,6 +237,17 @@ function buildTradeBuyHTML(ctx: TradeBuyContext): string {
       `${escapeHtml(ctx.signalsSummary)}`,
       ``
     );
+  }
+  
+  if (ctx.regime) {
+    lines.push(`🧭 <b>Régimen:</b> <code>${escapeHtml(ctx.regime)}</code>`);
+    if (ctx.regimeReason) {
+      lines.push(`   ↳ <i>${escapeHtml(ctx.regimeReason.substring(0, 80))}</i>`);
+    }
+    if (ctx.routerStrategy) {
+      lines.push(`🔄 <b>Router:</b> <code>${escapeHtml(ctx.routerStrategy)}</code>`);
+    }
+    lines.push(``);
   }
   
   lines.push(
