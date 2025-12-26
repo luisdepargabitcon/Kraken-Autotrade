@@ -3440,7 +3440,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               signal: "BUY",
               reason: "B3_REGEX_NO_MATCH",
               signalReason: signal.reason,
-              strategyId: strategyId,
+              strategyId: selectedStrategyId,
               entryMode: "SMART_GUARD",
             });
             log(`[B3] ${pair}: BLOQUEADO - regex no matcheó reason: "${signal.reason}"`, "trading");
@@ -3560,7 +3560,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
           }
           
-          log(`SMART_GUARD ${pair} [${strategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
+          log(`SMART_GUARD ${pair} [${selectedStrategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
           log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
           log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
           
@@ -3590,7 +3590,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               takeProfitPct,
               roundTripFees: profitCheck.roundTripFees,
               minProfitRequired: profitCheck.minProfitRequired,
-              strategyId,
+              strategyId: selectedStrategyId,
             });
             return;
           }
@@ -3645,7 +3645,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             reason: "VOLUME_BELOW_MINIMUM",
             calculatedVolume: tradeVolume,
             minVolume,
-            strategyId,
+            strategyId: selectedStrategyId,
           });
           this.setPairCooldown(pair);
           return;
@@ -3662,9 +3662,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           "buy", 
           tradeVolume.toFixed(8), 
           currentPrice, 
-          `${signal.reason} [${strategyId}]`, 
+          `${signal.reason} [${selectedStrategyId}]`, 
           adjustmentInfo,
-          { strategyId, timeframe, confidence: signal.confidence }
+          { strategyId: selectedStrategyId, timeframe, confidence: signal.confidence }
         );
         
         if (success) {
@@ -3683,13 +3683,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             pair,
             signal: "SELL",
             reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
-            strategyId,
+            strategyId: selectedStrategyId,
             signalReason: signal.reason,
           });
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "SELL_BLOCKED",
-            blockDetails: { reason: "SMART_GUARD solo permite risk exits", strategyId },
+            blockDetails: { reason: "SMART_GUARD solo permite risk exits", strategyId: selectedStrategyId },
             finalSignal: "NONE",
             finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
           });
@@ -3703,13 +3703,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             signal: "SELL",
             reason: "NO_POSITION",
             assetBalance,
-            strategyId,
+            strategyId: selectedStrategyId,
             signalReason: signal.reason,
           });
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "NO_POSITION",
-            blockDetails: { assetBalance, strategyId },
+            blockDetails: { assetBalance, strategyId: selectedStrategyId },
             finalSignal: "NONE",
             finalReason: "Sin posición para vender",
           });
@@ -3738,7 +3738,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             sellVolume,
             minVolume: minVolumeSell,
             sellValueUsd,
-            strategyId,
+            strategyId: selectedStrategyId,
           });
           return;
         }
@@ -3753,17 +3753,17 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             sellVolume,
             sellValueUsd,
             dustThresholdUsd: DUST_THRESHOLD_USD,
-            strategyId,
+            strategyId: selectedStrategyId,
           });
           return;
         }
 
-        log(`${pair}: SELL signal [${strategyId}] - vendiendo ${sellVolume.toFixed(8)} (value: $${sellValueUsd.toFixed(2)})`, "trading");
+        log(`${pair}: SELL signal [${selectedStrategyId}] - vendiendo ${sellVolume.toFixed(8)} (value: $${sellValueUsd.toFixed(2)})`, "trading");
 
         const sellContext = existingPosition 
           ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
           : undefined;
-        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${strategyId}]`, undefined, undefined, undefined, sellContext);
+        const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${selectedStrategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
         }
