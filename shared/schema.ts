@@ -47,6 +47,16 @@ export const botConfig = pgTable("bot_config", {
   dryRunMode: boolean("dry_run_mode").notNull().default(false),
   // Market Regime Detection: automatically adjust SMART_GUARD exit params based on market conditions
   regimeDetectionEnabled: boolean("regime_detection_enabled").notNull().default(false),
+  // Regime Router: select strategy based on market regime (TREND/RANGE/TRANSITION)
+  regimeRouterEnabled: boolean("regime_router_enabled").notNull().default(false),
+  // Router parameters for RANGE regime
+  rangeCooldownMinutes: integer("range_cooldown_minutes").notNull().default(60),
+  // Router parameters for TRANSITION regime
+  transitionSizeFactor: decimal("transition_size_factor", { precision: 4, scale: 2 }).notNull().default("0.50"),
+  transitionCooldownMinutes: integer("transition_cooldown_minutes").notNull().default(120),
+  transitionBeAtPct: decimal("transition_be_at_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  transitionTrailStartPct: decimal("transition_trail_start_pct", { precision: 5, scale: 2 }).notNull().default("2.80"),
+  transitionTpPct: decimal("transition_tp_pct", { precision: 5, scale: 2 }).notNull().default("5.00"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
