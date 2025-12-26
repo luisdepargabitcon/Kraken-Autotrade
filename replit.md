@@ -81,6 +81,12 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - `server/services/tradingEngine.ts` - Lógica del Router + estrategia mean_reversion_simple
 - `shared/schema.ts` - Campos del Router en bot_config
 - `client/src/pages/Settings.tsx` - Controles UI del Router
+- `server/services/telegram.ts` - Alertas BUY con régimen/router, alerta inicio con estado Router
+
+**Telegram Router Integration (2025-12-26):**
+- BUY notifications include: 🧭 Régimen (TREND/RANGE/TRANSITION), regimeReason, 🔄 Router Strategy
+- Bot Started notifications show Router status (ACTIVO/INACTIVO)
+- Fields only shown when Router enabled and regime detection active
 
 ## Pending Features (FASE 2)
 
