@@ -1,0 +1,127 @@
+INSTRUCCIONES PARA REPLIT — 1) Verificar lo ya implementado  2) Luego aplicar el bloque “Telegram configurable”
+
+OBJETIVO
+Antes de tocar nada: confirmar el estado real (NAS/PROD y REPLIT/DEV) y detectar si hoy hay:
+- token hardcodeado,
+- políticas por chat incompletas,
+- endpoint(s) no persistidos,
+- spam por eventos (stopUpdated / regime flapping / heartbeat).
+
+PARTE 1 — VERIFICACIÓN (NO CAMBIAR CÓDIGO)
+1) Identificar versión exacta en ejecución
+1.1 NAS/PROD
+- Revisar /api/environment:
+  - env, instanceId, isNAS, dryRun, gitCommit
+- Confirmar que el gitCommit coincide con el repo actual.
+
+1.2 REPLIT/DEV
+- Igual: /api/environment (debe indicar REPLIT/DEV + dryRun true si aplica)
+
+2) Confirmar cómo se configura Telegram hoy (fuente de verdad)
+2.1 Buscar variables de entorno relacionadas:
+- TELEGRAM_TOKEN
+- TELEGRAM_BOT_TOKEN
+- TELEGRAM_DEFAULT_TOKEN
+- TELEGRAM_CHAT_ID / TELEGRAM_CHAT_IDS
+- Cualquier “TOKEN=” en .env / config files
+
+2.2 Buscar en código (solo lectura)
+Buscar referencias (ripgrep):
+- "TELEGRAM" 
+- "botToken"
+- "sendMessage"
+- "/api/telegram"
+- "alertTrades"
+- "alertErrors"
+- "alertSystem"
+- "alertBalance"
+- "alertHeartbeat"
+Objetivo:
+- Encontrar el punto exacto donde se resuelve el token (¿env? ¿db? ¿hardcode?).
+
+3) Confirmar qué guarda hoy el backend sobre chats
+3.1 Llamar endpoint actual:
+- GET /api/telegram/chats
+Confirmar:
+- ¿devuelve chatId, name, flags alertTrades/alertErrors/...?
+- ¿hay soporte para múltiples canales o solo uno “default”?
+- ¿dónde se persistió (DB table / config json / in-memory)?
+
+3.2 Identificar storage real en DB
+- Revisar migraciones existentes relacionadas con telegram
+- Si hay tabla:
+  - listar esquema y 3 filas de ejemplo (sin exponer token en logs)
+- Si no hay tabla:
+  - identificar fichero/config donde se guarda
+
+4) Verificar el “spam” en logs y su causa exacta
+4.1 Tomar una ventana de 20–30 min de logs con eventos Telegram:
+- Grep:
+  - "[TELEGRAM]"
+  - "Cambio de Régimen"
+  - "Stop Actualizado"
+  - "Heartbeat"
+  - "Balance"
+  - "Break-Even"
+Contar:
+- cuántos mensajes por tipo
+- si STOP_UPDATED es el mayor contribuidor
+- si REGIME_CHANGE se repite por par
+
+4.2 Confirmar que el routing actual distingue por “moneda/par”
+- Si hoy se envía igual a todos los chats, documentarlo.
+- Si hay flags por chat, comprobar si realmente se respetan en runtime.
+
+5) Checklist de decisión (resultado de verificación)
+Replit debe responder con:
+- (A) Token source: env/db/hardcode (líneas/archivo exactos)
+- (B) Chat storage: DB tabla X / config Y
+- (C) Event types actuales: lista real de eventos que disparan Telegram
+- (D) Top 3 fuentes de spam: p.ej. STOP_UPDATED + REGIME_CHANGE + HEARTBEAT
+- (E) Riesgos: qué rompería si se cambia el modelo
+
+Si NO se puede responder A–E con precisión: NO proceder.
+
+PARTE 2 — PROCEDER CON EL BLOQUE (IMPLEMENTACIÓN) SOLO SI A–E ESTÁN CLAROS
+0) Principios obligatorios antes de tocar código
+- Mantener compatibilidad: /api/telegram/chats debe seguir funcionando (aunque sea “vista legacy”).
+- Nunca loguear botToken en texto plano.
+- Migración reversible: si falla, volver a modo actual en 1 commit.
+
+1) Implementar esquema nuevo (como en el bloque)
+- telegram_endpoints
+- telegram_subscriptions
+
+2) Migración desde lo actual
+- Crear endpoint DEFAULT con token actual (de env/config actual)
+- Migrar chats existentes a subscriptions con alertPolicyJson (mapping del bloque)
+
+3) Normalizar eventos + policy enforcement
+- Definir enum eventType (lista del bloque)
+- Implementar policyAllows() + shouldNotify() (isActive + policy + cooldown)
+- Aplicar policy en UNA sola capa (sender) para no duplicar lógica
+
+4) Eliminar hardcode definitivamente
+- Todo envío debe usar endpointId->botToken
+- Si no endpoint: no enviar y log reason=NO_ENDPOINT_CONFIGURED
+
+5) API + UI (mínimo viable)
+- Endpoints nuevos para endpoints/subscriptions
+- UI: selector token + toggles por chat
+
+6) Pruebas con evidencia
+- Caso “Señales” (solo BUY/SELL)
+- Caso “Monitor” (solo errors + regime)
+- Confirmar que STOP_UPDATED por defecto no se envía
+
+ENTREGABLES QUE REPLIT DEBE DEVOLVER (para dar por válido)
+- Captura o copia de:
+  - Resumen A–E (verificación)
+  - Esquema DB nuevo (sin tokens)
+  - Ejemplo de alertPolicyJson por chat
+  - 5 líneas de log donde se ve “sent=false reason=POLICY_DISABLED/COOLDOWN”
+  - 1 línea de log donde se envía BUY a un chat y NO a otro
+
+NOTA
+Si durante la verificación detectan que ya existe algo parecido (p.ej. endpoints multi-token),
+se adapta el plan: no se duplica, se completa lo que falta (policy granular + UI + cooldown).
