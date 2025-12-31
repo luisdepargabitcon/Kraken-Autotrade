@@ -5658,14 +5658,21 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const entryPrice = sellContext?.entryPrice ?? null;
         
         if (entryPrice != null && entryPrice > 0) {
-          // A2: Calcular P&L con entryPrice disponible
+          // A2: Calcular P&L NETO con fees incluidos
           const grossPnlUsd = (price - entryPrice) * volumeNum;
-          const pnlPct = ((price - entryPrice) / entryPrice) * 100;
-          // Fee no disponible en este scope - guardar gross P&L
+          const entryValueUsd = entryPrice * volumeNum;
+          const exitValueUsd = price * volumeNum;
+          
+          // Calcular fees: usar entryFee real si existe, sino estimar
+          const entryFeeUsd = sellContext?.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
+          const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+          const netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
+          const netPnlPct = (netPnlUsd / entryValueUsd) * 100;
+          
           tradeEntryPrice = entryPrice.toString();
-          tradeRealizedPnlUsd = grossPnlUsd.toFixed(8);
-          tradeRealizedPnlPct = pnlPct.toFixed(4);
-          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} → PnL=$${grossPnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)`, "trading");
+          tradeRealizedPnlUsd = netPnlUsd.toFixed(8);
+          tradeRealizedPnlPct = netPnlPct.toFixed(4);
+          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} → Bruto=$${grossPnlUsd.toFixed(2)}, Fees=$${(entryFeeUsd + exitFeeUsd).toFixed(2)}, NETO=$${netPnlUsd.toFixed(2)} (${netPnlPct.toFixed(2)}%)`, "trading");
         } else {
           // A3: Orphan/emergency sin entryPrice - permitir pero marcar
           reasonWithContext = `${reason} | SELL_NO_ENTRYPRICE`;
@@ -6318,9 +6325,14 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         await this.savePositionToDB(pair, position);
       }
       
-      // Recalcular PnL con cantidad real
-      const actualPnlUsd = (currentPrice - entryPrice) * sellAmountFinal;
-      const actualPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+      // Recalcular PnL NETO con cantidad real y fees
+      const grossPnlUsd = (currentPrice - entryPrice) * sellAmountFinal;
+      const entryValueUsd = entryPrice * sellAmountFinal;
+      const exitValueUsd = currentPrice * sellAmountFinal;
+      const entryFeeUsd = position.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
+      const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+      const actualPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
+      const actualPnlPct = (actualPnlUsd / entryValueUsd) * 100;
 
       // PRODUCCIÓN: Ejecutar orden real de venta
       const order = await this.krakenService.placeOrder({
