@@ -365,6 +365,10 @@ interface RegimePreset {
   sgTpFixedPct: number;
   minSignals: number;
   pauseEntries: boolean;
+  // ATR multipliers for dynamic SL/TP adjustment
+  slAtrMultiplier: number;   // SL = entryPrice - (ATR * multiplier)
+  tpAtrMultiplier: number;   // TP = entryPrice + (ATR * multiplier)
+  trailAtrMultiplier: number; // Trail distance = ATR * multiplier
 }
 
 const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
@@ -375,6 +379,9 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
     sgTpFixedPct: 8.0,     // TP más ambicioso
     minSignals: 5,         // Mantener 5 señales (no bajar)
     pauseEntries: false,
+    slAtrMultiplier: 2.0,    // SL más amplio en tendencia
+    tpAtrMultiplier: 3.0,    // TP más ambicioso en tendencia
+    trailAtrMultiplier: 1.5, // Trail más amplio en tendencia
   },
   RANGE: {
     sgBeAtPct: 1.0,        // Break-even rápido (asegurar)
@@ -383,6 +390,9 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
     sgTpFixedPct: 3.0,     // TP conservador
     minSignals: 6,         // Más exigente en lateral
     pauseEntries: false,
+    slAtrMultiplier: 1.0,    // SL ajustado en rango
+    tpAtrMultiplier: 1.5,    // TP conservador en rango
+    trailAtrMultiplier: 0.75, // Trail ajustado en rango
   },
   TRANSITION: {
     sgBeAtPct: 1.5,        // Valores base (sin cambio)
@@ -391,6 +401,9 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
     sgTpFixedPct: 5.0,
     minSignals: 5,
     pauseEntries: true,    // Pausar nuevas entradas
+    slAtrMultiplier: 1.5,    // SL moderado en transición
+    tpAtrMultiplier: 2.0,    // TP moderado en transición
+    trailAtrMultiplier: 1.0, // Trail estándar en transición
   },
 };
 
@@ -4862,6 +4875,101 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     };
   }
 
+  // === ATR-BASED DYNAMIC EXIT CALCULATION ===
+  // Uses ATR (Average True Range) to calculate SL/TP/Trail distances based on market volatility
+  // Combined with regime detection for optimal risk management
+  // Fee-aware: ensures TP always covers roundTripFeePct + profitBufferPct
+  
+  private calculateAtrBasedExits(
+    pair: string,
+    entryPrice: number,
+    atrPercent: number,
+    regime: MarketRegime,
+    adaptiveEnabled: boolean,
+    historyLength: number = 0  // Pass history.length to validate ATR data quality
+  ): {
+    slPct: number;       // Stop-loss percentage
+    tpPct: number;       // Take-profit percentage
+    trailPct: number;    // Trailing distance percentage
+    beAtPct: number;     // Break-even activation percentage
+    source: string;      // Description of calculation source
+    usedFallback: boolean; // True if fallback values were used
+  } {
+    const preset = REGIME_PRESETS[regime];
+    
+    // Fee-aware minimum TP floor: must cover round-trip fees + profit buffer
+    // Bot uses 100% MARKET orders → takerFee both legs
+    // Default: 0.40% * 2 = 0.80% + 1.00% buffer = 1.80% minimum TP
+    const TAKER_FEE_PCT = 0.40;
+    const PROFIT_BUFFER_PCT = 1.00;
+    const MIN_TP_FLOOR = (TAKER_FEE_PCT * 2) + PROFIT_BUFFER_PCT;  // 1.80%
+    
+    // Safety floors to match SMART_GUARD historic defaults
+    const MIN_SL_FLOOR = 2.0;   // Never less than 2% SL to avoid hypersensitive exits
+    const MIN_TRAIL_FLOOR = 0.75; // Minimum trail distance
+    const MIN_BE_FLOOR = 0.5;   // Minimum BE activation
+    
+    // If adaptive exit not enabled, use static regime presets
+    if (!adaptiveEnabled) {
+      return {
+        slPct: 5.0,  // Default static SL
+        tpPct: Math.max(MIN_TP_FLOOR, preset.sgTpFixedPct),
+        trailPct: preset.sgTrailDistancePct,
+        beAtPct: preset.sgBeAtPct,
+        source: `Static (regime=${regime})`,
+        usedFallback: false,
+      };
+    }
+    
+    // Guard: require minimum history for reliable ATR
+    // If insufficient data or ATR is NaN/invalid, fall back to static defaults
+    const ATR_MIN_PERIODS = 14;
+    if (historyLength < ATR_MIN_PERIODS || !isFinite(atrPercent) || isNaN(atrPercent) || atrPercent <= 0) {
+      log(`[ATR_EXIT] ${pair}: Insufficient ATR data (history=${historyLength}, ATR=${atrPercent}) → using static fallback`, "trading");
+      return {
+        slPct: 5.0,
+        tpPct: Math.max(MIN_TP_FLOOR, preset.sgTpFixedPct),
+        trailPct: preset.sgTrailDistancePct,
+        beAtPct: preset.sgBeAtPct,
+        source: `Fallback (insufficient ATR data, regime=${regime})`,
+        usedFallback: true,
+      };
+    }
+    
+    // Clamp ATR% to reasonable bounds (0.5% to 5%)
+    const clampedAtr = Math.max(0.5, Math.min(5.0, atrPercent));
+    
+    // Calculate dynamic levels using ATR multipliers from regime preset
+    // SL: Wider in trends (let position breathe), tighter in range (quick exit on reversal)
+    const dynamicSlPct = clampedAtr * preset.slAtrMultiplier;
+    
+    // TP: More ambitious in trends, conservative in range
+    const dynamicTpPct = clampedAtr * preset.tpAtrMultiplier;
+    
+    // Trail: Wider in trends, tighter in range
+    const dynamicTrailPct = clampedAtr * preset.trailAtrMultiplier;
+    
+    // BE: Based on half of trail distance (activate BE before trail)
+    const dynamicBePct = dynamicTrailPct * 0.5;
+    
+    // Apply floor/ceiling with fee-aware TP minimum
+    const finalSl = Math.max(MIN_SL_FLOOR, Math.min(8.0, dynamicSlPct));
+    const finalTp = Math.max(MIN_TP_FLOOR, Math.min(15.0, dynamicTpPct));  // Fee-gated floor
+    const finalTrail = Math.max(MIN_TRAIL_FLOOR, Math.min(4.0, dynamicTrailPct));
+    const finalBe = Math.max(MIN_BE_FLOOR, Math.min(3.0, dynamicBePct));
+    
+    log(`[ATR_EXIT] ${pair}: ATR=${clampedAtr.toFixed(2)}% regime=${regime} → SL=${finalSl.toFixed(2)}% TP=${finalTp.toFixed(2)}% Trail=${finalTrail.toFixed(2)}% BE=${finalBe.toFixed(2)}% (minTP=${MIN_TP_FLOOR.toFixed(2)}%)`, "trading");
+    
+    return {
+      slPct: finalSl,
+      tpPct: finalTp,
+      trailPct: finalTrail,
+      beAtPct: finalBe,
+      source: `ATR-Dynamic (ATR=${clampedAtr.toFixed(2)}%, regime=${regime})`,
+      usedFallback: false,
+    };
+  }
+
   // === PHASE 2: ANTI-SPAM HELPERS ===
   
   private computeHash(input: string): string {
@@ -5622,24 +5730,47 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             
             // Apply regime-based adjustments if enabled
             const regimeEnabled = currentConfig?.regimeDetectionEnabled ?? false;
-            if (regimeEnabled) {
+            const adaptiveExitEnabled = currentConfig?.adaptiveExitEnabled ?? false;
+            
+            if (regimeEnabled || adaptiveExitEnabled) {
               try {
                 const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
-                const regimeAdjusted = this.getRegimeAdjustedParams(
-                  {
-                    sgBeAtPct: configSnapshot.sgBeAtPct!,
-                    sgTrailDistancePct: configSnapshot.sgTrailDistancePct!,
-                    sgTrailStepPct: configSnapshot.sgTrailStepPct!,
-                    sgTpFixedPct: configSnapshot.sgTpFixedPct!,
-                  },
-                  regimeAnalysis.regime,
-                  true
-                );
-                configSnapshot.sgBeAtPct = regimeAdjusted.sgBeAtPct;
-                configSnapshot.sgTrailDistancePct = regimeAdjusted.sgTrailDistancePct;
-                configSnapshot.sgTrailStepPct = regimeAdjusted.sgTrailStepPct;
-                configSnapshot.sgTpFixedPct = regimeAdjusted.sgTpFixedPct;
-                log(`[REGIME] ${pair}: Snapshot ajustado para ${regimeAnalysis.regime} (BE=${regimeAdjusted.sgBeAtPct}%, Trail=${regimeAdjusted.sgTrailDistancePct}%, TP=${regimeAdjusted.sgTpFixedPct}%)`, "trading");
+                
+                // If adaptive exit is enabled, use ATR-based dynamic calculation
+                if (adaptiveExitEnabled) {
+                  // Get ATR from price history
+                  const history = this.priceHistory.get(pair) || [];
+                  const atrPercent = this.calculateATRPercent(history, 14);
+                  
+                  const atrExits = this.calculateAtrBasedExits(
+                    pair, price, atrPercent, regimeAnalysis.regime, true, history.length
+                  );
+                  
+                  configSnapshot.stopLossPercent = atrExits.slPct;
+                  configSnapshot.sgBeAtPct = atrExits.beAtPct;
+                  configSnapshot.sgTrailDistancePct = atrExits.trailPct;
+                  configSnapshot.sgTpFixedPct = atrExits.tpPct;
+                  
+                  const fallbackNote = atrExits.usedFallback ? " [FALLBACK]" : "";
+                  log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied → SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
+                } else if (regimeEnabled) {
+                  // Static regime adjustments
+                  const regimeAdjusted = this.getRegimeAdjustedParams(
+                    {
+                      sgBeAtPct: configSnapshot.sgBeAtPct!,
+                      sgTrailDistancePct: configSnapshot.sgTrailDistancePct!,
+                      sgTrailStepPct: configSnapshot.sgTrailStepPct!,
+                      sgTpFixedPct: configSnapshot.sgTpFixedPct!,
+                    },
+                    regimeAnalysis.regime,
+                    true
+                  );
+                  configSnapshot.sgBeAtPct = regimeAdjusted.sgBeAtPct;
+                  configSnapshot.sgTrailDistancePct = regimeAdjusted.sgTrailDistancePct;
+                  configSnapshot.sgTrailStepPct = regimeAdjusted.sgTrailStepPct;
+                  configSnapshot.sgTpFixedPct = regimeAdjusted.sgTpFixedPct;
+                  log(`[REGIME] ${pair}: Snapshot ajustado para ${regimeAnalysis.regime} (BE=${regimeAdjusted.sgBeAtPct}%, Trail=${regimeAdjusted.sgTrailDistancePct}%, TP=${regimeAdjusted.sgTpFixedPct}%)`, "trading");
+                }
               } catch (regimeErr: any) {
                 log(`[REGIME] ${pair}: Error ajustando snapshot, usando params base: ${regimeErr.message}`, "trading");
               }
