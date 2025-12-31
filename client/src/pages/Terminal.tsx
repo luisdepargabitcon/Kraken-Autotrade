@@ -43,6 +43,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface OpenPosition {
@@ -106,12 +112,23 @@ export default function Terminal() {
   const [orphanDialogOpen, setOrphanDialogOpen] = useState(false);
   const [orphanToDelete, setOrphanToDelete] = useState<{ lotId: string; pair: string; amount: string } | null>(null);
   const [dustPositions, setDustPositions] = useState<Set<string>>(new Set());
+  const [selectedPosition, setSelectedPosition] = useState<OpenPosition | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const getPositionKey = (pair: string, lotId?: string | null) => lotId || pair;
 
-  const { data: botConfig } = useQuery<{ positionMode?: string; sgMaxOpenLotsPerPair?: number }>({
+  const { data: botConfig } = useQuery<{ 
+    positionMode?: string; 
+    sgMaxOpenLotsPerPair?: number;
+    sgBePct?: string;
+    sgTrailStartPct?: string;
+    sgTrailDistancePct?: string;
+    sgTpPct?: string;
+    sgTimeStopHours?: number;
+    adaptiveExitEnabled?: boolean;
+    takerFeePct?: string;
+  }>({
     queryKey: ["botConfig"],
     queryFn: async () => {
       const res = await fetch("/api/config");
@@ -434,6 +451,65 @@ export default function Terminal() {
     return { strategyName, tfLabel, isCandles };
   };
 
+  const calculateExitStatus = (pos: OpenPosition) => {
+    const currentPnlPct = parseFloat(pos.unrealizedPnlPct);
+    const openedAt = new Date(pos.openedAt);
+    const now = new Date();
+    const hoursOpen = (now.getTime() - openedAt.getTime()) / (1000 * 60 * 60);
+    
+    const bePct = parseFloat(botConfig?.sgBePct || "2.5");
+    const trailStartPct = parseFloat(botConfig?.sgTrailStartPct || "3.0");
+    const trailDistancePct = parseFloat(botConfig?.sgTrailDistancePct || "1.5");
+    const tpPct = parseFloat(botConfig?.sgTpPct || "5.0");
+    const timeStopHours = botConfig?.sgTimeStopHours || 48;
+    const adaptiveEnabled = botConfig?.adaptiveExitEnabled || false;
+    
+    const beActive = currentPnlPct >= bePct;
+    const beProgress = Math.min(100, (currentPnlPct / bePct) * 100);
+    const beRemaining = Math.max(0, bePct - currentPnlPct);
+    
+    const trailActive = currentPnlPct >= trailStartPct;
+    const trailProgress = Math.min(100, (currentPnlPct / trailStartPct) * 100);
+    const trailRemaining = Math.max(0, trailStartPct - currentPnlPct);
+    
+    const tpProgress = Math.min(100, (currentPnlPct / tpPct) * 100);
+    const tpRemaining = Math.max(0, tpPct - currentPnlPct);
+    
+    const timeStopProgress = Math.min(100, (hoursOpen / timeStopHours) * 100);
+    const timeStopRemaining = Math.max(0, timeStopHours - hoursOpen);
+    const timeStopDisabled = pos.timeStopDisabled || false;
+    
+    let nextExit = "Ninguna activa";
+    let nextExitType = "none";
+    if (currentPnlPct >= tpPct) {
+      nextExit = "Take-Profit (objetivo alcanzado)";
+      nextExitType = "tp";
+    } else if (trailActive) {
+      nextExit = "Trailing Stop activo";
+      nextExitType = "trail";
+    } else if (beActive) {
+      nextExit = "Break-Even protegiendo";
+      nextExitType = "be";
+    } else if (!timeStopDisabled && hoursOpen >= timeStopHours) {
+      nextExit = "Time-Stop (tiempo excedido)";
+      nextExitType = "time";
+    } else if (currentPnlPct < 0) {
+      nextExit = "Stop-Loss de emergencia";
+      nextExitType = "sl";
+    } else {
+      nextExit = "Esperando condiciones de salida";
+      nextExitType = "waiting";
+    }
+    
+    return {
+      bePct, beActive, beProgress, beRemaining,
+      trailStartPct, trailActive, trailProgress, trailRemaining, trailDistancePct,
+      tpPct, tpProgress, tpRemaining,
+      timeStopHours, timeStopProgress, timeStopRemaining, timeStopDisabled,
+      hoursOpen, adaptiveEnabled, nextExit, nextExitType, currentPnlPct
+    };
+  };
+
   const totalPages = closedData ? Math.ceil(closedData.total / limit) : 0;
   const currentPage = Math.floor(offset / limit) + 1;
 
@@ -679,8 +755,9 @@ export default function Terminal() {
                         return (
                           <div 
                             key={pos.id}
-                            className="flex flex-col lg:flex-row lg:items-center justify-between p-4 hover:bg-white/[0.02] transition-colors"
+                            className="flex flex-col lg:flex-row lg:items-center justify-between p-4 hover:bg-white/[0.02] transition-colors cursor-pointer"
                             data-testid={`position-row-${pos.id}`}
+                            onClick={() => setSelectedPosition(pos)}
                           >
                             <div className="flex items-center gap-4 mb-3 lg:mb-0">
                               <div className="relative">
@@ -753,7 +830,7 @@ export default function Terminal() {
                                   })()}
                                 </div>
                               </div>
-                              <div className="flex gap-2 shrink-0">
+                              <div className="flex gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
                                 {pos.lotId && (
                                   <Button
                                     variant="outline"
@@ -1020,6 +1097,157 @@ export default function Terminal() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog de detalles de posición */}
+      <Dialog open={!!selectedPosition} onOpenChange={(open) => !open && setSelectedPosition(null)}>
+        <DialogContent className="bg-card border-border max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 font-mono">
+              <Target className="h-5 w-5 text-primary" />
+              Detalles de Posición - {selectedPosition?.pair}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {selectedPosition && (() => {
+            const exitStatus = calculateExitStatus(selectedPosition);
+            const entryFee = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+            const estimatedEntryFee = parseFloat(selectedPosition.entryValueUsd) * entryFee;
+            const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * entryFee;
+            
+            return (
+              <div className="space-y-4">
+                {/* Banner informativo */}
+                {exitStatus.adaptiveEnabled ? (
+                  <div className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
+                    <div className="text-xs text-cyan-400 uppercase mb-1">Motor ATR Activo</div>
+                    <div className="text-sm text-muted-foreground">
+                      Los valores de salida se calculan dinámicamente según volatilidad y régimen de mercado. 
+                      Los umbrales mostrados abajo son <span className="text-cyan-400">referencias base</span>, no valores finales.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg border bg-muted/20 border-muted">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Umbrales Configurados</div>
+                    <div className="text-sm text-muted-foreground">
+                      Valores SMART_GUARD según configuración actual.
+                    </div>
+                  </div>
+                )}
+
+                {/* Break-Even */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Break-Even ({exitStatus.bePct}%)</span>
+                    <span className={`text-sm font-mono ${exitStatus.beActive ? 'text-green-400' : 'text-muted-foreground'}`}>
+                      {exitStatus.beActive ? '✓ ACTIVO' : `Falta +${exitStatus.beRemaining.toFixed(2)}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all ${exitStatus.beActive ? 'bg-green-500' : 'bg-blue-500/50'}`}
+                      style={{ width: `${Math.max(0, exitStatus.beProgress)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Trailing Stop */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Trailing ({exitStatus.trailStartPct}% inicio, {exitStatus.trailDistancePct}% distancia)</span>
+                    <span className={`text-sm font-mono ${exitStatus.trailActive ? 'text-cyan-400' : 'text-muted-foreground'}`}>
+                      {exitStatus.trailActive ? '✓ SIGUIENDO' : `Falta +${exitStatus.trailRemaining.toFixed(2)}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all ${exitStatus.trailActive ? 'bg-cyan-500' : 'bg-cyan-500/30'}`}
+                      style={{ width: `${Math.max(0, exitStatus.trailProgress)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Take-Profit */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Take-Profit ({exitStatus.tpPct}%)</span>
+                    <span className={`text-sm font-mono ${exitStatus.currentPnlPct >= exitStatus.tpPct ? 'text-green-400' : 'text-muted-foreground'}`}>
+                      {exitStatus.currentPnlPct >= exitStatus.tpPct ? '✓ OBJETIVO' : `Falta +${exitStatus.tpRemaining.toFixed(2)}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all ${exitStatus.currentPnlPct >= exitStatus.tpPct ? 'bg-green-500' : 'bg-green-500/30'}`}
+                      style={{ width: `${Math.max(0, exitStatus.tpProgress)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Time-Stop */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Time-Stop ({exitStatus.timeStopHours}h)</span>
+                    <span className={`text-sm font-mono ${
+                      exitStatus.timeStopDisabled ? 'text-yellow-400' :
+                      exitStatus.hoursOpen >= exitStatus.timeStopHours ? 'text-orange-400' : 'text-muted-foreground'
+                    }`}>
+                      {exitStatus.timeStopDisabled ? '⏸ PAUSADO' :
+                       exitStatus.hoursOpen >= exitStatus.timeStopHours ? '⏱ EXPIRADO' :
+                       `${exitStatus.timeStopRemaining.toFixed(1)}h restantes`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all ${
+                        exitStatus.timeStopDisabled ? 'bg-yellow-500/50' :
+                        exitStatus.hoursOpen >= exitStatus.timeStopHours ? 'bg-orange-500' : 'bg-orange-500/30'
+                      }`}
+                      style={{ width: `${Math.max(0, exitStatus.timeStopProgress)}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Tiempo abierto: {exitStatus.hoursOpen.toFixed(1)} horas
+                  </div>
+                </div>
+
+                {/* Comisiones */}
+                <div className="p-3 rounded-lg bg-muted/20 border border-muted space-y-1">
+                  <div className="text-xs text-muted-foreground uppercase mb-2">Comisiones Estimadas</div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Entrada (pagada):</span>
+                    <span className="font-mono text-red-400">-${estimatedEntryFee.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Salida (estimada):</span>
+                    <span className="font-mono text-red-400">-${estimatedExitFee.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm pt-2 border-t border-muted">
+                    <span className="text-muted-foreground">Total comisiones:</span>
+                    <span className="font-mono text-red-400">-${(estimatedEntryFee + estimatedExitFee).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Info adicional */}
+                <div className="text-xs text-muted-foreground space-y-1 pt-2 border-t border-muted">
+                  <div className="flex justify-between">
+                    <span>Lote ID:</span>
+                    <span className="font-mono">{selectedPosition.lotId || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Estrategia:</span>
+                    <span className="font-mono">{selectedPosition.entryStrategyId}/{selectedPosition.entrySignalTf}</span>
+                  </div>
+                  {selectedPosition.signalConfidence && (
+                    <div className="flex justify-between">
+                      <span>Confianza entrada:</span>
+                      <span className="font-mono">{parseFloat(selectedPosition.signalConfidence).toFixed(0)}%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
