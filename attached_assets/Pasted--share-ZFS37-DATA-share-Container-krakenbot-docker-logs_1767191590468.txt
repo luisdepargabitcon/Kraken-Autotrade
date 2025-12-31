@@ -1,0 +1,32 @@
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs kraken-bot-app --tail 30
+[schema] Migration completed. Columns added: bot_config.sg_max_open_lots_per_pair, bot_config.sg_pair_overrides, bot_config.dry_run_mode, bot_config.sg_min_entry_usd, bot_config.sg_allow_under_min, bot_config.sg_be_at_pct, bot_config.sg_trail_start_pct, bot_config.sg_trail_distance_pct, bot_config.sg_trail_step_pct, bot_config.sg_tp_fixed_enabled, bot_config.sg_tp_fixed_pct, bot_config.sg_scale_out_enabled, bot_config.sg_scale_out_pct, bot_config.sg_min_part_usd, bot_config.sg_scale_out_threshold, bot_config.sg_fee_cushion_pct, bot_config.sg_fee_cushion_auto, bot_config.regime_detection_enabled, open_positions.lot_id, open_positions.sg_break_even_activated, open_positions.sg_trailing_activated, open_positions.sg_current_stop_price, open_positions.sg_scale_out_done, open_positions.config_snapshot_json
+[storage] Auto-migration successful, retrying getBotConfig...
+[startup] Error loading API credentials: error: column "profit_buffer_pct" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async I2.getBotConfig (/app/dist/index.cjs:70:31895)
+    at async rJ (/app/dist/index.cjs:775:3097)
+    at async /app/dist/index.cjs:809:5766 {
+  length: 119,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '1083',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+2:22:02 PM [express] serving on port 5000
+2:31:52 PM [express] GET /api/dashboard 500 in 25ms :: {"error":"Failed to get dashboard data"}
+2:31:54 PM [express] GET /api/dashboard 500 in 16ms :: {"error":"Failed to get dashboard data"}
+[/share/ZFS37_DATA/share/Container/krakenbot] #
