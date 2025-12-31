@@ -1,0 +1,30 @@
++] Running 2/2
+ ✔ Container kraken-bot-db   Healthy                                                                              29.4s
+ ✔ Container kraken-bot-app  Started                                                                              25.8s
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS maker_fee_pct TEXT DEFAULT '0.25';
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS regime_router_enabled BOOLEAN DEFAULT false;
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS range_cooldown_minutes TEXT DEFAULT '60';
+sition_size_factor TEXT DEFAULT > ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS transition_size_factor TEXT DEFAULT '0.5';
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS transition_cooldown_minutes TEXT DEFAULT '30';
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS transition_be_at_pct TEXT DEFAULT '1.5';
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS transition_trail_start_pct TEXT DEFAULT '2.0';
+> ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS transition_tp_pct TEXT DEFAULT '3.0';
+> "
+NOTICE:  column "maker_fee_pct" of relation "bot_config" already exists, skipping
+NOTICE:  column "regime_router_enabled" of relation "bot_config" already exists, skipping
+NOTICE:  column "range_cooldown_minutes" of relation "bot_config" already exists, skipping
+ALTER TABLE
+NOTICE:  column "transition_size_factor" of relation "bot_config" already exists, skipping
+ALTER TABLE
+NOTICE:  column "transition_cooldown_minutes" of relation "bot_config" already exists, skipping
+ALTER TABLE
+NOTICE:  column "transition_be_at_pct" of relation "bot_config" already exists, skipping
+ALTER TABLE
+NOTICE:  column "transition_trail_start_pct" of relation "bot_config" already exists, skipping
+ALTER TABLE
+NOTICE:  column "transition_tp_pct" of relation "bot_config" already exists, skipping
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+[/share/ZFS37_DATA/share/Container/krakenbot] #
