@@ -36,6 +36,12 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - **Risk Management**: Commission profitability filter, exposure control, bid-ask spread, trading hours, dynamic position sizing, Stop-Loss/Take-Profit, Trailing Stop, Daily Loss Limit, Cooldown System, Kraken compliance.
 - **SMART_GUARD Mode**: Intelligent capital protection with strict entry validation, including MTF entry filter, Anti-FOMO filter, minimum signals threshold, and dynamic sizing (Sizing v2) with fee cushion. Includes Break-Even Protection, Trailing Stop, Fixed Take-Profit, and Scale-Out features. Per-pair overrides are supported.
 - **Market Regime Detection**: Automatically adjusts SMART_GUARD exit parameters based on ADX, EMA alignment, and Bollinger Band width to detect TREND, RANGE, or TRANSITION regimes. Includes hysteresis, confirmation, and cooldown mechanisms to prevent oscillation and spam.
+- **Adaptive Exit Engine (ATR-based, 2025-12-31)**: Dynamic SL/TP/Trail calculation using ATR (Average True Range) and regime detection. Features:
+  - ATR multipliers per regime: TREND (SL×2, TP×3, Trail×1.5), RANGE (SL×1, TP×1.5, Trail×0.75), TRANSITION (SL×1.5, TP×2, Trail×1)
+  - Fee-aware TP floor: Minimum TP = 1.80% (0.40% taker × 2 legs + 1.00% buffer)
+  - Safety floors: SL min 2%, Trail min 0.75%, Ceilings: SL 8%, TP 15%, Trail 4%
+  - Fallback to static presets when ATR data insufficient (<14 periods)
+  - Logs tagged `[ATR_EXIT]` and `[ATR_SNAPSHOT]` for debugging
 - **Environment Safety**: DRY_RUN mode prevents real orders, automatically enabled on Replit.
 - **FIFO Position Matching**: Automatic position closing with partial fills tracking using `trade_fills` and `lot_matches` tables, ensuring accurate P&L and eliminating phantom positions.
 - **Confidence Normalization**: Internally uses 0..1 scale, displays and ML use 0..100.
@@ -48,6 +54,12 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - **Commands**: Supported on Docker/NAS for `/estado`, `/pausar`, `/reanudar`, `/balance`, `/config`, `/exposicion`, `/uptime`, `/ultimas`, `/ayuda`, `/menu`, `/channels`.
 - **Features**: Rate limiting, multi-chat support, inline keyboard buttons, daily reports, and channel management.
 - **Security**: HTML formatting with `escapeHtml()` helper to prevent markup injection.
+- **Natural Language Messages (2025-12-31)**: All trade notifications use conversational Spanish:
+  - BUY: "Nueva compra de BTC - He comprado $X de BTC a $Y. Mercado en tendencia alcista, confianza alta (85%)."
+  - SELL (Take-Profit): "Take-Profit en BTC - ¡Objetivo cumplido! Ganancia de +$45.32 (+3.5%)."
+  - SELL (Stop-Loss): "Stop-Loss en ETH - Pérdida limitada a -$12.50 (-2.1%)."
+  - SMART_GUARD events: "Protección activada en BTC - Tu posición ya está en ganancias (+2.5%). He movido el stop a break-even."
+  - All messages include essential data: prices, P&L, lot IDs, duration, and panel link.
 
 ### Quote Currency Validation
 - **Purpose**: Blocks trades on non-USD pairs, allowing only "USD" quoted pairs.

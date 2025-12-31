@@ -867,78 +867,69 @@ export class TradingEngine {
       reason: extra.reason,
     });
 
-    // Send Telegram notification
+    // Send Telegram notification with natural language + essential data
     if (this.telegramService.isInitialized()) {
-      let emoji = "";
-      let title = "";
-      
-      switch (eventType) {
-        case "SG_BREAK_EVEN_ACTIVATED":
-          emoji = "⚖️";
-          title = "Break-Even Activado";
-          break;
-        case "SG_TRAILING_ACTIVATED":
-          emoji = "📈";
-          title = "Trailing Stop Activado";
-          break;
-        case "SG_TRAILING_STOP_UPDATED":
-          emoji = "🔼";
-          title = "Stop Actualizado";
-          break;
-        case "SG_SCALE_OUT_EXECUTED":
-          emoji = "📊";
-          title = "Scale-Out Ejecutado";
-          break;
-      }
-
-      // Build exit prices section - use dynamic decimals based on price magnitude
       const formatPrice = (price: number) => {
         if (price >= 100) return price.toFixed(2);
         if (price >= 1) return price.toFixed(4);
         return price.toFixed(6);
       };
       
-      const exitLines: string[] = [];
-      if (extra.stopPrice) {
-        exitLines.push(`   • 📉 Salida por abajo: <code>$${formatPrice(extra.stopPrice)}</code>`);
-      }
-      if (extra.takeProfitPrice) {
-        exitLines.push(`   • 📈 Salida por arriba: <code>$${formatPrice(extra.takeProfitPrice)}</code>`);
-      }
-      const exitSection = exitLines.length > 0 
-        ? `\n🎯 <b>Salidas configuradas:</b>\n${exitLines.join('\n')}` 
-        : '';
-
-      // Build trailing status section
-      let trailingSection = '';
-      if (extra.trailingStatus) {
-        const ts = extra.trailingStatus;
-        const statusTxt = ts.active 
-          ? `Activo (distancia ${ts.distancePct}%)` 
-          : `Pendiente (activa a +${ts.startPct}%)`;
-        trailingSection = `\n🔄 <b>Trailing:</b> ${statusTxt}
-   • Distancia: <code>${ts.distancePct}%</code>
-   • Step: <code>${ts.stepPct}%</code>`;
+      const assetName = pair.replace("/USD", "");
+      const profitText = extra.profitPct >= 0 ? `+${extra.profitPct.toFixed(2)}%` : `${extra.profitPct.toFixed(2)}%`;
+      
+      let naturalMessage = "";
+      
+      switch (eventType) {
+        case "SG_BREAK_EVEN_ACTIVATED":
+          naturalMessage = `⚖️ <b>Protección activada en ${assetName}</b>\n\n`;
+          naturalMessage += `Tu posición ya está en ganancias (${profitText}). He movido el stop a break-even.\n\n`;
+          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+          if (extra.stopPrice) {
+            naturalMessage += `📍 Stop BE: $${formatPrice(extra.stopPrice)}\n`;
+          }
+          if (extra.takeProfitPrice) {
+            naturalMessage += `🎯 Objetivo: $${formatPrice(extra.takeProfitPrice)}\n`;
+          }
+          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+          break;
+          
+        case "SG_TRAILING_ACTIVATED":
+          naturalMessage = `📈 <b>Trailing activo en ${assetName}</b>\n\n`;
+          naturalMessage += `¡Las ganancias siguen subiendo! (${profitText}). El trailing ahora sigue el precio.\n\n`;
+          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+          if (extra.stopPrice) {
+            naturalMessage += `📍 Stop trailing: $${formatPrice(extra.stopPrice)}\n`;
+          }
+          if (extra.trailingStatus) {
+            naturalMessage += `🔄 Distancia: ${extra.trailingStatus.distancePct}%\n`;
+          }
+          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+          break;
+          
+        case "SG_TRAILING_STOP_UPDATED":
+          naturalMessage = `🔼 <b>Stop actualizado en ${assetName}</b>\n\n`;
+          naturalMessage += `El precio sigue subiendo (${profitText}). Stop elevado para proteger más ganancias.\n\n`;
+          naturalMessage += `📊 Actual: $${formatPrice(currentPrice)}\n`;
+          if (extra.stopPrice) {
+            naturalMessage += `📍 Nuevo stop: $${formatPrice(extra.stopPrice)}\n`;
+          }
+          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+          break;
+          
+        case "SG_SCALE_OUT_EXECUTED":
+          naturalMessage = `📊 <b>Venta parcial en ${assetName}</b>\n\n`;
+          naturalMessage += `He vendido parte de la posición para asegurar ganancias (${profitText}).\n\n`;
+          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
+          naturalMessage += `<i>El resto sigue abierto para capturar más subidas.</i>`;
+          break;
       }
       
-      const message = `🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-${emoji} <b>${title}</b>
-
-📦 <b>Estado actual:</b>
-   • Par: <code>${pair}</code>
-   • Lote: <code>${shortLotId}</code>
-   • Entrada: <code>$${formatPrice(entryPrice)}</code>
-   • Actual: <code>$${formatPrice(currentPrice)}</code>
-   • Profit: <code>${extra.profitPct >= 0 ? '+' : ''}${extra.profitPct.toFixed(2)}%</code>
-   • Duración: <code>${durationTxt}</code>${exitSection}${trailingSection}
-
-ℹ️ ${extra.reason}
-
-🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`;
-
-      await this.telegramService.sendAlertToMultipleChats(message, "trades");
+      await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
     }
   }
 
@@ -2282,28 +2273,59 @@ El bot ha pausado las operaciones de COMPRA.
       const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
       
       if (success && this.telegramService.isInitialized()) {
-        const pnlEmoji = pnl >= 0 ? "📈" : "📉";
         const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
         const durationMins = Math.floor(durationMs / 60000);
         const durationHours = Math.floor(durationMins / 60);
         const durationDays = Math.floor(durationHours / 24);
         const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
-        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-${emoji} <b>${reason}</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Lot: <code>${lotId}</code>
-   • Precio entrada: <code>$${position.entryPrice.toFixed(2)}</code>
-   • Precio actual: <code>$${currentPrice.toFixed(2)}</code>
-   • Cantidad vendida: <code>${actualSellAmount.toFixed(8)}</code>
-   • Duración: <code>${durationTxt}</code>
-
-${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)</code>
-
-🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`, "trades");
+        
+        const assetName = pair.replace("/USD", "");
+        const shortLotId = lotId.substring(0, 12);
+        
+        // Determine exit type for natural language header
+        const isStopLoss = reason.toLowerCase().includes("stop-loss") || reason.toLowerCase().includes("stoploss");
+        const isTakeProfit = reason.toLowerCase().includes("take-profit") || reason.toLowerCase().includes("tp fijo");
+        const isTrailing = reason.toLowerCase().includes("trailing");
+        
+        let headerEmoji = "";
+        let headerText = "";
+        let resultText = "";
+        
+        if (pnl >= 0) {
+          if (isTakeProfit) {
+            headerEmoji = "🎯";
+            headerText = `Take-Profit en ${assetName}`;
+            resultText = `¡Objetivo cumplido! Ganancia de <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+          } else if (isTrailing) {
+            headerEmoji = "📈";
+            headerText = `Trailing Stop en ${assetName}`;
+            resultText = `El trailing protegió las ganancias: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+          } else {
+            headerEmoji = "🟢";
+            headerText = `Venta con ganancia en ${assetName}`;
+            resultText = `Resultado: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+          }
+        } else {
+          if (isStopLoss) {
+            headerEmoji = "🛑";
+            headerText = `Stop-Loss en ${assetName}`;
+            resultText = `Pérdida limitada a <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
+          } else {
+            headerEmoji = "🔴";
+            headerText = `Venta en ${assetName}`;
+            resultText = `Resultado: <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
+          }
+        }
+        
+        let naturalMessage = `${headerEmoji} <b>${headerText}</b>\n\n`;
+        naturalMessage += `${resultText}\n\n`;
+        naturalMessage += `📊 Entrada: $${position.entryPrice.toFixed(2)} → Salida: $${currentPrice.toFixed(2)}\n`;
+        naturalMessage += `📦 Cantidad: ${actualSellAmount.toFixed(8)}\n`;
+        naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
+        naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
+        
+        await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
       }
 
       if (success) {
@@ -5898,32 +5920,42 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const confidenceValue = strategyMeta?.confidence ? toConfidencePct(strategyMeta.confidence, 0).toFixed(0) : "N/A";
         const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
         
-        // Build regime info for BUY notifications
-        let regimeSection = "";
-        if (type === "buy" && strategyMeta?.regime) {
-          regimeSection = `\n🧭 <b>Régimen:</b> <code>${strategyMeta.regime}</code>`;
-          if (strategyMeta.regimeReason) {
-            regimeSection += `\n   ↳ <i>${strategyMeta.regimeReason.substring(0, 80)}</i>`;
+        // Build natural language messages for Telegram with essential data
+        if (type === "buy") {
+          const regimeText = strategyMeta?.regime 
+            ? (strategyMeta.regime === "TREND" ? "tendencia alcista" : 
+               strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transición")
+            : "";
+          
+          const assetName = pair.replace("/USD", "");
+          const confNum = parseInt(confidenceValue);
+          const confidenceLevel = !isNaN(confNum) 
+            ? (confNum >= 80 ? "alta" : confNum >= 60 ? "buena" : "moderada")
+            : "";
+          
+          let naturalMessage = `🟢 <b>Nueva compra de ${assetName}</b>\n\n`;
+          naturalMessage += `He comprado <b>${volume}</b> ${assetName} (<b>$${totalUSDFormatted}</b>) a <b>$${price.toFixed(2)}</b>.\n\n`;
+          
+          if (regimeText && confidenceLevel) {
+            naturalMessage += `📊 Mercado en ${regimeText}, confianza ${confidenceLevel} (${confidenceValue}%).\n`;
+          } else if (confidenceLevel) {
+            naturalMessage += `📊 Confianza ${confidenceLevel} (${confidenceValue}%).\n`;
           }
-          if (strategyMeta.routerStrategy) {
-            regimeSection += `\n🔄 <b>Router:</b> <code>${strategyMeta.routerStrategy}</code>`;
-          }
-          regimeSection += "\n";
+          
+          naturalMessage += `🧠 Estrategia: ${strategyLabel}\n`;
+          naturalMessage += `🔗 ID: <code>${txid}</code>\n\n`;
+          naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
+          
+          await this.telegramService.sendMessage(naturalMessage);
+        } else {
+          const assetName = pair.replace("/USD", "");
+          let naturalMessage = `🔴 <b>Venta de ${assetName}</b>\n\n`;
+          naturalMessage += `He vendido <b>${volume}</b> ${assetName} a <b>$${price.toFixed(2)}</b> ($${totalUSDFormatted}).\n\n`;
+          naturalMessage += `📝 ${reason}\n`;
+          naturalMessage += `🔗 ID: <code>${txid}</code>`;
+          
+          await this.telegramService.sendMessage(naturalMessage);
         }
-        
-        await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
-
-💵 <b>Precio:</b> <code>$${price.toFixed(2)}</code>
-📦 <b>Cantidad:</b> <code>${volume}</code>
-💰 <b>Total:</b> <code>$${totalUSDFormatted}</code>
-${regimeSection}
-🧠 <b>Estrategia:</b> ${strategyLabel}
-📈 <b>Confianza:</b> <code>${confidenceValue}%</code>
-
-🔗 <b>ID:</b> <code>${txid}</code>
-━━━━━━━━━━━━━━━━━━━`);
       }
 
       log(`Orden ejecutada: ${txid}`, "trading");
