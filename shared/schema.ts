@@ -57,6 +57,13 @@ export const botConfig = pgTable("bot_config", {
   transitionBeAtPct: decimal("transition_be_at_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
   transitionTrailStartPct: decimal("transition_trail_start_pct", { precision: 5, scale: 2 }).notNull().default("2.80"),
   transitionTpPct: decimal("transition_tp_pct", { precision: 5, scale: 2 }).notNull().default("5.00"),
+  // Adaptive Exit Engine configuration
+  adaptiveExitEnabled: boolean("adaptive_exit_enabled").notNull().default(false),
+  takerFeePct: decimal("taker_fee_pct", { precision: 5, scale: 3 }).notNull().default("0.400"),
+  makerFeePct: decimal("maker_fee_pct", { precision: 5, scale: 3 }).notNull().default("0.250"),
+  profitBufferPct: decimal("profit_buffer_pct", { precision: 5, scale: 2 }).notNull().default("1.00"),
+  timeStopHours: integer("time_stop_hours").notNull().default(36),
+  timeStopMode: text("time_stop_mode").notNull().default("soft"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -151,6 +158,11 @@ export const openPositions = pgTable("open_positions", {
   sgCurrentStopPrice: decimal("sg_current_stop_price", { precision: 18, scale: 8 }),
   sgTrailingActivated: boolean("sg_trailing_activated").default(false),
   sgScaleOutDone: boolean("sg_scale_out_done").default(false),
+  // Adaptive Exit Engine state per lot
+  timeStopDisabled: boolean("time_stop_disabled").default(false),
+  timeStopExpiredAt: timestamp("time_stop_expired_at"),
+  // Break-even progressive level (1, 2, 3) for fee-aware BE
+  beProgressiveLevel: integer("be_progressive_level").default(0),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

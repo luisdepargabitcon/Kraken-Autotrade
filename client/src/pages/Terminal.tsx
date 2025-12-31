@@ -29,7 +29,9 @@ import {
   X,
   Loader2,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Timer,
+  TimerOff
 } from "lucide-react";
 import {
   AlertDialog,
@@ -60,6 +62,8 @@ interface OpenPosition {
   signalConfidence: string | null;
   lotId?: string | null;
   entryMode?: string | null;
+  timeStopDisabled?: boolean;
+  timeStopExpiredAt?: string | null;
 }
 
 interface ClosedTrade {
@@ -96,6 +100,7 @@ export default function Terminal() {
   const [activeTab, setActiveTab] = useState("positions");
   const [closingKey, setClosingKey] = useState<string | null>(null);
   const [deletingOrphanKey, setDeletingOrphanKey] = useState<string | null>(null);
+  const [togglingTimeStopKey, setTogglingTimeStopKey] = useState<string | null>(null);
   const [orphanDialogOpen, setOrphanDialogOpen] = useState(false);
   const [orphanToDelete, setOrphanToDelete] = useState<{ lotId: string; pair: string; amount: string } | null>(null);
   const [dustPositions, setDustPositions] = useState<Set<string>>(new Set());
@@ -349,6 +354,39 @@ export default function Terminal() {
   const handleReconcile = () => {
     if (confirm("¿Reconciliar posiciones con Kraken? Esto eliminará automáticamente las posiciones huérfanas (sin balance real).")) {
       reconcileMutation.mutate({ autoClean: true });
+    }
+  };
+
+  const handleToggleTimeStop = async (lotId: string, currentlyDisabled: boolean, pair: string) => {
+    setTogglingTimeStopKey(lotId);
+    try {
+      const res = await fetch(`/api/positions/${lotId}/time-stop`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled: !currentlyDisabled }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast({
+          title: !currentlyDisabled ? "Time-Stop Desactivado" : "Time-Stop Reactivado",
+          description: `${pair}: ${data.message}`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["openPositions"] });
+      } else {
+        toast({
+          title: "Error",
+          description: data.message,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setTogglingTimeStopKey(null);
     }
   };
 
@@ -707,6 +745,27 @@ export default function Terminal() {
                                 </div>
                               </div>
                               <div className="flex gap-2 shrink-0">
+                                {pos.lotId && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleToggleTimeStop(pos.lotId!, pos.timeStopDisabled || false, pos.pair)}
+                                    disabled={togglingTimeStopKey === pos.lotId}
+                                    className={pos.timeStopDisabled 
+                                      ? "text-yellow-400 border-yellow-400/50 hover:bg-yellow-400/10" 
+                                      : "text-emerald-400 border-emerald-400/50 hover:bg-emerald-400/10"}
+                                    data-testid={`button-toggle-timestop-${pos.lotId}`}
+                                    title={pos.timeStopDisabled ? "Time-stop desactivado - Click para reactivar" : "Time-stop activo - Click para desactivar"}
+                                  >
+                                    {togglingTimeStopKey === pos.lotId ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : pos.timeStopDisabled ? (
+                                      <TimerOff className="h-4 w-4" />
+                                    ) : (
+                                      <Timer className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="destructive"
                                   size="sm"

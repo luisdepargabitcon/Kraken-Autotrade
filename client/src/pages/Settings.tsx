@@ -99,6 +99,13 @@ interface BotConfig {
   transitionBeAtPct: string;
   transitionTrailStartPct: string;
   transitionTpPct: string;
+  // Adaptive Exit Engine fields
+  adaptiveExitEnabled: boolean;
+  takerFeePct: string;
+  makerFeePct: string;
+  profitBufferPct: string;
+  timeStopHours: number;
+  timeStopMode: string;
 }
 
 export default function Settings() {
@@ -688,6 +695,108 @@ export default function Settings() {
                               </div>
                             </div>
                           )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Adaptive Exit Engine Panel */}
+                    <div className="p-3 border border-emerald-500/30 rounded-lg bg-emerald-500/5 space-y-3" data-testid="panel-adaptive-exit">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Shield className="h-4 w-4 text-emerald-400" />
+                          <Label className="text-sm font-medium text-emerald-400">Motor de Salidas Inteligente</Label>
+                        </div>
+                        <Switch
+                          checked={config?.adaptiveExitEnabled || false}
+                          onCheckedChange={(checked) => updateMutation.mutate({ adaptiveExitEnabled: checked })}
+                          data-testid="switch-adaptive-exit"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground" data-testid="text-adaptive-exit-desc">
+                        Calcula automáticamente niveles de salida basados en comisiones reales y volatilidad. Evita cerrar operaciones con ganancias insuficientes para cubrir costes.
+                      </p>
+                      
+                      {config?.adaptiveExitEnabled && (
+                        <div className="space-y-3 pt-2 border-t border-emerald-500/20">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Comisión Taker (%)</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min={0.1}
+                                max={1.0}
+                                value={config.takerFeePct || "0.40"}
+                                onChange={(e) => updateMutation.mutate({ takerFeePct: e.target.value })}
+                                className="h-8 text-xs font-mono bg-background/50"
+                                data-testid="input-taker-fee"
+                              />
+                              <p className="text-[10px] text-muted-foreground">Fee en órdenes de mercado</p>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Comisión Maker (%)</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min={0.1}
+                                max={1.0}
+                                value={config.makerFeePct || "0.25"}
+                                onChange={(e) => updateMutation.mutate({ makerFeePct: e.target.value })}
+                                className="h-8 text-xs font-mono bg-background/50"
+                                data-testid="input-maker-fee"
+                              />
+                              <p className="text-[10px] text-muted-foreground">Fee en órdenes límite (futuro)</p>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Buffer de Ganancia (%)</Label>
+                              <Input
+                                type="number"
+                                step="0.1"
+                                min={0.5}
+                                max={3.0}
+                                value={config.profitBufferPct || "1.00"}
+                                onChange={(e) => updateMutation.mutate({ profitBufferPct: e.target.value })}
+                                className="h-8 text-xs font-mono bg-background/50"
+                                data-testid="input-profit-buffer"
+                              />
+                              <p className="text-[10px] text-muted-foreground">Ganancia mínima neta deseada</p>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Time-Stop (horas)</Label>
+                              <Input
+                                type="number"
+                                min={6}
+                                max={120}
+                                value={config.timeStopHours || 36}
+                                onChange={(e) => updateMutation.mutate({ timeStopHours: parseInt(e.target.value) || 36 })}
+                                className="h-8 text-xs font-mono bg-background/50"
+                                data-testid="input-time-stop"
+                              />
+                              <p className="text-[10px] text-muted-foreground">Tiempo máximo posición abierta</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-emerald-500/10 rounded">
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs">Modo Time-Stop</Label>
+                              <span className="text-[10px] text-muted-foreground">(soft = solo cierra si hay ganancia suficiente)</span>
+                            </div>
+                            <Select 
+                              value={config?.timeStopMode ?? "soft"}
+                              onValueChange={(value) => updateMutation.mutate({ timeStopMode: value })}
+                            >
+                              <SelectTrigger className="w-24 h-7 text-xs font-mono bg-background/50" data-testid="select-time-stop-mode">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="soft">SOFT</SelectItem>
+                                <SelectItem value="hard">HARD</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="text-xs bg-emerald-500/10 p-2 rounded border border-emerald-500/20">
+                            <strong>Mínimo para cerrar:</strong> {((parseFloat(config.takerFeePct || "0.40") * 2) + parseFloat(config.profitBufferPct || "1.00")).toFixed(2)}% 
+                            (fees {(parseFloat(config.takerFeePct || "0.40") * 2).toFixed(2)}% + buffer {config.profitBufferPct || "1.00"}%)
+                          </div>
                         </div>
                       )}
                     </div>

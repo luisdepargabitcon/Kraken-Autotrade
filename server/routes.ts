@@ -850,6 +850,73 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // === TOGGLE TIME-STOP POR POSICIÓN ===
+  // Nota: Este endpoint asume acceso seguro via red local o VPN, igual que otras rutas críticas
+  app.patch("/api/positions/:lotId/time-stop", async (req, res) => {
+    try {
+      const lotId = req.params.lotId;
+      const { disabled } = req.body;
+      
+      // Validación del body
+      if (typeof disabled !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_REQUEST",
+          message: "El campo 'disabled' debe ser un booleano (true/false)",
+        });
+      }
+      
+      const position = await storage.getOpenPositionByLotId(lotId);
+      if (!position) {
+        return res.status(404).json({
+          success: false,
+          error: "POSITION_NOT_FOUND",
+          message: `No se encontró posición con lotId: ${lotId}`,
+        });
+      }
+      
+      // DB primero para garantizar persistencia - si falla, no actualizamos memoria
+      const updatedPosition = await storage.updateOpenPositionByLotId(lotId, { 
+        timeStopDisabled: disabled 
+      });
+      
+      if (!updatedPosition) {
+        return res.status(500).json({
+          success: false,
+          error: "UPDATE_FAILED",
+          message: "No se pudo actualizar la posición en la base de datos",
+        });
+      }
+      
+      // Solo actualizamos memoria después de confirmar persistencia en DB
+      if (tradingEngine) {
+        const positions = tradingEngine.getOpenPositions();
+        const memPos = positions.get(lotId);
+        if (memPos) {
+          memPos.timeStopDisabled = disabled;
+        }
+      }
+      
+      console.log(`[TIME_STOP_TOGGLE] lotId=${lotId} pair=${position.pair} disabled=${disabled}`);
+      
+      res.json({
+        success: true,
+        lotId,
+        pair: position.pair,
+        timeStopDisabled: disabled,
+        message: disabled ? "Time-stop desactivado para esta posición" : "Time-stop reactivado",
+      });
+      
+    } catch (error: any) {
+      console.error("[api/positions/time-stop] Error:", error.message);
+      res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: error.message,
+      });
+    }
+  });
+
   // === RECONCILIAR POSICIONES CON KRAKEN ===
   // Compara balances reales con posiciones en BD y elimina huérfanas
   app.post("/api/positions/reconcile", async (req, res) => {

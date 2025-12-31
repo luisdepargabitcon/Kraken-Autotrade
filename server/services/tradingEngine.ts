@@ -284,6 +284,30 @@ interface OpenPosition {
   sgCurrentStopPrice?: number;
   sgTrailingActivated?: boolean;
   sgScaleOutDone?: boolean;
+  // Adaptive Exit Engine state per lot
+  timeStopDisabled?: boolean;
+  timeStopExpiredAt?: number; // Timestamp when time-stop expired (for UI/alerts)
+  beProgressiveLevel?: number; // Break-even progressive level (0, 1, 2, 3)
+}
+
+// === ADAPTIVE EXIT ENGINE TYPES ===
+type ExitReason = 
+  | "STOP_LOSS"           // Risk exit - always allowed
+  | "EMERGENCY_SL"        // Risk exit - always allowed
+  | "DAILY_LOSS_LIMIT"    // Risk exit - always allowed
+  | "TIME_STOP_HARD"      // Risk exit - always allowed
+  | "TAKE_PROFIT"         // Profit exit - subject to fee-gating
+  | "TRAILING_STOP"       // Profit exit - subject to fee-gating
+  | "BREAK_EVEN"          // Profit exit - subject to fee-gating
+  | "TIME_STOP_SOFT"      // Profit exit - subject to fee-gating
+  | "SCALE_OUT";          // Profit exit - subject to fee-gating
+
+interface FeeGatingResult {
+  allowed: boolean;
+  grossPnlPct: number;
+  minCloseNetPct: number;
+  estimatedNetPct: number;
+  reason: string;
 }
 
 function generateLotId(pair: string): string {
@@ -515,6 +539,233 @@ export class TradingEngine {
     
     // Log regime parameters at startup
     log(`[REGIME_PARAMS] enter=${REGIME_CONFIG.ADX_TREND_ENTRY} exit=${REGIME_CONFIG.ADX_TREND_EXIT} hardExit=${REGIME_CONFIG.ADX_HARD_EXIT} confirm=${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} minHold=${REGIME_CONFIG.MIN_HOLD_MINUTES} cooldown=${REGIME_CONFIG.NOTIFY_COOLDOWN_MS / 60000}min`, "trading");
+  }
+
+  // === ADAPTIVE EXIT ENGINE: FEE-GATING ===
+  // NOTA: El bot usa exclusivamente órdenes MARKET (100% taker fees).
+  // Por tanto, entryFeePct = exitFeePct = takerFeePct.
+  // El campo makerFeePct está reservado para futura implementación de órdenes límite.
+  // minCloseNetPct = (takerFeePct * 2) + profitBufferPct
+  
+  private isRiskExit(reason: ExitReason): boolean {
+    const riskExits: ExitReason[] = ["STOP_LOSS", "EMERGENCY_SL", "DAILY_LOSS_LIMIT", "TIME_STOP_HARD"];
+    return riskExits.includes(reason);
+  }
+
+  private async getAdaptiveExitConfig(): Promise<{
+    enabled: boolean;
+    takerFeePct: number;
+    makerFeePct: number;
+    profitBufferPct: number;
+    timeStopHours: number;
+    timeStopMode: "soft" | "hard";
+  }> {
+    const config = await storage.getBotConfig();
+    return {
+      enabled: config?.adaptiveExitEnabled ?? false,
+      takerFeePct: parseFloat(config?.takerFeePct?.toString() ?? "0.40"),
+      makerFeePct: parseFloat(config?.makerFeePct?.toString() ?? "0.25"),
+      profitBufferPct: parseFloat(config?.profitBufferPct?.toString() ?? "1.00"),
+      timeStopHours: config?.timeStopHours ?? 36,
+      timeStopMode: (config?.timeStopMode as "soft" | "hard") ?? "soft",
+    };
+  }
+
+  private calculateMinCloseNetPct(entryFeePct: number, exitFeePct: number, profitBufferPct: number): number {
+    const roundTripFeePct = entryFeePct + exitFeePct;
+    return roundTripFeePct + profitBufferPct;
+  }
+
+  private checkFeeGating(
+    grossPnlPct: number,
+    exitReason: ExitReason,
+    entryFeePct: number,
+    exitFeePct: number,
+    profitBufferPct: number
+  ): FeeGatingResult {
+    const minCloseNetPct = this.calculateMinCloseNetPct(entryFeePct, exitFeePct, profitBufferPct);
+    const estimatedNetPct = grossPnlPct - minCloseNetPct;
+    
+    if (this.isRiskExit(exitReason)) {
+      return {
+        allowed: true,
+        grossPnlPct,
+        minCloseNetPct,
+        estimatedNetPct,
+        reason: `[RISK_OVERRIDE] reason=${exitReason} (siempre permitido)`,
+      };
+    }
+    
+    if (grossPnlPct >= minCloseNetPct) {
+      return {
+        allowed: true,
+        grossPnlPct,
+        minCloseNetPct,
+        estimatedNetPct,
+        reason: `[EXIT] reason=${exitReason} grossPnlPct=${grossPnlPct.toFixed(2)} minCloseNetPct=${minCloseNetPct.toFixed(2)} decision=ALLOW`,
+      };
+    }
+    
+    return {
+      allowed: false,
+      grossPnlPct,
+      minCloseNetPct,
+      estimatedNetPct,
+      reason: `[EXIT_BLOCKED_FEES] reason=${exitReason} grossPnlPct=${grossPnlPct.toFixed(2)} minCloseNetPct=${minCloseNetPct.toFixed(2)} decision=BLOCK`,
+    };
+  }
+
+  // === ADAPTIVE EXIT ENGINE: TIME-STOP ===
+  
+  private timeStopNotified: Map<string, number> = new Map(); // Track last notification time per lotId
+  private readonly TIME_STOP_NOTIFY_THROTTLE_MS = 60 * 60 * 1000; // 1 hour between time-stop notifications
+
+  private async checkTimeStop(
+    position: OpenPosition,
+    currentPrice: number,
+    exitConfig: {
+      enabled: boolean;
+      takerFeePct: number;
+      profitBufferPct: number;
+      timeStopHours: number;
+      timeStopMode: "soft" | "hard";
+    }
+  ): Promise<{
+    triggered: boolean;
+    expired: boolean;
+    shouldClose: boolean;
+    reason: string;
+    ageHours: number;
+  }> {
+    const { lotId, openedAt, pair, entryPrice, timeStopDisabled } = position;
+    const now = Date.now();
+    const ageMs = now - openedAt;
+    const ageHours = ageMs / (1000 * 60 * 60);
+    const timeStopHours = exitConfig.timeStopHours;
+    
+    if (timeStopDisabled) {
+      return {
+        triggered: false,
+        expired: false,
+        shouldClose: false,
+        reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} disabled=true`,
+        ageHours,
+      };
+    }
+    
+    if (ageHours < timeStopHours) {
+      return {
+        triggered: false,
+        expired: false,
+        shouldClose: false,
+        reason: "",
+        ageHours,
+      };
+    }
+    
+    const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
+    const minCloseNetPct = this.calculateMinCloseNetPct(exitConfig.takerFeePct, exitConfig.takerFeePct, exitConfig.profitBufferPct);
+    
+    if (exitConfig.timeStopMode === "hard") {
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard FORCE_CLOSE`, "trading");
+      return {
+        triggered: true,
+        expired: true,
+        shouldClose: true,
+        reason: `Time-stop expirado (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [modo HARD]`,
+        ageHours,
+      };
+    }
+    
+    if (priceChange >= minCloseNetPct) {
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} PROFIT_EXIT_OK`, "trading");
+      return {
+        triggered: true,
+        expired: true,
+        shouldClose: true,
+        reason: `Time-stop expirado + profit suficiente (+${priceChange.toFixed(2)}% >= ${minCloseNetPct.toFixed(2)}%)`,
+        ageHours,
+      };
+    }
+    
+    const lastNotify = this.timeStopNotified.get(lotId) || 0;
+    const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
+    
+    if (shouldNotify && !position.timeStopExpiredAt) {
+      this.timeStopNotified.set(lotId, now);
+      position.timeStopExpiredAt = now;
+      this.openPositions.set(lotId, position);
+      await this.savePositionToDB(pair, position);
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT`, "trading");
+      
+      if (this.telegramService.isInitialized()) {
+        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Posición en espera</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite configurado: <code>${timeStopHours} horas</code>
+
+📊 <b>Estado:</b>
+   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+   • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
+
+💡 La posición se cerrará automáticamente cuando la ganancia supere ${minCloseNetPct.toFixed(2)}% (para cubrir comisiones).
+━━━━━━━━━━━━━━━━━━━`, "trades");
+      }
+    }
+    
+    return {
+      triggered: true,
+      expired: true,
+      shouldClose: false,
+      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft BLOCKED_FEES`,
+      ageHours,
+    };
+  }
+
+  // === ADAPTIVE EXIT ENGINE: BREAK-EVEN PROGRESIVO ===
+  
+  private calculateProgressiveBEStop(
+    position: OpenPosition,
+    currentPrice: number,
+    grossPnlPct: number,
+    roundTripFeePct: number,
+    profitBufferPct: number
+  ): { newStopPrice: number | null; newLevel: number; reason: string } {
+    const { entryPrice, beProgressiveLevel = 0 } = position;
+    let newLevel = beProgressiveLevel;
+    let newStopPrice: number | null = null;
+    let reason = "";
+    
+    // Nivel 1: +1.5% -> stop = entryPrice * (1 + roundTripFeePct)
+    // Nivel 2: +3.0% -> stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*0.50)
+    // Nivel 3: +5.0% -> stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*1.00)
+    
+    if (grossPnlPct >= 5.0 && beProgressiveLevel < 3) {
+      newLevel = 3;
+      const stopPct = roundTripFeePct + profitBufferPct;
+      newStopPrice = entryPrice * (1 + stopPct / 100);
+      reason = `BE Nivel 3: +5.0% alcanzado, stop en +${stopPct.toFixed(2)}%`;
+    } else if (grossPnlPct >= 3.0 && beProgressiveLevel < 2) {
+      newLevel = 2;
+      const stopPct = roundTripFeePct + (profitBufferPct * 0.5);
+      newStopPrice = entryPrice * (1 + stopPct / 100);
+      reason = `BE Nivel 2: +3.0% alcanzado, stop en +${stopPct.toFixed(2)}%`;
+    } else if (grossPnlPct >= 1.5 && beProgressiveLevel < 1) {
+      newLevel = 1;
+      const stopPct = roundTripFeePct;
+      newStopPrice = entryPrice * (1 + stopPct / 100);
+      reason = `BE Nivel 1: +1.5% alcanzado, stop en +${stopPct.toFixed(2)}%`;
+    }
+    
+    if (newStopPrice && newStopPrice >= currentPrice) {
+      return { newStopPrice: null, newLevel: beProgressiveLevel, reason: "Stop BE calculado >= precio actual, no aplicado" };
+    }
+    
+    return { newStopPrice, newLevel, reason };
   }
 
   // === MULTI-LOT HELPERS ===
