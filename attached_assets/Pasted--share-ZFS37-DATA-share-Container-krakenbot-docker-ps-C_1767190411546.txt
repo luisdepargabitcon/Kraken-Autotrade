@@ -1,0 +1,117 @@
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker ps
+CONTAINER ID   IMAGE                COMMAND                  CREATED          STATUS                    PORTS                    NAMES
+096e7a75e82b   node:20-alpine       "docker-entrypoint.s…"   49 seconds ago   Up 23 seconds             0.0.0.0:3000->5000/tcp   kraken-bot-app
+6d72c3f60ccf   postgres:16-alpine   "docker-entrypoint.s…"   54 seconds ago   Up 34 seconds (healthy)   5432/tcp                 kraken-bot-db
+6890ec99abb2   python:3.11          "sh -c 'cd /app && p…"   3 weeks ago      Up 11 hours                                        bot_btceth
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs krakenbot
+Error response from daemon: No such container: krakenbot
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs kraken-bot-app
+( 1/15) Installing ca-certificates (20251003-r0)
+( 2/15) Installing docker-cli (29.1.3-r0)
+( 3/15) Installing brotli-libs (1.2.0-r0)
+( 4/15) Installing c-ares (1.34.6-r0)
+( 5/15) Installing libunistring (1.4.1-r0)
+( 6/15) Installing libidn2 (2.3.8-r0)
+( 7/15) Installing nghttp2-libs (1.68.0-r0)
+( 8/15) Installing nghttp3 (1.13.1-r0)
+( 9/15) Installing libpsl (0.21.5-r3)
+(10/15) Installing zstd-libs (1.5.7-r2)
+(11/15) Installing libcurl (8.17.0-r1)
+(12/15) Installing libexpat (2.7.3-r0)
+(13/15) Installing pcre2 (10.47-r0)
+(14/15) Installing git (2.52.0-r0)
+(15/15) Installing git-init-template (2.52.0-r0)
+Executing busybox-1.37.0-r29.trigger
+Executing ca-certificates-20251003-r0.trigger
+OK: 53 MiB in 33 packages
+
+up to date, audited 611 packages in 4s
+
+105 packages are looking for funding
+  run `npm fund` for details
+
+16 vulnerabilities (2 low, 6 moderate, 6 high, 2 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm notice
+npm notice New major version of npm available! 10.8.2 -> 11.7.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.7.0
+npm notice To update run: npm install -g npm@11.7.0
+npm notice
+building client...
+vite v7.1.12 building for production...
+transforming...
+✓ 2509 modules transformed.
+rendering chunks...
+[meta-images] no Replit deployment domain found, skipping meta tag updates
+computing gzip size...
+../dist/public/index.html                                                1.71 kB │ gzip:   0.67 kB
+../dist/public/assets/dark_digital_hex_grid_background-CH-7zMzl.png  1,414.45 kB
+../dist/public/assets/index-CYXPxA-l.css                               114.22 kB │ gzip:  19.11 kB
+../dist/public/assets/index-DA-xS_jz.js                              1,093.70 kB │ gzip: 306.51 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 9.35s
+building server...
+
+  dist/index.cjs  2.2mb ⚠️
+
+⚡ Done in 285ms
+[migrate] Starting non-interactive database migration...
+[migrate] Applying bot_config migrations...
+[migrate] Applying open_positions migrations...
+[migrate] Backfilling lot_id for existing positions...
+[migrate] Checking lot_id uniqueness...
+[migrate] lot_id unique constraint already exists
+[migrate] Migration completed successfully!
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+2:11:50 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+2:11:50 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: true)
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+2:11:50 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+[storage] Schema issue detected, attempting auto-migration...
+[schema] Migration completed. Columns added: bot_config.sg_max_open_lots_per_pair, bot_config.sg_pair_overrides, bot_config.dry_run_mode, bot_config.sg_min_entry_usd, bot_config.sg_allow_under_min, bot_config.sg_be_at_pct, bot_config.sg_trail_start_pct, bot_config.sg_trail_distance_pct, bot_config.sg_trail_step_pct, bot_config.sg_tp_fixed_enabled, bot_config.sg_tp_fixed_pct, bot_config.sg_scale_out_enabled, bot_config.sg_scale_out_pct, bot_config.sg_min_part_usd, bot_config.sg_scale_out_threshold, bot_config.sg_fee_cushion_pct, bot_config.sg_fee_cushion_auto, bot_config.regime_detection_enabled, open_positions.lot_id, open_positions.sg_break_even_activated, open_positions.sg_trailing_activated, open_positions.sg_current_stop_price, open_positions.sg_scale_out_done, open_positions.config_snapshot_json
+[storage] Auto-migration successful, retrying getBotConfig...
+[startup] Error loading API credentials: error: column "adaptive_exit_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async I2.getBotConfig (/app/dist/index.cjs:70:31895)
+    at async rJ (/app/dist/index.cjs:775:3097)
+    at async /app/dist/index.cjs:809:5766 {
+  length: 123,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '1024',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+2:11:50 PM [express] serving on port 5000
+[/share/ZFS37_DATA/share/Container/krakenbot] #
