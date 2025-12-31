@@ -1,0 +1,118 @@
+BLOQUE LIMPIO (REPLIT) — Regime-aware Adaptive Exit Engine (v1)
+Objetivo: evitar cierres “finos” donde el único ganador es el exchange, sin bloquear stops de riesgo.
+Alcance: SOLO motor de salidas (exits). No tocar lógica de entradas/regímenes por ahora.
+
+1) CONFIG / CAMPOS (mínimos y explícitos)
+Añadir a bot_config (o equivalente):
+- takerFeePct: number   (default 0.40)   // % por operación en MARKET
+- makerFeePct: number   (default 0.25)   // % por operación en LIMIT
+- profitBufferPct: number (default 1.00) // “buffer” neto mínimo deseado (incluye slippageGuard)
+- timeStopHours: number (default 36)     // expiración temporal base por posición
+- timeStopMode: "soft" | "hard" (default "soft") // obligatorio: default soft
+
+NOTA: si no se puede añadir slippageGuard como campo, se considera incluido dentro de profitBufferPct.
+
+2) REGLAS OBLIGATORIAS (prioridades)
+2.1 Fee-gating NO puede bloquear NUNCA salidas de RIESGO:
+- STOP LOSS
+- hard stop / emergency close
+- daily loss limit / risk kill-switch
+Estas salidas se ejecutan siempre, aunque el cierre sea neto negativo.
+
+2.2 Fee-gating SÍ aplica a salidas “por profit”:
+- take profit
+- trailing exit
+- break-even / fee-safe stop (si se trata como salida por profit)
+- cualquier regla de “cerrar por ganancia” o “asegurar”
+
+3) CÁLCULO DE UMBRAL MÍNIMO PARA CERRAR EN PROFIT (neto)
+Definir (por lote):
+- entryFeePctUsed = si se conoce (según tipo de orden real), usarlo; si no, usar takerFeePct como worst-case.
+- exitFeePctUsed  = idem (por defecto takerFeePct si no se conoce).
+- roundTripFeePct = entryFeePctUsed + exitFeePctUsed
+
+Definir:
+- minCloseNetPct = roundTripFeePct + profitBufferPct
+  (profitBufferPct incluye “slippage/spread guard”, por diseño)
+
+Definir utilidad:
+function estimateExitNetPct(grossPnlPct, minCloseNetPct) {
+  return grossPnlPct - minCloseNetPct;
+}
+
+Criterio:
+- Para ejecutar una SALIDA por PROFIT: grossPnlPct >= minCloseNetPct
+- Si no cumple: bloquear la salida (EXIT_BLOCKED_FEES)
+
+4) TIME-STOP (por defecto SOFT) + override por posición
+4.1 Campos por lote (open_positions / lots):
+- timeStopDisabled: boolean (default false)
+- timeStopExpiredAt: timestamp | null (para auditoría / UI)
+- optional: timeStopTriggered: boolean
+
+4.2 Trigger:
+- if (timeStopDisabled) => no aplicar time-stop
+- else if (now - openedAt >= timeStopHours) => trigger
+
+4.3 Comportamiento:
+A) timeStopMode="soft" (DEFAULT OBLIGATORIO)
+- NO cerrar automáticamente si está en pérdida o si no cumple fee-gating.
+- Al expirar:
+  - marcar timeStopExpiredAt si aún no existe
+  - enviar 1 aviso (rate-limit) tipo: TIME_STOP_EXPIRED (no spam)
+  - permitir cierre SOLO si:
+    - (1) es salida de riesgo (siempre) o
+    - (2) es salida por profit y grossPnlPct >= minCloseNetPct (fee-gating)
+B) timeStopMode="hard" (NO default)
+- solo si el usuario lo elige: cerrar al expirar (pero seguir respetando “riesgo manda”; no recomendado por defecto)
+
+4.4 UI / Dashboard
+- Botón por lote: “Time-stop OFF/ON”
+  PATCH /api/open-positions/{lotId}/time-stop { disabled: true|false }
+- Mostrar estado: “Expirado desde HH:MM” si aplica.
+
+5) BREAK-EVEN PROGRESIVO (sin añadir 10 parámetros)
+Regla: el stop se mueve de forma escalonada para evitar salir a cero tras fees.
+Implementación mínima (3 niveles) usando los parámetros existentes de SmartGuard (si existen), pero con lógica “fee-aware”.
+
+Propuesta concreta (sin crear nuevos campos):
+- Nivel 1 (protección fees): cuando grossPnlPct >= 1.5% => stop = entryPrice * (1 + roundTripFeePct)
+- Nivel 2 (lock profit): cuando grossPnlPct >= 3.0% => stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*0.50)
+- Nivel 3 (lock más): cuando grossPnlPct >= 5.0% => stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*1.00)
+
+IMPORTANTE:
+- Si el stop calculado queda por encima del precio actual, no se aplica (obvio).
+- Si hay trailing activo, el stop efectivo final es el más “protector” (mayor para long), pero:
+  - cualquier “venta” disparada por ese stop pasa por:
+    - si es por riesgo -> ejecutar
+    - si es por profit -> fee-gating (grossPnlPct >= minCloseNetPct), si no, bloquear y mantener stop técnico (sin vender).
+
+6) ATR + Régimen (adaptación) — v1 sin romper el sistema actual
+- ATR se usa SOLO para ajustar distancias/targets internos, no para añadir campos al usuario.
+- Regla simple:
+  TREND: trailing más amplio (multiplicador ATR mayor)
+  RANGE: TP más cercano + stop más ajustado
+  TRANSITION: “shield”: BE/fee-safe más temprano y sin entradas (no tocar entradas aquí)
+
+Si el proyecto ya tiene ATR disponible: usarlo.
+Si no: dejar ATR como “TODO” y activar solo fee-gating + time-stop + BE progresivo (ya aporta el 80% del beneficio).
+
+7) LOGS / VERIFICACIÓN (criterios de aceptación)
+Añadir logs grepables y consistentes:
+- [EXIT] reason=TP|TRAIL|BE|RISK_SL ... grossPnlPct=... minCloseNetPct=... decision=ALLOW|BLOCK
+- [EXIT_BLOCKED_FEES] pair=... lotId=... grossPnlPct=... minCloseNetPct=...
+- [TIME_STOP_EXPIRED] pair=... lotId=... ageHours=... mode=soft|hard disabled=...
+- [RISK_OVERRIDE] reason=SL|DAILY_LIMIT ... (siempre ALLOW)
+
+Criterios de aceptación:
+1) Cero cierres “por profit” con grossPnlPct < minCloseNetPct
+2) SL / risk exits siguen ejecutándose aunque no cubran fees
+3) Time-stop soft NO fuerza ventas en rojo; solo cambia el estado y permite salida cuando cumpla fee-gating o por riesgo
+4) Dashboard permite desactivar time-stop por lote y se respeta.
+
+NOTA SOBRE “multiplicador 1x/1.5x/2x” (si lo necesitáis para UI):
+Si base=24h:
+- 1x = 24h
+- 1.5x = 36h
+- 2x = 48h
+(En este plan ya fijamos default 36h, equivalente a 1.5x con base 24h.)
