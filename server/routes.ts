@@ -543,6 +543,9 @@ export async function registerRoutes(
     try {
       const positions = await storage.getOpenPositions();
       
+      const botConfig = await storage.getBotConfig();
+      const takerFeePct = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+      
       const positionsWithPnl = await Promise.all(positions.map(async (pos) => {
         let currentPrice = 0;
         let unrealizedPnlUsd = 0;
@@ -568,11 +571,19 @@ export async function registerRoutes(
         const entryValueUsd = entryPrice * amount;
         const currentValueUsd = currentPrice * amount;
         
+        const storedEntryFee = pos.entryFee != null ? parseFloat(pos.entryFee.toString()) : null;
+        const entryFeeUsd = storedEntryFee != null && !isNaN(storedEntryFee) ? storedEntryFee : (entryValueUsd * takerFeePct);
+        const exitFeeUsd = currentValueUsd * takerFeePct;
+        const netPnlUsd = currentPrice > 0 ? (unrealizedPnlUsd - entryFeeUsd - exitFeeUsd) : 0;
+        const netPnlPct = entryValueUsd > 0 && currentPrice > 0 ? (netPnlUsd / entryValueUsd) * 100 : 0;
+        
         return {
           ...pos,
           currentPrice: currentPrice.toString(),
           unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
           unrealizedPnlPct: unrealizedPnlPct.toFixed(2),
+          netPnlUsd: netPnlUsd.toFixed(2),
+          netPnlPct: netPnlPct.toFixed(2),
           entryValueUsd: entryValueUsd.toFixed(2),
           currentValueUsd: currentValueUsd.toFixed(2),
         };
