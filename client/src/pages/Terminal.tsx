@@ -72,6 +72,7 @@ interface OpenPosition {
   entryMode?: string | null;
   timeStopDisabled?: boolean;
   timeStopExpiredAt?: string | null;
+  entryFee?: string | null;
 }
 
 interface ClosedTrade {
@@ -1110,9 +1111,13 @@ export default function Terminal() {
           
           {selectedPosition && (() => {
             const exitStatus = calculateExitStatus(selectedPosition);
-            const entryFee = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
-            const estimatedEntryFee = parseFloat(selectedPosition.entryValueUsd) * entryFee;
-            const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * entryFee;
+            const takerFeeRate = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+            const storedEntryFee = selectedPosition.entryFee ? parseFloat(selectedPosition.entryFee) : null;
+            const realEntryFee = storedEntryFee != null && !isNaN(storedEntryFee) ? storedEntryFee : null;
+            const estimatedEntryFee = parseFloat(selectedPosition.entryValueUsd) * takerFeeRate;
+            const displayEntryFee = realEntryFee ?? estimatedEntryFee;
+            const isEntryFeeReal = realEntryFee != null;
+            const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * takerFeeRate;
             
             return (
               <div className="space-y-4">
@@ -1211,18 +1216,22 @@ export default function Terminal() {
 
                 {/* Comisiones */}
                 <div className="p-3 rounded-lg bg-muted/20 border border-muted space-y-1">
-                  <div className="text-xs text-muted-foreground uppercase mb-2">Comisiones Estimadas</div>
+                  <div className="text-xs text-muted-foreground uppercase mb-2">Comisiones</div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Entrada (pagada):</span>
-                    <span className="font-mono text-red-400">-${estimatedEntryFee.toFixed(2)}</span>
+                    <span className="text-muted-foreground">
+                      Entrada {isEntryFeeReal ? '(real)' : '(estimada)'}:
+                    </span>
+                    <span className={`font-mono ${isEntryFeeReal ? 'text-red-400' : 'text-red-400/70'}`}>
+                      -${displayEntryFee.toFixed(2)}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Salida (estimada):</span>
-                    <span className="font-mono text-red-400">-${estimatedExitFee.toFixed(2)}</span>
+                    <span className="font-mono text-red-400/70">-${estimatedExitFee.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm pt-2 border-t border-muted">
-                    <span className="text-muted-foreground">Total comisiones:</span>
-                    <span className="font-mono text-red-400">-${(estimatedEntryFee + estimatedExitFee).toFixed(2)}</span>
+                    <span className="text-muted-foreground">Total:</span>
+                    <span className="font-mono text-red-400">-${(displayEntryFee + estimatedExitFee).toFixed(2)}</span>
                   </div>
                 </div>
 
