@@ -2259,8 +2259,15 @@ El bot ha pausado las operaciones de COMPRA.
 
       // Usar position.amount (puede haber sido ajustado al balance real)
       const actualSellAmount = position.amount;
-      const pnl = (currentPrice - position.entryPrice) * actualSellAmount;
-      const pnlPercent = priceChange;
+      
+      // Calcular P&L NETO (después de comisiones)
+      const grossPnl = (currentPrice - position.entryPrice) * actualSellAmount;
+      const entryValueUsd = position.entryPrice * actualSellAmount;
+      const exitValueUsd = currentPrice * actualSellAmount;
+      const entryFeeUsd = position.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
+      const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+      const pnl = grossPnl - entryFeeUsd - exitFeeUsd;
+      const pnlPercent = (pnl / entryValueUsd) * 100;
 
       const sellContext = { 
         entryPrice: position.entryPrice, 
@@ -6383,7 +6390,8 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
    • Precio entrada: <code>$${entryPrice.toFixed(2)}</code>
    • Precio salida: <code>$${currentPrice.toFixed(2)}</code>
 
-${pnlEmoji} <b>PnL:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toFixed(2)} (${actualPnlPct >= 0 ? "+" : ""}${actualPnlPct.toFixed(2)}%)</code>
+${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toFixed(2)} (${actualPnlPct >= 0 ? "+" : ""}${actualPnlPct.toFixed(2)}%)</code>
+💸 <b>Comisiones:</b> <code>-$${(entryFeeUsd + exitFeeUsd).toFixed(2)}</code>
 
 🔗 <b>ID:</b> <code>${txid}</code>
 ━━━━━━━━━━━━━━━━━━━`);
