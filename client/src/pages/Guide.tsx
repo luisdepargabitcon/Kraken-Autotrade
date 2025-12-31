@@ -350,6 +350,106 @@ export default function Guide() {
                     </AccordionContent>
                   </AccordionItem>
 
+                  <AccordionItem value="adaptive-exit">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-emerald-500" />
+                        Motor de Salidas Inteligente (ATR)
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Un sistema automático que calcula los niveles de salida (Stop Loss, Take Profit, Trailing) según la volatilidad real del mercado.</p>
+                      
+                      <div className="p-3 bg-emerald-500/10 rounded border border-emerald-500/30">
+                        <p className="font-medium text-emerald-400 mb-2">Ventajas del modo automático:</p>
+                        <ul className="text-muted-foreground space-y-1">
+                          <li>- Ajusta los niveles según la volatilidad actual (ATR)</li>
+                          <li>- Adapta parámetros al régimen de mercado (tendencia, rango, transición)</li>
+                          <li>- Garantiza que toda venta cubra las comisiones</li>
+                          <li>- Evita cerrar con pérdida pequeña que las comisiones aumentarían</li>
+                        </ul>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="font-medium">Multiplicadores por régimen:</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="p-2 bg-emerald-500/10 rounded border border-emerald-500/20 text-center">
+                            <p className="text-emerald-400 font-medium">TREND</p>
+                            <p className="text-xs text-muted-foreground">TP×3, SL×2, Trail×1.5</p>
+                            <p className="text-xs text-muted-foreground">Más espacio para ganancias</p>
+                          </div>
+                          <div className="p-2 bg-blue-500/10 rounded border border-blue-500/20 text-center">
+                            <p className="text-blue-400 font-medium">RANGE</p>
+                            <p className="text-xs text-muted-foreground">TP×1.5, SL×1, Trail×0.75</p>
+                            <p className="text-xs text-muted-foreground">Salidas más ajustadas</p>
+                          </div>
+                          <div className="p-2 bg-yellow-500/10 rounded border border-yellow-500/20 text-center">
+                            <p className="text-yellow-400 font-medium">TRANSITION</p>
+                            <p className="text-xs text-muted-foreground">TP×2, SL×1.5, Trail×1</p>
+                            <p className="text-xs text-muted-foreground">Balance intermedio</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-card/50 rounded border border-border">
+                        <p className="font-medium mb-1">Fee-Gating (Protección de comisiones):</p>
+                        <p className="text-muted-foreground">
+                          El bot nunca venderá con una ganancia menor al <strong>1.80%</strong> (0.40% comisión entrada + 0.40% comisión salida + 1% buffer). 
+                          Esto garantiza que cada operación ganadora sea realmente rentable después de comisiones.
+                        </p>
+                      </div>
+
+                      <div className="p-3 bg-card/50 rounded border border-border">
+                        <p className="font-medium mb-1">Time-Stop:</p>
+                        <p className="text-muted-foreground">
+                          Si una posición lleva demasiado tiempo abierta (por defecto 36 horas), el bot puede cerrarla:
+                        </p>
+                        <ul className="text-muted-foreground mt-1 space-y-1">
+                          <li><strong>SOFT:</strong> Solo cierra si hay ganancia suficiente para cubrir comisiones</li>
+                          <li><strong>HARD:</strong> Cierra siempre, aunque haya pérdida pequeña</li>
+                        </ul>
+                      </div>
+
+                      <p className="text-muted-foreground">
+                        <strong>Recomendación:</strong> Activa el Motor de Salidas Inteligente y deja que el bot calcule automáticamente los niveles óptimos.
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="regime-detection">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-cyan-500" />
+                        Detección de Régimen de Mercado
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> El bot analiza automáticamente el tipo de mercado actual para adaptar su comportamiento.</p>
+                      
+                      <div className="space-y-2">
+                        <div className="p-3 bg-emerald-500/10 rounded border border-emerald-500/30">
+                          <p className="font-medium text-emerald-400">TREND (Tendencia)</p>
+                          <p className="text-muted-foreground">El precio se mueve claramente en una dirección. El bot da más espacio a las posiciones ganadoras y usa stops más amplios.</p>
+                          <p className="text-xs mt-1">Detectado por: ADX alto (&gt;25), EMAs alineadas</p>
+                        </div>
+                        <div className="p-3 bg-blue-500/10 rounded border border-blue-500/30">
+                          <p className="font-medium text-blue-400">RANGE (Rango/Lateral)</p>
+                          <p className="text-muted-foreground">El precio oscila entre niveles. El bot usa stops ajustados y toma ganancias rápidamente.</p>
+                          <p className="text-xs mt-1">Detectado por: ADX bajo (&lt;20), Bollinger Band estrecha</p>
+                        </div>
+                        <div className="p-3 bg-yellow-500/10 rounded border border-yellow-500/30">
+                          <p className="font-medium text-yellow-400">TRANSITION (Transición)</p>
+                          <p className="text-muted-foreground">El mercado está cambiando de régimen. El bot usa parámetros intermedios y reduce el tamaño de posiciones.</p>
+                          <p className="text-xs mt-1">Detectado por: Señales mixtas entre tendencia y rango</p>
+                        </div>
+                      </div>
+
+                      <p className="text-muted-foreground">
+                        <strong>Nota:</strong> La detección de régimen es automática y se actualiza cada ciclo del bot.
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
                   <AccordionItem value="pairs">
                     <AccordionTrigger className="text-left">
                       <div className="flex items-center gap-2">

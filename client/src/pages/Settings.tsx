@@ -835,159 +835,191 @@ export default function Settings() {
                         />
                         <p className="text-xs text-muted-foreground" data-testid="text-sg-max-lots-desc">Número máximo de posiciones abiertas por par (1 = una entrada, 2+ = permitir DCA en SMART_GUARD).</p>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-sm">Proteger ganancias a partir de (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.1"
-                          value={config.sgBeAtPct}
-                          onChange={(e) => updateMutation.mutate({ sgBeAtPct: e.target.value })}
-                          className="font-mono bg-background/50"
-                          data-testid="input-sg-be-at"
-                        />
-                        <p className="text-xs text-muted-foreground" data-testid="text-sg-be-at-desc">Mover stop a break-even cuando la ganancia alcance este %.</p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-sm">Colchón de comisiones (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.05"
-                          value={config.sgFeeCushionPct}
-                          onChange={(e) => updateMutation.mutate({ sgFeeCushionPct: e.target.value })}
-                          className="font-mono bg-background/50"
-                          disabled={config.sgFeeCushionAuto}
-                          data-testid="input-sg-fee-cushion"
-                        />
-                        <p className="text-xs text-muted-foreground" data-testid="text-sg-fee-cushion-desc">Margen sobre precio de entrada para cubrir fees (~0.45%).</p>
-                        <div className="flex items-center justify-between mt-2">
-                          <Label className="text-xs text-muted-foreground">Calcular automáticamente</Label>
-                          <Switch
-                            checked={config.sgFeeCushionAuto}
-                            onCheckedChange={(checked) => updateMutation.mutate({ sgFeeCushionAuto: checked })}
-                            data-testid="switch-sg-fee-cushion-auto"
-                          />
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-sm">Stop dinámico: empieza a partir de (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.1"
-                          value={config.sgTrailStartPct}
-                          onChange={(e) => updateMutation.mutate({ sgTrailStartPct: e.target.value })}
-                          className="font-mono bg-background/50"
-                          data-testid="input-sg-trail-start"
-                        />
-                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-start-desc">El trailing stop se activa cuando la ganancia alcanza este %.</p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-sm">Stop dinámico: distancia (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.1"
-                          value={config.sgTrailDistancePct}
-                          onChange={(e) => updateMutation.mutate({ sgTrailDistancePct: e.target.value })}
-                          className="font-mono bg-background/50"
-                          data-testid="input-sg-trail-distance"
-                        />
-                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-distance-desc">Distancia del stop respecto al precio máximo alcanzado.</p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-sm">Stop dinámico: paso mínimo (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.05"
-                          value={config.sgTrailStepPct}
-                          onChange={(e) => updateMutation.mutate({ sgTrailStepPct: e.target.value })}
-                          className="font-mono bg-background/50"
-                          data-testid="input-sg-trail-step"
-                        />
-                        <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-step-desc">El stop sube en escalones de al menos este % para evitar spam.</p>
-                      </div>
                     </div>
                     
-                    <div className="border-t border-border/50 pt-4 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <Label>Salida por objetivo fijo (opcional)</Label>
-                          <p className="text-xs text-muted-foreground" data-testid="text-sg-tp-fixed-desc">Cerrar toda la posición al alcanzar un % de ganancia fijo.</p>
+                    {config?.adaptiveExitEnabled ? (
+                      <div className="p-4 border border-emerald-500/30 rounded-lg bg-emerald-500/5">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Shield className="h-4 w-4 text-emerald-400" />
+                          <span className="text-sm font-medium text-emerald-400">Modo Automático Activo</span>
                         </div>
-                        <Switch
-                          checked={config.sgTpFixedEnabled}
-                          onCheckedChange={(checked) => updateMutation.mutate({ sgTpFixedEnabled: checked })}
-                          data-testid="switch-sg-tp-fixed"
-                        />
+                        <p className="text-xs text-muted-foreground">
+                          Los niveles de Break-Even, Trailing Stop y Take-Profit se calculan automáticamente según la volatilidad del mercado (ATR) y el régimen detectado (TREND/RANGE/TRANSITION).
+                        </p>
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                          <div className="p-2 bg-background/50 rounded text-center">
+                            <div className="text-muted-foreground">TREND</div>
+                            <div className="font-mono text-emerald-400">TP×3, SL×2, Trail×1.5</div>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded text-center">
+                            <div className="text-muted-foreground">RANGE</div>
+                            <div className="font-mono text-blue-400">TP×1.5, SL×1, Trail×0.75</div>
+                          </div>
+                          <div className="p-2 bg-background/50 rounded text-center">
+                            <div className="text-muted-foreground">TRANSITION</div>
+                            <div className="font-mono text-yellow-400">TP×2, SL×1.5, Trail×1</div>
+                          </div>
+                        </div>
                       </div>
-                      
-                      {config.sgTpFixedEnabled && (
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label className="text-sm">Take-Profit fijo (%)</Label>
+                          <Label className="text-sm">Proteger ganancias a partir de (%)</Label>
                           <Input
                             type="number"
-                            step="0.5"
-                            value={config.sgTpFixedPct}
-                            onChange={(e) => updateMutation.mutate({ sgTpFixedPct: e.target.value })}
+                            step="0.1"
+                            value={config.sgBeAtPct}
+                            onChange={(e) => updateMutation.mutate({ sgBeAtPct: e.target.value })}
                             className="font-mono bg-background/50"
-                            data-testid="input-sg-tp-fixed"
+                            data-testid="input-sg-be-at"
                           />
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-be-at-desc">Mover stop a break-even cuando la ganancia alcance este %.</p>
                         </div>
-                      )}
-                    </div>
-                    
-                    <div className="border-t border-border/50 pt-4 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <Label>Salida en 2 pasos (solo si es excepcional)</Label>
-                          <p className="text-xs text-muted-foreground" data-testid="text-sg-scale-out-desc">Vender una parte cuando la señal es muy fuerte, el resto con trailing.</p>
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Colchón de comisiones (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.05"
+                            value={config.sgFeeCushionPct}
+                            onChange={(e) => updateMutation.mutate({ sgFeeCushionPct: e.target.value })}
+                            className="font-mono bg-background/50"
+                            disabled={config.sgFeeCushionAuto}
+                            data-testid="input-sg-fee-cushion"
+                          />
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-fee-cushion-desc">Margen sobre precio de entrada para cubrir fees (~0.45%).</p>
+                          <div className="flex items-center justify-between mt-2">
+                            <Label className="text-xs text-muted-foreground">Calcular automáticamente</Label>
+                            <Switch
+                              checked={config.sgFeeCushionAuto}
+                              onCheckedChange={(checked) => updateMutation.mutate({ sgFeeCushionAuto: checked })}
+                              data-testid="switch-sg-fee-cushion-auto"
+                            />
+                          </div>
                         </div>
-                        <Switch
-                          checked={config.sgScaleOutEnabled}
-                          onCheckedChange={(checked) => updateMutation.mutate({ sgScaleOutEnabled: checked })}
-                          data-testid="switch-sg-scale-out"
-                        />
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Stop dinámico: empieza a partir de (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={config.sgTrailStartPct}
+                            onChange={(e) => updateMutation.mutate({ sgTrailStartPct: e.target.value })}
+                            className="font-mono bg-background/50"
+                            data-testid="input-sg-trail-start"
+                          />
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-start-desc">El trailing stop se activa cuando la ganancia alcanza este %.</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Stop dinámico: distancia (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={config.sgTrailDistancePct}
+                            onChange={(e) => updateMutation.mutate({ sgTrailDistancePct: e.target.value })}
+                            className="font-mono bg-background/50"
+                            data-testid="input-sg-trail-distance"
+                          />
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-distance-desc">Distancia del stop respecto al precio máximo alcanzado.</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Stop dinámico: paso mínimo (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.05"
+                            value={config.sgTrailStepPct}
+                            onChange={(e) => updateMutation.mutate({ sgTrailStepPct: e.target.value })}
+                            className="font-mono bg-background/50"
+                            data-testid="input-sg-trail-step"
+                          />
+                          <p className="text-xs text-muted-foreground" data-testid="text-sg-trail-step-desc">El stop sube en escalones de al menos este % para evitar spam.</p>
+                        </div>
                       </div>
-                      
-                      {config.sgScaleOutEnabled && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-sm">Porcentaje a vender (%)</Label>
-                            <Input
-                              type="number"
-                              step="5"
-                              value={config.sgScaleOutPct}
-                              onChange={(e) => updateMutation.mutate({ sgScaleOutPct: e.target.value })}
-                              className="font-mono bg-background/50"
-                              data-testid="input-sg-scale-out-pct"
+                    )}
+                    
+                    {!config?.adaptiveExitEnabled && (
+                      <>
+                        <div className="border-t border-border/50 pt-4 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                              <Label>Salida por objetivo fijo (opcional)</Label>
+                              <p className="text-xs text-muted-foreground" data-testid="text-sg-tp-fixed-desc">Cerrar toda la posición al alcanzar un % de ganancia fijo.</p>
+                            </div>
+                            <Switch
+                              checked={config.sgTpFixedEnabled}
+                              onCheckedChange={(checked) => updateMutation.mutate({ sgTpFixedEnabled: checked })}
+                              data-testid="switch-sg-tp-fixed"
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label className="text-sm">Mínimo parte (USD)</Label>
-                            <Input
-                              type="number"
-                              value={config.sgMinPartUsd}
-                              onChange={(e) => updateMutation.mutate({ sgMinPartUsd: e.target.value })}
-                              className="font-mono bg-background/50"
-                              data-testid="input-sg-min-part"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-sm">Confianza mínima (%)</Label>
-                            <Input
-                              type="number"
-                              value={config.sgScaleOutThreshold}
-                              onChange={(e) => updateMutation.mutate({ sgScaleOutThreshold: e.target.value })}
-                              className="font-mono bg-background/50"
-                              data-testid="input-sg-scale-threshold"
-                            />
-                          </div>
+                          
+                          {config.sgTpFixedEnabled && (
+                            <div className="space-y-2">
+                              <Label className="text-sm">Take-Profit fijo (%)</Label>
+                              <Input
+                                type="number"
+                                step="0.5"
+                                value={config.sgTpFixedPct}
+                                onChange={(e) => updateMutation.mutate({ sgTpFixedPct: e.target.value })}
+                                className="font-mono bg-background/50"
+                                data-testid="input-sg-tp-fixed"
+                              />
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                        
+                        <div className="border-t border-border/50 pt-4 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                              <Label>Salida en 2 pasos (solo si es excepcional)</Label>
+                              <p className="text-xs text-muted-foreground" data-testid="text-sg-scale-out-desc">Vender una parte cuando la señal es muy fuerte, el resto con trailing.</p>
+                            </div>
+                            <Switch
+                              checked={config.sgScaleOutEnabled}
+                              onCheckedChange={(checked) => updateMutation.mutate({ sgScaleOutEnabled: checked })}
+                              data-testid="switch-sg-scale-out"
+                            />
+                          </div>
+                          
+                          {config.sgScaleOutEnabled && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="space-y-2">
+                                <Label className="text-sm">Porcentaje a vender (%)</Label>
+                                <Input
+                                  type="number"
+                                  step="5"
+                                  value={config.sgScaleOutPct}
+                                  onChange={(e) => updateMutation.mutate({ sgScaleOutPct: e.target.value })}
+                                  className="font-mono bg-background/50"
+                                  data-testid="input-sg-scale-out-pct"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-sm">Mínimo parte (USD)</Label>
+                                <Input
+                                  type="number"
+                                  value={config.sgMinPartUsd}
+                                  onChange={(e) => updateMutation.mutate({ sgMinPartUsd: e.target.value })}
+                                  className="font-mono bg-background/50"
+                                  data-testid="input-sg-min-part"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-sm">Confianza mínima (%)</Label>
+                                <Input
+                                  type="number"
+                                  value={config.sgScaleOutThreshold}
+                                  onChange={(e) => updateMutation.mutate({ sgScaleOutThreshold: e.target.value })}
+                                  className="font-mono bg-background/50"
+                                  data-testid="input-sg-scale-threshold"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                     
                     <PairOverridesSection 
                       overrides={config.sgPairOverrides as Record<string, Record<string, unknown>> | null}

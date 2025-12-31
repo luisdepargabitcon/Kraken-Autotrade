@@ -100,10 +100,34 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - Bot Started notifications show Router status (ACTIVO/INACTIVO)
 - Fields only shown when Router enabled and regime detection active
 
+## Exit System Priority Hierarchy (2025-12-31)
+
+When multiple exit systems are active, they follow this priority order:
+
+```
+1. EMERGENCIES (always win)
+   └── Stop-Loss, Emergency SL, Daily Loss Limit
+   
+2. ADAPTIVE EXIT ENGINE (if enabled)
+   └── Calculates SL/TP/Trail/BE dynamically based on ATR + regime
+   └── OVERRIDES manual SMART_GUARD values
+   └── Falls back to static presets if ATR data insufficient
+   
+3. SMART_GUARD (position protection)
+   └── Uses ATR values when Adaptive Exit is ON
+   └── Uses manual values when Adaptive Exit is OFF
+   
+4. TIME-STOP (last resort)
+   └── Acts only after position exceeds configured hours
+   └── SOFT mode: only closes if profit covers fees
+   └── HARD mode: closes regardless of P&L
+```
+
+**Key behavior**: When Adaptive Exit is ON, manual fields (BE%, Trail%, TP%) are hidden in UI because they're automatically calculated. Only fee configuration (Taker %, Buffer %) and Time-Stop settings remain visible.
+
 ## Pending Features (FASE 2)
 
 ### Regime Router - Mejoras pendientes
 - TRANSITION cooldown configurable (transitionCooldownMinutes)
 - TRANSITION overrides completos para exits (BE/Trailing/TP)
-- Time-stop condicionado para posiciones estancadas
 - Mean Reversion SELL (requiere cambio en SMART_GUARD sell-flow)
