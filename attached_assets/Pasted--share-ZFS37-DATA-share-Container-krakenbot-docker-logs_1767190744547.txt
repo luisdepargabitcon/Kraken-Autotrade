@@ -1,0 +1,53 @@
+
+[/share/ZFS37_DATA/share/Container/krakenbot] # docker logs kraken-bot-app --tail 50
+  line: '3729',
+  routine: 'errorMissingColumn'
+}
+2:15:22 PM [express] serving on port 5000
+2:16:30 PM [express] GET /api/dashboard 500 in 22ms :: {"error":"Failed to get dashboard data"}
+2:16:32 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:36 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:38 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:38 PM [express] GET /api/dashboard 500 in 17ms :: {"error":"Failed to get dashboard data"}
+2:16:39 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:39 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:40 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:41 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:41 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:41 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:57 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:16:58 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:59 PM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+2:16:59 PM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+2:17:04 PM [websocket] [WS] Conexión rechazada - token incorrecto (path: /ws/events, source: query, origin: http://192.168.1.104:3000, ip: 100.70.21.53)
+2:17:07 PM [websocket] [WS] Conexión rechazada - token incorrecto (path: /ws/events, source: query, origin: http://192.168.1.104:3000, ip: 100.70.21.53)
+2:17:24 PM [websocket] [WS] Conexión rechazada - token incorrecto (path: /ws/events, source: query, origin: http://192.168.1.104:3000, ip: 100.70.21.53)
+2:17:26 PM [express] GET /api/config 500 in 21ms :: {"error":"Failed to get config"}
+2:17:26 PM [express] GET /api/dashboard 500 in 23ms :: {"error":"Failed to get dashboard data"}
+2:17:27 PM [express] GET /api/config/api 200 in 18ms :: {"krakenConnected":true,"telegramConnected":true,"hasKrakenKeys":true,"hasTelegramKeys":true}
+2:17:27 PM [express] GET /api/telegram/chats 200 in 56ms :: [{"id":2,"name":"Chat 5806218741","chatId":"5806218741","alertTrades":true,"alertErrors":true,"alertSystem":true,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-21T22:14:50.726Z"},{"id":1,"name":"KRAKEN  2","chatId":"-1002588266564","alertTrades":true,"alertErrors":true,"alertSystem":true,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-11T15:49:12.653Z"}]
+2:17:28 PM [express] GET /api/config 500 in 4ms :: {"error":"Failed to get config"}
+2:17:28 PM [express] GET /api/environment 500 in 6ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:28 PM [express] GET /api/ai/status 200 in 19ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+2:17:28 PM [express] GET /api/ai/diagnostic 500 in 49ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:40 PM [express] GET /api/config 500 in 26ms :: {"error":"Failed to get config"}
+2:17:40 PM [express] GET /api/environment 500 in 39ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:40 PM [express] GET /api/ai/status 304 in 37ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+2:17:40 PM [express] GET /api/ai/diagnostic 500 in 52ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:40 PM [express] GET /api/environment 500 in 5ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:40 PM [express] GET /api/config 500 in 26ms :: {"error":"Failed to get config"}
+2:17:40 PM [express] GET /api/ai/status 304 in 38ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+2:17:40 PM [express] GET /api/ai/diagnostic 500 in 55ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:41 PM [express] GET /api/environment 500 in 7ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:41 PM [express] GET /api/config 500 in 27ms :: {"error":"Failed to get config"}
+2:17:41 PM [express] GET /api/ai/status 304 in 30ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+2:17:41 PM [express] GET /api/ai/diagnostic 500 in 47ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:41 PM [express] GET /api/environment 500 in 3ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:41 PM [express] GET /api/config 500 in 32ms :: {"error":"Failed to get config"}
+2:17:41 PM [express] GET /api/ai/status 304 in 34ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+2:17:41 PM [express] GET /api/ai/diagnostic 500 in 50ms :: {"error":"column \"maker_fee_pct\" does not exist"}
+2:17:54 PM [express] POST /api/config 500 in 12ms :: {"error":"Failed to update config"}
+2:17:57 PM [express] POST /api/config 500 in 11ms :: {"error":"Failed to update config"}
+2:18:29 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+2:18:32 PM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+[/share/ZFS37_DATA/share/Container/krakenbot] #
