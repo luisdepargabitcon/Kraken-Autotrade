@@ -717,7 +717,7 @@ export default function Terminal() {
                             </div>
                             
                             <div className="flex items-center gap-4">
-                              <div className="grid grid-cols-3 sm:grid-cols-7 gap-3 lg:gap-4 flex-1">
+                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4 flex-1">
                                 <div>
                                   <div className="font-mono text-[10px] text-muted-foreground uppercase">Cantidad</div>
                                   <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
@@ -737,13 +737,6 @@ export default function Terminal() {
                                 <div>
                                   <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor actual en USD">Valor Actual</div>
                                   <div className="font-mono font-medium text-sm text-cyan-400">${parseFloat(pos.currentValueUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                                </div>
-                                <div>
-                                  <div className="font-mono text-[10px] text-muted-foreground uppercase" title="P&L Bruto (antes de comisiones)">P&L Bruto</div>
-                                  <div className={`font-mono font-bold text-sm flex items-center gap-1 ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                    {isProfit ? '+' : '-'}${Math.abs(pnlUsd).toFixed(2)}
-                                    <span className="text-xs opacity-75">({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
-                                  </div>
                                 </div>
                                 <div>
                                   <div className="font-mono text-[10px] text-muted-foreground uppercase" title="P&L Neto (después de comisiones estimadas)">P&L Neto</div>
