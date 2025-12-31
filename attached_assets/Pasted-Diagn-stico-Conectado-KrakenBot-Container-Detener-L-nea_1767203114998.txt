@@ -1,0 +1,209 @@
+Diagnóstico
+Conectado
+
+KrakenBot Container
+Detener
+Líneas: 200
+Último: 18:45:01
+
+
+      "exposureAvailable": 288.5479,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=21, esperando confirmación)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Datos insuficientes para grid",
+      "exposureAvailable": 288.5479,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=28, EMAs desalineadas)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Datos insuficientes para grid",
+      "exposureAvailable": 288.5479,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=15, BB width=2.2%)"
+    }
+  },
+  "scanTime": "2025-12-31T17:43:44.779Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1767203024938"
+  }
+}
+5:44:00 PM [trading] [SCAN_START] scanId=scan-1767203040050 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+5:44:00 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+5:44:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203040050","scanTime":"2025-12-31T17:44:00.050Z","pair":"BTC/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=27, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:00 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+5:44:00 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+5:44:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203040050","scanTime":"2025-12-31T17:44:00.050Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=1.3%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:00 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+5:44:00 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+5:44:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203040050","scanTime":"2025-12-31T17:44:00.050Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:00 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+5:44:00 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+5:44:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203040050","scanTime":"2025-12-31T17:44:00.050Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=28, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:00 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+5:44:00 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+5:44:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203040050","scanTime":"2025-12-31T17:44:00.050Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=2.2%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:00 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+5:44:00 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1767203040050 pairs=5 snapshotted for emission
+5:44:00 PM [trading] [SCAN_END] scanId=scan-1767203040050 expected=5 done=5 failures=0 durationMs=403
+5:44:14 PM [trading] [SCAN_START] scanId=scan-1767203054965 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+5:44:14 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+5:44:15 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203054965","scanTime":"2025-12-31T17:44:14.965Z","pair":"BTC/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=27, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:15 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+5:44:15 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+5:44:15 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203054965","scanTime":"2025-12-31T17:44:14.965Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=1.3%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:15 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+5:44:15 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+5:44:15 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203054965","scanTime":"2025-12-31T17:44:14.965Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:15 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+5:44:15 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+5:44:15 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203054965","scanTime":"2025-12-31T17:44:14.965Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=28, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:15 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+5:44:15 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+5:44:15 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203054965","scanTime":"2025-12-31T17:44:14.965Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=2.2%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Datos insuficientes para grid","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Datos insuficientes para grid","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:15 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+5:44:15 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1767203054965 pairs=5 snapshotted for emission
+5:44:15 PM [trading] [SCAN_END] scanId=scan-1767203054965 expected=5 done=5 failures=0 durationMs=633
+5:44:29 PM [trading] [SCAN_START] scanId=scan-1767203069976 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+5:44:29 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+5:44:30 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203069976","scanTime":"2025-12-31T17:44:29.976Z","pair":"BTC/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=27, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:30 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+5:44:30 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+5:44:30 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203069976","scanTime":"2025-12-31T17:44:29.976Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=1.3%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:30 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+5:44:30 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+5:44:30 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203069976","scanTime":"2025-12-31T17:44:29.976Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:30 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+5:44:30 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+5:44:30 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203069976","scanTime":"2025-12-31T17:44:29.976Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=28, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:30 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+5:44:30 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+5:44:30 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203069976","scanTime":"2025-12-31T17:44:29.976Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=2.2%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:30 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+5:44:30 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1767203069976 pairs=5 snapshotted for emission
+5:44:30 PM [trading] [SCAN_END] scanId=scan-1767203069976 expected=5 done=5 failures=0 durationMs=321
+5:44:34 PM [websocket] [WS-LOGS] Cliente desconectado. Total: 0
+5:44:34 PM [websocket] [WS-LOGS] Proceso terminado (krakenbot_container): código 143
+5:44:34 PM [express] GET /api/config/api 304 in 3ms :: {"krakenConnected":true,"telegramConnected":true,"hasKrakenKeys":true,"hasTelegramKeys":true}
+5:44:34 PM [express] GET /api/telegram/chats 304 in 14ms :: [{"id":2,"name":"Chat 5806218741","chatId":"5806218741","alertTrades":true,"alertErrors":true,"alertSystem":true,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-21T22:14:50.726Z"},{"id":1,"name":"KRAKEN  2","chatId":"-1002588266564","alertTrades":true,"alertErrors":true,"alertSystem":true,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-11T15:49:12.653Z"}]
+5:44:35 PM [express] GET /api/dashboard 200 in 401ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"grid","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000100","XXBT":"0.0000000008","XXRP":"85.97620608","ZEUR":"0.0000","ZUSD":"288.5479"},"prices":{"XXBTZUSD":{"price":"87499.80000","change":"-1.02"},"XETHZUSD":{"price":"2971.25000","change":"0.03"},"SOLUSD":{"price":"124.68000","change":"-0.14"},"XXRPZUSD":{"price":"1.83827000","change":"-1.98"},"TONUSD":{"price":"1.6160000","change":"-0.43"}},"recentTrades":[{"id":393,"tradeId":"AUTO-1767121572225","pair":"ETH/USD","type":"sell","price":"2950.99000000","amount":"0.06833308","status":"filled","krakenOrderId":"OKWWCB-NA3CQ-KV2IRI","entryPrice":"2926.84000000","realizedPnlUsd":"1.55662756","realizedPnlPct":"0.7783","executedAt":"2025-12-30T19:06:12.170Z","createdAt":"2025-12-30T19:06:12.226Z"},{"id":392,"tradeId":"AUTO-1767038447127","pair":"TON/USD","type":"sell","price":"1.64800000","amount":"46.01226000","status":"filled","krakenOrderId":"OALLB4-KJ3SQ-SPY7BW","entryPrice":"1.63000000","realizedPnlUsd":"0.96625767","realizedPnlPct":"1.2883","executedAt":"2025-12-29T20:00:47.349Z","createdAt":"2025-12-29T20:00:47.143Z"},{"id":391,"tradeId":"AUTO-1767018614864","pair":"ETH/USD","type":"buy","price":"2926.50000000","amount":"0.06833308","status":"filled","krakenOrderId":"OPUM7R-GAYXB-7OXRU2","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T14:30:14.950Z","createdAt":"2025-12-29T14:30:14.865Z"},{"id":390,"tradeId":"AUTO-1767016814380","pair":"XRP/USD","type":"buy","price":"1.86099000","amount":"85.97620608","status":"filled","krakenOrderId":"OJVPYI-WIG6S-PZWCAI","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T14:00:14.454Z","createdAt":"2025-12-29T14:00:14.381Z"},{"id":389,"tradeId":"AUTO-1767006025051","pair":"TON/USD","type":"buy","price":"1.63000000","amount":"46.01226000","status":"filled","krakenOrderId":"OX4PHK-3BIYY-OBGW5J","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T11:00:25.418Z","createdAt":"2025-12-29T11:00:25.052Z"},{"id":388,"tradeId":"AUTO-1767000891156","pair":"BTC/USD","type":"sell","price":"88622.70000000","amount":"0.00010110","status":"filled","krakenOrderId":"O6JLTL-7WLIK-IXYHQS","entryPrice":"87087.20000000","realizedPnlUsd":"0.15435948","realizedPnlPct":"1.7532","executedAt":"2025-12-29T09:34:51.447Z","createdAt":"2025-12-29T09:34:51.158Z"},{"id":387,"tradeId":"AUTO-1767000861529","pair":"BTC/USD","type":"sell","price":"88610.90000000","amount":"0.00039559","status":"filled","krakenOrderId":"ODBRJH-UBCWD-2CGCVB","entryPrice":"87087.20000000","realizedPnlUsd":"0.59805296","realizedPnlPct":"1.7360","executedAt":"2025-12-29T09:34:21.821Z","createdAt":"2025-12-29T09:34:21.531Z"},{"id":386,"tradeId":"AUTO-1767000831735","pair":"XRP/USD","type":"sell","price":"1.88381000","amount":"13.88681495","status":"filled","krakenOrderId":"OBEKEN-MAZMD-CGI2PQ","entryPrice":"1.86967000","realizedPnlUsd":"0.19705390","realizedPnlPct":"0.7590","executedAt":"2025-12-29T09:33:52.026Z","createdAt":"2025-12-29T09:33:51.737Z"},{"id":385,"tradeId":"AUTO-1767000831393","pair":"BTC/USD","type":"sell","price":"88718.60000000","amount":"0.00039559","status":"filled","krakenOrderId":"OC4342-XRRMG-MCMZXP","entryPrice":"87087.20000000","realizedPnlUsd":"0.65157629","realizedPnlPct":"1.8913","executedAt":"2025-12-29T09:33:51.687Z","createdAt":"2025-12-29T09:33:51.394Z"},{"id":384,"tradeId":"AUTO-1767000801835","pair":"XRP/USD","type":"sell","price":"1.88289000","amount":"32.09122465","status":"filled","krakenOrderId":"OPAE5W-CHXRE-FLTSFG","entryPrice":"1.86967000","realizedPnlUsd":"0.43708248","realizedPnlPct":"0.7285","executedAt":"2025-12-29T09:33:22.127Z","createdAt":"2025-12-29T09:33:21.836Z"}]}
+5:44:35 PM [express] GET /api/dashboard 304 in 345ms :: {"krakenConnected":true,"telegramConnected":true,"botActive":true,"strategy":"grid","activePairs":["BTC/USD","ETH/USD","XRP/USD","SOL/USD","TON/USD"],"balances":{"EUR.HOLD":"0.0000","SOL":"0.0193389100","TON":"0.000000","USDC":"0.00000000","XETH":"0.0000000100","XXBT":"0.0000000008","XXRP":"85.97620608","ZEUR":"0.0000","ZUSD":"288.5479"},"prices":{"XXBTZUSD":{"price":"87499.80000","change":"-1.02"},"XETHZUSD":{"price":"2971.25000","change":"0.03"},"SOLUSD":{"price":"124.68000","change":"-0.14"},"XXRPZUSD":{"price":"1.83827000","change":"-1.98"},"TONUSD":{"price":"1.6160000","change":"-0.43"}},"recentTrades":[{"id":393,"tradeId":"AUTO-1767121572225","pair":"ETH/USD","type":"sell","price":"2950.99000000","amount":"0.06833308","status":"filled","krakenOrderId":"OKWWCB-NA3CQ-KV2IRI","entryPrice":"2926.84000000","realizedPnlUsd":"1.55662756","realizedPnlPct":"0.7783","executedAt":"2025-12-30T19:06:12.170Z","createdAt":"2025-12-30T19:06:12.226Z"},{"id":392,"tradeId":"AUTO-1767038447127","pair":"TON/USD","type":"sell","price":"1.64800000","amount":"46.01226000","status":"filled","krakenOrderId":"OALLB4-KJ3SQ-SPY7BW","entryPrice":"1.63000000","realizedPnlUsd":"0.96625767","realizedPnlPct":"1.2883","executedAt":"2025-12-29T20:00:47.349Z","createdAt":"2025-12-29T20:00:47.143Z"},{"id":391,"tradeId":"AUTO-1767018614864","pair":"ETH/USD","type":"buy","price":"2926.50000000","amount":"0.06833308","status":"filled","krakenOrderId":"OPUM7R-GAYXB-7OXRU2","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T14:30:14.950Z","createdAt":"2025-12-29T14:30:14.865Z"},{"id":390,"tradeId":"AUTO-1767016814380","pair":"XRP/USD","type":"buy","price":"1.86099000","amount":"85.97620608","status":"filled","krakenOrderId":"OJVPYI-WIG6S-PZWCAI","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T14:00:14.454Z","createdAt":"2025-12-29T14:00:14.381Z"},{"id":389,"tradeId":"AUTO-1767006025051","pair":"TON/USD","type":"buy","price":"1.63000000","amount":"46.01226000","status":"filled","krakenOrderId":"OX4PHK-3BIYY-OBGW5J","entryPrice":null,"realizedPnlUsd":null,"realizedPnlPct":null,"executedAt":"2025-12-29T11:00:25.418Z","createdAt":"2025-12-29T11:00:25.052Z"},{"id":388,"tradeId":"AUTO-1767000891156","pair":"BTC/USD","type":"sell","price":"88622.70000000","amount":"0.00010110","status":"filled","krakenOrderId":"O6JLTL-7WLIK-IXYHQS","entryPrice":"87087.20000000","realizedPnlUsd":"0.15435948","realizedPnlPct":"1.7532","executedAt":"2025-12-29T09:34:51.447Z","createdAt":"2025-12-29T09:34:51.158Z"},{"id":387,"tradeId":"AUTO-1767000861529","pair":"BTC/USD","type":"sell","price":"88610.90000000","amount":"0.00039559","status":"filled","krakenOrderId":"ODBRJH-UBCWD-2CGCVB","entryPrice":"87087.20000000","realizedPnlUsd":"0.59805296","realizedPnlPct":"1.7360","executedAt":"2025-12-29T09:34:21.821Z","createdAt":"2025-12-29T09:34:21.531Z"},{"id":386,"tradeId":"AUTO-1767000831735","pair":"XRP/USD","type":"sell","price":"1.88381000","amount":"13.88681495","status":"filled","krakenOrderId":"OBEKEN-MAZMD-CGI2PQ","entryPrice":"1.86967000","realizedPnlUsd":"0.19705390","realizedPnlPct":"0.7590","executedAt":"2025-12-29T09:33:52.026Z","createdAt":"2025-12-29T09:33:51.737Z"},{"id":385,"tradeId":"AUTO-1767000831393","pair":"BTC/USD","type":"sell","price":"88718.60000000","amount":"0.00039559","status":"filled","krakenOrderId":"OC4342-XRRMG-MCMZXP","entryPrice":"87087.20000000","realizedPnlUsd":"0.65157629","realizedPnlPct":"1.8913","executedAt":"2025-12-29T09:33:51.687Z","createdAt":"2025-12-29T09:33:51.394Z"},{"id":384,"tradeId":"AUTO-1767000801835","pair":"XRP/USD","type":"sell","price":"1.88289000","amount":"32.09122465","status":"filled","krakenOrderId":"OPAE5W-CHXRE-FLTSFG","entryPrice":"1.86967000","realizedPnlUsd":"0.43708248","realizedPnlPct":"0.7285","executedAt":"2025-12-29T09:33:22.127Z","createdAt":"2025-12-29T09:33:21.836Z"}]}
+5:44:37 PM [express] GET /api/environment 304 in 10ms :: {"env":"NAS/PROD","instanceId":"5892f9d44318-129-56c7cd89","isReplit":false,"isNAS":true,"dryRun":false,"gitCommit":"6db2df3"}
+5:44:37 PM [express] GET /api/ai/status 304 in 13ms :: {"phase":"red","phaseLabel":"Recolectando datos","completeSamples":99,"minSamplesForTrain":300,"minSamplesForActivate":300,"canTrain":false,"canActivate":false,"filterEnabled":false,"shadowEnabled":true,"modelLoaded":false,"lastTrainTs":null,"threshold":0.6,"metrics":null}
+5:44:37 PM [express] GET /api/ai/diagnostic 200 in 45ms :: {"operationsCount":222,"trainingTradesTotal":144,"closedTradesCount":142,"labeledTradesCount":99,"openTradesCount":2,"openLotsCount":2,"openTradesDescription":"training_trades con isClosed=false","openLotsDescription":"training_trades con qtyRemaining > 0","lastBackfillRun":"2025-12-30T04:06:44.414Z","lastBackfillError":null,"lastTrainRun":null,"lastTrainError":null,"modelVersion":null,"discardReasonsDataset":{"hold_excesivo":1,"pnl_atipico":29,"exit_price_error":13,"venta_sin_compra_previa":24},"lastBackfillDiscardReasons":{"venta_sin_compra_previa":134},"winRate":17.17171717171717,"avgPnlNet":-0.5439306396969698,"avgHoldTimeMinutes":685.2020202020202,"env":"NAS/PROD","instanceId":"5892f9d44318-129-56c7cd89","dryRun":false}
+5:44:44 PM [trading] [SCAN_START] scanId=scan-1767203084992 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+5:44:44 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+5:44:45 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203084992","scanTime":"2025-12-31T17:44:44.992Z","pair":"BTC/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=27, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:45 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+5:44:45 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+5:44:45 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203084992","scanTime":"2025-12-31T17:44:44.992Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=1.3%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:45 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+5:44:45 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+5:44:45 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203084992","scanTime":"2025-12-31T17:44:44.992Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:45 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+5:44:45 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+5:44:45 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203084992","scanTime":"2025-12-31T17:44:44.992Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=28, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:45 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+5:44:45 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+5:44:45 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203084992","scanTime":"2025-12-31T17:44:44.992Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=2.2%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:44:45 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+5:44:45 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1767203084992 pairs=5 snapshotted for emission
+5:44:45 PM [trading] [SCAN_END] scanId=scan-1767203084992 expected=5 done=5 failures=0 durationMs=342
+5:44:57 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 100.70.21.53)
+5:44:57 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+5:44:59 PM [websocket] [WS-LOGS] Iniciando fuente postgres_container: docker logs -f --tail=200 kraken-bot-db
+[36m[2025-12-31T17:44:59.774Z] [INFO] [ENGINE_TICK][0m Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "openPositionsCount": 1,
+  "openPositionsPairs": [
+    "LOT-XRPUSD-1767016814473-peon8k"
+  ],
+  "lastScanAt": "2025-12-31T17:44:44.774Z",
+  "lastScanId": "scan-1767203084992",
+  "timeSinceLastScanMs": 15000,
+  "balanceUsd": 288.5479,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+5:44:59 PM [trading] [SCAN_SUMMARY_COUNT] scanId=scan-1767203084992 expected=5 got=5 missing=[]
+5:44:59 PM [trading] [SCAN_SUMMARY_BUILD] scanId=scan-1767203084992 source=5 built=5
+[36m[2025-12-31T17:44:59.782Z] [INFO] [MARKET_SCAN_SUMMARY][0m Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia",
+      "exposureAvailable": 288.5479,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=27, EMAs desalineadas)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia",
+      "exposureAvailable": 288.5479,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=16, BB width=1.3%)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia",
+      "exposureAvailable": 288.5479,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=21, esperando confirmación)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia",
+      "exposureAvailable": 288.5479,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=28, EMAs desalineadas)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia",
+      "exposureAvailable": 288.5479,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=15, BB width=2.2%)"
+    }
+  },
+  "scanTime": "2025-12-31T17:44:44.774Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1767203084992"
+  }
+}
+5:44:59 PM [trading] [SCAN_START] scanId=scan-1767203099970 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+5:44:59 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+5:45:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203099970","scanTime":"2025-12-31T17:44:59.970Z","pair":"BTC/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=27, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.02%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:45:00 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+5:45:00 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+5:45:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203099970","scanTime":"2025-12-31T17:44:59.970Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=1.3%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.73%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:45:00 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+5:45:00 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+5:45:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203099970","scanTime":"2025-12-31T17:44:59.970Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=21, esperando confirmación)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":1,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.60%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:45:00 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+5:45:00 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+5:45:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203099970","scanTime":"2025-12-31T17:44:59.970Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=28, EMAs desalineadas)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=3.06%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:45:00 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+5:45:00 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+5:45:00 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1767203099970","scanTime":"2025-12-31T17:44:59.970Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=2.2%)","selectedStrategy":"grid","rawSignal":"NONE","rawReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","signalsCount":0,"minSignalsRequired":1,"exposureAvailableUsd":288.5479,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Grid: nivel=0, ATR=2.97%, precio entre soporte/resistencia","isIntermediateCycle":false,"lastCandleClosedAt":null,"lastFullEvaluationAt":null,"lastRegimeUpdateAt":null,"regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+5:45:00 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+5:45:00 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1767203099970 pairs=5 snapshotted for emission
+5:45:00 PM [trading] [SCAN_END] scanId=scan-1767203099970 expected=5 done=5 failures=0 durationMs=311
+5:45:02 PM [websocket] [WS-LOGS] Iniciando fuente krakenbot_container: docker logs -f --tail=200 kraken-bot-app
+5:45:02 PM [websocket] [WS-LOGS] Proceso terminado (postgres_container): código 143
