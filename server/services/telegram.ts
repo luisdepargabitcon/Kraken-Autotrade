@@ -484,7 +484,7 @@ interface TelegramConfig {
   chatId: string;
 }
 
-type AlertType = "trades" | "errors" | "system" | "balance" | "status";
+type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartbeat";
 
 type EngineController = {
   start: () => Promise<void>;
@@ -506,6 +506,9 @@ export class TelegramService {
   // Entry Intent dedupe cache: key = "pair:signal:candleBucket" -> timestamp
   private entryIntentCache: Map<string, number> = new Map();
   private readonly ENTRY_INTENT_DEDUPE_MS = 15 * 60 * 1000; // 15 minutos (una vela)
+  
+  // Cooldown cache: key = "eventType:pair?" -> lastSentTimestamp
+  private cooldownCache: Map<string, number> = new Map();
 
   setEngineController(controller: EngineController) {
     this.engineController = controller;
@@ -1083,6 +1086,13 @@ Incluye:
 
   private async sendHeartbeat() {
     try {
+      // Check cooldown first
+      const cooldownCheck = await this.checkCooldown("heartbeat");
+      if (!cooldownCheck.allowed) {
+        console.log(`[telegram] Heartbeat cooldown active (${cooldownCheck.remaining}s remaining)`);
+        return;
+      }
+      
       const config = await storage.getBotConfig();
       const engineActive = this.engineController?.isActive() ?? false;
       const status = engineActive ? "✅ Activo" : "⏸️ Pausado";
@@ -1117,6 +1127,9 @@ Incluye:
       if (this.chatId) {
         await this.sendMessage(message);
       }
+      
+      // Mark heartbeat as sent for cooldown tracking
+      this.markEventSent("heartbeat");
     } catch (error) {
       console.error("[telegram] Error enviando heartbeat:", error);
     }
@@ -1391,9 +1404,78 @@ Incluye:
         return chat.alertSystem;
       case "balance":
         return chat.alertBalance;
+      case "heartbeat":
+        return chat.alertHeartbeat;
       default:
         return false;
     }
+  }
+
+  // Cooldown check for specific event types
+  async checkCooldown(eventType: string, pair?: string): Promise<{ allowed: boolean; cooldownSeconds: number; remaining: number }> {
+    try {
+      const config = await storage.getBotConfig();
+      let cooldownSeconds = 0;
+      
+      switch (eventType) {
+        case "stop_updated":
+          cooldownSeconds = config?.notifCooldownStopUpdated ?? 60;
+          break;
+        case "regime_change":
+          cooldownSeconds = config?.notifCooldownRegimeChange ?? 300;
+          break;
+        case "heartbeat":
+          cooldownSeconds = config?.notifCooldownHeartbeat ?? 3600;
+          break;
+        case "trades":
+          cooldownSeconds = config?.notifCooldownTrades ?? 0;
+          break;
+        case "errors":
+          cooldownSeconds = config?.notifCooldownErrors ?? 60;
+          break;
+        default:
+          cooldownSeconds = 0;
+      }
+      
+      if (cooldownSeconds === 0) {
+        return { allowed: true, cooldownSeconds: 0, remaining: 0 };
+      }
+      
+      const cacheKey = pair ? `${eventType}:${pair}` : eventType;
+      const lastSent = this.cooldownCache.get(cacheKey) || 0;
+      const now = Date.now();
+      const elapsed = (now - lastSent) / 1000;
+      const remaining = Math.max(0, cooldownSeconds - elapsed);
+      
+      if (elapsed >= cooldownSeconds) {
+        return { allowed: true, cooldownSeconds, remaining: 0 };
+      }
+      
+      return { allowed: false, cooldownSeconds, remaining: Math.ceil(remaining) };
+    } catch (error) {
+      console.error("[telegram] Error checking cooldown:", error);
+      return { allowed: true, cooldownSeconds: 0, remaining: 0 };
+    }
+  }
+  
+  // Mark event as sent for cooldown tracking
+  markEventSent(eventType: string, pair?: string): void {
+    const cacheKey = pair ? `${eventType}:${pair}` : eventType;
+    this.cooldownCache.set(cacheKey, Date.now());
+  }
+  
+  // Send with cooldown check
+  async sendWithCooldown(message: string, eventType: string, alertType: AlertType, pair?: string): Promise<boolean> {
+    const cooldownCheck = await this.checkCooldown(eventType, pair);
+    
+    if (!cooldownCheck.allowed) {
+      console.log(`[telegram] Cooldown active for ${eventType}${pair ? `:${pair}` : ""} (${cooldownCheck.remaining}s remaining)`);
+      return false;
+    }
+    
+    await this.sendAlertToMultipleChats(message, alertType);
+    this.markEventSent(eventType, pair);
+    return true;
   }
 
   async sendTradeNotification(trade: {
@@ -1420,6 +1502,13 @@ _KrakenBot.AI - Trading Autónomo_
   }
 
   async sendAlert(title: string, description: string) {
+    // Check cooldown for errors
+    const cooldownCheck = await this.checkCooldown("errors");
+    if (!cooldownCheck.allowed) {
+      console.log(`[telegram] Error alert cooldown active (${cooldownCheck.remaining}s remaining): ${title}`);
+      return;
+    }
+    
     const message = `
 ⚠️ *${title}*
 
@@ -1429,6 +1518,7 @@ _KrakenBot.AI - Sistema de Alertas_
     `.trim();
 
     await this.sendAlertToMultipleChats(message, "errors");
+    this.markEventSent("errors");
   }
 
   async sendSystemStatus(isActive: boolean, strategy: string) {

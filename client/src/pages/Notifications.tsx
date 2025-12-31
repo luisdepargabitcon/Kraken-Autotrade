@@ -72,7 +72,7 @@ export default function Notifications() {
   const updateConfigMutation = useMutation({
     mutationFn: async (updates: Partial<BotConfig>) => {
       const res = await fetch("/api/config", {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });

@@ -61,6 +61,22 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
   - SMART_GUARD events: "Protección activada en BTC - Tu posición ya está en ganancias (+2.5%). He movido el stop a break-even."
   - All messages include essential data: prices, P&L, lot IDs, duration, and panel link.
 
+### Notifications Page (2025-12-31)
+- **New Page**: `/notifications` - Gestión completa de canales Telegram y cooldowns.
+- **Per-Chat Alert Policies**: Cada canal puede configurar qué alertas recibe:
+  - `alertTrades`: Operaciones BUY/SELL
+  - `alertErrors`: Errores de API, nonce, pérdidas diarias
+  - `alertSystem`: Bot iniciado/pausado, cambios de régimen
+  - `alertBalance`: Alertas de exposición y balance
+  - `alertHeartbeat`: Verificación periódica de actividad
+- **Configurable Cooldowns** (en `bot_config`):
+  - `notifCooldownStopUpdated`: 60s default - Para actualizaciones de trailing stop
+  - `notifCooldownRegimeChange`: 300s default - Para cambios de régimen de mercado
+  - `notifCooldownHeartbeat`: 3600s default - Para mensajes de heartbeat
+  - `notifCooldownTrades`: 0s default - Sin límite para trades
+  - `notifCooldownErrors`: 60s default - Para alertas de error
+- **Spam Prevention**: El sistema respeta los flags por chat y aplica cooldowns para evitar mensajes repetitivos.
+
 ### Quote Currency Validation
 - **Purpose**: Blocks trades on non-USD pairs, allowing only "USD" quoted pairs.
 
