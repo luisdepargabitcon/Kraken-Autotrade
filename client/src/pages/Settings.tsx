@@ -401,7 +401,7 @@ export default function Settings() {
               </CardContent>
             </Card>
 
-            {/* Notifications Settings */}
+            {/* Notifications Link */}
             <Card className="glass-panel border-border/50">
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -410,24 +410,16 @@ export default function Settings() {
                   </div>
                   <div>
                     <CardTitle>Alertas y Notificaciones</CardTitle>
-                    <CardDescription>Configura las alertas de Telegram del bot.</CardDescription>
+                    <CardDescription>Gestiona los canales de Telegram, cooldowns y tipos de alerta.</CardDescription>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card/30">
-                  <div className="space-y-0.5">
-                    <Label>Alertas de Error de Nonce</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Envía alerta por Telegram si hay errores persistentes de nonce con Kraken (máx. 1 cada 30 min)
-                    </p>
-                  </div>
-                  <Switch 
-                    checked={config?.nonceErrorAlertsEnabled ?? true}
-                    onCheckedChange={(checked) => updateMutation.mutate({ nonceErrorAlertsEnabled: checked })}
-                    data-testid="switch-nonce-alerts"
-                  />
-                </div>
+              <CardContent>
+                <Link href="/notifications">
+                  <Button variant="outline" className="w-full" data-testid="link-notifications">
+                    Ir a Notificaciones
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
 

@@ -64,6 +64,12 @@ export const botConfig = pgTable("bot_config", {
   profitBufferPct: decimal("profit_buffer_pct", { precision: 5, scale: 2 }).notNull().default("1.00"),
   timeStopHours: integer("time_stop_hours").notNull().default(36),
   timeStopMode: text("time_stop_mode").notNull().default("soft"),
+  // Telegram Notification Cooldowns (in seconds)
+  notifCooldownStopUpdated: integer("notif_cooldown_stop_updated").notNull().default(60),
+  notifCooldownRegimeChange: integer("notif_cooldown_regime_change").notNull().default(300),
+  notifCooldownHeartbeat: integer("notif_cooldown_heartbeat").notNull().default(3600),
+  notifCooldownTrades: integer("notif_cooldown_trades").notNull().default(0),
+  notifCooldownErrors: integer("notif_cooldown_errors").notNull().default(60),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

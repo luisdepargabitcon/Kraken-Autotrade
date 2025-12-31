@@ -11,6 +11,7 @@ import Terminal from "@/pages/Terminal";
 import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
 import Integrations from "@/pages/Integrations";
+import Notifications from "@/pages/Notifications";
 import Guide from "@/pages/Guide";
 import Monitor from "@/pages/Monitor";
 import NotFound from "@/pages/not-found";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/strategies" component={Strategies} />
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/notifications" component={Notifications} />
       <Route path="/guide" component={Guide} />
       <Route path="/monitor" component={Monitor} />
       
