@@ -15,6 +15,7 @@ export function Nav() {
     { href: "/monitor", label: "MONITOR", icon: Monitor },
     { href: "/wallet", label: "CARTERA", icon: Wallet },
     { href: "/integrations", label: "INTEGRACIONES", icon: Plug },
+    { href: "/notifications", label: "NOTIFICACIONES", icon: Bell },
     { href: "/settings", label: "AJUSTES", icon: Settings },
     { href: "/guide", label: "GUÍA", icon: BookOpen },
   ];
