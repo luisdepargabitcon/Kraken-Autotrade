@@ -97,8 +97,8 @@ export default function Notifications() {
     {
       category: "Estrategia",
       subtypes: [
-        { key: "strategy_regime_change", label: "Cambio de rgimen" },
-        { key: "strategy_router_transition", label: "Transicin de router" },
+        { key: "strategy_regime_change", label: "Cambio de régimen" },
+        { key: "strategy_router_transition", label: "Transición de router" },
       ],
     },
     {
@@ -118,13 +118,13 @@ export default function Notifications() {
     {
       category: "Balance",
       subtypes: [
-        { key: "balance_exposure", label: "Alertas de exposicin" },
+        { key: "balance_exposure", label: "Alertas de exposición" },
       ],
     },
     {
       category: "Heartbeat",
       subtypes: [
-        { key: "heartbeat_periodic", label: "Verificacin peridica" },
+        { key: "heartbeat_periodic", label: "Verificación periódica" },
       ],
     },
   ];
@@ -304,7 +304,7 @@ export default function Notifications() {
               <CardContent className="p-4 flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-yellow-500" />
                 <p className="text-sm">
-                  Telegram no est conectado. Ve a <Link href="/integrations" className="text-primary underline">Integraciones</Link> para configurar las credenciales del bot.
+                  Telegram no está conectado. Ve a <Link href="/integrations"><a className="text-primary underline">Integraciones</a></Link> para configurar las credenciales del bot.
                 </p>
               </CardContent>
             </Card>
@@ -319,8 +319,8 @@ export default function Notifications() {
                       <MessageSquare className="h-6 w-6 text-green-400" />
                     </div>
                     <div className="flex-1">
-                      <CardTitle>Probar Conexin</CardTitle>
-                      <CardDescription>Enva un mensaje de prueba para verificar que Telegram funciona.</CardDescription>
+                      <CardTitle>Probar Conexión</CardTitle>
+                      <CardDescription>Envía un mensaje de prueba para verificar que Telegram funciona.</CardDescription>
                     </div>
                     <div className="flex items-center gap-2 text-green-500">
                       <Check className="h-5 w-5" />
