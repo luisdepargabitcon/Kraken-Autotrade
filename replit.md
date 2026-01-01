@@ -65,10 +65,18 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - **New Page**: `/notifications` - Gestión completa de canales Telegram y cooldowns.
 - **Per-Chat Alert Policies**: Cada canal puede configurar qué alertas recibe:
   - `alertTrades`: Operaciones BUY/SELL
-  - `alertErrors`: Errores de API, nonce, pérdidas diarias
-  - `alertSystem`: Bot iniciado/pausado, cambios de régimen
-  - `alertBalance`: Alertas de exposición y balance
+  - `alertErrors`: Errores de API, nonce
+  - `alertSystem`: Bot iniciado/pausado
+  - `alertBalance`: Alertas de exposición
   - `alertHeartbeat`: Verificación periódica de actividad
+- **Granular Preferences (2026-01-01)**: Campo jsonb `alertPreferences` permite control fino:
+  - **Trades**: trade_buy, trade_sell, trade_stoploss, trade_takeprofit, trade_breakeven, trade_trailing, trade_daily_pnl
+  - **Strategy**: strategy_regime_change, strategy_router_transition
+  - **System**: system_bot_started, system_bot_paused
+  - **Errors**: error_api, error_nonce
+  - **Balance**: balance_exposure
+  - **Heartbeat**: heartbeat_periodic
+  - Lógica: Si el subtype está definido en alertPreferences, usa ese valor. Si no, fallback a categoría legacy (alertTrades, alertErrors, etc.)
 - **Configurable Cooldowns** (en `bot_config`):
   - `notifCooldownStopUpdated`: 60s default - Para actualizaciones de trailing stop
   - `notifCooldownRegimeChange`: 300s default - Para cambios de régimen de mercado

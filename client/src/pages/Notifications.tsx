@@ -6,9 +6,29 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, DollarSign, AlertCircle, RefreshCw } from "lucide-react";
+import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, DollarSign, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Settings2 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+
+interface AlertPreferences {
+  trade_buy?: boolean;
+  trade_sell?: boolean;
+  trade_breakeven?: boolean;
+  trade_trailing?: boolean;
+  trade_stoploss?: boolean;
+  trade_takeprofit?: boolean;
+  trade_daily_pnl?: boolean;
+  strategy_regime_change?: boolean;
+  strategy_router_transition?: boolean;
+  system_bot_started?: boolean;
+  system_bot_paused?: boolean;
+  error_api?: boolean;
+  error_nonce?: boolean;
+  balance_exposure?: boolean;
+  heartbeat_periodic?: boolean;
+}
 
 interface TelegramChat {
   id: number;
@@ -19,6 +39,7 @@ interface TelegramChat {
   alertSystem: boolean;
   alertBalance: boolean;
   alertHeartbeat: boolean;
+  alertPreferences?: AlertPreferences;
   isActive: boolean;
 }
 
@@ -41,6 +62,69 @@ export default function Notifications() {
   const [newAlertSystem, setNewAlertSystem] = useState(true);
   const [newAlertBalance, setNewAlertBalance] = useState(false);
   const [newAlertHeartbeat, setNewAlertHeartbeat] = useState(false);
+  const [expandedChats, setExpandedChats] = useState<Set<number>>(new Set());
+
+  const toggleExpanded = (chatId: number) => {
+    setExpandedChats(prev => {
+      const next = new Set(prev);
+      if (next.has(chatId)) next.delete(chatId);
+      else next.add(chatId);
+      return next;
+    });
+  };
+
+  const updateAlertPreference = (chatId: number, key: keyof AlertPreferences, value: boolean, currentPrefs?: AlertPreferences) => {
+    const newPrefs = { ...(currentPrefs || {}), [key]: value };
+    updateChatMutation.mutate({ id: chatId, alertPreferences: newPrefs });
+  };
+
+  const ALERT_SUBTYPES: { category: string; subtypes: { key: keyof AlertPreferences; label: string }[] }[] = [
+    {
+      category: "Trades",
+      subtypes: [
+        { key: "trade_buy", label: "Compras" },
+        { key: "trade_sell", label: "Ventas" },
+        { key: "trade_stoploss", label: "Stop-Loss" },
+        { key: "trade_takeprofit", label: "Take-Profit" },
+        { key: "trade_breakeven", label: "Break-Even" },
+        { key: "trade_trailing", label: "Trailing Stop" },
+        { key: "trade_daily_pnl", label: "Resumen diario P&L" },
+      ],
+    },
+    {
+      category: "Estrategia",
+      subtypes: [
+        { key: "strategy_regime_change", label: "Cambio de rgimen" },
+        { key: "strategy_router_transition", label: "Transicin de router" },
+      ],
+    },
+    {
+      category: "Sistema",
+      subtypes: [
+        { key: "system_bot_started", label: "Bot iniciado" },
+        { key: "system_bot_paused", label: "Bot pausado" },
+      ],
+    },
+    {
+      category: "Errores",
+      subtypes: [
+        { key: "error_api", label: "Errores de API" },
+        { key: "error_nonce", label: "Errores de Nonce" },
+      ],
+    },
+    {
+      category: "Balance",
+      subtypes: [
+        { key: "balance_exposure", label: "Alertas de exposicin" },
+      ],
+    },
+    {
+      category: "Heartbeat",
+      subtypes: [
+        { key: "heartbeat_periodic", label: "Verificacin peridica" },
+      ],
+    },
+  ];
 
   const { data: config } = useQuery<BotConfig>({
     queryKey: ["botConfig"],
@@ -431,6 +515,51 @@ export default function Notifications() {
                             <Label className="text-xs">Heartbeat</Label>
                           </div>
                         </div>
+
+                        <Collapsible open={expandedChats.has(chat.id)} onOpenChange={() => toggleExpanded(chat.id)}>
+                          <CollapsibleTrigger asChild>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground">
+                              {expandedChats.has(chat.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              <Settings2 className="h-4 w-4" />
+                              <span className="text-xs">Preferencias granulares</span>
+                            </Button>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="pt-3 space-y-4">
+                            <p className="text-xs text-muted-foreground">
+                              Activa o desactiva alertas especficas. Si no se configura, se usa el toggle principal de la categora.
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {ALERT_SUBTYPES.map((category) => (
+                                <div key={category.category} className="space-y-2 p-3 bg-card/50 rounded-md border border-border/50">
+                                  <p className="text-xs font-medium text-muted-foreground">{category.category}</p>
+                                  <div className="space-y-2">
+                                    {category.subtypes.map((subtype) => {
+                                      const isChecked = chat.alertPreferences?.[subtype.key];
+                                      const isUndefined = chat.alertPreferences?.[subtype.key] === undefined;
+                                      return (
+                                        <div key={subtype.key} className="flex items-center gap-2">
+                                          <Checkbox
+                                            id={`${chat.id}-${subtype.key}`}
+                                            checked={isChecked ?? true}
+                                            onCheckedChange={(checked) => 
+                                              updateAlertPreference(chat.id, subtype.key, checked as boolean, chat.alertPreferences)
+                                            }
+                                            data-testid={`checkbox-${subtype.key}-${chat.id}`}
+                                            className={isUndefined ? "opacity-50" : ""}
+                                          />
+                                          <Label htmlFor={`${chat.id}-${subtype.key}`} className="text-xs cursor-pointer">
+                                            {subtype.label}
+                                            {isUndefined && <span className="text-muted-foreground ml-1">(auto)</span>}
+                                          </Label>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
                       </div>
                     ))}
                   </div>
@@ -519,12 +648,14 @@ export default function Notifications() {
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
                   <Check className="h-5 w-5 text-green-500 mt-0.5" />
-                  <div className="text-sm text-muted-foreground">
-                    <p><strong>Trades:</strong> Compras y ventas ejecutadas</p>
-                    <p><strong>Errores:</strong> Fallos de API, errores de nonce, pérdidas diarias</p>
-                    <p><strong>Sistema:</strong> Bot iniciado/pausado, cambios de régimen</p>
-                    <p><strong>Balance:</strong> Alertas de exposición y cambios de balance</p>
-                    <p><strong>Heartbeat:</strong> Verificación periódica de que el bot está activo</p>
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Trades:</strong> Compras, ventas, SL, TP, BE, trailing, y resumen diario P&L</p>
+                    <p><strong>Errores:</strong> Fallos de API y errores de nonce</p>
+                    <p><strong>Sistema:</strong> Bot iniciado/pausado</p>
+                    <p><strong>Estrategia:</strong> Cambios de rgimen y transiciones del router (en preferencias granulares)</p>
+                    <p><strong>Balance:</strong> Alertas de exposicin</p>
+                    <p><strong>Heartbeat:</strong> Verificacin peridica de actividad</p>
+                    <p className="text-xs pt-2 text-muted-foreground/70">Usa "Preferencias granulares" para control fino de cada tipo de alerta.</p>
                   </div>
                 </div>
               </CardContent>

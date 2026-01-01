@@ -1422,7 +1422,7 @@ Incluye:
       case "heartbeat":
         return chat.alertHeartbeat;
       case "strategy":
-        return chat.alertSystem;
+        return true;
       default:
         return false;
     }
