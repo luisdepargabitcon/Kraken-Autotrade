@@ -304,7 +304,11 @@ export default function Notifications() {
               <CardContent className="p-4 flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-yellow-500" />
                 <p className="text-sm">
-                  Telegram no está conectado. Ve a <Link href="/integrations"><a className="text-primary underline">Integraciones</a></Link> para configurar las credenciales del bot.
+                  Telegram no está conectado. Ve a{" "}
+                  <Link href="/integrations">
+                    <span className="text-primary underline cursor-pointer">Integraciones</span>
+                  </Link>{" "}
+                  para configurar las credenciales del bot.
                 </p>
               </CardContent>
             </Card>
