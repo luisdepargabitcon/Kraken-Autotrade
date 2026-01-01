@@ -7,7 +7,7 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken exchange, d
 - Preferred communication style: Simple, everyday language.
 - **Entornos**: NAS es la fuente de verdad (producción y dataset IA). Replit solo para desarrollo y pruebas.
 - **Sincronización**: No implementar export/import ni DB remota entre NAS y Replit.
-- **NAS Docker**: Contenedor PostgreSQL se llama `kraken-bot-db`. Para ejecutar SQL: `docker exec -it kraken-bot-db psql -U postgres -d krakenbot -c "SQL_AQUI"`
+- **NAS Docker**: Contenedor PostgreSQL se llama `kraken-bot-db`. Para ejecutar SQL: `docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "SQL_AQUI"`
 
 ## System Architecture
 
