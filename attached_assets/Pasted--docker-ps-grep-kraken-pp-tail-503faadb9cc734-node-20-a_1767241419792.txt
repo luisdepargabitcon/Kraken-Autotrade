@@ -1,0 +1,54 @@
+[~] # docker ps | grep kraken
+pp --tail 503faadb9cc734   node:20-alpine       "docker-entrypoint.s…"   6 hours ago   Up About an hour             0.0.0.0:3000->5000/tcp   kraken-bot-app
+8237f80e86f5   postgres:16-alpine   "docker-entrypoint.s…"   6 hours ago   Up About an hour (healthy)   5432/tcp                 kraken-bot-db
+[~] # docker logs kraken-bot-app --tail 50
+4:15:48 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:15:58 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:16:08 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:16:18 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:16:28 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:16:38 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:16:48 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:16:58 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:17:08 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:17:18 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:17:28 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:17:38 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:17:48 AM [express] GET /api/dashboard 500 in 19ms :: {"error":"Failed to get dashboard data"}
+4:17:58 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:18:08 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:18:18 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:18:28 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:18:38 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:18:48 AM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+4:18:58 AM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+4:19:08 AM [express] GET /api/dashboard 500 in 16ms :: {"error":"Failed to get dashboard data"}
+4:19:18 AM [express] GET /api/dashboard 500 in 18ms :: {"error":"Failed to get dashboard data"}
+4:19:28 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:19:39 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:19:49 AM [express] GET /api/dashboard 500 in 16ms :: {"error":"Failed to get dashboard data"}
+4:19:59 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:20:09 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:20:19 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:20:29 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:20:39 AM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+4:20:49 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:20:49 AM [express] POST /api/config 500 in 13ms :: {"error":"Failed to update config"}
+4:20:51 AM [express] GET /api/config/api 304 in 20ms :: {"krakenConnected":true,"telegramConnected":true,"hasKrakenKeys":true,"hasTelegramKeys":true}
+4:20:51 AM [express] GET /api/telegram/chats 200 in 49ms :: [{"id":2,"name":"Chat 5806218741","chatId":"5806218741","alertTrades":true,"alertErrors":false,"alertSystem":false,"alertBalance":true,"alertHeartbeat":true,"isActive":true,"createdAt":"2025-12-21T22:14:50.726Z"}]
+4:20:52 AM [express] GET /api/dashboard 500 in 3ms :: {"error":"Failed to get dashboard data"}
+4:20:55 AM [express] GET /api/dashboard 500 in 6ms :: {"error":"Failed to get dashboard data"}
+4:20:57 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:20:57 AM [express] GET /api/dashboard 500 in 15ms :: {"error":"Failed to get dashboard data"}
+4:20:59 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:21:16 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:21:19 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:21:20 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:21:20 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:21:21 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:21:27 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:21:27 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:21:27 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
+4:21:28 AM [express] GET /api/dashboard 500 in 14ms :: {"error":"Failed to get dashboard data"}
+4:21:37 AM [express] GET /api/dashboard 500 in 12ms :: {"error":"Failed to get dashboard data"}
+4:22:19 AM [express] GET /api/dashboard 500 in 13ms :: {"error":"Failed to get dashboard data"}
