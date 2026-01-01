@@ -1753,12 +1753,12 @@ El motor de trading ha sido desactivado.
             const snapEmoji = hasSnap ? "📸" : "⚙️";
             return `   ${snapEmoji} ${p.pair}: <code>${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)}</code>`;
           }).join("\n");
-          await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 📂 <b>Posiciones Abiertas</b>
 
 ${positionsList}
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "balance", "balance_exposure");
         }
       }
     } catch (error: any) {
@@ -5234,7 +5234,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
 🔗 <a href="${environment.panelUrl}">Ver Panel</a>
 ━━━━━━━━━━━━━━━━━━━`;
 
-    await this.telegramService.sendMessage(message);
+    await this.telegramService.sendAlertWithSubtype(message, "strategy", "strategy_regime_change");
     
     log(`[TELEGRAM] RegimeChanged pair=${pair} from=${fromRegime} to=${analysis.regime}`, "trading");
     log(`[REGIME_NOTIFY] sent=true pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
@@ -5602,7 +5602,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
           const emoji = type === "buy" ? "🟢" : "🔴";
           const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
           
-          await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          const subtype = type === "buy" ? "trade_buy" : "trade_sell";
+          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🧪 <b>Trade Simulado</b> [DRY_RUN]
 
@@ -5613,7 +5614,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 💰 <b>Total:</b> <code>$${totalUSD.toFixed(2)}</code>
 
 ⚠️ Modo simulación - NO se envió orden real
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "trades", subtype as any);
         }
         
         return true; // Simular éxito para flujo normal
@@ -5960,7 +5961,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           naturalMessage += `🔗 ID: <code>${txid}</code>\n\n`;
           naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
           
-          await this.telegramService.sendMessage(naturalMessage);
+          await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_buy");
         } else {
           const assetName = pair.replace("/USD", "");
           let naturalMessage = `🔴 <b>Venta de ${assetName}</b>\n\n`;
@@ -5968,7 +5969,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           naturalMessage += `📝 ${reason}\n`;
           naturalMessage += `🔗 ID: <code>${txid}</code>`;
           
-          await this.telegramService.sendMessage(naturalMessage);
+          await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
         }
       }
 
@@ -6037,7 +6038,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       });
       
       if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⚠️ <b>Error en Operación</b>
 
@@ -6046,7 +6047,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
    • Tipo: <code>${type}</code>
 
 ❌ <b>Error:</b> <code>${error.message}</code>
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "errors", "error_api");
       }
       return false;
     }
@@ -6265,7 +6266,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         // Notificar por Telegram
         if (this.telegramService.isInitialized()) {
           const pnlEmoji = pnlUsd >= 0 ? "📈" : "📉";
-          await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🧪 <b>Cierre Manual Simulado</b> [DRY_RUN]
 
@@ -6278,7 +6279,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)</code>
 
 ⚠️ Modo simulación - NO se envió orden real
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_sell");
         }
 
         return {
@@ -6299,7 +6300,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         if (validation.isDust) {
           // Enviar alerta Telegram
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⚠️ <b>Posición DUST Detectada</b>
 
@@ -6311,7 +6312,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
    • Mínimo Kraken: <code>${validation.orderMin}</code>
 
 ℹ️ No se puede cerrar - usar "Eliminar huérfana" en UI
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "balance", "balance_exposure");
           }
         }
         
@@ -6380,7 +6381,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       // Notificar por Telegram
       if (this.telegramService.isInitialized()) {
         const pnlEmoji = actualPnlUsd >= 0 ? "📈" : "📉";
-        await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🔴 <b>Cierre Manual Ejecutado</b>
 
@@ -6394,7 +6395,7 @@ ${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUs
 💸 <b>Comisiones:</b> <code>-$${(entryFeeUsd + exitFeeUsd).toFixed(2)}</code>
 
 🔗 <b>ID:</b> <code>${txid}</code>
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_sell");
       }
 
       log(`[MANUAL_CLOSE] Cierre exitoso ${pair} (${positionLotId}) - Order: ${txid}, PnL: $${actualPnlUsd.toFixed(2)}`, "trading");
