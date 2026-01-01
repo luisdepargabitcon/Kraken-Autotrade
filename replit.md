@@ -156,3 +156,18 @@ When multiple exit systems are active, they follow this priority order:
 - TRANSITION cooldown configurable (transitionCooldownMinutes)
 - TRANSITION overrides completos para exits (BE/Trailing/TP)
 - Mean Reversion SELL (requiere cambio en SMART_GUARD sell-flow)
+
+### Multi-Exchange Support (Revolut X)
+**Investigado 2026-01-01 - PENDIENTE DE IMPLEMENTACIÓN**
+- **Viabilidad**: Confirmada - API REST completa disponible
+- **Tiempo estimado**: 4-5 días
+- **Requisito**: Cuenta Revolut Business (no personal)
+- **Fees Revolut X**: 0% maker, 0.09% taker (más barato que Kraken)
+- **Autenticación**: Ed25519 (diferente a HMAC-SHA512 de Kraken)
+- **Documentación**: https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api
+- **Implementación necesaria**:
+  1. Crear interfaz `IExchangeService` abstracta
+  2. Refactorizar `KrakenService` para implementar interfaz
+  3. Implementar `RevolutXService` con cliente Ed25519
+  4. UI selector de exchange en Integraciones
+  5. Adaptar Trading Engine para inyección dinámica de exchange
