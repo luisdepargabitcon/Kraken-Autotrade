@@ -6,11 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, DollarSign, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Settings2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Settings2, Send, MessageSquare } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Link } from "wouter";
 
 interface AlertPreferences {
   trade_buy?: boolean;
@@ -63,6 +65,7 @@ export default function Notifications() {
   const [newAlertBalance, setNewAlertBalance] = useState(false);
   const [newAlertHeartbeat, setNewAlertHeartbeat] = useState(false);
   const [expandedChats, setExpandedChats] = useState<Set<number>>(new Set());
+  const [customMessage, setCustomMessage] = useState("");
 
   const toggleExpanded = (chatId: number) => {
     setExpandedChats(prev => {
@@ -244,6 +247,25 @@ export default function Notifications() {
     },
   });
 
+  const sendMessageMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/telegram/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: customMessage }),
+      });
+      if (!res.ok) throw new Error("Failed to send");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Mensaje enviado a Telegram");
+      setCustomMessage("");
+    },
+    onError: () => {
+      toast.error("Error al enviar mensaje");
+    },
+  });
+
   const formatCooldown = (seconds: number): string => {
     if (seconds === 0) return "Sin límite";
     if (seconds < 60) return `${seconds}s`;
@@ -282,13 +304,54 @@ export default function Notifications() {
               <CardContent className="p-4 flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-yellow-500" />
                 <p className="text-sm">
-                  Telegram no está conectado. Ve a <a href="/integrations" className="text-primary underline">Integraciones</a> para configurar el bot.
+                  Telegram no est conectado. Ve a <Link href="/integrations" className="text-primary underline">Integraciones</Link> para configurar las credenciales del bot.
                 </p>
               </CardContent>
             </Card>
           )}
 
           <div className="grid gap-6">
+            {apiConfig?.telegramConnected && (
+              <Card className="glass-panel border-border/50">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-500/20 rounded-lg">
+                      <MessageSquare className="h-6 w-6 text-green-400" />
+                    </div>
+                    <div className="flex-1">
+                      <CardTitle>Probar Conexin</CardTitle>
+                      <CardDescription>Enva un mensaje de prueba para verificar que Telegram funciona.</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 text-green-500">
+                      <Check className="h-5 w-5" />
+                      <span className="text-sm font-mono">CONECTADO</span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Textarea
+                    placeholder="Escribe un mensaje para enviar a Telegram..."
+                    className="bg-background/50 min-h-[80px]"
+                    value={customMessage}
+                    onChange={(e) => setCustomMessage(e.target.value)}
+                    data-testid="input-custom-message"
+                  />
+                  <Button 
+                    className="w-full"
+                    onClick={() => sendMessageMutation.mutate()}
+                    disabled={!customMessage.trim() || sendMessageMutation.isPending}
+                    data-testid="button-send-message"
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje de Prueba"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Comandos disponibles en Docker/NAS: /estado, /pausar, /reanudar, /ultimas, /ayuda, /balance
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="glass-panel border-border/50">
               <CardHeader>
                 <div className="flex items-center gap-3">

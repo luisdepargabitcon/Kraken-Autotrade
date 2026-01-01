@@ -5,25 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { MessageSquare, Server, Check, Send, Plus, Trash2, Users, Plug, Eye, EyeOff } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MessageSquare, Server, Check, Plug, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-
-interface TelegramChat {
-  id: number;
-  name: string;
-  chatId: string;
-  alertTrades: boolean;
-  alertErrors: boolean;
-  alertSystem: boolean;
-  alertBalance: boolean;
-  isActive: boolean;
-}
+import { Link } from "wouter";
 
 export default function Integrations() {
-  const queryClient = useQueryClient();
   const [krakenApiKey, setKrakenApiKey] = useState("");
   const [krakenSecret, setKrakenSecret] = useState("");
   const [krakenConnected, setKrakenConnected] = useState(false);
@@ -34,29 +21,12 @@ export default function Integrations() {
   const [telegramChatId, setTelegramChatId] = useState("");
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [showTelegramToken, setShowTelegramToken] = useState(false);
-  const [customMessage, setCustomMessage] = useState("");
-
-  const [newChatName, setNewChatName] = useState("");
-  const [newChatId, setNewChatId] = useState("");
-  const [newAlertTrades, setNewAlertTrades] = useState(true);
-  const [newAlertErrors, setNewAlertErrors] = useState(true);
-  const [newAlertSystem, setNewAlertSystem] = useState(true);
-  const [newAlertBalance, setNewAlertBalance] = useState(false);
 
   const { data: apiConfig } = useQuery({
     queryKey: ["apiConfig"],
     queryFn: async () => {
       const res = await fetch("/api/config/api");
       if (!res.ok) throw new Error("Failed to fetch config");
-      return res.json();
-    },
-  });
-
-  const { data: telegramChats = [] } = useQuery<TelegramChat[]>({
-    queryKey: ["telegramChats"],
-    queryFn: async () => {
-      const res = await fetch("/api/telegram/chats");
-      if (!res.ok) throw new Error("Failed to fetch chats");
       return res.json();
     },
   });
@@ -106,95 +76,6 @@ export default function Integrations() {
     },
   });
 
-  const sendMessageMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/telegram/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: customMessage }),
-      });
-      if (!res.ok) throw new Error("Failed to send");
-      return res.json();
-    },
-    onSuccess: () => {
-      toast.success("Mensaje enviado a Telegram");
-      setCustomMessage("");
-    },
-    onError: () => {
-      toast.error("Error al enviar mensaje");
-    },
-  });
-
-  const createChatMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/telegram/chats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newChatName,
-          chatId: newChatId,
-          alertTrades: newAlertTrades,
-          alertErrors: newAlertErrors,
-          alertSystem: newAlertSystem,
-          alertBalance: newAlertBalance,
-        }),
-      });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "Failed to create chat");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      toast.success("Chat añadido correctamente");
-      setNewChatName("");
-      setNewChatId("");
-      setNewAlertTrades(true);
-      setNewAlertErrors(true);
-      setNewAlertSystem(true);
-      setNewAlertBalance(false);
-      queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message);
-    },
-  });
-
-  const deleteChatMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/telegram/chats/${id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw new Error("Failed to delete");
-      return res.json();
-    },
-    onSuccess: () => {
-      toast.success("Chat eliminado");
-      queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
-    },
-    onError: () => {
-      toast.error("Error al eliminar chat");
-    },
-  });
-
-  const updateChatMutation = useMutation({
-    mutationFn: async ({ id, ...data }: { id: number } & Partial<TelegramChat>) => {
-      const res = await fetch(`/api/telegram/chats/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to update");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
-    },
-    onError: () => {
-      toast.error("Error al actualizar chat");
-    },
-  });
-
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
       <div 
@@ -213,16 +94,15 @@ export default function Integrations() {
         <main className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold font-sans tracking-tight flex items-center gap-3">
+              <h1 className="text-3xl font-bold font-sans tracking-tight flex items-center gap-3" data-testid="title-integrations">
                 <Plug className="h-8 w-8 text-primary" />
                 Integraciones
               </h1>
-              <p className="text-muted-foreground mt-1">Gestiona todas las conexiones y credenciales de APIs.</p>
+              <p className="text-muted-foreground mt-1">Configura las credenciales de APIs externas.</p>
             </div>
           </div>
 
           <div className="grid gap-6">
-            {/* Kraken API */}
             <Card className="glass-panel border-border/50">
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -302,7 +182,6 @@ export default function Integrations() {
               </CardContent>
             </Card>
 
-            {/* Telegram Bot */}
             <Card className="glass-panel border-border/50">
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -311,7 +190,7 @@ export default function Integrations() {
                   </div>
                   <div className="flex-1">
                     <CardTitle>Telegram Bot</CardTitle>
-                    <CardDescription>Recibe alertas y controla el bot desde Telegram.</CardDescription>
+                    <CardDescription>Credenciales del bot para recibir alertas.</CardDescription>
                   </div>
                   {telegramConnected ? (
                     <div className="flex items-center gap-2 text-green-500">
@@ -366,167 +245,15 @@ export default function Integrations() {
                 </Button>
                 
                 {telegramConnected && (
-                  <div className="pt-4 border-t border-border/50 space-y-3">
-                    <Label>Enviar mensaje de prueba</Label>
-                    <Textarea
-                      placeholder="Escribe un mensaje para enviar a Telegram..."
-                      className="bg-background/50 min-h-[80px]"
-                      value={customMessage}
-                      onChange={(e) => setCustomMessage(e.target.value)}
-                      data-testid="input-custom-message"
-                    />
-                    <Button 
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => sendMessageMutation.mutate()}
-                      disabled={!customMessage.trim() || sendMessageMutation.isPending}
-                      data-testid="button-send-message"
-                    >
-                      <Send className="mr-2 h-4 w-4" />
-                      {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje"}
+                  <Link href="/notifications">
+                    <Button variant="outline" className="w-full mt-2" data-testid="link-to-notifications">
+                      <ArrowRight className="mr-2 h-4 w-4" />
+                      Gestionar canales y alertas en Notificaciones
                     </Button>
-                    <p className="text-xs text-muted-foreground">
-                      Comandos: /estado, /pausar, /reanudar, /ultimas, /ayuda
-                    </p>
-                  </div>
+                  </Link>
                 )}
               </CardContent>
             </Card>
-
-            {/* Multi-Chat Telegram */}
-            {telegramConnected && (
-              <Card className="glass-panel border-border/50">
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-500/20 rounded-lg">
-                      <Users className="h-6 w-6 text-purple-400" />
-                    </div>
-                    <div className="flex-1">
-                      <CardTitle>Multi-Chat Telegram</CardTitle>
-                      <CardDescription>Envía alertas a múltiples chats con configuración individual.</CardDescription>
-                    </div>
-                    <span className="text-sm text-muted-foreground">{telegramChats.length} chat(s)</span>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {telegramChats.length > 0 && (
-                    <div className="space-y-3">
-                      {telegramChats.map((chat) => (
-                        <div key={chat.id} className="p-4 border border-border rounded-lg bg-card/30 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className={`h-2 w-2 rounded-full ${chat.isActive ? 'bg-green-500' : 'bg-gray-500'}`}></span>
-                              <span className="font-medium">{chat.name}</span>
-                              <span className="text-xs text-muted-foreground font-mono">({chat.chatId})</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Switch 
-                                checked={chat.isActive}
-                                onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, isActive: checked })}
-                              />
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                onClick={() => deleteChatMutation.mutate(chat.id)}
-                                data-testid={`button-delete-chat-${chat.id}`}
-                              >
-                                <Trash2 className="h-4 w-4 text-red-500" />
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button 
-                              variant={chat.alertTrades ? "default" : "outline"} 
-                              size="sm"
-                              onClick={() => updateChatMutation.mutate({ id: chat.id, alertTrades: !chat.alertTrades })}
-                            >
-                              Trades
-                            </Button>
-                            <Button 
-                              variant={chat.alertErrors ? "default" : "outline"} 
-                              size="sm"
-                              onClick={() => updateChatMutation.mutate({ id: chat.id, alertErrors: !chat.alertErrors })}
-                            >
-                              Errores
-                            </Button>
-                            <Button 
-                              variant={chat.alertSystem ? "default" : "outline"} 
-                              size="sm"
-                              onClick={() => updateChatMutation.mutate({ id: chat.id, alertSystem: !chat.alertSystem })}
-                            >
-                              Sistema
-                            </Button>
-                            <Button 
-                              variant={chat.alertBalance ? "default" : "outline"} 
-                              size="sm"
-                              onClick={() => updateChatMutation.mutate({ id: chat.id, alertBalance: !chat.alertBalance })}
-                            >
-                              Balance
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="pt-4 border-t border-border/50 space-y-3">
-                    <Label className="flex items-center gap-2">
-                      <Plus className="h-4 w-4" /> Añadir nuevo chat
-                    </Label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="grid gap-2">
-                        <Label className="text-xs">Nombre</Label>
-                        <Input 
-                          placeholder="Mi grupo" 
-                          className="bg-background/50"
-                          value={newChatName}
-                          onChange={(e) => setNewChatName(e.target.value)}
-                          data-testid="input-new-chat-name"
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label className="text-xs">Chat ID</Label>
-                        <Input 
-                          placeholder="-1001234567890" 
-                          className="font-mono bg-background/50"
-                          value={newChatId}
-                          onChange={(e) => setNewChatId(e.target.value)}
-                          data-testid="input-new-chat-id"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-4">
-                      <div className="flex items-center gap-2">
-                        <Switch checked={newAlertTrades} onCheckedChange={setNewAlertTrades} />
-                        <Label className="text-sm">Trades</Label>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={newAlertErrors} onCheckedChange={setNewAlertErrors} />
-                        <Label className="text-sm">Errores</Label>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={newAlertSystem} onCheckedChange={setNewAlertSystem} />
-                        <Label className="text-sm">Sistema</Label>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={newAlertBalance} onCheckedChange={setNewAlertBalance} />
-                        <Label className="text-sm">Balance</Label>
-                      </div>
-                    </div>
-                    <Button 
-                      className="w-full"
-                      onClick={() => createChatMutation.mutate()}
-                      disabled={!newChatName.trim() || !newChatId.trim() || createChatMutation.isPending}
-                      data-testid="button-add-chat"
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      {createChatMutation.isPending ? "Añadiendo..." : "Añadir Chat"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
           </div>
         </main>
       </div>
