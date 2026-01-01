@@ -1321,21 +1321,21 @@ Incluye:
     const sentChatIds = new Set<string>();
 
     try {
-      if (this.chatId) {
-        await this.sendMessage(message);
-        sentChatIds.add(this.chatId);
-      }
-
       const chats = await storage.getActiveTelegramChats();
       
-      for (const chat of chats) {
-        if (sentChatIds.has(chat.chatId)) continue;
-        
-        const shouldSend = this.shouldSendToChat(chat, alertType);
-        if (shouldSend) {
-          await this.sendToChat(chat.chatId, message);
-          sentChatIds.add(chat.chatId);
+      if (chats.length > 0) {
+        for (const chat of chats) {
+          if (sentChatIds.has(chat.chatId)) continue;
+          
+          const shouldSend = this.shouldSendToChat(chat, alertType);
+          if (shouldSend) {
+            await this.sendToChat(chat.chatId, message);
+            sentChatIds.add(chat.chatId);
+          }
         }
+      } else if (this.chatId) {
+        await this.sendMessage(message);
+        sentChatIds.add(this.chatId);
       }
     } catch (error) {
       console.error("Error sending to multiple chats:", error);
