@@ -1,0 +1,58 @@
+[~] # -- Migrar valores legacy a preferencias granulares para chats existentes
+ild_object(
+  'trade_buy', alert-sh: --: command not found
+_trades,
+  'trade_sell', alert_trades,
+  'trade_stoploss', alert_trades,
+  'trad[~] # UPDATE telegram_chats
+-sh: UPDATE: command not found
+[~] # SET alert_preferences = jsonb_build_object(
+-sh: syntax error near unexpected token `('
+[~] #   'trade_buy', alert_trades,
+-sh: trade_buy,: command not found
+[~] #   'trade_sell', alert_trades,
+-sh: trade_sell,: command not found
+[~] #   'trade_stoploss', alert_trades,
+-sh: trade_stoploss,: command not found
+[~] #   'trade_takeprofit', alert_trades,
+_regime_change', true,
+  'strategy_router_transition', true,
+  'system_bot_started', alert_system,
+  'system_bot_paused', alert_system,
+  'error_api', alert_errors,
+  'error_nonce', alert_errors,
+  'balance_exposure', alert_balance,
+  'heartbeat_periodic', alert_heartbeat
+)
+WHERE alert_preferences IS NULL OR alert_preferences = '{}';-sh: trade_takeprofit,: command not found
+[~] #   'trade_breakeven', alert_trades,
+-sh: trade_breakeven,: command not found
+[~] #   'trade_trailing', alert_trades,
+-sh: trade_trailing,: command not found
+[~] #   'trade_daily_pnl', alert_trades,
+-sh: trade_daily_pnl,: command not found
+[~] #   'strategy_regime_change', true,
+-sh: strategy_regime_change,: command not found
+[~] #   'strategy_router_transition', true,
+-sh: strategy_router_transition,: command not found
+[~] #   'system_bot_started', alert_system,
+-sh: system_bot_started,: command not found
+[~] #   'system_bot_paused', alert_system,
+-sh: system_bot_paused,: command not found
+[~] #   'error_api', alert_errors,
+-sh: error_api,: command not found
+[~] #   'error_nonce', alert_errors,
+-sh: error_nonce,: command not found
+[~] #   'balance_exposure', alert_balance,
+-sh: balance_exposure,: command not found
+[~] #   'heartbeat_periodic', alert_heartbeat
+-sh: heartbeat_periodic,: command not found
+[~] # )
+-sh: syntax error near unexpected token `)'
+[~] # WHERE alert_preferences IS NULL OR alert_preferences = '{}';
+-sh: WHERE: command not found
+[~] # docker exec -it krakenbot-db psql -U postgres -d krakenbot -c "UPDATE telegram_chats SET alert_preferences = jsonb_build_object('trade_buy', alert_trades, 'trade_sell', alert_trades, 'trade_stoploss', alert_trades, 'trade_takeprofit', alert_trades, 'trade_breakeven', alert_trades, 'trade_trailing', alert_trades, 'trade_daily_pnl', alert_trades, 'strategy_regime_change', true, 'strategy_router_transition', true, 'system_bot_started', alert_system, 'system_bot_paused', alert_system, 'error_api', alert_errors, 'error_nonce', alert_errors, 'balance_exposure', alert_balance, 'heartbeat_periodic', alert_heartbeat) WHERE alert_preferences IS NULL OR alert_preferences = '{}';"
+Error response from daemon: No such container: krakenbot-db
+[~] # psql -U postgres -d krakenbot -c "UPDATE telegram_chats SET alert_preferences = jsonb_build_object('trade_buy', alert_trades, 'trade_sell', alert_trades, 'trade_stoploss', alert_trades, 'trade_takeprofit', alert_trades, 'trade_breakeven', alert_trades, 'trade_trailing', alert_trades, 'trade_daily_pnl', alert_trades, 'strategy_regime_change', true, 'strategy_router_transition', true, 'system_bot_started', alert_system, 'system_bot_paused', alert_system, 'error_api', alert_errors, 'error_nonce', alert_errors, 'balance_exposure', alert_balance, 'heartbeat_periodic', alert_heartbeat) WHERE alert_preferences IS NULL OR alert_preferences = '{}';"
+-sh: psql: command not found
+[~] #
