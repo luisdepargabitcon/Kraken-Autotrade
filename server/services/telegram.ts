@@ -484,7 +484,16 @@ interface TelegramConfig {
   chatId: string;
 }
 
-type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartbeat";
+type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartbeat" | "strategy";
+
+type AlertSubtype = 
+  | "trade_buy" | "trade_sell" | "trade_breakeven" | "trade_trailing" 
+  | "trade_stoploss" | "trade_takeprofit" | "trade_daily_pnl"
+  | "strategy_regime_change" | "strategy_router_transition"
+  | "system_bot_started" | "system_bot_paused"
+  | "error_api" | "error_nonce"
+  | "balance_exposure"
+  | "heartbeat_periodic";
 
 type EngineController = {
   start: () => Promise<void>;
@@ -1394,7 +1403,13 @@ Incluye:
     return sent;
   }
 
-  private shouldSendToChat(chat: TelegramChat, alertType: AlertType): boolean {
+  private shouldSendToChat(chat: TelegramChat, alertType: AlertType, subtype?: AlertSubtype): boolean {
+    const prefs = (chat.alertPreferences || {}) as Record<string, boolean>;
+    
+    if (subtype && prefs[subtype] !== undefined) {
+      return prefs[subtype];
+    }
+    
     switch (alertType) {
       case "trades":
         return chat.alertTrades;
@@ -1406,8 +1421,37 @@ Incluye:
         return chat.alertBalance;
       case "heartbeat":
         return chat.alertHeartbeat;
+      case "strategy":
+        return chat.alertSystem;
       default:
         return false;
+    }
+  }
+
+  async sendAlertWithSubtype(message: string, alertType: AlertType, subtype: AlertSubtype): Promise<void> {
+    if (!this.bot) return;
+
+    const sentChatIds = new Set<string>();
+
+    try {
+      if (this.chatId) {
+        await this.sendMessage(message);
+        sentChatIds.add(this.chatId);
+      }
+
+      const chats = await storage.getActiveTelegramChats();
+      
+      for (const chat of chats) {
+        if (sentChatIds.has(chat.chatId)) continue;
+        
+        const shouldSend = this.shouldSendToChat(chat, alertType, subtype);
+        if (shouldSend) {
+          await this.sendToChat(chat.chatId, message);
+          sentChatIds.add(chat.chatId);
+        }
+      }
+    } catch (error) {
+      console.error("Error sending to multiple chats:", error);
     }
   }
 
