@@ -127,9 +127,30 @@ export const telegramChats = pgTable("telegram_chats", {
   alertSystem: boolean("alert_system").notNull().default(true),
   alertBalance: boolean("alert_balance").notNull().default(false),
   alertHeartbeat: boolean("alert_heartbeat").notNull().default(true),
+  alertPreferences: jsonb("alert_preferences").notNull().default({}),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const alertPreferencesSchema = z.object({
+  trade_buy: z.boolean().optional(),
+  trade_sell: z.boolean().optional(),
+  trade_breakeven: z.boolean().optional(),
+  trade_trailing: z.boolean().optional(),
+  trade_stoploss: z.boolean().optional(),
+  trade_takeprofit: z.boolean().optional(),
+  trade_daily_pnl: z.boolean().optional(),
+  strategy_regime_change: z.boolean().optional(),
+  strategy_router_transition: z.boolean().optional(),
+  system_bot_started: z.boolean().optional(),
+  system_bot_paused: z.boolean().optional(),
+  error_api: z.boolean().optional(),
+  error_nonce: z.boolean().optional(),
+  balance_exposure: z.boolean().optional(),
+  heartbeat_periodic: z.boolean().optional(),
+});
+
+export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;
 
 export const botEvents = pgTable("bot_events", {
   id: serial("id").primaryKey(),
