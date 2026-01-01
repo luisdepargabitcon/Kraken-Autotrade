@@ -7,8 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Settings2, Send, MessageSquare } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, AlertCircle, RefreshCw, Send, MessageSquare } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -59,22 +58,16 @@ export default function Notifications() {
   
   const [newChatName, setNewChatName] = useState("");
   const [newChatId, setNewChatId] = useState("");
-  const [newAlertTrades, setNewAlertTrades] = useState(true);
-  const [newAlertErrors, setNewAlertErrors] = useState(true);
-  const [newAlertSystem, setNewAlertSystem] = useState(true);
-  const [newAlertBalance, setNewAlertBalance] = useState(false);
-  const [newAlertHeartbeat, setNewAlertHeartbeat] = useState(false);
-  const [expandedChats, setExpandedChats] = useState<Set<number>>(new Set());
   const [customMessage, setCustomMessage] = useState("");
-
-  const toggleExpanded = (chatId: number) => {
-    setExpandedChats(prev => {
-      const next = new Set(prev);
-      if (next.has(chatId)) next.delete(chatId);
-      else next.add(chatId);
-      return next;
-    });
-  };
+  const [newAlertPreferences, setNewAlertPreferences] = useState<AlertPreferences>({
+    trade_buy: true, trade_sell: true, trade_stoploss: true, trade_takeprofit: true,
+    trade_breakeven: true, trade_trailing: true, trade_daily_pnl: true,
+    strategy_regime_change: true, strategy_router_transition: true,
+    system_bot_started: true, system_bot_paused: true,
+    error_api: true, error_nonce: true,
+    balance_exposure: false,
+    heartbeat_periodic: false,
+  });
 
   const updateAlertPreference = (chatId: number, key: keyof AlertPreferences, value: boolean, currentPrefs?: AlertPreferences) => {
     const newPrefs = { ...(currentPrefs || {}), [key]: value };
@@ -183,11 +176,7 @@ export default function Notifications() {
         body: JSON.stringify({
           name: newChatName,
           chatId: newChatId,
-          alertTrades: newAlertTrades,
-          alertErrors: newAlertErrors,
-          alertSystem: newAlertSystem,
-          alertBalance: newAlertBalance,
-          alertHeartbeat: newAlertHeartbeat,
+          alertPreferences: newAlertPreferences,
         }),
       });
       if (!res.ok) {
@@ -200,11 +189,15 @@ export default function Notifications() {
       toast.success("Chat añadido correctamente");
       setNewChatName("");
       setNewChatId("");
-      setNewAlertTrades(true);
-      setNewAlertErrors(true);
-      setNewAlertSystem(true);
-      setNewAlertBalance(false);
-      setNewAlertHeartbeat(false);
+      setNewAlertPreferences({
+        trade_buy: true, trade_sell: true, trade_stoploss: true, trade_takeprofit: true,
+        trade_breakeven: true, trade_trailing: true, trade_daily_pnl: true,
+        strategy_regime_change: true, strategy_router_transition: true,
+        system_bot_started: true, system_bot_paused: true,
+        error_api: true, error_nonce: true,
+        balance_exposure: false,
+        heartbeat_periodic: false,
+      });
       queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
     },
     onError: (error: Error) => {
@@ -540,93 +533,69 @@ export default function Notifications() {
                           </Button>
                         </div>
                         
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={chat.alertTrades}
-                              onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, alertTrades: checked })}
-                              data-testid={`switch-trades-${chat.id}`}
-                            />
-                            <Label className="text-xs">Trades</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={chat.alertErrors}
-                              onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, alertErrors: checked })}
-                              data-testid={`switch-errors-${chat.id}`}
-                            />
-                            <Label className="text-xs">Errores</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={chat.alertSystem}
-                              onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, alertSystem: checked })}
-                              data-testid={`switch-system-${chat.id}`}
-                            />
-                            <Label className="text-xs">Sistema</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={chat.alertBalance}
-                              onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, alertBalance: checked })}
-                              data-testid={`switch-balance-${chat.id}`}
-                            />
-                            <Label className="text-xs">Balance</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={chat.alertHeartbeat}
-                              onCheckedChange={(checked) => updateChatMutation.mutate({ id: chat.id, alertHeartbeat: checked })}
-                              data-testid={`switch-heartbeat-${chat.id}`}
-                            />
-                            <Label className="text-xs">Heartbeat</Label>
-                          </div>
-                        </div>
-
-                        <Collapsible open={expandedChats.has(chat.id)} onOpenChange={() => toggleExpanded(chat.id)}>
-                          <CollapsibleTrigger asChild>
-                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground">
-                              {expandedChats.has(chat.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                              <Settings2 className="h-4 w-4" />
-                              <span className="text-xs">Preferencias granulares</span>
-                            </Button>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent className="pt-3 space-y-4">
-                            <p className="text-xs text-muted-foreground">
-                              Activa o desactiva alertas especficas. Si no se configura, se usa el toggle principal de la categora.
-                            </p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {ALERT_SUBTYPES.map((category) => (
-                                <div key={category.category} className="space-y-2 p-3 bg-card/50 rounded-md border border-border/50">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                          {ALERT_SUBTYPES.map((category) => {
+                            const allChecked = category.subtypes.every(s => chat.alertPreferences?.[s.key] ?? true);
+                            const noneChecked = category.subtypes.every(s => chat.alertPreferences?.[s.key] === false);
+                            return (
+                              <div key={category.category} className="space-y-2 p-3 bg-card/50 rounded-md border border-border/50">
+                                <div className="flex items-center justify-between">
                                   <p className="text-xs font-medium text-muted-foreground">{category.category}</p>
-                                  <div className="space-y-2">
-                                    {category.subtypes.map((subtype) => {
-                                      const isChecked = chat.alertPreferences?.[subtype.key];
-                                      const isUndefined = chat.alertPreferences?.[subtype.key] === undefined;
-                                      return (
-                                        <div key={subtype.key} className="flex items-center gap-2">
-                                          <Checkbox
-                                            id={`${chat.id}-${subtype.key}`}
-                                            checked={isChecked ?? true}
-                                            onCheckedChange={(checked) => 
-                                              updateAlertPreference(chat.id, subtype.key, checked as boolean, chat.alertPreferences)
-                                            }
-                                            data-testid={`checkbox-${subtype.key}-${chat.id}`}
-                                            className={isUndefined ? "opacity-50" : ""}
-                                          />
-                                          <Label htmlFor={`${chat.id}-${subtype.key}`} className="text-xs cursor-pointer">
-                                            {subtype.label}
-                                            {isUndefined && <span className="text-muted-foreground ml-1">(auto)</span>}
-                                          </Label>
-                                        </div>
-                                      );
-                                    })}
+                                  <div className="flex gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 px-1.5 text-[10px]"
+                                      onClick={() => {
+                                        const newPrefs = { ...(chat.alertPreferences || {}) };
+                                        category.subtypes.forEach(s => { newPrefs[s.key] = true; });
+                                        updateChatMutation.mutate({ id: chat.id, alertPreferences: newPrefs });
+                                      }}
+                                      disabled={allChecked}
+                                      data-testid={`btn-all-${category.category}-${chat.id}`}
+                                    >
+                                      Todo
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 px-1.5 text-[10px]"
+                                      onClick={() => {
+                                        const newPrefs = { ...(chat.alertPreferences || {}) };
+                                        category.subtypes.forEach(s => { newPrefs[s.key] = false; });
+                                        updateChatMutation.mutate({ id: chat.id, alertPreferences: newPrefs });
+                                      }}
+                                      disabled={noneChecked}
+                                      data-testid={`btn-none-${category.category}-${chat.id}`}
+                                    >
+                                      Ninguno
+                                    </Button>
                                   </div>
                                 </div>
-                              ))}
-                            </div>
-                          </CollapsibleContent>
-                        </Collapsible>
+                                <div className="space-y-2">
+                                  {category.subtypes.map((subtype) => {
+                                    const isChecked = chat.alertPreferences?.[subtype.key] ?? true;
+                                    return (
+                                      <div key={subtype.key} className="flex items-center gap-2">
+                                        <Checkbox
+                                          id={`${chat.id}-${subtype.key}`}
+                                          checked={isChecked}
+                                          onCheckedChange={(checked) => 
+                                            updateAlertPreference(chat.id, subtype.key, checked as boolean, chat.alertPreferences)
+                                          }
+                                          data-testid={`checkbox-${subtype.key}-${chat.id}`}
+                                        />
+                                        <Label htmlFor={`${chat.id}-${subtype.key}`} className="text-xs cursor-pointer">
+                                          {subtype.label}
+                                        </Label>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -655,47 +624,63 @@ export default function Notifications() {
                     </div>
                   </div>
                   
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={newAlertTrades}
-                        onCheckedChange={setNewAlertTrades}
-                        data-testid="switch-new-trades"
-                      />
-                      <Label className="text-xs">Trades</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={newAlertErrors}
-                        onCheckedChange={setNewAlertErrors}
-                        data-testid="switch-new-errors"
-                      />
-                      <Label className="text-xs">Errores</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={newAlertSystem}
-                        onCheckedChange={setNewAlertSystem}
-                        data-testid="switch-new-system"
-                      />
-                      <Label className="text-xs">Sistema</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={newAlertBalance}
-                        onCheckedChange={setNewAlertBalance}
-                        data-testid="switch-new-balance"
-                      />
-                      <Label className="text-xs">Balance</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={newAlertHeartbeat}
-                        onCheckedChange={setNewAlertHeartbeat}
-                        data-testid="switch-new-heartbeat"
-                      />
-                      <Label className="text-xs">Heartbeat</Label>
-                    </div>
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {ALERT_SUBTYPES.map((category) => {
+                      const allChecked = category.subtypes.every(s => newAlertPreferences[s.key] ?? true);
+                      const noneChecked = category.subtypes.every(s => newAlertPreferences[s.key] === false);
+                      return (
+                        <div key={category.category} className="space-y-2 p-3 bg-card/50 rounded-md border border-border/50">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-medium text-muted-foreground">{category.category}</p>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 px-1.5 text-[10px]"
+                                onClick={() => {
+                                  const updated = { ...newAlertPreferences };
+                                  category.subtypes.forEach(s => { updated[s.key] = true; });
+                                  setNewAlertPreferences(updated);
+                                }}
+                                disabled={allChecked}
+                              >
+                                Todo
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 px-1.5 text-[10px]"
+                                onClick={() => {
+                                  const updated = { ...newAlertPreferences };
+                                  category.subtypes.forEach(s => { updated[s.key] = false; });
+                                  setNewAlertPreferences(updated);
+                                }}
+                                disabled={noneChecked}
+                              >
+                                Ninguno
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {category.subtypes.map((subtype) => (
+                              <div key={subtype.key} className="flex items-center gap-2">
+                                <Checkbox
+                                  id={`new-${subtype.key}`}
+                                  checked={newAlertPreferences[subtype.key] ?? true}
+                                  onCheckedChange={(checked) => 
+                                    setNewAlertPreferences(prev => ({ ...prev, [subtype.key]: checked as boolean }))
+                                  }
+                                  data-testid={`checkbox-new-${subtype.key}`}
+                                />
+                                <Label htmlFor={`new-${subtype.key}`} className="text-xs cursor-pointer">
+                                  {subtype.label}
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   <Button 
@@ -719,10 +704,10 @@ export default function Notifications() {
                     <p><strong>Trades:</strong> Compras, ventas, SL, TP, BE, trailing, y resumen diario P&L</p>
                     <p><strong>Errores:</strong> Fallos de API y errores de nonce</p>
                     <p><strong>Sistema:</strong> Bot iniciado/pausado</p>
-                    <p><strong>Estrategia:</strong> Cambios de rgimen y transiciones del router (en preferencias granulares)</p>
-                    <p><strong>Balance:</strong> Alertas de exposicin</p>
-                    <p><strong>Heartbeat:</strong> Verificacin peridica de actividad</p>
-                    <p className="text-xs pt-2 text-muted-foreground/70">Usa "Preferencias granulares" para control fino de cada tipo de alerta.</p>
+                    <p><strong>Estrategia:</strong> Cambios de régimen y transiciones del router</p>
+                    <p><strong>Balance:</strong> Alertas de exposición</p>
+                    <p><strong>Heartbeat:</strong> Verificación periódica de actividad</p>
+                    <p className="text-xs pt-2 text-muted-foreground/70">Cada tipo de alerta se controla individualmente. Usa los botones "Todo/Ninguno" para cambios rápidos por categoría.</p>
                   </div>
                 </div>
               </CardContent>

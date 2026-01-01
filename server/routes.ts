@@ -438,15 +438,22 @@ export async function registerRoutes(
         return res.status(400).json({ error: "No se pudo enviar mensaje al chat. Verifica el Chat ID." });
       }
 
+      const prefs = alertPreferences || {};
+      const derivedTrades = alertTrades ?? (prefs.trade_buy !== false || prefs.trade_sell !== false);
+      const derivedErrors = alertErrors ?? (prefs.error_api !== false || prefs.error_nonce !== false);
+      const derivedSystem = alertSystem ?? (prefs.system_bot_started !== false || prefs.system_bot_paused !== false);
+      const derivedBalance = alertBalance ?? (prefs.balance_exposure === true);
+      const derivedHeartbeat = alertHeartbeat ?? (prefs.heartbeat_periodic === true);
+
       const chat = await storage.createTelegramChat({
         name,
         chatId,
-        alertTrades: alertTrades ?? true,
-        alertErrors: alertErrors ?? true,
-        alertSystem: alertSystem ?? true,
-        alertBalance: alertBalance ?? false,
-        alertHeartbeat: alertHeartbeat ?? false,
-        alertPreferences: alertPreferences ?? {},
+        alertTrades: derivedTrades,
+        alertErrors: derivedErrors,
+        alertSystem: derivedSystem,
+        alertBalance: derivedBalance,
+        alertHeartbeat: derivedHeartbeat,
+        alertPreferences: prefs,
         isActive: true,
       });
       
