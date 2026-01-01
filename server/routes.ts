@@ -417,7 +417,7 @@ export async function registerRoutes(
 
   app.post("/api/telegram/chats", async (req, res) => {
     try {
-      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance } = req.body;
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat } = req.body;
       
       if (!name || !chatId) {
         return res.status(400).json({ error: "Nombre y Chat ID son requeridos" });
@@ -445,6 +445,7 @@ export async function registerRoutes(
         alertErrors: alertErrors ?? true,
         alertSystem: alertSystem ?? true,
         alertBalance: alertBalance ?? false,
+        alertHeartbeat: alertHeartbeat ?? false,
         isActive: true,
       });
       
@@ -457,7 +458,7 @@ export async function registerRoutes(
   app.put("/api/telegram/chats/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, isActive } = req.body;
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, isActive } = req.body;
       
       const chat = await storage.updateTelegramChat(id, {
         name,
@@ -466,6 +467,7 @@ export async function registerRoutes(
         alertErrors,
         alertSystem,
         alertBalance,
+        alertHeartbeat,
         isActive,
       });
       
