@@ -1632,7 +1632,7 @@ export class TradingEngine {
     if (this.telegramService.isInitialized()) {
       const modeText = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE";
       const routerStatus = config.regimeRouterEnabled ? "ACTIVO" : "INACTIVO";
-      await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+      await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ✅ <b>Bot Iniciado</b>
 
@@ -1647,7 +1647,7 @@ export class TradingEngine {
    • Posiciones: <code>${this.openPositions.size}</code>
 
 ⚙️ <b>Modo:</b> <code>${modeText}</code>
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_started");
     }
     
     const intervalMs = this.getIntervalForStrategy(config.strategy);
@@ -1677,12 +1677,12 @@ export class TradingEngine {
     await botLogger.info("BOT_STOPPED", "Motor de trading detenido");
     
     if (this.telegramService.isInitialized()) {
-      await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+      await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🛑 <b>Bot Detenido</b>
 
 El motor de trading ha sido desactivado.
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_paused");
     }
   }
 
@@ -1861,7 +1861,7 @@ ${positionsList}
           });
           
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🛑 <b>Límite de Pérdida Diaria Alcanzado</b>
 
@@ -1874,7 +1874,7 @@ El bot ha pausado las operaciones de COMPRA.
 
 ℹ️ Las operaciones de cierre (SL/TP) siguen activas.
 ⏰ El trading normal se reanudará mañana.
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_daily_pnl");
           }
         }
       }
@@ -2206,7 +2206,7 @@ El bot ha pausado las operaciones de COMPRA.
           this.lastTradeTime.set(pair, Date.now());
           
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🔄 <b>Posición Huérfana Eliminada</b>
 
@@ -2217,7 +2217,7 @@ El bot ha pausado las operaciones de COMPRA.
    • Real en Kraken: <code>${realAssetBalance.toFixed(8)}</code>
 
 ⚠️ La posición no existe en Kraken y fue eliminada.
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
           }
           
           await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
@@ -2238,7 +2238,7 @@ El bot ha pausado las operaciones de COMPRA.
         
         // Notificar ajuste
         if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendMessage(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🔧 <b>Posición Ajustada</b>
 
@@ -2249,7 +2249,7 @@ El bot ha pausado las operaciones de COMPRA.
    • Cantidad real: <code>${realAssetBalance.toFixed(8)}</code>
 
 ℹ️ Se usará la cantidad real para la venta.
-━━━━━━━━━━━━━━━━━━━`);
+━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
         }
         
         // Continuar con la venta usando el balance real
