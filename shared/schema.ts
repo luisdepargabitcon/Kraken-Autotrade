@@ -62,6 +62,7 @@ export const botConfig = pgTable("bot_config", {
   takerFeePct: decimal("taker_fee_pct", { precision: 5, scale: 3 }).notNull().default("0.400"),
   makerFeePct: decimal("maker_fee_pct", { precision: 5, scale: 3 }).notNull().default("0.250"),
   profitBufferPct: decimal("profit_buffer_pct", { precision: 5, scale: 2 }).notNull().default("1.00"),
+  minBeFloorPct: decimal("min_be_floor_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
   timeStopHours: integer("time_stop_hours").notNull().default(36),
   timeStopMode: text("time_stop_mode").notNull().default("soft"),
   // Telegram Notification Cooldowns (in seconds)
