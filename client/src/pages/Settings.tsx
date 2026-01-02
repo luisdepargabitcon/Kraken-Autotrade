@@ -104,6 +104,7 @@ interface BotConfig {
   takerFeePct: string;
   makerFeePct: string;
   profitBufferPct: string;
+  minBeFloorPct: string;
   timeStopHours: number;
   timeStopMode: string;
 }
@@ -765,6 +766,24 @@ export default function Settings() {
                                 data-testid="input-time-stop"
                               />
                               <p className="text-[10px] text-muted-foreground">Tiempo máximo posición abierta</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-emerald-500/20">
+                            <div className="space-y-1 col-span-2">
+                              <Label className="text-xs">BE Mínimo ATR (%)</Label>
+                              <Input
+                                type="number"
+                                step="0.1"
+                                min={1.0}
+                                max={5.0}
+                                value={config.minBeFloorPct || "2.00"}
+                                onChange={(e) => updateMutation.mutate({ minBeFloorPct: e.target.value })}
+                                className="h-8 text-xs font-mono bg-background/50 w-24"
+                                data-testid="input-min-be-floor"
+                              />
+                              <p className="text-[10px] text-muted-foreground">
+                                Piso mínimo para activación de Break-Even con ATR. Debe ser mayor que fees + buffer ({((parseFloat(config.takerFeePct || "0.40") * 2) + parseFloat(config.profitBufferPct || "1.00")).toFixed(2)}%) para evitar ventas inmediatas.
+                              </p>
                             </div>
                           </div>
                           <div className="flex items-center justify-between p-2 bg-emerald-500/10 rounded">
