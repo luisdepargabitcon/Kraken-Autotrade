@@ -1,0 +1,2027 @@
+[
+  {
+    "id": 43351,
+    "timestamp": "2026-01-02T22:59:48.272Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:59:17.632Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394757745"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43350,
+    "timestamp": "2026-01-02T22:59:47.603Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:59:17.632Z",
+      "lastScanId": "scan-1767394757745",
+      "timeSinceLastScanMs": 29970,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43349,
+    "timestamp": "2026-01-02T22:58:47.602Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:58:17.629Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394697770"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43348,
+    "timestamp": "2026-01-02T22:58:47.599Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:58:17.629Z",
+      "lastScanId": "scan-1767394697770",
+      "timeSinceLastScanMs": 29970,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43347,
+    "timestamp": "2026-01-02T22:57:47.597Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:57:17.624Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394637774"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43346,
+    "timestamp": "2026-01-02T22:57:47.594Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:57:17.624Z",
+      "lastScanId": "scan-1767394637774",
+      "timeSinceLastScanMs": 29970,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43345,
+    "timestamp": "2026-01-02T22:56:47.602Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:56:17.636Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394577747"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43344,
+    "timestamp": "2026-01-02T22:56:47.598Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:56:17.636Z",
+      "lastScanId": "scan-1767394577747",
+      "timeSinceLastScanMs": 29962,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43343,
+    "timestamp": "2026-01-02T22:55:47.616Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:55:17.608Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394517726"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43342,
+    "timestamp": "2026-01-02T22:55:47.582Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:55:17.608Z",
+      "lastScanId": "scan-1767394517726",
+      "timeSinceLastScanMs": 29973,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43341,
+    "timestamp": "2026-01-02T22:54:47.587Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:54:17.606Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394457728"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43340,
+    "timestamp": "2026-01-02T22:54:47.584Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:54:17.606Z",
+      "lastScanId": "scan-1767394457728",
+      "timeSinceLastScanMs": 29977,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43339,
+    "timestamp": "2026-01-02T22:53:48.158Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:53:17.603Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394397714"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43338,
+    "timestamp": "2026-01-02T22:53:47.571Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:53:17.603Z",
+      "lastScanId": "scan-1767394397714",
+      "timeSinceLastScanMs": 29968,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43337,
+    "timestamp": "2026-01-02T22:52:47.589Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:52:17.596Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394337765"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43336,
+    "timestamp": "2026-01-02T22:52:47.583Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:52:17.596Z",
+      "lastScanId": "scan-1767394337765",
+      "timeSinceLastScanMs": 29986,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43335,
+    "timestamp": "2026-01-02T22:51:47.579Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:51:17.592Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394277705"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43334,
+    "timestamp": "2026-01-02T22:51:47.576Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:51:17.592Z",
+      "lastScanId": "scan-1767394277705",
+      "timeSinceLastScanMs": 29984,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43333,
+    "timestamp": "2026-01-02T22:50:47.571Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:50:17.592Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394217691"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43332,
+    "timestamp": "2026-01-02T22:50:47.567Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:50:17.592Z",
+      "lastScanId": "scan-1767394217691",
+      "timeSinceLastScanMs": 29975,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43331,
+    "timestamp": "2026-01-02T22:49:47.569Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:49:17.593Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394157702"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43330,
+    "timestamp": "2026-01-02T22:49:47.566Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:49:17.593Z",
+      "lastScanId": "scan-1767394157702",
+      "timeSinceLastScanMs": 29972,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43329,
+    "timestamp": "2026-01-02T22:48:47.568Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:48:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394097702"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43328,
+    "timestamp": "2026-01-02T22:48:47.565Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:48:17.589Z",
+      "lastScanId": "scan-1767394097702",
+      "timeSinceLastScanMs": 29975,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43327,
+    "timestamp": "2026-01-02T22:47:48.174Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:47:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767394037709"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43326,
+    "timestamp": "2026-01-02T22:47:47.558Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:47:17.589Z",
+      "lastScanId": "scan-1767394037709",
+      "timeSinceLastScanMs": 29968,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43325,
+    "timestamp": "2026-01-02T22:46:47.559Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:46:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393977704"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43324,
+    "timestamp": "2026-01-02T22:46:47.556Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:46:17.589Z",
+      "lastScanId": "scan-1767393977704",
+      "timeSinceLastScanMs": 29966,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43323,
+    "timestamp": "2026-01-02T22:45:47.555Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Señal filtrada por MTF: Tendencia 1h y 4h alcista",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=2/sell=3",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=3",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Señal filtrada por MTF: Tendencia 1h y 4h alcista",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal clara velas: sellSignals=2 < minRequired=4 | buy=1/sell=2",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:45:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393917703"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43322,
+    "timestamp": "2026-01-02T22:45:47.552Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:45:17.589Z",
+      "lastScanId": "scan-1767393917703",
+      "timeSinceLastScanMs": 29962,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43321,
+    "timestamp": "2026-01-02T22:44:47.563Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:44:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393857709"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43320,
+    "timestamp": "2026-01-02T22:44:47.548Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:44:17.589Z",
+      "lastScanId": "scan-1767393857709",
+      "timeSinceLastScanMs": 29958,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43319,
+    "timestamp": "2026-01-02T22:43:47.548Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:43:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393797823"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43318,
+    "timestamp": "2026-01-02T22:43:47.544Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:43:17.589Z",
+      "lastScanId": "scan-1767393797823",
+      "timeSinceLastScanMs": 29955,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43317,
+    "timestamp": "2026-01-02T22:42:47.543Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:42:17.590Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393737699"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43316,
+    "timestamp": "2026-01-02T22:42:47.539Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:42:17.590Z",
+      "lastScanId": "scan-1767393737699",
+      "timeSinceLastScanMs": 29949,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43315,
+    "timestamp": "2026-01-02T22:41:48.048Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:41:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393677730"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43314,
+    "timestamp": "2026-01-02T22:41:47.532Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:41:17.589Z",
+      "lastScanId": "scan-1767393677730",
+      "timeSinceLastScanMs": 29942,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43313,
+    "timestamp": "2026-01-02T22:40:47.526Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:40:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393617698"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43312,
+    "timestamp": "2026-01-02T22:40:47.523Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:40:17.589Z",
+      "lastScanId": "scan-1767393617698",
+      "timeSinceLastScanMs": 29934,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43311,
+    "timestamp": "2026-01-02T22:39:47.527Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:39:17.588Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393557770"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43310,
+    "timestamp": "2026-01-02T22:39:47.524Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:39:17.588Z",
+      "lastScanId": "scan-1767393557770",
+      "timeSinceLastScanMs": 29935,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43309,
+    "timestamp": "2026-01-02T22:38:47.526Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:38:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393497708"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43308,
+    "timestamp": "2026-01-02T22:38:47.522Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:38:17.589Z",
+      "lastScanId": "scan-1767393497708",
+      "timeSinceLastScanMs": 29932,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43307,
+    "timestamp": "2026-01-02T22:37:47.516Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:37:17.588Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393437769"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43306,
+    "timestamp": "2026-01-02T22:37:47.513Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:37:17.588Z",
+      "lastScanId": "scan-1767393437769",
+      "timeSinceLastScanMs": 29924,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43305,
+    "timestamp": "2026-01-02T22:36:47.513Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:36:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393377703"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43304,
+    "timestamp": "2026-01-02T22:36:47.510Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:36:17.589Z",
+      "lastScanId": "scan-1767393377703",
+      "timeSinceLastScanMs": 29921,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43303,
+    "timestamp": "2026-01-02T22:35:48.139Z",
+    "level": "INFO",
+    "type": "MARKET_SCAN_SUMMARY",
+    "message": "Resumen de escaneo de mercado",
+    "meta": {
+      "pairs": {
+        "BTC/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=33, EMAs alineadas)"
+        },
+        "ETH/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=66, EMAs alineadas)"
+        },
+        "XRP/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=57, EMAs alineadas)"
+        },
+        "SOL/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=31, EMAs alineadas)"
+        },
+        "TON/USD": {
+          "signal": "NONE",
+          "reason": "Sin señal en este ciclo",
+          "exposureAvailable": 453.2189,
+          "regime": "TREND",
+          "regimeReason": "Tendencia alcista (ADX=47, EMAs alineadas)"
+        }
+      },
+      "scanTime": "2026-01-02T22:35:17.589Z",
+      "regimeDetectionEnabled": true,
+      "_meta": {
+        "sourceCount": 5,
+        "builtCount": 5,
+        "scanId": "scan-1767393317696"
+      },
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  },
+  {
+    "id": 43302,
+    "timestamp": "2026-01-02T22:35:47.505Z",
+    "level": "INFO",
+    "type": "ENGINE_TICK",
+    "message": "Motor activo - escaneo en curso",
+    "meta": {
+      "activePairs": [
+        "BTC/USD",
+        "ETH/USD",
+        "XRP/USD",
+        "SOL/USD",
+        "TON/USD"
+      ],
+      "openPositionsCount": 0,
+      "openPositionsPairs": [],
+      "lastScanAt": "2026-01-02T22:35:17.589Z",
+      "lastScanId": "scan-1767393317696",
+      "timeSinceLastScanMs": 29916,
+      "balanceUsd": 453.2189,
+      "isDailyLimitReached": false,
+      "dailyPnL": 0,
+      "env": "NAS/PROD",
+      "instanceId": "1fa2024621d5-139-897c1e9f"
+    }
+  }
+]
