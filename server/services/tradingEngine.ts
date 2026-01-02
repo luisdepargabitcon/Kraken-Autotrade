@@ -4915,7 +4915,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     atrPercent: number,
     regime: MarketRegime,
     adaptiveEnabled: boolean,
-    historyLength: number = 0  // Pass history.length to validate ATR data quality
+    historyLength: number = 0,  // Pass history.length to validate ATR data quality
+    minBeFloorPct: number = 2.0  // Configurable minimum BE floor (default 2.0%)
   ): {
     slPct: number;       // Stop-loss percentage
     tpPct: number;       // Take-profit percentage
@@ -4936,7 +4937,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     // Safety floors to match SMART_GUARD historic defaults
     const MIN_SL_FLOOR = 2.0;   // Never less than 2% SL to avoid hypersensitive exits
     const MIN_TRAIL_FLOOR = 0.75; // Minimum trail distance
-    const MIN_BE_FLOOR = 0.5;   // Minimum BE activation
+    // MIN_BE_FLOOR now comes from configurable parameter minBeFloorPct (default 2.0%)
+    // This ensures BE activation is always > stop BE level (fees + buffer)
     
     // If adaptive exit not enabled, use static regime presets
     if (!adaptiveEnabled) {
@@ -4985,7 +4987,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const finalSl = Math.max(MIN_SL_FLOOR, Math.min(8.0, dynamicSlPct));
     const finalTp = Math.max(MIN_TP_FLOOR, Math.min(15.0, dynamicTpPct));  // Fee-gated floor
     const finalTrail = Math.max(MIN_TRAIL_FLOOR, Math.min(4.0, dynamicTrailPct));
-    const finalBe = Math.max(MIN_BE_FLOOR, Math.min(3.0, dynamicBePct));
+    const finalBe = Math.max(minBeFloorPct, Math.min(3.0, dynamicBePct));
     
     log(`[ATR_EXIT] ${pair}: ATR=${clampedAtr.toFixed(2)}% regime=${regime} → SL=${finalSl.toFixed(2)}% TP=${finalTp.toFixed(2)}% Trail=${finalTrail.toFixed(2)}% BE=${finalBe.toFixed(2)}% (minTP=${MIN_TP_FLOOR.toFixed(2)}%)`, "trading");
     
@@ -5779,8 +5781,11 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                   const history = this.priceHistory.get(pair) || [];
                   const atrPercent = this.calculateATRPercent(history, 14);
                   
+                  // Get configurable minBeFloorPct (default 2.0%)
+                  const minBeFloorPct = parseFloat(currentConfig?.minBeFloorPct?.toString() || "2.0");
+                  
                   const atrExits = this.calculateAtrBasedExits(
-                    pair, price, atrPercent, regimeAnalysis.regime, true, history.length
+                    pair, price, atrPercent, regimeAnalysis.regime, true, history.length, minBeFloorPct
                   );
                   
                   configSnapshot.stopLossPercent = atrExits.slPct;
