@@ -1,0 +1,41 @@
+=> exporting manifest sha256:f3d2f80ac499739365e6f07b0fe1f91820d043b999437535f54904ce693a0d2b                  0.0s
+ => => exporting config sha256:e1d6b3b09d8ae9fa18f06442de2614422cbdcb4283c382af9e003ceffba26ecf                    0.0s
+ => => exporting attestation manifest sha256:151e2c4cdcf811b9d8560c1b22f91f22c33eb40d84bea4d250922ac21df9a490      0.0s
+ => => exporting manifest list sha256:5eceac8c2be710e80844e9625d67cefec9c57e8159a491a15c9f87e97c974680             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               8.0s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] build 1/1
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                            30.4s
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+WARN[0000] No services to build
+[+] up 3/3
+ ✔ Network krakenbot-staging_krakenbot-staging-net Created                                                         0.0s
+ ✔ Container krakenbot-staging-db                  Created                                                         0.8s
+ ✔ Container krakenbot-staging-app                 Created                                                         0.0s
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:21:18 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:21:18 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:21:18 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:21:18 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:21:40 PM [vite] (client) Pre-transform error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
