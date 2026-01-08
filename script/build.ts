@@ -58,8 +58,19 @@ async function buildAll() {
       "process.env.NODE_ENV": '"production"',
     },
     minify: true,
-    external: [...externals, "./vite"],
+    external: externals,
     logLevel: "info",
+    treeShaking: true,
+    drop: ["debugger"],
+    plugins: [{
+      name: 'exclude-vite-dev',
+      setup(build) {
+        build.onResolve({ filter: /^\.\/vite$/ }, () => ({
+          path: './vite',
+          external: true,
+        }));
+      },
+    }],
   });
 }
 
