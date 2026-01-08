@@ -170,7 +170,7 @@ When multiple exit systems are active, they follow this priority order:
 
 **Configuración:**
 - **Kraken**: Default, siempre activo, fees 0.40% taker / 0.25% maker
-- **Revolut X**: Opcional, requiere cuenta Business, fees 0.09% taker / 0.00% maker (77% más barato)
+- **Revolut X**: Opcional, exchange cripto retail, fees 0.09% taker / 0.00% maker (77% más barato)
 - Solo un exchange activo a la vez
 - Al menos un exchange debe estar habilitado
 

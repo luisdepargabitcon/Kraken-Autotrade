@@ -272,7 +272,7 @@ export default function Integrations() {
                       Revolut X Exchange
                       <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">0.09% fees</span>
                     </CardTitle>
-                    <CardDescription>Exchange con fees muy bajos (77% menos que Kraken). Requiere cuenta Business.</CardDescription>
+                    <CardDescription>Exchange cripto con fees muy bajos (77% menos que Kraken).</CardDescription>
                   </div>
                   {revolutxConnected ? (
                     <div className="flex items-center gap-2 text-green-500">
@@ -337,7 +337,7 @@ export default function Integrations() {
                   {revolutxMutation.isPending ? "Conectando..." : revolutxConnected ? "Reconectar" : "Conectar a Revolut X"}
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  Obtén tus credenciales en <a href="https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api" target="_blank" rel="noopener" className="text-primary hover:underline">developer.revolut.com</a>. Requiere cuenta Revolut Business.
+                  Obtén tus credenciales en <a href="https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api" target="_blank" rel="noopener" className="text-primary hover:underline">developer.revolut.com</a> (Revolut X Crypto Exchange API).
                 </p>
                 
                 {revolutxConnected && (
