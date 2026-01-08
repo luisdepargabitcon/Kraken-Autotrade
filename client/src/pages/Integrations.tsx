@@ -5,17 +5,31 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Server, Check, Plug, Eye, EyeOff, ArrowRight } from "lucide-react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { MessageSquare, Server, Check, Plug, Eye, EyeOff, ArrowRight, Zap, Crown } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
 export default function Integrations() {
+  const queryClient = useQueryClient();
+  
   const [krakenApiKey, setKrakenApiKey] = useState("");
   const [krakenSecret, setKrakenSecret] = useState("");
   const [krakenConnected, setKrakenConnected] = useState(false);
+  const [krakenEnabled, setKrakenEnabled] = useState(true);
   const [showKrakenKey, setShowKrakenKey] = useState(false);
   const [showKrakenSecret, setShowKrakenSecret] = useState(false);
+  
+  const [revolutxApiKey, setRevolutxApiKey] = useState("");
+  const [revolutxPrivateKey, setRevolutxPrivateKey] = useState("");
+  const [revolutxConnected, setRevolutxConnected] = useState(false);
+  const [revolutxEnabled, setRevolutxEnabled] = useState(false);
+  const [showRevolutxKey, setShowRevolutxKey] = useState(false);
+  const [showRevolutxPrivateKey, setShowRevolutxPrivateKey] = useState(false);
+  
+  const [activeExchange, setActiveExchange] = useState<"kraken" | "revolutx">("kraken");
   
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
@@ -34,6 +48,10 @@ export default function Integrations() {
   useEffect(() => {
     if (apiConfig) {
       setKrakenConnected(apiConfig.krakenConnected);
+      setKrakenEnabled(apiConfig.krakenEnabled ?? true);
+      setRevolutxConnected(apiConfig.revolutxConnected ?? false);
+      setRevolutxEnabled(apiConfig.revolutxEnabled ?? false);
+      setActiveExchange(apiConfig.activeExchange ?? "kraken");
       setTelegramConnected(apiConfig.telegramConnected);
     }
   }, [apiConfig]);
@@ -54,6 +72,49 @@ export default function Integrations() {
     },
     onError: () => {
       toast.error("Error al conectar con Kraken");
+    },
+  });
+
+  const revolutxMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/config/revolutx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: revolutxApiKey, privateKey: revolutxPrivateKey }),
+      });
+      if (!res.ok) throw new Error("Failed to connect");
+      return res.json();
+    },
+    onSuccess: () => {
+      setRevolutxConnected(true);
+      queryClient.invalidateQueries({ queryKey: ["apiConfig"] });
+      toast.success("Revolut X conectado correctamente");
+    },
+    onError: () => {
+      toast.error("Error al conectar con Revolut X");
+    },
+  });
+
+  const activeExchangeMutation = useMutation({
+    mutationFn: async (exchange: "kraken" | "revolutx") => {
+      const res = await fetch("/api/config/active-exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activeExchange: exchange }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to change exchange");
+      }
+      return res.json();
+    },
+    onSuccess: (_, exchange) => {
+      setActiveExchange(exchange);
+      queryClient.invalidateQueries({ queryKey: ["apiConfig"] });
+      toast.success(`Exchange activo cambiado a ${exchange === "kraken" ? "Kraken" : "Revolut X"}`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
     },
   });
 
@@ -179,6 +240,123 @@ export default function Integrations() {
                 <p className="text-xs text-muted-foreground">
                   Obtén tus credenciales en <a href="https://www.kraken.com/u/security/api" target="_blank" rel="noopener" className="text-primary hover:underline">kraken.com/u/security/api</a>
                 </p>
+                
+                {krakenConnected && (
+                  <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                    <div className="flex items-center gap-2">
+                      {activeExchange === "kraken" && <Crown className="h-4 w-4 text-yellow-500" />}
+                      <span className="text-sm">{activeExchange === "kraken" ? "Exchange activo" : "Usar como exchange activo"}</span>
+                    </div>
+                    <Button
+                      variant={activeExchange === "kraken" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => activeExchangeMutation.mutate("kraken")}
+                      disabled={activeExchange === "kraken" || activeExchangeMutation.isPending}
+                      data-testid="button-activate-kraken"
+                    >
+                      {activeExchange === "kraken" ? "Activo" : "Activar"}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-500/20 rounded-lg">
+                    <Zap className="h-6 w-6 text-purple-400" />
+                  </div>
+                  <div className="flex-1">
+                    <CardTitle className="flex items-center gap-2">
+                      Revolut X Exchange
+                      <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">0.09% fees</span>
+                    </CardTitle>
+                    <CardDescription>Exchange con fees muy bajos (77% menos que Kraken). Requiere cuenta Business.</CardDescription>
+                  </div>
+                  {revolutxConnected ? (
+                    <div className="flex items-center gap-2 text-green-500">
+                      <Check className="h-5 w-5" />
+                      <span className="text-sm font-mono">CONECTADO</span>
+                    </div>
+                  ) : (
+                    <span className="text-sm font-mono text-yellow-500">DESCONECTADO</span>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-2">
+                  <Label>API Key (64 caracteres)</Label>
+                  <div className="relative">
+                    <Input 
+                      type={showRevolutxKey ? "text" : "password"}
+                      placeholder="Tu Revolut X API Key" 
+                      className="font-mono bg-background/50 pr-10"
+                      value={revolutxApiKey}
+                      onChange={(e) => setRevolutxApiKey(e.target.value)}
+                      data-testid="input-revolutx-api-key"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-0 top-0 h-full"
+                      onClick={() => setShowRevolutxKey(!showRevolutxKey)}
+                    >
+                      {showRevolutxKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Private Key (Ed25519 PEM)</Label>
+                  <div className="relative">
+                    <Textarea 
+                      placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                      className="font-mono bg-background/50 min-h-[80px] text-xs"
+                      value={revolutxPrivateKey}
+                      onChange={(e) => setRevolutxPrivateKey(e.target.value)}
+                      data-testid="input-revolutx-private-key"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-2 top-2"
+                      onClick={() => setShowRevolutxPrivateKey(!showRevolutxPrivateKey)}
+                    >
+                      {showRevolutxPrivateKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <Button 
+                  className="w-full bg-purple-600 hover:bg-purple-700" 
+                  onClick={() => revolutxMutation.mutate()}
+                  disabled={!revolutxApiKey || !revolutxPrivateKey || revolutxMutation.isPending}
+                  data-testid="button-connect-revolutx"
+                >
+                  {revolutxMutation.isPending ? "Conectando..." : revolutxConnected ? "Reconectar" : "Conectar a Revolut X"}
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Obtén tus credenciales en <a href="https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api" target="_blank" rel="noopener" className="text-primary hover:underline">developer.revolut.com</a>. Requiere cuenta Revolut Business.
+                </p>
+                
+                {revolutxConnected && (
+                  <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                    <div className="flex items-center gap-2">
+                      {activeExchange === "revolutx" && <Crown className="h-4 w-4 text-yellow-500" />}
+                      <span className="text-sm">{activeExchange === "revolutx" ? "Exchange activo" : "Usar como exchange activo"}</span>
+                    </div>
+                    <Button
+                      variant={activeExchange === "revolutx" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => activeExchangeMutation.mutate("revolutx")}
+                      disabled={activeExchange === "revolutx" || activeExchangeMutation.isPending}
+                      data-testid="button-activate-revolutx"
+                    >
+                      {activeExchange === "revolutx" ? "Activo" : "Activar"}
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
