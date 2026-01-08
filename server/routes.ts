@@ -9,6 +9,7 @@ import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { environment } from "./services/environment";
+import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
 
 let tradingEngine: TradingEngine | null = null;
@@ -71,6 +72,18 @@ export async function registerRoutes(
   try {
     const apiConfig = await storage.getApiConfig();
     if (apiConfig) {
+      // Initialize ExchangeFactory with all exchange credentials
+      await ExchangeFactory.initializeFromConfig({
+        krakenApiKey: apiConfig.krakenApiKey ?? undefined,
+        krakenApiSecret: apiConfig.krakenApiSecret ?? undefined,
+        krakenEnabled: apiConfig.krakenEnabled ?? true,
+        revolutxApiKey: apiConfig.revolutxApiKey ?? undefined,
+        revolutxPrivateKey: apiConfig.revolutxPrivateKey ?? undefined,
+        revolutxEnabled: apiConfig.revolutxEnabled ?? false,
+        activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx") ?? "kraken",
+      });
+      console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType()}`);
+      
       if (apiConfig.krakenApiKey && apiConfig.krakenApiSecret && apiConfig.krakenConnected) {
         krakenService.initialize({
           apiKey: apiConfig.krakenApiKey,
@@ -269,8 +282,16 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Revolut X no está conectado. Configura las credenciales primero." });
       }
 
+      // Update ExchangeFactory runtime state
+      try {
+        ExchangeFactory.setActiveExchange(activeExchange);
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message });
+      }
+
       await storage.updateApiConfig({ activeExchange });
       
+      console.log(`[exchange] Active exchange changed to: ${activeExchange}`);
       res.json({ success: true, activeExchange });
     } catch (error) {
       res.status(500).json({ error: "Failed to change active exchange" });

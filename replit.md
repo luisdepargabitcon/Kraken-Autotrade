@@ -157,17 +157,29 @@ When multiple exit systems are active, they follow this priority order:
 - TRANSITION overrides completos para exits (BE/Trailing/TP)
 - Mean Reversion SELL (requiere cambio en SMART_GUARD sell-flow)
 
-### Multi-Exchange Support (Revolut X)
-**Investigado 2026-01-01 - PENDIENTE DE IMPLEMENTACIÓN**
-- **Viabilidad**: Confirmada - API REST completa disponible
-- **Tiempo estimado**: 4-5 días
-- **Requisito**: Cuenta Revolut Business (no personal)
-- **Fees Revolut X**: 0% maker, 0.09% taker (más barato que Kraken)
-- **Autenticación**: Ed25519 (diferente a HMAC-SHA512 de Kraken)
-- **Documentación**: https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api
-- **Implementación necesaria**:
-  1. Crear interfaz `IExchangeService` abstracta
-  2. Refactorizar `KrakenService` para implementar interfaz
-  3. Implementar `RevolutXService` con cliente Ed25519
-  4. UI selector de exchange en Integraciones
-  5. Adaptar Trading Engine para inyección dinámica de exchange
+### Multi-Exchange Support (FASE 1 - IMPLEMENTADO 2026-01-08)
+**Objetivo**: Permitir usar múltiples exchanges (Kraken + Revolut X) para trading.
+
+**Implementación completada:**
+1. **IExchangeService interface**: Abstracción común para todos los exchanges en `server/services/exchanges/IExchangeService.ts`
+2. **RevolutXService**: Implementación para Revolut X con autenticación Ed25519 en `server/services/exchanges/RevolutXService.ts`
+3. **ExchangeFactory**: Selector dinámico de exchange en `server/services/exchanges/ExchangeFactory.ts`
+4. **Schema**: Campos añadidos en `api_config`: `revolutxApiKey`, `revolutxPrivateKey`, `revolutxConnected`, `revolutxEnabled`, `krakenEnabled`, `activeExchange`
+5. **UI**: Página de Integraciones actualizada con tarjeta Revolut X y selector de exchange activo
+6. **API Routes**: Nuevos endpoints `/api/config/revolutx` y `/api/config/active-exchange`
+
+**Configuración:**
+- **Kraken**: Default, siempre activo, fees 0.40% taker / 0.25% maker
+- **Revolut X**: Opcional, requiere cuenta Business, fees 0.09% taker / 0.00% maker (77% más barato)
+- Solo un exchange activo a la vez
+- Al menos un exchange debe estar habilitado
+
+**Seguridad:**
+- Credenciales almacenadas en base de datos, nunca en código
+- Validación al cambiar exchange activo (debe estar conectado primero)
+- DRY_RUN automático en Replit
+
+**Pendiente (FASE 2):**
+- Integración completa con TradingEngine para usar exchange dinámico en operaciones
+- Testing con cuenta real de Revolut X
+- Documentación API Revolut X detallada
