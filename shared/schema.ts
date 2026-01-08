@@ -76,9 +76,19 @@ export const botConfig = pgTable("bot_config", {
 
 export const apiConfig = pgTable("api_config", {
   id: serial("id").primaryKey(),
+  // Kraken configuration
   krakenApiKey: text("kraken_api_key"),
   krakenApiSecret: text("kraken_api_secret"),
   krakenConnected: boolean("kraken_connected").notNull().default(false),
+  krakenEnabled: boolean("kraken_enabled").notNull().default(true),
+  // Revolut X configuration
+  revolutxApiKey: text("revolutx_api_key"),
+  revolutxPrivateKey: text("revolutx_private_key"),
+  revolutxConnected: boolean("revolutx_connected").notNull().default(false),
+  revolutxEnabled: boolean("revolutx_enabled").notNull().default(false),
+  // Active exchange selector
+  activeExchange: text("active_exchange").notNull().default("kraken"),
+  // Telegram configuration
   telegramToken: text("telegram_token"),
   telegramChatId: text("telegram_chat_id"),
   telegramConnected: boolean("telegram_connected").notNull().default(false),
