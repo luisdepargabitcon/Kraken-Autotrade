@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { EnvironmentBadge } from "@/components/dashboard/EnvironmentBadge";
-import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";

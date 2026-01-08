@@ -1,0 +1,353 @@
+root@ubuntu:/opt/krakenbot-staging# # Verificar si existe el directorio
+ls -la attached_assets/generated_images/
+
+# Si no existe, crear directorio y placeholder
+mkdir -p attached_assets/generated_images
+touch attached_assets/generated_images/dark_digital_hex_grid_background.png
+
+# Reiniciar
+docker restart krakenbot-staging-app
+
+# Ver logs
+docker logs -f krakenbot-staging-app
+total 1424
+drwxr-xr-x 2 root root    4096 Dec  8 18:22 .
+drwxr-xr-x 3 root root   36864 Jan  4 13:09 ..
+-rw-r--r-- 1 root root 1414454 Jan  8 21:14 dark_digital_hex_grid_background.png
+krakenbot-staging-app
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:12:19 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:12:19 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:12:19 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:12:20 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:13:06 PM [vite] (client) Pre-transform error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:13:08 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:13:08 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:13:08 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:13:08 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:13:10 PM [vite] (client) Pre-transform error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Wallet.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Wallet.tsx:4:27
+  4  |  import { Nav } from "@/components/dashboard/Nav";
+  5  |  import { Ticker } from "@/components/dashboard/Ticker";
+  6  |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  7  |  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+  8  |  import { Progress } from "@/components/ui/progress";
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:13:11 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:13:11 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:13:11 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:13:12 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:13:12 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Wallet.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Wallet.tsx:4:27
+  4  |  import { Nav } from "@/components/dashboard/Nav";
+  5  |  import { Ticker } from "@/components/dashboard/Ticker";
+  6  |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  7  |  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+  8  |  import { Progress } from "@/components/ui/progress";
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 4)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:13:14 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:13:14 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:13:14 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:13:14 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:13:15 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 12)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:13:17 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:13:17 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:13:17 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:13:18 PM [express] serving on port 5000
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:14:21 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:14:21 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:14:21 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:14:21 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:14:57 PM [vite] (client) Pre-transform error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:14:58 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:14:58 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:14:58 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:14:59 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:15:00 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 12)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:15:01 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:15:01 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:15:01 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:15:01 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:15:02 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Guide.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Guide.tsx:2:27
+  1  |  import { jsxDEV } from "react/jsx-dev-runtime";
+  2  |  import { Nav } from "@/components/dashboard/Nav";
+  3  |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  4  |  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+  5  |  import { Badge } from "@/components/ui/badge";
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 2)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:15:04 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:15:04 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:15:04 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:15:04 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:15:05 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Wallet.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Wallet.tsx:4:27
+  4  |  import { Nav } from "@/components/dashboard/Nav";
+  5  |  import { Ticker } from "@/components/dashboard/Ticker";
+  6  |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  7  |  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+  8  |  import { Progress } from "@/components/ui/progress";
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 4)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:15:07 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:15:07 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:15:07 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:15:07 PM [express] serving on port 5000
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+9:15:08 PM [vite] Internal server error: Failed to resolve import "@assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /app/client/src/pages/Dashboard.tsx:12:27
+  12 |  import { AlertCircle } from "lucide-react";
+  13 |  import { Link } from "wouter";
+  14 |  import generatedImage from "@assets/generated_images/dark_digital_hex_grid_background.png";
+     |                              ^
+  15 |  export default function Dashboard() {
+  16 |    _s();
+      at TransformPluginContext._formatLog (/app/node_modules/vite/dist/node/chunks/config.js:31106:43)
+      at TransformPluginContext.error (/app/node_modules/vite/dist/node/chunks/config.js:31103:14)
+      at normalizeUrl (/app/node_modules/vite/dist/node/chunks/config.js:29590:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/app/node_modules/vite/dist/node/chunks/config.js:29648:32)
+      at async Promise.all (index 12)
+      at async TransformPluginContext.transform (/app/node_modules/vite/dist/node/chunks/config.js:29616:4)
+      at async EnvironmentPluginContainer.transform (/app/node_modules/vite/dist/node/chunks/config.js:30905:14)
+      at async loadAndTransform (/app/node_modules/vite/dist/node/chunks/config.js:26043:26)
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:15:11 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:15:11 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:15:11 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:15:11 PM [express] serving on port 5000
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+9:16:59 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:16:59 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: DESACTIVADO (Replit)
+[startup] Telegram credentials loaded from database
+9:16:59 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+9:16:59 PM [express] serving on port 5000

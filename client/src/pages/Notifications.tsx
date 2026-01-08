@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Nav } from "@/components/dashboard/Nav";
-import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";

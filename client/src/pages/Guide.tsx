@@ -1,5 +1,5 @@
 import { Nav } from "@/components/dashboard/Nav";
-import generatedImage from '@assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
