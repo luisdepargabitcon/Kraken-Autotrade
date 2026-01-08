@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Ticker } from "@/components/dashboard/Ticker";
-import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Wallet as WalletIcon, TrendingUp, TrendingDown, PieChart, RefreshCw } from "lucide-react";

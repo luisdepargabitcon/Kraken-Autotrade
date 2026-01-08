@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { Nav } from "@/components/dashboard/Nav";
-import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

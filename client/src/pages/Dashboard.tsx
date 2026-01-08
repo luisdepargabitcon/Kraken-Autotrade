@@ -9,7 +9,7 @@ import { EventsPanel } from "@/components/dashboard/EventsPanel";
 import { EnvironmentBadge } from "@/components/dashboard/EnvironmentBadge";
 import { AlertCircle } from "lucide-react";
 import { Link } from "wouter";
-import generatedImage from '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png';
+import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 
 interface DashboardData {
   krakenConnected: boolean;
