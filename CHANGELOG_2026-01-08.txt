@@ -1,0 +1,68 @@
+================================================================================
+CHANGELOG - KrakenBot
+Fecha: 2026-01-08
+================================================================================
+
+IMPLEMENTACIONES DEL DÍA
+================================================================================
+
+1. CLARIFICACIÓN UI REVOLUT X
+--------------------------------------------------------------------------------
+Archivo: client/src/pages/Integrations.tsx
+
+- Actualizada descripción de Revolut X Exchange:
+  "Exchange cripto con fees muy bajos (77% menos que Kraken)."
+
+- Actualizado enlace de documentación:
+  "Obtén tus credenciales en developer.revolut.com (Revolut X Crypto Exchange API)."
+
+
+2. SCRIPT DE VERIFICACIÓN DE CÓDIGO
+--------------------------------------------------------------------------------
+Archivo nuevo: scripts/check-no-business.sh
+
+Script bash que verifica que el código fuente solo use endpoints de 
+Revolut X (exchange cripto retail).
+
+Endpoints permitidos verificados:
+  - /api/1.0/crypto-exchange/*  (órdenes de trading)
+  - /api/1.0/public/*           (datos de mercado públicos)
+  - /api/1.0/balances           (consulta de saldos)
+  - /api/1.0/currencies         (metadata de monedas)
+
+Uso:
+  chmod +x scripts/check-no-business.sh
+  ./scripts/check-no-business.sh
+
+
+3. DOCUMENTACIÓN ACTUALIZADA
+--------------------------------------------------------------------------------
+Archivo: replit.md
+
+- Actualizada sección de configuración Revolut X
+- Añadida sección "IMPORTANTE - No Revolut Business" con:
+  * Lista de endpoints permitidos
+  * Lista de endpoints prohibidos
+  * Referencia al script de verificación
+
+
+ARCHIVOS MODIFICADOS
+================================================================================
+- client/src/pages/Integrations.tsx  (2 líneas modificadas)
+- replit.md                          (sección añadida)
+- scripts/check-no-business.sh       (archivo nuevo, 45 líneas)
+
+
+COMMITS
+================================================================================
+- 3d9920fd - Remove references to Revolut Business from the application interface
+- 5d26482e - Remove Revolut Business references and add a verification script  
+- b3a9c693 - Remove outdated references to business accounts from the platform
+
+
+ESTADO FINAL
+================================================================================
+- Aplicación funcionando correctamente
+- Exchange activo: Kraken (default)
+- Revolut X: Configurado como opción secundaria
+- Script de verificación: Pasando (0 errores)
