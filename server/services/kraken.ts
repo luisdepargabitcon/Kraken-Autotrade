@@ -1,6 +1,7 @@
 import * as KrakenAPI from "node-kraken-api";
 import { telegramService } from "./telegram";
 import { storage } from "../storage";
+import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from "./exchanges/IExchangeService";
 
 const { Kraken } = KrakenAPI as any;
 
@@ -9,19 +10,17 @@ interface KrakenConfig {
   apiSecret: string;
 }
 
-export interface PairMetadata {
-  lotDecimals: number;
-  orderMin: number;
-  pairDecimals: number;
-  stepSize: number;
-}
+export { PairMetadata };
 
 const NONCE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [500, 1000, 2000];
 const METADATA_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-export class KrakenService {
+export class KrakenService implements IExchangeService {
+  readonly exchangeName = 'kraken';
+  readonly takerFeePct = 0.40;
+  readonly makerFeePct = 0.25;
   private client: any | null = null;
   private publicClient: any;
   private lastNonceAlertTime: number = 0;
@@ -182,12 +181,34 @@ export class KrakenService {
     }
   }
 
-  async getBalance() {
+  async getBalance(): Promise<Record<string, number>> {
+    if (!this.client) throw new Error("Kraken client not initialized");
+    const rawBalance = await this.executeWithNonceRetry("getBalance", () => this.client.balance());
+    const result: Record<string, number> = {};
+    for (const [asset, value] of Object.entries(rawBalance as Record<string, string>)) {
+      result[asset] = parseFloat(value);
+    }
+    return result;
+  }
+
+  async getBalanceRaw(): Promise<Record<string, string>> {
     if (!this.client) throw new Error("Kraken client not initialized");
     return await this.executeWithNonceRetry("getBalance", () => this.client.balance());
   }
 
-  async getTicker(pair: string) {
+  async getTicker(pair: string): Promise<Ticker> {
+    const krakenPair = this.formatPair(pair);
+    const response = await this.publicClient.ticker({ pair: krakenPair });
+    const tickerData = response[krakenPair] || Object.values(response)[0];
+    return {
+      bid: parseFloat(tickerData?.b?.[0] || '0'),
+      ask: parseFloat(tickerData?.a?.[0] || '0'),
+      last: parseFloat(tickerData?.c?.[0] || '0'),
+      volume24h: parseFloat(tickerData?.v?.[1] || '0')
+    };
+  }
+
+  async getTickerRaw(pair: string): Promise<any> {
     const krakenPair = this.formatPair(pair);
     const response = await this.publicClient.ticker({ pair: krakenPair });
     return response;
@@ -203,7 +224,46 @@ export class KrakenService {
     ordertype: string;
     price?: string;
     volume: string;
-  }) {
+  }): Promise<OrderResult> {
+    if (!this.client) throw new Error("Kraken client not initialized");
+    
+    const krakenPair = this.formatPair(params.pair);
+    const orderParams: any = {
+      pair: krakenPair,
+      type: params.type,
+      ordertype: params.ordertype,
+      volume: params.volume,
+    };
+
+    if (params.price) {
+      orderParams.price = params.price;
+    }
+
+    try {
+      const result = await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams)) as { txid?: string[] };
+      const txids = result?.txid || [];
+      return {
+        success: txids.length > 0,
+        orderId: txids[0],
+        txid: txids[0],
+        volume: parseFloat(params.volume),
+        price: params.price ? parseFloat(params.price) : undefined
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async placeOrderRaw(params: {
+    pair: string;
+    type: "buy" | "sell";
+    ordertype: string;
+    price?: string;
+    volume: string;
+  }): Promise<any> {
     if (!this.client) throw new Error("Kraken client not initialized");
     
     const krakenPair = this.formatPair(params.pair);
@@ -221,9 +281,14 @@ export class KrakenService {
     return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams));
   }
 
-  async cancelOrder(txid: string) {
+  async cancelOrder(txid: string): Promise<boolean> {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }));
+    try {
+      await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async getOpenOrders() {
@@ -325,6 +390,10 @@ export class KrakenService {
   }
 
   formatPairReverse(krakenPair: string): string {
+    return this.normalizePairFromExchange(krakenPair);
+  }
+
+  normalizePairFromExchange(krakenPair: string): string {
     const pairMap: Record<string, string> = {
       "XXBTZUSD": "BTC/USD",
       "XETHZUSD": "ETH/USD",

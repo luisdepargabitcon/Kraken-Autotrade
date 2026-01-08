@@ -27,12 +27,12 @@ class ExchangeFactoryClass {
       case 'revolutx':
         if (!revolutXService.isInitialized()) {
           console.warn('[ExchangeFactory] Revolut X not initialized, falling back to Kraken');
-          return krakenService as unknown as IExchangeService;
+          return krakenService;
         }
         return revolutXService;
       case 'kraken':
       default:
-        return krakenService as unknown as IExchangeService;
+        return krakenService;
     }
   }
 
