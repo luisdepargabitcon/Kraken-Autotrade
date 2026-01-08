@@ -1,0 +1,429 @@
+root@ubuntu:/opt/krakenbot-staging# # Parar todo
+docker compose -f docker-compose.staging.yml down
+
+# Eliminar imagen vieja
+docker rmi krakenbot-staging-krakenbot-staging-app:latest
+
+# Limpiar cache de Docker
+docker builder prune -f
+
+# Reconstruir desde cero
+docker compose -f docker-compose.staging.yml build --no-cache
+docker compose -f docker-compose.staging.yml up -d
+
+# Verificar que los archivos estén correctos dentro del contenedor
+docker exec krakenbot-staging-app head -15 /app/client/src/pages/Dashboard.tsx
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] down 3/3
+ ✔ Container krakenbot-staging-app                 Removed                                                         0.3s
+ ✔ Container krakenbot-staging-db                  Removed                                                         0.3s
+ ✔ Network krakenbot-staging_krakenbot-staging-net Removed                                                         0.2s
+Untagged: krakenbot-staging-krakenbot-staging-app:latest
+Deleted: sha256:38f4db1fde3e2e43ff7e4b6284a14534eb4474d2fb878db80ca2caec5d2edc24
+ID                                              RECLAIMABLE     SIZE            LAST ACCESSED
+jtjanzanngac0g80ei9213u76                       true            553MB           38 minutes ago
+nwtq3evp5kzcyc7vhepde0gbt                       true    553MB           20 minutes ago
+bhp1vbrn6hvfzoka1yfezptlh*                      true    283.8MB         2 minutes ago
+t0hsygrkncqap6reqbu5x0ivl                       true    553MB           29 minutes ago
+ev51bdslfnb4j6qhkunp47g6v                       true    553MB           33 minutes ago
+gegvmiyycrurtnxdvtwb1cslo*                      true    8.192kB         2 minutes ago
+q4d13uq9nbzqkqnyncoevnxs2*                      true    8.192kB         2 minutes ago
+rxwxqq09c5a3cblq0nmufd3dp                       true    553MB           11 minutes ago
+z6bvlcu5qes1cymlaxszoo0mh                       true    16.38kB         2 minutes ago
+ummuyewamowne1x0w1oibzc2l                       true    553MB           5 minutes ago
+pxgzz9j6wduhm7pd5vseuy2pi                       true    562.7MB         5 minutes ago
+qa4gtpq8bh7xbzkxmqsclc955                       true    562.7MB         33 minutes ago
+yc0irhqclrs3ddsr366512wu8                       true    562.7MB         11 minutes ago
+rhcf2blywnixgb37z4vua8bny                       true    562.7MB         20 minutes ago
+9vndexsjh23f25lesfv4tvbsd                       true    283.8MB         2 minutes ago
+uh84d67w4yeej6vzccj90x26r                       true    562.7MB         38 minutes ago
+tlm2uqu35p77g1e2ihz17fj3w                       true    562.7MB         29 minutes ago
+nekkwdh1ctza2fx1mgvxe9185                       true    456.6kB         5 minutes ago
+v5p63ct2gtqsgro01h78719tl                       true    456.6kB         20 minutes ago
+uela6w5e6dzdysdst5kw9rxod                       true    456.6kB         33 minutes ago
+woou0ksrwrxdfql67dl5023bd                       true    456.6kB         38 minutes ago
+vtu1qcrsxsmmrm5rhrunzrdp8                       true    450.1MB         2 minutes ago
+4wwriujyn2kgjdmql3mp623e9                       true    456.6kB         29 minutes ago
+a3ux7ojh14q8jt49kzm87gxww                       true    456.6kB         11 minutes ago
+6x8j0m2rljse4ll7qqnx7sgao                       true    380.9kB         2 minutes ago
+zxgko57083ztxzrae29d13zbs                       true    424.2MB         5 minutes ago
+u277g6qt4cyz0lgzewrv0rwip                       true    424.2MB         33 minutes ago
+f238nhpbvmv34b6nzyfwurrr2                       true    424.2MB         11 minutes ago
+fzrqntrx7b5km2d4aayc9qo7l                       true    424.2MB         20 minutes ago
+71rkobraj1wcnv0s9w428ugzs                       true    424.2MB         38 minutes ago
+cksqgs0xbfo0802x1emyi15eh                       true    424.2MB         29 minutes ago
+7g2re9jt586yk140zx67j8caq                       true    13.46MB         2 minutes ago
+hg3tqgbaomm0h5p8yyif3ptzl                       true    8.285kB         2 minutes ago
+z382ktxgvj15sljpxbn0n279q                       true    20.92kB         38 minutes ago
+6dl3wz5409z2k4nib9re03llf                       true    6.743MB         38 minutes ago
+dcv5gvrs51ks1yslyt7qpegim                       true    171.9MB         38 minutes ago
+09dal6huf0urhokz3bmuln3aa                       true    3.86MB          38 minutes ago
+Total:  10.46GB
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 18.6s (13/13) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 600B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  1.6s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  2.3s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => sha256:fd1849a5c548bc65ee47a64498951bda5d40e87d08efe9dca69b5c8cdedc7a52 443B / 443B                         0.5s
+ => => sha256:cb3325e64457574e24f92246e3da3376946e473d636209e1390eac47b50b26a3 1.26MB / 1.26MB                     0.4s
+ => => sha256:8d06ba6946d1f299d8f962e37906c77006df33d47050430a57f7893ec35af697 42.78MB / 42.78MB                   1.5s
+ => => extracting sha256:8d06ba6946d1f299d8f962e37906c77006df33d47050430a57f7893ec35af697                          0.8s
+ => => extracting sha256:cb3325e64457574e24f92246e3da3376946e473d636209e1390eac47b50b26a3                          0.0s
+ => => extracting sha256:fd1849a5c548bc65ee47a64498951bda5d40e87d08efe9dca69b5c8cdedc7a52                          0.0s
+ => [internal] load build context                                                                                  0.9s
+ => => transferring context: 282.21MB                                                                              0.9s
+ => [2/8] WORKDIR /app                                                                                             0.8s
+ => [3/8] RUN apk add --no-cache libc6-compat git                                                                  0.9s
+ => [4/8] COPY package.json package-lock.json* ./                                                                  0.1s
+ => [5/8] RUN npm install                                                                                          9.3s
+ => [6/8] COPY . .                                                                                                 1.0s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi         0.2s
+ => ERROR [8/8] RUN npm run build                                                                                  2.3s
+------
+ > [8/8] RUN npm run build:
+0.506
+0.506 > rest-express@1.0.0 build
+0.506 > tsx script/build.ts
+0.506
+1.087 building client...
+1.233 vite v7.1.12 building for production...
+1.396 transforming...
+2.193 ✓ 92 modules transformed.
+2.265 ✗ Build failed in 894ms
+2.267 Could not resolve "../../../attached_assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Dashboard.tsx"
+2.267 file: /app/client/src/pages/Dashboard.tsx
+2.267     at getRollupError (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:401:41)
+2.267     at error (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:397:42)
+2.267     at ModuleLoader.handleInvalidResolvedId (/app/node_modules/rollup/dist/es/shared/node-entry.js:21565:24)
+2.267     at <anonymous> (/app/node_modules/rollup/dist/es/shared/node-entry.js:21525:26) {
+2.267   code: 'UNRESOLVED_IMPORT',
+2.267   exporter: '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png',
+2.267   id: '/app/client/src/pages/Dashboard.tsx',
+2.267   watchFiles: [
+2.267     '/app/client/index.html',
+2.267     '/app/client/src/main.tsx',
+2.267     '/app/package.json',
+2.267     '/app/node_modules/react/jsx-runtime.js',
+2.267     '/app/node_modules/react-dom/client.js',
+2.267     '/app/client/src/components/ErrorBoundary.tsx',
+2.267     '/app/client/src/App.tsx',
+2.267     '/app/client/src/index.css',
+2.267     '/app/node_modules/tailwindcss/index.css',
+2.267     '/app/node_modules/tw-animate-css/dist/tw-animate.css',
+2.267     '/app/node_modules/react/cjs/react-jsx-runtime.production.js',
+2.267     '/app/client/src/context/EventsWebSocketContext.tsx',
+2.267     '/app/client/src/components/ui/calendar.tsx',
+2.267     '/app/client/src/components/ui/switch.tsx',
+2.267     '/app/client/src/components/ui/kbd.tsx',
+2.267     '/app/client/src/components/ui/sidebar.tsx',
+2.267     '/app/client/src/components/ui/hover-card.tsx',
+2.267     '/app/client/src/components/ui/select.tsx',
+2.267     '/app/client/src/components/ui/slider.tsx',
+2.267     '/app/client/src/components/ui/pagination.tsx',
+2.267     '/app/client/src/components/ui/context-menu.tsx',
+2.267     '/app/client/src/components/ui/form.tsx',
+2.267     '/app/client/src/components/ui/toast.tsx',
+2.267     '/app/client/src/components/ui/resizable.tsx',
+2.267     '/app/client/src/components/ui/item.tsx',
+2.267     '/app/client/src/components/ui/label.tsx',
+2.267     '/app/client/src/components/ui/table.tsx',
+2.267     '/app/client/src/components/ui/dropdown-menu.tsx',
+2.267     '/app/client/src/components/ui/aspect-ratio.tsx',
+2.267     '/app/client/src/components/ui/toggle-group.tsx',
+2.267     '/app/client/src/components/ui/alert-dialog.tsx',
+2.267     '/app/client/src/components/ui/spinner.tsx',
+2.267     '/app/client/src/components/ui/textarea.tsx',
+2.267     '/app/client/src/components/ui/radio-group.tsx',
+2.267     '/app/client/src/components/ui/dialog.tsx',
+2.267     '/app/client/src/components/ui/badge.tsx',
+2.267     '/app/client/src/components/ui/progress.tsx',
+2.267     '/app/client/src/components/ui/button.tsx',
+2.267     '/app/client/src/components/ui/command.tsx',
+2.267     '/app/client/src/components/ui/toaster.tsx',
+2.267     '/app/client/src/components/ui/accordion.tsx',
+2.267     '/app/client/src/components/ui/breadcrumb.tsx',
+2.267     '/app/client/src/components/ui/input.tsx',
+2.267     '/app/client/src/components/ui/navigation-menu.tsx',
+2.267     '/app/client/src/components/ui/input-group.tsx',
+2.267     '/app/client/src/components/ui/avatar.tsx',
+2.267     '/app/client/src/components/ui/sonner.tsx',
+2.267     '/app/client/src/components/ui/alert.tsx',
+2.267     '/app/client/src/components/ui/sheet.tsx',
+2.267     '/app/client/src/components/ui/popover.tsx',
+2.267     '/app/client/src/components/ui/carousel.tsx',
+2.267     '/app/client/src/components/ui/tooltip.tsx',
+2.267     '/app/client/src/components/ui/drawer.tsx',
+2.267     '/app/client/src/components/ui/card.tsx',
+2.267     '/app/client/src/components/ui/tabs.tsx',
+2.267     '/app/client/src/components/ui/checkbox.tsx',
+2.267     '/app/client/src/components/ui/empty.tsx',
+2.267     '/app/client/src/components/ui/scroll-area.tsx',
+2.267     '/app/client/src/components/ui/skeleton.tsx',
+2.267     '/app/client/src/components/ui/menubar.tsx',
+2.267     '/app/client/src/components/ui/toggle.tsx',
+2.267     '/app/client/src/components/ui/button-group.tsx',
+2.267     '/app/client/src/components/ui/field.tsx',
+2.267     '/app/client/src/components/ui/separator.tsx',
+2.267     '/app/client/src/components/ui/chart.tsx',
+2.267     '/app/client/src/components/ui/collapsible.tsx',
+2.267     '/app/client/src/components/ui/input-otp.tsx',
+2.267     '/app/client/src/components/mobile/MobileTradeCard.tsx',
+2.267     '/app/client/src/components/mobile/MobileTabBar.tsx',
+2.267     '/app/client/src/components/mobile/MobilePositionCard.tsx',
+2.267     '/app/client/src/components/dashboard/BotControl.tsx',
+2.267     '/app/client/src/components/dashboard/EventsPanel.tsx',
+2.267     '/app/client/src/components/dashboard/TradeLog.tsx',
+2.267     '/app/client/src/components/dashboard/AssetCard.tsx',
+2.267     '/app/client/src/components/dashboard/ChartWidget.tsx',
+2.267     '/app/client/src/components/dashboard/EnvironmentBadge.tsx',
+2.267     '/app/client/src/components/dashboard/Nav.tsx',
+2.267     '/app/client/src/components/dashboard/Ticker.tsx',
+2.267     '/app/client/src/hooks/use-mobile.tsx',
+2.267     '/app/client/src/hooks/useEventsWebSocket.ts',
+2.267     '/app/client/src/hooks/useTerminalWebSocket.ts',
+2.267     '/app/client/src/hooks/use-toast.ts',
+2.267     '/app/client/src/lib/utils.ts',
+2.267     '/app/client/src/lib/queryClient.ts',
+2.267     '/app/client/src/pages/Integrations.tsx',
+2.267     '/app/client/src/pages/Dashboard.tsx',
+2.267     '/app/client/src/pages/not-found.tsx',
+2.267     '/app/client/src/pages/Guide.tsx',
+2.267     '/app/client/src/pages/Settings.tsx',
+2.267     '/app/client/src/pages/Monitor.tsx',
+2.267     '/app/client/src/pages/Strategies.tsx',
+2.267     '/app/client/src/pages/Notifications.tsx',
+2.267     '/app/client/src/pages/Wallet.tsx',
+2.267     '/app/client/src/pages/Terminal.tsx',
+2.267     '*',
+2.267     'src/**/*.{aspx,astro,cjs,css,cts,eex,erb,gjs,gts,haml,handlebars,hbs,heex,html,jade,js,jsx,liquid,md,mdx,mjs,mts,mustache,njk,nunjucks,php,pug,py,razor,rb,rhtml,rs,slim,svelte,tpl,ts,tsx,twig,vue}',
+2.267     '/app/node_modules/react-dom/cjs/react-dom-client.production.js',
+2.267     '/app/node_modules/wouter/esm/index.js',
+2.267     '/app/node_modules/@tanstack/react-query/build/modern/index.js',
+2.267     '/app/node_modules/react/index.js',
+2.267     ... 51 more items
+2.267   ]
+2.267 }
+------
+[+] build 0/1
+ ⠙ Image krakenbot-staging-krakenbot-staging-app Building                                                         18.7s
+Dockerfile:16
+
+--------------------
+
+  14 |     RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi
+
+  15 |
+
+  16 | >>> RUN npm run build
+
+  17 |
+
+  18 |     EXPOSE 5000
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1
+
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 2.5s (13/13) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 576B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  0.2s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => [internal] load build context                                                                                  0.0s
+ => => transferring context: 69.80kB                                                                               0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git                                                           0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                   0.0s
+ => CACHED [6/8] COPY . .                                                                                          0.0s
+ => CACHED [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi  0.0s
+ => ERROR [8/8] RUN npm run build                                                                                  2.2s
+------
+ > [8/8] RUN npm run build:
+0.277
+0.277 > rest-express@1.0.0 build
+0.277 > tsx script/build.ts
+0.277
+0.896 building client...
+1.034 vite v7.1.12 building for production...
+1.203 transforming...
+2.088 ✓ 90 modules transformed.
+2.157 ✗ Build failed in 980ms
+2.159 Could not resolve "../../../attached_assets/generated_images/dark_digital_hex_grid_background.png" from "client/src/pages/Wallet.tsx"
+2.159 file: /app/client/src/pages/Wallet.tsx
+2.159     at getRollupError (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:401:41)
+2.159     at error (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:397:42)
+2.159     at ModuleLoader.handleInvalidResolvedId (/app/node_modules/rollup/dist/es/shared/node-entry.js:21565:24)
+2.159     at <anonymous> (/app/node_modules/rollup/dist/es/shared/node-entry.js:21525:26) {
+2.159   code: 'UNRESOLVED_IMPORT',
+2.159   exporter: '../../../attached_assets/generated_images/dark_digital_hex_grid_background.png',
+2.159   id: '/app/client/src/pages/Wallet.tsx',
+2.159   watchFiles: [
+2.159     '/app/client/index.html',
+2.159     '/app/client/src/main.tsx',
+2.159     '/app/package.json',
+2.159     '/app/node_modules/react/jsx-runtime.js',
+2.159     '/app/node_modules/react-dom/client.js',
+2.159     '/app/client/src/components/ErrorBoundary.tsx',
+2.159     '/app/client/src/App.tsx',
+2.159     '/app/client/src/index.css',
+2.159     '/app/node_modules/tailwindcss/index.css',
+2.159     '/app/node_modules/tw-animate-css/dist/tw-animate.css',
+2.159     '/app/client/src/context/EventsWebSocketContext.tsx',
+2.159     '/app/client/src/components/ui/calendar.tsx',
+2.159     '/app/client/src/components/ui/switch.tsx',
+2.159     '/app/client/src/components/ui/kbd.tsx',
+2.159     '/app/client/src/components/ui/sidebar.tsx',
+2.159     '/app/client/src/components/ui/hover-card.tsx',
+2.159     '/app/client/src/components/ui/select.tsx',
+2.159     '/app/client/src/components/ui/slider.tsx',
+2.159     '/app/client/src/components/ui/pagination.tsx',
+2.159     '/app/client/src/components/ui/context-menu.tsx',
+2.159     '/app/client/src/components/ui/form.tsx',
+2.159     '/app/client/src/components/ui/toast.tsx',
+2.159     '/app/client/src/components/ui/resizable.tsx',
+2.159     '/app/client/src/components/ui/item.tsx',
+2.159     '/app/client/src/components/ui/label.tsx',
+2.159     '/app/client/src/components/ui/table.tsx',
+2.159     '/app/client/src/components/ui/dropdown-menu.tsx',
+2.159     '/app/client/src/components/ui/aspect-ratio.tsx',
+2.159     '/app/client/src/components/ui/toggle-group.tsx',
+2.159     '/app/client/src/components/ui/alert-dialog.tsx',
+2.159     '/app/client/src/components/ui/spinner.tsx',
+2.159     '/app/client/src/components/ui/textarea.tsx',
+2.159     '/app/client/src/components/ui/radio-group.tsx',
+2.159     '/app/client/src/components/ui/dialog.tsx',
+2.159     '/app/client/src/components/ui/badge.tsx',
+2.159     '/app/client/src/components/ui/progress.tsx',
+2.159     '/app/client/src/components/ui/button.tsx',
+2.159     '/app/client/src/components/ui/command.tsx',
+2.159     '/app/client/src/components/ui/toaster.tsx',
+2.159     '/app/client/src/components/ui/accordion.tsx',
+2.159     '/app/client/src/components/ui/breadcrumb.tsx',
+2.159     '/app/client/src/components/ui/input.tsx',
+2.159     '/app/client/src/components/ui/navigation-menu.tsx',
+2.159     '/app/client/src/components/ui/input-group.tsx',
+2.159     '/app/client/src/components/ui/avatar.tsx',
+2.159     '/app/client/src/components/ui/sonner.tsx',
+2.159     '/app/client/src/components/ui/alert.tsx',
+2.159     '/app/client/src/components/ui/sheet.tsx',
+2.159     '/app/client/src/components/ui/popover.tsx',
+2.159     '/app/client/src/components/ui/carousel.tsx',
+2.159     '/app/client/src/components/ui/tooltip.tsx',
+2.159     '/app/client/src/components/ui/drawer.tsx',
+2.159     '/app/client/src/components/ui/card.tsx',
+2.159     '/app/client/src/components/ui/tabs.tsx',
+2.159     '/app/client/src/components/ui/checkbox.tsx',
+2.159     '/app/client/src/components/ui/empty.tsx',
+2.159     '/app/client/src/components/ui/scroll-area.tsx',
+2.159     '/app/client/src/components/ui/skeleton.tsx',
+2.159     '/app/client/src/components/ui/menubar.tsx',
+2.159     '/app/client/src/components/ui/toggle.tsx',
+2.159     '/app/client/src/components/ui/button-group.tsx',
+2.159     '/app/client/src/components/ui/field.tsx',
+2.159     '/app/client/src/components/ui/separator.tsx',
+2.159     '/app/client/src/components/ui/chart.tsx',
+2.159     '/app/client/src/components/ui/collapsible.tsx',
+2.159     '/app/client/src/components/ui/input-otp.tsx',
+2.159     '/app/client/src/components/mobile/MobileTradeCard.tsx',
+2.159     '/app/client/src/components/mobile/MobileTabBar.tsx',
+2.159     '/app/client/src/components/mobile/MobilePositionCard.tsx',
+2.159     '/app/client/src/components/dashboard/BotControl.tsx',
+2.159     '/app/client/src/components/dashboard/EventsPanel.tsx',
+2.159     '/app/client/src/components/dashboard/TradeLog.tsx',
+2.159     '/app/client/src/components/dashboard/AssetCard.tsx',
+2.159     '/app/client/src/components/dashboard/ChartWidget.tsx',
+2.159     '/app/client/src/components/dashboard/EnvironmentBadge.tsx',
+2.159     '/app/client/src/components/dashboard/Nav.tsx',
+2.159     '/app/client/src/components/dashboard/Ticker.tsx',
+2.159     '/app/client/src/hooks/use-mobile.tsx',
+2.159     '/app/client/src/hooks/useEventsWebSocket.ts',
+2.159     '/app/client/src/hooks/useTerminalWebSocket.ts',
+2.159     '/app/client/src/hooks/use-toast.ts',
+2.159     '/app/client/src/lib/utils.ts',
+2.159     '/app/client/src/lib/queryClient.ts',
+2.159     '/app/client/src/pages/Integrations.tsx',
+2.159     '/app/client/src/pages/Dashboard.tsx',
+2.159     '/app/client/src/pages/not-found.tsx',
+2.159     '/app/client/src/pages/Guide.tsx',
+2.159     '/app/client/src/pages/Settings.tsx',
+2.159     '/app/client/src/pages/Monitor.tsx',
+2.159     '/app/client/src/pages/Strategies.tsx',
+2.159     '/app/client/src/pages/Notifications.tsx',
+2.159     '/app/client/src/pages/Wallet.tsx',
+2.159     '/app/client/src/pages/Terminal.tsx',
+2.159     '*',
+2.159     'src/**/*.{aspx,astro,cjs,css,cts,eex,erb,gjs,gts,haml,handlebars,hbs,heex,html,jade,js,jsx,liquid,md,mdx,mjs,mts,mustache,njk,nunjucks,php,pug,py,razor,rb,rhtml,rs,slim,svelte,tpl,ts,tsx,twig,vue}',
+2.159     '/app/node_modules/react/cjs/react-jsx-runtime.production.js',
+2.159     '/app/node_modules/wouter/esm/index.js',
+2.159     '/app/node_modules/@tanstack/react-query/build/modern/index.js',
+2.159     '/app/node_modules/react-dom/cjs/react-dom-client.production.js',
+2.159     '/app/node_modules/react/index.js',
+2.159     ... 51 more items
+2.159   ]
+2.159 }
+------
+[+] up 0/1
+ ⠙ Image krakenbot-staging-krakenbot-staging-app Building                                                          2.6s
+Dockerfile:16
+
+--------------------
+
+  14 |     RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi
+
+  15 |
+
+  16 | >>> RUN npm run build
+
+  17 |
+
+  18 |     EXPOSE 5000
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1
+
+Error response from daemon: No such container: krakenbot-staging-app
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging# ocker exec krakenbot-staging-app head -15 /app/client/src/pages/Dashboard.tsx
+Command 'ocker' not found, did you mean:
+  command 'docker' from snap docker (28.4.0)
+  command 'docker' from deb docker.io (28.2.2-0ubuntu1~22.04.1)
+  command 'docker' from deb podman-docker (3.4.4+ds1-1ubuntu1.22.04.3)
+See 'snap info <snapname>' for additional versions.
+root@ubuntu:/opt/krakenbot-staging# ocker exec krakenbot-staging-app head -15 /app/client/src/pages/Dashboard.tsx
+Command 'ocker' not found, did you mean:
+  command 'docker' from snap docker (28.4.0)
+  command 'docker' from deb docker.io (28.2.2-0ubuntu1~22.04.1)
+  command 'docker' from deb podman-docker (3.4.4+ds1-1ubuntu1.22.04.3)
+See 'snap info <snapname>' for additional versions.
+root@ubuntu:/opt/krakenbot-staging#
