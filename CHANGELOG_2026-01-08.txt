@@ -46,11 +46,42 @@ Archivo: replit.md
   * Referencia al script de verificación
 
 
+4. BOTÓN DRY RUN EN AJUSTES (VPS)
+--------------------------------------------------------------------------------
+Archivo: client/src/pages/Settings.tsx
+
+- Añadida nueva tarjeta "Modo de Operación" con toggle DRY RUN
+- Ubicación: Página de Ajustes, después de "APIs y Credenciales"
+- Funcionalidad:
+  * Toggle para activar/desactivar modo DRY RUN
+  * Indicador visual: Amarillo = SIMULACIÓN, Verde = REAL
+  * Badge dinámico que muestra estado actual
+  * Descripción contextual según el modo activo
+- Nota: En Replit siempre está forzado por seguridad
+
+Campos del toggle:
+  - data-testid: "switch-dry-run-mode"
+  - Campo en DB: bot_config.dry_run_mode (boolean)
+
+Uso previsto:
+  - En VPS: Activar DRY RUN para pruebas iniciales
+  - Cuando todo funcione: Desactivar para operar en modo REAL
+
+
 ARCHIVOS MODIFICADOS
 ================================================================================
 - client/src/pages/Integrations.tsx  (2 líneas modificadas)
+- client/src/pages/Settings.tsx      (nuevo toggle DRY RUN, ~60 líneas)
 - replit.md                          (sección añadida)
 - scripts/check-no-business.sh       (archivo nuevo, 45 líneas)
+
+
+NOTAS DE DESPLIEGUE VPS
+================================================================================
+- Puerto 3010 está ocupado en VPS (usar puerto alternativo)
+- Recomendación: Desplegar primero con DRY RUN activado
+- Probar conexión Revolut X antes de desactivar DRY RUN
+- El bot del NAS puede seguir operando mientras se prueba en VPS
 
 
 COMMITS
@@ -66,3 +97,4 @@ ESTADO FINAL
 - Exchange activo: Kraken (default)
 - Revolut X: Configurado como opción secundaria
 - Script de verificación: Pasando (0 errores)
+- Toggle DRY RUN: Disponible en Ajustes

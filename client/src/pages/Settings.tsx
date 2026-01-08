@@ -61,6 +61,7 @@ interface AiDiagnostic {
 interface BotConfig {
   id: number;
   isActive: boolean;
+  dryRunMode: boolean;
   strategy: string;
   riskLevel: string;
   activePairs: string[];
@@ -317,6 +318,65 @@ export default function Settings() {
                     </Button>
                   </Link>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* DRY RUN Mode - Safety Toggle */}
+            <Card className={cn(
+              "glass-panel border-2",
+              config?.dryRunMode 
+                ? "border-yellow-500/50 bg-yellow-500/5" 
+                : "border-green-500/50 bg-green-500/5"
+            )}>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "p-2 rounded-lg",
+                    config?.dryRunMode ? "bg-yellow-500/20" : "bg-green-500/20"
+                  )}>
+                    <Shield className={cn(
+                      "h-6 w-6",
+                      config?.dryRunMode ? "text-yellow-400" : "text-green-400"
+                    )} />
+                  </div>
+                  <div className="flex-1">
+                    <CardTitle className="flex items-center gap-2">
+                      Modo de Operación
+                      <Badge variant={config?.dryRunMode ? "secondary" : "default"} className={cn(
+                        config?.dryRunMode 
+                          ? "bg-yellow-500/20 text-yellow-400" 
+                          : "bg-green-500/20 text-green-400"
+                      )}>
+                        {config?.dryRunMode ? "SIMULACIÓN" : "REAL"}
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription>
+                      {config?.dryRunMode 
+                        ? "Las órdenes NO se envían al exchange (modo pruebas)" 
+                        : "Las órdenes SE ENVÍAN al exchange (dinero real)"}
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card/30">
+                  <div className="space-y-0.5">
+                    <Label>DRY RUN (Modo Simulación)</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {config?.dryRunMode 
+                        ? "Activo: El bot simula trades sin enviar órdenes reales" 
+                        : "Desactivado: El bot opera con dinero real"}
+                    </p>
+                  </div>
+                  <Switch 
+                    checked={config?.dryRunMode ?? false}
+                    onCheckedChange={(checked) => updateMutation.mutate({ dryRunMode: checked })}
+                    data-testid="switch-dry-run-mode"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  En Replit, el modo DRY RUN siempre está forzado por seguridad.
+                </p>
               </CardContent>
             </Card>
 
