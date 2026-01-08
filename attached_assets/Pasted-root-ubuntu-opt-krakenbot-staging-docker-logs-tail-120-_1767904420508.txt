@@ -1,0 +1,157 @@
+root@ubuntu:/opt/krakenbot-staging# docker logs --tail=120 krakenbot-staging-app
+ss -ltnp | grep ':3020' || true
+curl -I http://127.0.0.1:3020 || true
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+node:internal/modules/cjs/loader:1210
+  throw err;
+  ^
+
+Error: Cannot find module '/app/dist/index.cjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)
+    at Module._load (node:internal/modules/cjs/loader:1038:27)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v20.19.6
+curl: (7) Failed to connect to 127.0.0.1 port 3020 after 0 ms: Connection refused
+root@ubuntu:/opt/krakenbot-staging# ls -la
+test -f package.json && echo OK || echo FAIL
+total 204416
+drwxr-xr-x 12 root root      4096 Jan  8 20:30 .
+drwxr-xr-x  4 root root      4096 Jan  8 20:06 ..
+drwxr-xr-x  3 root root      4096 Dec 11 21:59 .config
+-rw-r--r--  1 root root       132 Dec  8 18:50 .dockerignore
+-rw-r--r--  1 root root       232 Jan  8 20:30 .env
+-rw-r--r--  1 root root       538 Dec 16 00:06 .env.example
+drwxr-xr-x  7 root root      4096 Jan  8 19:59 .git
+-rw-r--r--  1 root root        67 Dec  8 18:21 .gitignore
+drwxr-xr-x  3 root root      4096 Dec  8 18:21 .local
+-rw-r--r--  1 root root       876 Dec 18 17:19 .replit
+-rw-r--r--  1 root root      3819 Jan  8 11:14 CHANGELOG_2026-01-08.txt
+-rw-r--r--  1 root root       176 Jan  8 20:31 Dockerfile
+-rw-r--r--  1 root root      8243 Dec  8 20:54 GUIA_INSTALACION.md
+-rw-r--r--  1 root root      4657 Jan  8 19:59 VPS_DEPLOY_GUIDE.md
+-rw-r--r--  1 root root    491148 Dec 21 14:29 ai_strategy_grep.txt
+drwxr-xr-x  3 root root     36864 Jan  4 13:09 attached_assets
+-rw-r--r--  1 root root    662774 Dec 21 14:37 bot_artifacts.tgz
+-rw-r--r--  1 root root   6070552 Dec 21 14:34 bot_bundle.txt
+-rw-r--r--  1 root root   2274101 Dec 21 14:37 bot_bundle_clean.txt
+-rw-r--r--  1 root root     13905 Dec 21 14:34 bundle_files.txt
+-rw-r--r--  1 root root      4110 Dec 21 14:37 bundle_files_clean.txt
+drwxr-xr-x  4 root root      4096 Dec 22 22:03 client
+-rw-r--r--  1 root root       451 Dec 14 11:57 components.json
+drwxr-xr-x  3 root root      4096 Dec 15 14:11 dist
+-rw-r--r--  1 root root       650 Jan  8 20:30 docker-compose.staging.yml
+-rw-r--r--  1 root root      1944 Dec 20 14:57 docker-compose.yml
+-rw-r--r--  1 root root       325 Dec  8 18:21 drizzle.config.ts
+-rw-r--r--  1 root root   2447073 Dec 21 14:23 file_list.txt
+-rw-r--r--  1 root root 196786842 Jan  8 20:24 krakenbot.zip
+-rw-r--r--  1 root root    368163 Dec 21 20:00 package-lock.json
+-rw-r--r--  1 root root      3667 Dec 21 20:00 package.json
+-rw-r--r--  1 root root        80 Dec  8 18:21 postcss.config.js
+-rw-r--r--  1 root root     12674 Jan  8 08:05 replit.md
+drwxr-xr-x  2 root root      4096 Dec 18 20:37 script
+drwxr-xr-x  2 root root      4096 Jan  8 08:05 scripts
+drwxr-xr-x  5 root root      4096 Jan  8 07:34 server
+drwxr-xr-x  2 root root      4096 Jan  8 06:43 shared
+-rw-r--r--  1 root root       657 Dec  8 18:21 tsconfig.json
+-rw-r--r--  1 root root      2333 Dec  8 18:21 vite-plugin-meta-images.ts
+-rw-r--r--  1 root root      1330 Dec  8 18:21 vite.config.ts
+OK
+root@ubuntu:/opt/krakenbot-staging#
