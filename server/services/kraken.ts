@@ -1,7 +1,8 @@
 import * as KrakenAPI from "node-kraken-api";
 import { telegramService } from "./telegram";
 import { storage } from "../storage";
-import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from "./exchanges/IExchangeService";
+import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult } from "./exchanges/IExchangeService";
+import type { PairMetadata } from "./exchanges/IExchangeService";
 
 const { Kraken } = KrakenAPI as any;
 
@@ -10,7 +11,7 @@ interface KrakenConfig {
   apiSecret: string;
 }
 
-export { PairMetadata };
+export type { PairMetadata };
 
 const NONCE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_RETRIES = 3;

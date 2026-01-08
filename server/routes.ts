@@ -108,7 +108,7 @@ export async function registerRoutes(
       start: async () => { await tradingEngine?.start(); },
       stop: async () => { await tradingEngine?.stop(); },
       isActive: () => tradingEngine?.isActive() ?? false,
-      getBalance: async () => krakenService.isInitialized() ? await krakenService.getBalance() as Record<string, string> : {},
+      getBalance: async () => krakenService.isInitialized() ? await krakenService.getBalanceRaw() : {},
       getOpenPositions: () => tradingEngine?.getOpenPositions() ?? new Map(),
     });
     
@@ -581,12 +581,12 @@ export async function registerRoutes(
       
       if (krakenService.isInitialized()) {
         try {
-          balances = await krakenService.getBalance() as Record<string, string>;
+          balances = await krakenService.getBalanceRaw();
           
           const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD", "XXRPZUSD", "TONUSD"];
           for (const pair of pairs) {
             try {
-              const ticker = await krakenService.getTicker(pair);
+              const ticker = await krakenService.getTickerRaw(pair);
               const tickerData: any = Object.values(ticker)[0];
               if (tickerData) {
                 const currentPrice = parseFloat(tickerData.c?.[0] || "0");
@@ -639,7 +639,7 @@ export async function registerRoutes(
         if (krakenService.isInitialized()) {
           try {
             const krakenPair = krakenService.formatPair(pos.pair);
-            const ticker = await krakenService.getTicker(krakenPair);
+            const ticker = await krakenService.getTickerRaw(krakenPair);
             const tickerData: any = Object.values(ticker)[0];
             if (tickerData?.c?.[0]) {
               currentPrice = parseFloat(tickerData.c[0]);
@@ -723,7 +723,7 @@ export async function registerRoutes(
       if (krakenService.isInitialized()) {
         try {
           const krakenPair = krakenService.formatPair(pair);
-          const ticker = await krakenService.getTicker(krakenPair);
+          const ticker = await krakenService.getTickerRaw(krakenPair);
           const tickerData: any = Object.values(ticker)[0];
           
           if (tickerData?.c?.[0]) {
@@ -1036,7 +1036,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       }
 
       // Obtener balances reales de Kraken
-      const balances = await krakenService.getBalance() as Record<string, string>;
+      const balances = await krakenService.getBalanceRaw();
       
       // Mínimos de orden por par (hardcoded ya que getAssetPairs es para todos los pares)
       const orderMinMap: Record<string, number> = {
@@ -1269,7 +1269,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   app.get("/api/market/:pair", async (req, res) => {
     try {
       const { pair } = req.params;
-      const ticker = await krakenService.getTicker(pair);
+      const ticker = await krakenService.getTickerRaw(pair);
       
       const tickerData: any = Object.values(ticker)[0] || {};
       const data = await storage.saveMarketData({
@@ -1993,7 +1993,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       if (!currentPrice) {
         try {
           const ticker = await krakenService.getTicker(pair);
-          currentPrice = parseFloat(ticker?.c?.[0] || "0");
+          currentPrice = ticker.last || 0;
         } catch {
           currentPrice = 100; // Fallback para test
         }
@@ -2009,8 +2009,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       // Obtener balance USD
       let usdBalance = 0;
       try {
-        const balances = await krakenService.getBalance() as Record<string, string>;
-        usdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
+        const balances = await krakenService.getBalance();
+        usdBalance = balances?.ZUSD || balances?.USD || 0;
       } catch {
         usdBalance = 100; // Fallback para test
       }
