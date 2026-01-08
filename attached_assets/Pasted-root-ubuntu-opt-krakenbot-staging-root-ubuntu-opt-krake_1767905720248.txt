@@ -1,0 +1,560 @@
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging# docker exec kraken-bot-db pg_dump -U krakenbot -d krakenbot > /tmp/krakenbot_backup.sql
+Error response from daemon: No such container: kraken-bot-db
+root@ubuntu:/opt/krakenbot-staging# ^C
+root@ubuntu:/opt/krakenbot-staging# cd..
+cd..: command not found
+root@ubuntu:/opt/krakenbot-staging# docker cp /tmp/krakenbot_backup.sql krakenbot-staging-db:/tmp/
+docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /tmp/krakenbot_backup.sql
+docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "UPDATE bot_config SET dry_run_mode = true WHERE id = 1;"
+docker restart krakenbot-staging-app
+Successfully copied 41.1MB to krakenbot-staging-db:/tmp/
+SET
+SET
+SET
+SET
+SET
+ set_config
+------------
+
+(1 row)
+
+SET
+SET
+SET
+SET
+CREATE EXTENSION
+COMMENT
+SET
+SET
+psql:/tmp/krakenbot_backup.sql:58: ERROR:  relation "ai_config" already exists
+psql:/tmp/krakenbot_backup.sql:61: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:73: ERROR:  relation "ai_config_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:76: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:97: ERROR:  relation "ai_shadow_decisions" already exists
+psql:/tmp/krakenbot_backup.sql:100: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:112: ERROR:  relation "ai_shadow_decisions_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:115: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:144: ERROR:  relation "ai_trade_samples" already exists
+psql:/tmp/krakenbot_backup.sql:147: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:159: ERROR:  relation "ai_trade_samples_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:162: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:184: ERROR:  relation "api_config" already exists
+psql:/tmp/krakenbot_backup.sql:187: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:199: ERROR:  relation "api_config_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:202: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:283: ERROR:  relation "bot_config" already exists
+psql:/tmp/krakenbot_backup.sql:286: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:298: ERROR:  relation "bot_config_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:301: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:321: ERROR:  relation "bot_events" already exists
+psql:/tmp/krakenbot_backup.sql:324: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:336: ERROR:  relation "bot_events_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:339: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:363: ERROR:  relation "lot_matches" already exists
+psql:/tmp/krakenbot_backup.sql:366: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:378: ERROR:  relation "lot_matches_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:381: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:401: ERROR:  relation "market_data" already exists
+psql:/tmp/krakenbot_backup.sql:404: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:416: ERROR:  relation "market_data_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:419: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:439: ERROR:  relation "notifications" already exists
+psql:/tmp/krakenbot_backup.sql:442: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:454: ERROR:  relation "notifications_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:457: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:497: ERROR:  relation "open_positions" already exists
+psql:/tmp/krakenbot_backup.sql:500: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:512: ERROR:  relation "open_positions_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:515: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:542: ERROR:  relation "regime_state" already exists
+psql:/tmp/krakenbot_backup.sql:545: ERROR:  role "krakenbot" does not exist
+CREATE SEQUENCE
+psql:/tmp/krakenbot_backup.sql:560: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:566: ERROR:  column "id" of relation "regime_state" does not exist
+psql:/tmp/krakenbot_backup.sql:585: ERROR:  relation "telegram_chats" already exists
+psql:/tmp/krakenbot_backup.sql:588: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:600: ERROR:  relation "telegram_chats_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:603: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:626: ERROR:  relation "trade_fills" already exists
+psql:/tmp/krakenbot_backup.sql:629: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:641: ERROR:  relation "trade_fills_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:644: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:672: ERROR:  relation "trades" already exists
+psql:/tmp/krakenbot_backup.sql:675: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:687: ERROR:  relation "trades_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:690: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+psql:/tmp/krakenbot_backup.sql:731: ERROR:  relation "training_trades" already exists
+psql:/tmp/krakenbot_backup.sql:734: ERROR:  role "krakenbot" does not exist
+psql:/tmp/krakenbot_backup.sql:746: ERROR:  relation "training_trades_id_seq" already exists
+psql:/tmp/krakenbot_backup.sql:749: ERROR:  role "krakenbot" does not exist
+ALTER SEQUENCE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+psql:/tmp/krakenbot_backup.sql:832: ERROR:  column "id" of relation "regime_state" does not exist
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+COPY 1
+COPY 0
+COPY 54
+COPY 1
+psql:/tmp/krakenbot_backup.sql:955: ERROR:  column "fee_buffer_pct" of relation "bot_config" does not exist
+psql:/tmp/krakenbot_backup.sql:956: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:957: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:964: ERROR:  syntax error at or near "1"
+LINE 1: 1 t momentum high {BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD} ...
+        ^
+psql:/tmp/krakenbot_backup.sql:984: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:992: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1042: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1065: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1076: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1078: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1080: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1106: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1107: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1116: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1117: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1120: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1121: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1139: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1157: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1189: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1190: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1191: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1192: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1289: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1290: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1293: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1296: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1299: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1300: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:1306: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:2202: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:4933: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:5055: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:6821: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:6873: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:6910: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:6929: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:6946: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7105: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7123: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7155: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7171: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7190: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7207: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7224: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7241: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7596: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7642: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7647: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7792: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:7794: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:15214: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58280: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58287: ERROR:  syntax error at or near "1"
+LINE 1: 1 2025-12-12 00:25:05.632014 INFO BOT_STARTED Motor de tradi...
+        ^
+psql:/tmp/krakenbot_backup.sql:58288: error: backslash commands are restricted; only \unrestrict is allowed
+COPY 0
+COPY 0
+COPY 2
+psql:/tmp/krakenbot_backup.sql:58321: ERROR:  column "id" of relation "regime_state" does not exist
+psql:/tmp/krakenbot_backup.sql:58323: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58324: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58325: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58326: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58327: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58334: ERROR:  syntax error at or near "4"
+LINE 1: 4 BTC/USD TRANSITION 2026-01-07 15:29:57.633 2026-01-07 15:4...
+        ^
+psql:/tmp/krakenbot_backup.sql:58338: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58345: ERROR:  syntax error at or near "7"
+LINE 1: 7 KRAKEN  TRADING -1002639300934 t f f f t 2026-01-01 17:25:...
+        ^
+psql:/tmp/krakenbot_backup.sql:58346: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58353: ERROR:  column "entry_fee" of relation "trades" does not exist
+psql:/tmp/krakenbot_backup.sql:58354: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58356: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58357: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58359: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58360: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58361: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58362: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58365: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58366: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58367: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58368: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58369: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58370: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58371: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58373: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58374: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58375: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58376: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58378: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58380: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58382: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58383: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58385: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58388: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58393: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58394: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58397: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58398: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58402: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58403: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58405: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58411: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58412: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58413: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58415: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58417: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58418: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58419: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58420: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58421: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58423: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58425: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58426: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58427: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58428: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58429: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58431: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58435: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58437: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58438: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58440: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58441: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58442: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58443: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58444: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58447: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58449: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58451: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58454: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58458: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58460: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58462: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58463: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58465: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58467: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58474: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58477: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58478: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58480: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58482: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58486: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58487: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58488: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58491: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58494: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58498: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58504: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58507: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58508: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58509: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58512: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58513: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58516: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58524: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58525: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58528: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58529: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58534: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58535: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58550: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58551: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58556: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58557: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58565: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58567: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58568: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58569: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58570: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58573: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58576: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58594: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58595: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58596: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58597: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58598: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58599: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58600: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58607: ERROR:  syntax error at or near "41"
+LINE 1: 41 K-TVIWWS-J ETH/USD buy 3082.70000000 0.01524371 filled TV...
+        ^
+psql:/tmp/krakenbot_backup.sql:58608: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58609: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58610: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58611: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58612: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58613: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58614: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58615: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58616: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58617: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58618: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58619: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58620: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58621: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58622: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58623: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58624: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58625: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58626: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58627: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58628: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58629: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58630: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58631: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58632: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58633: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58634: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58635: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58636: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58637: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58638: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58639: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58640: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58641: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58642: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58643: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58644: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58645: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58646: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58647: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58648: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58649: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58650: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58651: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58652: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58653: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58654: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58655: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58656: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58657: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58658: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58659: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58660: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58661: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58662: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58663: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58664: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58665: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58666: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58667: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58668: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58669: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58670: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58671: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58672: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58673: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58674: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58675: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58676: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58677: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58678: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58679: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58680: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58681: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58682: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58683: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58684: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58685: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58686: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58687: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58688: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58689: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58690: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58691: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58692: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58693: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58694: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58695: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58696: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58697: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58698: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58699: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58700: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58701: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58702: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58703: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58704: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58705: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58706: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58707: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58708: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58709: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58710: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58711: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58712: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58713: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58714: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58715: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58716: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58717: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58718: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58719: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58720: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58721: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58722: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58723: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58724: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58725: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58726: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58727: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58728: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58729: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58730: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58731: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58732: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58733: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58734: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58735: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58736: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58737: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58738: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58739: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58740: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58741: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58742: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58743: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58744: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58745: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58746: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58747: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58748: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58749: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58750: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58751: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58752: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58753: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58754: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58755: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58756: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58757: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58758: error: backslash commands are restricted; only \unrestrict is allowed
+psql:/tmp/krakenbot_backup.sql:58765: ERROR:  syntax error at or near "152"
+LINE 1: 152 BTC/USD
+        ^
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+     54
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+  57561
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+     48
+(1 row)
+
+ setval
+--------
+      5
+(1 row)
+
+ setval
+--------
+      9
+(1 row)
+
+ setval
+--------
+      1
+(1 row)
+
+ setval
+--------
+    417
+(1 row)
+
+ setval
+--------
+    168
+(1 row)
+
+psql:/tmp/krakenbot_backup.sql:58871: ERROR:  multiple primary keys for table "ai_config" are not allowed
+psql:/tmp/krakenbot_backup.sql:58879: ERROR:  multiple primary keys for table "ai_shadow_decisions" are not allowed
+psql:/tmp/krakenbot_backup.sql:58887: ERROR:  multiple primary keys for table "ai_trade_samples" are not allowed
+psql:/tmp/krakenbot_backup.sql:58895: ERROR:  relation "ai_trade_samples_trade_id_unique" already exists
+psql:/tmp/krakenbot_backup.sql:58903: ERROR:  multiple primary keys for table "api_config" are not allowed
+psql:/tmp/krakenbot_backup.sql:58911: ERROR:  multiple primary keys for table "bot_config" are not allowed
+psql:/tmp/krakenbot_backup.sql:58919: ERROR:  multiple primary keys for table "bot_events" are not allowed
+psql:/tmp/krakenbot_backup.sql:58927: ERROR:  multiple primary keys for table "lot_matches" are not allowed
+ALTER TABLE
+psql:/tmp/krakenbot_backup.sql:58943: ERROR:  multiple primary keys for table "market_data" are not allowed
+psql:/tmp/krakenbot_backup.sql:58951: ERROR:  multiple primary keys for table "notifications" are not allowed
+psql:/tmp/krakenbot_backup.sql:58959: ERROR:  relation "open_positions_lot_id_unique" already exists
+psql:/tmp/krakenbot_backup.sql:58967: ERROR:  multiple primary keys for table "open_positions" are not allowed
+ALTER TABLE
+psql:/tmp/krakenbot_backup.sql:58983: ERROR:  column "id" of relation "regime_state" does not exist
+psql:/tmp/krakenbot_backup.sql:58991: ERROR:  multiple primary keys for table "telegram_chats" are not allowed
+psql:/tmp/krakenbot_backup.sql:58999: ERROR:  multiple primary keys for table "trade_fills" are not allowed
+ALTER TABLE
+psql:/tmp/krakenbot_backup.sql:59015: ERROR:  multiple primary keys for table "trades" are not allowed
+psql:/tmp/krakenbot_backup.sql:59023: ERROR:  relation "trades_trade_id_unique" already exists
+psql:/tmp/krakenbot_backup.sql:59031: ERROR:  multiple primary keys for table "training_trades" are not allowed
+CREATE INDEX
+CREATE INDEX
+UPDATE 0
+krakenbot-staging-app
+root@ubuntu:/opt/krakenbot-staging#
