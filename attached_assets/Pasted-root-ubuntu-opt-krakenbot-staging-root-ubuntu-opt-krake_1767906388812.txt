@@ -1,0 +1,266 @@
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging# docker compose -f docker-compose.staging.yml up -d
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+WARN[0000] No services to build
+[+] up 1/1
+ ✔ Container krakenbot-staging-db Running                                                                          0.0s
+root@ubuntu:/opt/krakenbot-staging# docker logs -f krakenbot-staging-app
+9:04:15 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:15 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:15 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:17 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:17 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:17 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:19 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:19 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:19 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:21 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:21 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:21 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:23 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:23 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:23 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:26 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:26 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:26 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:30 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:30 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:30 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:38 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:38 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:38 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:04:52 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:04:52 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:04:52 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:05:19 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:05:19 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:05:19 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+9:06:12 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+9:06:12 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Active exchange: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+9:06:12 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+/app/server/static.ts:6
+  const distPath = path.resolve(__dirname, "public");
+                                ^
+
+
+ReferenceError: __dirname is not defined
+    at serveStatic (/app/server/static.ts:6:33)
+    at <anonymous> (/app/server/index.ts:79:5)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+Node.js v20.19.6
+root@ubuntu:/opt/krakenbot-staging#
