@@ -164,8 +164,13 @@ export async function registerRoutes(
       const config = await storage.getApiConfig();
       res.json({
         krakenConnected: config?.krakenConnected || false,
+        krakenEnabled: config?.krakenEnabled ?? true,
+        revolutxConnected: config?.revolutxConnected || false,
+        revolutxEnabled: config?.revolutxEnabled || false,
+        activeExchange: config?.activeExchange || "kraken",
         telegramConnected: config?.telegramConnected || false,
         hasKrakenKeys: !!(config?.krakenApiKey && config?.krakenApiSecret),
+        hasRevolutxKeys: !!(config?.revolutxApiKey && config?.revolutxPrivateKey),
         hasTelegramKeys: !!(config?.telegramToken && config?.telegramChatId),
       });
     } catch (error) {
@@ -221,6 +226,54 @@ export async function registerRoutes(
     } catch (error) {
       await storage.updateApiConfig({ krakenConnected: false });
       res.status(500).json({ error: "Failed to connect to Kraken" });
+    }
+  });
+
+  app.post("/api/config/revolutx", async (req, res) => {
+    try {
+      const { apiKey, privateKey } = req.body;
+      
+      if (!apiKey || !privateKey) {
+        return res.status(400).json({ error: "API key and private key required" });
+      }
+
+      await storage.updateApiConfig({
+        revolutxApiKey: apiKey,
+        revolutxPrivateKey: privateKey,
+        revolutxConnected: true,
+        revolutxEnabled: true,
+      });
+      
+      res.json({ success: true, message: "Revolut X credentials saved successfully" });
+    } catch (error) {
+      await storage.updateApiConfig({ revolutxConnected: false });
+      res.status(500).json({ error: "Failed to save Revolut X credentials" });
+    }
+  });
+
+  app.post("/api/config/active-exchange", async (req, res) => {
+    try {
+      const { activeExchange } = req.body;
+      
+      if (!activeExchange || !["kraken", "revolutx"].includes(activeExchange)) {
+        return res.status(400).json({ error: "Invalid exchange. Must be 'kraken' or 'revolutx'" });
+      }
+
+      const config = await storage.getApiConfig();
+      
+      if (activeExchange === "kraken" && !config?.krakenConnected) {
+        return res.status(400).json({ error: "Kraken no está conectado. Configura las credenciales primero." });
+      }
+      
+      if (activeExchange === "revolutx" && !config?.revolutxConnected) {
+        return res.status(400).json({ error: "Revolut X no está conectado. Configura las credenciales primero." });
+      }
+
+      await storage.updateApiConfig({ activeExchange });
+      
+      res.json({ success: true, activeExchange });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to change active exchange" });
     }
   });
 
