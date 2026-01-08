@@ -186,8 +186,13 @@ When multiple exit systems are active, they follow this priority order:
 - ExchangeFactory funciona sin type assertions
 - Rutas actualizadas para usar métodos Raw donde se espera formato Kraken original
 
+**IMPORTANTE - No Revolut Business:**
+- Este proyecto usa exclusivamente **Revolut X** (exchange cripto retail)
+- Script de verificación: `./scripts/check-no-business.sh`
+- Endpoints permitidos: `/api/1.0/crypto-exchange/*`, `/api/1.0/public/*`, `/api/1.0/balances`, `/api/1.0/currencies`
+- Endpoints PROHIBIDOS: `/treasury`, `/payouts`, `/invoices`, `/counterparties`, `/bank_accounts`
+
 **Pendiente (FASE 2 - requiere aprobación):**
 - Integración completa con TradingEngine para usar exchange dinámico en operaciones
 - Inicializar RevolutXService cuando se guardan credenciales
 - Testing con cuenta real de Revolut X
-- Documentación API Revolut X detallada
