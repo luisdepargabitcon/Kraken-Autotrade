@@ -179,7 +179,15 @@ When multiple exit systems are active, they follow this priority order:
 - Validación al cambiar exchange activo (debe estar conectado primero)
 - DRY_RUN automático en Replit
 
-**Pendiente (FASE 2):**
+**FASE 1 Completada (2026-01-08):**
+- KrakenService refactorizado para implementar IExchangeService completamente
+- Métodos normalizados: getBalance(), getTicker(), placeOrder(), cancelOrder()
+- Métodos "Raw" añadidos para mantener compatibilidad con código existente
+- ExchangeFactory funciona sin type assertions
+- Rutas actualizadas para usar métodos Raw donde se espera formato Kraken original
+
+**Pendiente (FASE 2 - requiere aprobación):**
 - Integración completa con TradingEngine para usar exchange dinámico en operaciones
+- Inicializar RevolutXService cuando se guardan credenciales
 - Testing con cuenta real de Revolut X
 - Documentación API Revolut X detallada
