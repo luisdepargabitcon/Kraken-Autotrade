@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from './IExchangeService';
 
-const API_BASE_URL = 'https://api.revolut.com';
+const API_BASE_URL = 'https://revx.revolut.com';
 
 export class RevolutXService implements IExchangeService {
   readonly exchangeName = 'revolutx';
@@ -18,29 +18,58 @@ export class RevolutXService implements IExchangeService {
       throw new Error('Revolut X requires apiKey and privateKey (Ed25519 PEM)');
     }
     this.apiKey = config.apiKey;
-    this.privateKey = config.privateKey;
+    this.privateKey = this.normalizePemKey(config.privateKey);
     this.initialized = true;
     console.log('[revolutx] Initialized with Ed25519 authentication');
+  }
+
+  private normalizePemKey(key: string): string {
+    const trimmed = key.trim();
+    if (trimmed.includes('\n')) {
+      return trimmed;
+    }
+    
+    const beginPrivate = '-----BEGIN PRIVATE KEY-----';
+    const endPrivate = '-----END PRIVATE KEY-----';
+    const beginPublic = '-----BEGIN PUBLIC KEY-----';
+    const endPublic = '-----END PUBLIC KEY-----';
+    
+    let cleaned = trimmed
+      .replace(beginPrivate, '')
+      .replace(endPrivate, '')
+      .replace(beginPublic, '')
+      .replace(endPublic, '')
+      .replace(/\s+/g, '');
+    
+    const isPrivate = trimmed.includes('PRIVATE');
+    const begin = isPrivate ? beginPrivate : beginPublic;
+    const end = isPrivate ? endPrivate : endPublic;
+    
+    return `${begin}\n${cleaned}\n${end}`;
   }
 
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  private sign(method: string, path: string, body?: string): { timestamp: string; signature: string } {
+  private sign(method: string, path: string, queryString?: string, body?: string): { timestamp: string; signature: string } {
     const timestamp = Date.now().toString();
-    const message = timestamp + method + path + (body || '');
+    const message = timestamp + method + path + (queryString || '') + (body || '');
     
-    const signatureBuffer = crypto.sign(null, Buffer.from(message), this.privateKey);
-    
-    return {
-      timestamp,
-      signature: signatureBuffer.toString('base64')
-    };
+    try {
+      const signatureBuffer = crypto.sign(null, Buffer.from(message), this.privateKey);
+      return {
+        timestamp,
+        signature: signatureBuffer.toString('base64')
+      };
+    } catch (error: any) {
+      console.error('[revolutx] Signing error:', error.message);
+      throw new Error(`Failed to sign request: ${error.message}`);
+    }
   }
 
-  private getHeaders(method: string, path: string, body?: string): Record<string, string> {
-    const { timestamp, signature } = this.sign(method, path, body);
+  private getHeaders(method: string, path: string, queryString?: string, body?: string): Record<string, string> {
+    const { timestamp, signature } = this.sign(method, path, queryString, body);
     return {
       'Content-Type': 'application/json',
       'X-Revx-Api-Key': this.apiKey,
@@ -57,8 +86,11 @@ export class RevolutXService implements IExchangeService {
     
     try {
       const response = await fetch(API_BASE_URL + path, { headers });
+      
       if (!response.ok) {
-        throw new Error(`Revolut X API error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('[revolutx] getBalance response:', response.status, errorText);
+        throw new Error(`Revolut X API error: ${response.status} - ${errorText}`);
       }
       
       const data = await response.json() as any[];
@@ -67,11 +99,12 @@ export class RevolutXService implements IExchangeService {
       for (const item of data) {
         const currency = item.currency || item.asset;
         const available = parseFloat(item.available || item.balance || '0');
-        if (currency && available > 0) {
+        if (currency) {
           balances[currency] = available;
         }
       }
       
+      console.log('[revolutx] Balances fetched:', Object.keys(balances).length, 'currencies');
       return balances;
     } catch (error: any) {
       console.error('[revolutx] getBalance error:', error.message);
@@ -81,21 +114,33 @@ export class RevolutXService implements IExchangeService {
 
   async getTicker(pair: string): Promise<Ticker> {
     const symbol = this.formatPair(pair);
-    const path = `/api/1.0/public/ticker?symbol=${symbol}`;
+    const path = '/api/1.0/market-data/orderbook';
+    const queryString = `symbol=${symbol}`;
+    const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
     
     try {
-      const response = await fetch(API_BASE_URL + path);
+      const response = await fetch(fullUrl);
+      
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[revolutx] getTicker response:', response.status, errorText);
         throw new Error(`Revolut X API error: ${response.status}`);
       }
       
       const data = await response.json() as any;
       
+      const bids = data.bids || [];
+      const asks = data.asks || [];
+      
+      const bestBid = bids.length > 0 ? parseFloat(bids[0].price || bids[0][0] || '0') : 0;
+      const bestAsk = asks.length > 0 ? parseFloat(asks[0].price || asks[0][0] || '0') : 0;
+      const last = (bestBid + bestAsk) / 2;
+      
       return {
-        bid: parseFloat(data.best_bid_price || data.bid || '0'),
-        ask: parseFloat(data.best_ask_price || data.ask || '0'),
-        last: parseFloat(data.last_trade_price || data.last || '0'),
-        volume24h: parseFloat(data.volume_24h || '0')
+        bid: bestBid,
+        ask: bestAsk,
+        last: last,
+        volume24h: 0
       };
     } catch (error: any) {
       console.error('[revolutx] getTicker error:', error.message);
@@ -104,29 +149,8 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getOHLC(pair: string, interval: number = 5): Promise<OHLC[]> {
-    const symbol = this.formatPair(pair);
-    const path = `/api/1.0/public/candles?symbol=${symbol}&resolution=${interval}`;
-    
-    try {
-      const response = await fetch(API_BASE_URL + path);
-      if (!response.ok) {
-        throw new Error(`Revolut X API error: ${response.status}`);
-      }
-      
-      const data = await response.json() as any[];
-      
-      return data.map((candle: any) => ({
-        time: candle.timestamp || candle.t || 0,
-        open: parseFloat(candle.open || candle.o || '0'),
-        high: parseFloat(candle.high || candle.h || '0'),
-        low: parseFloat(candle.low || candle.l || '0'),
-        close: parseFloat(candle.close || candle.c || '0'),
-        volume: parseFloat(candle.volume || candle.v || '0')
-      }));
-    } catch (error: any) {
-      console.error('[revolutx] getOHLC error:', error.message);
-      return [];
-    }
+    console.log(`[revolutx] getOHLC called for ${pair} - Revolut X REST API does not provide OHLC data`);
+    return [];
   }
 
   async placeOrder(params: {
@@ -138,7 +162,7 @@ export class RevolutXService implements IExchangeService {
   }): Promise<OrderResult> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const path = '/api/1.0/crypto-exchange/orders';
+    const path = '/api/1.0/orders';
     const symbol = this.formatPair(params.pair);
     
     const orderBody: any = {
@@ -160,7 +184,9 @@ export class RevolutXService implements IExchangeService {
     }
     
     const body = JSON.stringify(orderBody);
-    const headers = this.getHeaders('POST', path, body);
+    const headers = this.getHeaders('POST', path, '', body);
+    
+    console.log('[revolutx] Placing order:', JSON.stringify(orderBody, null, 2));
     
     try {
       const response = await fetch(API_BASE_URL + path, {
@@ -172,19 +198,22 @@ export class RevolutXService implements IExchangeService {
       const data = await response.json() as any;
       
       if (!response.ok) {
+        console.error('[revolutx] placeOrder error response:', data);
         return {
           success: false,
-          error: data.message || data.error || `HTTP ${response.status}`
+          error: data.message || data.error || data.description || `HTTP ${response.status}`
         };
       }
       
+      console.log('[revolutx] Order placed successfully:', data.id || data.order_id);
+      
       return {
         success: true,
-        orderId: data.order_id || data.id,
-        txid: data.order_id || data.id,
-        price: parseFloat(data.executed_price || params.price || '0'),
-        volume: parseFloat(data.executed_size || params.volume),
-        cost: parseFloat(data.executed_value || '0')
+        orderId: data.id || data.order_id,
+        txid: data.id || data.order_id,
+        price: parseFloat(data.executed_price || data.average_price || params.price || '0'),
+        volume: parseFloat(data.executed_size || data.filled_size || params.volume),
+        cost: parseFloat(data.executed_value || data.executed_notional || '0')
       };
     } catch (error: any) {
       console.error('[revolutx] placeOrder error:', error.message);
@@ -198,7 +227,7 @@ export class RevolutXService implements IExchangeService {
   async cancelOrder(orderId: string): Promise<boolean> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const path = `/api/1.0/crypto-exchange/orders/${orderId}`;
+    const path = `/api/1.0/orders/${orderId}`;
     const headers = this.getHeaders('DELETE', path);
     
     try {
@@ -207,7 +236,14 @@ export class RevolutXService implements IExchangeService {
         headers
       });
       
-      return response.ok;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[revolutx] cancelOrder error:', response.status, errorText);
+        return false;
+      }
+      
+      console.log('[revolutx] Order cancelled:', orderId);
+      return true;
     } catch (error: any) {
       console.error('[revolutx] cancelOrder error:', error.message);
       return false;
@@ -218,27 +254,29 @@ export class RevolutXService implements IExchangeService {
     try {
       console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
       
-      const path = '/api/1.0/currencies';
-      const response = await fetch(API_BASE_URL + path);
+      const [currenciesRes, symbolsRes] = await Promise.all([
+        fetch(API_BASE_URL + '/api/1.0/currencies'),
+        fetch(API_BASE_URL + '/api/1.0/symbols')
+      ]);
       
-      if (!response.ok) {
-        console.warn('[revolutx] Failed to fetch currencies metadata');
-        return;
-      }
-      
-      const currencies = await response.json() as any[];
+      const currencies = currenciesRes.ok ? await currenciesRes.json() as any[] : [];
+      const symbols = symbolsRes.ok ? await symbolsRes.json() as any[] : [];
       
       for (const pair of pairs) {
         const [base] = pair.split('/');
-        const currencyInfo = currencies.find((c: any) => c.code === base || c.symbol === base);
+        const revPair = this.formatPair(pair);
         
-        const lotDecimals = currencyInfo?.decimals || 8;
-        const orderMin = currencyInfo?.min_order_size || 0.0001;
+        const currencyInfo = currencies.find((c: any) => c.code === base || c.currency === base);
+        const symbolInfo = symbols.find((s: any) => s.symbol === revPair || s.name === revPair);
+        
+        const lotDecimals = currencyInfo?.scale || currencyInfo?.decimals || 8;
+        const orderMin = symbolInfo?.min_order_size || symbolInfo?.min_base_size || 0.0001;
+        const pairDecimals = symbolInfo?.price_scale || 2;
         
         this.pairMetadataCache.set(pair, {
           lotDecimals,
           orderMin,
-          pairDecimals: 2,
+          pairDecimals,
           stepSize: Math.pow(10, -lotDecimals)
         });
         
