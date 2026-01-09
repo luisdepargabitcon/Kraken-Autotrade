@@ -11,6 +11,8 @@ import { createHash } from "crypto";
 import { regimeState, type RegimeState } from "@shared/schema";
 import { db } from "../db";
 import { eq } from "drizzle-orm";
+import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
+import type { IExchangeService } from "./exchanges/IExchangeService";
 
 interface PriceData {
   price: number;
@@ -467,7 +469,7 @@ export class TradingEngine {
   };
 
   private normalizeVolume(pair: string, volume: number): number {
-    const stepSize = this.krakenService.getStepSize(pair);
+    const stepSize = this.getTradingExchange().getStepSize(pair);
     if (stepSize === null) {
       log(`[WARNING] No step size for ${pair}, using 8 decimal fallback`, "trading");
       const fallbackDecimals = 8;
@@ -478,7 +480,7 @@ export class TradingEngine {
   }
 
   private getOrderMin(pair: string): number {
-    const orderMin = this.krakenService.getOrderMin(pair);
+    const orderMin = this.getTradingExchange().getOrderMin(pair);
     if (orderMin === null) {
       log(`[WARNING] No orderMin for ${pair}, using fallback`, "trading");
       return this.FALLBACK_MINIMUMS[pair] || 0.01;
@@ -487,7 +489,7 @@ export class TradingEngine {
   }
 
   private hasPairMetadata(pair: string): boolean {
-    return this.krakenService.hasMetadata(pair);
+    return this.getTradingExchange().hasMetadata(pair);
   }
   
   // Timeframe en segundos para calcular cierre de vela
@@ -552,6 +554,25 @@ export class TradingEngine {
     
     // Log regime parameters at startup
     log(`[REGIME_PARAMS] enter=${REGIME_CONFIG.ADX_TREND_ENTRY} exit=${REGIME_CONFIG.ADX_TREND_EXIT} hardExit=${REGIME_CONFIG.ADX_HARD_EXIT} confirm=${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} minHold=${REGIME_CONFIG.MIN_HOLD_MINUTES} cooldown=${REGIME_CONFIG.NOTIFY_COOLDOWN_MS / 60000}min`, "trading");
+    
+    // Log exchange configuration
+    log(`[EXCHANGE] Trading: ${ExchangeFactory.getTradingExchangeType()}, Data: ${ExchangeFactory.getDataExchangeType()}`, "trading");
+  }
+
+  private getTradingExchange(): IExchangeService {
+    return ExchangeFactory.getTradingExchange();
+  }
+
+  private getDataExchange(): IExchangeService {
+    return ExchangeFactory.getDataExchange();
+  }
+
+  private getTradingExchangeType(): ExchangeType {
+    return ExchangeFactory.getTradingExchangeType();
+  }
+
+  private getTradingFees(): { takerFeePct: number; makerFeePct: number } {
+    return ExchangeFactory.getTradingExchangeFees();
   }
 
   // === ADAPTIVE EXIT ENGINE: FEE-GATING ===
@@ -1284,7 +1305,7 @@ export class TradingEngine {
   private async getLastClosedCandle(pair: string, timeframe: string): Promise<OHLCCandle | null> {
     try {
       const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-      const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+      const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
       if (!candles || candles.length < 2) return null;
       return candles[candles.length - 2];
     } catch (error: any) {
@@ -1309,7 +1330,7 @@ export class TradingEngine {
     candle: OHLCCandle
   ): Promise<TradeSignal> {
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-    const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+    const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
     if (!candles || candles.length < 20) {
       return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas", signalsCount: 0, minSignalsRequired: 4 };
     }
@@ -1567,21 +1588,25 @@ export class TradingEngine {
       return;
     }
 
-    if (!this.krakenService.isInitialized()) {
-      log("Kraken no está configurado, no se puede iniciar el trading", "trading");
+    const tradingExchange = this.getTradingExchange();
+    if (!tradingExchange.isInitialized()) {
+      log(`${ExchangeFactory.getTradingExchangeType()} no está configurado, no se puede iniciar el trading`, "trading");
       return;
     }
 
-    // Load dynamic pair metadata from Kraken API (step sizes, order minimums)
+    // Load dynamic pair metadata from exchange API (step sizes, order minimums)
     const activePairs = config.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD"];
     try {
-      await this.krakenService.loadPairMetadata(activePairs);
+      await tradingExchange.loadPairMetadata(activePairs);
       // Verify all active pairs have metadata
-      const missingPairs = activePairs.filter(p => !this.krakenService.hasMetadata(p));
+      const missingPairs = activePairs.filter(p => !tradingExchange.hasMetadata(p));
       if (missingPairs.length > 0) {
         log(`[CRITICAL] Missing metadata for pairs: ${missingPairs.join(", ")}. Using fallback values.`, "trading");
       }
-      this.krakenService.startMetadataRefresh(activePairs);
+      // Start metadata refresh timer (Kraken-specific, falls back gracefully if not available)
+      if (this.krakenService.startMetadataRefresh) {
+        this.krakenService.startMetadataRefresh(activePairs);
+      }
     } catch (error: any) {
       log(`[CRITICAL] Failed to load pair metadata: ${error.message}. Trading will use fallback values.`, "trading");
       // Continue with fallbacks - don't block trading entirely for API failures
@@ -1604,7 +1629,7 @@ export class TradingEngine {
     }
 
     try {
-      const balances = await this.krakenService.getBalance();
+      const balances = await this.getTradingExchange().getBalance();
       this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
       log(`Balance inicial USD: $${this.currentUsdBalance.toFixed(2)}`, "trading");
     } catch (error: any) {
@@ -1822,7 +1847,7 @@ ${positionsList}
       this.lastScanTime = Date.now();
       this.lastScanResults.clear();
 
-      const balances = await this.krakenService.getBalance();
+      const balances = await this.getTradingExchange().getBalance();
       this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
       
       // Reset diario del P&L
@@ -2050,7 +2075,7 @@ El bot ha pausado las operaciones de COMPRA.
 
     try {
       const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.krakenService.getTicker(krakenPair);
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
       const tickerData: any = Object.values(ticker)[0];
       if (!tickerData) return;
 
@@ -2179,7 +2204,7 @@ El bot ha pausado las operaciones de COMPRA.
       }
 
       // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
-      const freshBalances = await this.krakenService.getBalance();
+      const freshBalances = await this.getTradingExchange().getBalance();
       const realAssetBalance = this.getAssetBalance(pair, freshBalances);
       
       // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
@@ -2566,7 +2591,7 @@ El bot ha pausado las operaciones de COMPRA.
       }
       
       // Balance verification
-      const freshBalances = await this.krakenService.getBalance();
+      const freshBalances = await this.getTradingExchange().getBalance();
       const realAssetBalance = this.getAssetBalance(pair, freshBalances);
       
       if (realAssetBalance < sellAmount * 0.995) {
@@ -2654,7 +2679,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       }
 
       const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.krakenService.getTicker(krakenPair);
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
       const tickerData: any = Object.values(ticker)[0];
       
       if (!tickerData) return;
@@ -3491,7 +3516,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       
       if (routerEnabled && regimeEnabledEarly && earlyRegime) {
         const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-        const candles = await this.krakenService.getOHLC(pair, intervalMinutes);
+        const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
         const closedCandles = candles ? candles.slice(0, -1) : [];
         const currentPrice = candle.close;
         
@@ -3575,7 +3600,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       }
 
       const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.krakenService.getTicker(krakenPair);
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
       const tickerData: any = Object.values(ticker)[0];
       if (!tickerData) return;
 
@@ -5064,7 +5089,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     };
     
     try {
-      const candles = await this.krakenService.getOHLC(pair, 60); // 1h candles
+      const candles = await this.getDataExchange().getOHLC(pair, 60); // 1h candles
       if (!candles || candles.length < 50) {
         return defaultResult;
       }
@@ -5412,13 +5437,13 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     stepSize: number;
     needsPositionAdjust: boolean;
   }> {
-    const stepSize = this.krakenService.getStepSize(pair) || 0.00000001;
+    const stepSize = this.getTradingExchange().getStepSize(pair) || 0.00000001;
     const orderMin = this.getOrderMin(pair);
     
     // 1) Obtener balance real del asset base
     let freshBalances: any;
     try {
-      freshBalances = await this.krakenService.getBalance();
+      freshBalances = await this.getTradingExchange().getBalance();
     } catch (error: any) {
       log(`[MANUAL_CLOSE_EVAL] ${pair} ${lotId}: ERROR getBalance - ${error.message}`, "trading");
       return {
@@ -5641,9 +5666,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         log(`[WARN] Emergency SELL sin sellContext para ${pair} - permitido. Razón: ${reason}`, "trading");
       }
       
-      log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)}`, "trading");
+      log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${this.getTradingExchangeType()}`, "trading");
       
-      const order = await this.krakenService.placeOrder({
+      const order = await this.getTradingExchange().placeOrder({
         pair,
         type,
         ordertype: "market",
@@ -6066,9 +6091,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       }
 
       const [tf5m, tf1h, tf4h] = await Promise.all([
-        this.krakenService.getOHLC(pair, 5),
-        this.krakenService.getOHLC(pair, 60),
-        this.krakenService.getOHLC(pair, 240),
+        this.getDataExchange().getOHLC(pair, 5),
+        this.getDataExchange().getOHLC(pair, 60),
+        this.getDataExchange().getOHLC(pair, 240),
       ]);
 
       const data: MultiTimeframeData = {
@@ -6347,8 +6372,8 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       const actualPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
       const actualPnlPct = (actualPnlUsd / entryValueUsd) * 100;
 
-      // PRODUCCIÓN: Ejecutar orden real de venta
-      const order = await this.krakenService.placeOrder({
+      // PRODUCCIÓN: Ejecutar orden real de venta via exchange activo
+      const order = await this.getTradingExchange().placeOrder({
         pair,
         type: "sell",
         ordertype: "market",
