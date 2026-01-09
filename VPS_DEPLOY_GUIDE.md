@@ -187,10 +187,39 @@ docker logs -f krakenbot-staging-app
 
 ## FASE 8: Probar Revolut X
 
-1. Ir a **Integraciones**
-2. Ingresar credenciales de Revolut X
-3. Conectar
-4. Verificar que el bot opera en modo simulación
+### 8.1 Verificar IP whitelisted
+Antes de conectar, asegúrate de que la IP del VPS (5.250.184.18) está en la whitelist de tu API key de Revolut X.
+
+### 8.2 Configurar en el Panel
+1. Ir a **Integraciones** (`http://5.250.184.18:3020/integrations`)
+2. En la sección "Revolut X Exchange":
+   - Ingresar **API Key** (64 caracteres)
+   - Ingresar **Private Key** (Ed25519 PEM completo, incluyendo `-----BEGIN PRIVATE KEY-----`)
+3. Click en **Conectar a Revolut X**
+4. Verificar que aparece "CONECTADO" en verde
+
+### 8.3 Activar como Exchange de Trading
+1. En la misma tarjeta, click en **Activar** para usar Revolut X
+2. Verificar en la tarjeta "Modo Exchange" que muestra:
+   - Trading: **Revolut X** (0.09% fees)
+   - Datos: **Kraken** (para OHLC)
+
+### 8.4 Verificar DRY_RUN
+**IMPORTANTE**: El bot DEBE estar en modo DRY_RUN durante las pruebas.
+```bash
+docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SELECT dry_run_mode FROM bot_config WHERE id = 1;"
+```
+Debe retornar `true`.
+
+### 8.5 Ver logs de conexión
+```bash
+docker logs krakenbot-staging-app | grep -i "revolutx\|exchange"
+```
+Deberías ver:
+```
+[ExchangeFactory] Revolut X initialized
+[ExchangeFactory] Trading: revolutx, Data: kraken
+```
 
 ---
 

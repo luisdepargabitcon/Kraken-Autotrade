@@ -186,6 +186,20 @@ When multiple exit systems are active, they follow this priority order:
 - ExchangeFactory funciona sin type assertions
 - Rutas actualizadas para usar métodos Raw donde se espera formato Kraken original
 
+**FASE 2 Completada (2026-01-09):**
+- **Schema**: Campos `tradingExchange` y `dataExchange` añadidos a `api_config` para modo híbrido
+- **ExchangeFactory**: Métodos `getTradingExchange()`, `getDataExchange()`, `getTradingExchangeFees()` implementados
+- **TradingEngine**: 32 referencias directas a KrakenService reemplazadas por llamadas a ExchangeFactory
+  - `placeOrder`, `getBalance` → `getTradingExchange()`
+  - `getOHLC`, `getTicker` → `getDataExchange()`
+  - Solo quedan 2 referencias: `startMetadataRefresh` (Kraken-específico, condicional)
+- **UI Integraciones**: Nueva tarjeta "Modo Exchange" muestra configuración trading/data dinámica
+- **Estado**: Funciona completamente cuando ambos exchanges son Kraken
+- **Pendiente para modo híbrido completo**:
+  - `formatKrakenPair()` asume formato Kraken - necesita abstracción
+  - Fees aún no conectados al cálculo de P&L (usa constante KRAKEN_FEE_PCT)
+  - Metadata refresh solo para Kraken
+
 **IMPORTANTE - No Revolut Business:**
 - Este proyecto usa exclusivamente **Revolut X** (exchange cripto retail)
 - Script de verificación: `./scripts/check-no-business.sh`
