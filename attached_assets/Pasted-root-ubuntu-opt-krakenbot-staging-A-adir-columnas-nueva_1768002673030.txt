@@ -1,0 +1,329 @@
+root@ubuntu:/opt/krakenbot-staging# # Añadir columnas nuevas a api_config
+docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS kraken_enabled boolean DEFAULT true;
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS revolutx_api_key text;
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS revolutx_private_key text;
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS revolutx_connected boolean DEFAULT false;
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS revolutx_enabled boolean DEFAULT false;
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS active_exchange text DEFAULT 'kraken';
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS trading_exchange text DEFAULT 'kraken';
+ALTER TABLE api_config ADD COLUMN IF NOT EXISTS data_exchange text DEFAULT 'kraken';
+"
+
+# Forzar DRY_RUN
+docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+UPDATE bot_config SET dry_run_mode = true;
+"
+
+# Reiniciar app
+docker restart krakenbot-staging-app
+
+# Ver logs
+docker logs -f krakenbot-staging-app
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+UPDATE 1
+krakenbot-staging-app
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[✓] Pulling schema from database...
+[✓] Changes applied
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:46:24 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:46:24 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+11:46:24 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:46:24 PM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+11:46:24 PM [express] serving on port 5000
+npm error path /app
+npm error command failed
+npm error signal SIGTERM
+npm error command sh -c NODE_ENV=production node dist/index.cjs
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-01-09T23_46_23_844Z-debug-0.log
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:47:31 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:47:31 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[startup] Error loading API credentials: error: column "kraken_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async M2.getApiConfig (/app/dist/index.cjs:70:32703)
+    at async cJ (/app/dist/index.cjs:779:2385)
+    at async /app/dist/index.cjs:813:5777 {
+  length: 114,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '73',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+11:47:31 PM [express] serving on port 5000
+npm error path /app
+npm error command failed
+npm error signal SIGTERM
+npm error command sh -c NODE_ENV=production node dist/index.cjs
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-01-09T23_47_31_192Z-debug-0.log
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:48:59 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:48:59 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[startup] Error loading API credentials: error: column "kraken_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async M2.getApiConfig (/app/dist/index.cjs:70:32703)
+    at async cJ (/app/dist/index.cjs:779:2385)
+    at async /app/dist/index.cjs:813:5777 {
+  length: 114,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '73',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+11:48:59 PM [express] serving on port 5000
+npm error path /app
+npm error command failed
+npm error signal SIGTERM
+npm error command sh -c NODE_ENV=production node dist/index.cjs
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-01-09T23_48_59_510Z-debug-0.log
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:50:27 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:50:27 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+11:50:27 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:50:27 PM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+[startup] Starting trading engine...
+11:50:27 PM [express] serving on port 5000
+[kraken] Loading pair metadata for: BTC/USD, ETH/USD, XRP/USD, SOL/USD, TON/USD
+[kraken] BTC/USD: lotDecimals=8, orderMin=0.00005, stepSize=1e-8
+[kraken] ETH/USD: lotDecimals=8, orderMin=0.001, stepSize=1e-8
+[kraken] XRP/USD: lotDecimals=8, orderMin=1.65, stepSize=1e-8
+[kraken] SOL/USD: lotDecimals=8, orderMin=0.02, stepSize=1e-8
+[kraken] TON/USD: lotDecimals=5, orderMin=0.75, stepSize=0.000009999999999999999
+[kraken] Pair metadata loaded successfully for 5 pairs
+[kraken] Metadata refresh scheduled every 6h
+11:50:27 PM [trading] [INFO] Modo DRY_RUN activado desde configuración
+11:50:27 PM [trading] Balance inicial USD: $1.61
+11:50:27 PM [trading] Motor de trading iniciado
+11:50:27 PM [trading] Posición recuperada: BTC/USD (LOT-BTCUSD-1767589216189-j3focf) - 0.00378107 @ $92566.30000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+11:50:27 PM [trading] Posición recuperada: ETH/USD (LOT-ETHUSD-1767818729954-it0mjc) - 0.03570389 @ $3132.91000000 (momentum_candles_15m/15m) [snapshot: SMART_GUARD]
+11:50:27 PM [trading] 2 posiciones abiertas (2 lotes) cargadas desde la base de datos
+[2026-01-09T23:50:27.549Z] [INFO] [BOT_STARTED] Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "balanceUsd": 1.6097,
+  "openPositions": 2,
+  "dryRunMode": true,
+  "isReplitEnvironment": false
+}
+11:50:27 PM [trading] Nuevo día de trading: 2026-01-09. Balance inicial: $1.61
+[2026-01-09T23:50:27.766Z] [INFO] [DAILY_LIMIT_RESET] Nuevo día de trading: 2026-01-09
+  Meta: {
+  "date": "2026-01-09",
+  "previousDayPnL": 0,
+  "startBalance": 1.6097
+}
+11:50:27 PM [trading] BTC/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:50:27.821Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en BTC/USD
+  Meta: {
+  "pair": "BTC/USD",
+  "entryPrice": 92566.3,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:50:27 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para BTC/USD (LOT-BTCUSD-1767589216189-j3focf)
+11:50:27 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-BTCUSD-1767589216189-j3focf: momentum_candles_15m/15m
+11:50:27 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.00378107 BTC/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:50:27.870Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "BTC/USD",
+  "type": "sell",
+  "volume": 0.00378107,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002627870",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:50:27 PM [trading] Error verificando SL/TP para BTC/USD: pnl is not defined
+11:50:28 PM [trading] ETH/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:50:28.041Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en ETH/USD
+  Meta: {
+  "pair": "ETH/USD",
+  "entryPrice": 3132.91,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:50:28 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para ETH/USD (LOT-ETHUSD-1767818729954-it0mjc)
+11:50:28 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-ETHUSD-1767818729954-it0mjc: momentum_candles_15m/15m
+11:50:28 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.03570389 ETH/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:50:28.142Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "ETH/USD",
+  "type": "sell",
+  "volume": 0.03570389,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002628142",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:50:28 PM [trading] Error verificando SL/TP para ETH/USD: pnl is not defined
+11:50:28 PM [trading] Saldo USD insuficiente: $1.61
+11:50:57 PM [trading] BTC/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:50:57.858Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en BTC/USD
+  Meta: {
+  "pair": "BTC/USD",
+  "entryPrice": 92566.3,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:50:57 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para BTC/USD (LOT-BTCUSD-1767589216189-j3focf)
+11:50:57 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-BTCUSD-1767589216189-j3focf: momentum_candles_15m/15m
+11:50:57 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.00378107 BTC/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:50:57.910Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "BTC/USD",
+  "type": "sell",
+  "volume": 0.00378107,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002657910",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:50:58 PM [trading] Error verificando SL/TP para BTC/USD: pnl is not defined
+11:50:58 PM [trading] ETH/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:50:58.103Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en ETH/USD
+  Meta: {
+  "pair": "ETH/USD",
+  "entryPrice": 3132.91,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:50:58 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para ETH/USD (LOT-ETHUSD-1767818729954-it0mjc)
+11:50:58 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-ETHUSD-1767818729954-it0mjc: momentum_candles_15m/15m
+11:50:58 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.03570389 ETH/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:50:58.155Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "ETH/USD",
+  "type": "sell",
+  "volume": 0.03570389,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002658155",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:50:58 PM [trading] Error verificando SL/TP para ETH/USD: pnl is not defined
+11:50:58 PM [trading] Saldo USD insuficiente: $1.61
