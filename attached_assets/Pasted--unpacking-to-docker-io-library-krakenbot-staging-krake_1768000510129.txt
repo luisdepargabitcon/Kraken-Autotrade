@@ -1,0 +1,79 @@
+=> => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               0.8s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] up 4/4
+ ✔ Image krakenbot-staging-krakenbot-staging-app   Built                                                          15.2s
+ ✔ Network krakenbot-staging_krakenbot-staging-net Created                                                         0.0s
+ ✔ Container krakenbot-staging-db                  Created                                                         0.5s
+ ✔ Container krakenbot-staging-app                 Created                                                         0.0s
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+[✓] Changes applied
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:12:52 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:12:52 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[revolutx] Initialized with Ed25519 authentication
+[ExchangeFactory] Revolut X initialized
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+11:12:52 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:12:52 PM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+11:12:52 PM [express] serving on port 5000
+
+
+
+
+docker logs -f krakenbot-staging-app
+
+
+
+
+^Croot@ubuntu:/opt/krakenbot-staging# docker logs -f krakenbot-staging-app
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+[✓] Changes applied
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:12:52 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:12:52 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[revolutx] Initialized with Ed25519 authentication
+[ExchangeFactory] Revolut X initialized
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+11:12:52 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:12:52 PM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+11:12:52 PM [express] serving on port 5000
