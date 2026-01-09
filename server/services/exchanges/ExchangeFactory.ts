@@ -15,6 +15,8 @@ export interface ExchangeStatus {
 
 class ExchangeFactoryClass {
   private activeExchange: ExchangeType = 'kraken';
+  private tradingExchange: ExchangeType = 'kraken';
+  private dataExchange: ExchangeType = 'kraken';
   private exchangeEnabled: Record<ExchangeType, boolean> = {
     kraken: true,
     revolutx: false
@@ -36,8 +38,45 @@ class ExchangeFactoryClass {
     }
   }
 
+  getTradingExchange(): IExchangeService {
+    return this.getExchange(this.tradingExchange);
+  }
+
+  getDataExchange(): IExchangeService {
+    return this.getExchange(this.dataExchange);
+  }
+
   getActiveExchange(): IExchangeService {
     return this.getExchange(this.activeExchange);
+  }
+
+  setTradingExchange(type: ExchangeType): void {
+    if (!this.exchangeEnabled[type]) {
+      throw new Error(`Exchange ${type} is not enabled`);
+    }
+    
+    const exchange = this.getExchange(type);
+    if (!exchange.isInitialized()) {
+      throw new Error(`Exchange ${type} is not configured`);
+    }
+    
+    this.tradingExchange = type;
+    this.activeExchange = type;
+    console.log(`[ExchangeFactory] Trading exchange set to: ${type}`);
+  }
+
+  setDataExchange(type: ExchangeType): void {
+    if (!this.exchangeEnabled[type]) {
+      throw new Error(`Exchange ${type} is not enabled`);
+    }
+    
+    const exchange = this.getExchange(type);
+    if (!exchange.isInitialized()) {
+      throw new Error(`Exchange ${type} is not configured`);
+    }
+    
+    this.dataExchange = type;
+    console.log(`[ExchangeFactory] Data exchange set to: ${type}`);
   }
 
   setActiveExchange(type: ExchangeType): void {
@@ -51,11 +90,20 @@ class ExchangeFactoryClass {
     }
     
     this.activeExchange = type;
+    this.tradingExchange = type;
     console.log(`[ExchangeFactory] Active exchange set to: ${type}`);
   }
 
   getActiveExchangeType(): ExchangeType {
     return this.activeExchange;
+  }
+
+  getTradingExchangeType(): ExchangeType {
+    return this.tradingExchange;
+  }
+
+  getDataExchangeType(): ExchangeType {
+    return this.dataExchange;
   }
 
   isExchangeEnabled(type: ExchangeType): boolean {
@@ -113,6 +161,8 @@ class ExchangeFactoryClass {
     revolutxPrivateKey?: string;
     revolutxEnabled?: boolean;
     activeExchange?: ExchangeType;
+    tradingExchange?: ExchangeType;
+    dataExchange?: ExchangeType;
   }): Promise<void> {
     if (config.krakenApiKey && config.krakenApiSecret) {
       krakenService.initialize({
@@ -133,14 +183,32 @@ class ExchangeFactoryClass {
       console.log('[ExchangeFactory] Revolut X initialized');
     }
 
-    if (config.activeExchange && this.exchangeEnabled[config.activeExchange]) {
-      const exchange = this.getExchange(config.activeExchange);
+    const tradingEx = config.tradingExchange || config.activeExchange || 'kraken';
+    if (this.exchangeEnabled[tradingEx]) {
+      const exchange = this.getExchange(tradingEx);
       if (exchange.isInitialized()) {
-        this.activeExchange = config.activeExchange;
+        this.tradingExchange = tradingEx;
+        this.activeExchange = tradingEx;
       }
     }
 
-    console.log(`[ExchangeFactory] Active exchange: ${this.activeExchange}`);
+    const dataEx = config.dataExchange || 'kraken';
+    if (this.exchangeEnabled[dataEx]) {
+      const exchange = this.getExchange(dataEx);
+      if (exchange.isInitialized()) {
+        this.dataExchange = dataEx;
+      }
+    }
+
+    console.log(`[ExchangeFactory] Trading: ${this.tradingExchange}, Data: ${this.dataExchange}`);
+  }
+
+  getTradingExchangeFees(): { takerFeePct: number; makerFeePct: number } {
+    const exchange = this.getTradingExchange();
+    return {
+      takerFeePct: exchange.takerFeePct,
+      makerFeePct: exchange.makerFeePct
+    };
   }
 }
 

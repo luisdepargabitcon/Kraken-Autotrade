@@ -81,6 +81,8 @@ export async function registerRoutes(
         revolutxPrivateKey: apiConfig.revolutxPrivateKey ?? undefined,
         revolutxEnabled: apiConfig.revolutxEnabled ?? false,
         activeExchange: (apiConfig.activeExchange as "kraken" | "revolutx") ?? "kraken",
+        tradingExchange: ((apiConfig as any).tradingExchange as "kraken" | "revolutx") ?? "kraken",
+        dataExchange: ((apiConfig as any).dataExchange as "kraken" | "revolutx") ?? "kraken",
       });
       console.log(`[startup] ExchangeFactory initialized. Active: ${ExchangeFactory.getActiveExchangeType()}`);
       

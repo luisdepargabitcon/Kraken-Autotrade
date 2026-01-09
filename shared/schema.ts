@@ -86,7 +86,12 @@ export const apiConfig = pgTable("api_config", {
   revolutxPrivateKey: text("revolutx_private_key"),
   revolutxConnected: boolean("revolutx_connected").notNull().default(false),
   revolutxEnabled: boolean("revolutx_enabled").notNull().default(false),
-  // Active exchange selector
+  // Exchange mode: which exchange is used for what purpose
+  // 'tradingExchange' executes orders (BUY/SELL)
+  tradingExchange: text("trading_exchange").notNull().default("kraken"),
+  // 'dataExchange' provides market data (prices, OHLC, orderbook)
+  dataExchange: text("data_exchange").notNull().default("kraken"),
+  // Legacy activeExchange field - kept for backward compatibility
   activeExchange: text("active_exchange").notNull().default("kraken"),
   // Telegram configuration
   telegramToken: text("telegram_token"),
