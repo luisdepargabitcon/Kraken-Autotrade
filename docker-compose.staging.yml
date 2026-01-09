@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  krakenbot-staging-db:
+    image: postgres:16-alpine
+    container_name: krakenbot-staging-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-krakenstaging}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-Kr4k3n_St4g1ng_2026!}
+      - POSTGRES_DB=${POSTGRES_DB:-krakenbot_staging}
+    volumes:
+      - pgdata_staging:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - krakenbot-staging-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krakenstaging -d krakenbot_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  krakenbot-staging-app:
+    build: .
+    container_name: krakenbot-staging-app
+    restart: unless-stopped
+    depends_on:
+      krakenbot-staging-db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-krakenstaging}:${POSTGRES_PASSWORD:-Kr4k3n_St4g1ng_2026!}@krakenbot-staging-db:5432/${POSTGRES_DB:-krakenbot_staging}
+      - NODE_ENV=production
+    ports:
+      - "3020:5000"
+    networks:
+      - krakenbot-staging-net
+
+volumes:
+  pgdata_staging:
+
+networks:
+  krakenbot-staging-net:
+    driver: bridge
