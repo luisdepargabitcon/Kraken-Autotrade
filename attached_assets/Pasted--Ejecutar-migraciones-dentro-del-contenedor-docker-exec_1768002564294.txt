@@ -1,0 +1,164 @@
+ Ejecutar migraciones dentro del contenedor
+docker exec -it krakenbot-staging-app npm run db:push
+
+# Reiniciar
+docker restart krakenbot-staging-app
+
+# Ver logs
+docker logs -f krakenbot-staging-app
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+· You're about to add trades_kraken_order_id_unique unique constraint to the table, which contains 246 items. If this statement fails, you will receive an error from the database. Do you want to truncate trades table?
+
+ Warning  Found data-loss statements:
+· You're about to delete fee_buffer_pct column in bot_config table with 1 items
+· You're about to delete time_stop_enabled column in bot_config table with 1 items
+· You're about to delete min_profit_pct column in bot_config table with 1 items
+· You're about to delete atr_period column in bot_config table with 1 items
+· You're about to delete atr_sl_multiplier column in bot_config table with 1 items
+· You're about to delete atr_tp_multiplier column in bot_config table with 1 items
+· You're about to delete atr_trail_multiplier column in bot_config table with 1 items
+· You're about to delete time_stop_disabled column in bot_config table with 1 items
+· You're about to delete id column in regime_state table with 5 items
+· You're about to delete entry_fee column in trades table with 246 items
+
+THIS ACTION WILL CAUSE DATA LOSS AND CANNOT BE REVERTED
+
+Do you still want to push changes?
+[x] All changes were aborted
+krakenbot-staging-app
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[✓] Pulling schema from database...
+[✓] Changes applied
+
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:46:24 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:46:24 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+11:46:24 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:46:24 PM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+11:46:24 PM [express] serving on port 5000
+npm error path /app
+npm error command failed
+npm error signal SIGTERM
+npm error command sh -c NODE_ENV=production node dist/index.cjs
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-01-09T23_46_23_844Z-debug-0.log
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:47:31 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:47:31 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[startup] Error loading API credentials: error: column "kraken_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async M2.getApiConfig (/app/dist/index.cjs:70:32703)
+    at async cJ (/app/dist/index.cjs:779:2385)
+    at async /app/dist/index.cjs:813:5777 {
+  length: 114,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '73',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+11:47:31 PM [express] serving on port 5000
+npm error path /app
+npm error command failed
+npm error signal SIGTERM
+npm error command sh -c NODE_ENV=production node dist/index.cjs
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-01-09T23_47_31_192Z-debug-0.log
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 150 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+
+
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:48:59 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:48:59 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[startup] Error loading API credentials: error: column "kraken_enabled" does not exist
+    at /app/dist/index.cjs:70:13356
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /app/dist/index.cjs:70:28733
+    at async M2.getApiConfig (/app/dist/index.cjs:70:32703)
+    at async cJ (/app/dist/index.cjs:779:2385)
+    at async /app/dist/index.cjs:813:5777 {
+  length: 114,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '73',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+11:48:59 PM [express] serving on port 5000
