@@ -1,0 +1,38 @@
+NECESITO QUE COMPRUEBES SI EL BOT ES REALMENTE FUNCIONAL CON REVOLUT X (NO SOLO “CONECTADO”)
+
+OBJETIVO
+- Verificar y dejar operativo el bot ejecutando en Revolut X (por fees bajos) manteniendo Kraken como “solo lectura” (datos/backup).
+- Confirmar que añadir Revolut X NO rompe la lógica del bot y que no está acoplado a Kraken.
+
+CHECKLIST DE COMPATIBILIDAD (OBLIGATORIO, END-TO-END)
+1) ABSTRACCIÓN / ACOPLAMIENTO
+- Confirmar si el bot usa un ExchangeAdapter/interfaz común o si hay código hardcodeado a Kraken (símbolos, endpoints, campos, estados de órdenes).
+- Normalización de símbolos: el bot debe trabajar con un formato canónico (ej. BTC-USD / ETH-EUR) y traducirlo por exchange.
+
+2) DATOS Y CUENTA (REVOLUT X)
+- Lectura real (no fake): balances, órdenes abiertas, posiciones (si aplica), estado de conexión.
+- Validar que el “Connected” significa que hay llamadas reales OK y permisos correctos.
+
+3) EJECUCIÓN (REVOLUT X)
+- Colocar y cancelar órdenes en Revolut X en modo controlado (test con tamaño mínimo permitido).
+- Verificar que respeta precision/decimales, min size y min notional de Revolut X.
+- Confirmar estados de orden: placed / partial / filled / canceled y que el bot los interpreta correctamente.
+
+4) LÓGICA DE ESTRATEGIA (MISMA QUE KRAKEN)
+- Confirmar que los parámetros de estrategia (riesgo, sizing, filtros, TP/SL si aplica) son globales y se aplican igual, sin asumir reglas específicas de Kraken.
+- Confirmar que el sizing funciona con el balance disponible de Revolut X y no toma el de Kraken si Kraken está solo lectura.
+
+5) MULTI-EXCHANGE FLAGS (OPERATIVO VS SOLO LECTURA)
+- Revolut X: trading_enabled=true, data_enabled=true.
+- Kraken: trading_enabled=false, data_enabled=true.
+- Garantizar que Kraken NO recibe ninguna orden bajo ninguna condición.
+
+6) LOGS Y EVIDENCIAS
+- Entregar evidencias (logs/capturas) de:
+  - una operación de prueba completa en Revolut X (create → filled/cancel),
+  - lectura de balances/estado,
+  - confirmación de que Kraken queda solo lectura.
+- Incluir un checklist final marcado (OK/PENDIENTE) indicando qué se ha verificado exactamente.
+
+IMPORTANTE
+- No implementar todavía lógica de “diferencia de precios entre exchanges” ni arbitraje; solo compatibilidad y ejecución funcional en Revolut X.

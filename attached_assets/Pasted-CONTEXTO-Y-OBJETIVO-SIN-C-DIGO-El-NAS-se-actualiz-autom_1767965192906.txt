@@ -1,0 +1,86 @@
+CONTEXTO Y OBJETIVO (SIN CÓDIGO)
+- El NAS se actualizó automáticamente mediante la tarea programada (pull desde Git) y ahora en el NAS está desplegada la versión que antes corría en el VPS.
+- Necesito que el sistema vuelva a funcionar correctamente EN EL VPS (servicio estable y operativo allí).
+- Actualmente, la base de datos con TODO el historial está en el NAS. Además, hay que migrar también la base de datos del recolector.
+- Hay fallos previos ya reportados (activación de Revolut X, rediseño cartera/dashboard multi-exchange, etc.) que siguen pendientes.
+
+TAREAS PRIORITARIAS PARA REPLIT (ARREGLAR Y VERIFICAR)
+
+1) NORMALIZAR ENTORNOS (VPS vs NAS)
+- Revisar y documentar el estado real de despliegue: qué servicios/containers corren en NAS y cuáles en VPS.
+- Definir el VPS como entorno operativo principal.
+- Evitar que los despliegues por Git vuelvan a pisar el entorno incorrecto (separar targets/variables/branches).
+
+2) RESTAURAR OPERACIÓN EN VPS (END-TO-END)
+- Levantar app completa en VPS (API + UI + bot/worker + recolector si aplica) y dejarla estable 24/7.
+- Verificar variables de entorno, puertos, reverse proxy (si existe) y healthchecks.
+- Confirmar que la UI en VPS muestra datos reales y actualizados.
+
+3) MIGRACIÓN DE BASES DE DATOS (CRÍTICO)
+- Migrar al VPS la base de datos principal desde el NAS conservando TODO el historial.
+- Migrar también la base de datos del recolector (histórico de mercado/señales/métricas).
+- Validar post-migración: recuentos, integridad, arranque sin errores y lecturas correctas desde UI.
+- Definir backups automáticos (NAS como destino de backup; no DB viva).
+
+4) MULTI-EXCHANGE: OPERATIVO VS SOLO LECTURA (SIN DIFERENCIA DE PRECIOS)
+- Implementar flags por exchange:
+  - data_enabled (lectura para IA/recolector/cartera)
+  - trading_enabled (permitir órdenes)
+- Configuración objetivo:
+  - Revolut X = Activo (Trading) + Datos
+  - Kraken = Solo lectura (Datos), NO trading
+- Corregir “No me deja activar Revolut X”: persistir en backend y reflejar tras recarga.
+- El bot SOLO opera en exchanges con trading_enabled=true.
+
+5) CARTERA (UI) — REDISEÑO
+- Resumen global: balance total, cash disponible, exposición (si aplica), última sync global.
+- Tarjetas por exchange: Total / Disponible / En órdenes / Última sync / Estado (Activo o Solo lectura).
+- Tabla de activos con filtro por exchange (Todos / Kraken / Revolut X) + vista agregada.
+
+6) DASHBOARD (UI) — SIMPLIFICACIÓN Y GRÁFICA
+- Eliminar del Dashboard “Operaciones recientes” y “Eventos/Logs” (ya existen en otras pestañas).
+- Mantener solo KPIs y estado operativo.
+- Añadir sección “Balance total por exchange operativo”:
+  - mostrar SOLO exchanges con trading_enabled=true;
+  - 1 operativo = 1 tarjeta; 2 operativos = 2 tarjetas.
+- Añadir gráfica de precios casi en tiempo real SOLO para monedas con posiciones abiertas:
+  - timeframe seleccionable (1m/5m/15m/1h),
+  - auto-actualización (polling o websocket),
+  - indicador de última actualización/estado.
+  - Si no hay posiciones abiertas, mostrar estado informativo.
+
+7) RECOLECTOR Y DATOS PARA IA
+- El recolector sigue activo para TODOS los exchanges con data_enabled=true aunque trading_enabled=false.
+- El motor de ejecución filtra estrictamente por trading_enabled=true.
+- Logs por ciclo: collected_exchanges[] y execution_exchanges[].
+
+8) GESTIÓN DE APIS DESDE UI (BORRADO / DESVINCULACIÓN)
+- Botones “Eliminar/Desvincular” credenciales por proveedor (Kraken, Revolut X, Telegram, etc.).
+- Al eliminar:
+  - borrar credenciales de forma segura,
+  - limpiar estado,
+  - desactivar data_enabled/trading_enabled,
+  - reflejar “Desconectado” en UI.
+- Confirmación fuerte (modal + confirmación explícita).
+- Auditoría mínima (timestamp).
+
+9) CHECKLIST DE ENTREGA (OBLIGATORIO)
+- Entregar un CHECKLIST final, marcado ítem por ítem, con:
+  - estado (OK / NO APLICA / PENDIENTE),
+  - breve nota de verificación,
+  - evidencia (captura o log) cuando aplique.
+- El checklist debe cubrir como mínimo:
+  - VPS operativo end-to-end,
+  - DB principal migrada y validada,
+  - DB recolector migrada y validada,
+  - Activación Revolut X persistente,
+  - Kraken solo lectura sin órdenes,
+  - Cartera rediseñada funcionando,
+  - Dashboard simplificado + gráfica en tiempo real,
+  - Recolector activo para IA,
+  - Eliminación de APIs desde UI funcionando,
+  - Backups configurados.
+
+IMPORTANTE
+- No implementar todavía arbitraje ni checks por diferencia de precios entre exchanges.
+- Mantener el NAS como backup/soporte; el entorno operativo principal debe quedar en el VPS.
