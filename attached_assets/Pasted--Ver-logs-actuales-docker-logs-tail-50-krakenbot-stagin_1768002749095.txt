@@ -1,0 +1,53 @@
+ Ver logs actuales
+docker logs --tail 50 krakenbot-staging-app
+11:51:28 PM [trading] Saldo USD insuficiente: $1.61
+11:51:57 PM [trading] BTC/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:51:57.910Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en BTC/USD
+  Meta: {
+  "pair": "BTC/USD",
+  "entryPrice": 92566.3,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:51:57 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para BTC/USD (LOT-BTCUSD-1767589216189-j3focf)
+11:51:57 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-BTCUSD-1767589216189-j3focf: momentum_candles_15m/15m
+11:51:57 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.00378107 BTC/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:51:57.969Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "BTC/USD",
+  "type": "sell",
+  "volume": 0.00378107,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002717969",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:51:58 PM [trading] Error verificando SL/TP para BTC/USD: pnl is not defined
+11:51:58 PM [trading] ETH/USD en cooldown post-SL por 30 minutos
+[2026-01-09T23:51:58.136Z] [WARN] [SG_EMERGENCY_STOPLOSS] SMART_GUARD Stop-Loss emergencia en ETH/USD
+  Meta: {
+  "pair": "ETH/USD",
+  "entryPrice": 3132.91,
+  "currentPrice": 0,
+  "priceChange": -100,
+  "ultimateSL": 5,
+  "paramsSource": "SMART_GUARD snapshot"
+}
+11:51:58 PM [trading] 🛑 Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot] para ETH/USD (LOT-ETHUSD-1767818729954-it0mjc)
+11:51:58 PM [trading] [META] Autocompletado strategyMeta desde posición LOT-ETHUSD-1767818729954-it0mjc: momentum_candles_15m/15m
+11:51:58 PM [trading] [NAS/PROD][DRY_RUN] SIMULACIÓN SELL 0.03570389 ETH/USD @ $0.00 (Total: $0.00)
+[2026-01-09T23:51:58.185Z] [INFO] [DRY_RUN_TRADE] [NAS/PROD][DRY_RUN] Trade simulado - NO enviado al exchange
+  Meta: {
+  "pair": "ETH/USD",
+  "type": "sell",
+  "volume": 0.03570389,
+  "price": 0,
+  "totalUsd": 0,
+  "simTxid": "DRY-1768002718185",
+  "reason": "Stop-Loss emergencia SMART_GUARD (-100.00% < -5%) [SMART_GUARD snapshot]"
+}
+11:51:58 PM [trading] Error verificando SL/TP para ETH/USD: pnl is not defined
+11:51:58 PM [trading] Saldo USD insuficiente: $1.61
+root@ubuntu:/opt/krakenbot-staging#
