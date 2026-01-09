@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { MessageSquare, Server, Check, Plug, Eye, EyeOff, ArrowRight, Zap, Crown } from "lucide-react";
+import { MessageSquare, Server, Check, Plug, Eye, EyeOff, ArrowRight, Zap, Crown, Settings, TrendingUp, BarChart2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -30,6 +30,8 @@ export default function Integrations() {
   const [showRevolutxPrivateKey, setShowRevolutxPrivateKey] = useState(false);
   
   const [activeExchange, setActiveExchange] = useState<"kraken" | "revolutx">("kraken");
+  const [tradingExchange, setTradingExchange] = useState<"kraken" | "revolutx">("kraken");
+  const [dataExchange, setDataExchange] = useState<"kraken" | "revolutx">("kraken");
   
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
@@ -52,6 +54,8 @@ export default function Integrations() {
       setRevolutxConnected(apiConfig.revolutxConnected ?? false);
       setRevolutxEnabled(apiConfig.revolutxEnabled ?? false);
       setActiveExchange(apiConfig.activeExchange ?? "kraken");
+      setTradingExchange(apiConfig.tradingExchange ?? apiConfig.activeExchange ?? "kraken");
+      setDataExchange(apiConfig.dataExchange ?? apiConfig.activeExchange ?? "kraken");
       setTelegramConnected(apiConfig.telegramConnected);
     }
   }, [apiConfig]);
@@ -162,6 +166,69 @@ export default function Integrations() {
               <p className="text-muted-foreground mt-1">Configura las credenciales de APIs externas.</p>
             </div>
           </div>
+
+          <Card className="glass-panel border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/20 rounded-lg">
+                  <Settings className="h-6 w-6 text-primary" />
+                </div>
+                <div className="flex-1">
+                  <CardTitle>Modo Exchange</CardTitle>
+                  <CardDescription>Configuracion actual del motor de trading.</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1 p-3 rounded-lg bg-background/50 border border-border/50">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                    <TrendingUp className="h-4 w-4" />
+                    <span>Exchange para Trading</span>
+                  </div>
+                  <div className="font-semibold text-lg">
+                    {tradingExchange === "kraken" ? (
+                      <span className="flex items-center gap-2">
+                        <Server className="h-5 w-5 text-orange-400" />
+                        Kraken
+                        <span className="text-xs text-muted-foreground font-normal">(0.40% fees)</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Zap className="h-5 w-5 text-purple-400" />
+                        Revolut X
+                        <span className="text-xs text-muted-foreground font-normal">(0.09% fees)</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 p-3 rounded-lg bg-background/50 border border-border/50">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                    <BarChart2 className="h-4 w-4" />
+                    <span>Exchange para Datos (OHLC)</span>
+                  </div>
+                  <div className="font-semibold text-lg">
+                    {dataExchange === "kraken" ? (
+                      <span className="flex items-center gap-2">
+                        <Server className="h-5 w-5 text-orange-400" />
+                        Kraken
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Zap className="h-5 w-5 text-purple-400" />
+                        Revolut X
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {tradingExchange !== dataExchange && (
+                <p className="text-xs text-yellow-500/80 mt-3">
+                  Modo hibrido activo: Trading en {tradingExchange === "kraken" ? "Kraken" : "Revolut X"}, datos de mercado desde {dataExchange === "kraken" ? "Kraken" : "Revolut X"}.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid gap-6">
             <Card className="glass-panel border-border/50">
