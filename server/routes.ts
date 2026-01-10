@@ -1236,13 +1236,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         } else if (trade.type === "sell") {
           const lastBuy = pairPrices[pair];
           if (lastBuy && lastBuy.lastBuyPrice > 0) {
-            // Use stored realizedPnlUsd (net of fees) if available, otherwise calculate gross
-            let pnl: number;
-            if (trade.realizedPnlUsd !== null && trade.realizedPnlUsd !== undefined) {
-              pnl = parseFloat(trade.realizedPnlUsd);
-            } else {
-              pnl = (price - lastBuy.lastBuyPrice) * Math.min(amount, lastBuy.lastBuyAmount);
-            }
+            const pnl = (price - lastBuy.lastBuyPrice) * Math.min(amount, lastBuy.lastBuyAmount);
             totalPnl += pnl;
             currentEquity += pnl;
 
