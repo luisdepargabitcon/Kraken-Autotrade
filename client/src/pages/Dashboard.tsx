@@ -12,12 +12,16 @@ import { Link } from "wouter";
 import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 
 interface DashboardData {
-  krakenConnected: boolean;
+  exchangeConnected: boolean;
+  tradingExchange: string;
+  dataExchange: string;
+  krakenConnected: boolean; // Legacy
   telegramConnected: boolean;
   botActive: boolean;
   strategy: string;
   activePairs: string[];
-  balances: Record<string, string>;
+  activeAssets: string[];
+  balances: Record<string, number>;
   prices: Record<string, { price: string; change: string }>;
   recentTrades: any[];
 }
@@ -33,28 +37,23 @@ export default function Dashboard() {
     refetchInterval: 30000,
   });
 
+  // Now using generic symbols (BTC, ETH, etc.) from trading exchange
   const formatBalance = (symbol: string) => {
     if (!data?.balances) return { balance: "0", value: "$0.00", change: 0 };
     
-    const symbolMap: Record<string, string> = {
-      "BTC": "XXBT", "ETH": "XETH", "SOL": "SOL", "XRP": "XXRP", "TON": "TON", "USD": "ZUSD"
-    };
-    const pairMap: Record<string, string> = {
-      "BTC": "XXBTZUSD", "ETH": "XETHZUSD", "SOL": "SOLUSD", "XRP": "XXRPZUSD", "TON": "TONUSD"
-    };
+    // Balances now use generic symbols directly (BTC, ETH, SOL, XRP, TON, USD)
+    const balance = data.balances[symbol] || 0;
     
-    const krakenSymbol = symbolMap[symbol] || "ZUSD";
-    const balance = parseFloat(data.balances[krakenSymbol] || "0");
-    
-    const pricePair = pairMap[symbol];
-    const priceData = pricePair ? data.prices[pricePair] : null;
+    // Prices are keyed by pair (e.g., "BTC/USD")
+    const pair = symbol === "USD" ? null : `${symbol}/USD`;
+    const priceData = pair ? data.prices[pair] : null;
     const price = parseFloat(priceData?.price || "0");
     const change = parseFloat(priceData?.change || "0");
     
     const value = symbol === "USD" ? balance : balance * price;
     
     return {
-      balance: balance.toFixed(symbol === "USD" ? 2 : 4),
+      balance: balance.toFixed(symbol === "USD" ? 2 : 6),
       value: `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       change: symbol === "USD" ? 0 : change,
     };
@@ -63,19 +62,15 @@ export default function Dashboard() {
   const getTotalBalance = () => {
     if (!data?.balances || !data?.prices) return "$0.00";
     
-    let total = parseFloat(data.balances["ZUSD"] || "0");
+    // USD balance
+    let total = data.balances["USD"] || 0;
     
-    const assets = [
-      { symbol: "XXBT", pair: "XXBTZUSD" },
-      { symbol: "XETH", pair: "XETHZUSD" },
-      { symbol: "SOL", pair: "SOLUSD" },
-      { symbol: "XXRP", pair: "XXRPZUSD" },
-      { symbol: "TON", pair: "TONUSD" },
-    ];
-    
-    for (const asset of assets) {
-      const balance = parseFloat(data.balances[asset.symbol] || "0");
-      const price = parseFloat(data.prices[asset.pair]?.price || "0");
+    // Get assets from activePairs
+    const activePairs = data.activePairs || [];
+    for (const pair of activePairs) {
+      const [base] = pair.split("/");
+      const balance = data.balances[base] || 0;
+      const price = parseFloat(data.prices[pair]?.price || "0");
       total += balance * price;
     }
     
@@ -84,17 +79,26 @@ export default function Dashboard() {
 
   const usdData = formatBalance("USD");
   
-  const cryptoAssets = [
-    { symbol: "BTC", name: "Bitcoin", ...formatBalance("BTC") },
-    { symbol: "ETH", name: "Ethereum", ...formatBalance("ETH") },
-    { symbol: "SOL", name: "Solana", ...formatBalance("SOL") },
-    { symbol: "XRP", name: "Ripple", ...formatBalance("XRP") },
-    { symbol: "TON", name: "Toncoin", ...formatBalance("TON") },
-  ].sort((a, b) => {
-    const valueA = parseFloat(a.value.replace(/[$,]/g, "")) || 0;
-    const valueB = parseFloat(b.value.replace(/[$,]/g, "")) || 0;
-    return valueB - valueA;
-  });
+  // Asset name mapping for display
+  const assetNames: Record<string, string> = {
+    "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "Ripple",
+    "TON": "Toncoin", "ADA": "Cardano", "DOT": "Polkadot", "DOGE": "Dogecoin",
+    "LTC": "Litecoin", "MATIC": "Polygon", "AVAX": "Avalanche", "LINK": "Chainlink"
+  };
+  
+  // Generate crypto assets dynamically from activeAssets (excluding USD)
+  const cryptoAssets = (data?.activeAssets || [])
+    .filter(symbol => symbol !== "USD")
+    .map(symbol => ({
+      symbol,
+      name: assetNames[symbol] || symbol,
+      ...formatBalance(symbol)
+    }))
+    .sort((a, b) => {
+      const valueA = parseFloat(a.value.replace(/[$,]/g, "")) || 0;
+      const valueB = parseFloat(b.value.replace(/[$,]/g, "")) || 0;
+      return valueB - valueA;
+    });
 
   if (isLoading) {
     return (
@@ -146,16 +150,27 @@ export default function Dashboard() {
           <EnvironmentBadge />
         </div>
         
-        {!data?.krakenConnected && !isLoading && (
+        {!data?.exchangeConnected && !isLoading && (
           <div className="mx-4 md:mx-6 mt-4 p-3 md:p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
             <AlertCircle className="h-5 w-5 text-yellow-500 shrink-0" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-yellow-500">Kraken no conectado</p>
-              <p className="text-xs text-muted-foreground">Configura tus claves API en Ajustes para ver datos reales.</p>
+              <p className="text-sm font-medium text-yellow-500">Exchange no conectado</p>
+              <p className="text-xs text-muted-foreground">Configura tus claves API en Integraciones para ver datos reales.</p>
             </div>
-            <Link href="/settings" className="text-sm text-primary hover:underline whitespace-nowrap" data-testid="link-goto-settings">
-              Ir a Ajustes
+            <Link href="/integrations" className="text-sm text-primary hover:underline whitespace-nowrap" data-testid="link-goto-integrations">
+              Ir a Integraciones
             </Link>
+          </div>
+        )}
+        
+        {data?.exchangeConnected && (
+          <div className="mx-4 md:mx-6 mt-4 flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-mono">
+              Trading: <span className="text-primary">{data.tradingExchange?.toUpperCase()}</span>
+              {data.tradingExchange !== data.dataExchange && (
+                <> | Datos: <span className="text-blue-400">{data.dataExchange?.toUpperCase()}</span></>
+              )}
+            </span>
           </div>
         )}
         
@@ -166,7 +181,7 @@ export default function Dashboard() {
               symbol="USD" 
               name="Balance Total" 
               balance={usdData.balance} 
-              value={data?.krakenConnected ? getTotalBalance() : "--"} 
+              value={data?.exchangeConnected ? getTotalBalance() : "--"} 
               change={0} 
             />
             {cryptoAssets.map((asset) => (
@@ -174,8 +189,8 @@ export default function Dashboard() {
                 key={asset.symbol}
                 symbol={asset.symbol} 
                 name={asset.name} 
-                balance={data?.krakenConnected ? asset.balance : "--"} 
-                value={data?.krakenConnected ? asset.value : "--"} 
+                balance={data?.exchangeConnected ? asset.balance : "--"} 
+                value={data?.exchangeConnected ? asset.value : "--"} 
                 change={asset.change} 
               />
             ))}

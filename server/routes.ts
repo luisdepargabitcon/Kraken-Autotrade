@@ -589,35 +589,80 @@ export async function registerRoutes(
       const botConfig = await storage.getBotConfig();
       const trades = await storage.getTrades(10);
       
-      let balances: Record<string, string> = {};
+      let balances: Record<string, number> = {};
       let prices: Record<string, { price: string; change: string }> = {};
       
-      if (krakenService.isInitialized()) {
-        try {
-          balances = await krakenService.getBalanceRaw();
-          
-          const pairs = ["XXBTZUSD", "XETHZUSD", "SOLUSD", "XXRPZUSD", "TONUSD"];
-          for (const pair of pairs) {
-            try {
-              const ticker = await krakenService.getTickerRaw(pair);
-              const tickerData: any = Object.values(ticker)[0];
-              if (tickerData) {
-                const currentPrice = parseFloat(tickerData.c?.[0] || "0");
-                const openPrice = parseFloat(tickerData.o || "0");
-                const change = openPrice > 0 ? ((currentPrice - openPrice) / openPrice * 100).toFixed(2) : "0";
-                prices[pair] = { price: tickerData.c?.[0] || "0", change };
-              }
-            } catch (e) {}
-          }
-        } catch (e) {}
+      // Get trading exchange info
+      const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
+      const tradingExchange = ExchangeFactory.getTradingExchange();
+      const dataExchange = ExchangeFactory.getDataExchange();
+      
+      // Get active pairs from bot config - only show assets the bot uses
+      const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
+      const activeAssets = new Set<string>(["USD"]); // Always include USD
+      for (const pair of activePairs) {
+        const [base] = pair.split("/");
+        activeAssets.add(base);
       }
       
+      // Normalize exchange symbols to generic symbols using centralized krakenService method
+      // For Revolut X, symbols are already generic (BTC, ETH, etc.)
+      const normalizeSymbol = (symbol: string, exchangeType: string): string => {
+        if (exchangeType === 'kraken') {
+          return krakenService.normalizeAsset(symbol);
+        }
+        // Revolut X and others use generic symbols, just return as-is
+        return symbol;
+      };
+      
+      // Get balances from TRADING exchange (Revolut X or Kraken)
+      if (tradingExchange.isInitialized()) {
+        try {
+          const rawBalances = await tradingExchange.getBalance();
+          // Normalize and filter to only include assets the bot uses
+          for (const [asset, amount] of Object.entries(rawBalances)) {
+            const normalizedSymbol = normalizeSymbol(asset, tradingExchangeType);
+            if (activeAssets.has(normalizedSymbol)) {
+              // Aggregate balances for same asset (e.g., XBT + XBT.S)
+              balances[normalizedSymbol] = (balances[normalizedSymbol] || 0) + amount;
+            }
+          }
+        } catch (e) {
+          console.error('[dashboard] Error fetching trading exchange balances:', e);
+        }
+      }
+      
+      // Get prices from DATA exchange (Kraken for OHLC data)
+      // Uses exchange's getTicker which handles pair format internally
+      if (dataExchange.isInitialized()) {
+        try {
+          for (const pair of activePairs) {
+            try {
+              const ticker = await dataExchange.getTicker(pair);
+              prices[pair] = { price: ticker.last.toString(), change: "0" };
+            } catch (e) {
+              // Silently skip pairs that fail (e.g., TON may not exist on some exchanges)
+            }
+          }
+        } catch (e) {
+          console.error('[dashboard] Error fetching data exchange prices:', e);
+        }
+      }
+      
+      // Determine connection status based on trading exchange
+      const exchangeConnected = tradingExchange.isInitialized();
+      
       res.json({
-        krakenConnected: apiConfig?.krakenConnected || false,
+        exchangeConnected,
+        tradingExchange: tradingExchangeType,
+        dataExchange: ExchangeFactory.getDataExchangeType(),
+        // Legacy fields for backward compatibility
+        krakenConnected: krakenService.isInitialized(),
         telegramConnected: apiConfig?.telegramConnected || false,
         botActive: botConfig?.isActive || false,
         strategy: botConfig?.strategy || "momentum",
-        activePairs: botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"],
+        activePairs,
+        activeAssets: Array.from(activeAssets),
         balances,
         prices,
         recentTrades: trades,

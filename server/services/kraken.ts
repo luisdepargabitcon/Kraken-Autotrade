@@ -423,6 +423,38 @@ export class KrakenService implements IExchangeService {
     };
     return pairMap[pair] || pair;
   }
+
+  // Normalize Kraken asset symbols to generic symbols (e.g., XXBT -> BTC, ZUSD -> USD)
+  normalizeAsset(krakenSymbol: string): string {
+    // Remove staking suffixes (.S, .M, .F, etc.)
+    let s = krakenSymbol.replace(/\.\w+$/, "");
+    
+    // Explicit mappings for common assets (including staking/derivative variants)
+    const explicitMap: Record<string, string> = {
+      "ZUSD": "USD", "ZEUR": "EUR", "ZGBP": "GBP", "ZCAD": "CAD", "ZJPY": "JPY",
+      "XXBT": "BTC", "XBT": "BTC", "XETH": "ETH", "XXRP": "XRP", "XLTC": "LTC", 
+      "XXDG": "DOGE", "XETC": "ETC", "XXMR": "XMR", "XZEC": "ZEC", "XXLM": "XLM",
+      "XADA": "ADA", "XTRX": "TRX", "XNANO": "NANO", "XDOT": "DOT",
+      // Staking/derivative variants
+      "ETH2": "ETH", "ETHW": "ETH", "FLOWH": "FLOW", "MATICM": "MATIC",
+      "SOLW": "SOL", "ATOM21": "ATOM", "DOT28": "DOT"
+    };
+    
+    if (explicitMap[s]) return explicitMap[s];
+    
+    // Auto-strip X prefix for crypto (4+ chars starting with X, not XRP)
+    if (s.length >= 4 && s.startsWith("X") && !s.startsWith("XRP")) {
+      const stripped = s.slice(1);
+      if (/^[A-Z]{3,5}$/.test(stripped)) return stripped;
+    }
+    
+    // Auto-strip Z prefix for fiat (4 chars starting with Z)
+    if (s.length === 4 && s.startsWith("Z")) {
+      return s.slice(1);
+    }
+    
+    return s;
+  }
 }
 
 export const krakenService = new KrakenService();
