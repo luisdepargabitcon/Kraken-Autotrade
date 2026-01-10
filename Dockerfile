@@ -2,7 +2,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat git
+RUN apk add --no-cache libc6-compat git docker-cli
 
 COPY package.json package-lock.json* ./
 

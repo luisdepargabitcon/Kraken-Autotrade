@@ -33,7 +33,6 @@ services:
       - NODE_ENV=production
       - VPS_DEPLOY=true
       - TERMINAL_TOKEN=${TERMINAL_TOKEN}
-      - ENABLE_DOCKER_LOGS_STREAM=true
     ports:
       - "3020:5000"
     networks:
