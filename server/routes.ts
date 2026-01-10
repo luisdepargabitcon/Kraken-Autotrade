@@ -1621,6 +1621,108 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // Endpoint para recalcular P&L de todos los trades existentes en BD
+  app.post("/api/trades/recalculate-pnl", async (req, res) => {
+    try {
+      const allTrades = await storage.getTrades(1000);
+      
+      // Agrupar trades por par
+      const tradesByPair: Record<string, { buys: any[]; sells: any[] }> = {};
+      
+      for (const trade of allTrades) {
+        const pair = trade.pair;
+        if (!tradesByPair[pair]) {
+          tradesByPair[pair] = { buys: [], sells: [] };
+        }
+        
+        const tradeData = {
+          id: trade.id,
+          pair,
+          type: trade.type,
+          price: parseFloat(trade.price),
+          amount: parseFloat(trade.amount),
+          time: trade.executedAt ? new Date(trade.executedAt) : new Date(trade.createdAt),
+        };
+        
+        if (trade.type === 'buy') {
+          tradesByPair[pair].buys.push(tradeData);
+        } else {
+          tradesByPair[pair].sells.push(tradeData);
+        }
+      }
+      
+      // Calcular P&L para cada SELL usando FIFO
+      let pnlCalculated = 0;
+      let totalPnlUsd = 0;
+      const results: { pair: string; sellId: number; pnlUsd: number }[] = [];
+      
+      for (const [pair, trades] of Object.entries(tradesByPair)) {
+        // Ordenar por tiempo
+        trades.buys.sort((a, b) => a.time.getTime() - b.time.getTime());
+        trades.sells.sort((a, b) => a.time.getTime() - b.time.getTime());
+        
+        let buyIndex = 0;
+        let buyRemaining = trades.buys[0]?.amount || 0;
+        
+        for (const sell of trades.sells) {
+          let sellRemaining = sell.amount;
+          let totalCost = 0;
+          let totalAmount = 0;
+          
+          // Emparejar con BUYs (FIFO)
+          while (sellRemaining > 0.00000001 && buyIndex < trades.buys.length) {
+            const buy = trades.buys[buyIndex];
+            const matchAmount = Math.min(buyRemaining, sellRemaining);
+            
+            totalCost += matchAmount * buy.price;
+            totalAmount += matchAmount;
+            
+            sellRemaining -= matchAmount;
+            buyRemaining -= matchAmount;
+            
+            if (buyRemaining <= 0.00000001) {
+              buyIndex++;
+              buyRemaining = trades.buys[buyIndex]?.amount || 0;
+            }
+          }
+          
+          // Calcular P&L para matched portion
+          if (totalAmount > 0.00000001) {
+            const avgEntryPrice = totalCost / totalAmount;
+            const revenue = totalAmount * sell.price;
+            const cost = totalCost;
+            const pnlGross = revenue - cost;
+            const pnlPct = cost > 0 ? (pnlGross / cost) * 100 : 0;
+            
+            // Actualizar el trade SELL con P&L
+            await storage.updateTradePnl(
+              sell.id,
+              avgEntryPrice.toFixed(8),
+              pnlGross.toFixed(8),
+              pnlPct.toFixed(4)
+            );
+            pnlCalculated++;
+            totalPnlUsd += pnlGross;
+            results.push({ pair, sellId: sell.id, pnlUsd: pnlGross });
+          }
+        }
+      }
+      
+      console.log(`[RECALCULATE_PNL] Recalculated ${pnlCalculated} trades, total P&L: $${totalPnlUsd.toFixed(2)}`);
+      
+      res.json({ 
+        success: true, 
+        pnlCalculated,
+        totalPnlUsd: totalPnlUsd.toFixed(2),
+        pairs: Object.keys(tradesByPair).length,
+        details: results.slice(-20),
+      });
+    } catch (error: any) {
+      console.error("[api/trades/recalculate-pnl] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to recalculate P&L" });
+    }
+  });
+
   // Endpoint para limpiar duplicados existentes
   app.post("/api/trades/cleanup-duplicates", async (req, res) => {
     try {
