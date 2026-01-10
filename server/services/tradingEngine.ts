@@ -52,13 +52,31 @@ const DUST_THRESHOLD_USD = 5; // Minimum USD value to attempt selling
 
 const SMALL_ACCOUNT_FACTOR = 0.95;
 
-// Kraken fee structure (taker fees for market orders)
-// NOTA: Bot es MARKET-only = 100% taker. Tier base Kraken Pro = 0.40% taker
-const KRAKEN_FEE_PCT = 0.40; // 0.40% per trade (taker, tier base Kraken Pro)
+// Fee structure (taker fees for market orders)
+// NOTA: Bot es MARKET-only = 100% taker
+// Kraken Pro tier base: 0.40% taker
+// Revolut X: 0.09% taker
+const KRAKEN_FEE_PCT = 0.40; // Fallback/default - use getTakerFeePct() for dynamic value
 const SLIPPAGE_BUFFER_PCT = 0.20; // Buffer adicional para slippage en market orders
-const ROUND_TRIP_FEE_PCT = KRAKEN_FEE_PCT * 2; // 0.80% for buy + sell
-const ROUND_TRIP_WITH_BUFFER_PCT = ROUND_TRIP_FEE_PCT + SLIPPAGE_BUFFER_PCT; // 1.00% total
 const MIN_PROFIT_MULTIPLIER = 2; // Take-profit debe ser al menos 2x las fees
+
+// Dynamic fee helper - gets fee from active trading exchange
+function getTakerFeePct(): number {
+  try {
+    const fees = ExchangeFactory.getTradingExchangeFees();
+    return fees.takerFeePct;
+  } catch {
+    return KRAKEN_FEE_PCT; // Fallback to Kraken fees
+  }
+}
+
+function getRoundTripFeePct(): number {
+  return getTakerFeePct() * 2;
+}
+
+function getRoundTripWithBufferPct(): number {
+  return getRoundTripFeePct() + SLIPPAGE_BUFFER_PCT;
+}
 
 // Defensive improvements
 const MAX_SPREAD_PCT = 0.5; // No comprar si spread > 0.5%
@@ -1280,7 +1298,7 @@ export class TradingEngine {
     roundTripFees: number;
     netExpectedProfit: number;
   } {
-    const roundTripFees = ROUND_TRIP_FEE_PCT;
+    const roundTripFees = getRoundTripFeePct();
     const minProfitRequired = roundTripFees * MIN_PROFIT_MULTIPLIER;
     const netExpectedProfit = takeProfitPct - roundTripFees;
     
@@ -1737,7 +1755,7 @@ El motor de trading ha sido desactivado.
         const storedEntryFee = (pos as any).entryFee ? parseFloat((pos as any).entryFee) : 0;
         const calculatedEntryFee = storedEntryFee > 0 
           ? storedEntryFee 
-          : parseFloat(pos.amount) * parseFloat(pos.entryPrice) * (KRAKEN_FEE_PCT / 100);
+          : parseFloat(pos.amount) * parseFloat(pos.entryPrice) * (getTakerFeePct() / 100);
         
         this.openPositions.set(lotId, {
           lotId,
@@ -2289,8 +2307,9 @@ El bot ha pausado las operaciones de COMPRA.
       const grossPnl = (currentPrice - position.entryPrice) * actualSellAmount;
       const entryValueUsd = position.entryPrice * actualSellAmount;
       const exitValueUsd = currentPrice * actualSellAmount;
-      const entryFeeUsd = position.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
-      const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+      const currentFeePct = getTakerFeePct();
+      const entryFeeUsd = position.entryFee ?? (entryValueUsd * currentFeePct / 100);
+      const exitFeeUsd = exitValueUsd * currentFeePct / 100;
       const pnl = grossPnl - entryFeeUsd - exitFeeUsd;
       const pnlPercent = (pnl / entryValueUsd) * 100;
 
@@ -3032,8 +3051,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
         const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
         
-        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT + slippage buffer = 1.00%)
-        const effectiveCushionPct = sgFeeCushionAuto ? ROUND_TRIP_WITH_BUFFER_PCT : sgFeeCushionPct;
+        // Calcular fee cushion efectivo (auto = round-trip fees + slippage buffer)
+        const effectiveCushionPct = sgFeeCushionAuto ? getRoundTripWithBufferPct() : sgFeeCushionPct;
         
         // usdDisponible = saldo real disponible (sin buffer en SMART_GUARD v2 para sizing exacto)
         const usdDisponible = freshUsdBalance;
@@ -3873,8 +3892,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const sgFeeCushionPct = sgParams?.sgFeeCushionPct || 0;
         const sgFeeCushionAuto = sgParams?.sgFeeCushionAuto ?? false;
         
-        // Calcular fee cushion efectivo (auto = 2 * KRAKEN_FEE_PCT + slippage buffer = 1.00%)
-        const effectiveCushionPct = sgFeeCushionAuto ? ROUND_TRIP_WITH_BUFFER_PCT : sgFeeCushionPct;
+        // Calcular fee cushion efectivo (auto = round-trip fees + slippage buffer)
+        const effectiveCushionPct = sgFeeCushionAuto ? getRoundTripWithBufferPct() : sgFeeCushionPct;
         const usdDisponible = freshUsdBalance;
         const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD);
         const cushionAmount = freshUsdBalance * (effectiveCushionPct / 100);
@@ -5698,9 +5717,10 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           const entryValueUsd = entryPrice * volumeNum;
           const exitValueUsd = price * volumeNum;
           
-          // Calcular fees: usar entryFee real si existe, sino estimar
-          const entryFeeUsd = sellContext?.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
-          const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+          // Calcular fees: usar entryFee real si existe, sino estimar con fee dinámico
+          const currentFeePct = getTakerFeePct();
+          const entryFeeUsd = sellContext?.entryFee ?? (entryValueUsd * currentFeePct / 100);
+          const exitFeeUsd = exitValueUsd * currentFeePct / 100;
           const netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
           const netPnlPct = (netPnlUsd / entryValueUsd) * 100;
           
@@ -5750,8 +5770,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           // DCA mode: update existing position
           const totalAmount = existing.amount + volumeNum;
           const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
-          // DCA: accumulate fees from both entries
-          const additionalEntryFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          // DCA: accumulate fees from both entries (use dynamic fee from active exchange)
+          const additionalEntryFee = volumeNum * price * (getTakerFeePct() / 100);
           const totalEntryFee = (existing.entryFee || 0) + additionalEntryFee;
           newPosition = { 
             ...existing,
@@ -5844,8 +5864,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             }
           }
           
-          // Calculate entry fee for accurate P&L (two legs)
-          const entryFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          // Calculate entry fee for accurate P&L (two legs) - use dynamic fee from active exchange
+          const entryFee = volumeNum * price * (getTakerFeePct() / 100);
           
           newPosition = { 
             lotId,
@@ -5915,8 +5935,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         if (sellContext) {
           const pnlGross = (price - sellContext.entryPrice) * volumeNum;
           
-          // Calculate fees for this sale (prorate entryFee if partial sell)
-          const exitFee = volumeNum * price * (KRAKEN_FEE_PCT / 100);
+          // Calculate fees for this sale (prorate entryFee if partial sell) - use dynamic fee
+          const exitFee = volumeNum * price * (getTakerFeePct() / 100);
           const sellRatio = (sellContext.sellAmount && sellContext.positionAmount && sellContext.positionAmount > 0) 
             ? sellContext.sellAmount / sellContext.positionAmount 
             : 1;
@@ -5926,7 +5946,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           this.dailyPnL += pnlNet;
           
           // [FEES_DIAG] Diagnostic log for fee tracking
-          log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${KRAKEN_FEE_PCT}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
+          log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${getTakerFeePct()}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
           log(`P&L de operación: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
           
           // AI Sample update: mark sample complete with PnL result
@@ -6024,7 +6044,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       const isSimulation = this.dryRunMode || (executionMeta?.dryRun ?? false);
       if (type === "sell" && !isSimulation) {
         try {
-          const fee = volumeNum * price * (KRAKEN_FEE_PCT / 100); // Use existing fee constant
+          const fee = volumeNum * price * (getTakerFeePct() / 100); // Use dynamic fee from active exchange
           await storage.upsertTradeFill({
             txid,
             pair,
@@ -6363,12 +6383,13 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         await this.savePositionToDB(pair, position);
       }
       
-      // Recalcular PnL NETO con cantidad real y fees
+      // Recalcular PnL NETO con cantidad real y fees (usar fee dinámico del exchange activo)
       const grossPnlUsd = (currentPrice - entryPrice) * sellAmountFinal;
       const entryValueUsd = entryPrice * sellAmountFinal;
       const exitValueUsd = currentPrice * sellAmountFinal;
-      const entryFeeUsd = position.entryFee ?? (entryValueUsd * KRAKEN_FEE_PCT / 100);
-      const exitFeeUsd = exitValueUsd * KRAKEN_FEE_PCT / 100;
+      const currentFeePct = getTakerFeePct();
+      const entryFeeUsd = position.entryFee ?? (entryValueUsd * currentFeePct / 100);
+      const exitFeeUsd = exitValueUsd * currentFeePct / 100;
       const actualPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
       const actualPnlPct = (actualPnlUsd / entryValueUsd) * 100;
 
