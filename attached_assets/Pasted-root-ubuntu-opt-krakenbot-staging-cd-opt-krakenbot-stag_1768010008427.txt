@@ -1,0 +1,103 @@
+root@ubuntu:/opt/krakenbot-staging# cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+remote: Enumerating objects: 21, done.
+remote: Counting objects: 100% (21/21), done.
+remote: Compressing objects: 100% (10/10), done.
+remote: Total 16 (delta 8), reused 14 (delta 6), pack-reused 0 (from 0)
+Unpacking objects: 100% (16/16), 2.86 MiB | 7.88 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+ * branch            main       -> FETCH_HEAD
+   0351f9e..85e29f8  main       -> origin/main
+Updating 0351f9e..85e29f8
+Fast-forward
+ attached_assets/Captura_de_pantalla_(527)_1768009091310.png | Bin 0 -> 810888 bytes
+ attached_assets/Captura_de_pantalla_(528)_1768009091309.png | Bin 0 -> 833193 bytes
+ attached_assets/Captura_de_pantalla_(529)_1768009532227.png | Bin 0 -> 747764 bytes
+ attached_assets/Captura_de_pantalla_(530)_1768009706913.png | Bin 0 -> 677167 bytes
+ client/public/opengraph.jpg                                 | Bin 8425 -> 8412 bytes
+ 5 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 attached_assets/Captura_de_pantalla_(527)_1768009091310.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(528)_1768009091309.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(529)_1768009532227.png
+ create mode 100644 attached_assets/Captura_de_pantalla_(530)_1768009706913.png
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 15.4s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 576B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  0.9s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => [internal] load build context                                                                                  0.0s
+ => => transferring context: 78.53kB                                                                               0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git                                                           0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                   0.0s
+ => [6/8] COPY . .                                                                                                 0.8s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi         0.2s
+ => [8/8] RUN npm run build                                                                                        7.1s
+ => exporting to image                                                                                             6.1s
+ => => exporting layers                                                                                            5.3s
+ => => exporting manifest sha256:4be19ef205c0094b351b0925714ea7d60a3636ff2e648a29c09a9127090a6ec5                  0.0s
+ => => exporting config sha256:bf14b492eda329d45d9b4e5f8c462b4a5034196e0663f2ccb33ab7bd67a180b9                    0.0s
+ => => exporting attestation manifest sha256:c2a752737aa1a61597dbb49845570a6b3fb5d179765c90ca93cafeb531362bee      0.0s
+ => => exporting manifest list sha256:7ea78a13da52bef274af5f7e733e0671b85afce5a9cf562945ad0e5fa5e58618             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               0.8s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] up 3/3
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                            15.4s
+ ✔ Container krakenbot-staging-db                Healthy                                                           1.9s
+ ✔ Container krakenbot-staging-app               Recreated                                                         1.4s
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging#
+root@ubuntu:/opt/krakenbot-staging# docker compose -f docker-compose.staging.yml build --no-cache
+docker compose -f docker-compose.staging.yml up -d
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 34.1s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 600B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  0.5s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => [internal] load build context                                                                                  0.0s
+ => => transferring context: 70.10kB                                                                               0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                      0.0s
+ => [3/8] RUN apk add --no-cache libc6-compat git                                                                  0.8s
+ => [4/8] COPY package.json package-lock.json* ./                                                                  0.1s
+ => [5/8] RUN npm install                                                                                          9.3s
+ => [6/8] COPY . .                                                                                                 1.1s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi         0.2s
+ => [8/8] RUN npm run build                                                                                        7.1s
+ => exporting to image                                                                                            14.9s
+ => => exporting layers                                                                                            8.4s
+ => => exporting manifest sha256:24f93824ef8c3476bea4504156c122c64c4b4c108b565b012b265795107a725f                  0.0s
+ => => exporting config sha256:5f0bcf29dcb399c3a47be25ed53b37e0a7695cbbae99c804943b95917bfcafe1                    0.0s
+ => => exporting attestation manifest sha256:96862af9b37b0c5a3edbe93ba83083be0c9add7e86b9a3afd182fd902fad04a5      0.0s
+ => => exporting manifest list sha256:97e9521559b19453c86dcf7b511d0578d25d2e94b16d420b5dbe3a2d5fbae8b8             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               6.5s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] build 1/1
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                            34.1s
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+WARN[0000] No services to build
+[+] up 2/2
+ ✔ Container krakenbot-staging-db  Healthy                                                                         3.3s
+ ✔ Container krakenbot-staging-app Recreated                                                                       2.8s
+root@ubuntu:/opt/krakenbot-staging# docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "DELETE FROM lot_matches; UPDATE trades SET realized_pnl_usd = NULL, realized_pnl_pct = NULL; UPDATE trade_fills SET matched = false;"
+docker restart krakenbot-staging-app
+DELETE 0
+UPDATE 248
+UPDATE 0
