@@ -1947,7 +1947,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   app.get("/api/environment", async (req, res) => {
     try {
       const config = await storage.getBotConfig();
-      const dryRun = environment.isReplit || environment.isVPS || (config?.dryRunMode ?? false);
+      // Solo Replit fuerza DRY_RUN. VPS y NAS respetan la configuración del usuario.
+      const dryRun = environment.isReplit || (config?.dryRunMode ?? false);
       
       res.json({
         env: environment.envTag,
