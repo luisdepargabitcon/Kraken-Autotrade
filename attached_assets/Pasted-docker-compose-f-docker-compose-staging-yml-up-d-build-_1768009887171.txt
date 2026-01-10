@@ -1,0 +1,56 @@
+docker compose -f docker-compose.staging.yml up -d --build
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 0.7s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 576B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  0.5s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => [internal] load build context                                                                                  0.0s
+ => => transferring context: 70.10kB                                                                               0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git                                                           0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                   0.0s
+ => CACHED [6/8] COPY . .                                                                                          0.0s
+ => CACHED [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi  0.0s
+ => CACHED [8/8] RUN npm run build                                                                                 0.0s
+ => exporting to image                                                                                             0.0s
+ => => exporting layers                                                                                            0.0s
+ => => exporting manifest sha256:8e9f7534c26d7743545e09eaabca3995b92c502b72920b1281381b22cae717f7                  0.0s
+ => => exporting config sha256:b465f7fd89a9392f2c4e23255f9e7d87ac484614f278dffa4107bc27982c23ae                    0.0s
+ => => exporting attestation manifest sha256:418f45e22c03d387d24f4c6b4ceed55c1a1465fa970e6ec4415b28f0ee7fe651      0.0s
+ => => exporting manifest list sha256:7c2540b36edef5dd08bab2aa95ee97cb6a1f4f3977da5237d7a5915528577df3             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               0.0s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] up 3/3
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                             0.8s
+ ✔ Container krakenbot-staging-db                Healthy                                                           1.4s
+ ✔ Container krakenbot-staging-app               Recreated                                                         0.8s
+root@ubuntu:/opt/krakenbot-staging# cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+remote: Enumerating objects: 21, done.
+remote: Counting objects: 100% (21/21), done.
+remote: Compressing objects: 100% (10/10), done.
+remote: Total 16 (delta 8), reused 14 (delta 6), pack-reused 0 (from 0)
+Unpacking objects: 100% (16/16), 2.86 MiB | 7.88 MiB/s, done.
+From https://github.com/luisdepargabitcon/Kraken-Autotrade
+ * branch            main       -> FETCH_HEAD
+   0351f9e..85e29f8  main       -> origin/main
+Updating 0351f9e..85e29f8
+Fast-forward
+ attached_assets/Captura_de_pantalla_(527)_1768009091310.png | Bin 0 -> 810888 bytes
+ attached_assets/Captura_de_pantalla_(528)_1768009091309.png | Bin 0 -> 833193 bytes
+ attached_assets/Captura_de_pantalla_(529)_1768009532227.png | Bin 0 -> 747764 bytes
+ attached_assets/Captura_de_pantalla_(530)_1768009706913.png | Bin 0 -> 677167 bytes
+ client/public/opengraph.jpg                                 | Bin 8425 -> 8412 bytes
+ 5 files changed, 0 insertions(+), 0 deletions(-)
