@@ -1,0 +1,142 @@
+root@ubuntu:/opt/krakenbot-staging# docker compose -f docker-compose.staging.yml up -d --build
+Y para ver los logs:
+
+docker logs -f krakenbot-staging-app
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 15.1s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                         0.0s
+ => => reading from stdin 576B                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 461B                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                  1.0s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 174B                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a3  0.0s
+ => [internal] load build context                                                                                  0.0s
+ => => transferring context: 489.95kB                                                                              0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git                                                           0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                   0.0s
+ => [6/8] COPY . .                                                                                                 0.8s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi         0.2s
+ => [8/8] RUN npm run build                                                                                        6.9s
+ => exporting to image                                                                                             5.9s
+ => => exporting layers                                                                                            5.1s
+ => => exporting manifest sha256:3859ce51826c74abdc5d21d4d5ad53d8874c3904b39bbca3b82432492a9727ff                  0.0s
+ => => exporting config sha256:3670a68d94685de2f71aa04e80b148f09fbcd6849f2a922a550aede844e5417a                    0.0s
+ => => exporting attestation manifest sha256:779921160b5380aee9ee1ce9eed322c0353e409b5d1c1cd0e0d44d86b5186ec0      0.0s
+ => => exporting manifest list sha256:bfe67f6ee87c8b38ca48c468e308d2cdbae60f9b28dadeacd5c546a3f7d69613             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                               0.8s
+ => resolving provenance for metadata file                                                                         0.0s
+[+] up 3/3
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                            15.1s
+ ✔ Container krakenbot-staging-db                Healthy                                                           1.9s
+ ✔ Container krakenbot-staging-app               Recreated                                                         1.4s
+Y: command not found
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 153 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+1:06:04 AM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+1:06:04 AM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[revolutx] Initialized with Ed25519 authentication
+[ExchangeFactory] Revolut X initialized
+[ExchangeFactory] Trading: kraken, Data: kraken
+[startup] ExchangeFactory initialized. Active: kraken
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+1:06:04 AM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+1:06:04 AM [trading] [EXCHANGE] Trading: kraken, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+[startup] Starting trading engine...
+1:06:04 AM [express] serving on port 5000
+[kraken] Loading pair metadata for: BTC/USD, ETH/USD, XRP/USD, SOL/USD, TON/USD
+[kraken] BTC/USD: lotDecimals=8, orderMin=0.00005, stepSize=1e-8
+[kraken] ETH/USD: lotDecimals=8, orderMin=0.001, stepSize=1e-8
+[kraken] XRP/USD: lotDecimals=8, orderMin=1.65, stepSize=1e-8
+[kraken] SOL/USD: lotDecimals=8, orderMin=0.02, stepSize=1e-8
+[kraken] TON/USD: lotDecimals=5, orderMin=0.75, stepSize=0.000009999999999999999
+[kraken] Pair metadata loaded successfully for 5 pairs
+[kraken] Metadata refresh scheduled every 6h
+1:06:04 AM [trading] [INFO] Modo DRY_RUN activado desde configuración
+1:06:04 AM [trading] Balance inicial USD: $452.57
+1:06:04 AM [trading] Motor de trading iniciado
+[2026-01-10T01:06:04.430Z] [INFO] [BOT_STARTED] Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "balanceUsd": 452.5736,
+  "openPositions": 0,
+  "dryRunMode": true,
+  "isReplitEnvironment": false
+}
+1:06:04 AM [trading] Nuevo día de trading: 2026-01-10. Balance inicial: $452.57
+[2026-01-10T01:06:04.746Z] [INFO] [DAILY_LIMIT_RESET] Nuevo día de trading: 2026-01-10
+  Meta: {
+  "date": "2026-01-10",
+  "previousDayPnL": 0,
+  "startBalance": 452.5736
+}
+1:06:04 AM [trading] [SCAN_START] scanId=scan-1768007164747 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+1:06:04 AM [trading] [SCAN_PAIR_START] pair=BTC/USD
+1:06:04 AM [trading] Nueva vela cerrada BTC/USD/15m @ 2026-01-10T00:45:00.000Z
+1:06:05 AM [trading] [ROUTER] BTC/USD: RANGE regime → mean_reversion_simple
+1:06:05 AM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768007164747","scanTime":"2026-01-10T01:06:04.747Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=17, BB width=1.8%)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=56 BB%=55","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":452.5736,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=56 BB%=55","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-10T00:45:00.000Z","lastFullEvaluationAt":"2026-01-10T01:06:05.082Z","lastRegimeUpdateAt":"2026-01-10T01:06:05.082Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+1:06:05 AM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+1:06:05 AM [trading] [SCAN_PAIR_START] pair=ETH/USD
+1:06:05 AM [trading] Nueva vela cerrada ETH/USD/15m @ 2026-01-10T00:45:00.000Z
+1:06:05 AM [trading] [ROUTER] ETH/USD: RANGE regime → mean_reversion_simple
+1:06:05 AM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768007164747","scanTime":"2026-01-10T01:06:04.747Z","pair":"ETH/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=19, BB width=2.1%)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=51 BB%=44","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":452.5736,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=51 BB%=44","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-10T00:45:00.000Z","lastFullEvaluationAt":"2026-01-10T01:06:05.339Z","lastRegimeUpdateAt":"2026-01-10T01:06:05.339Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+1:06:05 AM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+1:06:05 AM [trading] [SCAN_PAIR_START] pair=XRP/USD
+1:06:05 AM [trading] Nueva vela cerrada XRP/USD/15m @ 2026-01-10T00:45:00.000Z
+1:06:05 AM [trading] MTF datos actualizados para XRP/USD: 5m=721, 1h=721, 4h=721
+1:06:05 AM [trading] [MTF_DIAG] XRP/USD: 5m: 721 velas [2026-01-07T13:05 -> 2026-01-10T01:05] span=60.0h | 1h: 721 velas [2025-12-11T01:00 -> 2026-01-10T01:00] span=720.0h | 4h: 721 velas [2025-09-12T00:00 -> 2026-01-10T00:00] span=2880.0h
+1:06:05 AM [trading] [ROUTER] XRP/USD: TRANSITION regime → momentum_candles + overrides
+1:06:05 AM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768007164747","scanTime":"2026-01-10T01:06:04.747Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=19, EMAs desalineadas)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=1","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":452.5736,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=1","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-10T00:45:00.000Z","lastFullEvaluationAt":"2026-01-10T01:06:05.869Z","lastRegimeUpdateAt":"2026-01-10T01:06:05.869Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+1:06:05 AM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+1:06:05 AM [trading] [SCAN_PAIR_START] pair=SOL/USD
+1:06:05 AM [trading] Nueva vela cerrada SOL/USD/15m @ 2026-01-10T00:45:00.000Z
+1:06:06 AM [trading] MTF datos actualizados para SOL/USD: 5m=721, 1h=721, 4h=721
+1:06:06 AM [trading] [MTF_DIAG] SOL/USD: 5m: 721 velas [2026-01-07T13:05 -> 2026-01-10T01:05] span=60.0h | 1h: 721 velas [2025-12-11T01:00 -> 2026-01-10T01:00] span=720.0h | 4h: 721 velas [2025-09-12T00:00 -> 2026-01-10T00:00] span=2880.0h
+1:06:06 AM [trading] [ROUTER] SOL/USD: TRANSITION regime → momentum_candles + overrides
+1:06:06 AM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768007164747","scanTime":"2026-01-10T01:06:04.747Z","pair":"SOL/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=16, esperando confirmación)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=1","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":452.5736,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=3 < minRequired=4 | buy=3/sell=1","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-10T00:45:00.000Z","lastFullEvaluationAt":"2026-01-10T01:06:06.524Z","lastRegimeUpdateAt":"2026-01-10T01:06:06.524Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+1:06:06 AM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+1:06:06 AM [trading] [SCAN_PAIR_START] pair=TON/USD
+1:06:06 AM [trading] Nueva vela cerrada TON/USD/15m @ 2026-01-10T00:45:00.000Z
+1:06:07 AM [trading] MTF datos actualizados para TON/USD: 5m=721, 1h=721, 4h=721
+1:06:07 AM [trading] [MTF_DIAG] TON/USD: 5m: 721 velas [2026-01-07T13:05 -> 2026-01-10T01:05] span=60.0h | 1h: 721 velas [2025-12-11T01:00 -> 2026-01-10T01:00] span=720.0h | 4h: 721 velas [2025-09-12T00:00 -> 2026-01-10T00:00] span=2880.0h
+1:06:07 AM [trading] [ROUTER] TON/USD: TREND regime → momentum_candles
+1:06:07 AM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768007164747","scanTime":"2026-01-10T01:06:04.747Z","pair":"TON/USD","regime":"TREND","regimeReason":"Tendencia bajista (ADX=35, EMAs alineadas)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: buySignals=1 < minRequired=4 | buy=1/sell=1","signalsCount":1,"minSignalsRequired":4,"exposureAvailableUsd":452.5736,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: buySignals=1 < minRequired=4 | buy=1/sell=1","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-10T00:45:00.000Z","lastFullEvaluationAt":"2026-01-10T01:06:07.086Z","lastRegimeUpdateAt":"2026-01-10T01:06:07.086Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+1:06:07 AM [trading] [SCAN_PAIR_OK] pair=TON/USD
+1:06:07 AM [trading] [SCAN_SNAPSHOT] scanId=scan-1768007164747 pairs=5 snapshotted for emission
+1:06:07 AM [trading] [SCAN_END] scanId=scan-1768007164747 expected=5 done=5 failures=0 durationMs=2339
+1:06:12 AM [websocket] [WS] WS_ADMIN_TOKEN no configurado - conexión sin autenticación permitida (desarrollo) desde 88.16.110.146
+1:06:12 AM [websocket] [WS] Cliente conectado. Total: 1
