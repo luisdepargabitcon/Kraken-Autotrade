@@ -123,7 +123,7 @@ type BlockReasonCode =
   | "NO_POSITION"             // Sin posición para vender
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
-type SmartGuardDecision = "ALLOW" | "BLOCK" | "NOOP";
+type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
 
 interface DecisionTraceContext {
   scanId: string;
@@ -3373,6 +3373,26 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
       } else if (signal.action === "sell") {
+        // PRIMERO: Verificar si hay posición para vender (antes de cualquier lógica SMART_GUARD)
+        if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+            pair,
+            signal: "SELL",
+            reason: "NO_POSITION",
+            assetBalance,
+            signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "SKIP",
+            blockReasonCode: "NO_POSITION",
+            blockDetails: { assetBalance },
+            finalSignal: "NONE",
+            finalReason: "Sin posición para vender",
+          });
+          this.emitPairDecisionTrace(pair);
+          return;
+        }
+        
         // A1: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
         // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
         const botConfigSell = await storage.getBotConfig();
@@ -3411,25 +3431,6 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 ━━━━━━━━━━━━━━━━━━━`, "system");
           }
           
-          return;
-        }
-
-        if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
-            pair,
-            signal: "SELL",
-            reason: "NO_POSITION",
-            assetBalance,
-            signalReason: signal.reason,
-          });
-          this.updatePairTrace(pair, {
-            smartGuardDecision: "BLOCK",
-            blockReasonCode: "NO_POSITION",
-            blockDetails: { assetBalance },
-            finalSignal: "NONE",
-            finalReason: "Sin posición para vender",
-          });
-          this.emitPairDecisionTrace(pair);
           return;
         }
 
@@ -4039,6 +4040,27 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
       } else if (signal.action === "sell") {
+        // PRIMERO: Verificar si hay posición para vender (antes de cualquier lógica SMART_GUARD)
+        if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
+          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+            pair,
+            signal: "SELL",
+            reason: "NO_POSITION",
+            assetBalance,
+            strategyId: selectedStrategyId,
+            signalReason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "SKIP",
+            blockReasonCode: "NO_POSITION",
+            blockDetails: { assetBalance, strategyId: selectedStrategyId },
+            finalSignal: "NONE",
+            finalReason: "Sin posición para vender",
+          });
+          this.emitPairDecisionTrace(pair);
+          return;
+        }
+        
         // A2: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
         // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
         const botConfigSellCandles = await storage.getBotConfig();
@@ -4059,26 +4081,6 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             blockDetails: { reason: "SMART_GUARD solo permite risk exits", strategyId: selectedStrategyId },
             finalSignal: "NONE",
             finalReason: "SELL bloqueado: Solo SL/TP/Trailing permiten vender",
-          });
-          this.emitPairDecisionTrace(pair);
-          return;
-        }
-
-        if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
-            pair,
-            signal: "SELL",
-            reason: "NO_POSITION",
-            assetBalance,
-            strategyId: selectedStrategyId,
-            signalReason: signal.reason,
-          });
-          this.updatePairTrace(pair, {
-            smartGuardDecision: "BLOCK",
-            blockReasonCode: "NO_POSITION",
-            blockDetails: { assetBalance, strategyId: selectedStrategyId },
-            finalSignal: "NONE",
-            finalReason: "Sin posición para vender",
           });
           this.emitPairDecisionTrace(pair);
           return;

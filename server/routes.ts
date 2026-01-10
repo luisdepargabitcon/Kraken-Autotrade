@@ -1947,30 +1947,16 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   app.get("/api/environment", async (req, res) => {
     try {
       const config = await storage.getBotConfig();
-      const dryRun = environment.isReplit || (config?.dryRunMode ?? false);
-      
-      // Obtener git commit hash
-      let gitCommit = "unknown";
-      try {
-        const { execSync } = await import("child_process");
-        gitCommit = execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
-      } catch {
-        // Git no disponible, usar archivo de versión si existe
-        try {
-          const fs = await import("fs");
-          if (fs.existsSync("VERSION")) {
-            gitCommit = fs.readFileSync("VERSION", "utf-8").trim();
-          }
-        } catch {}
-      }
+      const dryRun = environment.isReplit || environment.isVPS || (config?.dryRunMode ?? false);
       
       res.json({
         env: environment.envTag,
         instanceId: environment.instanceId,
+        version: environment.version,
         isReplit: environment.isReplit,
+        isVPS: environment.isVPS,
         isNAS: environment.isNAS,
         dryRun,
-        gitCommit,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

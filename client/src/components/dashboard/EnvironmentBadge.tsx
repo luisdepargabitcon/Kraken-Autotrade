@@ -1,15 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
-import { Server, TestTube, AlertTriangle } from "lucide-react";
+import { Server, TestTube, AlertTriangle, Cloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EnvironmentData {
-  env: "REPLIT/DEV" | "NAS/PROD";
+  env: "REPLIT/DEV" | "VPS/STG" | "NAS/PROD";
   instanceId: string;
+  version: string;
   isReplit: boolean;
+  isVPS: boolean;
   isNAS: boolean;
   dryRun: boolean;
-  gitCommit?: string;
+}
+
+function getEnvColors(env: EnvironmentData["env"]) {
+  switch (env) {
+    case "NAS/PROD":
+      return { bg: "bg-green-500", border: "border-green-500", text: "text-green-500" };
+    case "VPS/STG":
+      return { bg: "bg-cyan-500", border: "border-cyan-500", text: "text-cyan-500" };
+    case "REPLIT/DEV":
+    default:
+      return { bg: "bg-yellow-500", border: "border-yellow-500", text: "text-yellow-500" };
+  }
+}
+
+function EnvIcon({ env }: { env: EnvironmentData["env"] }) {
+  const colors = getEnvColors(env);
+  switch (env) {
+    case "NAS/PROD":
+      return <Server className={cn("w-5 h-5", colors.text)} />;
+    case "VPS/STG":
+      return <Cloud className={cn("w-5 h-5", colors.text)} />;
+    default:
+      return <TestTube className={cn("w-5 h-5", colors.text)} />;
+  }
 }
 
 export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
@@ -25,7 +50,7 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
 
   if (isLoading || !data) return null;
 
-  const isProduction = data.env === "NAS/PROD";
+  const colors = getEnvColors(data.env);
   const showDryRunWarning = data.dryRun;
 
   if (compact) {
@@ -33,15 +58,10 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
       <div className="flex items-center gap-2" data-testid="environment-badge-compact">
         <Badge 
           variant="outline"
-          className={cn(
-            "font-mono text-xs",
-            isProduction 
-              ? "bg-green-500/10 text-green-500 border-green-500/30" 
-              : "bg-yellow-500/10 text-yellow-500 border-yellow-500/30"
-          )}
+          className={cn("font-mono text-xs", `${colors.bg}/10 ${colors.text} ${colors.border}/30`)}
         >
-          {isProduction ? <Server className="w-3 h-3 mr-1" /> : <TestTube className="w-3 h-3 mr-1" />}
-          {data.env}
+          <EnvIcon env={data.env} />
+          <span className="ml-1">{data.env}</span>
         </Badge>
         {showDryRunWarning && (
           <Badge 
@@ -60,24 +80,15 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
     <div 
       className={cn(
         "p-3 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4",
-        isProduction 
-          ? "bg-green-500/5 border-green-500/20" 
-          : "bg-yellow-500/5 border-yellow-500/20"
+        `${colors.bg}/5 ${colors.border}/20`
       )}
       data-testid="environment-badge"
     >
       <div className="flex items-center gap-2">
-        {isProduction ? (
-          <Server className={cn("w-5 h-5", isProduction ? "text-green-500" : "text-yellow-500")} />
-        ) : (
-          <TestTube className="w-5 h-5 text-yellow-500" />
-        )}
+        <EnvIcon env={data.env} />
         <div>
           <div className="flex items-center gap-2">
-            <span className={cn(
-              "font-mono font-bold text-sm",
-              isProduction ? "text-green-500" : "text-yellow-500"
-            )}>
+            <span className={cn("font-mono font-bold text-sm", colors.text)}>
               {data.env}
             </span>
             {showDryRunWarning && (
@@ -90,14 +101,14 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
             )}
           </div>
           <p className="text-xs text-muted-foreground font-mono">
-            ID: {data.instanceId} {data.gitCommit && <span className="opacity-60">· v{data.gitCommit}</span>}
+            ID: {data.instanceId} · v{data.version}
           </p>
         </div>
       </div>
       
-      {data.isReplit && (
+      {(data.isReplit || data.dryRun) && (
         <p className="text-xs text-muted-foreground">
-          Entorno de desarrollo - No se envían órdenes reales
+          {data.isReplit ? "Entorno de desarrollo - " : ""}No se envían órdenes reales
         </p>
       )}
     </div>

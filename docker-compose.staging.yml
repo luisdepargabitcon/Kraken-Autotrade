@@ -31,6 +31,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-krakenstaging}:${POSTGRES_PASSWORD:-Kr4k3n_St4g1ng_2026!}@krakenbot-staging-db:5432/${POSTGRES_DB:-krakenbot_staging}
       - NODE_ENV=production
+      - VPS_DEPLOY=true
+      - TERMINAL_TOKEN=${TERMINAL_TOKEN}
     ports:
       - "3020:5000"
     networks:
