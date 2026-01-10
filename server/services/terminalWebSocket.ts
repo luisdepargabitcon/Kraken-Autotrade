@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { spawn, ChildProcess } from "child_process";
 import { log } from "../index";
+import { logStreamService } from "./logStreamService";
 
 const WS_PATH = "/ws/logs";
 const MAX_LOG_HISTORY = 200;
@@ -12,6 +13,7 @@ interface WsClient extends WebSocket {
   connectedAt: Date;
   activeSource: string | null;
   activeProcess: ChildProcess | null;
+  logStreamUnsubscribe?: (() => void) | null;
 }
 
 interface WsMessage {
@@ -22,7 +24,7 @@ interface WsMessage {
 interface LogSource {
   id: string;
   name: string;
-  type: "docker_compose" | "docker_container" | "file";
+  type: "docker_compose" | "docker_container" | "file" | "app_stdout";
   command?: string[];
   containerName?: string;
   filePath?: string;
@@ -60,6 +62,11 @@ function getPredefinedSources(): LogSource[] {
       name: "App Log File",
       type: "file",
       filePath: "/var/log/krakenbot/app.log",
+    },
+    {
+      id: "app_stdout",
+      name: "Logs de Aplicación (en vivo)",
+      type: "app_stdout",
     },
   ];
 }
@@ -170,6 +177,9 @@ class TerminalWebSocketServer {
       if (source.type === "docker_compose" || source.type === "docker_container") {
         return this.dockerEnabled;
       }
+      if (source.type === "app_stdout") {
+        return true;
+      }
       return true;
     });
   }
@@ -201,6 +211,35 @@ class TerminalWebSocketServer {
     }
 
     this.stopClientProcess(client);
+
+    if (source.type === "app_stdout") {
+      client.activeSource = sourceId;
+      
+      const history = logStreamService.getHistoryFormatted();
+      if (history.length > 0) {
+        this.sendMessage(client, {
+          type: "LOG_HISTORY",
+          payload: { lines: history, sourceId },
+        });
+      }
+
+      this.sendMessage(client, {
+        type: "SOURCE_CHANGED",
+        payload: { sourceId, sourceName: source.name },
+      });
+
+      const unsubscribe = logStreamService.subscribe((entry) => {
+        const time = entry.timestamp.toISOString().slice(11, 23);
+        const levelTag = entry.level.toUpperCase().padEnd(5);
+        const line = `[${time}] [${levelTag}] ${entry.message}`;
+        const isError = entry.level === "error" || entry.level === "warn";
+        this.sendMessage(client, { type: "LOG_LINE", payload: { line, sourceId, isError } });
+      });
+
+      client.logStreamUnsubscribe = unsubscribe;
+      log(`[WS-LOGS] Cliente suscrito a logs de aplicación`, "websocket");
+      return;
+    }
 
     let command: string[];
     
@@ -280,6 +319,10 @@ class TerminalWebSocketServer {
   }
 
   private stopClientProcess(client: WsClient): void {
+    if (client.logStreamUnsubscribe) {
+      client.logStreamUnsubscribe();
+      client.logStreamUnsubscribe = null;
+    }
     if (client.activeProcess) {
       try {
         client.activeProcess.kill("SIGTERM");

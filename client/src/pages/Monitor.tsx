@@ -14,7 +14,7 @@ import {
   Wifi, WifiOff, RefreshCw, Trash2, Pause, Play, 
   Download, Copy, Search, X, ChevronDown, ChevronRight,
   AlertCircle, AlertTriangle, Info, Terminal, Activity,
-  Eye, TrendingUp, TrendingDown, Minus
+  Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -726,12 +726,72 @@ interface DiagnosticData {
   lastScanAt: string | null;
 }
 
+interface DbDiagnosticData {
+  timestamp: string;
+  server: {
+    version: string;
+    uptimeHours: number;
+    startTime: string;
+  };
+  connections: {
+    current: number;
+    max: number;
+    usage: string;
+    byState: Record<string, number>;
+  };
+  storage: {
+    databaseSizeMB: string;
+    tableSizes: Array<{ table: string; sizeBytes: number; sizeMB: string }>;
+  };
+  tables: {
+    rowCounts: Array<{ table: string; rows: number }>;
+  };
+  performance: {
+    activeQueries: Array<{ pid: number; user: string; state: string; query: string; durationSecs: number }>;
+    waitingLocks: number;
+  };
+  maintenance: {
+    recentVacuums: Array<{ table: string; lastVacuum: string; lastAnalyze: string }>;
+  };
+}
+
 function DiagnosticTab() {
   const { data, isLoading, isFetching, error, refetch } = useQuery<DiagnosticData>({
     queryKey: ["/api/scan/diagnostic"],
     refetchInterval: 10000,
     staleTime: 0,
   });
+
+  const { data: dbData, isFetching: dbFetching, error: dbError, refetch: refetchDb } = useQuery<DbDiagnosticData>({
+    queryKey: ["/api/db/diagnostic"],
+    refetchInterval: 30000,
+    staleTime: 0,
+  });
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyDbDiagnostic = () => {
+    if (!dbData) return;
+    const text = JSON.stringify(dbData, null, 2);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const handleDownloadDbDiagnostic = () => {
+    if (!dbData) return;
+    const text = JSON.stringify(dbData, null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `db-diagnostic-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const getSignalBadge = (signal: string) => {
     switch (signal) {
@@ -867,6 +927,135 @@ function DiagnosticTab() {
                 </div>
               )}
             </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Diagnóstico PostgreSQL
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {dbData && (
+              <span className="text-xs text-muted-foreground">
+                {new Date(dbData.timestamp).toLocaleTimeString("es-ES")}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyDbDiagnostic}
+              disabled={!dbData}
+              data-testid="btn-copy-db-diagnostic"
+            >
+              {copied ? <CheckCircle className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              {copied ? "Copiado" : "Copiar"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadDbDiagnostic}
+              disabled={!dbData}
+              data-testid="btn-download-db-diagnostic"
+            >
+              <Download className="h-4 w-4" />
+              Descargar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetchDb()}
+              disabled={dbFetching}
+              data-testid="btn-refresh-db-diagnostic"
+            >
+              <RefreshCw className={cn("h-4 w-4", dbFetching && "animate-spin")} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {dbError ? (
+            <div className="text-red-400 text-sm" data-testid="db-diagnostic-error">
+              Error al cargar diagnóstico DB: {(dbError as Error).message}
+            </div>
+          ) : !dbData ? (
+            <div className="text-muted-foreground text-sm">Cargando...</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Versión</div>
+                  <div className="text-sm font-semibold truncate" data-testid="db-version">{dbData.server.version}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Uptime</div>
+                  <div className="text-lg font-semibold" data-testid="db-uptime">{dbData.server.uptimeHours}h</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Conexiones</div>
+                  <div className="text-lg font-semibold" data-testid="db-connections">
+                    {dbData.connections.current}/{dbData.connections.max}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{dbData.connections.usage}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Tamaño BD</div>
+                  <div className="text-lg font-semibold" data-testid="db-size">{dbData.storage.databaseSizeMB} MB</div>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Tamaño por tabla</h4>
+                  <div className="bg-muted/20 rounded-lg p-2 max-h-48 overflow-y-auto">
+                    {dbData.storage.tableSizes.map((t) => (
+                      <div key={t.table} className="flex justify-between text-xs py-1 border-b border-muted/30 last:border-0">
+                        <span className="font-mono">{t.table}</span>
+                        <span className="text-muted-foreground">{t.sizeMB} MB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Filas por tabla</h4>
+                  <div className="bg-muted/20 rounded-lg p-2 max-h-48 overflow-y-auto">
+                    {dbData.tables.rowCounts.map((t) => (
+                      <div key={t.table} className="flex justify-between text-xs py-1 border-b border-muted/30 last:border-0">
+                        <span className="font-mono">{t.table}</span>
+                        <span className="text-muted-foreground">{t.rows.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {dbData.performance.activeQueries.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    Queries activas ({dbData.performance.activeQueries.length})
+                  </h4>
+                  <div className="bg-muted/20 rounded-lg p-2 overflow-x-auto">
+                    {dbData.performance.activeQueries.map((q) => (
+                      <div key={q.pid} className="text-xs py-1 border-b border-muted/30 last:border-0">
+                        <span className="font-mono text-muted-foreground">PID {q.pid} ({q.durationSecs}s):</span>{" "}
+                        <span className="font-mono">{q.query}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {dbData.performance.waitingLocks > 0 && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                  <span className="text-sm text-yellow-400">
+                    {dbData.performance.waitingLocks} bloqueos en espera
+                  </span>
+                </div>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

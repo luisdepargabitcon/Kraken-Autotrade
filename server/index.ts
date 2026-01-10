@@ -2,6 +2,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes, initializeWebSockets } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { logStreamService } from "./services/logStreamService";
+
+logStreamService.initialize();
 
 const app = express();
 const httpServer = createServer(app);

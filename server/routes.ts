@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { pool } from "./db";
 import { krakenService } from "./services/kraken";
 import { revolutXService } from "./services/exchanges/RevolutXService";
 import { telegramService } from "./services/telegram";
@@ -1961,6 +1962,151 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/db/diagnostic", async (req, res) => {
+    try {
+      const client = await pool.connect();
+      try {
+        const versionResult = await client.query("SELECT version()");
+        const version = versionResult.rows[0]?.version || "Unknown";
+
+        const uptimeResult = await client.query("SELECT pg_postmaster_start_time() as start_time");
+        const startTime = uptimeResult.rows[0]?.start_time;
+        const uptimeMs = startTime ? Date.now() - new Date(startTime).getTime() : 0;
+        const uptimeHours = Math.floor(uptimeMs / (1000 * 60 * 60));
+
+        const maxConnResult = await client.query("SHOW max_connections");
+        const maxConnections = parseInt(maxConnResult.rows[0]?.max_connections || "100");
+
+        const connStatsResult = await client.query(`
+          SELECT state, COUNT(*) as count 
+          FROM pg_stat_activity 
+          WHERE datname = current_database()
+          GROUP BY state
+        `);
+        const connectionStats: Record<string, number> = {};
+        let totalConnections = 0;
+        for (const row of connStatsResult.rows) {
+          const state = row.state || "null";
+          const count = parseInt(row.count);
+          connectionStats[state] = count;
+          totalConnections += count;
+        }
+
+        const dbSizeResult = await client.query(`
+          SELECT pg_database_size(current_database()) as size
+        `);
+        const dbSizeBytes = parseInt(dbSizeResult.rows[0]?.size || "0");
+        const dbSizeMB = (dbSizeBytes / (1024 * 1024)).toFixed(2);
+
+        const tableSizesResult = await client.query(`
+          SELECT 
+            schemaname || '.' || tablename as table_name,
+            pg_total_relation_size(schemaname || '.' || tablename) as total_size
+          FROM pg_tables 
+          WHERE schemaname = 'public'
+          ORDER BY pg_total_relation_size(schemaname || '.' || tablename) DESC
+          LIMIT 15
+        `);
+        const tableSizes = tableSizesResult.rows.map(row => ({
+          table: row.table_name.replace("public.", ""),
+          sizeBytes: parseInt(row.total_size),
+          sizeMB: (parseInt(row.total_size) / (1024 * 1024)).toFixed(3),
+        }));
+
+        const rowCountsResult = await client.query(`
+          SELECT relname as table_name, n_live_tup as row_count
+          FROM pg_stat_user_tables
+          ORDER BY n_live_tup DESC
+          LIMIT 15
+        `);
+        const rowCounts = rowCountsResult.rows.map(row => ({
+          table: row.table_name,
+          rows: parseInt(row.row_count),
+        }));
+
+        const activeQueriesResult = await client.query(`
+          SELECT 
+            pid,
+            usename,
+            state,
+            query,
+            query_start,
+            EXTRACT(EPOCH FROM (now() - query_start))::int as duration_secs
+          FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND state = 'active'
+            AND pid != pg_backend_pid()
+          ORDER BY query_start ASC
+          LIMIT 10
+        `);
+        const activeQueries = activeQueriesResult.rows.map(row => ({
+          pid: row.pid,
+          user: row.usename,
+          state: row.state,
+          query: row.query?.substring(0, 200),
+          durationSecs: row.duration_secs,
+        }));
+
+        const locksResult = await client.query(`
+          SELECT COUNT(*) as count FROM pg_locks WHERE NOT granted
+        `);
+        const waitingLocks = parseInt(locksResult.rows[0]?.count || "0");
+
+        const vacuumResult = await client.query(`
+          SELECT 
+            relname as table_name,
+            last_vacuum,
+            last_autovacuum,
+            last_analyze,
+            last_autoanalyze
+          FROM pg_stat_user_tables
+          WHERE last_vacuum IS NOT NULL OR last_autovacuum IS NOT NULL
+          ORDER BY COALESCE(last_autovacuum, last_vacuum) DESC
+          LIMIT 5
+        `);
+        const vacuumStats = vacuumResult.rows.map(row => ({
+          table: row.table_name,
+          lastVacuum: row.last_vacuum || row.last_autovacuum,
+          lastAnalyze: row.last_analyze || row.last_autoanalyze,
+        }));
+
+        res.json({
+          timestamp: new Date().toISOString(),
+          server: {
+            version: version.split(",")[0],
+            uptimeHours,
+            startTime,
+          },
+          connections: {
+            current: totalConnections,
+            max: maxConnections,
+            usage: ((totalConnections / maxConnections) * 100).toFixed(1) + "%",
+            byState: connectionStats,
+          },
+          storage: {
+            databaseSizeMB: dbSizeMB,
+            tableSizes,
+          },
+          tables: {
+            rowCounts,
+          },
+          performance: {
+            activeQueries,
+            waitingLocks,
+          },
+          maintenance: {
+            recentVacuums: vacuumStats,
+          },
+        });
+      } finally {
+        client.release();
+      }
+    } catch (error: any) {
+      console.error("[api/db/diagnostic] Error:", error.message);
+      res.status(500).json({ error: error.message || "Failed to get database diagnostic" });
     }
   });
 
