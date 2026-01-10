@@ -1,10 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, RefreshCw, Zap, Target, Shield, Info, Power } from "lucide-react";
+import { TrendingUp, RefreshCw, Zap, Target, Shield, Info, Power, Server, BarChart2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import type { BotConfig } from "@shared/schema";
+
+interface ApiConfig {
+  activeExchange?: string;
+  tradingExchange?: string;
+  dataExchange?: string;
+  krakenConnected?: boolean;
+  revolutxConnected?: boolean;
+}
 
 const STRATEGIES: Record<string, { name: string; icon: typeof TrendingUp }> = {
   momentum: { name: "Momentum", icon: TrendingUp },
@@ -29,9 +37,19 @@ export function BotControl() {
     },
   });
 
+  const { data: apiConfig } = useQuery<ApiConfig>({
+    queryKey: ["apiConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/config/api");
+      if (!res.ok) throw new Error("Failed to fetch api config");
+      return res.json();
+    },
+  });
+
   const isActive = config?.isActive ?? false;
   const strategyId = config?.strategy || "momentum";
   const riskId = config?.riskLevel || "medium";
+  const tradingExchange = apiConfig?.tradingExchange || apiConfig?.activeExchange || "kraken";
   
   const currentStrategy = STRATEGIES[strategyId] || STRATEGIES.momentum;
   const currentRisk = RISK_LEVELS[riskId] || RISK_LEVELS.medium;
@@ -85,6 +103,34 @@ export function BotControl() {
             </div>
             <Badge variant="outline" className={cn("font-mono border", currentRisk.color)}>
               {currentRisk.name.toUpperCase()}
+            </Badge>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-background/50">
+            <div className="flex items-center gap-2">
+              <Server className="h-4 w-4 text-primary" />
+              <span className="text-sm">Exchange Trading</span>
+            </div>
+            <Badge 
+              variant="outline" 
+              className={cn(
+                "font-mono border",
+                tradingExchange === "kraken" 
+                  ? "text-orange-400 bg-orange-500/10 border-orange-500/30" 
+                  : "text-purple-400 bg-purple-500/10 border-purple-500/30"
+              )}
+            >
+              {tradingExchange === "kraken" ? "KRAKEN" : "REVOLUT X"}
+            </Badge>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-background/50">
+            <div className="flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-primary" />
+              <span className="text-sm">Datos de Mercado</span>
+            </div>
+            <Badge variant="outline" className="font-mono border text-orange-400 bg-orange-500/10 border-orange-500/30">
+              KRAKEN
             </Badge>
           </div>
         </div>

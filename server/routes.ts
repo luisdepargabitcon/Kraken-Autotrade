@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { krakenService } from "./services/kraken";
+import { revolutXService } from "./services/exchanges/RevolutXService";
 import { telegramService } from "./services/telegram";
 import { TradingEngine } from "./services/tradingEngine";
 import { botLogger } from "./services/botLogger";
@@ -177,12 +178,15 @@ export async function registerRoutes(
   app.get("/api/config/api", async (req, res) => {
     try {
       const config = await storage.getApiConfig();
+      const activeEx = config?.activeExchange || "kraken";
       res.json({
         krakenConnected: config?.krakenConnected || false,
         krakenEnabled: config?.krakenEnabled ?? true,
         revolutxConnected: config?.revolutxConnected || false,
         revolutxEnabled: config?.revolutxEnabled || false,
-        activeExchange: config?.activeExchange || "kraken",
+        activeExchange: activeEx,
+        tradingExchange: config?.tradingExchange || activeEx,
+        dataExchange: "kraken",
         telegramConnected: config?.telegramConnected || false,
         hasKrakenKeys: !!(config?.krakenApiKey && config?.krakenApiSecret),
         hasRevolutxKeys: !!(config?.revolutxApiKey && config?.revolutxPrivateKey),
@@ -1303,6 +1307,60 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.json(balance);
     } catch (error) {
       res.status(500).json({ error: "Failed to get balance" });
+    }
+  });
+
+  // Multi-exchange balances endpoint
+  app.get("/api/balances/all", async (req, res) => {
+    try {
+      const apiConfig = await storage.getApiConfig();
+      const result: {
+        kraken: { connected: boolean; balances: Record<string, number>; error?: string };
+        revolutx: { connected: boolean; balances: Record<string, number>; error?: string };
+        activeExchange: string;
+        tradingExchange: string;
+      } = {
+        kraken: { connected: false, balances: {} },
+        revolutx: { connected: false, balances: {} },
+        activeExchange: apiConfig?.activeExchange || 'kraken',
+        tradingExchange: apiConfig?.tradingExchange || apiConfig?.activeExchange || 'kraken',
+      };
+
+      // Fetch Kraken balances
+      if (krakenService.isInitialized()) {
+        result.kraken.connected = true;
+        try {
+          const rawBalances = await krakenService.getBalanceRaw();
+          for (const [key, value] of Object.entries(rawBalances)) {
+            const numValue = parseFloat(value);
+            if (numValue > 0) {
+              result.kraken.balances[key] = numValue;
+            }
+          }
+        } catch (e: any) {
+          result.kraken.error = e.message;
+        }
+      }
+
+      // Fetch Revolut X balances
+      if (revolutXService.isInitialized()) {
+        result.revolutx.connected = true;
+        try {
+          const balances = await revolutXService.getBalance();
+          for (const [key, val] of Object.entries(balances)) {
+            const numVal = typeof val === 'number' ? val : parseFloat(String(val));
+            if (numVal > 0) {
+              result.revolutx.balances[key] = numVal;
+            }
+          }
+        } catch (e: any) {
+          result.revolutx.error = e.message;
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get multi-exchange balances" });
     }
   });
 

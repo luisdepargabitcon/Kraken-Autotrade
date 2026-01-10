@@ -206,14 +206,35 @@ export class RevolutXService implements IExchangeService {
       }
       
       console.log('[revolutx] Order placed successfully:', data.id || data.order_id);
+      console.log('[revolutx] Order response data:', JSON.stringify(data, null, 2));
+      
+      // For market orders, Revolut X may not return executed_price immediately
+      // We need to fetch the current ticker price as a fallback
+      let executedPrice = parseFloat(data.executed_price || data.average_price || data.price || '0');
+      
+      if (executedPrice === 0 && params.ordertype === 'market') {
+        try {
+          const ticker = await this.getTicker(params.pair);
+          // For buy, use ask price; for sell, use bid price
+          executedPrice = params.type === 'buy' ? ticker.ask : ticker.bid;
+          console.log(`[revolutx] Market order price estimated from ticker: ${executedPrice}`);
+        } catch (tickerError) {
+          console.warn('[revolutx] Could not fetch ticker for price estimation');
+        }
+      }
+      
+      const executedVolume = parseFloat(data.executed_size || data.filled_size || params.volume);
+      const executedCost = executedPrice > 0 && executedVolume > 0 
+        ? executedPrice * executedVolume 
+        : parseFloat(data.executed_value || data.executed_notional || '0');
       
       return {
         success: true,
         orderId: data.id || data.order_id,
         txid: data.id || data.order_id,
-        price: parseFloat(data.executed_price || data.average_price || params.price || '0'),
-        volume: parseFloat(data.executed_size || data.filled_size || params.volume),
-        cost: parseFloat(data.executed_value || data.executed_notional || '0')
+        price: executedPrice,
+        volume: executedVolume,
+        cost: executedCost
       };
     } catch (error: any) {
       console.error('[revolutx] placeOrder error:', error.message);
