@@ -208,17 +208,11 @@ export default function Integrations() {
                     <span>Exchange para Datos (OHLC)</span>
                   </div>
                   <div className="font-semibold text-lg">
-                    {dataExchange === "kraken" ? (
-                      <span className="flex items-center gap-2">
-                        <Server className="h-5 w-5 text-orange-400" />
-                        Kraken
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Zap className="h-5 w-5 text-purple-400" />
-                        Revolut X
-                      </span>
-                    )}
+                    <span className="flex items-center gap-2">
+                      <Server className="h-5 w-5 text-orange-400" />
+                      Kraken
+                      <span className="text-xs text-muted-foreground font-normal">(siempre)</span>
+                    </span>
                   </div>
                 </div>
               </div>

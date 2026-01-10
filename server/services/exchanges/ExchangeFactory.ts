@@ -192,13 +192,9 @@ class ExchangeFactoryClass {
       }
     }
 
-    const dataEx = config.dataExchange || 'kraken';
-    if (this.exchangeEnabled[dataEx]) {
-      const exchange = this.getExchange(dataEx);
-      if (exchange.isInitialized()) {
-        this.dataExchange = dataEx;
-      }
-    }
+    // Data exchange is ALWAYS Kraken - it has the best OHLC/market data API
+    // This is intentionally hardcoded and ignores config.dataExchange
+    this.dataExchange = 'kraken';
 
     console.log(`[ExchangeFactory] Trading: ${this.tradingExchange}, Data: ${this.dataExchange}`);
   }

@@ -291,7 +291,13 @@ export async function registerRoutes(
         return res.status(400).json({ error: e.message });
       }
 
-      await storage.updateApiConfig({ activeExchange });
+      // IMPORTANT: Data exchange is ALWAYS Kraken (better API for OHLC data)
+      // Only trading exchange changes when activating a different exchange
+      await storage.updateApiConfig({ 
+        activeExchange,
+        tradingExchange: activeExchange,
+        dataExchange: 'kraken'  // Always Kraken for market data
+      });
       
       console.log(`[exchange] Active exchange changed to: ${activeExchange}`);
       res.json({ success: true, activeExchange });
