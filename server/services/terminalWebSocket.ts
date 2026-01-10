@@ -28,32 +28,41 @@ interface LogSource {
   filePath?: string;
 }
 
-const PREDEFINED_SOURCES: LogSource[] = [
-  {
-    id: "docker_compose",
-    name: "Docker Compose (todos)",
-    type: "docker_compose",
-    command: ["docker", "compose", "logs", "-f", "--tail=200"],
-  },
-  {
-    id: "krakenbot_container",
-    name: "KrakenBot Container",
-    type: "docker_container",
-    containerName: "kraken-bot-app",
-  },
-  {
-    id: "postgres_container",
-    name: "PostgreSQL Container",
-    type: "docker_container",
-    containerName: "kraken-bot-db",
-  },
-  {
-    id: "app_log",
-    name: "App Log File",
-    type: "file",
-    filePath: "/var/log/krakenbot/app.log",
-  },
-];
+function getPredefinedSources(): LogSource[] {
+  const isVPS = !!process.env.VPS_DEPLOY;
+  const appContainer = isVPS ? "krakenbot-staging-app" : "kraken-bot-app";
+  const dbContainer = isVPS ? "krakenbot-staging-db" : "kraken-bot-db";
+  const composeFile = isVPS ? "-f docker-compose.staging.yml" : "";
+  
+  return [
+    {
+      id: "docker_compose",
+      name: "Docker Compose (todos)",
+      type: "docker_compose",
+      command: composeFile 
+        ? ["docker", "compose", "-f", "docker-compose.staging.yml", "logs", "-f", "--tail=200"]
+        : ["docker", "compose", "logs", "-f", "--tail=200"],
+    },
+    {
+      id: "krakenbot_container",
+      name: "KrakenBot Container",
+      type: "docker_container",
+      containerName: appContainer,
+    },
+    {
+      id: "postgres_container",
+      name: "PostgreSQL Container",
+      type: "docker_container",
+      containerName: dbContainer,
+    },
+    {
+      id: "app_log",
+      name: "App Log File",
+      type: "file",
+      filePath: "/var/log/krakenbot/app.log",
+    },
+  ];
+}
 
 class TerminalWebSocketServer {
   private wss: WebSocketServer | null = null;
@@ -157,7 +166,7 @@ class TerminalWebSocketServer {
   }
 
   private getAvailableSources(): LogSource[] {
-    return PREDEFINED_SOURCES.filter(source => {
+    return getPredefinedSources().filter(source => {
       if (source.type === "docker_compose" || source.type === "docker_container") {
         return this.dockerEnabled;
       }
