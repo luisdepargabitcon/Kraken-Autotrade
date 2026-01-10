@@ -526,8 +526,46 @@ function TerminalTab() {
   
   const [autoScroll, setAutoScroll] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
+  const [logsCopied, setLogsCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevLinesLengthRef = useRef(lines.length);
+
+  const handleCopyLogs = async () => {
+    if (lines.length === 0) return;
+    const text = lines.map(l => l.line).join("\n");
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setLogsCopied(true);
+      setTimeout(() => setLogsCopied(false), 2000);
+    } catch (err) {
+      console.error("Error copying logs:", err);
+    }
+  };
+
+  const handleDownloadLogs = () => {
+    if (lines.length === 0) return;
+    const text = lines.map(l => l.line).join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `app-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     if (autoScroll && !isPaused && lines.length > prevLinesLengthRef.current && scrollRef.current) {
@@ -637,6 +675,28 @@ function TerminalTab() {
               data-testid="button-terminal-clear"
             >
               <Trash2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleCopyLogs}
+              disabled={lines.length === 0}
+              title="Copiar logs"
+              data-testid="button-terminal-copy"
+            >
+              {logsCopied ? <CheckCircle className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleDownloadLogs}
+              disabled={lines.length === 0}
+              title="Descargar logs"
+              data-testid="button-terminal-download"
+            >
+              <Download className="h-4 w-4" />
             </Button>
             {!isConnected && (
               <Button
@@ -770,13 +830,27 @@ function DiagnosticTab() {
 
   const [copied, setCopied] = useState(false);
 
-  const handleCopyDbDiagnostic = () => {
+  const handleCopyDbDiagnostic = async () => {
     if (!dbData) return;
     const text = JSON.stringify(dbData, null, 2);
-    navigator.clipboard.writeText(text).then(() => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch (err) {
+      console.error("Error copying:", err);
+    }
   };
 
   const handleDownloadDbDiagnostic = () => {
@@ -1008,7 +1082,7 @@ function DiagnosticTab() {
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <h4 className="text-sm font-medium mb-2">Tamaño por tabla</h4>
-                  <div className="bg-muted/20 rounded-lg p-2 max-h-48 overflow-y-auto">
+                  <div className="bg-muted/20 rounded-lg p-2">
                     {dbData.storage.tableSizes.map((t) => (
                       <div key={t.table} className="flex justify-between text-xs py-1 border-b border-muted/30 last:border-0">
                         <span className="font-mono">{t.table}</span>
@@ -1019,7 +1093,7 @@ function DiagnosticTab() {
                 </div>
                 <div>
                   <h4 className="text-sm font-medium mb-2">Filas por tabla</h4>
-                  <div className="bg-muted/20 rounded-lg p-2 max-h-48 overflow-y-auto">
+                  <div className="bg-muted/20 rounded-lg p-2">
                     {dbData.tables.rowCounts.map((t) => (
                       <div key={t.table} className="flex justify-between text-xs py-1 border-b border-muted/30 last:border-0">
                         <span className="font-mono">{t.table}</span>

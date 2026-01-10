@@ -1,0 +1,179 @@
+{
+  "timestamp": "2026-01-10T17:02:12.268Z",
+  "server": {
+    "version": "PostgreSQL 16.11 on x86_64-pc-linux-musl",
+    "uptimeHours": 17,
+    "startTime": "2026-01-09T23:46:13.545Z"
+  },
+  "connections": {
+    "current": 2,
+    "max": 100,
+    "usage": "2.0%",
+    "byState": {
+      "active": 1,
+      "idle": 1
+    }
+  },
+  "storage": {
+    "databaseSizeMB": "54.29",
+    "tableSizes": [
+      {
+        "table": "bot_events",
+        "sizeBytes": 47579136,
+        "sizeMB": "45.375"
+      },
+      {
+        "table": "trades",
+        "sizeBytes": 196608,
+        "sizeMB": "0.188"
+      },
+      {
+        "table": "ai_trade_samples",
+        "sizeBytes": 98304,
+        "sizeMB": "0.094"
+      },
+      {
+        "table": "training_trades",
+        "sizeBytes": 98304,
+        "sizeMB": "0.094"
+      },
+      {
+        "table": "regime_state",
+        "sizeBytes": 57344,
+        "sizeMB": "0.055"
+      },
+      {
+        "table": "open_positions",
+        "sizeBytes": 49152,
+        "sizeMB": "0.047"
+      },
+      {
+        "table": "api_config",
+        "sizeBytes": 32768,
+        "sizeMB": "0.031"
+      },
+      {
+        "table": "ai_config",
+        "sizeBytes": 32768,
+        "sizeMB": "0.031"
+      },
+      {
+        "table": "bot_config",
+        "sizeBytes": 32768,
+        "sizeMB": "0.031"
+      },
+      {
+        "table": "telegram_chats",
+        "sizeBytes": 32768,
+        "sizeMB": "0.031"
+      },
+      {
+        "table": "market_data",
+        "sizeBytes": 16384,
+        "sizeMB": "0.016"
+      },
+      {
+        "table": "ai_shadow_decisions",
+        "sizeBytes": 16384,
+        "sizeMB": "0.016"
+      },
+      {
+        "table": "trade_fills",
+        "sizeBytes": 16384,
+        "sizeMB": "0.016"
+      },
+      {
+        "table": "lot_matches",
+        "sizeBytes": 16384,
+        "sizeMB": "0.016"
+      },
+      {
+        "table": "notifications",
+        "sizeBytes": 16384,
+        "sizeMB": "0.016"
+      }
+    ]
+  },
+  "tables": {
+    "rowCounts": [
+      {
+        "table": "bot_events",
+        "rows": 59647
+      },
+      {
+        "table": "trades",
+        "rows": 239
+      },
+      {
+        "table": "training_trades",
+        "rows": 176
+      },
+      {
+        "table": "ai_trade_samples",
+        "rows": 54
+      },
+      {
+        "table": "regime_state",
+        "rows": 5
+      },
+      {
+        "table": "telegram_chats",
+        "rows": 3
+      },
+      {
+        "table": "bot_config",
+        "rows": 1
+      },
+      {
+        "table": "ai_config",
+        "rows": 1
+      },
+      {
+        "table": "api_config",
+        "rows": 1
+      },
+      {
+        "table": "open_positions",
+        "rows": 0
+      },
+      {
+        "table": "trade_fills",
+        "rows": 0
+      },
+      {
+        "table": "market_data",
+        "rows": 0
+      },
+      {
+        "table": "ai_shadow_decisions",
+        "rows": 0
+      },
+      {
+        "table": "lot_matches",
+        "rows": 0
+      },
+      {
+        "table": "notifications",
+        "rows": 0
+      }
+    ]
+  },
+  "performance": {
+    "activeQueries": [],
+    "waitingLocks": 0
+  },
+  "maintenance": {
+    "recentVacuums": [
+      {
+        "table": "trades",
+        "lastVacuum": "2026-01-10T02:10:46.034Z",
+        "lastAnalyze": "2026-01-10T16:49:21.579Z"
+      },
+      {
+        "table": "bot_events",
+        "lastVacuum": "2026-01-09T23:47:44.428Z",
+        "lastAnalyze": "2026-01-09T23:47:44.676Z"
+      }
+    ]
+  }
+}

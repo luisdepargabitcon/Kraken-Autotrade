@@ -11,7 +11,7 @@ export interface LogLine {
 export interface LogSource {
   id: string;
   name: string;
-  type: "docker_compose" | "docker_container" | "file";
+  type: "docker_compose" | "docker_container" | "file" | "app_stdout";
 }
 
 type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting" | "needsAuth";
@@ -100,10 +100,25 @@ export function useTerminalWebSocket(options: UseTerminalWebSocketOptions = {}) 
               setLineCount((c) => c + 1);
               setLastLineTime(new Date());
               break;
+            case "LOG_HISTORY":
+              const historyLines: LogLine[] = (data.payload.lines || []).map((line: string, idx: number) => {
+                lineIdRef.current++;
+                return {
+                  id: lineIdRef.current,
+                  timestamp: new Date(),
+                  line,
+                  sourceId: data.payload.sourceId,
+                  isError: line.includes("[ERROR]") || line.includes("[WARN"),
+                };
+              });
+              setLines(historyLines.slice(-maxLines));
+              setLineCount(historyLines.length);
+              if (historyLines.length > 0) {
+                setLastLineTime(new Date());
+              }
+              break;
             case "SOURCE_CHANGED":
               setActiveSource(data.payload.sourceId);
-              setLines([]);
-              setLineCount(0);
               break;
             case "SOURCE_STOPPED":
               setActiveSource(null);
