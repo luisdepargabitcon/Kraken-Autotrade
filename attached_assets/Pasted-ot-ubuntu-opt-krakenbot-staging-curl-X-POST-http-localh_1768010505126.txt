@@ -1,0 +1,36 @@
+ot@ubuntu:/opt/krakenbot-staging# curl -X POST http://localhost:5000/api/trades/sync
+curl: (7) Failed to connect to localhost port 5000 after 0 ms: Connection refused
+root@ubuntu:/opt/krakenbot-staging# docker restart krakenbot-staging-app
+sleep 5
+curl -X POST http://localhost:5000/api/trades/sync
+krakenbot-staging-app
+curl: (7) Failed to connect to localhost port 5000 after 0 ms: Connection refused
+root@ubuntu:/opt/krakenbot-staging# docker ps
+docker logs krakenbot-staging-app --tail 20
+CONTAINER ID   IMAGE                                     COMMAND                  CREATED         STATUS                    PORTS                                         NAMES
+e101fc78dd23   krakenbot-staging-krakenbot-staging-app   "docker-entrypoint.s…"   8 minutes ago   Up 11 seconds             0.0.0.0:3020->5000/tcp, [::]:3020->5000/tcp   krakenbot-staging-app
+11e9bbd9d995   postgres:16-alpine                        "docker-entrypoint.s…"   2 hours ago     Up 2 hours (healthy)      0.0.0.0:5435->5432/tcp, [::]:5435->5432/tcp   krakenbot-staging-db
+d7bd266c5dc5   crypto-tracker-worker                     "python -m worker.sc…"   30 hours ago    Up 30 hours (unhealthy)   8000/tcp                                      crypto-tracker-worker-1
+fe7ab3be9d2a   crypto-tracker-app                        "uvicorn app.main:ap…"   30 hours ago    Up 28 hours (healthy)     0.0.0.0:3010->8000/tcp, [::]:3010->8000/tcp   crypto-tracker-app-1
+7bdd17714a3e   postgres:15-alpine                        "docker-entrypoint.s…"   30 hours ago    Up 30 hours (healthy)     5432/tcp                                      crypto-tracker-db-1
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 153 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+2:01:32 AM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+2:01:32 AM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+root@ubuntu:/opt/krakenbot-staging#
