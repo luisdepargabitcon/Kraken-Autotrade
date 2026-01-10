@@ -999,7 +999,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       // Solo actualizamos memoria después de confirmar persistencia en DB
       if (tradingEngine) {
         const positions = tradingEngine.getOpenPositions();
-        const memPos = positions.get(lotId);
+        const memPos = positions.get(lotId) as any;
         if (memPos) {
           memPos.timeStopDisabled = disabled;
         }
