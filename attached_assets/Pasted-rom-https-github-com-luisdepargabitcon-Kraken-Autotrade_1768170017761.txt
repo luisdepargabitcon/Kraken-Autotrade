@@ -1,0 +1,48 @@
+rom https://github.com/luisdepargabitcon/Kraken-Autotrade
+ * branch            main       -> FETCH_HEAD
+   a0066b6..dbfa177  main       -> origin/main
+Updating a0066b6..dbfa177
+Fast-forward
+ attached_assets/Pasted-root-ubuntu-opt-krakenbot-staging-docker-logs-f-krakenb_1768169845695.txt | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ replit.md                                                                                        |  2 ++
+ 2 files changed, 53 insertions(+)
+ create mode 100644 attached_assets/Pasted-root-ubuntu-opt-krakenbot-staging-docker-logs-f-krakenb_1768169845695.txt
+Command 'docker-compose' not found, but can be installed with:
+snap install docker          # version 28.4.0, or
+apt  install docker-compose  # version 1.29.2-1
+See 'snap info docker' for additional versions.
+root@ubuntu:/opt/krakenbot-staging# docker compose -f docker-compose.staging.yml up -d --build krakenbot-staging-app
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 15.7s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                                                                                                                                                                                         0.0s
+ => => reading from stdin 576B                                                                                                                                                                                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                                                                                                                                                                                               0.0s
+ => => transferring dockerfile: 472B                                                                                                                                                                                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                                                                                                                                                                                  1.0s
+ => [internal] load .dockerignore                                                                                                                                                                                                                                                  0.0s
+ => => transferring context: 174B                                                                                                                                                                                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a370d448                                                                                                                                                            0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a370d448                                                                                                                                                            0.0s
+ => [internal] load build context                                                                                                                                                                                                                                                  0.0s
+ => => transferring context: 75.03kB                                                                                                                                                                                                                                               0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                                                                                                                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git docker-cli                                                                                                                                                                                                                0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                                                                                                                                                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                                                                                                                                                                                   0.0s
+ => [6/8] COPY . .                                                                                                                                                                                                                                                                 0.8s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi                                                                                                                                                                         0.2s
+ => [8/8] RUN npm run build                                                                                                                                                                                                                                                        7.3s
+ => exporting to image                                                                                                                                                                                                                                                             6.2s
+ => => exporting layers                                                                                                                                                                                                                                                            5.4s
+ => => exporting manifest sha256:a7caa9789fe11f2729b71f367310e844232afcfe7635dff56955de036b52472e                                                                                                                                                                                  0.0s
+ => => exporting config sha256:657a1533a05056f534d83242fb93d3c415c43d446c4567eb28334926ff3e52d2                                                                                                                                                                                    0.0s
+ => => exporting attestation manifest sha256:688b97221189c2684a7f30202ef2b3e7cb253193f5d89995567782bb57564b13                                                                                                                                                                      0.0s
+ => => exporting manifest list sha256:dce0309e750a65cd565c7266b9d31f59c5ad05cb84c86d95030787085a37bbb8                                                                                                                                                                             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                                                                                                                                                                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                                                                                                                                                                               0.8s
+ => resolving provenance for metadata file                                                                                                                                                                                                                                         0.0s
+[+] up 3/3
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                                                                                                                                                                                            15.7s
+ ✔ Container krakenbot-staging-db                Healthy                                                                                                                                                                                                                           1.9s
+ ✔ Container krakenbot-staging-app               Recreated                                                                                                                                                                                                                         1.4s
+root@ubuntu:/opt/krakenbot-staging#
