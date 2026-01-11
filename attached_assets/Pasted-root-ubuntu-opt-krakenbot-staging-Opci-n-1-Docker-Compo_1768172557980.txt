@@ -1,0 +1,65 @@
+root@ubuntu:/opt/krakenbot-staging# # Opción 1: Docker Compose v2 (viene integrado con Docker)
+docker compose restart
+
+# Si no funciona, verifica cómo está configurado:
+ls -la
+
+# Si usas docker directamente sin compose:
+docker ps  # Ver contenedores activos
+docker restart krakenbot-staging  # Reiniciar el contenedor (ajusta el nombre)
+
+# Ver logs
+docker logs -f --tail=50 krakenbot-staging
+WARN[0000] /opt/krakenbot-staging/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+total 204416
+drwxr-xr-x 12 root root      4096 Jan 11 22:18 .
+drwxr-xr-x  4 root root      4096 Jan  8 20:06 ..
+drwxr-xr-x  3 root root      4096 Dec 11 21:59 .config
+-rw-r--r--  1 root root       132 Jan  8 21:39 .dockerignore
+-rw-r--r--  1 root root       272 Jan 10 16:25 .env
+-rw-r--r--  1 root root       538 Jan  8 21:39 .env.example
+drwxr-xr-x  7 root root      4096 Jan 11 23:01 .git
+-rw-r--r--  1 root root        67 Jan  8 21:39 .gitignore
+drwxr-xr-x  3 root root      4096 Dec  8 18:21 .local
+-rw-r--r--  1 root root       876 Jan  8 21:39 .replit
+-rw-r--r--  1 root root      3819 Jan  8 21:39 CHANGELOG_2026-01-08.txt
+-rw-r--r--  1 root root       433 Jan 10 17:00 Dockerfile
+-rw-r--r--  1 root root      8243 Jan  8 21:39 GUIA_INSTALACION.md
+-rw-r--r--  1 root root      5767 Jan  9 23:12 VPS_DEPLOY_GUIDE.md
+-rw-r--r--  1 root root    491148 Jan  8 21:39 ai_strategy_grep.txt
+drwxr-xr-x  3 root root     36864 Jan 11 22:55 attached_assets
+-rw-r--r--  1 root root    662774 Jan  8 21:39 bot_artifacts.tgz
+-rw-r--r--  1 root root   6070552 Jan  8 21:39 bot_bundle.txt
+-rw-r--r--  1 root root   2274101 Jan  8 21:39 bot_bundle_clean.txt
+-rw-r--r--  1 root root     13905 Jan  8 21:39 bundle_files.txt
+-rw-r--r--  1 root root      4110 Jan  8 21:39 bundle_files_clean.txt
+drwxr-xr-x  4 root root      4096 Jan  8 21:39 client
+-rw-r--r--  1 root root       451 Jan  8 21:39 components.json
+drwxr-xr-x  3 root root      4096 Dec 15 14:11 dist
+-rw-r--r--  1 root root      1254 Jan 10 16:15 docker-compose.staging.yml
+-rw-r--r--  1 root root       650 Jan  9 23:36 docker-compose.staging.yml.save
+-rw-r--r--  1 root root       654 Jan  9 23:42 docker-compose.staging.yml.save.1
+-rw-r--r--  1 root root      1944 Jan  8 21:39 docker-compose.yml
+-rw-r--r--  1 root root       325 Jan  8 21:39 drizzle.config.ts
+-rw-r--r--  1 root root   2447073 Jan  8 21:39 file_list.txt
+-rw-r--r--  1 root root 196786842 Jan  8 20:24 krakenbot.zip
+-rw-r--r--  1 root root    368163 Jan  8 21:39 package-lock.json
+-rw-r--r--  1 root root      3667 Jan  8 21:39 package.json
+-rw-r--r--  1 root root        80 Jan  8 21:39 postcss.config.js
+-rw-r--r--  1 root root      4857 Jan 11 22:18 replit.md
+drwxr-xr-x  2 root root      4096 Jan  8 21:56 script
+drwxr-xr-x  2 root root      4096 Jan  9 23:12 scripts
+drwxr-xr-x  5 root root      4096 Jan 10 19:43 server
+drwxr-xr-x  2 root root      4096 Jan  9 23:12 shared
+-rw-r--r--  1 root root       657 Jan  8 21:39 tsconfig.json
+-rw-r--r--  1 root root      2333 Jan  8 21:39 vite-plugin-meta-images.ts
+-rw-r--r--  1 root root      1330 Jan  8 21:39 vite.config.ts
+CONTAINER ID   IMAGE                                     COMMAND                  CREATED          STATUS                  PORTS                                         NAMES
+19c00023c413   krakenbot-staging-krakenbot-staging-app   "docker-entrypoint.s…"   43 minutes ago   Up 43 minutes           0.0.0.0:3020->5000/tcp, [::]:3020->5000/tcp   krakenbot-staging-app
+11e9bbd9d995   postgres:16-alpine                        "docker-entrypoint.s…"   47 hours ago     Up 47 hours (healthy)   0.0.0.0:5435->5432/tcp, [::]:5435->5432/tcp   krakenbot-staging-db
+d7bd266c5dc5   crypto-tracker-worker                     "python -m worker.sc…"   3 days ago       Up 3 days (unhealthy)   8000/tcp                                      crypto-tracker-worker-1
+fe7ab3be9d2a   crypto-tracker-app                        "uvicorn app.main:ap…"   3 days ago       Up 3 days (healthy)     0.0.0.0:3010->8000/tcp, [::]:3010->8000/tcp   crypto-tracker-app-1
+7bdd17714a3e   postgres:15-alpine                        "docker-entrypoint.s…"   3 days ago       Up 3 days (healthy)     5432/tcp                                      crypto-tracker-db-1
+Error response from daemon: No such container: krakenbot-staging
+Error response from daemon: No such container: krakenbot-staging
+root@ubuntu:/opt/krakenbot-staging#
