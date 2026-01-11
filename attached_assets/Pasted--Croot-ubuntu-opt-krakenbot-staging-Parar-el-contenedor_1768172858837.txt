@@ -1,0 +1,166 @@
+^Croot@ubuntu:/opt/krakenbot-staging# Parar el contenedor actualal
+docker compose down
+
+# Usar el archivo de staging específico
+docker compose -f docker-compose.staging.yml up -d --build
+
+# Ver logs
+docker logs -f --tail=50 krakenbot-staging-app
+WARN[0000] /opt/krakenbot-staging/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] down 3/3
+ ✔ Container kraken-bot-app                    Removed                                                                                                                                                                                                                             0.0s
+ ✔ Container kraken-bot-db                     Removed                                                                                                                                                                                                                             0.2s
+ ✔ Network krakenbot-staging_krakenbot-network Removed                                                                                                                                                                                                                             0.2s
+WARN[0000] /opt/krakenbot-staging/docker-compose.staging.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] Building 14.6s (15/15) FINISHED
+ => [internal] load local bake definitions                                                                                                                                                                                                                                         0.0s
+ => => reading from stdin 576B                                                                                                                                                                                                                                                     0.0s
+ => [internal] load build definition from Dockerfile                                                                                                                                                                                                                               0.0s
+ => => transferring dockerfile: 472B                                                                                                                                                                                                                                               0.0s
+ => [internal] load metadata for docker.io/library/node:20-alpine                                                                                                                                                                                                                  0.0s
+ => [internal] load .dockerignore                                                                                                                                                                                                                                                  0.0s
+ => => transferring context: 174B                                                                                                                                                                                                                                                  0.0s
+ => [1/8] FROM docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a370d448                                                                                                                                                            0.0s
+ => => resolve docker.io/library/node:20-alpine@sha256:658d0f63e501824d6c23e06d4bb95c71e7d704537c9d9272f488ac03a370d448                                                                                                                                                            0.0s
+ => [internal] load build context                                                                                                                                                                                                                                                  0.0s
+ => => transferring context: 416.84kB                                                                                                                                                                                                                                              0.0s
+ => CACHED [2/8] WORKDIR /app                                                                                                                                                                                                                                                      0.0s
+ => CACHED [3/8] RUN apk add --no-cache libc6-compat git docker-cli                                                                                                                                                                                                                0.0s
+ => CACHED [4/8] COPY package.json package-lock.json* ./                                                                                                                                                                                                                           0.0s
+ => CACHED [5/8] RUN npm install                                                                                                                                                                                                                                                   0.0s
+ => [6/8] COPY . .                                                                                                                                                                                                                                                                 0.8s
+ => [7/8] RUN if [ -d .git ]; then git rev-parse --short HEAD > VERSION; else echo "unknown" > VERSION; fi                                                                                                                                                                         0.2s
+ => [8/8] RUN npm run build                                                                                                                                                                                                                                                        7.2s
+ => exporting to image                                                                                                                                                                                                                                                             6.3s
+ => => exporting layers                                                                                                                                                                                                                                                            5.4s
+ => => exporting manifest sha256:b21dd21ea68830ab00934e61ddd4c3d56cd90bccee02adff166522c404190396                                                                                                                                                                                  0.0s
+ => => exporting config sha256:a010e2def01a21b180d6e972998ddbd3607791b93fc050780634cfafb1187d1e                                                                                                                                                                                    0.0s
+ => => exporting attestation manifest sha256:c8e71ea2bb41ae702234dfbff249e2fac8292f172b6b6d8949990a1593e61820                                                                                                                                                                      0.0s
+ => => exporting manifest list sha256:99b7e056145e1da96b28ac74a4ebb29efd39d122922a68a4ed8efca3233251cc                                                                                                                                                                             0.0s
+ => => naming to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                                                                                                                                                                                  0.0s
+ => => unpacking to docker.io/library/krakenbot-staging-krakenbot-staging-app:latest                                                                                                                                                                                               0.8s
+ => resolving provenance for metadata file                                                                                                                                                                                                                                         0.0s
+[+] up 3/3
+ ✔ Image krakenbot-staging-krakenbot-staging-app Built                                                                                                                                                                                                                            14.7s
+ ✔ Container krakenbot-staging-db                Healthy                                                                                                                                                                                                                           1.9s
+ ✔ Container krakenbot-staging-app               Recreated                                                                                                                                                                                                                         1.3s
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[⣯] Pulling schema from database...
+[⣟] Pulling schema from database...
+[✓] Pulling schema from database...
+· You're about to add training_trades_buy_txid_unique unique constraint to the table, which contains 176 items. If this statement fails, you will receive an error from the database. Do you want to truncate training_trades table?
+
+❯ No, add the constraint without truncating the table
+  Yes, truncate the table
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.cjs
+
+11:06:50 PM [websocket] [WS] Servidor WebSocket inicializado en /ws/events
+11:06:50 PM [websocket] [WS-LOGS] Terminal WebSocket inicializado en /ws/logs (docker: false)
+[ExchangeFactory] Kraken initialized
+[revolutx] Initialized with Ed25519 authentication
+[ExchangeFactory] Revolut X initialized
+[ExchangeFactory] Trading: revolutx, Data: kraken
+[startup] ExchangeFactory initialized. Active: revolutx
+[startup] Kraken API credentials loaded from database
+[telegram] Inicializando bot - Polling: ACTIVADO (Docker/NAS)
+[startup] Telegram credentials loaded from database
+11:06:50 PM [trading] [REGIME_PARAMS] enter=27 exit=23 hardExit=19 confirm=3 minHold=20 cooldown=60min
+11:06:50 PM [trading] [EXCHANGE] Trading: revolutx, Data: kraken
+[telegram] Heartbeat iniciado (cada 12h)
+[telegram] Reporte diario programado para las 14:00 (Europe/Madrid)
+[startup] Starting trading engine...
+11:06:50 PM [express] serving on port 5000
+[revolutx] Loading pair metadata for: BTC/USD, ETH/USD, XRP/USD, SOL/USD, TON/USD
+[revolutx] BTC/USD: lotDecimals=8, orderMin=0.0001
+[revolutx] ETH/USD: lotDecimals=8, orderMin=0.0001
+[revolutx] XRP/USD: lotDecimals=8, orderMin=0.0001
+[revolutx] SOL/USD: lotDecimals=8, orderMin=0.0001
+[revolutx] TON/USD: lotDecimals=8, orderMin=0.0001
+[revolutx] Pair metadata loaded for 5 pairs
+[kraken] Metadata refresh scheduled every 6h
+[revolutx] Balances fetched: 13 currencies
+11:06:51 PM [trading] Balance inicial USD: $520.00
+11:06:51 PM [trading] Motor de trading iniciado
+[2026-01-11T23:06:51.035Z] [INFO] [BOT_STARTED] Motor de trading iniciado
+  Meta: {
+  "strategy": "momentum",
+  "riskLevel": "high",
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "balanceUsd": 520,
+  "openPositions": 0,
+  "dryRunMode": false,
+  "isReplitEnvironment": false
+}
+[revolutx] Balances fetched: 13 currencies
+11:06:51 PM [trading] Nuevo día de trading: 2026-01-11. Balance inicial: $520.00
+[2026-01-11T23:06:51.095Z] [INFO] [DAILY_LIMIT_RESET] Nuevo día de trading: 2026-01-11
+  Meta: {
+  "date": "2026-01-11",
+  "previousDayPnL": 0,
+  "startBalance": 520
+}
+11:06:51 PM [trading] [SCAN_START] scanId=scan-1768172811096 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:06:51 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:06:51 PM [websocket] [WS-LOGS] Token válido (path: /ws/logs, source: query, ip: 88.16.110.146)
+11:06:51 PM [websocket] [WS-LOGS] Cliente conectado. Total: 1
+11:06:51 PM [trading] Nueva vela cerrada BTC/USD/15m @ 2026-01-11T22:45:00.000Z
+11:06:51 PM [trading] [ROUTER] BTC/USD: RANGE regime → mean_reversion_simple
+11:06:51 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172811096","scanTime":"2026-01-11T23:06:51.096Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=16, BB width=0.7%)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:06:51.414Z","lastRegimeUpdateAt":"2026-01-11T23:06:51.414Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+11:06:51 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:06:51 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:06:51 PM [trading] Nueva vela cerrada ETH/USD/15m @ 2026-01-11T22:45:00.000Z
+11:06:51 PM [trading] MTF datos actualizados para ETH/USD: 5m=721, 1h=721, 4h=721
+11:06:51 PM [trading] [MTF_DIAG] ETH/USD: 5m: 721 velas [2026-01-09T11:05 -> 2026-01-11T23:05] span=60.0h | 1h: 721 velas [2025-12-12T23:00 -> 2026-01-11T23:00] span=720.0h | 4h: 721 velas [2025-09-13T20:00 -> 2026-01-11T20:00] span=2880.0h
+11:06:51 PM [trading] [ROUTER] ETH/USD: TRANSITION regime → momentum_candles + overrides
+[2026-01-11T23:06:51.986Z] [INFO] [TRADE_SKIPPED] SELL skipped - dust position (valor < $5)
+  Meta: {
+  "pair": "ETH/USD",
+  "signal": "SELL",
+  "reason": "DUST_POSITION",
+  "lotAmount": 0.13894469,
+  "realAssetBalance": 0.13894469,
+  "sellVolume": 0.13894469,
+  "sellValueUsd": 0,
+  "dustThresholdUsd": 5,
+  "strategyId": "momentum_candles_15m"
+}
+11:06:51 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172811096","scanTime":"2026-01-11T23:06:51.096Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=24, EMAs desalineadas)","selectedStrategy":"momentum_candles_15m","rawSignal":"SELL","rawReason":"Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1 | Confirmado por MTF bajista","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"SELL","finalReason":"Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1 | Confirmado por MTF bajista","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:06:51.933Z","lastRegimeUpdateAt":"2026-01-11T23:06:51.933Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+11:06:51 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:06:51 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:06:52 PM [trading] Nueva vela cerrada XRP/USD/15m @ 2026-01-11T22:45:00.000Z
+11:06:52 PM [trading] MTF datos actualizados para XRP/USD: 5m=721, 1h=721, 4h=721
+11:06:52 PM [trading] [MTF_DIAG] XRP/USD: 5m: 721 velas [2026-01-09T11:05 -> 2026-01-11T23:05] span=60.0h | 1h: 721 velas [2025-12-12T23:00 -> 2026-01-11T23:00] span=720.0h | 4h: 721 velas [2025-09-13T20:00 -> 2026-01-11T20:00] span=2880.0h
+11:06:52 PM [trading] [ROUTER] XRP/USD: TRANSITION regime → momentum_candles + overrides
+11:06:52 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172811096","scanTime":"2026-01-11T23:06:51.096Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Zona intermedia (ADX=25, histéresis activa)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:06:52.557Z","lastRegimeUpdateAt":"2026-01-11T23:06:52.557Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+11:06:52 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:06:52 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:06:52 PM [trading] Nueva vela cerrada SOL/USD/15m @ 2026-01-11T22:45:00.000Z
+11:06:52 PM [trading] [REGIME_HOLD] pair=SOL/USD skipChange=true remainingMin=8 candidate=TRANSITION adx=33.5
+11:06:52 PM [trading] [REGIME_NOTIFY] sent=false skipReason=hysteresis_hold pair=SOL/USD
+11:06:53 PM [trading] MTF datos actualizados para SOL/USD: 5m=721, 1h=721, 4h=721
+11:06:53 PM [trading] [MTF_DIAG] SOL/USD: 5m: 721 velas [2026-01-09T11:05 -> 2026-01-11T23:05] span=60.0h | 1h: 721 velas [2025-12-12T23:00 -> 2026-01-11T23:00] span=720.0h | 4h: 721 velas [2025-09-13T20:00 -> 2026-01-11T20:00] span=2880.0h
+11:06:53 PM [trading] [ROUTER] SOL/USD: TREND regime → momentum_candles
+11:06:53 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172811096","scanTime":"2026-01-11T23:06:51.096Z","pair":"SOL/USD","regime":"TREND","regimeReason":"Manteniendo TREND (minHold 8min restantes)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:06:53.079Z","lastRegimeUpdateAt":"2026-01-11T23:06:53.079Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+11:06:53 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:06:53 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:06:53 PM [trading] Nueva vela cerrada TON/USD/15m @ 2026-01-11T22:45:00.000Z
+11:06:53 PM [trading] [ROUTER] TON/USD: RANGE regime → mean_reversion_simple
+11:06:53 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172811096","scanTime":"2026-01-11T23:06:51.096Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=14, BB width=2.5%)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2","signalsCount":1,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2","isIntermediateCycle":false,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:06:53.383Z","lastRegimeUpdateAt":"2026-01-11T23:06:53.383Z","regimeRouterEnabled":true,"feeCushionEffectivePct":null}
+11:06:53 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:06:53 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1768172811096 pairs=5 snapshotted for emission
+11:06:53 PM [trading] [SCAN_END] scanId=scan-1768172811096 expected=5 done=5 failures=0 durationMs=2288
+[revolutx] Balances fetched: 13 currencies
