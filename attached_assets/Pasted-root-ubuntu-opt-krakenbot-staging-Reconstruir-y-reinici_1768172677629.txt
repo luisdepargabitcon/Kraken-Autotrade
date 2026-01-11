@@ -1,0 +1,172 @@
+root@ubuntu:/opt/krakenbot-staging# # Reconstruir y reiniciar con los nuevos cambios
+docker compose down
+docker compose up -d --build
+
+# Ver logs
+docker logs -f --tail=50 krakenbot-staging-app
+WARN[0000] /opt/krakenbot-staging/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+WARN[0000] /opt/krakenbot-staging/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion
+[+] up 0/1
+ ⠼ Image node:20-alpine Pulling                                                                                                                                                                                                                                                    2.5s
+[+] up 6/6 No services to build
+ ✔ Image node:20-alpine                        Pulled                                                                                                                                                                                                                              2.5s
+ ✔ Network krakenbot-staging_krakenbot-network Created                                                                                                                                                                                                                             0.0s
+ ✔ Volume krakenbot-staging_node_modules       Created                                                                                                                                                                                                                             0.0s
+ ✔ Volume krakenbot-staging_postgres_data      Created                                                                                                                                                                                                                             0.0s
+ ✔ Container kraken-bot-db                     Healthy                                                                                                                                                                                                                            10.7s
+ ✔ Container kraken-bot-app                    Created                                                                                                                                                                                                                             0.0s
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=13, BB width=2.4%)"
+    }
+  },
+  "scanTime": "2026-01-11T23:01:55.044Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1768172515197"
+  }
+}
+[revolutx] Balances fetched: 13 currencies
+11:02:25 PM [trading] [SCAN_START] scanId=scan-1768172545131 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:02:25 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:02:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172545131","scanTime":"2026-01-11T23:02:25.131Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=0.6%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14)","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.367Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.367Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:25 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:02:25 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:02:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172545131","scanTime":"2026-01-11T23:02:25.131Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=25, EMAs desalineadas) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1)","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.796Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.796Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:25 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:02:25 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:02:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172545131","scanTime":"2026-01-11T23:02:25.131Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Zona intermedia (ADX=25, histéresis activa) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.317Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.317Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:25 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:02:25 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:02:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172545131","scanTime":"2026-01-11T23:02:25.131Z","pair":"SOL/USD","regime":"TREND","regimeReason":"Manteniendo TREND (minHold 15min restantes) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.720Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.720Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:25 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:02:25 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:02:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172545131","scanTime":"2026-01-11T23:02:25.131Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=13, BB width=2.4%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2)","signalsCount":1,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.920Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.920Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:25 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:02:25 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1768172545131 pairs=5 snapshotted for emission
+11:02:25 PM [trading] [SCAN_END] scanId=scan-1768172545131 expected=5 done=5 failures=0 durationMs=528
+[revolutx] Balances fetched: 13 currencies
+11:02:55 PM [trading] [SCAN_START] scanId=scan-1768172575207 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:02:55 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:02:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172575207","scanTime":"2026-01-11T23:02:55.207Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=0.6%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14)","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.367Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.367Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:55 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:02:55 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:02:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172575207","scanTime":"2026-01-11T23:02:55.207Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=25, EMAs desalineadas) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1)","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.796Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.796Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:55 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:02:55 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:02:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172575207","scanTime":"2026-01-11T23:02:55.207Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Zona intermedia (ADX=25, histéresis activa) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.317Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.317Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:55 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:02:55 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:02:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172575207","scanTime":"2026-01-11T23:02:55.207Z","pair":"SOL/USD","regime":"TREND","regimeReason":"Manteniendo TREND (minHold 15min restantes) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.720Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.720Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:55 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:02:55 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:02:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172575207","scanTime":"2026-01-11T23:02:55.207Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=13, BB width=2.4%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2)","signalsCount":1,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.920Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.920Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:02:55 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:02:55 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1768172575207 pairs=5 snapshotted for emission
+11:02:55 PM [trading] [SCAN_END] scanId=scan-1768172575207 expected=5 done=5 failures=0 durationMs=691
+[2026-01-11T23:03:25.039Z] [INFO] [ENGINE_TICK] Motor activo - escaneo en curso
+  Meta: {
+  "activePairs": [
+    "BTC/USD",
+    "ETH/USD",
+    "XRP/USD",
+    "SOL/USD",
+    "TON/USD"
+  ],
+  "openPositionsCount": 0,
+  "openPositionsPairs": [],
+  "lastScanAt": "2026-01-11T23:02:55.044Z",
+  "lastScanId": "scan-1768172575207",
+  "timeSinceLastScanMs": 29995,
+  "balanceUsd": 520,
+  "isDailyLimitReached": false,
+  "dailyPnL": 0
+}
+11:03:25 PM [trading] [SCAN_SUMMARY_COUNT] scanId=scan-1768172575207 expected=5 got=5 missing=[]
+11:03:25 PM [trading] [SCAN_SUMMARY_BUILD] scanId=scan-1768172575207 source=5 built=5
+[2026-01-11T23:03:25.041Z] [INFO] [MARKET_SCAN_SUMMARY] Resumen de escaneo de mercado
+  Meta: {
+  "pairs": {
+    "BTC/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 520,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=15, BB width=0.6%)"
+    },
+    "ETH/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 520,
+      "regime": "TRANSITION",
+      "regimeReason": "Transición (ADX=25, EMAs desalineadas)"
+    },
+    "XRP/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 520,
+      "regime": "TRANSITION",
+      "regimeReason": "Zona intermedia (ADX=25, histéresis activa)"
+    },
+    "SOL/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 520,
+      "regime": "TREND",
+      "regimeReason": "Manteniendo TREND (minHold 15min restantes)"
+    },
+    "TON/USD": {
+      "signal": "NONE",
+      "reason": "Sin señal en este ciclo",
+      "exposureAvailable": 520,
+      "regime": "RANGE",
+      "regimeReason": "Mercado lateral (ADX=13, BB width=2.4%)"
+    }
+  },
+  "scanTime": "2026-01-11T23:02:55.044Z",
+  "regimeDetectionEnabled": true,
+  "_meta": {
+    "sourceCount": 5,
+    "builtCount": 5,
+    "scanId": "scan-1768172575207"
+  }
+}
+[revolutx] Balances fetched: 13 currencies
+11:03:25 PM [trading] [SCAN_START] scanId=scan-1768172605136 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:03:25 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:03:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172605136","scanTime":"2026-01-11T23:03:25.136Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=0.6%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14)","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.367Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.367Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:25 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:03:25 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:03:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172605136","scanTime":"2026-01-11T23:03:25.136Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=25, EMAs desalineadas) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1)","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.796Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.796Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:25 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:03:25 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:03:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172605136","scanTime":"2026-01-11T23:03:25.136Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Zona intermedia (ADX=25, histéresis activa) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.317Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.317Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:25 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:03:25 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:03:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172605136","scanTime":"2026-01-11T23:03:25.136Z","pair":"SOL/USD","regime":"TREND","regimeReason":"Manteniendo TREND (minHold 15min restantes) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.720Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.720Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:25 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:03:25 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:03:25 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172605136","scanTime":"2026-01-11T23:03:25.136Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=13, BB width=2.4%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2)","signalsCount":1,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.920Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.920Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:25 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:03:25 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1768172605136 pairs=5 snapshotted for emission
+11:03:25 PM [trading] [SCAN_END] scanId=scan-1768172605136 expected=5 done=5 failures=0 durationMs=600
+[revolutx] Balances fetched: 13 currencies
+11:03:55 PM [trading] [SCAN_START] scanId=scan-1768172635145 expectedPairs=[BTC/USD,ETH/USD,XRP/USD,SOL/USD,TON/USD]
+11:03:55 PM [trading] [SCAN_PAIR_START] pair=BTC/USD
+11:03:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172635145","scanTime":"2026-01-11T23:03:55.145Z","pair":"BTC/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=15, BB width=0.6%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=0 < min=2 | RSI=38 BB%=14)","signalsCount":0,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.367Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.367Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:55 PM [trading] [SCAN_PAIR_OK] pair=BTC/USD
+11:03:55 PM [trading] [SCAN_PAIR_START] pair=ETH/USD
+11:03:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172635145","scanTime":"2026-01-11T23:03:55.145Z","pair":"ETH/USD","regime":"TRANSITION","regimeReason":"Transición (ADX=25, EMAs desalineadas) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Momentum Velas VENTA: MACD bajista, Vela bajista fuerte, Engulfing bajista | Señales: 4/1)","signalsCount":4,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:25.796Z","lastRegimeUpdateAt":"2026-01-11T23:00:25.796Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:55 PM [trading] [SCAN_PAIR_OK] pair=ETH/USD
+11:03:55 PM [trading] [SCAN_PAIR_START] pair=XRP/USD
+11:03:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172635145","scanTime":"2026-01-11T23:03:55.145Z","pair":"XRP/USD","regime":"TRANSITION","regimeReason":"Zona intermedia (ADX=25, histéresis activa) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.317Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.317Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:55 PM [trading] [SCAN_PAIR_OK] pair=XRP/USD
+11:03:55 PM [trading] [SCAN_PAIR_START] pair=SOL/USD
+11:03:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172635145","scanTime":"2026-01-11T23:03:55.145Z","pair":"SOL/USD","regime":"TREND","regimeReason":"Manteniendo TREND (minHold 15min restantes) (cached)","selectedStrategy":"momentum_candles_15m","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Sin señal clara velas: sellSignals=3 < minRequired=4 | buy=1/sell=3)","signalsCount":3,"minSignalsRequired":4,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.720Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.720Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:55 PM [trading] [SCAN_PAIR_OK] pair=SOL/USD
+11:03:55 PM [trading] [SCAN_PAIR_START] pair=TON/USD
+11:03:55 PM [trading] [PAIR_DECISION_TRACE] {"scanId":"scan-1768172635145","scanTime":"2026-01-11T23:03:55.145Z","pair":"TON/USD","regime":"RANGE","regimeReason":"Mercado lateral (ADX=13, BB width=2.4%) (cached)","selectedStrategy":"mean_reversion_simple","rawSignal":"NONE","rawReason":"Ciclo intermedio - sin vela 15m cerrada (último: Mean Reversion sin señal: buy=1 < min=2 | RSI=29 BB%=-2)","signalsCount":1,"minSignalsRequired":2,"exposureAvailableUsd":520,"computedOrderUsd":0,"minOrderUsd":100,"allowSmallerEntries":false,"openLotsThisPair":0,"maxLotsPerPair":2,"smartGuardDecision":"NOOP","blockReasonCode":"NO_SIGNAL","blockDetails":null,"finalSignal":"NONE","finalReason":"Ciclo intermedio - sin vela 15m cerrada","isIntermediateCycle":true,"lastCandleClosedAt":"2026-01-11T22:45:00.000Z","lastFullEvaluationAt":"2026-01-11T23:00:26.920Z","lastRegimeUpdateAt":"2026-01-11T23:00:26.920Z","regimeRouterEnabled":null,"feeCushionEffectivePct":null}
+11:03:55 PM [trading] [SCAN_PAIR_OK] pair=TON/USD
+11:03:55 PM [trading] [SCAN_SNAPSHOT] scanId=scan-1768172635145 pairs=5 snapshotted for emission
+11:03:55 PM [trading] [SCAN_END] scanId=scan-1768172635145 expected=5 done=5 failures=0 durationMs=506
