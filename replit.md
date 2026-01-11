@@ -5,9 +5,11 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken and Revolut
 
 ## User Preferences
 - Preferred communication style: Simple, everyday language.
+- **GitHub**: Configurado en Replit para sincronización de código.
 - **Entornos**: NAS es la fuente de verdad (producción y dataset IA). Replit solo para desarrollo y pruebas.
 - **Sincronización**: No implementar export/import ni DB remota entre NAS y Replit.
 - **NAS Docker**: Contenedor PostgreSQL se llama `kraken-bot-db`. Para ejecutar SQL: `docker exec -it kraken-bot-db psql -U krakenbot -d krakenbot -c "SQL_AQUI"`
+- **VPS Staging (IONOS)**: IP `5.250.184.18:3020`, ubicación `/opt/krakenbot-staging/`. Contenedor DB: `krakenbot-staging-db`. Usuario DB: `krakenstaging`, base de datos: `krakenbot_staging`. Para SQL: `docker exec -it krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SQL_AQUI"`
 
 ## System Architecture
 
