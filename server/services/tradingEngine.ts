@@ -3247,7 +3247,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // === VALIDACIÓN FINAL ÚNICA Y CENTRALIZADA (fuente de verdad) ===
         // Se ejecuta ANTES de executeTrade() para REAL y DRY_RUN
         const orderUsdFinal = tradeAmountUSD;
-        const envPrefix = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+        const envPrefix = environment.envTag;
         const currentOpenLotsForLog = this.countLotsForPair(pair);
         const sgMaxLotsPerPairConfig = botConfig?.sgMaxOpenLotsPerPair ?? 1;
         const maxLotsForModeConfig = positionMode === "SMART_GUARD" ? sgMaxLotsPerPairConfig : 1;
@@ -5596,8 +5596,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       
       // === DRY_RUN MODE: Simular sin enviar orden real ===
       if (this.dryRunMode) {
-        const envPrefix = environment.isReplit ? "[REPLIT/DEV][DRY\\_RUN]" : "[NAS/PROD][DRY\\_RUN]";
-        const envPrefixLog = environment.isReplit ? "[REPLIT/DEV][DRY_RUN]" : "[NAS/PROD][DRY_RUN]";
+        const envPrefix = `[${environment.envTag}][DRY\\_RUN]`;
+        const envPrefixLog = `[${environment.envTag}][DRY_RUN]`;
         
         // === DOBLE CINTURÓN: Validación redundante para DRY_RUN ===
         // Si falla mínimos, ni simula ni envía mensaje de trade

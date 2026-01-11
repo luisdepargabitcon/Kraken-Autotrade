@@ -4,6 +4,7 @@ import si from "systeminformation";
 import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
+import { botLogger } from "./botLogger";
 
 // ============================================================
 // HTML ESCAPE HELPER - Previene markup roto en mensajes
@@ -500,7 +501,14 @@ type EngineController = {
   stop: () => Promise<void>;
   isActive: () => boolean;
   getBalance?: () => Promise<Record<string, string>>;
-  getOpenPositions?: () => Map<string, { amount: number; entryPrice: number }>;
+  getOpenPositions?: () => Map<string, { 
+    pair?: string;
+    amount: number; 
+    entryPrice: number;
+    openedAt?: Date | string | null;
+    sgBreakEvenActivated?: boolean;
+    sgTrailingActivated?: boolean;
+  }>;
 };
 
 export class TelegramService {
@@ -587,6 +595,18 @@ export class TelegramService {
 
     this.bot.onText(/\/channels/, async (msg) => {
       await this.handleChannels(msg.chat.id);
+    });
+
+    this.bot.onText(/\/posiciones/, async (msg) => {
+      await this.handlePosiciones(msg.chat.id);
+    });
+
+    this.bot.onText(/\/ganancias/, async (msg) => {
+      await this.handleGanancias(msg.chat.id);
+    });
+
+    this.bot.onText(/\/logs/, async (msg) => {
+      await this.handleLogs(msg.chat.id);
     });
 
     // Callback query handler for inline buttons
@@ -695,16 +715,25 @@ export class TelegramService {
     const message = `
 <b>🤖 Comandos disponibles:</b>
 
+<b>📊 Información:</b>
 /estado - Ver estado del bot
 /balance - Ver balance actual
-/config - Ver configuración de riesgo
+/posiciones - Ver posiciones abiertas con P&L
+/ganancias - Ver ganancias (24h, semana, total)
 /exposicion - Ver exposición por par
+/ultimas - Ver últimas 5 operaciones
+/logs - Ver logs recientes (6 horas)
+
+<b>⚙️ Configuración:</b>
+/config - Ver configuración de riesgo
 /uptime - Ver tiempo encendido
 /menu - Menú interactivo con botones
 /channels - Configurar alertas por chat
+
+<b>🔧 Control:</b>
 /pausar - Pausar el bot
 /reanudar - Activar el bot
-/ultimas - Ver últimas operaciones
+
 /ayuda - Ver esta ayuda
 
 <i>KrakenBot.AI - Trading Autónomo</i>
@@ -820,6 +849,197 @@ export class TelegramService {
     `.trim();
 
     await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+  }
+
+  private async handlePosiciones(chatId: number) {
+    try {
+      const positions = this.engineController?.getOpenPositions?.() || new Map();
+      
+      if (positions.size === 0) {
+        await this.bot?.sendMessage(chatId, "<b>📭 Sin posiciones abiertas</b>\n\nNo hay posiciones activas en este momento.", { parse_mode: "HTML" });
+        return;
+      }
+
+      let message = `<b>📈 Posiciones Abiertas (${positions.size})</b>\n\n`;
+      let totalExposure = 0;
+
+      const posArray = Array.from(positions.entries());
+      
+      for (const [key, pos] of posArray) {
+        // Key can be lotId or pair depending on engine implementation
+        // pos.pair may or may not exist - use key as fallback for pair name
+        const pairName = pos.pair || key;
+        const displayId = key.length > 16 ? key.slice(0, 8) : key; // Short ID for lotIds
+        
+        const exposure = pos.amount * pos.entryPrice;
+        totalExposure += exposure;
+        
+        // Handle optional fields gracefully
+        const duration = pos.openedAt ? formatDuration(pos.openedAt) : "N/A";
+        const sgBE = pos.sgBreakEvenActivated ?? false;
+        const sgTrail = pos.sgTrailingActivated ?? false;
+        const sgStatus = sgBE ? "🔒 B.E." : sgTrail ? "📉 Trail" : "⏳ Activa";
+        
+        message += `<b>${escapeHtml(pairName)}</b>`;
+        if (key.length > 16) {
+          message += ` <code>${displayId}</code>`;
+        }
+        message += `\n`;
+        message += `   💵 Entrada: $${pos.entryPrice.toFixed(2)}\n`;
+        message += `   📦 Cantidad: ${pos.amount.toFixed(6)}\n`;
+        message += `   💰 Exposición: $${exposure.toFixed(2)}\n`;
+        message += `   ⏱️ Duración: ${duration}\n`;
+        message += `   🛡️ Estado: ${sgStatus}\n\n`;
+      }
+
+      message += `━━━━━━━━━━━━━━━━━━━\n`;
+      message += `<b>Total expuesto:</b> $${totalExposure.toFixed(2)}`;
+
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo posiciones: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleGanancias(chatId: number) {
+    try {
+      const trades = await storage.getTrades(500); // Get recent trades
+      
+      const now = new Date();
+      const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      let pnl24h = 0;
+      let pnlWeek = 0;
+      let pnlTotal = 0;
+      let trades24h = 0;
+      let tradesWeek = 0;
+      let wins = 0;
+      let losses = 0;
+      
+      for (const trade of trades) {
+        if (trade.type !== "sell") continue;
+        
+        const pnl = parseFloat(trade.pnl?.toString() || "0");
+        const tradeDate = trade.executedAt ? new Date(trade.executedAt) : null;
+        
+        pnlTotal += pnl;
+        if (pnl > 0) wins++;
+        else if (pnl < 0) losses++;
+        
+        if (tradeDate) {
+          if (tradeDate >= last24h) {
+            pnl24h += pnl;
+            trades24h++;
+          }
+          if (tradeDate >= lastWeek) {
+            pnlWeek += pnl;
+            tradesWeek++;
+          }
+        }
+      }
+      
+      const winRate = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : 0;
+      const emoji24h = pnl24h >= 0 ? "🟢" : "🔴";
+      const emojiWeek = pnlWeek >= 0 ? "🟢" : "🔴";
+      const emojiTotal = pnlTotal >= 0 ? "📈" : "📉";
+      
+      const message = `
+<b>💰 Resumen de Ganancias</b>
+━━━━━━━━━━━━━━━━━━━
+
+<b>📊 Últimas 24 horas:</b>
+${emoji24h} P&L: ${pnl24h >= 0 ? '+' : ''}$${pnl24h.toFixed(2)}
+   Trades: ${trades24h}
+
+<b>📅 Última semana:</b>
+${emojiWeek} P&L: ${pnlWeek >= 0 ? '+' : ''}$${pnlWeek.toFixed(2)}
+   Trades: ${tradesWeek}
+
+<b>📈 Total histórico:</b>
+${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
+   Trades cerrados: ${wins + losses}
+   ✅ Ganadores: ${wins}
+   ❌ Perdedores: ${losses}
+   🎯 Win Rate: ${winRate.toFixed(1)}%
+
+<i>Actualizado: ${formatSpanishDate()}</i>
+      `.trim();
+
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo ganancias: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleLogs(chatId: number) {
+    try {
+      const events = await botLogger.getDbEvents(100);
+      
+      if (events.length === 0) {
+        await this.bot?.sendMessage(chatId, "<b>📭 Sin logs recientes</b>\n\nNo hay eventos registrados.", { parse_mode: "HTML" });
+        return;
+      }
+      
+      // Filter last 6 hours
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+      const recentEvents = events.filter(e => {
+        const eventDate = e.timestamp ? new Date(e.timestamp) : null;
+        return eventDate && eventDate >= sixHoursAgo;
+      });
+      
+      if (recentEvents.length === 0) {
+        await this.bot?.sendMessage(chatId, "<b>📭 Sin logs en las últimas 6 horas</b>\n\nNo hay eventos recientes.", { parse_mode: "HTML" });
+        return;
+      }
+      
+      // Group by type for summary
+      const typeCount = new Map<string, number>();
+      const errorTypes: string[] = [];
+      
+      for (const event of recentEvents) {
+        const count = typeCount.get(event.type) || 0;
+        typeCount.set(event.type, count + 1);
+        
+        if (event.level === "ERROR") {
+          errorTypes.push(`${event.type}: ${event.message.slice(0, 50)}`);
+        }
+      }
+      
+      let message = `<b>📋 Logs (últimas 6 horas)</b>\n`;
+      message += `<i>Total: ${recentEvents.length} eventos</i>\n`;
+      message += `━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      // Show event type summary
+      message += `<b>📊 Resumen por tipo:</b>\n`;
+      const sortedTypes = Array.from(typeCount.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      for (const [type, count] of sortedTypes) {
+        const emoji = type.includes("ERROR") ? "❌" : type.includes("TRADE") ? "💹" : type.includes("SG_") ? "🛡️" : "📝";
+        message += `${emoji} ${type}: ${count}\n`;
+      }
+      
+      // Show recent errors if any
+      if (errorTypes.length > 0) {
+        message += `\n<b>⚠️ Errores recientes:</b>\n`;
+        for (const error of errorTypes.slice(0, 5)) {
+          message += `❌ ${escapeHtml(error)}\n`;
+        }
+      }
+      
+      // Show last 5 events
+      message += `\n<b>🕒 Últimos 5 eventos:</b>\n`;
+      for (const event of recentEvents.slice(0, 5)) {
+        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString("es-ES") : "N/A";
+        const levelEmoji = event.level === "ERROR" ? "❌" : event.level === "WARN" ? "⚠️" : "ℹ️";
+        message += `<code>${time}</code> ${levelEmoji} ${escapeHtml(event.type)}\n`;
+      }
+      
+      message += `\n<i>Env: ${environment.envTag}</i>`;
+
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo logs: ${escapeHtml(error.message)}`);
+    }
   }
 
   private async handleMenu(chatId: number) {
@@ -1201,7 +1421,7 @@ Incluye:
         totalExposure += pos.amount * pos.entryPrice;
       });
 
-      const envName = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+      const envName = environment.envTag;
       const dryRunStatus = config?.dryRunMode ? "SÍ" : "NO";
       const positionMode = config?.positionMode || "SINGLE";
       const strategy = config?.strategy || "momentum";
@@ -1277,7 +1497,7 @@ Incluye:
     try {
       const config = await storage.getBotConfig();
       const dryRun = config?.dryRunMode ?? false;
-      const envLabel = environment.isReplit ? "REPLIT/DEV" : "NAS/PROD";
+      const envLabel = environment.envTag;
       const dryLabel = dryRun ? "[DRY_RUN]" : "";
       return `<b>[${envLabel}]${dryLabel}</b> `;
     } catch {
