@@ -2913,7 +2913,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             }
           }
           
-          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
+          // Regex flexible: acepta "Señales: X/Y" (Momentum) o "Señales: X" (Mean Reversion)
+          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)(?:\/(\d+))?/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
             // Extraer nombre de régimen limpio para analytics
@@ -3761,7 +3762,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             }
           }
           
-          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)\/(\d+)/);
+          // Regex flexible: acepta "Señales: X/Y" (Momentum) o "Señales: X" (Mean Reversion)
+          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)(?:\/(\d+))?/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
             // Extraer nombre de régimen limpio para analytics
