@@ -1,0 +1,83 @@
+docker ps
+
+# O si no usa Docker, buscar el proceso de PostgreSQL
+ps aux | grep postgres
+
+# Buscar archivos de log recientes
+find /opt/krakenbot-staging -name "*.log" -mtime -1 2>/dev/null
+
+# Ver estructura del proyecto
+ls -la /opt/krakenbot-staging/
+CONTAINER ID   IMAGE                                     COMMAND                  CREATED        STATUS                  PORTS                                         NAMES
+70b1c7ff5d4c   krakenbot-staging-krakenbot-staging-app   "docker-entrypoint.s…"   26 hours ago   Up 26 hours             0.0.0.0:3020->5000/tcp, [::]:3020->5000/tcp   krakenbot-staging-app
+11e9bbd9d995   postgres:16-alpine                        "docker-entrypoint.s…"   46 hours ago   Up 46 hours (healthy)   0.0.0.0:5435->5432/tcp, [::]:5435->5432/tcp   krakenbot-staging-db
+d7bd266c5dc5   crypto-tracker-worker                     "python -m worker.sc…"   3 days ago     Up 3 days (unhealthy)   8000/tcp                                      crypto-tracker-worker-1
+fe7ab3be9d2a   crypto-tracker-app                        "uvicorn app.main:ap…"   3 days ago     Up 3 days (healthy)     0.0.0.0:3010->8000/tcp, [::]:3010->8000/tcp   crypto-tracker-app-1
+7bdd17714a3e   postgres:15-alpine                        "docker-entrypoint.s…"   3 days ago     Up 3 days (healthy)     5432/tcp                                      crypto-tracker-db-1
+postgres   11641  0.0  0.2 218792 23988 ?        Ss   Jan06   0:13 /usr/lib/postgresql/14/bin/postgres -D /var/lib/postgresql/14/main -c config_file=/etc/postgresql/14/main/postgresql.conf
+postgres   11643  0.0  0.0 218920  7492 ?        Ss   Jan06   0:00 postgres: 14/main: checkpointer
+postgres   11644  0.0  0.0 218792  7456 ?        Ss   Jan06   0:03 postgres: 14/main: background writer
+postgres   11645  0.0  0.1 218792  9480 ?        Ss   Jan06   0:03 postgres: 14/main: walwriter
+postgres   11646  0.0  0.0 219360  7868 ?        Ss   Jan06   0:06 postgres: 14/main: autovacuum launcher
+postgres   11647  0.0  0.0  73520  5540 ?        Ss   Jan06   0:06 postgres: 14/main: stats collector
+postgres   11648  0.0  0.0 219220  7120 ?        Ss   Jan06   0:00 postgres: 14/main: logical replication launcher
+70        800873  0.0  0.3 173832 24564 ?        Ss   Jan08   0:16 postgres
+70        800951  0.0  0.1 173992 10212 ?        Ss   Jan08   0:00 postgres: checkpointer
+70        800952  0.0  0.0 173936  5420 ?        Ss   Jan08   0:02 postgres: background writer
+70        800954  0.0  0.1 173904  9268 ?        Ss   Jan08   0:02 postgres: walwriter
+70        800955  0.0  0.0 175516  7364 ?        Ss   Jan08   0:02 postgres: autovacuum launcher
+70        800956  0.0  0.0 175444  5852 ?        Ss   Jan08   0:00 postgres: logical replication launcher
+70        819937  0.0  0.2 176948 18232 ?        Ss   Jan08   0:00 postgres: postgres aeat_crypto 172.18.0.4(33708) idle
+70        841080  0.0  0.2 177232 16792 ?        Ss   Jan08   0:00 postgres: postgres aeat_crypto 172.18.0.3(35876) idle
+70        841110  0.0  0.2 177196 16312 ?        Ss   Jan08   0:00 postgres: postgres aeat_crypto 172.18.0.3(51486) idle
+70       1181314  0.0  0.2 174524 22924 ?        Ss   Jan09   0:13 postgres
+70       1181441  0.0  0.4 174768 39980 ?        Ss   Jan09   0:01 postgres: checkpointer
+70       1181442  0.0  0.1 174620 10980 ?        Ss   Jan09   0:01 postgres: background writer
+70       1181444  0.0  0.1 174588  9260 ?        Ss   Jan09   0:08 postgres: walwriter
+70       1181445  0.0  0.0 176204  7504 ?        Ss   Jan09   0:01 postgres: autovacuum launcher
+70       1181446  0.0  0.0 176124  5816 ?        Ss   Jan09   0:00 postgres: logical replication launcher
+root     2100723  0.0  0.0   7008  2044 pts/0    S+   21:50   0:00 grep --color=auto postgres
+total 204416
+drwxr-xr-x 12 root root      4096 Jan 10 17:00 .
+drwxr-xr-x  4 root root      4096 Jan  8 20:06 ..
+drwxr-xr-x  3 root root      4096 Dec 11 21:59 .config
+-rw-r--r--  1 root root       132 Jan  8 21:39 .dockerignore
+-rw-r--r--  1 root root       272 Jan 10 16:25 .env
+-rw-r--r--  1 root root       538 Jan  8 21:39 .env.example
+drwxr-xr-x  7 root root      4096 Jan 10 19:43 .git
+-rw-r--r--  1 root root        67 Jan  8 21:39 .gitignore
+drwxr-xr-x  3 root root      4096 Dec  8 18:21 .local
+-rw-r--r--  1 root root       876 Jan  8 21:39 .replit
+-rw-r--r--  1 root root      3819 Jan  8 21:39 CHANGELOG_2026-01-08.txt
+-rw-r--r--  1 root root       433 Jan 10 17:00 Dockerfile
+-rw-r--r--  1 root root      8243 Jan  8 21:39 GUIA_INSTALACION.md
+-rw-r--r--  1 root root      5767 Jan  9 23:12 VPS_DEPLOY_GUIDE.md
+-rw-r--r--  1 root root    491148 Jan  8 21:39 ai_strategy_grep.txt
+drwxr-xr-x  3 root root     36864 Jan 10 19:43 attached_assets
+-rw-r--r--  1 root root    662774 Jan  8 21:39 bot_artifacts.tgz
+-rw-r--r--  1 root root   6070552 Jan  8 21:39 bot_bundle.txt
+-rw-r--r--  1 root root   2274101 Jan  8 21:39 bot_bundle_clean.txt
+-rw-r--r--  1 root root     13905 Jan  8 21:39 bundle_files.txt
+-rw-r--r--  1 root root      4110 Jan  8 21:39 bundle_files_clean.txt
+drwxr-xr-x  4 root root      4096 Jan  8 21:39 client
+-rw-r--r--  1 root root       451 Jan  8 21:39 components.json
+drwxr-xr-x  3 root root      4096 Dec 15 14:11 dist
+-rw-r--r--  1 root root      1254 Jan 10 16:15 docker-compose.staging.yml
+-rw-r--r--  1 root root       650 Jan  9 23:36 docker-compose.staging.yml.save
+-rw-r--r--  1 root root       654 Jan  9 23:42 docker-compose.staging.yml.save.1
+-rw-r--r--  1 root root      1944 Jan  8 21:39 docker-compose.yml
+-rw-r--r--  1 root root       325 Jan  8 21:39 drizzle.config.ts
+-rw-r--r--  1 root root   2447073 Jan  8 21:39 file_list.txt
+-rw-r--r--  1 root root 196786842 Jan  8 20:24 krakenbot.zip
+-rw-r--r--  1 root root    368163 Jan  8 21:39 package-lock.json
+-rw-r--r--  1 root root      3667 Jan  8 21:39 package.json
+-rw-r--r--  1 root root        80 Jan  8 21:39 postcss.config.js
+-rw-r--r--  1 root root      4489 Jan 10 01:03 replit.md
+drwxr-xr-x  2 root root      4096 Jan  8 21:56 script
+drwxr-xr-x  2 root root      4096 Jan  9 23:12 scripts
+drwxr-xr-x  5 root root      4096 Jan 10 19:43 server
+drwxr-xr-x  2 root root      4096 Jan  9 23:12 shared
+-rw-r--r--  1 root root       657 Jan  8 21:39 tsconfig.json
+-rw-r--r--  1 root root      2333 Jan  8 21:39 vite-plugin-meta-images.ts
+-rw-r--r--  1 root root      1330 Jan  8 21:39 vite.config.ts
+root@ubuntu:/opt/krakenbot-staging#
