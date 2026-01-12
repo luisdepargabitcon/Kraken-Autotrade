@@ -1,0 +1,40 @@
+He revisado los logs del motor de trading (RevolutX) y, aunque NO hay errores críticos (failures=0, scans completan expected=5 done=5, balances OK), sí hay varios “fallos”/inconsistencias que conviene corregir porque confunden el diagnóstico y pueden esconder bugs lógicos:
+
+1) BUG en el texto de razón (comparación imposible)
+   - En ETH aparece: “sellSignals=5 < minRequired=4 | buy=3/sell=5”.
+   - 5 < 4 es falso, así que ese mensaje está mal formateado o está usando variables equivocadas.
+   - Acción: revisar el generador de rawReason/finalReason para que la condición que se imprime corresponda con los valores reales.
+
+2) Inconsistencia entre signalsCount y la razón
+   - Ej: ETH tiene signalsCount=5 y minSignalsRequired=4, pero finalSignal=NONE y la razón dice “sellSignals=5 < minRequired=4”.
+   - Esto sugiere:
+     a) o bien hay reglas adicionales (dominancia buy vs sell, filtros de régimen, confirmaciones) y el mensaje no las explica;
+     b) o la lógica de disparo está mal.
+   - Acción: ajustar el “reason” para reflejar EXACTAMENTE la condición que bloquea (ej: “no dominance”, “conflict buy/sell”, “regime filter”, etc.) y/o corregir la lógica.
+
+3) Posible contradicción semántica de señales (BTC)
+   - En el resumen de mercado, BTC da SELL con motivo: “MACD alcista, ... Engulfing bajista ...”.
+   - “MACD alcista” como señal de VENTA es sospechoso (podría estar invertido el criterio o etiquetado).
+   - Acción: auditar el mapeo de señales de MACD y cómo se agregan al bucket de buy/sell.
+
+4) Orden y “race condition” de logs / emisión de resumen
+   - Se ve que [SCAN_SUMMARY_BUILD]/[MARKET_SCAN_SUMMARY] de un scanId se imprime mientras ya ha empezado el siguiente SCAN_START (se mezclan líneas).
+   - Ej claro: se emite resumen del scan-...8525600 a las 14:35:56.050 mientras está en curso el scan-...8555631.
+   - Acción: hacer la emisión del resumen:
+     - o síncrona al final de SCAN_END,
+     - o encolada pero garantizando orden (no intercalar con el scan siguiente),
+     - o al menos incluir SIEMPRE scanId/scanTime en todas las líneas del summary para que sea inequívoco.
+
+5) Campos que quedan null en ciclos “cached/intermediate”
+   - En PAIR_DECISION_TRACE cuando isIntermediateCycle=true, aparece regimeRouterEnabled:null (y feeCushionEffectivePct:null).
+   - Acción: mantener tipos consistentes (boolean para regimeRouterEnabled) incluso en rutas cached; y decidir si feeCushionEffectivePct debe calcularse siempre o si null es intencionado.
+
+6) Claridad de “intermediate cycle”
+   - Está bien que no opere sin vela 15m cerrada (“Ciclo intermedio - sin vela 15m cerrada”), pero el resumen puede “parecer” que hubo señal (BTC SELL) y acto seguido finalSignal=NONE.
+   - Acción: en el resumen, mostrar explícitamente si la señal es “del último cierre 15m” y si el ciclo actual es “intermedio” (o no).
+
+Resumen ejecutivo:
+- El motor está funcionando (sin fallos hard), pero hay bugs de logging/mensajería y posibles inconsistencias lógicas (especialmente el “sellSignals=5 < minRequired=4” y el “MACD alcista” como SELL) que deben corregirse para que el diagnóstico sea fiable.
+
+Adjunto ejemplo exacto del error más claro:
+- “Sin señal clara velas: sellSignals=5 < minRequired=4 | buy=3/sell=5” (ETH/USD).
