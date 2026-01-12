@@ -1410,6 +1410,117 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // Get prices for all portfolio assets dynamically
+  app.get("/api/prices/portfolio", async (req, res) => {
+    try {
+      const prices: Record<string, { price: number; source: string }> = {};
+      const stablecoins = ["USD", "ZUSD", "USDC", "USDT", "EUR"];
+      
+      // Normalize Kraken symbols to standard tickers
+      const krakenToStandard: Record<string, string> = {
+        "XXBT": "BTC", "XBT": "BTC", "XETH": "ETH", "XXRP": "XRP",
+        "XXLM": "XLM", "XLTC": "LTC", "XXDG": "DOGE", "ZUSD": "USD",
+        "ZEUR": "EUR", "ZGBP": "GBP", "ZCAD": "CAD",
+      };
+      
+      // Collect all unique assets from both exchanges (normalized)
+      const assetBalances: Map<string, { balance: number; originalSymbol: string; exchange: string }> = new Map();
+      
+      if (krakenService.isInitialized()) {
+        try {
+          const rawBalances = await krakenService.getBalanceRaw();
+          for (const [key, value] of Object.entries(rawBalances)) {
+            const balance = parseFloat(value);
+            if (balance > 0) {
+              const normalized = krakenToStandard[key] || key;
+              assetBalances.set(key, { balance, originalSymbol: key, exchange: 'kraken' });
+              // Also add normalized version
+              if (krakenToStandard[key]) {
+                assetBalances.set(normalized, { balance, originalSymbol: key, exchange: 'kraken' });
+              }
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+      
+      if (revolutXService.isInitialized()) {
+        try {
+          const balances = await revolutXService.getBalance();
+          for (const [key, val] of Object.entries(balances)) {
+            const numVal = typeof val === 'number' ? val : parseFloat(String(val));
+            if (numVal > 0) {
+              assetBalances.set(key, { balance: numVal, originalSymbol: key, exchange: 'revolutx' });
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+      
+      // Stablecoins have fixed USD value
+      for (const stable of stablecoins) {
+        if (assetBalances.has(stable)) {
+          prices[stable] = { price: stable === "EUR" ? 1.08 : 1, source: "fixed" };
+        }
+      }
+      
+      // Map standard symbols to Kraken trading pairs
+      const krakenPairMap: Record<string, string> = {
+        "XXBT": "XXBTZUSD", "BTC": "XXBTZUSD",
+        "XETH": "XETHZUSD", "ETH": "XETHZUSD",
+        "SOL": "SOLUSD", "XXRP": "XXRPZUSD", "XRP": "XXRPZUSD",
+        "TON": "TONUSD", "DOT": "DOTUSD", "ADA": "ADAUSD",
+        "LINK": "LINKUSD", "AVAX": "AVAXUSD", "MATIC": "MATICUSD",
+        "XLM": "XLMUSD", "LTC": "XLTCZUSD", "DOGE": "XDGUSD",
+      };
+      
+      // Fetch prices for non-stable assets
+      for (const [asset, info] of assetBalances.entries()) {
+        if (stablecoins.includes(asset)) continue;
+        if (prices[asset]) continue; // Already have price
+        
+        // Skip Kraken prefix duplicates (we'll use the normalized version)
+        if (krakenToStandard[asset] && prices[krakenToStandard[asset]]) {
+          prices[asset] = prices[krakenToStandard[asset]];
+          continue;
+        }
+        
+        // Try Revolut X first (has more altcoins like VET, FLR, MEW, etc.)
+        if (revolutXService.isInitialized()) {
+          try {
+            // Revolut X uses format: ASSET-USD
+            const pair = `${asset}-USD`;
+            const ticker = await revolutXService.getTicker(pair);
+            if (ticker && ticker.last > 0) {
+              prices[asset] = { price: ticker.last, source: "revolutx" };
+              continue;
+            }
+          } catch (e) { /* try Kraken */ }
+        }
+        
+        // Try Kraken
+        if (krakenService.isInitialized()) {
+          try {
+            const krakenPair = krakenPairMap[asset] || krakenPairMap[info.originalSymbol];
+            if (krakenPair) {
+              const ticker = await krakenService.getTicker(krakenPair) as any;
+              if (ticker && ticker.c && ticker.c[0]) {
+                prices[asset] = { price: parseFloat(ticker.c[0]), source: "kraken" };
+                continue;
+              }
+            }
+          } catch (e) { /* ignore */ }
+        }
+        
+        // No price found - mark as unavailable
+        prices[asset] = { price: 0, source: "unavailable" };
+      }
+      
+      res.json({ prices, fetchedAt: new Date().toISOString() });
+    } catch (error: any) {
+      console.error("[api/prices/portfolio] Error:", error.message);
+      res.status(500).json({ error: "Failed to get portfolio prices" });
+    }
+  });
+
   app.post("/api/trade", async (req, res) => {
     try {
       if (!krakenService.isInitialized()) {

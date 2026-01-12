@@ -23,6 +23,11 @@ interface DashboardData {
   prices: Record<string, { price: string; change: string }>;
 }
 
+interface PortfolioPrices {
+  prices: Record<string, { price: number; source: string }>;
+  fetchedAt: string;
+}
+
 const ASSET_INFO: Record<string, { name: string; color: string }> = {
   "XXBT": { name: "Bitcoin", color: "bg-orange-500" },
   "BTC": { name: "Bitcoin", color: "bg-orange-500" },
@@ -73,10 +78,20 @@ export default function Wallet() {
     refetchInterval: 30000,
   });
 
+  const { data: portfolioPrices } = useQuery<PortfolioPrices>({
+    queryKey: ["portfolio-prices"],
+    queryFn: async () => {
+      const res = await fetch("/api/prices/portfolio");
+      if (!res.ok) throw new Error("Failed to fetch portfolio prices");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   const calculatePortfolio = (exchange: 'kraken' | 'revolutx' | 'all') => {
     if (!multiData) return { assets: [], total: 0 };
 
-    const assets: { symbol: string; name: string; balance: number; value: number; color: string; change: number; exchange: string }[] = [];
+    const assets: { symbol: string; name: string; balance: number; value: number; color: string; change: number; exchange: string; priceSource?: string }[] = [];
     let total = 0;
 
     const processBalances = (balances: Record<string, number> | undefined, exchangeName: string) => {
@@ -86,20 +101,36 @@ export default function Wallet() {
 
         let value = balance;
         let change = 0;
+        let priceSource = "unknown";
 
-        const isStable = ["ZUSD", "USD", "USDC", "USDT", "EUR"].includes(symbol);
-        if (isStable) {
-          value = symbol === "EUR" ? balance * 1.08 : balance;
+        // Use dynamic portfolio prices first
+        if (portfolioPrices?.prices[symbol]) {
+          const priceInfo = portfolioPrices.prices[symbol];
+          if (priceInfo.price > 0) {
+            value = balance * priceInfo.price;
+            priceSource = priceInfo.source;
+          } else {
+            // No price available - show 0 value
+            value = 0;
+            priceSource = "unavailable";
+          }
         } else {
+          // Fallback to dashboard prices for major pairs
           const pricePair = PRICE_PAIRS[symbol];
           if (pricePair && priceData?.prices[pricePair]) {
             const price = parseFloat(priceData.prices[pricePair].price);
             value = balance * price;
             change = parseFloat(priceData.prices[pricePair].change);
+            priceSource = "kraken";
+          } else {
+            // No price found - set to 0 (don't use balance as value!)
+            value = 0;
+            priceSource = "unavailable";
           }
         }
 
-        if (value > 0.01) {
+        // Show assets with value > 0.01 or with balance > 0 and no price (so user knows)
+        if (value > 0.01 || (balance > 0 && priceSource === "unavailable")) {
           assets.push({
             symbol,
             name: ASSET_INFO[symbol]?.name || symbol,
@@ -108,6 +139,7 @@ export default function Wallet() {
             color: ASSET_INFO[symbol]?.color || "bg-gray-500",
             change,
             exchange: exchangeName,
+            priceSource,
           });
           total += value;
         }
