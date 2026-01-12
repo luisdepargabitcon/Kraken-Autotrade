@@ -1472,28 +1472,87 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         "XLM": "XLMUSD", "LTC": "XLTCZUSD", "DOGE": "XDGUSD",
       };
       
-      // Fetch prices for non-stable assets
-      for (const [asset, info] of assetBalances.entries()) {
+      // CoinGecko ID mapping for common assets
+      const coinGeckoIds: Record<string, string> = {
+        "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana",
+        "XRP": "ripple", "TON": "the-open-network", "DOT": "polkadot",
+        "ADA": "cardano", "LINK": "chainlink", "AVAX": "avalanche-2",
+        "MATIC": "matic-network", "XLM": "stellar", "LTC": "litecoin",
+        "DOGE": "dogecoin", "VET": "vechain", "FLR": "flare-networks",
+        "MEW": "cat-in-a-dogs-world", "LMWR": "limewire", "ZKJ": "polyhedra-network",
+        "USDC": "usd-coin", "USDT": "tether",
+      };
+      
+      // Collect assets that need prices
+      const assetsNeedingPrices: string[] = [];
+      for (const [asset] of Array.from(assetBalances.entries())) {
         if (stablecoins.includes(asset)) continue;
-        if (prices[asset]) continue; // Already have price
+        if (prices[asset]) continue;
+        // Normalize Kraken prefixes
+        const normalized = krakenToStandard[asset] || asset;
+        if (!assetsNeedingPrices.includes(normalized)) {
+          assetsNeedingPrices.push(normalized);
+        }
+      }
+      
+      // Try to fetch all prices from CoinGecko in one request (most efficient)
+      const coinGeckoIdsToFetch = assetsNeedingPrices
+        .map(a => coinGeckoIds[a])
+        .filter(Boolean);
+      
+      if (coinGeckoIdsToFetch.length > 0) {
+        try {
+          const ids = coinGeckoIdsToFetch.join(',');
+          const cgResponse = await fetch(
+            `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
+            { headers: { 'Accept': 'application/json' } }
+          );
+          if (cgResponse.ok) {
+            const cgPrices = await cgResponse.json() as Record<string, { usd?: number }>;
+            // Map CoinGecko prices back to symbols
+            for (const [symbol, cgId] of Object.entries(coinGeckoIds)) {
+              if (cgPrices[cgId]?.usd) {
+                prices[symbol] = { price: cgPrices[cgId].usd, source: "coingecko" };
+                // Also add Kraken prefix version
+                const krakenSymbol = Object.entries(krakenToStandard).find(([_, v]) => v === symbol)?.[0];
+                if (krakenSymbol) {
+                  prices[krakenSymbol] = prices[symbol];
+                }
+              }
+            }
+          }
+        } catch (e: any) {
+          console.log('[prices/portfolio] CoinGecko fallback failed:', e.message);
+        }
+      }
+      
+      // Fetch remaining prices from exchanges
+      for (const [asset, info] of Array.from(assetBalances.entries())) {
+        if (stablecoins.includes(asset)) continue;
+        if (prices[asset]) continue; // Already have price from CoinGecko
         
         // Skip Kraken prefix duplicates (we'll use the normalized version)
-        if (krakenToStandard[asset] && prices[krakenToStandard[asset]]) {
-          prices[asset] = prices[krakenToStandard[asset]];
+        const normalized = krakenToStandard[asset];
+        if (normalized && prices[normalized]) {
+          prices[asset] = prices[normalized];
           continue;
         }
         
-        // Try Revolut X first (has more altcoins like VET, FLR, MEW, etc.)
+        // Try Revolut X for altcoins
         if (revolutXService.isInitialized()) {
           try {
-            // Revolut X uses format: ASSET-USD
             const pair = `${asset}-USD`;
             const ticker = await revolutXService.getTicker(pair);
             if (ticker && ticker.last > 0) {
               prices[asset] = { price: ticker.last, source: "revolutx" };
               continue;
             }
-          } catch (e) { /* try Kraken */ }
+          } catch (e: any) {
+            // Log only if not a 404/not found error
+            if (!e.message?.includes('404') && !e.message?.includes('not found')) {
+              console.log(`[prices/portfolio] RevolutX ${asset}: ${e.message}`);
+            }
+          }
         }
         
         // Try Kraken
