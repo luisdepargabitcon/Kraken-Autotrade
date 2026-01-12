@@ -1412,45 +1412,46 @@ export class TradingEngine {
     
     let buySignals = 0;
     let sellSignals = 0;
-    const reasons: string[] = [];
+    const buyReasons: string[] = [];
+    const sellReasons: string[] = [];
 
-    if (shortEMA > longEMA) buySignals++;
-    else if (shortEMA < longEMA) sellSignals++;
+    if (shortEMA > longEMA) { buySignals++; buyReasons.push("EMA10>EMA20"); }
+    else if (shortEMA < longEMA) { sellSignals++; sellReasons.push("EMA10<EMA20"); }
 
-    if (rsi < 30) { buySignals += 2; reasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
+    if (rsi < 30) { buySignals += 2; buyReasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
     else if (rsi < 45) { buySignals++; }
-    else if (rsi > 70) { sellSignals += 2; reasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
+    else if (rsi > 70) { sellSignals += 2; sellReasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
     else if (rsi > 55) { sellSignals++; }
 
-    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; reasons.push("MACD alcista"); }
-    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; reasons.push("MACD bajista"); }
+    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; buyReasons.push("MACD alcista"); }
+    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; sellReasons.push("MACD bajista"); }
 
-    if (bollinger.percentB < 20) { buySignals++; reasons.push("Precio en Bollinger inferior"); }
-    else if (bollinger.percentB > 80) { sellSignals++; reasons.push("Precio en Bollinger superior"); }
+    if (bollinger.percentB < 20) { buySignals++; buyReasons.push("Precio en Bollinger inferior"); }
+    else if (bollinger.percentB > 80) { sellSignals++; sellReasons.push("Precio en Bollinger superior"); }
 
     if (isBullishCandle && bodyRatio > 0.6) {
       buySignals++;
-      reasons.push("Vela alcista fuerte");
+      buyReasons.push("Vela alcista fuerte");
     } else if (isBearishCandle && bodyRatio > 0.6) {
       sellSignals++;
-      reasons.push("Vela bajista fuerte");
+      sellReasons.push("Vela bajista fuerte");
     }
 
     if (isHighVolume) {
-      if (isBullishCandle) { buySignals++; reasons.push(`Volumen alto alcista (${volumeRatio.toFixed(1)}x)`); }
-      else if (isBearishCandle) { sellSignals++; reasons.push(`Volumen alto bajista (${volumeRatio.toFixed(1)}x)`); }
+      if (isBullishCandle) { buySignals++; buyReasons.push(`Volumen alto alcista (${volumeRatio.toFixed(1)}x)`); }
+      else if (isBearishCandle) { sellSignals++; sellReasons.push(`Volumen alto bajista (${volumeRatio.toFixed(1)}x)`); }
     }
 
     if (isBullishCandle && prevCandle && prevCandle.close < prevCandle.open) {
       if (lastCandle.close > prevCandle.open) {
         buySignals++;
-        reasons.push("Engulfing alcista");
+        buyReasons.push("Engulfing alcista");
       }
     }
     if (isBearishCandle && prevCandle && prevCandle.close > prevCandle.open) {
       if (lastCandle.close < prevCandle.open) {
         sellSignals++;
-        reasons.push("Engulfing bajista");
+        sellReasons.push("Engulfing bajista");
       }
     }
 
@@ -1475,7 +1476,7 @@ export class TradingEngine {
         action: "buy",
         pair,
         confidence,
-        reason: `Momentum Velas COMPRA: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        reason: `Momentum Velas COMPRA: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
       };
@@ -1486,20 +1487,35 @@ export class TradingEngine {
         action: "sell",
         pair,
         confidence,
-        reason: `Momentum Velas VENTA: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        reason: `Momentum Velas VENTA: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
         signalsCount: sellSignals,
         minSignalsRequired,
       };
     }
 
-    // No signal: provide diagnostic counts
+    // No signal: provide detailed diagnostic reason
     const dominantCount = Math.max(buySignals, sellSignals);
     const dominantSide = buySignals >= sellSignals ? "buy" : "sell";
+    
+    // Determine the actual blocking reason
+    let blockReason = "";
+    if (dominantCount < minSignalsRequired) {
+      blockReason = `señales insuficientes (${dominantCount}/${minSignalsRequired})`;
+    } else if (dominantSide === "buy" && rsi >= 70) {
+      blockReason = `RSI muy alto (${rsi.toFixed(0)}>=70) bloquea compra`;
+    } else if (dominantSide === "sell" && rsi <= 30) {
+      blockReason = `RSI muy bajo (${rsi.toFixed(0)}<=30) bloquea venta`;
+    } else if (buySignals === sellSignals) {
+      blockReason = `conflicto buy/sell (${buySignals}=${sellSignals})`;
+    } else {
+      blockReason = `sin dominancia clara`;
+    }
+    
     return { 
       action: "hold", 
       pair, 
       confidence: 0.3, 
-      reason: `Sin señal clara velas: ${dominantSide}Signals=${dominantCount} < minRequired=${minSignalsRequired} | buy=${buySignals}/sell=${sellSignals}`,
+      reason: `Sin señal clara velas: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
@@ -4230,29 +4246,30 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     
     let buySignals = 0;
     let sellSignals = 0;
-    const reasons: string[] = [];
+    const buyReasons: string[] = [];
+    const sellReasons: string[] = [];
 
-    if (shortEMA > longEMA) buySignals++;
-    else if (shortEMA < longEMA) sellSignals++;
+    if (shortEMA > longEMA) { buySignals++; buyReasons.push("EMA10>EMA20"); }
+    else if (shortEMA < longEMA) { sellSignals++; sellReasons.push("EMA10<EMA20"); }
 
-    if (rsi < 30) { buySignals += 2; reasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
+    if (rsi < 30) { buySignals += 2; buyReasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
     else if (rsi < 45) { buySignals++; }
-    else if (rsi > 70) { sellSignals += 2; reasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
+    else if (rsi > 70) { sellSignals += 2; sellReasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
     else if (rsi > 55) { sellSignals++; }
 
-    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; reasons.push("MACD alcista"); }
-    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; reasons.push("MACD bajista"); }
+    if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; buyReasons.push("MACD alcista"); }
+    else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; sellReasons.push("MACD bajista"); }
 
-    if (bollinger.percentB < 20) { buySignals++; reasons.push("Precio cerca de Bollinger inferior"); }
-    else if (bollinger.percentB > 80) { sellSignals++; reasons.push("Precio cerca de Bollinger superior"); }
+    if (bollinger.percentB < 20) { buySignals++; buyReasons.push("Precio cerca de Bollinger inferior"); }
+    else if (bollinger.percentB > 80) { sellSignals++; sellReasons.push("Precio cerca de Bollinger superior"); }
 
     if (volumeAnalysis.isAbnormal) {
-      if (volumeAnalysis.direction === "bullish") { buySignals++; reasons.push(`Volumen alto alcista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
-      else if (volumeAnalysis.direction === "bearish") { sellSignals++; reasons.push(`Volumen alto bajista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
+      if (volumeAnalysis.direction === "bullish") { buySignals++; buyReasons.push(`Volumen alto alcista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
+      else if (volumeAnalysis.direction === "bearish") { sellSignals++; sellReasons.push(`Volumen alto bajista (${volumeAnalysis.ratio.toFixed(1)}x)`); }
     }
 
-    if (trend > 1) buySignals++;
-    else if (trend < -1) sellSignals++;
+    if (trend > 1) { buySignals++; buyReasons.push("Tendencia alcista"); }
+    else if (trend < -1) { sellSignals++; sellReasons.push("Tendencia bajista"); }
 
     const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.08));
     const minSignalsRequired = 4; // Momentum strategy requires 4 signals
@@ -4262,7 +4279,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "buy",
         pair,
         confidence,
-        reason: `Momentum alcista: ${reasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        reason: `Momentum alcista: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
       };
@@ -4273,20 +4290,35 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "sell",
         pair,
         confidence,
-        reason: `Momentum bajista: ${reasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        reason: `Momentum bajista: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
         signalsCount: sellSignals,
         minSignalsRequired,
       };
     }
 
-    // No signal: still provide diagnostic counts
+    // No signal: provide detailed diagnostic reason
     const dominantCount = Math.max(buySignals, sellSignals);
     const dominantSide = buySignals >= sellSignals ? "buy" : "sell";
+    
+    // Determine the actual blocking reason
+    let blockReason = "";
+    if (dominantCount < minSignalsRequired) {
+      blockReason = `señales insuficientes (${dominantCount}/${minSignalsRequired})`;
+    } else if (dominantSide === "buy" && rsi >= 70) {
+      blockReason = `RSI muy alto (${rsi.toFixed(0)}>=70) bloquea compra`;
+    } else if (dominantSide === "sell" && rsi <= 30) {
+      blockReason = `RSI muy bajo (${rsi.toFixed(0)}<=30) bloquea venta`;
+    } else if (buySignals === sellSignals) {
+      blockReason = `conflicto buy/sell (${buySignals}=${sellSignals})`;
+    } else {
+      blockReason = `sin dominancia clara`;
+    }
+    
     return { 
       action: "hold", 
       pair, 
       confidence: 0.3, 
-      reason: `Sin señal clara: ${dominantSide}Signals=${dominantCount} < minRequired=${minSignalsRequired} | buy=${buySignals}/sell=${sellSignals}`,
+      reason: `Sin señal clara momentum: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
