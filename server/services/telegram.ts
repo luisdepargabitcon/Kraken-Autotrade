@@ -1026,12 +1026,18 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
         }
       }
       
-      // Show last 5 events
-      message += `\n<b>🕒 Últimos 5 eventos:</b>\n`;
-      for (const event of recentEvents.slice(0, 5)) {
+      // Show last 8 events with message content
+      message += `\n<b>🕒 Últimos eventos:</b>\n`;
+      for (const event of recentEvents.slice(0, 8)) {
         const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString("es-ES") : "N/A";
         const levelEmoji = event.level === "ERROR" ? "❌" : event.level === "WARN" ? "⚠️" : "ℹ️";
-        message += `<code>${time}</code> ${levelEmoji} ${escapeHtml(event.type)}\n`;
+        // Truncate message to 60 chars to keep Telegram message manageable
+        const msgPreview = event.message ? event.message.slice(0, 60).replace(/\n/g, " ") : "";
+        const msgSuffix = event.message && event.message.length > 60 ? "..." : "";
+        message += `<code>${time}</code> ${levelEmoji} <b>${escapeHtml(event.type)}</b>\n`;
+        if (msgPreview) {
+          message += `   ↳ <i>${escapeHtml(msgPreview)}${msgSuffix}</i>\n`;
+        }
       }
       
       message += `\n<i>Env: ${environment.envTag}</i>`;

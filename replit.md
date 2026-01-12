@@ -53,6 +53,35 @@ KrakenBot is an autonomous cryptocurrency trading bot for the Kraken and Revolut
 - **Configuration**: Allows dynamic selection of active trading and data exchanges.
 - **Dynamic Fees**: P&L calculations dynamically use fees from the active exchange.
 
+## Environment Variables
+
+### Environment Detection
+The system auto-detects environment based on these variables:
+- **REPLIT/DEV**: Detected when `REPLIT_DEPLOYMENT` or `REPL_ID` exists
+- **VPS/STG**: Detected when `VPS_DEPLOY=true`
+- **NAS/PROD**: Default when neither Replit nor VPS detected
+
+### Required Variables per Environment
+
+#### VPS Staging (`docker-compose.staging.yml`)
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VPS_DEPLOY` | Enables VPS detection | `true` |
+| `VPS_PANEL_URL` | Public URL for "Ver Panel" links | `http://5.250.184.18:3020` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db` |
+| `TERMINAL_TOKEN` | WebSocket auth token | (secret) |
+
+#### NAS Production (`docker-compose.yml`)
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NAS_PANEL_URL` | Public URL for panel links | `http://nas-ip:5000` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db` |
+
+### Important Notes
+- If `VPS_DEPLOY` is not set, system defaults to NAS/PROD
+- Panel URL defaults to `localhost` if not configured (links won't work externally)
+- Telegram messages include `[ENV_TAG]` prefix based on detected environment
+
 ## External Dependencies
 
 -   **Kraken Exchange API**: Via `node-kraken-api` for trading and market data.
