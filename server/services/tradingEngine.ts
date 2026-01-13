@@ -2724,6 +2724,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       const low24h = parseFloat(tickerData.l?.[1] || tickerData.l?.[0] || "0");
       const volume = parseFloat(tickerData.v?.[1] || tickerData.v?.[0] || "0");
 
+      // SAFETY: Fail-fast if price is invalid (prevents Infinity in volume calculations)
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        log(`[TICKER_INVALID] ${pair}: price=${currentPrice} - aborting cycle to prevent Infinity`, "trading");
+        return;
+      }
+
       this.updatePriceHistory(pair, {
         price: currentPrice,
         timestamp: Date.now(),
@@ -3246,6 +3252,18 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         const tradeVolume = tradeAmountUSD / currentPrice;
+
+        // SAFETY: Validate volume is finite before proceeding (prevents Infinity/NaN in placeOrder)
+        if (!Number.isFinite(tradeVolume) || tradeVolume <= 0) {
+          log(`[ORDER_SKIPPED_INVALID_NUMBER] ${pair}: tradeVolume=${tradeVolume}, orderUsd=${tradeAmountUSD}, price=${currentPrice}`, "trading");
+          await botLogger.warn("ORDER_SKIPPED_INVALID_NUMBER", `Volume invalido - posible division por cero`, {
+            pair,
+            tradeVolume,
+            tradeAmountUSD,
+            currentPrice,
+          });
+          return;
+        }
 
         if (tradeVolume < minVolume) {
           log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
@@ -4012,6 +4030,19 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         const tradeVolume = tradeAmountUSD / currentPrice;
+
+        // SAFETY: Validate volume is finite before proceeding (prevents Infinity/NaN in placeOrder)
+        if (!Number.isFinite(tradeVolume) || tradeVolume <= 0) {
+          log(`[ORDER_SKIPPED_INVALID_NUMBER] ${pair}: tradeVolume=${tradeVolume}, orderUsd=${tradeAmountUSD}, price=${currentPrice}`, "trading");
+          await botLogger.warn("ORDER_SKIPPED_INVALID_NUMBER", `Volume invalido - posible division por cero`, {
+            pair,
+            tradeVolume,
+            tradeAmountUSD,
+            currentPrice,
+            strategyId: selectedStrategyId,
+          });
+          return;
+        }
 
         if (tradeVolume < minVolume) {
           log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");

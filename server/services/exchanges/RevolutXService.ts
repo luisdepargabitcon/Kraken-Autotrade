@@ -119,7 +119,9 @@ export class RevolutXService implements IExchangeService {
     const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
     
     try {
-      const response = await fetch(fullUrl);
+      // Use authenticated request to avoid 401 errors on rate-limited or protected endpoints
+      const headers = this.initialized ? this.getHeaders('GET', path, queryString) : {};
+      const response = await fetch(fullUrl, { headers });
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -135,6 +137,12 @@ export class RevolutXService implements IExchangeService {
       const bestBid = bids.length > 0 ? parseFloat(bids[0].price || bids[0][0] || '0') : 0;
       const bestAsk = asks.length > 0 ? parseFloat(asks[0].price || asks[0][0] || '0') : 0;
       const last = (bestBid + bestAsk) / 2;
+      
+      // SAFETY: Validate prices are finite
+      if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || !Number.isFinite(last)) {
+        console.error('[revolutx] getTicker INVALID_PRICE:', { pair, bestBid, bestAsk, last });
+        throw new Error(`Invalid ticker price for ${pair}: bid=${bestBid}, ask=${bestAsk}`);
+      }
       
       return {
         bid: bestBid,
@@ -161,6 +169,21 @@ export class RevolutXService implements IExchangeService {
     volume: string;
   }): Promise<OrderResult> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    // SAFETY: Validate volume is finite before sending to API (prevents Infinity/NaN errors)
+    const volumeNum = parseFloat(params.volume);
+    if (!Number.isFinite(volumeNum) || volumeNum <= 0) {
+      console.error('[revolutx] placeOrder BLOCKED: Invalid volume', { 
+        volume: params.volume, 
+        volumeNum,
+        pair: params.pair,
+        type: params.type
+      });
+      return { 
+        success: false, 
+        error: `Invalid volume: ${params.volume} (must be finite positive number)` 
+      };
+    }
 
     const path = '/api/1.0/orders';
     const symbol = this.formatPair(params.pair);
