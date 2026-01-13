@@ -120,6 +120,8 @@ type BlockReasonCode =
   | "REGIME_ERROR"            // Error detectando régimen
   | "DAILY_LIMIT"             // Límite de pérdida diaria alcanzado
   | "SELL_BLOCKED"            // SELL bloqueado por SMART_GUARD
+  | "RSI_OVERBOUGHT"          // BUY bloqueado por RSI >= 70
+  | "RSI_OVERSOLD"            // SELL bloqueado por RSI <= 30
   | "NO_POSITION"             // Sin posición para vender
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
@@ -168,6 +170,8 @@ interface LastFullAnalysisCache {
   candleClosedAt: string;
   evaluatedAt: string;
   regimeUpdatedAt: string;
+  regimeRouterEnabled?: boolean;
+  feeCushionEffectivePct?: number | null;
 }
 
 interface MinimumValidationParams {
@@ -3639,6 +3643,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         minSignalsRequired: signal.minSignalsRequired ?? 4,
         rawReason: signal.reason || "Sin señal",
         candleClosedAt: new Date(candle.time * 1000).toISOString(),
+        regimeRouterEnabled: routerEnabled,
+        feeCushionEffectivePct: null,
       });
       
       if (signal.action === "hold" || signal.confidence < 0.6) {
@@ -5419,9 +5425,9 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       lastCandleClosedAt: cached?.candleClosedAt || null,
       lastFullEvaluationAt: cached?.evaluatedAt || null,
       lastRegimeUpdateAt: cached?.regimeUpdatedAt || null,
-      // Campos de observabilidad Router FASE 1
-      regimeRouterEnabled: null,
-      feeCushionEffectivePct: null,
+      // Campos de observabilidad Router FASE 1 - usar cache en ciclos intermedios
+      regimeRouterEnabled: isIntermediateCycle && cached ? cached.regimeRouterEnabled ?? null : null,
+      feeCushionEffectivePct: isIntermediateCycle && cached ? cached.feeCushionEffectivePct ?? null : null,
     };
     this.pairDecisionTrace.set(pair, trace);
   }
@@ -5435,6 +5441,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     minSignalsRequired: number;
     rawReason: string;
     candleClosedAt: string;
+    regimeRouterEnabled?: boolean;
+    feeCushionEffectivePct?: number | null;
   }): void {
     this.lastFullAnalysisCache.set(pair, {
       ...data,
@@ -5454,12 +5462,25 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     const trace = this.pairDecisionTrace.get(pair);
     if (!trace) return;
     
+    // Detectar blockReasonCode específico basado en finalReason
+    let derivedBlockCode = trace.blockReasonCode || "NO_SIGNAL";
+    const reason = trace.finalReason || trace.rawReason || "";
+    
+    // Si es NO_SIGNAL pero la razón indica RSI block, usar código específico
+    if (derivedBlockCode === "NO_SIGNAL") {
+      if (reason.includes("RSI muy alto") || reason.includes("bloquea compra") || reason.includes(">=70")) {
+        derivedBlockCode = "RSI_OVERBOUGHT";
+      } else if (reason.includes("RSI muy bajo") || reason.includes("bloquea venta") || reason.includes("<=30")) {
+        derivedBlockCode = "RSI_OVERSOLD";
+      }
+    }
+    
     // Asegurar que finalSignal y finalReason estén definidos
     const safeTrace: DecisionTraceContext = {
       ...trace,
       finalSignal: trace.finalSignal || "NONE",
       finalReason: trace.finalReason || "Sin señal en este ciclo",
-      blockReasonCode: trace.blockReasonCode || "NO_SIGNAL",
+      blockReasonCode: derivedBlockCode,
       smartGuardDecision: trace.smartGuardDecision || "NOOP",
     };
     
