@@ -15,9 +15,9 @@ The bot automatically detects market conditions using technical indicators and a
 
 | Regime | Description | Strategy Used | Entry Behavior |
 |--------|-------------|---------------|----------------|
-| **TREND** | Strong directional movement | Momentum (Candles 15m) | Aggressive entries with 4+ signals |
-| **RANGE** | Sideways/consolidating market | Mean Reversion | Conservative entries with 2+ signals |
-| **TRANSITION** | Changing between regimes | Momentum with caution | Reduced size (50%), extra confirmation |
+| **TREND** | Strong directional movement | Momentum (Candles 15m) | Selective entries with 5+ signals |
+| **RANGE** | Sideways/consolidating market | Mean Reversion | Bounce entries with 2 signals |
+| **TRANSITION** | Changing between regimes | Momentum with caution | Reduced size (50%) or paused |
 
 #### Detection Indicators
 
@@ -41,23 +41,33 @@ The bot automatically detects market conditions using technical indicators and a
 
 Analyzes 15-minute candlestick patterns combined with technical indicators.
 
-**BUY Signals** (requires 4/5 confirmations):
-| Signal | Condition |
-|--------|-----------|
-| EMA Crossover | Short EMA (10) > Long EMA (20) |
-| RSI Momentum | RSI between 40-65 (not overbought) |
-| MACD Bullish | MACD line > Signal line |
-| Bollinger Position | Price near lower band (recovering) |
-| Bullish Candle | Close > Open with significant body |
+**BUY Signals** (weighted score >= 5 required):
+| # | Signal | Condition | Weight |
+|---|--------|-----------|--------|
+| 1 | EMA Crossover | EMA10 > EMA20 | +1 |
+| 2 | RSI Momentum | RSI < 45 | +1 |
+| 2b | RSI Oversold Bonus | RSI < 30 (replaces +1 with +2) | +2 |
+| 3 | MACD Bullish | Histogram > 0 AND MACD > Signal | +1 |
+| 4 | Bollinger Position | Price %B < 20 (near lower band) | +1 |
+| 5 | Bullish Candle | Close > Open with body > 60% | +1 |
+| 6 | High Volume | Volume > 1.5x average + bullish candle | +1 |
+| 7 | Engulfing Pattern | Current candle engulfs previous | +1 |
 
-**SELL Signals** (requires 4/5 confirmations):
-| Signal | Condition |
-|--------|-----------|
-| EMA Crossover | Short EMA (10) < Long EMA (20) |
-| RSI Overbought | RSI > 70 |
-| MACD Bearish | MACD line < Signal line |
-| Bollinger Position | Price near upper band |
-| Bearish Candle | Close < Open with significant body |
+> **Note**: RSI < 30 gives +2 instead of +1 (bonus). Max score = 8 (if RSI oversold bonus active).
+
+**SELL Signals** (weighted score >= 5 required):
+| # | Signal | Condition | Weight |
+|---|--------|-----------|--------|
+| 1 | EMA Crossover | EMA10 < EMA20 | +1 |
+| 2 | RSI Overbought | RSI > 55 | +1 |
+| 2b | RSI Extreme Bonus | RSI > 70 (replaces +1 with +2) | +2 |
+| 3 | MACD Bearish | Histogram < 0 AND MACD < Signal | +1 |
+| 4 | Bollinger Position | Price %B > 80 (near upper band) | +1 |
+| 5 | Bearish Candle | Close < Open with body > 60% | +1 |
+| 6 | High Volume | Volume > 1.5x average + bearish candle | +1 |
+| 7 | Engulfing Pattern | Current candle engulfs previous | +1 |
+
+> **Note**: RSI > 70 gives +2 instead of +1 (bonus). Max score = 8 (if RSI overbought bonus active).
 
 #### 2.2 Mean Reversion Strategy (mean_reversion_simple)
 **Used in**: RANGE regime
@@ -65,13 +75,12 @@ Analyzes 15-minute candlestick patterns combined with technical indicators.
 Looks for oversold/overbought conditions in sideways markets.
 
 **BUY Signals** (requires 2 confirmations):
-| Signal | Condition |
-|--------|-----------|
-| Bollinger Touch | Price touches or crosses lower Bollinger Band |
-| RSI Oversold | RSI < 30 |
-| Bullish Reversal | Current candle is bullish (close > open) |
+| # | Signal | Condition |
+|---|--------|-----------|
+| 1 | Bollinger Touch | Price <= Lower Bollinger Band |
+| 2 | RSI Oversold | RSI <= 35 |
 
-**Note**: This strategy only generates BUY signals. SELL exits are handled by SMART_GUARD.
+**Note**: Mean Reversion only generates BUY signals. SELL exits are handled by SMART_GUARD exit conditions.
 
 ---
 
@@ -79,9 +88,9 @@ Looks for oversold/overbought conditions in sideways markets.
 
 | Regime | Strategy | Min Signals Required | Entry Size Factor |
 |--------|----------|---------------------|-------------------|
-| TREND | Momentum 15m | 4 signals | 100% (0.80 factor) |
-| RANGE | Mean Reversion | 2 signals | 80% (reduced) |
-| TRANSITION | Momentum 15m | 4 signals | 50% (sizeFactor=0.50) |
+| TREND | Momentum 15m | 5 signals | 100% |
+| RANGE | Mean Reversion | 2 signals | 100% |
+| TRANSITION | Momentum 15m | 5 signals | 50% (sizeFactor=0.50) |
 
 ---
 
