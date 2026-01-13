@@ -1389,7 +1389,7 @@ export class TradingEngine {
   }
 
   private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
-    const minSignalsRequired = 4; // Defined early for early-exit cases
+    const minSignalsRequired = 5; // TREND/TRANSITION require 5 signals (aligned with SMART_GUARD B3)
     
     if (candles.length < 20) {
       return { action: "hold", pair, confidence: 0, reason: "Historial de velas insuficiente", signalsCount: 0, minSignalsRequired };
@@ -4309,7 +4309,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     else if (trend < -1) { sellSignals++; sellReasons.push("Tendencia bajista"); }
 
     const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.08));
-    const minSignalsRequired = 4; // Momentum strategy requires 4 signals
+    const minSignalsRequired = 5; // TREND/TRANSITION require 5 signals (aligned with SMART_GUARD B3)
     
     if (buySignals >= minSignalsRequired && buySignals > sellSignals && rsi < 70) {
       return {
