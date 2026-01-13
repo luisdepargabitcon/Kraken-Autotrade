@@ -1,0 +1,122 @@
+REPLIT — INVESTIGACIÓN Y FIX “REVOLUTX Infinity” (krakenbot-staging-app)
+
+Contexto (VPS/STG, LIVE):
+- En logs aparece:
+  1) getTicker 401 Unauthorized
+     "[revolutx] getTicker response: 401 …"
+     "[revolutx] getTicker error: Revolut X API error: 401"
+  2) placeOrder falla porque Revolut no puede parsear un campo con Infinity
+     "[revolutx] placeOrder error response: { message: \"Unable to parse value: 'Infinity'\", … }"
+
+Objetivo:
+- Eliminar el 401 (autenticación) y garantizar que NUNCA se envíen NaN/Infinity a RevolutX.
+- Si falla getTicker (o price inválido), bloquear el ciclo y NO construir/mandar órdenes.
+
+Qué logs necesito que revises / pídeme si faltan:
+- grep con contexto del 401:
+  grep -n -C 120 "\[revolutx\] getTicker response: 401" /root/krakenbot-staging-app-12h.log
+- grep con contexto del Infinity:
+  grep -n -C 200 "Unable to parse value: 'Infinity'" /root/krakenbot-staging-app-12h.log
+- grep con contexto de placeOrder:
+  grep -n -C 200 "\[revolutx\].*placeOrder" /root/krakenbot-staging-app-12h.log
+
+Hipótesis principal (muy probable):
+- getTicker devuelve 401 → no hay precio válido (price = undefined/0/NaN)
+- Algún cálculo hace qty = orderUsd / price o stop/tp/trail con divisor 0 → Infinity
+- Ese Infinity se serializa y se manda en el payload de placeOrder → RevolutX lo rechaza.
+
+Cambios requeridos (fix):
+1) “Fail fast” si getTicker falla o price no es finito:
+   - Si getTicker != 200 o precio no existe → return/NOOP con log explícito.
+   - No continuar a cálculo de qty, stop, tp, trailing.
+
+2) Validación dura antes de llamar a placeOrder:
+   - Validar todos los números del payload:
+     Number.isFinite(x) && x > 0 (según campo)
+   - Si no cumple, NO enviar la orden y loggear:
+     [ORDER_SKIPPED_INVALID_NUMBER] field=<...> value=<...> pair=<...> scanId=<...>
+
+3) Logging de diagnóstico justo antes de placeOrder (1 vez por intento):
+   - Loggear (sanitizado) el payload final y los inputs:
+     pair, side, orderUsd, price, qty, stopLoss, takeProfit, trailing params, fee cushion.
+   - Importante: imprimir explícitamente “price” y “qty” en el log para rastrear Infinity.
+
+4) Corregir 401 Unauthorized:
+   - Revisar construcción de Authorization header / token / API key en STG:
+     - Variables de entorno (REVOLUTX_*), nombre exacto, si existen en el contenedor.
+     - Refresh token si aplica.
+     - BaseURL / endpoint correcto para STG.
+     - Reloj del servidor (NTP) si la firma depende de timestamp.
+   - Cuando haya 401: cortar y reintentar con backoff (sin spamear), y alertar.
+
+Archivos / módulos donde mirar (puntos típicos del repo):
+A) Cliente RevolutX:
+- src/exchanges/revolutx.ts (o revolutxClient.ts / revolut.ts)
+  - getTicker()
+  - placeOrder()
+  - buildHeaders()/auth/signature()
+  - request() wrapper / fetch/axios error handling
+
+B) Construcción de orden (donde nace el Infinity):
+- src/trading/orderSizing.ts / positionSizing.ts / risk.ts
+  - qty = orderUsd / price
+  - redondeos/precision
+  - minNotional / minQty
+- src/trading/smartGuard.ts (o smart_guard.ts)
+  - cálculo BE / trailing / stop / TP
+  - distancias porcentuales → precios stop (pueden explotar si price=0)
+
+C) Motor / ejecución:
+- src/engine/engine.ts / marketScan.ts / tradingEngine.ts
+  - secuencia: getTicker → compute → placeOrder
+  - dónde se ignoran errores y se sigue
+
+Snippet de código que TIENES que añadir (ejemplo en TS/JS):
+
+// 1) Check de precio al recibir ticker
+const price = Number(ticker?.price);
+if (!Number.isFinite(price) || price <= 0) {
+  logger.warn("[REVOLUTX_TICKER_INVALID]", { pair, price: ticker?.price, ticker });
+  return { decision: "NOOP", reason: "TICKER_INVALID" };
+}
+
+// 2) Check de qty al calcular
+const qty = orderUsd / price;
+if (!Number.isFinite(qty) || qty <= 0) {
+  logger.warn("[ORDER_SKIPPED_INVALID_NUMBER]", { pair, field: "qty", qty, orderUsd, price });
+  return { decision: "NOOP", reason: "QTY_INVALID" };
+}
+
+// 3) Validación final del payload antes de enviar
+function assertFinitePositive(name: string, v: unknown) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`NON_FINITE_${name}:${String(v)}`);
+  return n;
+}
+
+const payload = { /* ... */ };
+try {
+  // Valida solo los campos numéricos que enviamos a RevolutX
+  assertFinitePositive("price", payload.price);
+  assertFinitePositive("amount", payload.amount);
+  // si hay stop/tp/trailing:
+  if (payload.stopLossPrice != null) assertFinitePositive("stopLossPrice", payload.stopLossPrice);
+  if (payload.takeProfitPrice != null) assertFinitePositive("takeProfitPrice", payload.takeProfitPrice);
+
+  logger.info("[REVOLUTX_PLACEORDER_REQUEST]", { pair, side, payload: { ...payload, auth: "***" } });
+} catch (e) {
+  logger.error("[ORDER_SKIPPED_INVALID_NUMBER]", { pair, side, error: String(e), payload });
+  return { decision: "NOOP", reason: "PAYLOAD_INVALID" };
+}
+
+await revolutx.placeOrder(payload);
+
+Qué necesito como “respuesta” del fix:
+- Confirmación de causa raíz (qué campo era Infinity y por qué).
+- PR con:
+  - validaciones (ticker + payload)
+  - logging pre-placeOrder
+  - manejo correcto del 401 (no continuar / reintentos)
+- Prueba mínima:
+  - Simular getTicker 401 → no se hace placeOrder.
+  - Simular price=0/undefined → no se hace placeOrder, log [TICKER_INVALID].
