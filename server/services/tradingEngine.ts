@@ -423,7 +423,7 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
     sgTrailDistancePct: 1.5,
     sgTrailStepPct: 0.25,
     sgTpFixedPct: 5.0,
-    minSignals: 5,
+    minSignals: 4,         // Revertido a 4 (valor original pre-ene-2026) para desbloquear entradas válidas
     pauseEntries: true,    // Pausar nuevas entradas
     slAtrMultiplier: 1.5,    // SL moderado en transición
     tpAtrMultiplier: 2.0,    // TP moderado en transición
