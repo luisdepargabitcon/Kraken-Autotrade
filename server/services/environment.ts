@@ -17,6 +17,18 @@ function getPackageVersion(): string {
 }
 
 function getGitCommit(): string {
+  // First try to read from VERSION file (created during Docker build)
+  try {
+    const versionPath = join(process.cwd(), "VERSION");
+    const version = readFileSync(versionPath, "utf-8").trim();
+    if (version && version !== "unknown") {
+      return version;
+    }
+  } catch {
+    // VERSION file doesn't exist, try git directly
+  }
+  
+  // Fallback to git command (works in dev/Replit)
   try {
     return execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
   } catch {

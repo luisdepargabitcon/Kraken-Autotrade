@@ -22,7 +22,10 @@ services:
       retries: 5
 
   krakenbot-staging-app:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: krakenbot-staging-app
     restart: unless-stopped
     depends_on:
