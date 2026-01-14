@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { hostname } from "os";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { execSync } from "child_process";
 
 type EnvTag = "REPLIT/DEV" | "VPS/STG" | "NAS/PROD";
 
@@ -15,6 +16,14 @@ function getPackageVersion(): string {
   }
 }
 
+function getGitCommit(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
 class EnvironmentService {
   private _envTag: EnvTag;
   private _instanceId: string;
@@ -25,7 +34,7 @@ class EnvironmentService {
   private _panelUrl: string;
 
   constructor() {
-    this._version = getPackageVersion();
+    this._version = `${getPackageVersion()}-${getGitCommit()}`;
     this._isReplit = !!(process.env.REPLIT_DEPLOYMENT || process.env.REPL_ID);
     this._isVPS = !!process.env.VPS_DEPLOY;
     this._isNAS = !this._isReplit && !this._isVPS;
