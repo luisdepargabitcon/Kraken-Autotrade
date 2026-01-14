@@ -1668,7 +1668,7 @@ export class TradingEngine {
 
     try {
       const balances = await this.getTradingExchange().getBalance();
-      this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
+      this.currentUsdBalance = parseFloat(String(balances?.ZUSD || balances?.USD || "0"));
       log(`Balance inicial USD: $${this.currentUsdBalance.toFixed(2)}`, "trading");
     } catch (error: any) {
       log(`Error obteniendo balance inicial: ${error.message}`, "trading");
@@ -1886,7 +1886,7 @@ ${positionsList}
       this.lastScanResults.clear();
 
       const balances = await this.getTradingExchange().getBalance();
-      this.currentUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
+      this.currentUsdBalance = parseFloat(String(balances?.ZUSD || balances?.USD || "0"));
       
       // Reset diario del P&L
       const today = new Date().toISOString().split("T")[0];
@@ -2262,7 +2262,7 @@ El bot ha pausado las operaciones de COMPRA.
           // Pero SÍ debemos reconciliar exposure y cooldowns
           
           // Refrescar balance USD para tener métricas consistentes
-          this.currentUsdBalance = parseFloat(freshBalances?.ZUSD || freshBalances?.USD || "0");
+          this.currentUsdBalance = parseFloat(String(freshBalances?.ZUSD || freshBalances?.USD || "0"));
           
           this.openPositions.delete(lotId);
           await this.deletePositionFromDBByLotId(lotId);
@@ -2651,6 +2651,13 @@ El bot ha pausado las operaciones de COMPRA.
       }
       
       log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
+      
+      // Calculate P&L before Telegram alert (fix crash: pnl was undefined)
+      const sellValueGross = sellAmount * currentPrice;
+      const sellFeeEstimated = sellValueGross * (getTakerFeePct() / 100);
+      const entryValueGross = sellAmount * position.entryPrice;
+      const entryFeeProrated = (position.entryFee || 0) * (sellAmount / position.amount);
+      const pnl = sellValueGross - sellFeeEstimated - entryValueGross - entryFeeProrated;
       
       const sellContext = { 
         entryPrice: position.entryPrice, 
@@ -5648,8 +5655,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     reason: string,
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
     strategyMeta?: { strategyId: string; timeframe: string; confidence: number; regime?: string; regimeReason?: string; routerStrategy?: string },
-    executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; minOrderUsd: number; allowUnderMin: boolean; dryRun: boolean },
-    sellContext?: { entryPrice: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and openedAt for P&L and duration tracking
+    executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; sgMinEntryUsd: number; sgAllowUnderMin_DEPRECATED: boolean; dryRun: boolean; env?: string; floorUsd?: number; availableAfterCushion?: number; sgReasonCode?: SmartGuardReasonCode; minOrderUsd?: number; allowUnderMin?: boolean },
+    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and optional fee/amounts for accurate P&L tracking
   ): Promise<boolean> {
     try {
       // === VALIDACIÓN: Bloquear pares no-USD ===
@@ -6147,11 +6154,14 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           const fee = volumeNum * price * (getTakerFeePct() / 100); // Use dynamic fee from active exchange
           await storage.upsertTradeFill({
             txid,
+            orderId: txid,
             pair,
             type: "sell",
             price: price.toString(),
             amount: volume,
+            cost: (volumeNum * price).toFixed(8),
             fee: fee.toFixed(8),
+            executedAt: new Date(),
             matched: false,
           });
           
@@ -6683,7 +6693,7 @@ ${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUs
           pair,
           signal: result.signal,
           razon,
-          cooldownSec: cooldownSec > 0 ? cooldownSec : undefined,
+          cooldownSec: cooldownSec !== undefined && cooldownSec > 0 ? cooldownSec : undefined,
           exposureAvailable: result.exposureAvailable,
           hasPosition,
           positionUsd: hasPosition ? totalPositionUsd : undefined,
@@ -6734,7 +6744,7 @@ ${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUs
           pair,
           signal: "NONE",
           razon,
-          cooldownSec: cooldownSec > 0 ? cooldownSec : undefined,
+          cooldownSec: cooldownSec !== undefined && cooldownSec > 0 ? cooldownSec : undefined,
           exposureAvailable: exposure.maxAllowed,
           hasPosition,
           positionUsd: hasPosition ? totalPositionUsd : undefined,

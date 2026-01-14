@@ -517,7 +517,7 @@ export class TelegramService {
   private engineController: EngineController | null = null;
   private startTime: Date = new Date();
   private heartbeatInterval: NodeJS.Timeout | null = null;
-  private dailyReportJob: cron.ScheduledTask | null = null;
+  private dailyReportJob: ReturnType<typeof cron.schedule> | null = null;
   private lastDailyReportDate: string = "";
   
   // Entry Intent dedupe cache: key = "pair:signal:candleBucket" -> timestamp
@@ -920,7 +920,7 @@ export class TelegramService {
       for (const trade of trades) {
         if (trade.type !== "sell") continue;
         
-        const pnl = parseFloat(trade.pnl?.toString() || "0");
+        const pnl = parseFloat(trade.realizedPnlUsd?.toString() || "0");
         const tradeDate = trade.executedAt ? new Date(trade.executedAt) : null;
         
         pnlTotal += pnl;
