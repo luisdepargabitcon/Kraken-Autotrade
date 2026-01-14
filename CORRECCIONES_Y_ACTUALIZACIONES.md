@@ -8,6 +8,27 @@
 
 ## 🔄 Sesión 14-15 Enero 2026
 
+### 0. Etiqueta Windsurf en Dashboard
+**Commit:** _(pendiente de despliegue en VPS)_  
+**Fecha:** 15 Enero 2026  
+**Archivos:** `client/src/components/dashboard/EnvironmentBadge.tsx`
+
+**Descripción:**  
+Añadida una insignia “Windsurf <commit>” junto a la información de entorno (ej. `VPS/STG`, `ID`, `versión`). El badge se renderiza tanto en vista regular como en compacta.
+
+**Detalles técnicos:**
+```tsx
+const commitTag = data.version?.split("-").pop() ?? data.version ?? "N/A";
+
+<Badge variant="outline" className="font-mono text-[10px] ...">
+  Windsurf&nbsp;{commitTag}
+</Badge>
+```
+
+**Motivo:** Proveer trazabilidad visual inmediata en el dashboard, mostrando la etiqueta “Windsurf + hash/versión” tal como solicitó el usuario.
+
+---
+
 ### 1. Corrección de Crashes Críticos TypeScript
 
 #### 1.1 Fix: Variable `pnl` indefinida en ventas SMART_GUARD

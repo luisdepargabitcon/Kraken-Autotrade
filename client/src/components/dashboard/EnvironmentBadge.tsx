@@ -52,6 +52,7 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
 
   const colors = getEnvColors(data.env);
   const showDryRunWarning = data.dryRun;
+  const commitTag = data.version?.split("-").pop() ?? data.version ?? "N/A";
 
   if (compact) {
     return (
@@ -87,7 +88,7 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
       <div className="flex items-center gap-2">
         <EnvIcon env={data.env} />
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={cn("font-mono font-bold text-sm", colors.text)}>
               {data.env}
             </span>
@@ -99,6 +100,12 @@ export function EnvironmentBadge({ compact = false }: { compact?: boolean }) {
                 DRY_RUN
               </Badge>
             )}
+            <Badge 
+              variant="outline"
+              className="font-mono text-[10px] bg-slate-500/10 text-slate-500 border-slate-500/30"
+            >
+              Windsurf&nbsp;{commitTag}
+            </Badge>
           </div>
           <p className="text-xs text-muted-foreground font-mono">
             ID: {data.instanceId} · v{data.version}
