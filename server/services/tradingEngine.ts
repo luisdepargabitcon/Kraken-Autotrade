@@ -3644,7 +3644,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         rawReason: signal.reason || "Sin señal",
         candleClosedAt: new Date(candle.time * 1000).toISOString(),
         regimeRouterEnabled: routerEnabled,
-        feeCushionEffectivePct: null,
+        feeCushionEffectivePct: getRoundTripWithBufferPct(),
       });
       
       if (signal.action === "hold" || signal.confidence < 0.6) {

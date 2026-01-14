@@ -114,7 +114,8 @@ export class RevolutXService implements IExchangeService {
 
   async getTicker(pair: string): Promise<Ticker> {
     const symbol = this.formatPair(pair);
-    const path = '/api/1.0/market-data/orderbook';
+    // Use authenticated endpoint /api/1.0/orderbook (not /market-data/orderbook which returns 404)
+    const path = '/api/1.0/orderbook';
     const queryString = `symbol=${symbol}`;
     const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
     
