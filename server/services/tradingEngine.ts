@@ -2118,6 +2118,11 @@ El bot ha pausado las operaciones de COMPRA.
       if (!tickerData) return;
 
       const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando SL/TP`, "trading");
+        return;
+      }
 
       // Process each position for this pair independently
       for (const position of positions) {
@@ -3666,6 +3671,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (!tickerData) return;
 
       const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluación`, "trading");
+        await botLogger.warn("PRICE_INVALID", `Precio no válido para ${pair}`, { pair, currentPrice });
+        return;
+      }
+      
       const assetBalance = this.getAssetBalance(pair, balances);
       const existingPositions = this.getPositionsByPair(pair);
       const existingPosition = existingPositions[0];
