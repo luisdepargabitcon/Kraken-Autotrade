@@ -487,39 +487,52 @@ const DEFAULT_SIGNAL_CONFIG = {
 
 ---
 
-## 🔄 Sesión 15-16 Enero 2026 (Config Dashboard UI + Despliegue STG)
+## 🔄 Sesión 16 Enero 2026 (Auditoría y Corrección Integral Telegram)
 
-### 7. UI Presets: Bloques de Detalle con Texto Rojo (sin fondo)
+### 8. Auditoría Completa Sistema Telegram
 
-**Commit:** `WINDSURF CONFIG UI`  
+**Commits:** `f773a09`, `7840e58`, `292b162`, `ead913c`, `77d358b`  
 **Fecha:** 16 Enero 2026  
 **Archivos:**
-- `client/src/components/dashboard/TradingConfigDashboard.tsx` (ajustes de estilo)
-- `server/services/ConfigService.ts` (include config en presets)
-- `scripts/apply-config-migration.ts` (fix ES module __dirname)
-- `db/migrations/001_create_config_tables.sql` (idempotente DROP TRIGGER)
+- `server/services/telegram.ts` (refactor completo)
+- `server/services/environment.ts` (BOT_DISPLAY_NAME)
+- `server/services/exchanges/ExchangeFactory.ts` (singleton)
+- `server/storage.ts` (getRecentTradeFills)
+- `tests/telegram.test.js` (guards)
 
 **Descripción:**
-- **Backend:** `/api/config/presets` ahora devuelve el objeto `config` completo por preset.
-- **UI:** Se eliminó el fondo degradado rosado de los bloques de presets; ahora solo el texto es rojo con bordes sutiles y fondo transparente, manteniendo la legibilidad del dashboard.
-- **Migración:** Se hizo idempotente la migración con `DROP TRIGGER IF EXISTS` para evitar errores al reejecutar.
-- **Despliegue:** Aplicado en VPS/STG; endpoints responden 200 y UI muestra bloques rojos sin fondo.
+- **Fix 1:** `formatSpanishDate` ahora valida fechas y devuelve "N/A" si es inválida. `sendDailyReport` pasa objeto `Date` en lugar de string locale.
+- **Fix 2:** `normalizePanelUrl` valida URL y añade protocolo. `buildPanelUrlFooter` con fallback "Panel no configurado".
+- **Fix 3:** Branding unificado con `BOT_DISPLAY_NAME` env var. Todos los templates usan `${environment.envTag} ${environment.botDisplayName}`.
+- **Feat 4:** `/logs` con filtros (`/logs 50`, `/logs level=ERROR`, `/logs type=TRADE_EXECUTED`) y `/log <id>` para detalles completos.
+- **Feat 5:** `/balance` multi-exchange via ExchangeFactory. Soporta `/balance all`, `/balance kraken`, `/balance revolutx`.
+- **Fix 6:** `/ganancias` desde `lot_matches.pnlNet` (preferido) o fallback a `training_trades.pnlNet`.
+- **Fix 7:** `/ultimas` desde `tradeFills` reales con dedupe por txid. Soporta `/ultimas 20`, `/ultimas exchange=kraken`.
+- **Tests:** Guards para `formatSpanishDate` y `normalizePanelUrl` para evitar regresiones.
 
-**Cambios de estilo:**
-```tsx
-// Antes: fondo rosado
-className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm"
-// Después: fondo transparente, texto rojo
-className="rounded-md border border-red-300/60 bg-transparent px-4 py-3"
+**Comandos Telegram Mejorados:**
+```bash
+/logs                    # Últimos 10 eventos
+/logs 50                # Más eventos  
+/logs level=ERROR       # Solo errores
+/logs type=TRADE_EXECUTED # Por tipo
+/log 12345              # Detalle completo
+
+/balance                # Exchange trading actual
+/balance all            # Todos los exchanges
+/balance kraken         # Exchange específico
+
+/ultimas                # Últimas 5 operaciones
+/ultimas 20             # Más operaciones
+/ultimas exchange=kraken # Filtrar por exchange
 ```
 
 **Verificación:**
-- ✅ `/api/config/health` 200
-- ✅ `/api/config/presets` 200 con `config` completo
-- ✅ `/api/config/active` 200
-- ✅ Bloques de presets visibles en STG con texto rojo, sin fondo
-
-**Motivo:** Mejorar legibilidad y estética del dashboard mientras se mantiene la información destacada.
+- ✅ `npm run check` (TypeScript sin errores)
+- ✅ Todos los comandos usan fuentes reales (DB/ExchangeFactory)
+- ✅ Compatibilidad hacia atrás con "N/A" si faltan datos
+- ✅ Sin "Invalid Date" ni links rotos
+- ✅ Branding consistente en todos los mensajes
 
 ---
 
