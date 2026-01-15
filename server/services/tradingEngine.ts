@@ -3627,6 +3627,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         exposureAvailable: exposureScan.maxAllowed,
       });
       
+      // Ajustar minSignalsRequired según régimen (antes de guardar en trace/cache)
+      const baseMinSignals = signal.minSignalsRequired ?? 5;
+      const adjustedMinSignals = earlyRegime === "TRANSITION" 
+        ? Math.max(4, baseMinSignals) 
+        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) : baseMinSignals);
+      
       // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
       this.updatePairTrace(pair, {
         selectedStrategy: selectedStrategyId,
@@ -3635,7 +3641,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         regime: earlyRegime,
         regimeReason: earlyRegimeReason,
         signalsCount: signal.signalsCount ?? null,
-        minSignalsRequired: signal.minSignalsRequired ?? null,
+        minSignalsRequired: adjustedMinSignals,
         exposureAvailableUsd: exposureScan.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         finalReason: signal.reason || "Sin señal",
@@ -3653,7 +3659,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         regimeReason: earlyRegimeReason || "No regime data",
         selectedStrategy: selectedStrategyId,
         signalsCount: signal.signalsCount ?? 0,
-        minSignalsRequired: signal.minSignalsRequired ?? 4,
+        minSignalsRequired: adjustedMinSignals,
         rawReason: signal.reason || "Sin señal",
         candleClosedAt: new Date(candle.time * 1000).toISOString(),
         regimeRouterEnabled: routerEnabled,
