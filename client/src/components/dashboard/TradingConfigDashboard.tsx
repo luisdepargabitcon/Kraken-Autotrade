@@ -194,10 +194,14 @@ export function TradingConfigDashboard() {
     }
   };
 
-  // Initialize config from active config
+  // Initialize config from active config and sync selected preset
   useEffect(() => {
     if (activeConfig?.data) {
       setConfig(activeConfig.data);
+      // Sync selected preset with active preset
+      if (activeConfig.data.activePreset) {
+        setSelectedPreset(activeConfig.data.activePreset);
+      }
     }
   }, [activeConfig]);
 
