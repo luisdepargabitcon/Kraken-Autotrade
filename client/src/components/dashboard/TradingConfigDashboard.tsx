@@ -87,15 +87,27 @@ export function TradingConfigDashboard() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
   // Fetch active configuration
-  const { data: activeConfig, isLoading: loadingConfig } = useQuery<{ data: TradingConfig }>({
-    queryKey: ["/api/config"],
+  const { data: activeConfig, isLoading: loadingConfig } = useQuery<{ success: boolean; data: TradingConfig }>({
+    queryKey: ["/api/config/active"],
+    queryFn: async () => {
+      const res = await fetch("/api/config/active");
+      if (!res.ok) throw new Error("Failed to fetch active config");
+      return res.json();
+    },
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
   // Fetch presets
-  const { data: presets, isLoading: loadingPresets } = useQuery<Preset[]>({
+  const { data: presetsData, isLoading: loadingPresets } = useQuery<{ success: boolean; data: Preset[] }>({
     queryKey: ["/api/config/presets"],
+    queryFn: async () => {
+      const res = await fetch("/api/config/presets");
+      if (!res.ok) throw new Error("Failed to fetch presets");
+      return res.json();
+    },
   });
+
+  const presets = presetsData?.data;
 
   // Activate preset mutation
   const activatePresetMutation = useMutation({
@@ -109,7 +121,7 @@ export function TradingConfigDashboard() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/config"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/config/active"] });
       toast({
         title: "Preset Activated",
         description: "Configuration preset has been activated successfully",
@@ -130,7 +142,11 @@ export function TradingConfigDashboard() {
       // Get active config ID from list endpoint
       const listResponse = await fetch("/api/config/list");
       const listData = await listResponse.json();
-      const activeConfigId = listData.data?.find((c: any) => c.isActive)?.id || "1";
+      const activeConfigId = listData.data?.find((c: any) => c.isActive)?.id;
+      
+      if (!activeConfigId) {
+        throw new Error("No active configuration ID found to update");
+      }
       
       const response = await fetch(`/api/config/${activeConfigId}`, {
         method: "PUT",
@@ -145,7 +161,7 @@ export function TradingConfigDashboard() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/config"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/config/active"] });
       toast({
         title: "Configuration Updated",
         description: "Trading configuration has been updated successfully",

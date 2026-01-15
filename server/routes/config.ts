@@ -72,8 +72,320 @@ export function registerConfigRoutes(app: Express): void {
   
   // === CONFIGURATION MANAGEMENT ===
 
-  // GET /api/config - Get active configuration
-  app.get("/api/config", async (req, res) => {
+  // GET /api/config/list - List all configurations (MUST be before /api/config/:id)
+  app.get("/api/config/list", async (req, res) => {
+    try {
+      const configs = await configService.listConfigs();
+      res.json({
+        success: true,
+        data: configs,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[config] Error listing configs:", error);
+      res.status(500).json({ error: "Failed to list configurations" });
+    }
+  });
+
+  // POST /api/config/validate - Validate configuration without saving
+  app.post("/api/config/validate", async (req, res) => {
+    try {
+      const { config } = req.body;
+      
+      const validationResult = configService.validateConfig(config);
+      
+      res.json({
+        success: true,
+        data: validationResult,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[config] Error validating config:", error);
+      res.status(500).json({ error: "Failed to validate configuration" });
+    }
+  });
+
+  // === PRESET MANAGEMENT ===
+
+  // GET /api/config/presets - List all presets
+  app.get("/api/config/presets", async (req, res) => {
+    try {
+      const presets = await configService.listPresets();
+      res.json({
+        success: true,
+        data: presets,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[config] Error listing presets:", error);
+      res.status(500).json({ error: "Failed to list presets" });
+    }
+  });
+
+  // POST /api/config/presets - Create new preset
+  app.post("/api/config/presets", async (req, res) => {
+    try {
+      const body = createPresetSchema.parse(req.body);
+      
+      const preset = await configService.createPreset(
+        body.name,
+        body.description,
+        body.config,
+        body.isDefault
+      );
+
+
+      res.status(201).json({
+        success: true,
+        data: preset,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Invalid request data",
+          details: error.errors,
+        });
+      }
+      console.error("[config] Error creating preset:", error);
+      res.status(500).json({ error: "Failed to create preset" });
+    }
+  });
+
+  // POST /api/config/presets/:name/activate - Activate preset
+  app.post("/api/config/presets/:name/activate", async (req, res) => {
+    try {
+      const { name } = req.params;
+      const body = activatePresetSchema.parse({ ...req.body, presetName: name });
+      
+      const result = await configService.activatePreset(body.presetName, {
+        userId: body.userId,
+        description: body.description,
+        metadata: body.metadata,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Failed to activate preset",
+          details: result.errors,
+          warnings: result.warnings,
+        });
+      }
+
+      // Log preset activation
+      await botLogger.info("PRESET_ACTIVATED", `Preset ${body.presetName} activated`, {
+        presetName: body.presetName,
+        configId: result.configId,
+        changeId: result.changeId,
+        userId: body.userId,
+        env: environment.envTag,
+        instanceId: environment.instanceId,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          configId: result.configId,
+          changeId: result.changeId,
+          warnings: result.warnings,
+          appliedAt: result.appliedAt,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Invalid request data",
+          details: error.errors,
+        });
+      }
+      console.error("[config] Error activating preset:", error);
+      res.status(500).json({ error: "Failed to activate preset" });
+    }
+  });
+
+  // GET /api/config/presets/:name - Get specific preset
+  app.get("/api/config/presets/:name", async (req, res) => {
+    try {
+      const { name } = req.params;
+      const preset = await configService.getPreset(name);
+      
+      if (!preset) {
+        return res.status(404).json({ error: "Preset not found" });
+      }
+
+      res.json({
+        success: true,
+        data: preset,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[config] Error getting preset:", error);
+      res.status(500).json({ error: "Failed to get preset" });
+    }
+  });
+
+  // === CHANGE HISTORY ===
+
+  // GET /api/config/history - Get all change history
+  app.get("/api/config/history", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const history = await configService.getChangeHistory(undefined, limit);
+      
+      res.json({
+        success: true,
+        data: history,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[config] Error getting change history:", error);
+      res.status(500).json({ error: "Failed to get change history" });
+    }
+  });
+
+  // POST /api/config/rollback - Rollback to specific change
+  app.post("/api/config/rollback", async (req, res) => {
+    try {
+      const body = rollbackSchema.parse(req.body);
+      
+      const result = await configService.rollbackToChange(body.changeId, {
+        userId: body.userId,
+        description: body.description,
+        metadata: body.metadata,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Failed to rollback",
+          details: result.errors,
+          warnings: result.warnings,
+        });
+      }
+
+      // Log rollback
+      await botLogger.info("CONFIG_ROLLBACK", `Rollback to change ${body.changeId}`, {
+        changeId: body.changeId,
+        configId: result.configId,
+        userId: body.userId,
+        env: environment.envTag,
+        instanceId: environment.instanceId,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          configId: result.configId,
+          warnings: result.warnings,
+          appliedAt: result.appliedAt,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Invalid request data",
+          details: error.errors,
+        });
+      }
+      console.error("[config] Error rolling back:", error);
+      res.status(500).json({ error: "Failed to rollback" });
+    }
+  });
+
+  // === IMPORT/EXPORT ===
+
+  // POST /api/config/import - Import configuration
+  app.post("/api/config/import", async (req, res) => {
+    try {
+      const body = importConfigSchema.parse(req.body);
+      
+      const result = await configService.importConfig(
+        body.configJson,
+        body.name,
+        {
+          userId: body.userId,
+          description: body.description,
+          metadata: { ...body.metadata, imported: true },
+          skipValidation: body.skipValidation,
+        }
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Failed to import configuration",
+          details: result.errors,
+          warnings: result.warnings,
+        });
+      }
+
+      // Log import
+      await botLogger.info("CONFIG_IMPORTED", `Configuration imported: ${body.name}`, {
+        configId: result.configId,
+        name: body.name,
+        userId: body.userId,
+        env: environment.envTag,
+        instanceId: environment.instanceId,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          configId: result.configId,
+          changeId: result.changeId,
+          warnings: result.warnings,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Invalid request data",
+          details: error.errors,
+        });
+      }
+      console.error("[config] Error importing config:", error);
+      res.status(500).json({ error: "Failed to import configuration" });
+    }
+  });
+
+  // === HEALTH CHECK ===
+
+  // GET /api/config/health - Check configuration service health
+  app.get("/api/config/health", async (req, res) => {
+    try {
+      const activeConfig = await configService.getActiveConfig();
+      const configs = await configService.listConfigs();
+      const presets = await configService.listPresets();
+      
+      res.json({
+        success: true,
+        data: {
+          healthy: true,
+          activeConfigId: configService['activeConfigId'],
+          totalConfigs: configs.length,
+          totalPresets: presets.length,
+          hasActiveConfig: !!activeConfig,
+          cacheSize: configService['configCache'].size,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      console.error("[config] Error checking health:", error);
+      res.status(500).json({ 
+        success: false, 
+        healthy: false, 
+        error: "Configuration service unhealthy" 
+      });
+    }
+  });
+
+  // === DYNAMIC CONFIGURATION (NEW) ===
+
+  // GET /api/config/active - Get current active trading configuration
+  // Renamed to avoid collision with legacy /api/config
+  app.get("/api/config/active", async (req, res) => {
     try {
       const config = await configService.getActiveConfig();
       if (!config) {
@@ -88,21 +400,6 @@ export function registerConfigRoutes(app: Express): void {
     } catch (error) {
       console.error("[config] Error getting active config:", error);
       res.status(500).json({ error: "Failed to get active configuration" });
-    }
-  });
-
-  // GET /api/config/list - List all configurations
-  app.get("/api/config/list", async (req, res) => {
-    try {
-      const configs = await configService.listConfigs();
-      res.json({
-        success: true,
-        data: configs,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("[config] Error listing configs:", error);
-      res.status(500).json({ error: "Failed to list configurations" });
     }
   });
 
@@ -127,8 +424,9 @@ export function registerConfigRoutes(app: Express): void {
     }
   });
 
-  // POST /api/config - Create new configuration
-  app.post("/api/config", async (req, res) => {
+  // POST /api/config/new - Create new configuration
+  // Renamed from POST /api/config to avoid collision
+  app.post("/api/config/new", async (req, res) => {
     try {
       const body = createConfigSchema.parse(req.body);
       
@@ -281,146 +579,6 @@ export function registerConfigRoutes(app: Express): void {
     }
   });
 
-  // POST /api/config/validate - Validate configuration without saving
-  app.post("/api/config/validate", async (req, res) => {
-    try {
-      const { config } = req.body;
-      
-      const validationResult = configService.validateConfig(config);
-      
-      res.json({
-        success: true,
-        data: validationResult,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("[config] Error validating config:", error);
-      res.status(500).json({ error: "Failed to validate configuration" });
-    }
-  });
-
-  // === PRESET MANAGEMENT ===
-
-  // GET /api/config/presets - List all presets
-  app.get("/api/config/presets", async (req, res) => {
-    try {
-      const presets = await configService.listPresets();
-      res.json({
-        success: true,
-        data: presets,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("[config] Error listing presets:", error);
-      res.status(500).json({ error: "Failed to list presets" });
-    }
-  });
-
-  // GET /api/config/presets/:name - Get specific preset
-  app.get("/api/config/presets/:name", async (req, res) => {
-    try {
-      const { name } = req.params;
-      const preset = await configService.getPreset(name);
-      
-      if (!preset) {
-        return res.status(404).json({ error: "Preset not found" });
-      }
-
-      res.json({
-        success: true,
-        data: preset,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("[config] Error getting preset:", error);
-      res.status(500).json({ error: "Failed to get preset" });
-    }
-  });
-
-  // POST /api/config/presets - Create new preset
-  app.post("/api/config/presets", async (req, res) => {
-    try {
-      const body = createPresetSchema.parse(req.body);
-      
-      const preset = await configService.createPreset(
-        body.name,
-        body.description,
-        body.config,
-        body.isDefault
-      );
-
-
-      res.status(201).json({
-        success: true,
-        data: preset,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          error: "Invalid request data",
-          details: error.errors,
-        });
-      }
-      console.error("[config] Error creating preset:", error);
-      res.status(500).json({ error: "Failed to create preset" });
-    }
-  });
-
-  // POST /api/config/presets/:name/activate - Activate preset
-  app.post("/api/config/presets/:name/activate", async (req, res) => {
-    try {
-      const { name } = req.params;
-      const body = activatePresetSchema.parse({ ...req.body, presetName: name });
-      
-      const result = await configService.activatePreset(body.presetName, {
-        userId: body.userId,
-        description: body.description,
-        metadata: body.metadata,
-      });
-
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Failed to activate preset",
-          details: result.errors,
-          warnings: result.warnings,
-        });
-      }
-
-      // Log preset activation
-      await botLogger.info("PRESET_ACTIVATED", `Preset ${body.presetName} activated`, {
-        presetName: body.presetName,
-        configId: result.configId,
-        changeId: result.changeId,
-        userId: body.userId,
-        env: environment.envTag,
-        instanceId: environment.instanceId,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          configId: result.configId,
-          changeId: result.changeId,
-          warnings: result.warnings,
-          appliedAt: result.appliedAt,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          error: "Invalid request data",
-          details: error.errors,
-        });
-      }
-      console.error("[config] Error activating preset:", error);
-      res.status(500).json({ error: "Failed to activate preset" });
-    }
-  });
-
-  // === CHANGE HISTORY ===
-
   // GET /api/config/:id/history - Get configuration change history
   app.get("/api/config/:id/history", async (req, res) => {
     try {
@@ -440,75 +598,6 @@ export function registerConfigRoutes(app: Express): void {
     }
   });
 
-  // GET /api/config/history - Get all change history
-  app.get("/api/config/history", async (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 50;
-      
-      const history = await configService.getChangeHistory(undefined, limit);
-      
-      res.json({
-        success: true,
-        data: history,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("[config] Error getting change history:", error);
-      res.status(500).json({ error: "Failed to get change history" });
-    }
-  });
-
-  // POST /api/config/rollback - Rollback to specific change
-  app.post("/api/config/rollback", async (req, res) => {
-    try {
-      const body = rollbackSchema.parse(req.body);
-      
-      const result = await configService.rollbackToChange(body.changeId, {
-        userId: body.userId,
-        description: body.description,
-        metadata: body.metadata,
-      });
-
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Failed to rollback",
-          details: result.errors,
-          warnings: result.warnings,
-        });
-      }
-
-      // Log rollback
-      await botLogger.info("CONFIG_ROLLBACK", `Rollback to change ${body.changeId}`, {
-        changeId: body.changeId,
-        configId: result.configId,
-        userId: body.userId,
-        env: environment.envTag,
-        instanceId: environment.instanceId,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          configId: result.configId,
-          warnings: result.warnings,
-          appliedAt: result.appliedAt,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          error: "Invalid request data",
-          details: error.errors,
-        });
-      }
-      console.error("[config] Error rolling back:", error);
-      res.status(500).json({ error: "Failed to rollback" });
-    }
-  });
-
-  // === IMPORT/EXPORT ===
-
   // GET /api/config/:id/export - Export configuration
   app.get("/api/config/:id/export", async (req, res) => {
     try {
@@ -525,91 +614,6 @@ export function registerConfigRoutes(app: Express): void {
     } catch (error) {
       console.error("[config] Error exporting config:", error);
       res.status(500).json({ error: "Failed to export configuration" });
-    }
-  });
-
-  // POST /api/config/import - Import configuration
-  app.post("/api/config/import", async (req, res) => {
-    try {
-      const body = importConfigSchema.parse(req.body);
-      
-      const result = await configService.importConfig(
-        body.configJson,
-        body.name,
-        {
-          userId: body.userId,
-          description: body.description,
-          metadata: { ...body.metadata, imported: true },
-          skipValidation: body.skipValidation,
-        }
-      );
-
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Failed to import configuration",
-          details: result.errors,
-          warnings: result.warnings,
-        });
-      }
-
-      // Log import
-      await botLogger.info("CONFIG_IMPORTED", `Configuration imported: ${body.name}`, {
-        configId: result.configId,
-        name: body.name,
-        userId: body.userId,
-        env: environment.envTag,
-        instanceId: environment.instanceId,
-      });
-
-      res.status(201).json({
-        success: true,
-        data: {
-          configId: result.configId,
-          changeId: result.changeId,
-          warnings: result.warnings,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          error: "Invalid request data",
-          details: error.errors,
-        });
-      }
-      console.error("[config] Error importing config:", error);
-      res.status(500).json({ error: "Failed to import configuration" });
-    }
-  });
-
-  // === HEALTH CHECK ===
-
-  // GET /api/config/health - Check configuration service health
-  app.get("/api/config/health", async (req, res) => {
-    try {
-      const activeConfig = await configService.getActiveConfig();
-      const configs = await configService.listConfigs();
-      const presets = await configService.listPresets();
-      
-      res.json({
-        success: true,
-        data: {
-          healthy: true,
-          activeConfigId: configService['activeConfigId'],
-          totalConfigs: configs.length,
-          totalPresets: presets.length,
-          hasActiveConfig: !!activeConfig,
-          cacheSize: configService['configCache'].size,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } catch (error) {
-      console.error("[config] Error checking health:", error);
-      res.status(500).json({ 
-        success: false, 
-        healthy: false, 
-        error: "Configuration service unhealthy" 
-      });
     }
   });
 }

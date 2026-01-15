@@ -30,10 +30,10 @@ Implementado sistema completo de configuración dinámica para señales de tradi
 
 **Endpoints API:**
 ```
-GET    /api/config              - Obtener configuración activa
+GET    /api/config/active              - Obtener configuración activa
 GET    /api/config/list         - Listar todas las configuraciones
 GET    /api/config/:id          - Obtener configuración específica
-POST   /api/config              - Crear nueva configuración
+POST   /api/config/new              - Crear nueva configuración
 PUT    /api/config/:id          - Actualizar configuración
 POST   /api/config/:id/activate - Activar configuración
 POST   /api/config/validate     - Validar sin guardar
