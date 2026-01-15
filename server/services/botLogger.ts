@@ -67,7 +67,18 @@ export type EventType =
   | "MANUAL_CLOSE_FAILED"
   | "MANUAL_CLOSE_EXCEPTION"
   | "MANUAL_CLOSE_DUST"
-  | "ORPHAN_POSITION_DELETED";
+  | "ORPHAN_POSITION_DELETED"
+  // Signal configuration events
+  | "SIGNAL_CONFIG_UPDATED"
+  // Configuration management events
+  | "CONFIG_CREATED"
+  | "CONFIG_UPDATED"
+  | "CONFIG_ACTIVATED"
+  | "CONFIG_ROLLBACK"
+  | "CONFIG_IMPORTED"
+  | "CONFIG_LOADED"
+  | "PRESET_CREATED"
+  | "PRESET_ACTIVATED";
 
 interface LogMeta {
   [key: string]: any;

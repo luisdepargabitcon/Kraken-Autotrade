@@ -13,6 +13,8 @@ import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
+import { configService } from "./ConfigService";
+import type { TradingConfig } from "@shared/config-schema";
 
 interface PriceData {
   price: number;
@@ -564,6 +566,9 @@ export class TradingEngine {
   // Cache para último análisis completo por par (evita null en ciclos intermedios)
   private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
 
+  // Dynamic configuration from ConfigService
+  private dynamicConfig: TradingConfig | null = null;
+
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
     this.telegramService = telegramService;
@@ -573,6 +578,9 @@ export class TradingEngine {
       this.dryRunMode = true;
       log("[SAFETY] Entorno Replit detectado - DRY_RUN activado automáticamente", "trading");
     }
+    
+    // Setup configuration change listener for hot-reload
+    this.setupConfigListener();
     
     // Log regime parameters at startup
     log(`[REGIME_PARAMS] enter=${REGIME_CONFIG.ADX_TREND_ENTRY} exit=${REGIME_CONFIG.ADX_TREND_EXIT} hardExit=${REGIME_CONFIG.ADX_HARD_EXIT} confirm=${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} minHold=${REGIME_CONFIG.MIN_HOLD_MINUTES} cooldown=${REGIME_CONFIG.NOTIFY_COOLDOWN_MS / 60000}min`, "trading");
@@ -1654,6 +1662,9 @@ export class TradingEngine {
     if (!this.telegramService.isInitialized()) {
       log("Telegram no está configurado, continuando sin notificaciones", "trading");
     }
+    
+    // Load dynamic configuration from ConfigService
+    await this.loadDynamicConfig();
     
     // Load dryRunMode from config (Replit always forces dry run regardless of DB setting)
     const dbDryRun = (config as any).dryRunMode ?? false;
@@ -5409,9 +5420,68 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
   }
 
   getRegimeMinSignals(regime: MarketRegime, baseMinSignals: number): number {
+    // Check if we have dynamic configuration from ConfigService
+    if (this.dynamicConfig?.signals?.[regime]) {
+      const signalConfig = this.dynamicConfig.signals[regime];
+      const currentSignals = signalConfig.currentSignals;
+      // Use dynamic value if it's within reasonable bounds
+      if (currentSignals >= 1 && currentSignals <= 10) {
+        log(`[CONFIG] Using dynamic minSignals=${currentSignals} for regime=${regime}`, "trading");
+        return currentSignals;
+      }
+    }
+    
+    // Fallback to preset values
     const preset = REGIME_PRESETS[regime];
     // Never go below the stricter of base config or regime preset
     return Math.max(baseMinSignals, preset.minSignals);
+  }
+
+  private setupConfigListener(): void {
+    // Listen for configuration changes from ConfigService
+    configService.on('config:activated', async ({ configId }) => {
+      log(`[CONFIG] Configuration activated: ${configId}, reloading...`, "trading");
+      await this.loadDynamicConfig();
+    });
+
+    configService.on('config:updated', async ({ configId }) => {
+      log(`[CONFIG] Configuration updated: ${configId}, reloading...`, "trading");
+      await this.loadDynamicConfig();
+    });
+  }
+
+  async loadDynamicConfig(): Promise<void> {
+    try {
+      const config = await configService.getActiveConfig();
+      if (config) {
+        this.dynamicConfig = config;
+        
+        // Apply global configuration
+        if (config.global) {
+          // Update dry run mode if not in Replit
+          if (!this.isReplitEnvironment) {
+            this.dryRunMode = config.global.dryRunMode;
+            log(`[CONFIG] DryRunMode updated: ${this.dryRunMode}`, "trading");
+          }
+        }
+        
+        log(`[CONFIG] Dynamic configuration loaded successfully`, "trading");
+        
+        await botLogger.info("CONFIG_LOADED", "Dynamic configuration loaded", {
+          hasSignals: !!config.signals,
+          hasExchanges: !!config.exchanges,
+          hasGlobal: !!config.global,
+          dryRunMode: this.dryRunMode,
+          env: environment.envTag,
+        });
+      } else {
+        log(`[CONFIG] No active configuration found, using defaults`, "trading");
+      }
+    } catch (error) {
+      console.error('[tradingEngine] Error loading dynamic config:', error);
+      log(`[CONFIG] Failed to load dynamic config, using defaults`, "trading");
+      this.dynamicConfig = null;
+    }
   }
 
   shouldPauseEntriesDueToRegime(regime: MarketRegime, regimeEnabled: boolean): boolean {

@@ -13,6 +13,8 @@ import { Progress } from "@/components/ui/progress";
 import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield, ChevronRight, Trash2, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { SignalThresholdConfig } from "@/components/dashboard/SignalThresholdConfig";
+import { TradingConfigDashboard } from "@/components/dashboard/TradingConfigDashboard";
 import { Link } from "wouter";
 import { toast } from "sonner";
 
@@ -1101,6 +1103,9 @@ export default function Settings() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Trading Configuration Dashboard */}
+            <TradingConfigDashboard />
 
             {/* AI Integration */}
             <Card className="glass-panel border-border/50">

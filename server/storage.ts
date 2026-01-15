@@ -129,6 +129,13 @@ export interface IStorage {
   // Schema health check and auto-migration
   checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }>;
   runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }>;
+  
+  // Signal configuration methods
+  getSignalConfig(): Promise<any | undefined>;
+  setSignalConfig(config: any): Promise<void>;
+  getRecentScans(limit?: number): Promise<any[]>;
+  getRecentScansByTimeframe(timeframe: string): Promise<any[]>;
+  getTradesByTimeframe(timeframe: string): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1201,6 +1208,73 @@ export class DatabaseStorage implements IStorage {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('[schema] Migration failed:', errorMessage);
       return { success: false, columnsAdded, error: errorMessage };
+    }
+  }
+
+  // Signal configuration methods
+  async getSignalConfig(): Promise<any | undefined> {
+    try {
+      // For now, store signal config in a separate storage approach
+      // We'll use a simple file-based approach for now
+      const config = await this.getBotConfig();
+      if (config && (config as any).signalConfig) {
+        return JSON.parse((config as any).signalConfig as string);
+      }
+      return undefined;
+    } catch (error) {
+      console.error('[storage] Error getting signal config:', error);
+      return undefined;
+    }
+  }
+
+  async setSignalConfig(config: any): Promise<void> {
+    try {
+      // Use type assertion to bypass TypeScript checking for now
+      await this.updateBotConfig({
+        ...(config as any),
+        updatedAt: new Date()
+      });
+    } catch (error) {
+      console.error('[storage] Error setting signal config:', error);
+      throw error;
+    }
+  }
+
+  async getRecentScans(limit: number = 100): Promise<any[]> {
+    try {
+      // For now, return empty array - this would need to be implemented
+      // based on actual scan data storage
+      console.log(`[storage] Getting recent scans (limit: ${limit})`);
+      return [];
+    } catch (error) {
+      console.error('[storage] Error getting recent scans:', error);
+      return [];
+    }
+  }
+
+  async getRecentScansByTimeframe(timeframe: string): Promise<any[]> {
+    try {
+      // For now, return empty array - this would need to be implemented
+      // based on actual scan data storage
+      console.log(`[storage] Getting scans by timeframe: ${timeframe}`);
+      return [];
+    } catch (error) {
+      console.error('[storage] Error getting scans by timeframe:', error);
+      return [];
+    }
+  }
+
+  async getTradesByTimeframe(timeframe: string): Promise<any[]> {
+    try {
+      // Simple implementation based on existing getTrades method
+      const hours = timeframe === '24h' ? 24 : timeframe === '7d' ? 168 : 24;
+      const cutoffTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+      
+      const trades = await this.getTrades(1000); // Get more trades to filter
+      return trades.filter(trade => new Date(trade.createdAt) > cutoffTime);
+    } catch (error) {
+      console.error('[storage] Error getting trades by timeframe:', error);
+      return [];
     }
   }
 }

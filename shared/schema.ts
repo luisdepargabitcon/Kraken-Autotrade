@@ -2,7 +2,73 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { tradingConfigSchema, configChangeSchema, type TradingConfig, type ConfigChange } from "./config-schema";
 
+// New Trading Configuration Tables
+export const tradingConfig = pgTable("trading_config", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  config: jsonb("config").notNull(),
+  isActive: boolean("is_active").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const configChange = pgTable("config_change", {
+  id: serial("id").primaryKey(),
+  configId: text("config_id").notNull(),
+  userId: text("user_id"),
+  changeType: text("change_type").notNull(), // CREATE, UPDATE, DELETE, ACTIVATE_PRESET, ROLLBACK
+  description: text("description").notNull(),
+  previousConfig: jsonb("previous_config"),
+  newConfig: jsonb("new_config").notNull(),
+  changedFields: text("changed_fields").array().notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  appliedAt: timestamp("applied_at"),
+  isActive: boolean("is_active").notNull().default(false),
+});
+
+export const configPreset = pgTable("config_preset", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull(),
+  config: jsonb("config").notNull(),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Zod schemas for new tables
+export const tradingConfigInsertSchema = createInsertSchema(tradingConfig).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  config: tradingConfigSchema,
+});
+
+export const configChangeInsertSchema = createInsertSchema(configChange).omit({
+  id: true,
+  createdAt: true,
+  appliedAt: true,
+});
+
+export const configPresetInsertSchema = createInsertSchema(configPreset).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  config: tradingConfigSchema,
+});
+
+// Type exports
+export type TradingConfigRow = typeof tradingConfig.$inferInsert;
+export type ConfigChangeRow = typeof configChange.$inferInsert;
+export type ConfigPresetRow = typeof configPreset.$inferInsert;
+
+// Legacy compatibility exports
 export const botConfig = pgTable("bot_config", {
   id: serial("id").primaryKey(),
   isActive: boolean("is_active").notNull().default(false),

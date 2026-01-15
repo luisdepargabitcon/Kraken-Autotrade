@@ -11,6 +11,7 @@ import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { environment } from "./services/environment";
+import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
 
@@ -3067,6 +3068,9 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.status(500).json({ error: "B3_TEST_ERROR", message: error.message });
     }
   });
+
+  // Register configuration routes
+  registerConfigRoutes(app);
 
   return httpServer;
 }

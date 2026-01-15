@@ -8,7 +8,84 @@
 
 ## 🔄 Sesión 14-15 Enero 2026
 
-### 0. Etiqueta Windsurf en Dashboard
+### 0. Sistema de Configuración Dinámica (MVP - Fase 1)
+**Commit:** `WINDSURF CONFIG DASHBOARD`  
+**Fecha:** 15 Enero 2026  
+**Archivos:** 
+- `shared/config-schema.ts` (nuevo)
+- `shared/schema.ts` (extendido)
+- `server/services/ConfigService.ts` (nuevo)
+- `server/routes/config.ts` (nuevo)
+- `server/services/botLogger.ts` (eventos añadidos)
+- `db/migrations/001_create_config_tables.sql` (nuevo)
+
+**Descripción:**  
+Implementado sistema completo de configuración dinámica para señales de trading multi-exchange con:
+- **Esquemas Zod:** Validación de configuración (señales, exchanges, global)
+- **ConfigService:** Servicio singleton con cache, locking, validación y hot-reload
+- **API REST:** Endpoints completos para CRUD de configuraciones y presets
+- **Base de datos:** 3 nuevas tablas (trading_config, config_change, config_preset)
+- **Auditoría:** Historial completo de cambios con rollback
+- **Presets:** 3 presets predefinidos (conservative, balanced, aggressive)
+
+**Endpoints API:**
+```
+GET    /api/config              - Obtener configuración activa
+GET    /api/config/list         - Listar todas las configuraciones
+GET    /api/config/:id          - Obtener configuración específica
+POST   /api/config              - Crear nueva configuración
+PUT    /api/config/:id          - Actualizar configuración
+POST   /api/config/:id/activate - Activar configuración
+POST   /api/config/validate     - Validar sin guardar
+GET    /api/config/presets      - Listar presets
+POST   /api/config/presets      - Crear preset
+POST   /api/config/presets/:name/activate - Activar preset
+GET    /api/config/:id/history  - Historial de cambios
+POST   /api/config/rollback     - Rollback a cambio anterior
+GET    /api/config/:id/export   - Exportar configuración JSON
+POST   /api/config/import       - Importar configuración JSON
+GET    /api/config/health       - Health check del servicio
+```
+
+**Estructura de Configuración:**
+```typescript
+{
+  global: {
+    riskPerTradePct: number,
+    maxTotalExposurePct: number,
+    maxPairExposurePct: number,
+    dryRunMode: boolean,
+    regimeDetectionEnabled: boolean,
+    regimeRouterEnabled: boolean
+  },
+  signals: {
+    TREND: { minSignals, maxSignals, currentSignals, description },
+    RANGE: { minSignals, maxSignals, currentSignals, description },
+    TRANSITION: { minSignals, maxSignals, currentSignals, description }
+  },
+  exchanges: {
+    kraken: { enabled, minOrderUsd, maxOrderUsd, maxSpreadPct, ... },
+    revolutx: { enabled, minOrderUsd, maxOrderUsd, maxSpreadPct, ... }
+  }
+}
+```
+
+**Guardrails implementados:**
+- Validación de rangos seguros para todos los parámetros
+- Cross-validation (ej: maxTotalExposure >= maxPairExposure)
+- Locking para evitar cambios concurrentes
+- Fallback a preset seguro si configuración inválida
+
+**Eventos de logging añadidos:**
+- `CONFIG_CREATED`, `CONFIG_UPDATED`, `CONFIG_ACTIVATED`
+- `CONFIG_ROLLBACK`, `CONFIG_IMPORTED`
+- `PRESET_CREATED`, `PRESET_ACTIVATED`
+
+**Motivo:** Permitir ajuste dinámico de parámetros de trading sin reiniciar el bot, con auditoría completa y capacidad de rollback para entornos de producción.
+
+---
+
+### 1. Etiqueta Windsurf en Dashboard
 **Commit:** _(pendiente de despliegue en VPS)_  
 **Fecha:** 15 Enero 2026  
 **Archivos:** `client/src/components/dashboard/EnvironmentBadge.tsx`
@@ -317,6 +394,96 @@ Math.min(baseMinSignals, 4)
 **Impacto esperado:**
 - `TRANSITION` permite umbral 4 de forma efectiva.
 - El `PAIR_DECISION_TRACE` debe mostrar `minSignalsRequired: 4` cuando el régimen sea `TRANSITION`.
+
+---
+
+## 🔄 Sesión 15 Enero 2026 (Dashboard Configuración Dinámica)
+
+### 6. Dashboard de Configuración de Señales con Inteligencia
+
+**Commit:** "WINDSURF 4 SEÑALES"  
+**Fecha:** 15 Enero 2026  
+**Archivos:**
+- `client/src/components/dashboard/SignalThresholdConfig.tsx` (nuevo)
+- `server/routes/signalConfig.ts` (nuevo)
+- `server/storage.ts` (métodos añadidos)
+- `server/services/botLogger.ts` (evento añadido)
+- `server/services/tradingEngine.ts` (integración dinámica)
+- `client/src/pages/Settings.tsx` (integración UI)
+
+**Descripción:**
+Implementación completa de dashboard para configuración dinámica de umbrales de señales por régimen de mercado, con presets vs personalización, simulador de impacto y optimización inteligente.
+
+**Características implementadas:**
+
+#### 6.1 Componente React: SignalThresholdConfig
+```typescript
+// Presets vs Custom Configuration
+<Tabs value={selectedRegime}>
+  <TabsContent value="TREND">
+    <Card title="Configuración Predeterminada">
+      <div className="text-2xl font-bold text-primary">{currentConfig?.current}</div>
+      <Progress value={progress} />
+    </Card>
+    <Card title="Configuración Personalizada">
+      <Switch checked={isCustomActive} />
+      <Input type="number" value={customValue} />
+      <Alert className="bg-purple-500/10">
+        Sugerencia IA: {suggestion.recommended} señales
+      </Alert>
+    </Card>
+  </TabsContent>
+</Tabs>
+```
+
+#### 6.2 API Endpoints
+```typescript
+// GET /api/trading/signals/config
+// PUT /api/trading/signals/config
+// POST /api/trading/signals/simulate
+// GET /api/trading/signals/optimize
+// GET /api/trading/signals/performance
+```
+
+#### 6.3 Integración con Trading Engine
+```typescript
+getRegimeMinSignals(regime: MarketRegime, baseMinSignals: number): number {
+  // Check if we have custom signal configuration
+  const customConfig = this.getCustomSignalConfig();
+  if (customConfig && customConfig[regime.toLowerCase()]) {
+    const customMinSignals = customConfig[regime.toLowerCase()].current;
+    if (customMinSignals >= 1 && customMinSignals <= 10) {
+      return customMinSignals;
+    }
+  }
+  // Fallback to preset values
+  return Math.max(baseMinSignals, preset.minSignals);
+}
+```
+
+**Funcionalidades clave:**
+
+- **Presets inteligentes:** Valores optimizados por defecto (TREND: 5, RANGE: 6, TRANSITION: 4)
+- **Personalización dinámica:** Override por régimen con validación en tiempo real
+- **Simulador de impacto:** Predice trades adicionales, riesgo y confianza
+- **Optimización IA:** Sugerencias basadas en histórico de rendimiento
+- **Métricas en vivo:** Análisis de rendimiento por configuración
+- **Integración transparente:** Sin reinicios, cambios hot-reload
+
+**Configuración por defecto:**
+```typescript
+const DEFAULT_SIGNAL_CONFIG = {
+  trend: { min: 3, max: 8, current: 5 },
+  range: { min: 4, max: 10, current: 6 },
+  transition: { min: 2, max: 6, current: 4 }
+};
+```
+
+**Impacto esperado:**
+- Control total sobre umbrales de señales sin modificar código
+- Experimentación segura con rollback instantáneo
+- Optimización basada en datos reales
+- Reducción del cuello de botella actual (falta de BUY)
 
 ---
 
