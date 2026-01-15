@@ -626,8 +626,13 @@ export class TelegramService {
       await this.handleGanancias(msg.chat.id);
     });
 
-    this.bot.onText(/\/logs/, async (msg) => {
-      await this.handleLogs(msg.chat.id);
+    this.bot.onText(/\/logs(.*)/, async (msg, match) => {
+      const args = match?.[1]?.trim().split(/\s+/) || [];
+      await this.handleLogs(msg.chat.id, args);
+    });
+
+    this.bot.onText(/\/log\s+(\d+)/, async (msg, match) => {
+      await this.handleLogDetail(msg.chat.id, match?.[1]);
     });
 
     // Callback query handler for inline buttons
@@ -993,79 +998,126 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
     }
   }
 
-  private async handleLogs(chatId: number) {
+  private async handleLogs(chatId: number, args?: string[]) {
     try {
-      const events = await botLogger.getDbEvents(100);
+      // Parse arguments
+      const limit = args?.find(arg => /^\d+$/.test(arg)) ? parseInt(args.find(arg => /^\d+$/.test(arg))!) : 10;
+      const levelFilter = args?.find(arg => arg.startsWith('level='))?.split('=')[1]?.toUpperCase();
+      const typeFilter = args?.find(arg => arg.startsWith('type='))?.split('=')[1]?.toUpperCase();
+      
+      const events = await botLogger.getDbEvents(Math.min(limit, 100));
       
       if (events.length === 0) {
         await this.bot?.sendMessage(chatId, "<b>📭 Sin logs recientes</b>\n\nNo hay eventos registrados.", { parse_mode: "HTML" });
         return;
       }
       
-      // Filter last 6 hours
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
-      const recentEvents = events.filter(e => {
-        const eventDate = e.timestamp ? new Date(e.timestamp) : null;
-        return eventDate && eventDate >= sixHoursAgo;
-      });
+      // Apply filters
+      let filteredEvents = events;
+      if (levelFilter && ['INFO', 'WARN', 'ERROR'].includes(levelFilter)) {
+        filteredEvents = filteredEvents.filter(e => e.level === levelFilter);
+      }
+      if (typeFilter) {
+        filteredEvents = filteredEvents.filter(e => e.type === typeFilter);
+      }
       
-      if (recentEvents.length === 0) {
-        await this.bot?.sendMessage(chatId, "<b>📭 Sin logs en las últimas 6 horas</b>\n\nNo hay eventos recientes.", { parse_mode: "HTML" });
+      if (filteredEvents.length === 0) {
+        await this.bot?.sendMessage(chatId, `<b>📭 Sin eventos con filtros</b>\n\nNivel: ${levelFilter || 'cualquiera'}\nTipo: ${typeFilter || 'cualquiera'}`, { parse_mode: "HTML" });
         return;
       }
       
-      // Group by type for summary
-      const typeCount = new Map<string, number>();
-      const errorTypes: string[] = [];
-      
-      for (const event of recentEvents) {
-        const count = typeCount.get(event.type) || 0;
-        typeCount.set(event.type, count + 1);
-        
-        if (event.level === "ERROR") {
-          errorTypes.push(`${event.type}: ${event.message.slice(0, 50)}`);
-        }
+      // Show summary
+      let message = `<b>📋 Logs recientes</b>\n`;
+      message += `<i>Mostrando ${filteredEvents.length} de ${events.length} eventos</i>\n`;
+      if (levelFilter || typeFilter) {
+        message += `<i>Filtros: ${levelFilter ? `Nivel=${levelFilter}` : ''} ${typeFilter ? `Tipo=${typeFilter}` : ''}</i>\n`;
       }
-      
-      let message = `<b>📋 Logs (últimas 6 horas)</b>\n`;
-      message += `<i>Total: ${recentEvents.length} eventos</i>\n`;
       message += `━━━━━━━━━━━━━━━━━━━\n\n`;
       
-      // Show event type summary
-      message += `<b>📊 Resumen por tipo:</b>\n`;
-      const sortedTypes = Array.from(typeCount.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
-      for (const [type, count] of sortedTypes) {
-        const emoji = type.includes("ERROR") ? "❌" : type.includes("TRADE") ? "💹" : type.includes("SG_") ? "🛡️" : "📝";
-        message += `${emoji} ${type}: ${count}\n`;
-      }
-      
-      // Show recent errors if any
-      if (errorTypes.length > 0) {
-        message += `\n<b>⚠️ Errores recientes:</b>\n`;
-        for (const error of errorTypes.slice(0, 5)) {
-          message += `❌ ${escapeHtml(error)}\n`;
-        }
-      }
-      
-      // Show last 8 events with message content
-      message += `\n<b>🕒 Últimos eventos:</b>\n`;
-      for (const event of recentEvents.slice(0, 8)) {
-        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString("es-ES") : "N/A";
+      // Show last events with details
+      const recentEvents = filteredEvents.slice(0, 10);
+      for (const event of recentEvents) {
+        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid" }) : "N/A";
         const levelEmoji = event.level === "ERROR" ? "❌" : event.level === "WARN" ? "⚠️" : "ℹ️";
-        // Truncate message to 60 chars to keep Telegram message manageable
-        const msgPreview = event.message ? event.message.slice(0, 60).replace(/\n/g, " ") : "";
-        const msgSuffix = event.message && event.message.length > 60 ? "..." : "";
+        
         message += `<code>${time}</code> ${levelEmoji} <b>${escapeHtml(event.type)}</b>\n`;
-        if (msgPreview) {
+        if (event.message) {
+          const msgPreview = event.message.slice(0, 80).replace(/\n/g, " ");
+          const msgSuffix = event.message.length > 80 ? "..." : "";
           message += `   ↳ <i>${escapeHtml(msgPreview)}${msgSuffix}</i>\n`;
         }
+        message += `   🆔 <code>${event.id}</code>\n\n`;
       }
       
-      message += `\n<i>Env: ${environment.envTag}</i>`;
+      if (filteredEvents.length > 10) {
+        message += `<i>... y ${filteredEvents.length - 10} más</i>\n`;
+      }
+      
+      message += `\n💡 <i>Usa /log &lt;id&gt; para detalles</i>`;
+      message += `\n💡 <i>Usa /logs 50 para más eventos</i>`;
+      message += `\n💡 <i>Usa /logs level=ERROR o /logs type=TRADE_EXECUTED</i>`;
+      
+      message += `\n\n<i>Env: ${environment.envTag}</i>`;
 
       await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error obteniendo logs: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleLogDetail(chatId: number, logId?: string) {
+    if (!logId || !/^\d+$/.test(logId)) {
+      await this.bot?.sendMessage(chatId, "❌ ID de log inválido. Usa: /log <id>");
+      return;
+    }
+    
+    try {
+      const events = await botLogger.getDbEvents(1000);
+      const event = events.find(e => e.id === parseInt(logId));
+      
+      if (!event) {
+        await this.bot?.sendMessage(chatId, `❌ Log #${logId} no encontrado`);
+        return;
+      }
+      
+      const time = event.timestamp ? new Date(event.timestamp).toLocaleString("es-ES", { timeZone: "Europe/Madrid" }) : "N/A";
+      const levelEmoji = event.level === "ERROR" ? "❌" : event.level === "WARN" ? "⚠️" : "ℹ️";
+      
+      let message = `<b>📋 Detalle del Log #${event.id}</b>\n`;
+      message += `━━━━━━━━━━━━━━━━━━━\n\n`;
+      message += `${levelEmoji} <b>Tipo:</b> <code>${escapeHtml(event.type)}</code>\n`;
+      message += `🕒 <b>Fecha:</b> <code>${time}</code>\n`;
+      message += `📊 <b>Nivel:</b> <code>${event.level}</code>\n`;
+      let instanceId = 'N/A';
+      if (event.meta) {
+        try {
+          const metaObj = typeof event.meta === 'string' ? JSON.parse(event.meta) : event.meta;
+          instanceId = metaObj.instanceId || 'N/A';
+        } catch {
+          instanceId = 'N/A';
+        }
+      }
+      message += `🔗 <b>Instance:</b> <code>${escapeHtml(instanceId)}</code>\n\n`;
+      
+      message += `<b>📝 Mensaje:</b>\n`;
+      message += `<code>${escapeHtml(event.message || 'N/A')}</code>\n\n`;
+      
+      if (event.meta && Object.keys(event.meta).length > 0) {
+        message += `<b>🔧 Meta:</b>\n`;
+        try {
+          const metaJson = JSON.stringify(event.meta, null, 2);
+          const truncatedMeta = metaJson.length > 500 ? metaJson.substring(0, 500) + "..." : metaJson;
+          message += `<pre>${escapeHtml(truncatedMeta)}</pre>\n`;
+        } catch {
+          message += `<code>${escapeHtml(String(event.meta))}</code>\n`;
+        }
+      }
+      
+      message += `\n<i>Env: ${environment.envTag}</i>`;
+      
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo detalle del log: ${escapeHtml(error.message)}`);
     }
   }
 
