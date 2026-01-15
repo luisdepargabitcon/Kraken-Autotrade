@@ -316,25 +316,47 @@ export function TradingConfigDashboard() {
                   console.error(`[TradingConfigDashboard] Missing config for preset ${preset.name}`);
                 }
                 const signalsEntries = Object.entries(preset.config?.signals ?? {});
+                const getSignalColor = (regime: string) => {
+                  switch (regime) {
+                    case 'RANGE': return 'border-green-300/60 text-green-600';
+                    case 'TREND': return 'border-blue-300/60 text-blue-600';
+                    case 'TRANSITION': return 'border-yellow-300/60 text-yellow-600';
+                    default: return 'border-gray-300/60 text-gray-600';
+                  }
+                };
+
                 const signalBadges = signalsEntries.length > 0
-                  ? signalsEntries.map(([regime, signal]) => (
-                      <div
-                        key={regime}
-                        className="rounded-md border border-red-300/60 bg-transparent px-3 py-2 text-sm text-red-600"
-                      >
-                        <p className="font-semibold tracking-wide uppercase">{regime}</p>
-                        <p className="text-xs font-mono text-red-600/90">
-                          Min {signal.minSignals} · Current {signal.currentSignals} · Max {signal.maxSignals}
-                        </p>
-                        {signal.description && (
-                          <p className="mt-1 text-[11px] text-red-500/80">{signal.description}</p>
-                        )}
-                      </div>
-                    ))
+                  ? signalsEntries.map(([regime, signal]) => {
+                      const colorClass = getSignalColor(regime);
+                      return (
+                        <div
+                          key={regime}
+                          className={`rounded-md border ${colorClass} bg-transparent px-3 py-2 text-sm`}
+                        >
+                          <p className="font-semibold tracking-wide uppercase">{regime}</p>
+                          <p className={`text-xs font-mono ${colorClass.replace('text-', 'text-').replace('border-', 'text-')}/90`}>
+                            Min {signal.minSignals} · Current {signal.currentSignals} · Max {signal.maxSignals}
+                          </p>
+                          {signal.description && (
+                            <p className={`mt-1 text-[11px] ${colorClass.replace('text-', 'text-').replace('border-', 'text-')}/80`}>{signal.description}</p>
+                          )}
+                        </div>
+                      );
+                    })
                   : null;
 
+                const getConfigColor = (presetName: string) => {
+                  switch (presetName) {
+                    case 'conservative': return 'border-green-300/60 text-green-700';
+                    case 'balanced': return 'border-blue-300/60 text-blue-700';
+                    case 'aggressive': return 'border-yellow-300/60 text-yellow-700';
+                    default: return 'border-gray-300/60 text-gray-700';
+                  }
+                };
+
+                const configColor = getConfigColor(preset.name);
                 const configSummary = hasConfig ? (
-                  <div className="mt-3 grid gap-3 text-sm font-mono text-red-800 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className={`mt-3 grid gap-3 text-sm font-mono ${configColor.replace('text-', 'text-').replace('border-', 'text-')} sm:grid-cols-2 lg:grid-cols-3`}>
                     <span>Risk/Trade: {preset.config?.global.riskPerTradePct}%</span>
                     <span>Max Total Exp: {preset.config?.global.maxTotalExposurePct}%</span>
                     <span>Max Pair Exp: {preset.config?.global.maxPairExposurePct}%</span>
@@ -343,7 +365,7 @@ export function TradingConfigDashboard() {
                     <span>Regime Router: {preset.config?.global.regimeRouterEnabled ? "ON" : "OFF"}</span>
                   </div>
                 ) : (
-                  <p className="mt-2 text-sm text-red-600">No disponible</p>
+                  <p className={`mt-2 text-sm ${configColor.replace('text-', 'text-').replace('border-', 'text-')}`}>No disponible</p>
                 );
 
                 return (
@@ -373,21 +395,21 @@ export function TradingConfigDashboard() {
                       <CardDescription>{preset.description}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="rounded-md border border-red-300/60 bg-transparent px-4 py-3">
-                        <p className="text-sm font-semibold uppercase tracking-wide text-red-700">
+                      <div className={`rounded-md border ${configColor} bg-transparent px-4 py-3`}>
+                        <p className={`text-sm font-semibold uppercase tracking-wide ${configColor.replace('text-', 'text-').replace('border-', 'text-')}`}>
                           Configuración del preset
                         </p>
                         {configSummary}
                       </div>
 
-                      <div className="rounded-md border border-red-300/60 bg-transparent px-4 py-3">
-                        <p className="text-sm font-semibold uppercase tracking-wide text-red-700">
+                      <div className={`rounded-md border ${configColor} bg-transparent px-4 py-3`}>
+                        <p className={`text-sm font-semibold uppercase tracking-wide ${configColor.replace('text-', 'text-').replace('border-', 'text-')}`}>
                           Señales del preset
                         </p>
                         {signalBadges ? (
                           <div className="mt-3 flex flex-wrap gap-2">{signalBadges}</div>
                         ) : (
-                          <p className="mt-2 text-sm text-red-600">No disponible</p>
+                          <p className={`mt-2 text-sm ${configColor.replace('text-', 'text-').replace('border-', 'text-')}`}>No disponible</p>
                         )}
                       </div>
                     </CardContent>
