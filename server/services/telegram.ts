@@ -75,9 +75,26 @@ function formatDuration(openedAt: string | Date | null | undefined): string {
 // ============================================================
 // PANEL URL FOOTER - Añade enlace al panel en cada mensaje
 // ============================================================
+function normalizePanelUrl(url?: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    // Ensure URL has protocol
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    const parsed = new URL(url);
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function buildPanelUrlFooter(): string {
-  const url = environment.panelUrl;
-  return `\n🔗 <a href="${url}">Ver Panel</a>`;
+  const url = normalizePanelUrl(environment.panelUrl);
+  if (!url) {
+    return '\n📋 Panel no configurado';
+  }
+  return `\n🔗 <a href="${url}">Ver Panel</a>\n<i>${url}</i>`;
 }
 
 // ============================================================
@@ -98,7 +115,7 @@ interface BotStartedContext {
 function buildBotStartedHTML(ctx: BotStartedContext): string {
   const routerStatus = ctx.routerEnabled ? "ACTIVO" : "INACTIVO";
   return [
-    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`,
     `━━━━━━━━━━━━━━━━━━━`,
     `✅ <b>Bot Iniciado</b>`,
     ``,
@@ -133,7 +150,7 @@ interface HeartbeatContext {
 
 function buildHeartbeatHTML(ctx: HeartbeatContext): string {
   return [
-    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`,
     `━━━━━━━━━━━━━━━━━━━`,
     `✅ <b>Sistema operativo 24x7</b>`,
     `Verificación automática de funcionamiento`,
@@ -175,7 +192,7 @@ interface DailyReportContext {
 
 function buildDailyReportHTML(ctx: DailyReportContext): string {
   return [
-    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`,
     `━━━━━━━━━━━━━━━━━━━`,
     `📋 <b>REPORTE DIARIO (14:00)</b>`,
     ``,
@@ -740,7 +757,7 @@ export class TelegramService {
 
 /ayuda - Ver esta ayuda
 
-<i>KrakenBot.AI - Trading Autónomo</i>
+<i>${environment.botDisplayName} - Trading Autónomo</i>
     `.trim();
 
     await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
@@ -849,7 +866,7 @@ export class TelegramService {
 <b>Estado:</b> ${status}
 <b>Iniciado:</b> ${this.startTime.toLocaleString("es-ES")}
 
-<i>KrakenBot.AI</i>
+<i>${environment.botDisplayName}</i>
     `.trim();
 
     await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });

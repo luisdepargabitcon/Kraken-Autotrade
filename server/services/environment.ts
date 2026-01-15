@@ -44,6 +44,7 @@ class EnvironmentService {
   private _isVPS: boolean;
   private _isNAS: boolean;
   private _panelUrl: string;
+  private _botDisplayName: string;
 
   constructor() {
     this._version = `${getPackageVersion()}-${getGitCommit()}`;
@@ -64,6 +65,7 @@ class EnvironmentService {
       (this._isReplit ? `https://${process.env.REPLIT_DEV_DOMAIN || 'panel.replit.app'}` : 
        this._isVPS ? process.env.VPS_PANEL_URL || "http://localhost:3020" :
        process.env.NAS_PANEL_URL || "http://localhost:5000");
+    this._botDisplayName = process.env.BOT_DISPLAY_NAME || "WINDSURF CHESTER BOT";
   }
 
   get envTag(): EnvTag {
@@ -92,6 +94,10 @@ class EnvironmentService {
 
   get panelUrl(): string {
     return this._panelUrl;
+  }
+
+  get botDisplayName(): string {
+    return this._botDisplayName;
   }
 
   getMessagePrefix(dryRun: boolean): string {
