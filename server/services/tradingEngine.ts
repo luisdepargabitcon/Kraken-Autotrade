@@ -2931,8 +2931,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
-              // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
-              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+              // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
+              const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
               regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
@@ -3801,8 +3802,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
-              // Adjust minSignals based on regime (RANGE = 6, TREND = 5)
-              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+              // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
+              const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
               regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
@@ -6682,7 +6684,8 @@ ${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUs
             const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
             regime = regimeAnalysis.regime;
             regimeReason = regimeAnalysis.reason;
-            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+            const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
           } catch (err) {
             regime = "ERROR";
             regimeReason = "Error obteniendo régimen";
@@ -6733,7 +6736,8 @@ ${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUs
             const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
             regime = regimeAnalysis.regime;
             regimeReason = regimeAnalysis.reason;
-            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
+            const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
           } catch (err) {
             regime = "ERROR";
             regimeReason = "Error obteniendo régimen";
