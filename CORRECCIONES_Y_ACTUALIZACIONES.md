@@ -487,6 +487,42 @@ const DEFAULT_SIGNAL_CONFIG = {
 
 ---
 
+## 🔄 Sesión 15-16 Enero 2026 (Config Dashboard UI + Despliegue STG)
+
+### 7. UI Presets: Bloques de Detalle con Texto Rojo (sin fondo)
+
+**Commit:** `WINDSURF CONFIG UI`  
+**Fecha:** 16 Enero 2026  
+**Archivos:**
+- `client/src/components/dashboard/TradingConfigDashboard.tsx` (ajustes de estilo)
+- `server/services/ConfigService.ts` (include config en presets)
+- `scripts/apply-config-migration.ts` (fix ES module __dirname)
+- `db/migrations/001_create_config_tables.sql` (idempotente DROP TRIGGER)
+
+**Descripción:**
+- **Backend:** `/api/config/presets` ahora devuelve el objeto `config` completo por preset.
+- **UI:** Se eliminó el fondo degradado rosado de los bloques de presets; ahora solo el texto es rojo con bordes sutiles y fondo transparente, manteniendo la legibilidad del dashboard.
+- **Migración:** Se hizo idempotente la migración con `DROP TRIGGER IF EXISTS` para evitar errores al reejecutar.
+- **Despliegue:** Aplicado en VPS/STG; endpoints responden 200 y UI muestra bloques rojos sin fondo.
+
+**Cambios de estilo:**
+```tsx
+// Antes: fondo rosado
+className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm"
+// Después: fondo transparente, texto rojo
+className="rounded-md border border-red-300/60 bg-transparent px-4 py-3"
+```
+
+**Verificación:**
+- ✅ `/api/config/health` 200
+- ✅ `/api/config/presets` 200 con `config` completo
+- ✅ `/api/config/active` 200
+- ✅ Bloques de presets visibles en STG con texto rojo, sin fondo
+
+**Motivo:** Mejorar legibilidad y estética del dashboard mientras se mantiene la información destacada.
+
+---
+
 ## 📊 Resumen de Cambios por Categoría
 
 ### Correcciones de Bugs

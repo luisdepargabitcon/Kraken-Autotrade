@@ -320,14 +320,14 @@ export function TradingConfigDashboard() {
                   ? signalsEntries.map(([regime, signal]) => (
                       <div
                         key={regime}
-                        className="rounded-md border border-red-300/80 bg-white/80 px-3 py-2 text-sm text-red-700 shadow-sm"
+                        className="rounded-md border border-red-300/60 bg-transparent px-3 py-2 text-sm text-red-600"
                       >
-                        <p className="font-semibold tracking-wide">{regime}</p>
-                        <p className="text-xs font-mono">
+                        <p className="font-semibold tracking-wide uppercase">{regime}</p>
+                        <p className="text-xs font-mono text-red-600/90">
                           Min {signal.minSignals} · Current {signal.currentSignals} · Max {signal.maxSignals}
                         </p>
                         {signal.description && (
-                          <p className="mt-1 text-[11px] text-red-600/80">{signal.description}</p>
+                          <p className="mt-1 text-[11px] text-red-500/80">{signal.description}</p>
                         )}
                       </div>
                     ))
@@ -373,15 +373,15 @@ export function TradingConfigDashboard() {
                       <CardDescription>{preset.description}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm">
-                        <p className="text-sm font-semibold uppercase tracking-wide text-red-800">
+                      <div className="rounded-md border border-red-300/60 bg-transparent px-4 py-3">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-red-700">
                           Configuración del preset
                         </p>
                         {configSummary}
                       </div>
 
-                      <div className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm">
-                        <p className="text-sm font-semibold uppercase tracking-wide text-red-800">
+                      <div className="rounded-md border border-red-300/60 bg-transparent px-4 py-3">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-red-700">
                           Señales del preset
                         </p>
                         {signalBadges ? (
