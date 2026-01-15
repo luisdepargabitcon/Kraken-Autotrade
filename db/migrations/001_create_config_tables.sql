@@ -247,9 +247,11 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_trading_config_updated_at ON trading_config;
 CREATE TRIGGER update_trading_config_updated_at BEFORE UPDATE ON trading_config
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_config_preset_updated_at ON config_preset;
 CREATE TRIGGER update_config_preset_updated_at BEFORE UPDATE ON config_preset
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
