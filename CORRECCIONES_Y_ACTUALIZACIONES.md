@@ -295,6 +295,31 @@ TRANSITION: {
 
 ---
 
+#### 5.2 Fix definitivo: minSignalsRequired=4 en TRANSITION (trace + scans)
+**Commit:** `eaa17ea` → _(base)_ y ajuste final en este commit local  
+**Fecha:** 15 Enero 2026  
+**Archivo:** `server/services/tradingEngine.ts`
+
+**Problema:**
+- En régimen `TRANSITION` seguía apareciendo `minSignalsRequired: 5` en `PAIR_DECISION_TRACE`.
+- Causa raíz: el cálculo de mínimos usaba `Math.max(4, baseMinSignals)` (si `baseMinSignals=5`, el resultado siempre es 5).
+
+**Solución aplicada (fuente única de verdad para TRANSITION):**
+- En los 3 puntos donde se calcula el mínimo ajustado (modo `scans`, pre-cálculo para estrategia candles, y trace/cache candles) se reemplazó:
+```ts
+Math.max(4, baseMinSignals)
+```
+por:
+```ts
+Math.min(baseMinSignals, 4)
+```
+
+**Impacto esperado:**
+- `TRANSITION` permite umbral 4 de forma efectiva.
+- El `PAIR_DECISION_TRACE` debe mostrar `minSignalsRequired: 4` cuando el régimen sea `TRANSITION`.
+
+---
+
 ## 📊 Resumen de Cambios por Categoría
 
 ### Correcciones de Bugs

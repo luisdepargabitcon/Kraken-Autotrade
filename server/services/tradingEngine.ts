@@ -2792,7 +2792,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       // Ajustar minSignalsRequired según régimen (modo scans)
       const baseMinSignalsScan = signal.minSignalsRequired ?? 5;
       const adjustedMinSignalsScan = earlyRegime === "TRANSITION" 
-        ? Math.max(4, baseMinSignalsScan) 
+        ? Math.min(baseMinSignalsScan, 4) 
         : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsScan) : baseMinSignalsScan);
       
       // Actualizar trace con señal raw + régime + signalsCount
@@ -3591,7 +3591,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       // Pre-calcular adjustedMinSignals para régimen (usado en analyzeWithCandleStrategy)
       const baseMinSignalsForStrategy = 5; // Base para momentum
       const adjustedMinSignalsForStrategy = earlyRegime === "TRANSITION" 
-        ? Math.max(4, baseMinSignalsForStrategy) 
+        ? Math.min(baseMinSignalsForStrategy, 4) 
         : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsForStrategy) : baseMinSignalsForStrategy);
       
       // === ROUTER: Select strategy based on regime ===
@@ -3643,7 +3643,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       // Ajustar minSignalsRequired según régimen (antes de guardar en trace/cache)
       const baseMinSignals = signal.minSignalsRequired ?? 5;
       const adjustedMinSignals = earlyRegime === "TRANSITION" 
-        ? Math.max(4, baseMinSignals) 
+        ? Math.min(baseMinSignals, 4) 
         : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) : baseMinSignals);
       
       // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
