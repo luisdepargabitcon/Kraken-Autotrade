@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.git/
+attached_assets/
+*.tgz
+bot_bundle*.txt
+*.log
+coverage/
+.cache/
