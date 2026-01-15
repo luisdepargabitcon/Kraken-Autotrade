@@ -13,7 +13,9 @@ export interface ExchangeStatus {
   makerFeePct: number;
 }
 
-class ExchangeFactoryClass {
+export class ExchangeFactoryClass {
+  private static instance: ExchangeFactoryClass;
+  
   private activeExchange: ExchangeType = 'kraken';
   private tradingExchange: ExchangeType = 'kraken';
   private dataExchange: ExchangeType = 'kraken';
@@ -21,6 +23,13 @@ class ExchangeFactoryClass {
     kraken: true,
     revolutx: false
   };
+
+  static getInstance(): ExchangeFactoryClass {
+    if (!ExchangeFactoryClass.instance) {
+      ExchangeFactoryClass.instance = new ExchangeFactoryClass();
+    }
+    return ExchangeFactoryClass.instance;
+  }
 
   getExchange(type?: ExchangeType): IExchangeService {
     const exchangeType = type || this.activeExchange;

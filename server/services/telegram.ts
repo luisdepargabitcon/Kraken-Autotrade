@@ -5,6 +5,7 @@ import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
 import { botLogger } from "./botLogger";
+import { ExchangeFactoryClass } from "./exchanges/ExchangeFactory";
 
 // ============================================================
 // HTML ESCAPE HELPER - Previene markup roto en mensajes
@@ -618,12 +619,14 @@ export class TelegramService {
       await this.handleChannels(msg.chat.id);
     });
 
-    this.bot.onText(/\/posiciones/, async (msg) => {
-      await this.handlePosiciones(msg.chat.id);
+    this.bot.onText(/\/balance(.*)/, async (msg, match) => {
+      const args = match?.[1]?.trim().split(/\s+/) || [];
+      await this.handleBalance(msg.chat.id, args);
     });
 
-    this.bot.onText(/\/ganancias/, async (msg) => {
-      await this.handleGanancias(msg.chat.id);
+    this.bot.onText(/\/ultimas(.*)/, async (msg, match) => {
+      const args = match?.[1]?.trim().split(/\s+/) || [];
+      await this.handleUltimas(msg.chat.id, args);
     });
 
     this.bot.onText(/\/logs(.*)/, async (msg, match) => {
@@ -709,28 +712,55 @@ export class TelegramService {
     }
   }
 
-  private async handleUltimas(chatId: number) {
+  private async handleUltimas(chatId: number, args?: string[]) {
     try {
-      const trades = await storage.getTrades(5);
+      const limit = args?.[0] ? parseInt(args[0]) : 5;
+      const exchangeFilter = args?.find(arg => arg.startsWith('exchange='))?.split('=')[1]?.toLowerCase();
       
-      if (trades.length === 0) {
+      const fills = await storage.getRecentTradeFills(Math.min(limit, 50), exchangeFilter);
+      
+      if (fills.length === 0) {
         await this.bot?.sendMessage(chatId, "📭 No hay operaciones recientes.");
         return;
       }
 
-      let message = "<b>📈 Últimas operaciones:</b>\n\n";
-      
-      for (const trade of trades) {
-        const emoji = trade.type === "buy" ? "🟢" : "🔴";
-        const tipo = trade.type === "buy" ? "Compra" : "Venta";
-        const fecha = trade.executedAt ? new Date(trade.executedAt).toLocaleDateString("es-ES") : "Pendiente";
-        
-        message += `${emoji} <b>${tipo}</b> ${escapeHtml(trade.pair)}\n`;
-        message += `   Precio: $${parseFloat(trade.price).toFixed(2)}\n`;
-        message += `   Cantidad: ${escapeHtml(trade.amount)}\n`;
-        message += `   Fecha: ${fecha}\n\n`;
+      // Dedupe by txid (avoid duplicates from same fill)
+      const uniqueFills = new Map();
+      for (const fill of fills) {
+        if (!uniqueFills.has(fill.txid)) {
+          uniqueFills.set(fill.txid, fill);
+        }
       }
 
+      let message = `<b>📈 Últimas operaciones</b>\n`;
+      message += `<i>Mostrando ${uniqueFills.size} operaciones únicas</i>\n`;
+      if (exchangeFilter) {
+        message += `<i>Filtro: Exchange=${exchangeFilter}</i>\n`;
+      }
+      message += `━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      // Sort by executedAt desc
+      const sortedFills = Array.from(uniqueFills.values()).sort((a, b) => 
+        new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime()
+      );
+      
+      for (const fill of sortedFills.slice(0, limit)) {
+        const emoji = fill.type === "buy" ? "🟢" : "🔴";
+        const tipo = fill.type === "buy" ? "Compra" : "Venta";
+        const fecha = fill.executedAt ? new Date(fill.executedAt).toLocaleDateString("es-ES", { timeZone: "Europe/Madrid" }) : "Pendiente";
+        const hora = fill.executedAt ? new Date(fill.executedAt).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid" }) : "";
+        
+        message += `${emoji} <b>${tipo}</b> ${escapeHtml(fill.pair)}\n`;
+        message += `   Precio: $${parseFloat(fill.price).toFixed(2)}\n`;
+        message += `   Cantidad: ${escapeHtml(fill.amount)}\n`;
+        message += `   Coste: $${parseFloat(fill.cost).toFixed(2)}\n`;
+        message += `   Fecha: ${fecha} ${hora}\n`;
+        message += `   🆔 <code>${fill.txid.slice(0, 8)}...</code>\n\n`;
+      }
+
+      message += `\n💡 <i>Usa /ultimas 20 para más operaciones</i>`;
+      message += `\n💡 <i>Usa /ultimas exchange=kraken para filtrar</i>`;
+      
       await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error obteniendo operaciones: ${escapeHtml(error.message)}`);
@@ -768,30 +798,105 @@ export class TelegramService {
     await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
   }
 
-  private async handleBalance(chatId: number) {
+  private async handleBalance(chatId: number, args?: string[]) {
     try {
-      if (!this.engineController?.getBalance) {
-        await this.bot?.sendMessage(chatId, "⚠️ Kraken no está conectado. Configura las credenciales primero.");
-        return;
+      const exchangeArg = args?.[0]?.toLowerCase();
+      const exchangeFactory = ExchangeFactoryClass.getInstance();
+      
+      let message = `<b>💰 Balance</b>\n━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      if (exchangeArg === 'all') {
+        // Show all configured exchanges
+        const exchangeStatuses = exchangeFactory.getExchangeStatus();
+        for (const status of exchangeStatuses) {
+          if (!status.configured) continue;
+          
+          try {
+            const exchange = exchangeFactory.getExchange(status.name);
+            const balances = await exchange.getBalance();
+            
+            message += `<b>${status.displayName}:</b>\n`;
+            
+            // Show non-zero balances
+            const nonZeroBalances = Object.entries(balances)
+              .filter(([_, amount]) => parseFloat(String(amount)) > 0.00000001)
+              .sort(([_, a], [__, b]) => parseFloat(String(b)) - parseFloat(String(a)));
+            
+            if (nonZeroBalances.length === 0) {
+              message += `   <i>Sin fondos</i>\n`;
+            } else {
+              for (const [asset, amount] of nonZeroBalances.slice(0, 10)) {
+                const amountNum = parseFloat(String(amount));
+                if (asset === 'ZUSD' || asset === 'USD') {
+                  message += `   ${asset}: <b>$${amountNum.toFixed(2)}</b>\n`;
+                } else if (amountNum > 0.00000001) {
+                  message += `   ${asset}: <b>${amountNum.toFixed(6)}</b>\n`;
+                }
+              }
+            }
+            message += `\n`;
+          } catch (error: any) {
+            message += `<b>${status.displayName}:</b> ❌ ${escapeHtml(error.message)}\n\n`;
+          }
+        }
+      } else if (exchangeArg && ['kraken', 'revolutx'].includes(exchangeArg)) {
+        // Show specific exchange
+        try {
+          const exchange = exchangeFactory.getExchange(exchangeArg as any);
+          const balances = await exchange.getBalance();
+          
+          message += `<b>${exchangeArg.toUpperCase()}:</b>\n`;
+          
+          const nonZeroBalances = Object.entries(balances)
+            .filter(([_, amount]) => parseFloat(String(amount)) > 0.00000001)
+            .sort(([_, a], [__, b]) => parseFloat(String(b)) - parseFloat(String(a)));
+          
+          if (nonZeroBalances.length === 0) {
+            message += `   <i>Sin fondos</i>\n`;
+          } else {
+            for (const [asset, amount] of nonZeroBalances) {
+              const amountNum = parseFloat(String(amount));
+              if (asset === 'ZUSD' || asset === 'USD') {
+                message += `   ${asset}: <b>$${amountNum.toFixed(2)}</b>\n`;
+              } else if (amountNum > 0.00000001) {
+                message += `   ${asset}: <b>${amountNum.toFixed(6)}</b>\n`;
+              }
+            }
+          }
+        } catch (error: any) {
+          message = `❌ Error obteniendo balance de ${exchangeArg}: ${escapeHtml(error.message)}`;
+        }
+      } else {
+        // Default: show trading exchange balance
+        const tradingExchange = exchangeFactory.getTradingExchange();
+        const balances = await tradingExchange.getBalance();
+        
+        message += `<b>${tradingExchange.exchangeName.toUpperCase()} (Trading):</b>\n`;
+        
+        const nonZeroBalances = Object.entries(balances)
+          .filter(([_, amount]) => parseFloat(String(amount)) > 0.00000001)
+          .sort(([_, a], [__, b]) => parseFloat(String(b)) - parseFloat(String(a)));
+        
+        if (nonZeroBalances.length === 0) {
+          message += `   <i>Sin fondos</i>\n`;
+        } else {
+          for (const [asset, amount] of nonZeroBalances) {
+            const amountNum = parseFloat(String(amount));
+            if (asset === 'ZUSD' || asset === 'USD') {
+              message += `   ${asset}: <b>$${amountNum.toFixed(2)}</b>\n`;
+            } else if (amountNum > 0.00000001) {
+              message += `   ${asset}: <b>${amountNum.toFixed(6)}</b>\n`;
+            }
+          }
+        }
+        
+        message += `\n💡 <i>Usa /balance all para todos los exchanges</i>`;
+        message += `\n💡 <i>Usa /balance kraken o /balance revolutx para específico</i>`;
       }
-      const balances = await this.engineController.getBalance();
-      const usd = parseFloat(balances?.ZUSD || balances?.USD || "0");
-      const btc = parseFloat(balances?.XXBT || balances?.XBT || "0");
-      const eth = parseFloat(balances?.XETH || balances?.ETH || "0");
-      const sol = parseFloat(balances?.SOL || "0");
-
-      const message = `
-<b>💰 Balance Actual</b>
-
-<b>USD:</b> $${usd.toFixed(2)}
-<b>BTC:</b> ${btc.toFixed(6)}
-<b>ETH:</b> ${eth.toFixed(6)}
-<b>SOL:</b> ${sol.toFixed(4)}
-
-<i>Actualizado: ${new Date().toLocaleString("es-ES")}</i>
-      `.trim();
-
-      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+      
+      message += `\n<i>Actualizado: ${formatSpanishDate()}</i>`;
+      
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error obteniendo balance: ${escapeHtml(error.message)}`);
     }
@@ -929,12 +1034,7 @@ export class TelegramService {
 
   private async handleGanancias(chatId: number) {
     try {
-      const trades = await storage.getTrades(500); // Get recent trades
-      
-      const now = new Date();
-      const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
+      // Try to get P&L from lot_matches first (preferred source)
       let pnl24h = 0;
       let pnlWeek = 0;
       let pnlTotal = 0;
@@ -942,25 +1042,65 @@ export class TelegramService {
       let tradesWeek = 0;
       let wins = 0;
       let losses = 0;
+      let dataSource = "lot_matches";
       
-      for (const trade of trades) {
-        if (trade.type !== "sell") continue;
+      try {
+        const lotMatches = await storage.getLotMatchesByLotId("all"); // This might not exist, so we'll try different approaches
         
-        const pnl = parseFloat(trade.realizedPnlUsd?.toString() || "0");
-        const tradeDate = trade.executedAt ? new Date(trade.executedAt) : null;
+        // If lot_matches doesn't work, fallback to training_trades
+        if (!lotMatches || lotMatches.length === 0) {
+          throw new Error("No lot matches found");
+        }
         
-        pnlTotal += pnl;
-        if (pnl > 0) wins++;
-        else if (pnl < 0) losses++;
+        const now = new Date();
+        const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         
-        if (tradeDate) {
-          if (tradeDate >= last24h) {
-            pnl24h += pnl;
-            trades24h++;
+        for (const match of lotMatches) {
+          const pnl = parseFloat(match.pnlNet?.toString() || "0");
+          const matchDate = match.createdAt ? new Date(match.createdAt) : null;
+          
+          pnlTotal += pnl;
+          if (pnl > 0) wins++;
+          else if (pnl < 0) losses++;
+          
+          if (matchDate) {
+            if (matchDate >= last24h) {
+              pnl24h += pnl;
+              trades24h++;
+            }
+            if (matchDate >= lastWeek) {
+              pnlWeek += pnl;
+              tradesWeek++;
+            }
           }
-          if (tradeDate >= lastWeek) {
-            pnlWeek += pnl;
-            tradesWeek++;
+        }
+      } catch {
+        // Fallback to training_trades if lot_matches fails
+        dataSource = "training_trades";
+        const trainingTrades = await storage.getTrainingTrades({ closed: true, limit: 500 });
+        
+        const now = new Date();
+        const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        
+        for (const trade of trainingTrades) {
+          const pnl = parseFloat(trade.pnlNet?.toString() || "0");
+          const tradeDate = trade.exitTs ? new Date(trade.exitTs) : null; // Use exitTs instead of closedAt
+          
+          pnlTotal += pnl;
+          if (pnl > 0) wins++;
+          else if (pnl < 0) losses++;
+          
+          if (tradeDate) {
+            if (tradeDate >= last24h) {
+              pnl24h += pnl;
+              trades24h++;
+            }
+            if (tradeDate >= lastWeek) {
+              pnlWeek += pnl;
+              tradesWeek++;
+            }
           }
         }
       }
@@ -989,6 +1129,7 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
    ❌ Perdedores: ${losses}
    🎯 Win Rate: ${winRate.toFixed(1)}%
 
+<i>Fuente: ${dataSource}</i>
 <i>Actualizado: ${formatSpanishDate()}</i>
       `.trim();
 
