@@ -1349,7 +1349,8 @@ export class TradingEngine {
   private async analyzeWithCandleStrategy(
     pair: string,
     timeframe: string,
-    candle: OHLCCandle
+    candle: OHLCCandle,
+    adjustedMinSignals?: number
   ): Promise<TradeSignal> {
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
     const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
@@ -1376,7 +1377,7 @@ export class TradingEngine {
           confidence: 0.3, 
           reason: `Señal filtrada por MTF: ${mtfBoost.reason}`,
           signalsCount: signal.signalsCount,
-          minSignalsRequired: signal.minSignalsRequired,
+          minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
         };
       }
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
@@ -2788,7 +2789,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         earlyRegimeReason = "Regime detection disabled in config";
       }
       
-      // Actualizar trace con señal raw + régimen + signalsCount
+      // Ajustar minSignalsRequired según régimen (modo scans)
+      const baseMinSignalsScan = signal.minSignalsRequired ?? 5;
+      const adjustedMinSignalsScan = earlyRegime === "TRANSITION" 
+        ? Math.max(4, baseMinSignalsScan) 
+        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsScan) : baseMinSignalsScan);
+      
+      // Actualizar trace con señal raw + régime + signalsCount
       this.updatePairTrace(pair, {
         selectedStrategy: strategy,
         rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
@@ -2796,7 +2803,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         regime: earlyRegime,
         regimeReason: earlyRegimeReason,
         signalsCount: signal.signalsCount ?? null,
-        minSignalsRequired: signal.minSignalsRequired ?? null,
+        minSignalsRequired: adjustedMinSignalsScan,
         exposureAvailableUsd: exposure.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         finalReason: signal.reason || "Sin señal",
@@ -3581,6 +3588,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         earlyRegimeReason = "Regime detection disabled in config";
       }
       
+      // Pre-calcular adjustedMinSignals para régimen (usado en analyzeWithCandleStrategy)
+      const baseMinSignalsForStrategy = 5; // Base para momentum
+      const adjustedMinSignalsForStrategy = earlyRegime === "TRANSITION" 
+        ? Math.max(4, baseMinSignalsForStrategy) 
+        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsForStrategy) : baseMinSignalsForStrategy);
+      
       // === ROUTER: Select strategy based on regime ===
       let selectedStrategyId = `momentum_candles_${timeframe}`;
       let signal: TradeSignal;
@@ -3601,13 +3614,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
           routerApplied = true;
           log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
         } else {
           // TREND or other: Use standard momentum
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
           if (earlyRegime === "TREND") {
             routerApplied = true;
             log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
@@ -3615,7 +3628,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
       } else {
         // Router disabled: use standard momentum strategy
-        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle);
+        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
       }
       
       // Registrar resultado del escaneo para candles
