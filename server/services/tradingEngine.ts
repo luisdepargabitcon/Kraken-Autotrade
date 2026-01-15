@@ -1364,7 +1364,7 @@ export class TradingEngine {
     const mtfData = await this.getMultiTimeframeData(pair);
     const mtfAnalysis = mtfData ? this.analyzeMultiTimeframe(mtfData) : null;
     
-    let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close);
+    let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close, adjustedMinSignals);
     
     // Aplicar filtro MTF si hay señal activa
     if (mtfAnalysis && signal.action !== "hold") {
@@ -1389,8 +1389,8 @@ export class TradingEngine {
     return signal;
   }
 
-  private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
-    const minSignalsRequired = 5; // TREND/TRANSITION require 5 signals (aligned with SMART_GUARD B3)
+  private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number, adjustedMinSignals?: number): TradeSignal {
+    const minSignalsRequired = adjustedMinSignals ?? 5; // Default 5, but can be overridden (e.g., 4 for TRANSITION)
     
     if (candles.length < 20) {
       return { action: "hold", pair, confidence: 0, reason: "Historial de velas insuficiente", signalsCount: 0, minSignalsRequired };
