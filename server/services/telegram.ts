@@ -22,9 +22,13 @@ function escapeHtml(s: unknown): string {
 // ============================================================
 // SPANISH DATE FORMATTER - Formato profesional de fecha/hora
 // ============================================================
-function formatSpanishDate(dateInput?: string | Date): string {
+function formatSpanishDate(dateInput?: string | Date | number): string {
   try {
     const date = dateInput ? new Date(dateInput) : new Date();
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return "N/A";
+    }
     return date.toLocaleString("es-ES", { 
       timeZone: "Europe/Madrid",
       year: "numeric",
@@ -35,7 +39,7 @@ function formatSpanishDate(dateInput?: string | Date): string {
       second: "2-digit"
     });
   } catch {
-    return new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    return "N/A";
   }
 }
 
@@ -166,7 +170,7 @@ interface DailyReportContext {
   pairs: string;
   positionCount: number;
   exposureUsd: string;
-  ts: string;
+  ts: Date | string;
 }
 
 function buildDailyReportHTML(ctx: DailyReportContext): string {
@@ -1453,7 +1457,7 @@ Incluye:
         pairs,
         positionCount: positions.size,
         exposureUsd: totalExposure.toFixed(2),
-        ts: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" }),
+        ts: new Date(),
       });
 
       // Send to chats with alertSystem enabled

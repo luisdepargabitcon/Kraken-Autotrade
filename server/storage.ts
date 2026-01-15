@@ -97,6 +97,7 @@ export interface IStorage {
   getTradeFillByTxid(txid: string): Promise<TradeFill | undefined>;
   getUnmatchedSellFills(pair: string): Promise<TradeFill[]>;
   markFillAsMatched(txid: string): Promise<void>;
+  getRecentTradeFills(limit?: number, exchange?: string): Promise<TradeFill[]>;
   
   // Lot matches (FIFO matcher audit trail)
   createLotMatch(match: InsertLotMatch): Promise<LotMatch>;
@@ -598,6 +599,15 @@ export class DatabaseStorage implements IStorage {
     await db.update(tradeFillsTable)
       .set({ matched: true })
       .where(eq(tradeFillsTable.txid, txid));
+  }
+
+  async getRecentTradeFills(limit: number = 20, exchange?: string): Promise<TradeFill[]> {
+    // Note: tradeFills table doesn't have exchange column, so we ignore exchange filter for now
+    // In future, we could add exchange column or join with trades table
+    return await db.select()
+      .from(tradeFillsTable)
+      .orderBy(desc(tradeFillsTable.executedAt))
+      .limit(limit);
   }
 
   // Lot matches
