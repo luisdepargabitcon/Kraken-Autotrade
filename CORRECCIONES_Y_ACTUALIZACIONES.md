@@ -536,6 +536,47 @@ const DEFAULT_SIGNAL_CONFIG = {
 
 ---
 
+## 🔄 Sesión 16 Enero 2026 (Corrección Revolut X API)
+
+### 9. Fix Revolut X getTicker Endpoint 404
+
+**Commit:** `7a2d283`  
+**Fecha:** 16 Enero 2026  
+**Archivos:**
+- `server/services/exchanges/RevolutXService.ts` (getTicker refactor)
+
+**Descripción:**
+- **Problema:** Error 404 en `/api/1.0/orderbook` - endpoint no existe en Revolut X API
+- **Solución:** Usar `/market-data/public/ticker` como endpoint primario (público, sin autenticación)
+- **Fallback:** Si ticker falla, intentar `/api/1.0/orderbook` con autenticación
+- **Resultado:** Evita errores 404 y permite obtener precios de Revolut X correctamente
+
+**Error Original:**
+```
+[ERROR] [revolutx] getTicker response: 404 {"message":"Endpoint GET /api/1.0/orderbook not found"}
+```
+
+**Código Aplicado:**
+```typescript
+// Primario: endpoint público
+const path = '/market-data/public/ticker';
+const response = await fetch(fullUrl);
+
+if (!response.ok) {
+  // Fallback a orderbook autenticado
+  return await this.getTickerFromOrderbook(pair);
+}
+```
+
+**Verificación:**
+- ✅ `npm run check` (TypeScript sin errores)
+- ✅ Commit y push completados
+- ✅ Listo para despliegue VPS
+
+**Motivo:** Corregir error 404 que impedía obtener precios de Revolut X, afectando funcionalidad multi-exchange.
+
+---
+
 ## 📊 Resumen de Cambios por Categoría
 
 ### Correcciones de Bugs
