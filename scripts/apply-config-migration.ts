@@ -1,8 +1,10 @@
 import { pool } from '../server/db';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 async function applyMigration() {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
   const client = await pool.connect();
   
   try {

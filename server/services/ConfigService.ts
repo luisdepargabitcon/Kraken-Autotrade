@@ -393,7 +393,14 @@ export class ConfigService extends EventEmitter {
 
   // === PRESET MANAGEMENT ===
 
-  async listPresets(): Promise<Array<{ id: string; name: string; description: string; isDefault: boolean; createdAt: Date }>> {
+  async listPresets(): Promise<Array<{
+    id: string;
+    name: string;
+    description: string;
+    isDefault: boolean;
+    createdAt: Date;
+    config: TradingConfig | null;
+  }>> {
     try {
       const presets = await db.select({
         id: configPreset.id,
@@ -401,6 +408,7 @@ export class ConfigService extends EventEmitter {
         description: configPreset.description,
         isDefault: configPreset.isDefault,
         createdAt: configPreset.createdAt,
+        config: configPreset.config,
       }).from(configPreset).orderBy(desc(configPreset.createdAt));
 
       return presets.map(preset => ({
@@ -409,6 +417,7 @@ export class ConfigService extends EventEmitter {
         description: preset.description,
         isDefault: preset.isDefault,
         createdAt: preset.createdAt,
+        config: (preset.config as TradingConfig) ?? null,
       }));
     } catch (error) {
       console.error('[ConfigService] Error listing presets:', error);

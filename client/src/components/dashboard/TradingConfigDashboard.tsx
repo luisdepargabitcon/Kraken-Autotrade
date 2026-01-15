@@ -69,6 +69,7 @@ interface Preset {
   description: string;
   isDefault: boolean;
   createdAt: string;
+  config?: TradingConfig | null;
 }
 
 interface ValidationResult {
@@ -98,7 +99,7 @@ export function TradingConfigDashboard() {
   });
 
   // Fetch presets
-  const { data: presetsData, isLoading: loadingPresets } = useQuery<{ success: boolean; data: Preset[] }>({
+  const { data: presetsData, isLoading: loadingPresets, error: presetsError } = useQuery<{ success: boolean; data: Preset[] }>({
     queryKey: ["/api/config/presets"],
     queryFn: async () => {
       const res = await fetch("/api/config/presets");
@@ -300,30 +301,99 @@ export function TradingConfigDashboard() {
 
           {/* PRESET MODE */}
           <TabsContent value="preset" className="space-y-4">
+            {presetsError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Failed to load presets: {(presetsError as Error).message}
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="grid gap-4">
-              {presets?.map((preset) => (
-                <Card
-                  key={preset.id}
-                  className={`cursor-pointer transition-all ${
-                    selectedPreset === preset.name
-                      ? "ring-2 ring-primary"
-                      : "hover:bg-accent"
-                  }`}
-                  onClick={() => handlePresetSelect(preset.name)}
-                >
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg capitalize">
-                        {preset.name}
-                      </CardTitle>
-                      {preset.isDefault && (
-                        <Badge variant="secondary">Default</Badge>
-                      )}
-                    </div>
-                    <CardDescription>{preset.description}</CardDescription>
-                  </CardHeader>
-                </Card>
-              ))}
+              {presets?.map((preset) => {
+                const hasConfig = !!preset.config;
+                if (!hasConfig) {
+                  console.error(`[TradingConfigDashboard] Missing config for preset ${preset.name}`);
+                }
+                const signalsEntries = Object.entries(preset.config?.signals ?? {});
+                const signalBadges = signalsEntries.length > 0
+                  ? signalsEntries.map(([regime, signal]) => (
+                      <div
+                        key={regime}
+                        className="rounded-md border border-red-300/80 bg-white/80 px-3 py-2 text-sm text-red-700 shadow-sm"
+                      >
+                        <p className="font-semibold tracking-wide">{regime}</p>
+                        <p className="text-xs font-mono">
+                          Min {signal.minSignals} · Current {signal.currentSignals} · Max {signal.maxSignals}
+                        </p>
+                        {signal.description && (
+                          <p className="mt-1 text-[11px] text-red-600/80">{signal.description}</p>
+                        )}
+                      </div>
+                    ))
+                  : null;
+
+                const configSummary = hasConfig ? (
+                  <div className="mt-3 grid gap-3 text-sm font-mono text-red-800 sm:grid-cols-2 lg:grid-cols-3">
+                    <span>Risk/Trade: {preset.config?.global.riskPerTradePct}%</span>
+                    <span>Max Total Exp: {preset.config?.global.maxTotalExposurePct}%</span>
+                    <span>Max Pair Exp: {preset.config?.global.maxPairExposurePct}%</span>
+                    <span>Dry Run: {preset.config?.global.dryRunMode ? "ON" : "OFF"}</span>
+                    <span>Regime Detect: {preset.config?.global.regimeDetectionEnabled ? "ON" : "OFF"}</span>
+                    <span>Regime Router: {preset.config?.global.regimeRouterEnabled ? "ON" : "OFF"}</span>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-red-600">No disponible</p>
+                );
+
+                return (
+                  <Card
+                    key={preset.id}
+                    className={`cursor-pointer transition-all ${
+                      selectedPreset === preset.name
+                        ? "ring-2 ring-primary"
+                        : "hover:bg-accent"
+                    }`}
+                    onClick={() => handlePresetSelect(preset.name)}
+                  >
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg capitalize">
+                          {preset.name}
+                        </CardTitle>
+                        <div className="flex items-center gap-2">
+                          {preset.isDefault && (
+                            <Badge variant="secondary">Default</Badge>
+                          )}
+                          <Badge variant="outline" className="font-mono text-xs">
+                            {new Date(preset.createdAt).toLocaleDateString()}
+                          </Badge>
+                        </div>
+                      </div>
+                      <CardDescription>{preset.description}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-red-800">
+                          Configuración del preset
+                        </p>
+                        {configSummary}
+                      </div>
+
+                      <div className="rounded-md border border-red-200/80 bg-gradient-to-br from-red-50 to-red-100 px-4 py-3 shadow-sm">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-red-800">
+                          Señales del preset
+                        </p>
+                        {signalBadges ? (
+                          <div className="mt-3 flex flex-wrap gap-2">{signalBadges}</div>
+                        ) : (
+                          <p className="mt-2 text-sm text-red-600">No disponible</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
 
             <Button
