@@ -114,19 +114,62 @@ export class RevolutXService implements IExchangeService {
 
   async getTicker(pair: string): Promise<Ticker> {
     const symbol = this.formatPair(pair);
-    // Use authenticated endpoint /api/1.0/orderbook (not /market-data/orderbook which returns 404)
+    // Use public market data endpoint for ticker
+    const path = '/market-data/public/ticker';
+    const queryString = `symbol=${symbol}`;
+    const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
+    
+    try {
+      // Use public endpoint (no authentication needed for market data)
+      const response = await fetch(fullUrl);
+      
+      if (!response.ok) {
+        // Fallback to orderbook if ticker endpoint fails
+        console.warn('[revolutx] Ticker endpoint failed, trying orderbook fallback');
+        return await this.getTickerFromOrderbook(pair);
+      }
+      
+      const data = await response.json() as any;
+      
+      // Parse ticker response format
+      const bid = parseFloat(data.bid || '0');
+      const ask = parseFloat(data.ask || '0');
+      const last = parseFloat(data.last || data.price || '0');
+      const volume24h = parseFloat(data.volume24h || '0');
+      
+      // SAFETY: Validate prices are finite
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || !Number.isFinite(last)) {
+        console.error('[revolutx] getTicker INVALID_PRICE:', { pair, bid, ask, last });
+        throw new Error(`Invalid ticker price for ${pair}: bid=${bid}, ask=${ask}`);
+      }
+      
+      return {
+        bid,
+        ask,
+        last,
+        volume24h
+      };
+    } catch (error: any) {
+      console.error('[revolutx] getTicker error:', error.message);
+      // Fallback to orderbook method
+      return await this.getTickerFromOrderbook(pair);
+    }
+  }
+
+  private async getTickerFromOrderbook(pair: string): Promise<Ticker> {
+    const symbol = this.formatPair(pair);
+    // Fallback to authenticated orderbook endpoint
     const path = '/api/1.0/orderbook';
     const queryString = `symbol=${symbol}`;
     const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
     
     try {
-      // Use authenticated request to avoid 401 errors on rate-limited or protected endpoints
       const headers = this.initialized ? this.getHeaders('GET', path, queryString) : {};
       const response = await fetch(fullUrl, { headers });
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[revolutx] getTicker response:', response.status, errorText);
+        console.error('[revolutx] getTickerFromOrderbook response:', response.status, errorText);
         throw new Error(`Revolut X API error: ${response.status}`);
       }
       
@@ -141,7 +184,7 @@ export class RevolutXService implements IExchangeService {
       
       // SAFETY: Validate prices are finite
       if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || !Number.isFinite(last)) {
-        console.error('[revolutx] getTicker INVALID_PRICE:', { pair, bestBid, bestAsk, last });
+        console.error('[revolutx] getTickerFromOrderbook INVALID_PRICE:', { pair, bestBid, bestAsk, last });
         throw new Error(`Invalid ticker price for ${pair}: bid=${bestBid}, ask=${bestAsk}`);
       }
       
@@ -152,7 +195,7 @@ export class RevolutXService implements IExchangeService {
         volume24h: 0
       };
     } catch (error: any) {
-      console.error('[revolutx] getTicker error:', error.message);
+      console.error('[revolutx] getTickerFromOrderbook error:', error.message);
       throw error;
     }
   }
