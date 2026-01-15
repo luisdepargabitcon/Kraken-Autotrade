@@ -377,7 +377,7 @@ export function TradingConfigDashboard() {
                     key={preset.id}
                     className={`cursor-pointer transition-all ${
                       selectedPreset === preset.name
-                        ? "ring-2 ring-primary"
+                        ? `ring-2 ring-offset-2 ${configColor.replace('border-', 'ring-').replace('/60', '')}`
                         : "hover:bg-accent"
                     }`}
                     onClick={() => handlePresetSelect(preset.name)}
