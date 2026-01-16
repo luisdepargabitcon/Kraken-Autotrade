@@ -48,11 +48,11 @@ export class ErrorAlertService {
   }
 
   // Obtener TelegramService inyectado
-  private getTelegramService(): any {
+  private async getTelegramService(): Promise<any> {
     if (!this.telegramService) {
-      // Import dinámico solo cuando se necesita
-      const { TelegramService } = require("./telegram");
-      this.telegramService = new TelegramService();
+      // Import dinámico solo cuando se necesita (ESM compatible)
+      const telegramModule = await import("./telegram");
+      this.telegramService = new telegramModule.TelegramService();
     }
     return this.telegramService;
   }
@@ -72,7 +72,7 @@ export class ErrorAlertService {
       if (!this.config.enabled) return;
       if (!this.shouldSendAlert(alert)) return;
       
-      const telegramService = this.getTelegramService();
+      const telegramService = await this.getTelegramService();
       if (!telegramService.isInitialized()) return;
 
       const message = await this.formatAlertMessage(alert);
