@@ -1872,26 +1872,36 @@ Incluye:
     if (!this.bot) return;
 
     const sentChatIds = new Set<string>();
+    const chats = await storage.getTelegramChats();
+    
+    for (const chat of chats) {
+      if (!chat.isActive) continue;
+      if (sentChatIds.has(chat.chatId)) continue;
+      
+      if (this.shouldSendToChat(chat, alertType, subtype)) {
+        try {
+          await this.bot.sendMessage(chat.chatId, message, { parse_mode: "HTML" });
+          sentChatIds.add(chat.chatId);
+          console.log(`[telegram] Alert sent to ${chat.name} (${chat.chatId})`);
+        } catch (error: any) {
+          console.error(`[telegram] Failed to send to ${chat.name}:`, error.message);
+        }
+      }
+    }
+  }
+
+  /**
+   * Envía un mensaje a un chat específico por su chatId
+   */
+  async sendToSpecificChat(message: string, chatId: string): Promise<void> {
+    if (!this.bot) return;
 
     try {
-      const chats = await storage.getActiveTelegramChats();
-      
-      if (chats.length > 0) {
-        for (const chat of chats) {
-          if (sentChatIds.has(chat.chatId)) continue;
-          
-          const shouldSend = this.shouldSendToChat(chat, alertType, subtype);
-          if (shouldSend) {
-            await this.sendToChat(chat.chatId, message);
-            sentChatIds.add(chat.chatId);
-          }
-        }
-      } else if (this.chatId) {
-        await this.sendMessage(message);
-        sentChatIds.add(this.chatId);
-      }
-    } catch (error) {
-      console.error("Error sending to multiple chats:", error);
+      await this.bot.sendMessage(chatId, message, { parse_mode: "HTML" });
+      console.log(`[telegram] Message sent to specific chat: ${chatId}`);
+    } catch (error: any) {
+      console.error(`[telegram] Failed to send to chat ${chatId}:`, error.message);
+      throw error;
     }
   }
 

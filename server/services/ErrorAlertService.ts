@@ -1,6 +1,7 @@
 import { TelegramService } from "./telegram";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { storage } from "../storage";
 
 export type ErrorType = 'PRICE_INVALID' | 'API_ERROR' | 'DATABASE_ERROR' | 'TRADING_ERROR' | 'SYSTEM_ERROR';
 export type ErrorSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -59,10 +60,22 @@ export class ErrorAlertService {
       if (!this.telegramService.isInitialized()) return;
 
       const message = await this.formatAlertMessage(alert);
-      await this.telegramService.sendAlertWithSubtype(message, "errors", "error_api");
+      
+      // Obtener configuración del chat específico para alertas de errores
+      const config = await storage.getBotConfig();
+      const errorAlertChatId = config?.errorAlertChatId;
+      
+      if (errorAlertChatId) {
+        // Enviar solo al chat específico configurado
+        await this.telegramService.sendToSpecificChat(message, errorAlertChatId);
+        console.log(`[ErrorAlert] Sent ${alert.type} alert to specific chat: ${errorAlertChatId}`);
+      } else {
+        // Enviar a todos los chats activos (comportamiento por defecto)
+        await this.telegramService.sendAlertWithSubtype(message, "errors", "error_api");
+        console.log(`[ErrorAlert] Sent ${alert.type} alert to all active chats`);
+      }
       
       this.updateRateLimit(alert);
-      console.log(`[ErrorAlert] Sent ${alert.type} alert for ${alert.function}`);
     } catch (error: any) {
       console.error('[ErrorAlert] Failed to send alert:', error.message);
     }

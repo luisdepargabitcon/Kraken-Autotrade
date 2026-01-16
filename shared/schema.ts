@@ -137,6 +137,7 @@ export const botConfig = pgTable("bot_config", {
   notifCooldownHeartbeat: integer("notif_cooldown_heartbeat").notNull().default(3600),
   notifCooldownTrades: integer("notif_cooldown_trades").notNull().default(0),
   notifCooldownErrors: integer("notif_cooldown_errors").notNull().default(60),
+  errorAlertChatId: text("error_alert_chat_id"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

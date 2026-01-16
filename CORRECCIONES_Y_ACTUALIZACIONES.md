@@ -145,6 +145,64 @@ if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
 - **Filtrado inteligente** por severidad y tipo de error
 - **Contexto completo** para resolución rápida de problemas
 
+### 3. Selector de Chat para Alertas de Errores Críticos
+**Fecha:** 16 Enero 2026  
+**Tipo:** Mejora de UI  
+**Severidad:** Media  
+
+#### Implementación:
+
+**A. Campo de Base de Datos:**
+- **Archivo:** `shared/schema.ts` - Añadido campo `errorAlertChatId` a `botConfig`
+- **Funcionalidad:** Almacena el chat ID específico para recibir alertas de errores críticos
+
+**B. Selector en UI de Notificaciones:**
+- **Archivo:** `client/src/pages/Notifications.tsx` - Nueva sección "🚨 Alertas de Errores Críticos"
+- **Componente:** Dropdown selector con opciones:
+  - "Todos los chats activos" (comportamiento por defecto)
+  - Lista de chats configurados con nombres y chat IDs
+- **Funcionalidad:** Actualización en tiempo real de la configuración
+
+**C. Lógica de Envío Inteligente:**
+- **Archivo:** `server/services/ErrorAlertService.ts` - Modificado método `sendCriticalError()`
+- **Archivo:** `server/services/telegram.ts` - Añadido método `sendToSpecificChat()`
+- **Comportamiento:**
+  - Si hay chat específico configurado → Envía solo a ese chat
+  - Si no hay configuración → Envía a todos los chats activos (por defecto)
+
+**D. Script de Pruebas:**
+- **Archivo:** `server/test/chatSelectorTest.ts` (nuevo)
+- **Funcionalidad:** Pruebas completas del selector con diferentes configuraciones
+
+#### Casos de Uso:
+
+**🎯 Separación de Canales:**
+- Canal de trading → Solo alertas de trades y PnL
+- Canal de errores → Solo alertas críticas del sistema
+- Canal general → Heartbeat y notificaciones generales
+
+**📱 Control Granular:**
+- Administrador recibe errores críticos en chat privado
+- Equipo técnico recibe en grupo específico
+- Usuarios finales no reciben alertas técnicas
+
+#### Configuración:
+
+```typescript
+// Configuración por defecto (todos los chats)
+errorAlertChatId: undefined
+
+// Configuración específica
+errorAlertChatId: "-1001234567890"  // Chat ID del canal de errores
+```
+
+#### Beneficios:
+- **Control granular** sobre destino de alertas críticas
+- **Separación de responsabilidades** entre diferentes tipos de notificaciones
+- **Reducción de ruido** en canales no técnicos
+- **Escalabilidad** para equipos con múltiples canales especializados
+- **Integración perfecta** con UI existente de notificaciones
+
 ---
 
 ## 🔄 Sesión 14-15 Enero 2026

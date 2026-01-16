@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, AlertCircle, RefreshCw, Send, MessageSquare } from "lucide-react";
+import { Bell, Clock, Plus, Trash2, Users, Check, AlertTriangle, TrendingUp, Heart, AlertCircle, RefreshCw, Send, MessageSquare, Shield } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -51,6 +52,7 @@ interface BotConfig {
   notifCooldownTrades: number;
   notifCooldownErrors: number;
   nonceErrorAlertsEnabled: boolean;
+  errorAlertChatId?: string;
 }
 
 export default function Notifications() {
@@ -488,6 +490,77 @@ export default function Notifications() {
                     onCheckedChange={(checked) => updateConfigMutation.mutate({ nonceErrorAlertsEnabled: checked })}
                     data-testid="switch-nonce-alerts"
                   />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="glass-panel border-red-500/20 bg-red-500/5">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-red-500/20 rounded-lg">
+                    <Shield className="h-6 w-6 text-red-400" />
+                  </div>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      🚨 Alertas de Errores Críticos
+                    </CardTitle>
+                    <CardDescription>
+                      Selecciona qué chat recibe las alertas automáticas de errores críticos del sistema (PRICE_INVALID, API_ERROR, DATABASE_ERROR, etc.).
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Chat de destino para alertas de errores</Label>
+                  <Select 
+                    value={config?.errorAlertChatId || "all"} 
+                    onValueChange={(value) => {
+                      const chatId = value === "all" ? undefined : value;
+                      updateConfigMutation.mutate({ errorAlertChatId: chatId });
+                    }}
+                    data-testid="select-error-alert-chat"
+                  >
+                    <SelectTrigger className="bg-background/50">
+                      <SelectValue placeholder="Seleccionar chat para alertas de errores" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          Todos los chats activos
+                        </div>
+                      </SelectItem>
+                      {telegramChats.filter(chat => chat.isActive).map(chat => (
+                        <SelectItem key={chat.id} value={chat.chatId}>
+                          <div className="flex items-center gap-2">
+                            <MessageSquare className="h-4 w-4" />
+                            <span>{chat.name}</span>
+                            <span className="text-xs text-muted-foreground font-mono">({chat.chatId})</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Las alertas de errores críticos incluyen: PRICE_INVALID (precios inválidos), API_ERROR (fallos de RevolutX), 
+                    DATABASE_ERROR (errores de PostgreSQL), TRADING_ERROR (fallos de trading) y SYSTEM_ERROR (errores del sistema).
+                  </p>
+                </div>
+                
+                <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5" />
+                    <div className="text-xs text-yellow-600 dark:text-yellow-400">
+                      <p className="font-medium">Configuración actual:</p>
+                      <p>
+                        {config?.errorAlertChatId 
+                          ? `Enviando a: ${telegramChats.find(c => c.chatId === config.errorAlertChatId)?.name || config.errorAlertChatId}`
+                          : "Enviando a todos los chats activos"
+                        }
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
