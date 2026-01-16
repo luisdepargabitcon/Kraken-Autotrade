@@ -2,7 +2,7 @@ import { KrakenService } from "./kraken";
 import { TelegramService } from "./telegram";
 import { botLogger } from "./botLogger";
 import { storage } from "../storage";
-import { log } from "../index";
+import { log } from "../utils/logger";
 import { aiService, AiFeatures } from "./aiService";
 import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";

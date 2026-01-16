@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { db } from "../db";
 import { botEvents } from "@shared/schema";
 import { desc } from "drizzle-orm";
-import { log } from "../index";
+import { log } from "../utils/logger";
 
 const WS_PATH = "/ws/events";
 const SNAPSHOT_LIMIT = 50;

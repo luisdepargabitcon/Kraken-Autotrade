@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { spawn, ChildProcess } from "child_process";
-import { log } from "../index";
+import { log } from "../utils/logger";
 import { logStreamService } from "./logStreamService";
 
 const WS_PATH = "/ws/logs";
