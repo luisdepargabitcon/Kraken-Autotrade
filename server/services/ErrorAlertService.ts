@@ -1,4 +1,3 @@
-import { TelegramService } from "./telegram";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { storage } from "../storage";
@@ -26,7 +25,7 @@ interface AlertRateLimit {
 
 export class ErrorAlertService {
   private static instance: ErrorAlertService;
-  private telegramService: TelegramService;
+  private telegramService: any; // TelegramService inyectado dinámicamente
   private rateLimits: Map<string, AlertRateLimit> = new Map();
   
   // Configuración de alertas
@@ -40,7 +39,22 @@ export class ErrorAlertService {
   };
 
   private constructor() {
-    this.telegramService = new TelegramService();
+    // TelegramService se inyectará dinámicamente para evitar import circular
+  }
+
+  // Inyectar TelegramService dinámicamente
+  setTelegramService(telegramService: any): void {
+    this.telegramService = telegramService;
+  }
+
+  // Obtener TelegramService inyectado
+  private getTelegramService(): any {
+    if (!this.telegramService) {
+      // Import dinámico solo cuando se necesita
+      const { TelegramService } = require("./telegram");
+      this.telegramService = new TelegramService();
+    }
+    return this.telegramService;
   }
 
   static getInstance(): ErrorAlertService {
@@ -57,7 +71,9 @@ export class ErrorAlertService {
     try {
       if (!this.config.enabled) return;
       if (!this.shouldSendAlert(alert)) return;
-      if (!this.telegramService.isInitialized()) return;
+      
+      const telegramService = this.getTelegramService();
+      if (!telegramService.isInitialized()) return;
 
       const message = await this.formatAlertMessage(alert);
       
@@ -67,11 +83,11 @@ export class ErrorAlertService {
       
       if (errorAlertChatId) {
         // Enviar solo al chat específico configurado
-        await this.telegramService.sendToSpecificChat(message, errorAlertChatId);
+        await telegramService.sendToSpecificChat(message, errorAlertChatId);
         console.log(`[ErrorAlert] Sent ${alert.type} alert to specific chat: ${errorAlertChatId}`);
       } else {
         // Enviar a todos los chats activos (comportamiento por defecto)
-        await this.telegramService.sendAlertWithSubtype(message, "errors", "error_api");
+        await telegramService.sendAlertWithSubtype(message, "errors", "error_api");
         console.log(`[ErrorAlert] Sent ${alert.type} alert to all active chats`);
       }
       
