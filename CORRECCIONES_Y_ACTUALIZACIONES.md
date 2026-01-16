@@ -174,6 +174,24 @@ if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
 - **Archivo:** `server/test/chatSelectorTest.ts` (nuevo)
 - **Funcionalidad:** Pruebas completas del selector con diferentes configuraciones
 
+**E. Fix Crítico - Token de Telegram:**
+- **Problema:** ErrorAlertService leía token de `botConfig` (donde no existe)
+- **Solución:** Modificado para obtener token de `apiConfig` (donde sí existe)
+- **Cambios:**
+  - `getTelegramService()` ahora inicializa con token de `apiConfig.telegramToken`
+  - Mantenido `errorAlertChatId` de `botConfig` (correcto)
+  - Eliminado import circular con `require()` → `import()` dinámico
+  - Corregido compatibilidad ESM
+
+**F. Logger Independiente:**
+- **Archivo:** `server/utils/logger.ts` (nuevo)
+- **Funcionalidad:** Centralizar función `log()` para evitar dependencias circulares
+- **Impacto:** Eliminados imports circulares entre múltiples módulos
+
+**G. Test de Verificación:**
+- **Archivo:** `server/test/testTelegramFix.js` (nuevo)
+- **Funcionalidad:** Verificar que el fix del token funciona correctamente
+
 #### Casos de Uso:
 
 **🎯 Separación de Canales:**
