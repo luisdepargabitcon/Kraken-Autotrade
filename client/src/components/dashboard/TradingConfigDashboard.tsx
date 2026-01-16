@@ -199,8 +199,8 @@ export function TradingConfigDashboard() {
     if (activeConfig?.data) {
       setConfig(activeConfig.data);
       // Sync selected preset with active preset
-      if (activeConfig.data.activePreset) {
-        setSelectedPreset(activeConfig.data.activePreset);
+      if ((activeConfig.data as any).activePreset) {
+        setSelectedPreset((activeConfig.data as any).activePreset);
       }
     }
   }, [activeConfig]);

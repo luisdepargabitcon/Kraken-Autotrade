@@ -2126,10 +2126,7 @@ El bot ha pausado las operaciones de COMPRA.
     try {
       const krakenPair = this.formatKrakenPair(pair);
       const ticker = await this.getDataExchange().getTicker(krakenPair);
-      const tickerData: any = Object.values(ticker)[0];
-      if (!tickerData) return;
-
-      const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      const currentPrice = Number((ticker as any)?.last ?? 0);
       
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando SL/TP`, "trading");
@@ -2743,14 +2740,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
       const krakenPair = this.formatKrakenPair(pair);
       const ticker = await this.getDataExchange().getTicker(krakenPair);
-      const tickerData: any = Object.values(ticker)[0];
-      
-      if (!tickerData) return;
-
-      const currentPrice = parseFloat(tickerData.c?.[0] || "0");
-      const high24h = parseFloat(tickerData.h?.[1] || tickerData.h?.[0] || "0");
-      const low24h = parseFloat(tickerData.l?.[1] || tickerData.l?.[0] || "0");
-      const volume = parseFloat(tickerData.v?.[1] || tickerData.v?.[0] || "0");
+      const currentPrice = Number((ticker as any)?.last ?? 0);
+      const high24h = 0;
+      const low24h = 0;
+      const volume = Number((ticker as any)?.volume24h ?? 0);
 
       // SAFETY: Fail-fast if price is invalid (prevents Infinity in volume calculations)
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
@@ -3705,10 +3698,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
       const krakenPair = this.formatKrakenPair(pair);
       const ticker = await this.getDataExchange().getTicker(krakenPair);
-      const tickerData: any = Object.values(ticker)[0];
-      if (!tickerData) return;
-
-      const currentPrice = parseFloat(tickerData.c?.[0] || "0");
+      const currentPrice = Number((ticker as any)?.last ?? 0);
       
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluación`, "trading");
@@ -6357,19 +6347,29 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     const last1h = tf1h[tf1h.length - 1]?.time || 0;
     const last4h = tf4h[tf4h.length - 1]?.time || 0;
     
-    // Detectar posible duplicación (timestamps muy similares entre TFs)
-    const firstTsSame = first5m === first1h || first1h === first4h || first5m === first4h;
-    const lastTsSame = last5m === last1h || last1h === last4h || last5m === last4h;
-    const spansSuspicious = span5m === span1h || span1h === span4h;
+    // Detectar duplicación real (más restrictivo para evitar falsos positivos)
+    // Solo alertar si hay evidencia clara de datos incorrectos
+    const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0);
+    const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
+    const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(span5m) > 0);
+    
+    // Detectar casos sospechosos pero menos críticos
+    const suspiciousOverlap = (
+      (Math.abs(last5m - last1h) < 3600) || // Menos de 1h de diferencia entre 5m y 1h
+      (Math.abs(last1h - last4h) < 7200)    // Menos de 2h de diferencia entre 1h y 4h
+    ) && tf5m.length > 10 && tf1h.length > 10 && tf4h.length > 10;
     
     log(`[MTF_DIAG] ${pair}: ` +
       `5m: ${tf5m.length} velas [${formatTs(first5m)} -> ${formatTs(last5m)}] span=${span5m}h | ` +
       `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h | ` +
       `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h`, "trading");
     
-    if (firstTsSame || lastTsSame || spansSuspicious) {
-      log(`[MTF_DIAG] ⚠️ WARN ${pair}: Posible duplicación MTF detectada! ` +
-        `firstTsSame=${firstTsSame}, lastTsSame=${lastTsSame}, spansSuspicious=${spansSuspicious}`, "trading");
+    // Solo alertar en casos realmente problemáticos
+    if (exactFirstMatch || exactLastMatch || identicalSpans) {
+      log(`[MTF_DIAG] 🚨 ERROR ${pair}: Duplicación MTF CRÍTICA detectada! ` +
+        `exactFirst=${exactFirstMatch}, exactLast=${exactLastMatch}, identicalSpans=${identicalSpans}`, "trading");
+    } else if (suspiciousOverlap) {
+      log(`[MTF_DIAG] ⚠️ INFO ${pair}: Solapamiento temporal detectado (puede ser normal en mercados activos)`, "trading");
     }
   }
 

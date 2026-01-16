@@ -124,7 +124,14 @@ export class RevolutXService implements IExchangeService {
       const response = await fetch(fullUrl);
       
       if (!response.ok) {
-        // Fallback to orderbook if ticker endpoint fails
+        const errorText = await response.text();
+        // Avoid orderbook fallback for 404 (endpoint not found / unsupported)
+        if (response.status === 404) {
+          console.error('[revolutx] Ticker endpoint 404:', errorText);
+          throw new Error(`Revolut X API error: ${response.status}`);
+        }
+
+        // Fallback to orderbook if ticker endpoint fails (non-404)
         console.warn('[revolutx] Ticker endpoint failed, trying orderbook fallback');
         return await this.getTickerFromOrderbook(pair);
       }
@@ -151,7 +158,10 @@ export class RevolutXService implements IExchangeService {
       };
     } catch (error: any) {
       console.error('[revolutx] getTicker error:', error.message);
-      // Fallback to orderbook method
+      // Fallback to orderbook method only if this is not a 404/not found error
+      if (String(error?.message || '').includes('404') || String(error?.message || '').toLowerCase().includes('not found')) {
+        throw error;
+      }
       return await this.getTickerFromOrderbook(pair);
     }
   }

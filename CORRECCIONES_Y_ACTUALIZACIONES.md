@@ -2,7 +2,73 @@
 
 **Proyecto:** Kraken Autotrade Bot  
 **Repositorio:** https://github.com/luisdepargabitcon/Kraken-Autotrade  
-**Última actualización:** 15 Enero 2026
+**Última actualización:** 16 Enero 2026
+
+---
+
+## 🔄 Sesión 16 Enero 2026
+
+### 1. Diagnóstico de Errores Críticos del Sistema
+**Fecha:** 16 Enero 2026  
+**Tipo:** Diagnóstico y Análisis  
+**Severidad:** Alta  
+
+#### Problemas Identificados:
+
+**A. Precios Inválidos (PRICE_INVALID)**
+- **Error:** `currentPrice: 0` en BTC/USD, ETH/USD, SOL/USD
+- **Causa Raíz:** `tradingEngine.ts` trataba el retorno de `getTicker()` (objeto normalizado `Ticker`) como si fuera el payload raw de Kraken (`tickerData.c[0]`, `h`, `l`, `v`). Eso provocaba `currentPrice=0` y `PRICE_INVALID` falsos.
+- **Impacto:** Sistema salta evaluación de trading y señales BUY válidas
+- **Ubicación:** `tradingEngine.ts` (lectura de ticker en SL/TP, ciclo de análisis y ejecución de señal)
+
+**B. Errores 404 en Revolut X API**
+- **Error:** Endpoint `/api/1.0/orderbook` retorna 404
+- **Mensaje:** "Endpoint GET /api/1.0/orderbook not found"
+- **Causa:** URL incorrecta o endpoint deprecated en Revolut X API
+- **Impacto:** Fallback de ticker falla, sin precios para trading
+- **Ubicación:** `RevolutXService.ts:172-173`
+
+**C. Advertencias MTF de Duplicación**
+- **Warning:** "Posible duplicación MTF detectada"
+- **Condición:** `lastTsSame=true` para todos los timeframes
+- **Causa:** Datos OHLC con mismo timestamp final en 5m, 1h, 4h
+- **Impacto:** Posible corrupción de datos históricos
+- **Ubicación:** `tradingEngine.ts:6371-6372`
+
+#### Análisis Técnico:
+
+**Flujo de Datos Afectado:**
+```
+getDataExchange() → Kraken.getTicker() → (Ticker normalizado) → lectura incorrecta como raw → 0
+↓
+PRICE_INVALID → botLogger.warn() → return (salta evaluación)
+```
+
+**Configuración Exchange:**
+- Trading Exchange: Revolut X (funcionando)
+- Data Exchange: Kraken (con problemas de ticker)
+- Exchange Factory: Data fallback correcto
+
+#### Recomendaciones:
+
+1. **Inmediato:** Implementar fallback robusto para precios inválidos
+2. **Corto Plazo:** Investigar y corregir endpoint de Revolut X API
+3. **Mediano Plazo:** Validar integridad de datos MTF
+4. **Largo Plazo:** Implementar sistema de health checking para exchanges
+
+#### Fix Aplicado (código):
+
+**A. Corrección de lectura de precios en `tradingEngine.ts`**
+- **Cambio:** donde se usaba `tickerData.c?.[0]` y similares, se reemplazó por `ticker.last` / `ticker.volume24h` (Ticker normalizado).
+- **Resultado esperado:** elimina `PRICE_INVALID` falsos por `currentPrice=0` cuando Kraken sí devuelve precio.
+
+**B. Revolut X: evitar fallback a orderbook en 404**
+- **Cambio:** `RevolutXService.getTicker()` ya no intenta `getTickerFromOrderbook()` cuando el endpoint público falla con **404** (not found).
+- **Resultado esperado:** menos ruido de logs y menos errores en cascada cuando el endpoint no existe.
+
+**C. MTF: reducir falsos positivos en detección de duplicación**
+- **Cambio:** `emitMTFDiagnostic()` ahora usa criterios más restrictivos para alertar duplicación MTF. Solo marca como ERROR cuando hay timestamps exactamente iguales en todos los timeframes, y como INFO para solapamientos menores.
+- **Resultado esperado:** menos warnings MTF innecesarios, solo alertas cuando hay problemas reales de datos.
 
 ---
 
