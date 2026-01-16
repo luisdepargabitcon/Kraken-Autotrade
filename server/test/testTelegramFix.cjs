@@ -1,4 +1,4 @@
-const { errorAlertService } = require('../services/ErrorAlertService');
+const { errorAlertService } = require('./services/ErrorAlertService');
 
 async function testTelegramFix() {
   try {
