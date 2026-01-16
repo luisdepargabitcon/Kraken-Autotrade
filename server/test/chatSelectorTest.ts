@@ -123,7 +123,7 @@ async function testChatSelector() {
 }
 
 // Ejecutar tests si se llama directamente
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   testChatSelector().then(() => {
     console.log('\n✨ Script de pruebas del selector de chat finalizado');
     process.exit(0);
