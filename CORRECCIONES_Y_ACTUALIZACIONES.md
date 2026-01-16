@@ -70,6 +70,81 @@ PRICE_INVALID → botLogger.warn() → return (salta evaluación)
 - **Cambio:** `emitMTFDiagnostic()` ahora usa criterios más restrictivos para alertar duplicación MTF. Solo marca como ERROR cuando hay timestamps exactamente iguales en todos los timeframes, y como INFO para solapamientos menores.
 - **Resultado esperado:** menos warnings MTF innecesarios, solo alertas cuando hay problemas reales de datos.
 
+### 2. Sistema de Alertas de Telegram para Errores Críticos
+**Fecha:** 16 Enero 2026  
+**Tipo:** Nueva Funcionalidad  
+**Severidad:** Alta  
+
+#### Implementación Completa:
+
+**A. ErrorAlertService.ts - Servicio Principal**
+- **Archivo:** `server/services/ErrorAlertService.ts` (nuevo)
+- **Funcionalidad:** Sistema singleton de alertas con rate limiting, filtrado por severidad y formateo de mensajes
+- **Características:**
+  - Rate limiting configurable por tipo de error
+  - Fragmentos de código fuente incluidos automáticamente
+  - Stack trace simplificado para errores de JavaScript
+  - Formateo HTML para Telegram con emojis y estructura clara
+
+**B. Integración en Puntos Críticos:**
+- **tradingEngine.ts:** Alertas para PRICE_INVALID y errores de trading
+- **RevolutXService.ts:** Alertas para errores 404 y fallos de API
+- **storage.ts:** Alertas para errores críticos de base de datos
+- **routes.ts:** Alertas para errores en endpoints de API de trading
+
+**C. Configuración y Testing:**
+- **Archivo:** `server/config/errorAlerts.ts` (nuevo) - Configuración centralizada
+- **Archivo:** `server/test/errorAlertTest.ts` (nuevo) - Script de pruebas completo
+
+#### Tipos de Alertas Implementadas:
+
+**🚨 CRITICAL:**
+- DATABASE_ERROR (errores de PostgreSQL)
+- TRADING_ERROR (fallos en operaciones de trading)
+
+**🔴 HIGH:**
+- PRICE_INVALID (precios inválidos que bloquean trading)
+- SYSTEM_ERROR (errores de sistema)
+
+**🟡 MEDIUM:**
+- API_ERROR (fallos de APIs externas como Revolut X)
+
+#### Formato de Alerta Telegram:
+```
+🚨 ERROR CRÍTICO DETECTADO 🚨
+━━━━━━━━━━━━━━━━━━━
+📦 Tipo: PRICE_INVALID
+🔍 Par: BTC/USD
+⏰ Hora: 2026-01-16 10:45:23
+📍 Archivo: server/services/tradingEngine.ts
+📍 Función: analyzePairAndTrade()
+📍 Línea: 3720
+
+❌ Error: Precio inválido detectado: 0 para BTC/USD
+
+📋 Contexto:
+   • currentPrice: 0
+   • signal: "BUY"
+   • confidence: 0.85
+
+📋 Código Implicado:
+if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+  log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluación`, "trading");
+  await botLogger.warn("PRICE_INVALID", `Precio no válido para ${pair}`, { pair, currentPrice });
+  return;
+}
+
+🔧 Acción Recomendada: Verificar conexión con exchange de datos
+━━━━━━━━━━━━━━━━━━━
+```
+
+#### Beneficios:
+- **Detección inmediata** de problemas críticos vía Telegram
+- **Diagnóstico rápido** con código fuente y contexto incluido
+- **Rate limiting** para evitar spam de alertas
+- **Filtrado inteligente** por severidad y tipo de error
+- **Contexto completo** para resolución rápida de problemas
+
 ---
 
 ## 🔄 Sesión 14-15 Enero 2026

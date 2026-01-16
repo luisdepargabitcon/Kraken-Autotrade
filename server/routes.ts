@@ -14,6 +14,7 @@ import { environment } from "./services/environment";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
+import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -919,6 +920,23 @@ export async function registerRoutes(
         isDryRun: isDryRunErr,
         timestamp: new Date().toISOString(),
       });
+      
+      // Enviar alerta crítica de error en API de trading
+      const alert = ErrorAlertService.createFromError(
+        error,
+        'TRADING_ERROR',
+        'CRITICAL',
+        'closePosition',
+        'server/routes.ts',
+        pair,
+        { 
+          endpoint: '/api/positions/close',
+          lotId: lotId || "not_specified",
+          isDryRun: isDryRunErr,
+          userAgent: req.headers['user-agent']
+        }
+      );
+      await errorAlertService.sendCriticalError(alert);
       
       await botLogger.error("MANUAL_CLOSE_EXCEPTION", `Excepción no controlada en cierre manual`, {
         pair,

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from './IExchangeService';
+import { errorAlertService, ErrorAlertService } from '../ErrorAlertService';
 
 const API_BASE_URL = 'https://revx.revolut.com';
 
@@ -128,6 +129,20 @@ export class RevolutXService implements IExchangeService {
         // Avoid orderbook fallback for 404 (endpoint not found / unsupported)
         if (response.status === 404) {
           console.error('[revolutx] Ticker endpoint 404:', errorText);
+          
+          // Enviar alerta de error 404
+          const alert = ErrorAlertService.createCustomAlert(
+            'API_ERROR',
+            `Revolut X API endpoint no encontrado: ${response.status} - ${errorText}`,
+            'MEDIUM',
+            'getTicker',
+            'server/services/exchanges/RevolutXService.ts',
+            130,
+            pair,
+            { status: response.status, endpoint: fullUrl, errorText }
+          );
+          await errorAlertService.sendCriticalError(alert);
+          
           throw new Error(`Revolut X API error: ${response.status}`);
         }
 
@@ -158,6 +173,19 @@ export class RevolutXService implements IExchangeService {
       };
     } catch (error: any) {
       console.error('[revolutx] getTicker error:', error.message);
+      
+      // Enviar alerta para errores generales de API
+      const alert = ErrorAlertService.createFromError(
+        error,
+        'API_ERROR',
+        'HIGH',
+        'getTicker',
+        'server/services/exchanges/RevolutXService.ts',
+        pair,
+        { endpoint: fullUrl, exchangeName: this.exchangeName }
+      );
+      await errorAlertService.sendCriticalError(alert);
+      
       // Fallback to orderbook method only if this is not a 404/not found error
       if (String(error?.message || '').includes('404') || String(error?.message || '').toLowerCase().includes('not found')) {
         throw error;

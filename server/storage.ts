@@ -41,6 +41,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull } from "drizzle-orm";
+import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 
 export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
@@ -163,6 +164,19 @@ export class DatabaseStorage implements IStorage {
         // Migration failed - propagate error
         console.error('[storage] Auto-migration failed:', migrationResult.error);
       }
+      
+      // Enviar alerta crítica de error de base de datos
+      const alert = ErrorAlertService.createFromError(
+        error as Error,
+        'DATABASE_ERROR',
+        'CRITICAL',
+        'getBotConfig',
+        'server/storage.ts',
+        undefined,
+        { operation: 'getBotConfig', migrationAttempted: this.schemaMigrationAttempted }
+      );
+      await errorAlertService.sendCriticalError(alert);
+      
       // No fallback - surface the error so operators know to fix schema
       throw error;
     }

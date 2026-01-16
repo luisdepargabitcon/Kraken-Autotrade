@@ -15,6 +15,7 @@ import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory"
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
 import type { TradingConfig } from "@shared/config-schema";
+import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
 
 interface PriceData {
   price: number;
@@ -2130,6 +2131,20 @@ El bot ha pausado las operaciones de COMPRA.
       
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando SL/TP`, "trading");
+        
+        // Enviar alerta crítica de precio inválido
+        const alert = ErrorAlertService.createCustomAlert(
+          'PRICE_INVALID',
+          `Precio inválido detectado: ${currentPrice} para ${pair} en SL/TP`,
+          'HIGH',
+          'checkPositionsSLTP',
+          'server/services/tradingEngine.ts',
+          2133,
+          pair,
+          { currentPrice, positions: positions.length }
+        );
+        await errorAlertService.sendCriticalError(alert);
+        
         return;
       }
 
@@ -3031,7 +3046,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // MEJORA 1: Verificar spread antes de comprar
-        const spreadCheck = this.isSpreadAcceptable(tickerData);
+        // Obtener ticker raw para spread check
+        const tickerRaw = await this.getDataExchange().getTicker(krakenPair);
+        const spreadCheck = this.isSpreadAcceptable(tickerRaw);
         if (!spreadCheck.acceptable) {
           log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
@@ -3703,6 +3720,20 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluación`, "trading");
         await botLogger.warn("PRICE_INVALID", `Precio no válido para ${pair}`, { pair, currentPrice });
+        
+        // Enviar alerta crítica de precio inválido
+        const alert = ErrorAlertService.createCustomAlert(
+          'PRICE_INVALID',
+          `Precio inválido detectado: ${currentPrice} para ${pair} en evaluación de señal`,
+          'CRITICAL',
+          'analyzePairAndTrade',
+          'server/services/tradingEngine.ts',
+          3720,
+          pair,
+          { currentPrice, signal: signal?.action, confidence: signal?.confidence }
+        );
+        await errorAlertService.sendCriticalError(alert);
+        
         return;
       }
       
@@ -3909,7 +3940,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        const spreadCheck = this.isSpreadAcceptable(tickerData);
+        // Obtener ticker raw para spread check
+        const tickerRaw2 = await this.getDataExchange().getTicker(krakenPair);
+        const spreadCheck = this.isSpreadAcceptable(tickerRaw2);
         if (!spreadCheck.acceptable) {
           log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
@@ -6351,7 +6384,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     // Solo alertar si hay evidencia clara de datos incorrectos
     const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0);
     const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
-    const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(span5m) > 0);
+    const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(String(span5m)) > 0);
     
     // Detectar casos sospechosos pero menos críticos
     const suspiciousOverlap = (
