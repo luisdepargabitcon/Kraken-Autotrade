@@ -106,7 +106,12 @@ function buildPanelUrlFooter(): string {
   if (!url) {
     return '\n📋 Panel no configurado';
   }
-  return `\n🔗 <a href="${url}">Ver Panel</a>\n<i>${url}</i>`;
+  
+  // Build clickable HTML link + fallback plain text
+  const clickableLink = `<a href="${url}">🔗 Ver Panel</a>`;
+  const fallbackText = `Panel: ${url}`;
+  
+  return `\n${clickableLink}\n<i>${fallbackText}</i>`;
 }
 
 // ============================================================
