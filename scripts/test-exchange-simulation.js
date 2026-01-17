@@ -7,15 +7,6 @@
  * Uso: node scripts/test-exchange-simulation.js
  */
 
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// Cargar variables de entorno
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, '../.env') });
-
 import RevolutXService from '../server/services/exchanges/RevolutXService.js';
 
 async function testExchangeSimulation() {
