@@ -148,10 +148,23 @@ class SinglePollerGuard {
     return SinglePollerGuard.instance;
   }
 
+  private hashString(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+
   async tryAcquireLock(): Promise<boolean> {
     try {
+      // Convertir string lockKey a hash numérico para pg_advisory_lock
+      const lockHash = this.hashString(this.lockKey);
+      
       // Intentar adquirir advisory lock de PostgreSQL
-      const result = await db.execute(sql`SELECT pg_try_advisory_lock(${this.lockKey}) as acquired`);
+      const result = await db.execute(sql`SELECT pg_try_advisory_lock(${lockHash}) as acquired`);
       const acquired = result.rows[0]?.acquired;
       
       if (acquired) {
@@ -180,7 +193,8 @@ class SinglePollerGuard {
 
   async releaseLock(): Promise<void> {
     try {
-      await db.execute(sql`SELECT pg_advisory_unlock(${this.lockKey})`);
+      const lockHash = this.hashString(this.lockKey);
+      await db.execute(sql`SELECT pg_advisory_unlock(${lockHash})`);
       this.pollingActive = false;
       console.log(`[SinglePollerGuard] 🔓 Lock released for ${this.lockKey}`);
       await botLogger.info("TELEGRAM_POLLING_STOPPED" as any, "Single poller lock released", {
