@@ -25,21 +25,32 @@ function escapeHtml(s: unknown): string {
 // ============================================================
 function formatSpanishDate(dateInput?: string | Date | number): string {
   try {
-    const date = dateInput ? new Date(dateInput) : new Date();
+    // Handle null/undefined
+    if (!dateInput) {
+      dateInput = new Date();
+    }
+    
+    const date = new Date(dateInput);
+    
     // Check if date is valid
     if (isNaN(date.getTime())) {
+      console.warn('[formatSpanishDate] Invalid date input:', dateInput);
       return "N/A";
     }
-    return date.toLocaleString("es-ES", { 
-      timeZone: "Europe/Madrid",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    });
-  } catch {
+    
+    // Use Intl.DateTimeFormat for consistent formatting
+    return new Intl.DateTimeFormat('es-ES', {
+      timeZone: 'Europe/Madrid',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(date);
+  } catch (error) {
+    console.error('[formatSpanishDate] Error formatting date:', error, 'input:', dateInput);
     return "N/A";
   }
 }
