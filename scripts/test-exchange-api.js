@@ -92,8 +92,27 @@ async function testExchangeViaAPI() {
     if (!priceResponse.ok) {
       throw new Error(`Error obteniendo precios: ${priceResponse.status}`);
     }
-    const prices = await priceResponse.json();
-    const ethPrice = prices.find(p => p.asset === 'ETH')?.price || 0;
+    const priceData = await priceResponse.json();
+    console.log('📄 Formato de precios recibido:', JSON.stringify(priceData, null, 2).substring(0, 300) + '...');
+    
+    let ethPrice = 0;
+    
+    // Intentar diferentes formatos posibles
+    if (Array.isArray(priceData)) {
+      // Formato: [{ asset: 'ETH', price: 3333.33 }, ...]
+      ethPrice = priceData.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (priceData.prices && Array.isArray(priceData.prices)) {
+      // Formato: { prices: [{ asset: 'ETH', price: 3333.33 }, ...] }
+      ethPrice = priceData.prices.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (priceData.ETH) {
+      // Formato: { ETH: 3333.33, BTC: 45000.00, ... }
+      ethPrice = priceData.ETH;
+    } else if (priceData.data && priceData.data.ETH) {
+      // Formato: { data: { ETH: 3333.33, ... } }
+      ethPrice = priceData.data.ETH;
+    }
+    
+    console.log(`💰 ETH price detected: $${ethPrice}`);
     
     if (ethPrice <= 0) {
       throw new Error('No se pudo obtener el precio de ETH');
@@ -126,8 +145,20 @@ async function testExchangeViaAPI() {
     if (!newPriceResponse.ok) {
       throw new Error(`Error obteniendo precios nuevos: ${newPriceResponse.status}`);
     }
-    const newPrices = await newPriceResponse.json();
-    const newEthPrice = newPrices.find(p => p.asset === 'ETH')?.price || 0;
+    const newPriceData = await newPriceResponse.json();
+    
+    let newEthPrice = 0;
+    
+    // Usar la misma lógica flexible que antes
+    if (Array.isArray(newPriceData)) {
+      newEthPrice = newPriceData.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (newPriceData.prices && Array.isArray(newPriceData.prices)) {
+      newEthPrice = newPriceData.prices.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (newPriceData.ETH) {
+      newEthPrice = newPriceData.ETH;
+    } else if (newPriceData.data && newPriceData.data.ETH) {
+      newEthPrice = newPriceData.data.ETH;
+    }
     
     console.log(`   Nuevo precio ETH/USD: $${newEthPrice.toFixed(2)}`);
     console.log(`   Cambio: ${newEthPrice >= ethPrice ? '📈' : '📉'} ${((newEthPrice - ethPrice) / ethPrice * 100).toFixed(2)}%`);
