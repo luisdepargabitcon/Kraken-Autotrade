@@ -1683,14 +1683,14 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         });
       }
       
-      // Guardar en base de datos
-      const tradeId = `RX-${Date.now()}`;
+      // Guardar en base de datos usando el ID de RevolutX
+      const tradeId = order.orderId || `RX-${Date.now()}`;
       const trade = await storage.createTrade({
         tradeId,
         pair,
         type,
         price: order.price?.toString() || "market",
-        amount: volume.toString(),
+        amount: order.volume?.toString() || volume.toString(),
         status: "filled",
       });
       
@@ -1699,7 +1699,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         type,
         pair,
         price: order.price?.toString() || "market",
-        amount: volume.toString(),
+        amount: order.volume?.toString() || volume.toString(),
         status: "filled",
       });
       
@@ -1711,7 +1711,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           tradeId,
           pair,
           type,
-          amount: volume.toString(),
+          amount: order.volume?.toString() || volume.toString(),
           price: order.price,
           cost: order.cost,
           status: "filled"
