@@ -1642,6 +1642,91 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // Endpoint para trading con RevolutX
+  app.post("/api/trade/revolutx", async (req, res) => {
+    try {
+      const { pair, type, ordertype, volume } = req.body;
+      
+      if (!pair || !type || !volume) {
+        return res.status(400).json({ 
+          error: "Missing required parameters: pair, type, volume" 
+        });
+      }
+      
+      if (!["buy", "sell"].includes(type)) {
+        return res.status(400).json({ 
+          error: "Invalid order type. Must be 'buy' or 'sell'" 
+        });
+      }
+      
+      // Usar RevolutXService ya inicializado globalmente
+      if (!revolutXService.isInitialized()) {
+        return res.status(400).json({ 
+          error: "RevolutX not initialized" 
+        });
+      }
+      
+      console.log(`[API] RevolutX trade request: ${type} ${volume} ${pair}`);
+      
+      // Ejecutar la orden
+      const order = await revolutXService.placeOrder({
+        pair,
+        type: type as "buy" | "sell",
+        ordertype: ordertype || "market",
+        volume: volume.toString()
+      });
+      
+      if (!order.success) {
+        console.error(`[API] RevolutX trade failed:`, order.error);
+        return res.status(400).json({ 
+          error: order.error || "Trade failed" 
+        });
+      }
+      
+      // Guardar en base de datos
+      const tradeId = `RX-${Date.now()}`;
+      const trade = await storage.createTrade({
+        tradeId,
+        pair,
+        type,
+        price: order.price?.toString() || "market",
+        amount: volume.toString(),
+        status: "filled",
+      });
+      
+      // Enviar notificación a Telegram
+      await telegramService.sendTradeNotification({
+        type,
+        pair,
+        price: order.price?.toString() || "market",
+        amount: volume.toString(),
+        status: "filled",
+      });
+      
+      console.log(`[API] RevolutX trade executed: ${tradeId}`);
+      
+      res.json({ 
+        success: true, 
+        trade: {
+          tradeId,
+          pair,
+          type,
+          amount: volume.toString(),
+          price: order.price,
+          cost: order.cost,
+          status: "filled"
+        },
+        order 
+      });
+      
+    } catch (error: any) {
+      console.error(`[API] RevolutX trade error:`, error);
+      res.status(500).json({ 
+        error: error.message || "Failed to place RevolutX trade" 
+      });
+    }
+  });
+
   app.get("/api/notifications", async (req, res) => {
     try {
       const notifications = await storage.getUnsentNotifications();
