@@ -469,6 +469,53 @@ export class DatabaseStorage implements IStorage {
     await db.delete(telegramChatsTable).where(eq(telegramChatsTable.id, id));
   }
 
+  async ensureDefaultChat(): Promise<void> {
+    // Check if there's already a default chat
+    const existingDefault = await db.select()
+      .from(telegramChatsTable)
+      .where(eq(telegramChatsTable.isDefault, true))
+      .limit(1);
+
+    if (existingDefault.length === 0) {
+      // Get legacy chat_id from api_config
+      const apiConfig = await this.getApiConfig();
+      if (apiConfig?.telegramChatId) {
+        // Create default chat from legacy config
+        await this.createTelegramChat({
+          name: "Chat por defecto",
+          chatId: apiConfig.telegramChatId,
+          isDefault: true,
+          alertTrades: true,
+          alertErrors: true,
+          alertSystem: true,
+          alertBalance: false,
+          alertHeartbeat: false,
+          isActive: true
+        });
+      }
+    }
+  }
+
+  async setDefaultChat(chatId: number): Promise<void> {
+    // Remove default from all chats
+    await db.update(telegramChatsTable)
+      .set({ isDefault: false })
+      .where(eq(telegramChatsTable.isDefault, true));
+
+    // Set new default
+    await db.update(telegramChatsTable)
+      .set({ isDefault: true })
+      .where(eq(telegramChatsTable.id, chatId));
+  }
+
+  async getDefaultChat(): Promise<TelegramChat | undefined> {
+    const [defaultChat] = await db.select()
+      .from(telegramChatsTable)
+      .where(eq(telegramChatsTable.isDefault, true))
+      .limit(1);
+    return defaultChat;
+  }
+
   async getOpenPositions(): Promise<OpenPosition[]> {
     return await db.select().from(openPositionsTable);
   }

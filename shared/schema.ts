@@ -205,6 +205,7 @@ export const telegramChats = pgTable("telegram_chats", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   chatId: text("chat_id").notNull(),
+  isDefault: boolean("is_default").notNull().default(false),
   alertTrades: boolean("alert_trades").notNull().default(true),
   alertErrors: boolean("alert_errors").notNull().default(true),
   alertSystem: boolean("alert_system").notNull().default(true),
