@@ -37,6 +37,7 @@ services:
       - VPS_DEPLOY=true
       - VPS_PANEL_URL=http://5.250.184.18:3020
       - TERMINAL_TOKEN=${TERMINAL_TOKEN}
+      - WS_ADMIN_TOKEN=${WS_ADMIN_TOKEN:-Kr4k3n_WS_St4g1ng_2026!}
     ports:
       - "3020:5000"
     networks:
