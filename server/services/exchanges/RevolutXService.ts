@@ -27,6 +27,13 @@ export class RevolutXService implements IExchangeService {
 
   private constructor() {}
 
+  private generateClientOrderId(): string {
+    const timestampPart = Date.now().toString(36).toUpperCase();
+    const randomPart = crypto.randomBytes(10).toString('hex').toUpperCase();
+    const combined = `RX${timestampPart}${randomPart}`;
+    return combined.slice(0, 32);
+  }
+
   public static getInstance(): RevolutXService {
     if (!RevolutXService.instance) {
       RevolutXService.instance = new RevolutXService();
@@ -344,7 +351,7 @@ export class RevolutXService implements IExchangeService {
     const symbol = this.formatPair(params.pair);
     
     const orderBody: any = {
-      client_order_id: `rx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      client_order_id: this.generateClientOrderId(),
       symbol: symbol,
       side: params.type.toUpperCase(),
       order_configuration: {}

@@ -260,9 +260,9 @@ describe('ConfigService', () => {
     it('should generate warnings for edge case values', () => {
       const edgeCaseConfig: TradingConfig = {
         global: {
-          riskPerTradePct: 9.5, // High risk
+          riskPerTradePct: 9.0, // High risk
           maxTotalExposurePct: 50,
-          maxPairExposurePct: 25,
+          maxPairExposurePct: 15,
           dryRunMode: false,
           regimeDetectionEnabled: true,
           regimeRouterEnabled: true,

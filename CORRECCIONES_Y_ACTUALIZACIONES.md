@@ -968,3 +968,73 @@ docker logs krakenbot-staging-app | grep "Señales: 4"
 ---
 
 **Última revisión:** 15 Enero 2026, 00:43 UTC+01:00
+
+---
+
+## 🔄 Sesión 17 Enero 2026 (Recuperación tras pérdida de volúmenes / Auto-reparación VPS)
+
+**Inicio trabajo:** 2026-01-17 20:32 UTC+01:00  
+**Fin trabajo:** 2026-01-17 22:20 UTC+01:00
+
+### 1. Auto-reparación de base de datos en arranque (Docker / VPS)
+
+**Archivo:** `script/migrate.ts`
+
+**Objetivo:** que el contenedor sea autosuficiente tras perder el volumen PostgreSQL (sin prompts y sin intervención manual).
+
+**Cambios:**
+- Crea tablas base si faltan (modo no destructivo):
+  - `api_config`, `bot_config`, `open_positions`, `notifications`, `market_data`, `trades`, `telegram_chats`
+  - Historial/analytics: `bot_events`, `trade_fills`, `lot_matches`, `training_trades`
+- Aplica el SQL de configuración dinámica y presets:
+  - `db/migrations/001_create_config_tables.sql` (recrea `trading_config`, `config_change`, `config_preset` y re-inserta presets)
+- Aplica migración de columnas extendidas de `bot_config`:
+  - `db/migrations/003_add_missing_bot_config_columns.sql`
+- Añade/asegura columnas críticas para evitar crashes del dashboard:
+  - `trades.kraken_order_id`, `trades.entry_price`, `trades.realized_pnl_usd`, `trades.realized_pnl_pct`, `trades.executed_at`
+  - `open_positions` (campos base + SMART_GUARD/estado)
+  - `notifications.telegram_sent`, `notifications.sent_at`
+  - `market_data.volume_24h`, `market_data.change_24h`
+- Constraints idempotentes:
+  - `lot_matches` UNIQUE(sell_fill_txid, lot_id)
+  - `training_trades.buy_txid` UNIQUE solo si es seguro (ya existía lógica de comprobación)
+
+### 2. Script de bootstrap para VPS
+
+**Archivo:** `scripts/vps-bootstrap.sh`
+
+**Objetivo:** reducir el proceso en VPS a:
+```bash
+git pull origin main
+./scripts/vps-bootstrap.sh
+```
+
+**Acciones del script:**
+- `git pull`
+- `docker compose build --no-cache`
+- `docker compose up -d`
+- `curl /api/health` (validación rápida)
+
+### 3. Fix de tests (Vitest) para aliases y entorno
+
+**Archivos:**
+- `vitest.config.ts`
+- `vitest.setup.ts`
+- `server/tests/config.test.ts`
+
+**Cambios:**
+- Añadidos aliases `@shared` y `@` en Vitest para que coincidan con `tsconfig.json`.
+- `vitest.setup.ts` define `DATABASE_URL` dummy para que imports del servidor no fallen durante tests.
+- Ajuste del test de warnings para cumplir el rango del schema y seguir disparando el warning.
+
+**Verificación:**
+- ✅ `npm run check`
+- ✅ `npm test`
+
+### 4. RevolutX: client_order_id (preparación para resolver rechazo)
+
+**Archivo:** `server/services/exchanges/RevolutXService.ts`
+
+**Cambio:**
+- Generador `generateClientOrderId()` con formato alfanumérico en mayúsculas y sin guiones (hasta 32 chars) para cumplir restricciones del API.
+

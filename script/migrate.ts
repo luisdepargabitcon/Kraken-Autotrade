@@ -15,8 +15,36 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import pg from "pg";
+import fs from "fs";
+import path from "path";
 
 const { Pool } = pg;
+
+async function tryExecute(db: any, statement: string, label: string): Promise<void> {
+  try {
+    await db.execute(sql.raw(statement));
+  } catch (e) {
+    console.log(`[migrate] ${label} note:`, e);
+  }
+}
+
+async function tryExecuteFile(db: any, filePath: string, label: string): Promise<void> {
+  try {
+    if (!fs.existsSync(filePath)) {
+      console.log(`[migrate] ${label} skipped (file not found): ${filePath}`);
+      return;
+    }
+    const content = fs.readFileSync(filePath, "utf-8");
+    if (!content.trim()) {
+      console.log(`[migrate] ${label} skipped (empty file): ${filePath}`);
+      return;
+    }
+    await db.execute(sql.raw(content));
+    console.log(`[migrate] ${label} applied: ${path.basename(filePath)}`);
+  } catch (e) {
+    console.log(`[migrate] ${label} note:`, e);
+  }
+}
 
 async function runMigration() {
   console.log("[migrate] Starting non-interactive database migration...");
@@ -31,6 +59,93 @@ async function runMigration() {
   const db = drizzle(pool);
   
   try {
+    // Trading configuration tables + presets (Trade Configuration dashboard)
+    console.log("[migrate] Ensuring trading configuration tables and presets exist...");
+    const configSqlPath = path.resolve(process.cwd(), "db", "migrations", "001_create_config_tables.sql");
+    await tryExecuteFile(db, configSqlPath, "trading_config/config_preset/config_change");
+
+    // api_config table (credentials)
+    console.log("[migrate] Ensuring api_config table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS api_config (
+        id SERIAL PRIMARY KEY,
+        kraken_api_key TEXT,
+        kraken_api_secret TEXT,
+        kraken_connected BOOLEAN NOT NULL DEFAULT false,
+        kraken_enabled BOOLEAN NOT NULL DEFAULT true,
+        revolutx_api_key TEXT,
+        revolutx_private_key TEXT,
+        revolutx_connected BOOLEAN NOT NULL DEFAULT false,
+        revolutx_enabled BOOLEAN NOT NULL DEFAULT false,
+        trading_exchange TEXT NOT NULL DEFAULT 'kraken',
+        data_exchange TEXT NOT NULL DEFAULT 'kraken',
+        active_exchange TEXT NOT NULL DEFAULT 'kraken',
+        telegram_token TEXT,
+        telegram_chat_id TEXT,
+        telegram_connected BOOLEAN NOT NULL DEFAULT false,
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "api_config table"
+    );
+
+    // bot_config table (core bot settings)
+    console.log("[migrate] Ensuring bot_config table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS bot_config (
+        id SERIAL PRIMARY KEY,
+        is_active BOOLEAN NOT NULL DEFAULT false,
+        strategy TEXT NOT NULL DEFAULT 'momentum',
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "bot_config table"
+    );
+
+    // bot_config extended columns (keep in sync with shared/schema.ts)
+    console.log("[migrate] Ensuring bot_config extended columns exist...");
+    const botConfigSqlPath = path.resolve(process.cwd(), "db", "migrations", "003_add_missing_bot_config_columns.sql");
+    await tryExecuteFile(db, botConfigSqlPath, "bot_config columns");
+
+    // open_positions table (positions)
+    console.log("[migrate] Ensuring open_positions table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS open_positions (
+        id SERIAL PRIMARY KEY,
+        pair TEXT NOT NULL,
+        opened_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "open_positions table"
+    );
+
+    // notifications table
+    console.log("[migrate] Ensuring notifications table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "notifications table"
+    );
+
+    // market_data table
+    console.log("[migrate] Ensuring market_data table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS market_data (
+        id SERIAL PRIMARY KEY,
+        pair TEXT NOT NULL,
+        price DECIMAL(18,8) NOT NULL,
+        timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "market_data table"
+    );
+
     // telegram_chats table (multi-chat support)
     console.log("[migrate] Ensuring telegram_chats table exists...");
     try {
@@ -69,6 +184,175 @@ async function runMigration() {
       }
     }
 
+    // trades table + columns required by dashboard
+    console.log("[migrate] Ensuring trades table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS trades (
+        id SERIAL PRIMARY KEY,
+        trade_id TEXT NOT NULL UNIQUE,
+        pair TEXT NOT NULL,
+        type TEXT NOT NULL,
+        price TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "trades table"
+    );
+
+    console.log("[migrate] Ensuring trades columns exist...");
+    const tradesMigrations = [
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS kraken_order_id TEXT",
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_price DECIMAL(18,8)",
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl_usd DECIMAL(18,8)",
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl_pct DECIMAL(10,4)",
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS executed_at TIMESTAMP WITHOUT TIME ZONE",
+    ];
+    for (const migration of tradesMigrations) {
+      try {
+        await db.execute(sql.raw(migration));
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    // notifications table columns used by dashboard / telegram
+    console.log("[migrate] Ensuring notifications columns exist...");
+    const notificationsMigrations = [
+      "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS telegram_sent BOOLEAN NOT NULL DEFAULT false",
+      "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP WITHOUT TIME ZONE",
+    ];
+    for (const migration of notificationsMigrations) {
+      try {
+        await db.execute(sql.raw(migration));
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    // market_data table columns used by portfolio/prices
+    console.log("[migrate] Ensuring market_data columns exist...");
+    const marketDataMigrations = [
+      "ALTER TABLE market_data ADD COLUMN IF NOT EXISTS volume_24h DECIMAL(18,2)",
+      "ALTER TABLE market_data ADD COLUMN IF NOT EXISTS change_24h DECIMAL(10,2)",
+    ];
+    for (const migration of marketDataMigrations) {
+      try {
+        await db.execute(sql.raw(migration));
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    // bot_events table (logs feed)
+    console.log("[migrate] Ensuring bot_events table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS bot_events (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+        level TEXT NOT NULL,
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        meta TEXT
+      );`,
+      "bot_events table"
+    );
+
+    // trade_fills table
+    console.log("[migrate] Ensuring trade_fills table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS trade_fills (
+        id SERIAL PRIMARY KEY,
+        txid TEXT NOT NULL UNIQUE,
+        order_id TEXT NOT NULL,
+        pair TEXT NOT NULL,
+        type TEXT NOT NULL,
+        price DECIMAL(18,8) NOT NULL,
+        amount DECIMAL(18,8) NOT NULL,
+        cost DECIMAL(18,8) NOT NULL,
+        fee DECIMAL(18,8) NOT NULL,
+        matched BOOLEAN NOT NULL DEFAULT false,
+        executed_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "trade_fills table"
+    );
+
+    // lot_matches table
+    console.log("[migrate] Ensuring lot_matches table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS lot_matches (
+        id SERIAL PRIMARY KEY,
+        sell_fill_txid TEXT NOT NULL,
+        lot_id TEXT NOT NULL,
+        matched_qty DECIMAL(18,8) NOT NULL,
+        buy_price DECIMAL(18,8) NOT NULL,
+        sell_price DECIMAL(18,8) NOT NULL,
+        buy_fee_allocated DECIMAL(18,8) NOT NULL,
+        sell_fee_allocated DECIMAL(18,8) NOT NULL,
+        pnl_net DECIMAL(18,8) NOT NULL,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "lot_matches table"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF NOT EXISTS (
+           SELECT 1
+           FROM information_schema.table_constraints
+           WHERE table_name = 'lot_matches'
+             AND constraint_type = 'UNIQUE'
+             AND constraint_name = 'lot_matches_sell_lot_unique'
+         ) THEN
+           ALTER TABLE lot_matches
+             ADD CONSTRAINT lot_matches_sell_lot_unique UNIQUE (sell_fill_txid, lot_id);
+         END IF;
+       END $$;`,
+      "lot_matches unique constraint"
+    );
+
+    // training_trades table (used by backfills and telegram profits fallback)
+    console.log("[migrate] Ensuring training_trades table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS training_trades (
+        id SERIAL PRIMARY KEY,
+        pair TEXT NOT NULL,
+        strategy_id TEXT,
+        buy_txid TEXT NOT NULL,
+        sell_txid TEXT,
+        sell_txids_json JSONB,
+        entry_price DECIMAL(18,8) NOT NULL,
+        exit_price DECIMAL(18,8),
+        entry_amount DECIMAL(18,8) NOT NULL,
+        exit_amount DECIMAL(18,8),
+        qty_remaining DECIMAL(18,8),
+        entry_fee DECIMAL(18,8) NOT NULL DEFAULT 0,
+        exit_fee DECIMAL(18,8),
+        cost_usd DECIMAL(18,8) NOT NULL,
+        revenue_usd DECIMAL(18,8),
+        pnl_gross DECIMAL(18,8),
+        pnl_net DECIMAL(18,8),
+        pnl_pct DECIMAL(10,4),
+        hold_time_minutes INTEGER,
+        label_win INTEGER,
+        features_json JSONB,
+        discard_reason TEXT,
+        is_closed BOOLEAN NOT NULL DEFAULT false,
+        is_labeled BOOLEAN NOT NULL DEFAULT false,
+        entry_ts TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+        exit_ts TIMESTAMP WITHOUT TIME ZONE,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "training_trades table"
+    );
+
     // bot_config columns
     const botConfigMigrations = [
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_max_open_lots_per_pair INTEGER DEFAULT 1',
@@ -88,16 +372,36 @@ async function runMigration() {
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_scale_out_threshold DECIMAL(5,2) DEFAULT 80.00',
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_pct DECIMAL(5,2) DEFAULT 0.45',
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_auto BOOLEAN DEFAULT true',
+      "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS signal_timeframe TEXT DEFAULT 'cycle'",
+      "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS risk_level TEXT DEFAULT 'medium'",
+      "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS active_pairs TEXT[] DEFAULT ARRAY['BTC/USD','ETH/USD','SOL/USD']",
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS error_alert_chat_id TEXT',
     ];
     
     // open_positions columns
     const openPositionsMigrations = [
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_price DECIMAL(18,8)',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS amount DECIMAL(18,8)',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS qty_remaining DECIMAL(18,8)',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS qty_filled DECIMAL(18,8) DEFAULT 0',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS highest_price DECIMAL(18,8)',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS trade_id TEXT',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS kraken_order_id TEXT',
+      "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_strategy_id TEXT DEFAULT 'momentum_cycle'",
+      "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_signal_tf TEXT DEFAULT 'cycle'",
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS signal_confidence DECIMAL(5,2)',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS signal_reason TEXT',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_mode TEXT',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS config_snapshot_json JSONB',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_fee DECIMAL(18,8) DEFAULT 0',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_trailing_activated BOOLEAN DEFAULT false',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_current_stop_price DECIMAL(18,8)',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_scale_out_done BOOLEAN DEFAULT false',
-      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS config_snapshot_json JSONB',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS time_stop_disabled BOOLEAN DEFAULT false',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS time_stop_expired_at TIMESTAMP WITHOUT TIME ZONE',
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS be_progressive_level INTEGER DEFAULT 0',
     ];
     
     console.log("[migrate] Applying bot_config migrations...");
