@@ -85,6 +85,13 @@ function formatDuration(openedAt: string | Date | null | undefined): string {
 }
 
 // ============================================================
+// BRANDING HELPER - Branding consistente para todos los mensajes
+// ============================================================
+function getBotBranding(): string {
+  return `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`;
+}
+
+// ============================================================
 // PANEL URL FOOTER - Añade enlace al panel en cada mensaje
 // ============================================================
 function normalizePanelUrl(url?: string): string | null {
@@ -132,22 +139,22 @@ interface BotStartedContext {
 function buildBotStartedHTML(ctx: BotStartedContext): string {
   const routerStatus = ctx.routerEnabled ? "ACTIVO" : "INACTIVO";
   return [
-    `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`,
+    getBotBranding(),
     `━━━━━━━━━━━━━━━━━━━`,
     `✅ <b>Bot Iniciado</b>`,
     ``,
-    `📊 <b>Configuración:</b>`,
+    `🤖 <b>Configuración:</b>`,
+    `   • Entorno: <code>${escapeHtml(ctx.env)}</code>`,
     `   • Estrategia: <code>${escapeHtml(ctx.strategy)}</code>`,
     `   • Riesgo: <code>${escapeHtml(ctx.risk)}</code>`,
-    `   • Pares: <code>${escapeHtml(ctx.pairs.join(", "))}</code>`,
+    `   • Modo: <code>${escapeHtml(ctx.mode)}</code>`,
     `   • Router: <code>${routerStatus}</code>`,
     ``,
-    `💰 <b>Estado:</b>`,
-    `   • Balance: <code>$${escapeHtml(ctx.balanceUsd)}</code>`,
-    `   • Posiciones: <code>${ctx.positionCount}</code>`,
+    `💰 <b>Balance inicial:</b> <code>$${escapeHtml(ctx.balanceUsd)}</code>`,
+    `📊 <b>Pares activos:</b> <code>${ctx.pairs.join(", ")}</code>`,
+    `📈 <b>Posiciones:</b> <code>${ctx.positionCount}</code>`,
     ``,
-    `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
-    `🏷️ <b>Entorno:</b> <code>${escapeHtml(ctx.env)}</code>`,
+    `📅 ${formatSpanishDate()}`,
     `━━━━━━━━━━━━━━━━━━━`,
     buildPanelUrlFooter()
   ].join("\n");
@@ -209,7 +216,7 @@ interface DailyReportContext {
 
 function buildDailyReportHTML(ctx: DailyReportContext): string {
   return [
-    `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`,
+    getBotBranding(),
     `━━━━━━━━━━━━━━━━━━━`,
     `📋 <b>REPORTE DIARIO (14:00)</b>`,
     ``,
@@ -260,7 +267,7 @@ interface TradeBuyContext {
 
 function buildTradeBuyHTML(ctx: TradeBuyContext): string {
   const lines = [
-    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+    getBotBranding(),
     `━━━━━━━━━━━━━━━━━━━`,
     `🟢 <b>SEÑAL: COMPRAR ${escapeHtml(ctx.pair)}</b> 🟢`,
     ``,
@@ -280,26 +287,22 @@ function buildTradeBuyHTML(ctx: TradeBuyContext): string {
   
   if (ctx.regime) {
     lines.push(`🧭 <b>Régimen:</b> <code>${escapeHtml(ctx.regime)}</code>`);
-    if (ctx.regimeReason) {
-      lines.push(`   ↳ <i>${escapeHtml(ctx.regimeReason.substring(0, 80))}</i>`);
-    }
-    if (ctx.routerStrategy) {
-      lines.push(`🔄 <b>Router:</b> <code>${escapeHtml(ctx.routerStrategy)}</code>`);
-    }
-    lines.push(``);
+  }
+
+  if (ctx.regimeReason) {
+    lines.push(`📝 <b>Razón del Régimen:</b> <code>${escapeHtml(ctx.regimeReason)}</code>`);
+  }
+
+  if (ctx.routerStrategy) {
+    lines.push(`🔀 <b>Estrategia Router:</b> <code>${escapeHtml(ctx.routerStrategy)}</code>`);
   }
   
   lines.push(
-    `🧠 <b>Estrategia:</b> ${escapeHtml(ctx.strategyLabel)}`,
-    `📈 <b>Confianza:</b> <code>${escapeHtml(ctx.confPct)}%</code>`,
-    ``,
-    `🛡️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
-    `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
-    ``,
     `📅 ${formatSpanishDate()}`,
     `━━━━━━━━━━━━━━━━━━━`,
     buildPanelUrlFooter()
   );
+  
   return lines.join("\n");
 }
 
@@ -380,28 +383,36 @@ interface OrphanSellContext {
   reasonCode: string;
 }
 
-function buildOrphanSellHTML(ctx: OrphanSellContext): string {
-  return [
-    `🤖 <b>KRAKEN BOT</b> 🇪🇸`,
+function buildTradeBuyHTML(ctx: TradeBuyContext): string {
+  const lines = [
+    getBotBranding(),
     `━━━━━━━━━━━━━━━━━━━`,
-    `🟠 <b>LIQUIDACIÓN HUÉRFANA</b> 🟠`,
+    `🟢 <b>SEÑAL: COMPRAR ${escapeHtml(ctx.pair)}</b> 🟢`,
     ``,
-    `📦 <b>Operación:</b>`,
-    `   • Par/Activo: <code>${escapeHtml(ctx.assetOrPair)}</code>`,
+    `💰 <b>Orden:</b>`,
     `   • Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
-    `   • Precio: <code>${escapeHtml(ctx.price)}</code>`,
-    `   • Total: <code>${escapeHtml(ctx.total)}</code>`,
+    `   • Precio: <code>$${escapeHtml(ctx.price)}</code>`,
+    `   • Total: <code>$${escapeHtml(ctx.total)}</code>`,
+    `   • Order ID: <code>${escapeHtml(ctx.orderId)}</code>`,
     ``,
-    `⚠️ <b>Resultado:</b>`,
-    `   • PnL cierre: <code>N/A (sin entryPrice)</code>`,
-    `   • Razón: <code>${escapeHtml(ctx.reasonCode)}</code>`,
+    `🤖 <b>Estrategia:</b>`,
+    `   • Tipo: <code>${escapeHtml(ctx.strategyLabel)}</code>`,
+    `   • Confianza: <code>${escapeHtml(ctx.confPct)}</code>%`,
+    `   • Razón: <code>${escapeHtml(ctx.reason)}</code>`,
     ``,
-    `🔗 <b>ID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    `⚙️ <b>Configuración:</b>`,
+    `   • Modo: <code>${escapeHtml(ctx.mode)}</code>`,
     ``,
     `📅 ${formatSpanishDate()}`,
     `━━━━━━━━━━━━━━━━━━━`,
     buildPanelUrlFooter()
-  ].join("\n");
+  ];
+  
+  if (ctx.signalsSummary) {
+    lines.splice(16, 0, `📊 <b>Señales:</b> ${ctx.signalsSummary}`);
+  }
+  
+  return lines.join("\n");
 }
 
 interface SignalContext {
@@ -412,8 +423,16 @@ interface SignalContext {
   rsi?: string;
   macd?: string;
   adx?: string;
+  stoch?: string;
+  bb?: string;
+  ema?: string;
+  sma?: string;
+  volume?: string;
+  timeframe?: string;
   regime?: string;
-  ts: string;
+  regimeReason?: string;
+  routerStrategy?: string;
+  signalsSummary?: string;
 }
 
 function buildSignalHTML(ctx: SignalContext): string {
