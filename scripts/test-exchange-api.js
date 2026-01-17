@@ -104,6 +104,9 @@ async function testExchangeViaAPI() {
     } else if (priceData.prices && Array.isArray(priceData.prices)) {
       // Formato: { prices: [{ asset: 'ETH', price: 3333.33 }, ...] }
       ethPrice = priceData.prices.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (priceData.prices && priceData.prices.ETH && priceData.prices.ETH.price) {
+      // Formato: { prices: { "ETH": { "price": 3333.33 } } }
+      ethPrice = priceData.prices.ETH.price;
     } else if (priceData.ETH) {
       // Formato: { ETH: 3333.33, BTC: 45000.00, ... }
       ethPrice = priceData.ETH;
@@ -154,6 +157,9 @@ async function testExchangeViaAPI() {
       newEthPrice = newPriceData.find(p => p.asset === 'ETH')?.price || 0;
     } else if (newPriceData.prices && Array.isArray(newPriceData.prices)) {
       newEthPrice = newPriceData.prices.find(p => p.asset === 'ETH')?.price || 0;
+    } else if (newPriceData.prices && newPriceData.prices.ETH && newPriceData.prices.ETH.price) {
+      // Formato: { prices: { "ETH": { "price": 3333.33 } } }
+      newEthPrice = newPriceData.prices.ETH.price;
     } else if (newPriceData.ETH) {
       newEthPrice = newPriceData.ETH;
     } else if (newPriceData.data && newPriceData.data.ETH) {
