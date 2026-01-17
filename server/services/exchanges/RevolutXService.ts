@@ -5,14 +5,88 @@ import { errorAlertService, ErrorAlertService } from '../ErrorAlertService';
 const API_BASE_URL = 'https://revx.revolut.com';
 
 export class RevolutXService implements IExchangeService {
-  readonly exchangeName = 'revolutx';
-  readonly takerFeePct = 0.09;
-  readonly makerFeePct = 0.00;
+  private static instance: RevolutXService;
+  private initialized = false;
+  private apiKey: string | null = null;
+  private apiSecret: string | null = null;
+  private publicKey: string | null = null;
+  private privateKey: string | null = null;
+  public exchangeName = 'revolutx';
+  private takerFeePct = 0.09;
+  private makerFeePct = 0.00;
 
-  private apiKey: string = '';
-  private privateKey: string = '';
-  private initialized: boolean = false;
+  // Circuit breaker para endpoints rotos
+  private circuitBreakers = new Map<string, {
+    isOpen: boolean;
+    openedAt: number;
+    retryAfter: number;
+    failureCount: number;
+  }>();
+
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
+
+  private constructor() {}
+
+  public static getInstance(): RevolutXService {
+    if (!RevolutXService.instance) {
+      RevolutXService.instance = new RevolutXService();
+    }
+    return RevolutXService.instance;
+  }
+
+  private checkCircuitBreaker(endpoint: string): boolean {
+    const breaker = this.circuitBreakers.get(endpoint);
+    if (!breaker) return false;
+    
+    const now = Date.now();
+    if (breaker.isOpen && now < breaker.retryAfter) {
+      return true; // Still in cooldown
+    }
+    
+    if (breaker.isOpen && now >= breaker.retryAfter) {
+      // Try to close circuit breaker
+      this.circuitBreakers.delete(endpoint);
+      console.log(`[revolutx] Circuit breaker closed for ${endpoint}`);
+      return false;
+    }
+    
+    return false;
+  }
+
+  private recordFailure(endpoint: string): void {
+    const now = Date.now();
+    const breaker = this.circuitBreakers.get(endpoint) || {
+      isOpen: false,
+      openedAt: 0,
+      retryAfter: 0,
+      failureCount: 0
+    };
+    
+    breaker.failureCount++;
+    
+    // Open circuit breaker after 3 failures
+    if (breaker.failureCount >= 3 && !breaker.isOpen) {
+      breaker.isOpen = true;
+      breaker.openedAt = now;
+      breaker.retryAfter = now + (5 * 60 * 1000); // 5 minutes
+      this.circuitBreakers.set(endpoint, breaker);
+      console.log(`[revolutx] Circuit breaker OPENED for ${endpoint} (retry after 5 minutes)`);
+      
+      // Send alert about circuit breaker
+      const alert = ErrorAlertService.createFromError(
+        new Error(`Circuit breaker opened for ${endpoint} after ${breaker.failureCount} failures`),
+        'API_ERROR',
+        'HIGH',
+        'recordFailure',
+        'server/services/exchanges/RevolutXService.ts',
+        'unknown',
+        { endpoint, failureCount: breaker.failureCount, retryAfter: new Date(breaker.retryAfter).toISOString() }
+      );
+      errorAlertService.sendCriticalError(alert);
+    }
+    
+    this.circuitBreakers.set(endpoint, breaker);
+  }
 
   initialize(config: ExchangeConfig): void {
     if (!config.apiKey || !config.privateKey) {
@@ -148,33 +222,33 @@ export class RevolutXService implements IExchangeService {
 
         // Fallback to orderbook if ticker endpoint fails (non-404)
         console.warn('[revolutx] Ticker endpoint failed, trying orderbook fallback');
-        return await this.getTickerFromOrderbook(pair);
       }
       
       const data = await response.json() as any;
       
-      // Parse ticker response format
-      const bid = parseFloat(data.bid || '0');
-      const ask = parseFloat(data.ask || '0');
-      const last = parseFloat(data.last || data.price || '0');
-      const volume24h = parseFloat(data.volume24h || '0');
+      const ticker: Ticker = {
+        bid: parseFloat(data.bid || '0'),
+        ask: parseFloat(data.ask || '0'),
+        last: parseFloat(data.last || data.price || '0'),
+        volume: parseFloat(data.volume || '0'),
+        timestamp: data.timestamp || new Date().toISOString()
+      };
       
-      // SAFETY: Validate prices are finite
-      if (!Number.isFinite(bid) || !Number.isFinite(ask) || !Number.isFinite(last)) {
-        console.error('[revolutx] getTicker INVALID_PRICE:', { pair, bid, ask, last });
-        throw new Error(`Invalid ticker price for ${pair}: bid=${bid}, ask=${ask}`);
+      // Reset circuit breaker on success
+      const breaker = this.circuitBreakers.get(`ticker_${pair}`);
+      if (breaker?.isOpen) {
+        this.circuitBreakers.delete(`ticker_${pair}`);
+        console.log(`[revolutx] ✅ Circuit breaker closed for ticker_${pair} after successful request`);
       }
       
-      return {
-        bid,
-        ask,
-        last,
-        volume24h
-      };
+      return ticker;
     } catch (error: any) {
       console.error('[revolutx] getTicker error:', error.message);
       
-      // Enviar alerta para errores generales de API
+      // Record failure for circuit breaker
+      this.recordFailure(`ticker_${pair}`);
+      
+      // Send alert for errors generales de API
       const alert = ErrorAlertService.createFromError(
         error,
         'API_ERROR',
@@ -186,11 +260,8 @@ export class RevolutXService implements IExchangeService {
       );
       await errorAlertService.sendCriticalError(alert);
       
-      // Fallback to orderbook method only if this is not a 404/not found error
-      if (String(error?.message || '').includes('404') || String(error?.message || '').toLowerCase().includes('not found')) {
-        throw error;
-      }
-      return await this.getTickerFromOrderbook(pair);
+      // No más fallback a orderbook - simplemente lanzar el error
+      throw error;
     }
   }
 
