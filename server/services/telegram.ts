@@ -6,6 +6,8 @@ import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
 import { botLogger } from "./botLogger";
 import { ExchangeFactoryClass } from "./exchanges/ExchangeFactory";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 
 // ============================================================
 // HTML ESCAPE HELPER - Previene markup roto en mensajes
@@ -119,6 +121,132 @@ function buildPanelUrlFooter(): string {
   const fallbackText = `Panel: ${url}`;
   
   return `\n${clickableLink}\n<i>${fallbackText}</i>`;
+}
+
+// ============================================================
+// SINGLE POLLER GUARD - Previene conflictos 409
+// ============================================================
+class SinglePollerGuard {
+  private static instance: SinglePollerGuard;
+  private lockKey: string;
+  private pollingActive = false;
+  private lastErrorTime = 0;
+  private backoffMs = 2000;
+  private maxBackoffMs = 60000;
+  private errorRateLimitMs = 30000;
+
+  private constructor() {
+    // Key única por entorno + token para evitar colisiones
+    const tokenHash = environment.botDisplayName?.slice(0, 8) || 'unknown';
+    this.lockKey = `telegram_poller_${environment.envTag}_${tokenHash}`;
+  }
+
+  static getInstance(): SinglePollerGuard {
+    if (!SinglePollerGuard.instance) {
+      SinglePollerGuard.instance = new SinglePollerGuard();
+    }
+    return SinglePollerGuard.instance;
+  }
+
+  async tryAcquireLock(): Promise<boolean> {
+    try {
+      // Intentar adquirir advisory lock de PostgreSQL
+      const result = await db.execute(sql`SELECT pg_try_advisory_lock(${this.lockKey}) as acquired`);
+      const acquired = result.rows[0]?.acquired;
+      
+      if (acquired) {
+        this.pollingActive = true;
+        console.log(`[SinglePollerGuard] ✅ Lock acquired for ${this.lockKey}`);
+        await botLogger.info("TELEGRAM_POLLING_STARTED" as any, "Single poller lock acquired", {
+          instanceId: environment.instanceId,
+          envTag: environment.envTag,
+          lockKey: this.lockKey
+        });
+        return true;
+      } else {
+        console.log(`[SinglePollerGuard] ❌ Lock denied for ${this.lockKey} - another instance is polling`);
+        await botLogger.info("TELEGRAM_POLLING_LOCKED" as any, "Another instance is polling", {
+          instanceId: environment.instanceId,
+          envTag: environment.envTag,
+          lockKey: this.lockKey
+        });
+        return false;
+      }
+    } catch (error) {
+      console.error(`[SinglePollerGuard] Error acquiring lock:`, error);
+      return false;
+    }
+  }
+
+  async releaseLock(): Promise<void> {
+    try {
+      await db.execute(sql`SELECT pg_advisory_unlock(${this.lockKey})`);
+      this.pollingActive = false;
+      console.log(`[SinglePollerGuard] 🔓 Lock released for ${this.lockKey}`);
+      await botLogger.info("TELEGRAM_POLLING_STOPPED", "Single poller lock released", {
+        instanceId: environment.instanceId,
+        envTag: environment.envTag,
+        lockKey: this.lockKey
+      });
+    } catch (error) {
+      console.error(`[SinglePollerGuard] Error releasing lock:`, error);
+    }
+  }
+
+  async handle409Conflict(error: Error): Promise<void> {
+    const now = Date.now();
+    
+    // Rate limit para evitar spam de logs
+    if (now - this.lastErrorTime < this.errorRateLimitMs) {
+      return;
+    }
+    this.lastErrorTime = now;
+
+    console.error(`[SinglePollerGuard] 🔴 409 Conflict detected:`, error.message);
+    await botLogger.error("TELEGRAM_POLLING_409_CONFLICT", "409 Conflict - another poller detected", {
+      instanceId: environment.instanceId,
+      envTag: environment.envTag,
+      lockKey: this.lockKey,
+      error: error.message
+    });
+
+    // Liberar lock si lo tenemos
+    if (this.pollingActive) {
+      await this.releaseLock();
+    }
+
+    // Iniciar backoff exponencial
+    await this.startBackoffRetry();
+  }
+
+  private async startBackoffRetry(): Promise<void> {
+    let currentBackoff = this.backoffMs;
+    
+    while (currentBackoff <= this.maxBackoffMs) {
+      console.log(`[SinglePollerGuard] ⏳ Retrying in ${currentBackoff}ms...`);
+      
+      await new Promise(resolve => setTimeout(resolve, currentBackoff));
+      
+      if (await this.tryAcquireLock()) {
+        console.log(`[SinglePollerGuard] ✅ Successfully re-acquired lock after backoff`);
+        return;
+      }
+      
+      currentBackoff = Math.min(currentBackoff * 2, this.maxBackoffMs);
+    }
+    
+    console.log(`[SinglePollerGuard] ⚠️ Max backoff reached, switching to send-only mode`);
+    await botLogger.error("TELEGRAM_POLLING_MAX_BACKOFF", "Max backoff reached, switching to send-only", {
+      instanceId: environment.instanceId,
+      envTag: environment.envTag,
+      lockKey: this.lockKey,
+      maxBackoffMs: this.maxBackoffMs
+    });
+  }
+
+  isActive(): boolean {
+    return this.pollingActive;
+  }
 }
 
 // ============================================================
@@ -602,9 +730,27 @@ export class TelegramService {
     
     console.log(`[telegram] Inicializando bot - Polling: ${enablePolling ? 'ACTIVADO (Docker/NAS)' : 'DESACTIVADO (Replit)'}`);
     
-    this.bot = new TelegramBot(config.token, { polling: enablePolling });
-    this.chatId = config.chatId;
-    this.setupCommands();
+    // Usar Single Poller Guard si el polling está habilitado
+    if (enablePolling) {
+      const guard = SinglePollerGuard.getInstance();
+      guard.tryAcquireLock().then(canPoll => {
+        if (canPoll) {
+          this.bot = new TelegramBot(config.token, { polling: true });
+          this.chatId = config.chatId;
+          this.setupCommands();
+        } else {
+          // Modo send-only
+          this.bot = new TelegramBot(config.token, { polling: false });
+          this.chatId = config.chatId;
+          this.setupCommands();
+          console.log('[telegram] Bot iniciado en modo send-only (otra instancia está haciendo polling)');
+        }
+      });
+    } else {
+      this.bot = new TelegramBot(config.token, { polling: false });
+      this.chatId = config.chatId;
+      this.setupCommands();
+    }
   }
 
   private setupCommands() {
@@ -683,8 +829,14 @@ export class TelegramService {
       await this.handleCallbackQuery(query);
     });
 
-    this.bot.on("polling_error", (error) => {
+    this.bot.on("polling_error", async (error) => {
       console.error("Telegram polling error:", error.message);
+      
+      // Si es un error 409, usar el Single Poller Guard
+      if (error.message.includes('409') || error.message.includes('conflict')) {
+        const guard = SinglePollerGuard.getInstance();
+        await guard.handle409Conflict(error);
+      }
     });
   }
 
