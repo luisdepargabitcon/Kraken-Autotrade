@@ -659,6 +659,10 @@ export class TelegramService {
       await this.handleBalance(msg.chat.id, args);
     });
 
+    this.bot.onText(/\/cartera/, async (msg) => {
+      await this.handleCartera(msg.chat.id);
+    });
+
     this.bot.onText(/\/ultimas(.*)/, async (msg, match) => {
       const args = match?.[1]?.trim().split(/\s+/) || [];
       await this.handleUltimas(msg.chat.id, args);
@@ -809,6 +813,7 @@ export class TelegramService {
 <b>📊 Información:</b>
 /estado - Ver estado del bot
 /balance - Ver balance actual
+/cartera - Ver cartera valorada
 /posiciones - Ver posiciones abiertas con P&L
 /ganancias - Ver ganancias (24h, semana, total)
 /exposicion - Ver exposición por par
@@ -934,6 +939,106 @@ export class TelegramService {
       await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error obteniendo balance: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleCartera(chatId: number) {
+    try {
+      const exchangeFactory = ExchangeFactoryClass.getInstance();
+      let message = `<b>💼 Cartera Valorada</b>\n━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      let totalValue = 0;
+      const exchangeStatuses = exchangeFactory.getExchangeStatus();
+      
+      for (const status of exchangeStatuses) {
+        if (!status.configured) continue;
+        
+        try {
+          const exchange = exchangeFactory.getExchange(status.name);
+          const balances = await exchange.getBalance();
+          
+          message += `<b>${status.displayName}:</b>\n`;
+          let exchangeTotal = 0;
+          
+          // Get non-zero balances
+          const nonZeroBalances = Object.entries(balances)
+            .filter(([_, amount]) => parseFloat(String(amount)) > 0.00000001)
+            .sort(([_, a], [__, b]) => parseFloat(String(b)) - parseFloat(String(a)));
+          
+          if (nonZeroBalances.length === 0) {
+            message += `   <i>Sin fondos</i>\n\n`;
+            continue;
+          }
+          
+          for (const [asset, amount] of nonZeroBalances) {
+            const amountNum = parseFloat(String(amount));
+            let usdValue = 0;
+            let priceInfo = '';
+            
+            if (asset === 'ZUSD' || asset === 'USD') {
+              usdValue = amountNum;
+              priceInfo = `$${amountNum.toFixed(2)}`;
+            } else {
+              // Try to get price from internal price service
+              try {
+                // Use the same price service as /api/prices/portfolio
+                const price = await this.getAssetPrice(asset);
+                if (price && price > 0) {
+                  usdValue = amountNum * price;
+                  priceInfo = `$${price.toFixed(6)} × ${amountNum.toFixed(6)} = $${usdValue.toFixed(2)}`;
+                } else {
+                  priceInfo = `${amountNum.toFixed(6)} (sin precio)`;
+                }
+              } catch {
+                priceInfo = `${amountNum.toFixed(6)} (precio no disponible)`;
+              }
+            }
+            
+            if (usdValue > 0) {
+              exchangeTotal += usdValue;
+              totalValue += usdValue;
+            }
+            
+            message += `   ${asset}: <b>${priceInfo}</b>\n`;
+          }
+          
+          message += `   ──────────\n`;
+          message += `   <b>Total: $${exchangeTotal.toFixed(2)}</b>\n\n`;
+          
+        } catch (error: any) {
+          message += `<b>${status.displayName}:</b> ❌ ${escapeHtml(error.message)}\n\n`;
+        }
+      }
+      
+      message += `━━━━━━━━━━━━━━━━━━━\n`;
+      message += `<b>💰 Valor Total Cartera: $${totalValue.toFixed(2)}</b>\n`;
+      message += `<i>Actualizado: ${formatSpanishDate()}</i>\n`;
+      message += `<i>💡 Usa /balance para ver balances sin valoración</i>`;
+      
+      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error obteniendo cartera: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async getAssetPrice(asset: string): Promise<number | null> {
+    try {
+      // Try to get price from the same service that powers /api/prices/portfolio
+      const response = await fetch(`http://localhost:5000/api/prices/portfolio`);
+      if (!response.ok) return null;
+      
+      const data = await response.json();
+      if (data.prices && data.prices[asset]) {
+        return parseFloat(data.prices[asset].price);
+      }
+      
+      // Fallback to Kraken ticker if available
+      const exchangeFactory = ExchangeFactoryClass.getInstance();
+      const krakenExchange = exchangeFactory.getExchange('kraken');
+      const ticker = await krakenExchange.getTicker(`${asset}USD`);
+      return ticker ? parseFloat(String(ticker.last)) : null;
+    } catch {
+      return null;
     }
   }
 
