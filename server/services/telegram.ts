@@ -1180,8 +1180,9 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
       const limit = args?.find(arg => /^\d+$/.test(arg)) ? parseInt(args.find(arg => /^\d+$/.test(arg))!) : 10;
       const levelFilter = args?.find(arg => arg.startsWith('level='))?.split('=')[1]?.toUpperCase();
       const typeFilter = args?.find(arg => arg.startsWith('type='))?.split('=')[1]?.toUpperCase();
+      const page = args?.find(arg => arg.startsWith('page=')) ? parseInt(args.find(arg => arg.startsWith('page='))!.split('=')[1]) : 1;
       
-      const events = await botLogger.getDbEvents(Math.min(limit, 100));
+      const events = await botLogger.getDbEvents(Math.min(limit * 3, 300)); // Get more for pagination
       
       if (events.length === 0) {
         await this.bot?.sendMessage(chatId, "<b>📭 Sin logs recientes</b>\n\nNo hay eventos registrados.", { parse_mode: "HTML" });
@@ -1202,40 +1203,74 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
         return;
       }
       
+      // Pagination
+      const itemsPerPage = Math.min(limit, 20);
+      const totalPages = Math.ceil(filteredEvents.length / itemsPerPage);
+      const currentPage = Math.min(page, totalPages);
+      const startIndex = (currentPage - 1) * itemsPerPage;
+      const endIndex = startIndex + itemsPerPage;
+      const pageEvents = filteredEvents.slice(startIndex, endIndex);
+      
       // Show summary
       let message = `<b>📋 Logs recientes</b>\n`;
-      message += `<i>Mostrando ${filteredEvents.length} de ${events.length} eventos</i>\n`;
+      message += `<i>Página ${currentPage}/${totalPages} - Mostrando ${pageEvents.length} de ${filteredEvents.length} eventos</i>\n`;
       if (levelFilter || typeFilter) {
         message += `<i>Filtros: ${levelFilter ? `Nivel=${levelFilter}` : ''} ${typeFilter ? `Tipo=${typeFilter}` : ''}</i>\n`;
       }
       message += `━━━━━━━━━━━━━━━━━━━\n\n`;
       
-      // Show last events with details
-      const recentEvents = filteredEvents.slice(0, 10);
-      for (const event of recentEvents) {
-        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid" }) : "N/A";
+      // Show events with enhanced details
+      for (const event of pageEvents) {
+        const time = event.timestamp ? formatSpanishDate(event.timestamp) : "N/A";
         const levelEmoji = event.level === "ERROR" ? "❌" : event.level === "WARN" ? "⚠️" : "ℹ️";
         
         message += `<code>${time}</code> ${levelEmoji} <b>${escapeHtml(event.type)}</b>\n`;
+        message += `   🆔 <code>${event.id}</code> 📊 <code>${event.level}</code>\n`;
+        
         if (event.message) {
-          const msgPreview = event.message.slice(0, 80).replace(/\n/g, " ");
-          const msgSuffix = event.message.length > 80 ? "..." : "";
-          message += `   ↳ <i>${escapeHtml(msgPreview)}${msgSuffix}</i>\n`;
+          const msgPreview = event.message.slice(0, 100).replace(/\n/g, " ");
+          const msgSuffix = event.message.length > 100 ? "..." : "";
+          message += `   📝 <i>${escapeHtml(msgPreview)}${msgSuffix}</i>\n`;
         }
-        message += `   🆔 <code>${event.id}</code>\n\n`;
+        
+        // Show meta if exists
+        if (event.meta && Object.keys(event.meta).length > 0) {
+          const metaKeys = Object.keys(event.meta).slice(0, 3);
+          message += `   📋 <i>${metaKeys.map(k => `${k}: ${JSON.stringify(event.meta?.[k as keyof typeof event.meta])}`).join(', ')}</i>\n`;
+        }
+        
+        message += `\n`;
       }
       
-      if (filteredEvents.length > 10) {
-        message += `<i>... y ${filteredEvents.length - 10} más</i>\n`;
+      // Pagination controls
+      if (totalPages > 1) {
+        const prevPage = currentPage > 1 ? currentPage - 1 : null;
+        const nextPage = currentPage < totalPages ? currentPage + 1 : null;
+        
+        const keyboard = [];
+        const row = [];
+        
+        if (prevPage) {
+          row.push({ text: `⬅️ P${prevPage}`, callback_data: `logs_page_${prevPage}` });
+        }
+        row.push({ text: `📄 P${currentPage}/${totalPages}`, callback_data: `logs_info` });
+        if (nextPage) {
+          row.push({ text: `P${nextPage} ➡️`, callback_data: `logs_page_${nextPage}` });
+        }
+        
+        keyboard.push(row);
+        
+        const replyMarkup = { inline_keyboard: keyboard };
+        await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML", reply_markup: replyMarkup });
+      } else {
+        message += `\n💡 <i>Usa /log &lt;id&gt; para detalles</i>`;
+        message += `\n💡 <i>Usa /logs 50 para más eventos</i>`;
+        message += `\n💡 <i>Usa /logs level=ERROR o /logs type=TRADE_EXECUTED</i>`;
+        message += `\n💡 <i>Usa /logs page=2 para paginación</i>`;
+        
+        message += `\n\n<i>Env: ${environment.envTag}</i>`;
+        await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
       }
-      
-      message += `\n💡 <i>Usa /log &lt;id&gt; para detalles</i>`;
-      message += `\n💡 <i>Usa /logs 50 para más eventos</i>`;
-      message += `\n💡 <i>Usa /logs level=ERROR o /logs type=TRADE_EXECUTED</i>`;
-      
-      message += `\n\n<i>Env: ${environment.envTag}</i>`;
-
-      await this.bot?.sendMessage(chatId, message.trim(), { parse_mode: "HTML" });
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error obteniendo logs: ${escapeHtml(error.message)}`);
     }
