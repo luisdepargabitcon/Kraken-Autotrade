@@ -35,7 +35,10 @@ export class ErrorAlertService {
     rateLimitMinutes: 5,  // Máximo 1 alerta cada 5 min por tipo
     includeCodeSnippet: true,
     maxCodeLines: 10,
-    maxMessageLength: 4000  // Límite de Telegram menos margen
+    maxCodeLinesHigh: 15,      // Más líneas para errores HIGH
+    maxCodeLinesCritical: 25,  // Aún más líneas para errores CRITICAL
+    maxMessageLength: 4000,    // Límite de Telegram menos margen
+    maxMessageLengthCritical: 4000  // Mantener límite para errores críticos
   };
 
   private constructor() {
@@ -163,29 +166,40 @@ export class ErrorAlertService {
       SYSTEM_ERROR: '⚙️'
     };
 
-    let message = `${severityEmoji[alert.severity]} <b>ERROR ${alert.severity}</b> ${typeEmoji[alert.type]}
+    // Colores según severidad para Telegram
+    const severityColors = {
+      LOW: '', // Sin color (gris por defecto)
+      MEDIUM: '<span style="color: #FFA500">', // Naranja
+      HIGH: '<span style="color: #FF4444">', // Rojo fuerte
+      CRITICAL: '<span style="color: #FF0000; font-weight: bold">' // Rojo brillante + negrita
+    };
+
+    const colorEnd = '</span>';
+    const currentColor = severityColors[alert.severity];
+
+    let message = `${severityEmoji[alert.severity]} ${currentColor}<b>ERROR ${alert.severity}</b>${colorEnd} ${typeEmoji[alert.type]}
 ━━━━━━━━━━━━━━━━━━━
-📦 <b>Tipo:</b> <code>${alert.type}</code>`;
+📦 ${currentColor}<b>Tipo:</b>${colorEnd} <code>${alert.type}</code>`;
 
     if (alert.pair) {
-      message += `\n🔍 <b>Par:</b> <code>${alert.pair}</code>`;
+      message += `\n🔍 ${currentColor}<b>Par:</b>${colorEnd} <code>${alert.pair}</code>`;
     }
 
-    message += `\n⏰ <b>Hora:</b> <code>${alert.timestamp.toLocaleString('es-ES')}</code>
-📍 <b>Archivo:</b> <code>${alert.fileName}</code>
-📍 <b>Función:</b> <code>${alert.function}()</code>`;
+    message += `\n⏰ ${currentColor}<b>Hora:</b>${colorEnd} <code>${alert.timestamp.toLocaleString('es-ES')}</code>
+📍 ${currentColor}<b>Archivo:</b>${colorEnd} <code>${alert.fileName}</code>
+📍 ${currentColor}<b>Función:</b>${colorEnd} <code>${alert.function}()</code>`;
 
     if (alert.lineNumber) {
-      message += `\n📍 <b>Línea:</b> <code>${alert.lineNumber}</code>`;
+      message += `\n📍 ${currentColor}<b>Línea:</b>${colorEnd} <code>${alert.lineNumber}</code>`;
     }
 
-    message += `\n\n❌ <b>Error:</b> ${alert.message}`;
+    message += `\n\n❌ ${currentColor}<b>Error:</b>${colorEnd} ${alert.message}`;
 
     // Añadir contexto si existe
     if (alert.context && Object.keys(alert.context).length > 0) {
-      message += `\n\n📋 <b>Contexto:</b>`;
+      message += `\n\n📋 ${currentColor}<b>Contexto:</b>${colorEnd}`;
       for (const [key, value] of Object.entries(alert.context)) {
-        message += `\n   • <b>${key}:</b> <code>${JSON.stringify(value)}</code>`;
+        message += `\n   • ${currentColor}<b>${key}:</b>${colorEnd} <code>${JSON.stringify(value)}</code>`;
       }
     }
 
@@ -193,7 +207,17 @@ export class ErrorAlertService {
     if (this.config.includeCodeSnippet) {
       const codeSnippet = await this.getRelevantCodeSnippet(alert);
       if (codeSnippet) {
-        message += `\n\n📋 <b>Código Implicado:</b>\n<pre><code>${codeSnippet}</code></pre>`;
+        // Para errores críticos, añadir instrucción de copiado
+        let copyInstruction = '';
+        if (alert.severity === 'CRITICAL') {
+          copyInstruction = `\n💡 <b>Para copiar:</b> Selecciona el código y usa Ctrl+C`;
+        } else if (alert.severity === 'HIGH') {
+          copyInstruction = `\n📋 <b>Código contextual:</b>`;
+        } else {
+          copyInstruction = `\n📋 <b>Código implicado:</b>`;
+        }
+        
+        message += `\n\n📋 ${currentColor}<b>Código Fuente:</b>${colorEnd}${copyInstruction}\n<pre><code>${codeSnippet}</code></pre>`;
       }
     }
 
@@ -201,7 +225,7 @@ export class ErrorAlertService {
     if (alert.stackTrace) {
       const simplifiedStack = this.simplifyStackTrace(alert.stackTrace);
       if (simplifiedStack) {
-        message += `\n\n🔍 <b>Stack Trace:</b>\n<pre><code>${simplifiedStack}</code></pre>`;
+        message += `\n\n🔍 ${currentColor}<b>Stack Trace:</b>${colorEnd}\n<pre><code>${simplifiedStack}</code></pre>`;
       }
     }
 
@@ -226,8 +250,17 @@ export class ErrorAlertService {
       const fileContent = readFileSync(filePath, 'utf-8');
       const lines = fileContent.split('\n');
 
-      const startLine = Math.max(0, alert.lineNumber - 5);
-      const endLine = Math.min(lines.length - 1, alert.lineNumber + 4);
+      // Determinar cuántas líneas mostrar según la severidad
+      let contextLines = 5; // Por defecto: 5 antes, 4 después (10 total)
+      
+      if (alert.severity === 'HIGH') {
+        contextLines = 7; // 7 antes, 7 después (15 total)
+      } else if (alert.severity === 'CRITICAL') {
+        contextLines = 12; // 12 antes, 12 después (25 total)
+      }
+
+      const startLine = Math.max(0, alert.lineNumber - contextLines);
+      const endLine = Math.min(lines.length - 1, alert.lineNumber + (contextLines - 1));
 
       const snippet = lines
         .slice(startLine, endLine + 1)
@@ -238,7 +271,10 @@ export class ErrorAlertService {
         })
         .join('\n');
 
-      return snippet;
+      // Añadir información del archivo para facilitar la copia
+      const fileInfo = `📁 Archivo: ${alert.fileName}:${alert.lineNumber}\n`;
+      
+      return fileInfo + snippet;
     } catch (error) {
       console.error('[ErrorAlert] Failed to get code snippet:', error);
       return null;
