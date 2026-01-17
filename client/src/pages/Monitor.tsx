@@ -111,7 +111,7 @@ function EventsTab() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [selectedEvent, setSelectedEvent] = useState<BotEvent | null>(null);
   const [searchText, setSearchText] = useState("");
-  const [levelFilter, setLevelFilter] = useState<string[]>(["INFO", "WARN", "ERROR"]);
+  const [levelFilter, setLevelFilter] = useState<string[]>(["INFO"]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [pairFilter, setPairFilter] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<string>("24h");
@@ -226,6 +226,13 @@ function EventsTab() {
     );
   };
 
+  const toggleAllLevels = () => {
+    const allLevels = ["INFO", "WARN", "ERROR"];
+    setLevelFilter(prev => 
+      prev.length === allLevels.length ? [] : allLevels
+    );
+  };
+
   const formatTimestamp = (ts: string) => {
     const date = new Date(ts);
     return date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -299,6 +306,18 @@ function EventsTab() {
                 </div>
                 
                 <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "h-8 px-2 text-xs",
+                      levelFilter.length === 3 ? "bg-primary/20 text-primary border-primary/30" : "opacity-40"
+                    )}
+                    onClick={toggleAllLevels}
+                    data-testid="button-filter-all-levels"
+                  >
+                    Todos
+                  </Button>
                   {["INFO", "WARN", "ERROR"].map(level => (
                     <Button
                       key={level}
