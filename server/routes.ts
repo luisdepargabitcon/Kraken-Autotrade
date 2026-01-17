@@ -2125,7 +2125,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   app.get("/api/events", async (req, res) => {
     try {
-      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const limit = Math.min(parseInt(req.query.limit as string) || 500, 1000);
       const level = req.query.level as string;
       
       const events = await botLogger.getDbEvents(limit);

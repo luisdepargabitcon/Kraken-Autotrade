@@ -31,16 +31,34 @@ const LEVEL_ICONS: Record<string, React.ReactNode> = {
   ERROR: <AlertCircle className="h-3 w-3" />,
 };
 
-const DEFAULT_EVENT_TYPES = [
-  "TRADE_EXECUTED", "TRADE_BLOCKED", "TRADE_FAILED", "TRADE_ADJUSTED", "TRADE_REJECTED_LOW_PROFIT", "TRADE_SKIPPED",
-  "STOP_LOSS_HIT", "TAKE_PROFIT_HIT", "TRAILING_STOP_HIT",
-  "BOT_STARTED", "BOT_STOPPED", "BOT_PAUSED", "BOT_RESUMED",
-  "ENGINE_TICK", "MARKET_SCAN_SUMMARY",
-  "DAILY_LIMIT_HIT", "DAILY_LIMIT_RESET", "PAIR_COOLDOWN",
-  "KRAKEN_ERROR", "KRAKEN_CONNECTED", "TELEGRAM_ERROR", "TELEGRAM_CONNECTED", "NONCE_ERROR",
-  "POSITION_OPENED", "POSITION_CLOSED", "ORPHAN_POSITION_CLEANED",
-  "SIGNAL_GENERATED", "BALANCE_CHECK", "SYSTEM_ERROR",
-];
+const EVENT_TYPE_CATEGORIES = {
+  "Trades": [
+    "TRADE_EXECUTED", "TRADE_BLOCKED", "TRADE_FAILED", "TRADE_ADJUSTED", 
+    "TRADE_REJECTED_LOW_PROFIT", "TRADE_SKIPPED", "POSITION_OPENED", "POSITION_CLOSED"
+  ],
+  "Stop/Profit": [
+    "STOP_LOSS_HIT", "TAKE_PROFIT_HIT", "TRAILING_STOP_HIT", "ORPHAN_POSITION_CLEANED"
+  ],
+  "Sistema": [
+    "BOT_STARTED", "BOT_STOPPED", "BOT_PAUSED", "BOT_RESUMED", 
+    "ENGINE_TICK", "MARKET_SCAN_SUMMARY", "BALANCE_CHECK"
+  ],
+  "Límites": [
+    "DAILY_LIMIT_HIT", "DAILY_LIMIT_RESET", "PAIR_COOLDOWN"
+  ],
+  "Estrategia": [
+    "SIGNAL_GENERATED", "REGIME_CHANGE", "ROUTER_TRANSITION"
+  ],
+  "Conexiones": [
+    "KRAKEN_ERROR", "KRAKEN_CONNECTED", "TELEGRAM_ERROR", "TELEGRAM_CONNECTED", 
+    "REVOLUTX_ERROR", "REVOLUTX_CONNECTED"
+  ],
+  "Errores": [
+    "NONCE_ERROR", "SYSTEM_ERROR", "API_ERROR", "DATABASE_ERROR"
+  ]
+};
+
+const DEFAULT_EVENT_TYPES = Object.values(EVENT_TYPE_CATEGORIES).flat();
 
 const DEFAULT_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
 
@@ -96,6 +114,7 @@ function EventsTab() {
   const [levelFilter, setLevelFilter] = useState<string[]>(["INFO", "WARN", "ERROR"]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [pairFilter, setPairFilter] = useState<string[]>([]);
+  const [timeRange, setTimeRange] = useState<string>("24h");
   const [showFilters, setShowFilters] = useState(false);
   const [lastMessageTime, setLastMessageTime] = useState<Date | null>(null);
   
@@ -119,7 +138,19 @@ function EventsTab() {
   }, [events.length, autoScroll]);
 
   const filteredEvents = useMemo(() => {
+    const now = Date.now();
+    const timeRangeMs = timeRange === "1h" ? 60 * 60 * 1000 :
+                        timeRange === "6h" ? 6 * 60 * 60 * 1000 :
+                        timeRange === "24h" ? 24 * 60 * 60 * 1000 :
+                        Infinity;
+
     return events.filter((event) => {
+      // Time range filter
+      if (timeRange !== "all") {
+        const eventTime = new Date(event.timestamp).getTime();
+        if (now - eventTime > timeRangeMs) return false;
+      }
+      
       if (levelFilter.length > 0 && !levelFilter.includes(event.level)) return false;
       if (typeFilter.length > 0 && !typeFilter.includes(event.type)) return false;
       if (pairFilter.length > 0) {
@@ -135,7 +166,7 @@ function EventsTab() {
       }
       return true;
     });
-  }, [events, levelFilter, typeFilter, pairFilter, searchText]);
+  }, [events, levelFilter, typeFilter, pairFilter, searchText, timeRange]);
 
   const stats = useMemo(() => {
     const last24h = events.filter(e => {
@@ -163,8 +194,16 @@ function EventsTab() {
     return Array.from(combined).sort();
   }, [events]);
 
-  const handleCopyEvent = (event: BotEvent) => {
-    navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+  const [eventCopied, setEventCopied] = useState(false);
+
+  const handleCopyEvent = async (event: BotEvent) => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+      setEventCopied(true);
+      setTimeout(() => setEventCopied(false), 2000);
+    } catch (err) {
+      console.error("Error copying event:", err);
+    }
   };
 
   const handleCopyAll = () => {
@@ -278,6 +317,18 @@ function EventsTab() {
                   ))}
                 </div>
 
+                <Select value={timeRange} onValueChange={setTimeRange}>
+                  <SelectTrigger className="h-8 w-24 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1h">1 hora</SelectItem>
+                    <SelectItem value="6h">6 horas</SelectItem>
+                    <SelectItem value="24h">24 horas</SelectItem>
+                    <SelectItem value="all">Todo</SelectItem>
+                  </SelectContent>
+                </Select>
+
                 <Button
                   variant="ghost"
                   size="sm"
@@ -345,30 +396,45 @@ function EventsTab() {
             </div>
 
             {showFilters && (
-              <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-                <div className="flex flex-wrap gap-1" data-testid="filter-type-container">
-                  <span className="text-xs text-muted-foreground mr-2">Tipo:</span>
-                  {availableEventTypes.map((type: string) => (
-                    <Badge
-                      key={type}
-                      variant="outline"
-                      className={cn(
-                        "cursor-pointer text-xs",
-                        typeFilter.includes(type) ? "bg-primary/20" : "opacity-50"
-                      )}
-                      onClick={() => setTypeFilter(prev => 
-                        prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-                      )}
-                      data-testid={`filter-type-${type}`}
-                    >
-                      {type.replace(/_/g, " ")}
-                    </Badge>
-                  ))}
-                  {typeFilter.length > 0 && (
-                    <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
-                      Limpiar
-                    </Button>
-                  )}
+              <div className="mt-3 pt-3 border-t border-border/50 space-y-3">
+                <div className="space-y-2" data-testid="filter-type-container">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-muted-foreground">Tipos de eventos:</span>
+                    {typeFilter.length > 0 && (
+                      <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
+                        Limpiar ({typeFilter.length})
+                      </Button>
+                    )}
+                  </div>
+                  
+                  {Object.entries(EVENT_TYPE_CATEGORIES).map(([category, types]) => {
+                    const visibleTypes = types.filter(t => availableEventTypes.includes(t));
+                    if (visibleTypes.length === 0) return null;
+                    
+                    return (
+                      <div key={category} className="space-y-1">
+                        <span className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">{category}</span>
+                        <div className="flex flex-wrap gap-1">
+                          {visibleTypes.map((type: string) => (
+                            <Badge
+                              key={type}
+                              variant="outline"
+                              className={cn(
+                                "cursor-pointer text-xs",
+                                typeFilter.includes(type) ? "bg-primary/20 border-primary/50" : "opacity-50"
+                              )}
+                              onClick={() => setTypeFilter(prev => 
+                                prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                              )}
+                              data-testid={`filter-type-${type}`}
+                            >
+                              {type.replace(/_/g, " ")}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap gap-1" data-testid="filter-pair-container">
                   <span className="text-xs text-muted-foreground mr-2">Par:</span>
@@ -466,8 +532,8 @@ function EventsTab() {
                     onClick={() => handleCopyEvent(selectedEvent)}
                     data-testid="button-copy-event"
                   >
-                    <Copy className="h-3 w-3 mr-1" />
-                    Copiar
+                    {eventCopied ? <CheckCircle className="h-3 w-3 mr-1 text-green-500" /> : <Copy className="h-3 w-3 mr-1" />}
+                    {eventCopied ? "Copiado" : "Copiar"}
                   </Button>
                 </div>
                 
