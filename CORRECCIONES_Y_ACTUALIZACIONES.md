@@ -2,7 +2,45 @@
 
 **Proyecto:** Kraken Autotrade Bot  
 **Repositorio:** https://github.com/luisdepargabitcon/Kraken-Autotrade  
-**Última actualización:** 16 Enero 2026
+**Última actualización:** 17 Enero 2026
+
+---
+
+## 🔄 Sesión 17 Enero 2026
+
+### 1. Mejora del Sistema de Alertas de Errores
+**Fecha:** 17 Enero 2026  
+**Tipo:** Mejora de Funcionalidad  
+**Severidad:** Media  
+**Commit:** `6b593d3`
+
+#### Cambios Implementados:
+
+**A. Sistema de Colores por Severidad**
+- **LOW:** Gris por defecto (sin cambios)
+- **MEDIUM:** Naranja (#FFA500)
+- **HIGH:** Rojo fuerte (#FF4444)
+- **CRITICAL:** Rojo brillante + negrita (#FF0000; font-weight: bold)
+
+**B. Contexto de Código Dinámico**
+- **LOW/MEDIUM:** 10 líneas (5 antes + 4 después)
+- **HIGH:** 15 líneas (7 antes + 7 después)
+- **CRITICAL:** 25 líneas (12 antes + 12 después)
+
+**C. Mejoras de Usabilidad**
+- Instrucciones de copiado para errores críticos
+- Información del archivo para fácil localización
+- Etiquetas diferenciadas por severidad
+- Línea exacta marcada con flecha (→)
+
+**D. Archivos Modificados:**
+- `server/services/ErrorAlertService.ts` (+52 líneas, -16 líneas)
+
+#### Impacto:
+- Mejor identificación visual de errores críticos
+- Más contexto para diagnóstico rápido
+- Facilita copiado y análisis de código fuente
+- Jerarquía visual clara en mensajes Telegram
 
 ---
 
