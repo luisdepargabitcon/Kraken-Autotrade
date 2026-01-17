@@ -17,27 +17,60 @@ async function testExchangeViaAPI() {
   try {
     // 1. Verificar que el bot está funcionando
     console.log('\n🔍 Verificando estado del bot...');
-    const statusResponse = await fetch(`${BASE_URL}/api/status`);
     
-    if (!statusResponse.ok) {
-      const errorText = await statusResponse.text();
-      console.error(`❌ Status response: ${statusResponse.status}`);
-      console.error(`❌ Response body: ${errorText.substring(0, 200)}...`);
-      throw new Error(`Error obteniendo status: ${statusResponse.status}`);
+    // Probar diferentes endpoints
+    const endpoints = ['/api/status', '/api/health', '/api/ping', '/status', '/health'];
+    let workingEndpoint = null;
+    let status = null;
+    
+    for (const endpoint of endpoints) {
+      console.log(`   📡 Probando ${BASE_URL}${endpoint}...`);
+      try {
+        const response = await fetch(`${BASE_URL}${endpoint}`);
+        const responseText = await response.text();
+        
+        if (response.ok) {
+          try {
+            const data = JSON.parse(responseText);
+            console.log(`   ✅ ${endpoint} funciona!`);
+            workingEndpoint = endpoint;
+            status = data;
+            break;
+          } catch (e) {
+            console.log(`   ❌ ${endpoint} devuelve HTML, no JSON`);
+          }
+        } else {
+          console.log(`   ❌ ${endpoint} status: ${response.status}`);
+        }
+      } catch (e) {
+        console.log(`   ❌ ${endpoint} error: ${e.message}`);
+      }
     }
     
-    const statusText = await statusResponse.text();
-    console.log(`📄 Response preview: ${statusText.substring(0, 100)}...`);
-    
-    let status;
-    try {
-      status = JSON.parse(statusText);
-    } catch (e) {
-      console.error('❌ Response is not JSON:', statusText.substring(0, 500));
-      throw new Error('La respuesta no es JSON - posible página de error');
+    if (!workingEndpoint) {
+      console.log('\n❌ Ningún endpoint de API funcionó');
+      console.log('💡 Esto puede significar:');
+      console.log('   - El bot solo sirve el frontend (React app)');
+      console.log('   - La API está en un puerto diferente');
+      console.log('   - Los endpoints de API no existen');
+      
+      // Verificar si es el frontend de React
+      console.log('\n🔍 Verificando si es el frontend...');
+      try {
+        const response = await fetch(BASE_URL);
+        const text = await response.text();
+        if (text.includes('KrakenAutoTrade') && text.includes('React')) {
+          console.log('✅ Confirmado: Es el frontend de React');
+          console.log('❌ La API probablemente no está expuesta públicamente');
+        }
+      } catch (e) {
+        console.log('❌ Error verificando frontend:', e.message);
+      }
+      
+      throw new Error('No se encontró ningún endpoint de API funcional');
     }
     
-    console.log('✅ Bot operativo:', status.status);
+    console.log(`✅ Bot operativo usando ${workingEndpoint}:`, status);
     
     // 2. Obtener balance actual
     console.log('\n📊 Obteniendo balance actual...');
