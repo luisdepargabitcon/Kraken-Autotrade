@@ -236,24 +236,49 @@ function EventsTab() {
     );
   };
 
-  const moveCategoryLeft = (category: string) => {
-    setCategoryOrder(prev => {
-      const index = prev.indexOf(category);
-      if (index <= 0) return prev;
-      const newOrder = [...prev];
-      [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
-      return newOrder;
-    });
+  const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
+  const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, category: string) => {
+    setDraggedCategory(category);
+    e.dataTransfer.effectAllowed = 'move';
   };
 
-  const moveCategoryRight = (category: string) => {
+  const handleDragOver = (e: React.DragEvent, category: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverCategory(category);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverCategory(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetCategory: string) => {
+    e.preventDefault();
+    setDragOverCategory(null);
+    
+    if (!draggedCategory || draggedCategory === targetCategory) return;
+    
     setCategoryOrder(prev => {
-      const index = prev.indexOf(category);
-      if (index === -1 || index === prev.length - 1) return prev;
+      const draggedIndex = prev.indexOf(draggedCategory);
+      const targetIndex = prev.indexOf(targetCategory);
+      
+      if (draggedIndex === -1 || targetIndex === -1) return prev;
+      
       const newOrder = [...prev];
-      [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+      newOrder.splice(draggedIndex, 1);
+      newOrder.splice(targetIndex, 0, draggedCategory);
+      
       return newOrder;
     });
+    
+    setDraggedCategory(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedCategory(null);
+    setDragOverCategory(null);
   };
 
   const formatTimestamp = (ts: string) => {
@@ -380,28 +405,32 @@ function EventsTab() {
                     if (visibleTypes.length === 0) return null;
                     
                     const isActive = visibleTypes.some(t => typeFilter.includes(t));
-                    const categoryIndex = categoryOrder.indexOf(category);
+                    const isDragging = draggedCategory === category;
+                    const isDragOver = dragOverCategory === category;
                     
                     return (
-                      <div key={category} className="flex items-center gap-0">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-4 p-0 opacity-50 hover:opacity-100"
-                          onClick={() => moveCategoryLeft(category)}
-                          disabled={categoryIndex === 0}
-                          title="Mover a la izquierda"
-                        >
-                          ‹
-                        </Button>
-                        
+                      <div
+                        key={category}
+                        className={cn(
+                          "relative",
+                          isDragging && "opacity-50",
+                          isDragOver && "border-t-2 border-primary"
+                        )}
+                      >
                         <Button
                           variant="outline"
                           size="sm"
                           className={cn(
-                            "h-8 px-2 text-xs",
-                            isActive ? "bg-primary/20 text-primary border-primary/30" : "opacity-40"
+                            "h-8 px-2 text-xs cursor-move",
+                            isActive ? "bg-primary/20 text-primary border-primary/30" : "opacity-40",
+                            "hover:scale-105 transition-transform"
                           )}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, category)}
+                          onDragOver={(e) => handleDragOver(e, category)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, category)}
+                          onDragEnd={handleDragEnd}
                           onClick={() => {
                             const allTypes = visibleTypes;
                             const currentlyActive = allTypes.filter(t => typeFilter.includes(t));
@@ -420,20 +449,12 @@ function EventsTab() {
                               });
                             }
                           }}
-                          title={category}
+                          title={`${category} (arrastrar para reorganizar)`}
                         >
-                          {category}
-                        </Button>
-                        
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-4 p-0 opacity-50 hover:opacity-100"
-                          onClick={() => moveCategoryRight(category)}
-                          disabled={categoryIndex === categoryOrder.length - 1}
-                          title="Mover a la derecha"
-                        >
-                          ›
+                          <div className="flex items-center gap-1">
+                            <div className="w-1 h-3 bg-muted-foreground/50 rounded-sm" />
+                            {category}
+                          </div>
                         </Button>
                       </div>
                     );
