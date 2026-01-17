@@ -44,8 +44,8 @@ async function testRealTrade() {
       throw new Error(`Error obteniendo balance: ${balanceResponse.status}`);
     }
     const balance = await balanceResponse.json();
-    const ethBalance = parseFloat(balance.ETH || 0);
-    const usdBalance = parseFloat(balance.USD || 0);
+    const ethBalance = parseFloat(balance.XETH || balance.ETH || 0);
+    const usdBalance = parseFloat(balance.ZUSD || balance.USD || 0);
     
     console.log(`💰 Balance actual:`);
     console.log(`   USD: $${usdBalance.toFixed(2)}`);
@@ -178,8 +178,8 @@ async function testRealTrade() {
     console.log('\n🔍 Verificación final - Balance REAL:');
     const finalBalanceResponse = await fetch(`${BASE_URL}/api/balance`);
     const finalBalance = await finalBalanceResponse.json();
-    const finalUsd = parseFloat(finalBalance.USD || 0);
-    const finalEth = parseFloat(finalBalance.ETH || 0);
+    const finalUsd = parseFloat(finalBalance.ZUSD || finalBalance.USD || 0);
+    const finalEth = parseFloat(finalBalance.XETH || finalBalance.ETH || 0);
     
     console.log(`   USD REAL: $${finalUsd.toFixed(2)}`);
     console.log(`   ETH REAL: ${finalEth.toFixed(6)}`);
