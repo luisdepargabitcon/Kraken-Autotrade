@@ -7,13 +7,16 @@
  * Uso: node scripts/test-exchange-trade.js
  */
 
-const dotenv = require('dotenv');
-const path = require('path');
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Cargar variables de entorno
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const RevolutXService = require('../server/services/exchanges/RevolutXService');
+import RevolutXService from '../server/services/exchanges/RevolutXService.js';
 
 async function testExchangeTrade() {
   console.log('🚀 Iniciando prueba de exchange - RevolutX');
@@ -163,8 +166,8 @@ process.on('SIGINT', async () => {
 });
 
 // Ejecutar prueba
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   testExchangeTrade();
 }
 
-module.exports = { testExchangeTrade };
+export { testExchangeTrade };
