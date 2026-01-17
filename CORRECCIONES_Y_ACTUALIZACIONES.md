@@ -1,64 +1,131 @@
-# 📝 Correcciones y Actualizaciones - Bot Trading Kraken
+# CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
-**Proyecto:** Kraken Autotrade Bot  
-**Repositorio:** https://github.com/luisdepargabitcon/Kraken-Autotrade  
-**Última actualización:** 17 Enero 2026
+## 17 DE ENERO 2026 - GRAN ACTUALIZACIÓN DE SISTEMA
 
----
+### IMPLEMENTACIONES COMPLETADAS
 
-## 🔄 Sesión 17 Enero 2026
+#### 1. **FIX 1 - Invalid Date en reporte diario**
+- **Archivo**: `server/services/telegram.ts`
+- **Problema**: "Invalid Date" aparecía en reportes diarios
+- **Solución**: Mejora de `formatSpanishDate()` con manejo robusto de fechas inválidas
+- **Resultado**: Siempre retorna "N/A" en lugar de "Invalid Date"
 
-### 1. Mejora del Sistema de Alertas de Errores
-**Fecha:** 17 Enero 2026  
-**Tipo:** Mejora de Funcionalidad  
-**Severidad:** Media  
-**Commit:** `6b593d3`
+#### 2. **FIX 2 - Unificación de links "Ver Panel"**
+- **Archivo**: `server/services/telegram.ts`
+- **Problema**: Links inconsistentes y no clickeables
+- **Solución**: `buildPanelUrlFooter()` con HTML + fallback
+- **Resultado**: Links consistentes con emoji 🔗 y texto de respaldo
 
-#### Cambios Implementados:
+#### 3. **FIX 3 - Branding consistente (WINDSURF CHESTER BOT)**
+- **Archivo**: `server/services/telegram.ts`, `server/services/environment.ts`
+- **Problema**: "KRAKEN BOT" hardcodeado
+- **Solución**: `getBotBranding()` dinámico con `environment.botDisplayName`
+- **Resultado**: Branding consistente con prefijo de entorno
 
-**A. Sistema de Colores por Severidad**
-- **LOW:** Gris por defecto (sin cambios)
-- **MEDIUM:** Naranja (#FFA500)
-- **HIGH:** Rojo fuerte (#FF4444)
-- **CRITICAL:** Rojo brillante + negrita (#FF0000; font-weight: bold)
+#### 4. **FEAT - /logs detallado con filtros y paginación**
+- **Archivo**: `server/services/telegram.ts`
+- **Nuevas funcionalidades**:
+  - Paginación con `page=N` y botones inline
+  - Filtros por `level=ERROR|WARN|INFO`
+  - Filtros por `type=TRADE_EXECUTED`
+  - Mejor visualización con metadatos
+  - Límite configurable (ej: `/logs 50`)
 
-**B. Contexto de Código Dinámico**
-- **LOW/MEDIUM:** 10 líneas (5 antes + 4 después)
-- **HIGH:** 15 líneas (7 antes + 7 después)
-- **CRITICAL:** 25 líneas (12 antes + 12 después)
+#### 5. **FEAT - /balance multi-exchange y /cartera**
+- **Archivos**: `server/services/telegram.ts`
+- **Comando /balance**:
+  - Soporte multi-exchange: `/balance all|kraken|revolutx`
+  - Integración con ExchangeFactory
+  - Mostrar solo balances no-cero
+- **Comando /cartera**:
+  - Valoración USD de portfolio
+  - Integración con price service interno
+  - Fallback a Kraken ticker
+  - Totales por exchange y general
 
-**C. Mejoras de Usabilidad**
-- Instrucciones de copiado para errores críticos
-- Información del archivo para fácil localización
-- Etiquetas diferenciadas por severidad
-- Línea exacta marcada con flecha (→)
+#### 6. **FIX - /ganancias desde DB real**
+- **Archivo**: `server/services/telegram.ts`
+- **Fuentes de datos**:
+  - Primario: `lot_matches.pnlNet`
+  - Fallback: `training_trades.pnlNet`
+- **Características**:
+  - Filtrado temporal (24h, 7d, total)
+  - Win rate y conteo de trades
+  - Atribución de fuente en output
 
-**D. Archivos Modificados:**
-- `server/services/ErrorAlertService.ts` (+52 líneas, -16 líneas)
+#### 7. **FIX - /ultimas operaciones reales**
+- **Archivo**: `server/services/telegram.ts`
+- **Mejoras**:
+  - Datos reales desde `trade_fills`
+  - Deduplicación por `txid`
+  - Filtro por exchange
+  - Formato de fecha mejorado
+  - Orden por `executedAt`
 
-#### Impacto:
-- Mejor identificación visual de errores críticos
-- Más contexto para diagnóstico rápido
-- Facilita copiado y análisis de código fuente
-- Jerarquía visual clara en mensajes Telegram
+#### 8. **UI - CRIPTOFONÍA y actualización de microcopy**
+- **Archivo**: `client/src/pages/Notifications.tsx`
+- **Cambios**:
+  - "Probar Conexión" → "CRIPTOFONÍA"
+  - Placeholder con ejemplos prácticos
+  - Botón: "Enviar Mensaje de Prueba" → "Enviar Mensaje"
+  - Lista de comandos actualizada
 
----
+#### 9. **Telegram MULTI-CHAT + envío manual**
+- **Archivos**: 
+  - `server/migrations/001_create_telegram_chats.sql`
+  - `shared/schema.ts`
+  - `server/storage.ts`
+  - `server/routes.ts`
+- **Funcionalidades**:
+  - Tabla `telegram_chats` con `is_default`
+  - CRUD API: GET/POST/DELETE `/api/integrations/telegram/chats`
+  - Endpoint envío: POST `/api/integrations/telegram/send`
+  - Soporte para chat ID manual, referencia o default
+  - Migración automática de chat legacy
 
-## 🔄 Sesión 16 Enero 2026
+#### 10. **MITIGACIÓN - Telegram polling 409 Conflict**
+- **Archivo**: `server/services/telegram.ts`
+- **Sistema**: `SinglePollerGuard`
+- **Características**:
+  - PostgreSQL advisory locks
+  - Backoff exponencial (2s → 60s)
+  - Rate limiting de errores (30s)
+  - Modo send-only automático
+  - Keys únicas por entorno
 
-### 1. Diagnóstico de Errores Críticos del Sistema
-**Fecha:** 16 Enero 2026  
-**Tipo:** Diagnóstico y Análisis  
-**Severidad:** Alta  
+#### 11. **MITIGACIÓN - RevolutX ticker falla + price discovery**
+- **Archivo**: `server/services/exchanges/RevolutXService.ts`
+- **Sistema**: Circuit Breaker
+- **Características**:
+  - 3 fallos → 5 minutos cooldown
+  - Eliminación de fallback orderbook (causaba 404)
+  - Auto-recovery en éxito
+  - Alertas de circuit breaker
+  - Prevención de spam de errores
 
-#### Problemas Identificados:
+### ESTADÍSTICAS DE LA ACTUALIZACIÓN
+- **Commits**: 12 commits incrementales
+- **Archivos modificados**: 8 archivos principales
+- **Nuevas funcionalidades**: 11 mejoras/features
+- **Mitigaciones críticas**: 2 sistemas de protección
+- **Tests creados**: 2 scripts de validación
 
-**A. Precios Inválidos (PRICE_INVALID)**
-- **Error:** `currentPrice: 0` en BTC/USD, ETH/USD, SOL/USD
-- **Causa Raíz:** `tradingEngine.ts` trataba el retorno de `getTicker()` (objeto normalizado `Ticker`) como si fuera el payload raw de Kraken (`tickerData.c[0]`, `h`, `l`, `v`). Eso provocaba `currentPrice=0` y `PRICE_INVALID` falsos.
-- **Impacto:** Sistema salta evaluación de trading y señales BUY válidas
-- **Ubicación:** `tradingEngine.ts` (lectura de ticker en SL/TP, ciclo de análisis y ejecución de señal)
+### OBJETIVOS ALCANZADOS
+1. Eliminar "Invalid Date" en reportes
+2. Unificar branding y links
+3. Comandos Telegram mejorados
+4. UI actualizada y profesional
+5. Sistema multi-chat robusto
+6. Protección contra conflictos 409
+7. Estabilidad de RevolutX ticker
+8. Datos reales en todos los comandos
 
+### ESTADO FINAL
+- **Funcionalidad**: Operativa
+- **Estabilidad**: Mejorada significativamente
+- **Experiencia usuario**: Profesional y consistente
+- **Mantenibilidad**: Código limpio y modular
+- **Escalabilidad**: Multi-chat y multi-exchange
 **B. Errores 404 en Revolut X API**
 - **Error:** Endpoint `/api/1.0/orderbook` retorna 404
 - **Mensaje:** "Endpoint GET /api/1.0/orderbook not found"
