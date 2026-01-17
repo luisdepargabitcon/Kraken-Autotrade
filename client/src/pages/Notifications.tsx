@@ -318,8 +318,8 @@ export default function Notifications() {
                       <MessageSquare className="h-6 w-6 text-green-400" />
                     </div>
                     <div className="flex-1">
-                      <CardTitle>Probar Conexión</CardTitle>
-                      <CardDescription>Envía un mensaje de prueba para verificar que Telegram funciona.</CardDescription>
+                      <CardTitle>CRIPTOFONÍA</CardTitle>
+                      <CardDescription>Envía mensajes a Telegram para comunicación y pruebas operativas (sin afectar la operativa).</CardDescription>
                     </div>
                     <div className="flex items-center gap-2 text-green-500">
                       <Check className="h-5 w-5" />
@@ -329,7 +329,7 @@ export default function Notifications() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Textarea
-                    placeholder="Escribe un mensaje para enviar a Telegram..."
+                    placeholder="Escribe el mensaje que quieres enviar a Telegram… (ej: 'Estado del bot', 'Reinicia motor', 'Prueba de alerta')"
                     className="bg-background/50 min-h-[80px]"
                     value={customMessage}
                     onChange={(e) => setCustomMessage(e.target.value)}
@@ -342,10 +342,10 @@ export default function Notifications() {
                     data-testid="button-send-message"
                   >
                     <Send className="mr-2 h-4 w-4" />
-                    {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje de Prueba"}
+                    {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje"}
                   </Button>
                   <p className="text-xs text-muted-foreground">
-                    Comandos disponibles en Docker/NAS: /estado, /pausar, /reanudar, /ultimas, /ayuda, /balance
+                    Comandos Telegram: /estado, /pausar, /reanudar, /ultimas, /ayuda, /balance, /cartera, /logs
                   </p>
                 </CardContent>
               </Card>
