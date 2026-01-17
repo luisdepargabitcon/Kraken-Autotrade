@@ -344,7 +344,7 @@ export class RevolutXService implements IExchangeService {
     const symbol = this.formatPair(params.pair);
     
     const orderBody: any = {
-      client_order_id: `kb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      client_order_id: `rx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       symbol: symbol,
       side: params.type.toUpperCase(),
       order_configuration: {}
