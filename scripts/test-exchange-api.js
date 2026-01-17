@@ -7,7 +7,7 @@
  * Uso: node scripts/test-exchange-api.js
  */
 
-const BASE_URL = process.env.VPS_PANEL_URL || 'http://localhost:5000';
+const BASE_URL = process.env.VPS_PANEL_URL || 'http://5.250.184.18:3020';
 
 async function testExchangeViaAPI() {
   console.log('🚀 Iniciando prueba de exchange vía API');
