@@ -18,10 +18,25 @@ async function testExchangeViaAPI() {
     // 1. Verificar que el bot está funcionando
     console.log('\n🔍 Verificando estado del bot...');
     const statusResponse = await fetch(`${BASE_URL}/api/status`);
+    
     if (!statusResponse.ok) {
+      const errorText = await statusResponse.text();
+      console.error(`❌ Status response: ${statusResponse.status}`);
+      console.error(`❌ Response body: ${errorText.substring(0, 200)}...`);
       throw new Error(`Error obteniendo status: ${statusResponse.status}`);
     }
-    const status = await statusResponse.json();
+    
+    const statusText = await statusResponse.text();
+    console.log(`📄 Response preview: ${statusText.substring(0, 100)}...`);
+    
+    let status;
+    try {
+      status = JSON.parse(statusText);
+    } catch (e) {
+      console.error('❌ Response is not JSON:', statusText.substring(0, 500));
+      throw new Error('La respuesta no es JSON - posible página de error');
+    }
+    
     console.log('✅ Bot operativo:', status.status);
     
     // 2. Obtener balance actual
