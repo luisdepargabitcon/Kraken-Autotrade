@@ -117,6 +117,9 @@ function EventsTab() {
   const [timeRange, setTimeRange] = useState<string>("24h");
   const [showFilters, setShowFilters] = useState(false);
   const [lastMessageTime, setLastMessageTime] = useState<Date | null>(null);
+  const [categoryOrder, setCategoryOrder] = useState<string[]>([
+    "Trades", "Sistema", "Errores", "Conexiones", "Estrategia", "Límites", "Stop/Profit"
+  ]);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevEventsLengthRef = useRef(events.length);
@@ -231,6 +234,26 @@ function EventsTab() {
     setLevelFilter(prev => 
       prev.length === allLevels.length ? [] : allLevels
     );
+  };
+
+  const moveCategoryLeft = (category: string) => {
+    setCategoryOrder(prev => {
+      const index = prev.indexOf(category);
+      if (index <= 0) return prev;
+      const newOrder = [...prev];
+      [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+      return newOrder;
+    });
+  };
+
+  const moveCategoryRight = (category: string) => {
+    setCategoryOrder(prev => {
+      const index = prev.indexOf(category);
+      if (index === -1 || index === prev.length - 1) return prev;
+      const newOrder = [...prev];
+      [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+      return newOrder;
+    });
   };
 
   const formatTimestamp = (ts: string) => {
@@ -348,44 +371,71 @@ function EventsTab() {
                   </SelectContent>
                 </Select>
 
-                <div className="flex gap-1">
-                  {Object.entries(EVENT_TYPE_CATEGORIES).map(([category, types]) => {
+                <div className="flex gap-1 flex-wrap">
+                  {categoryOrder.map(category => {
+                    const types = EVENT_TYPE_CATEGORIES[category as keyof typeof EVENT_TYPE_CATEGORIES];
+                    if (!types) return null;
+                    
                     const visibleTypes = types.filter(t => availableEventTypes.includes(t));
                     if (visibleTypes.length === 0) return null;
                     
                     const isActive = visibleTypes.some(t => typeFilter.includes(t));
+                    const categoryIndex = categoryOrder.indexOf(category);
                     
                     return (
-                      <Button
-                        key={category}
-                        variant="outline"
-                        size="sm"
-                        className={cn(
-                          "h-8 px-2 text-xs",
-                          isActive ? "bg-primary/20 text-primary border-primary/30" : "opacity-40"
-                        )}
-                        onClick={() => {
-                          const allTypes = visibleTypes;
-                          const currentlyActive = allTypes.filter(t => typeFilter.includes(t));
-                          
-                          if (currentlyActive.length === allTypes.length) {
-                            // All types in this category are active, deactivate all
-                            setTypeFilter(prev => prev.filter(t => !allTypes.includes(t)));
-                          } else {
-                            // Activate all types in this category
-                            setTypeFilter(prev => {
-                              const newFilter = [...prev];
-                              allTypes.forEach(t => {
-                                if (!newFilter.includes(t)) newFilter.push(t);
+                      <div key={category} className="flex items-center gap-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-4 p-0 opacity-50 hover:opacity-100"
+                          onClick={() => moveCategoryLeft(category)}
+                          disabled={categoryIndex === 0}
+                          title="Mover a la izquierda"
+                        >
+                          ‹
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "h-8 px-2 text-xs",
+                            isActive ? "bg-primary/20 text-primary border-primary/30" : "opacity-40"
+                          )}
+                          onClick={() => {
+                            const allTypes = visibleTypes;
+                            const currentlyActive = allTypes.filter(t => typeFilter.includes(t));
+                            
+                            if (currentlyActive.length === allTypes.length) {
+                              // All types in this category are active, deactivate all
+                              setTypeFilter(prev => prev.filter(t => !allTypes.includes(t)));
+                            } else {
+                              // Activate all types in this category
+                              setTypeFilter(prev => {
+                                const newFilter = [...prev];
+                                allTypes.forEach(t => {
+                                  if (!newFilter.includes(t)) newFilter.push(t);
+                                });
+                                return newFilter;
                               });
-                              return newFilter;
-                            });
-                          }
-                        }}
-                        title={category}
-                      >
-                        {category}
-                      </Button>
+                            }
+                          }}
+                          title={category}
+                        >
+                          {category}
+                        </Button>
+                        
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-4 p-0 opacity-50 hover:opacity-100"
+                          onClick={() => moveCategoryRight(category)}
+                          disabled={categoryIndex === categoryOrder.length - 1}
+                          title="Mover a la derecha"
+                        >
+                          ›
+                        </Button>
+                      </div>
                     );
                   })}
                 </div>
