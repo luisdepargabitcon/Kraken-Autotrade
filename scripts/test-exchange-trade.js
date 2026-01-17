@@ -66,18 +66,24 @@ async function testExchangeTrade() {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    // 4. Vender todo el ETH
-    console.log('\n💰 Vendiendo todo el ETH...');
+    // 4. Vender exactamente el ETH comprado (incluyendo fees)
+    console.log('\n💰 Vendiendo exactamente el ETH comprado...');
     
+    // Obtener balance actual para ver cuánto ETH recibimos realmente
     const newBalance = await exchange.getBalance();
-    const ethToSell = parseFloat(newBalance.ETH || 0);
+    const actualEthReceived = parseFloat(newBalance.ETH || 0);
     
-    if (ethToSell <= 0) {
+    if (actualEthReceived <= 0) {
       console.log('❌ No hay ETH para vender');
       return;
     }
     
-    const sellOrder = await exchange.createMarketOrder('sell', 'ETH/USD', ethToSell);
+    console.log(`   ETH recibido en compra: ${actualEthReceived.toFixed(8)} ETH`);
+    console.log(`   ETH teórico sin fees: ${ethAmount.toFixed(8)} ETH`);
+    console.log(`   Diferencia (fees): ${(ethAmount - actualEthReceived).toFixed(8)} ETH`);
+    
+    // Vender exactamente el ETH que tenemos (lo que recibimos después de fees)
+    const sellOrder = await exchange.createMarketOrder('sell', 'ETH/USD', actualEthReceived);
     
     console.log(`✅ Orden de venta ejecutada:`);
     console.log(`   Order ID: ${sellOrder.orderId}`);
@@ -85,7 +91,7 @@ async function testExchangeTrade() {
     console.log(`   Precio: $${sellOrder.price} USD`);
     console.log(`   Total: $${sellOrder.cost} USD`);
     
-    // 5. Calcular resultados
+    // 5. Calcular resultados precisos
     console.log('\n📈 Resultados de la operación:');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
@@ -94,10 +100,19 @@ async function testExchangeTrade() {
     const pnl = finalUsd - usdBalance;
     const pnlPercent = (pnl / usdToSpend) * 100;
     
+    // Calcular fees
+    const buyFee = usdToSpend - (buyOrder.amount * buyOrder.price);
+    const sellFee = (sellOrder.amount * sellOrder.price) - sellOrder.cost;
+    const totalFees = buyFee + sellFee;
+    
     console.log(`💳 Invertido: $${usdToSpend.toFixed(2)} USD`);
     console.log(`💰 Recuperado: $${sellOrder.cost.toFixed(2)} USD`);
-    console.log(`📊 PnL: $${pnl.toFixed(2)} USD (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`);
+    console.log(`📊 PnL neto: $${pnl.toFixed(2)} USD (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`);
+    console.log(`💸 Fees totales: $${totalFees.toFixed(4)} USD`);
+    console.log(`   └─ Fee compra: $${buyFee.toFixed(4)} USD`);
+    console.log(`   └─ Fee venta: $${sellFee.toFixed(4)} USD`);
     console.log(`💵 Balance final USD: $${finalUsd.toFixed(2)}`);
+    console.log(`🪙 ETH final: ${parseFloat(finalBalance.ETH || 0).toFixed(8)} ETH`);
     
     if (pnl > 0) {
       console.log('🎉 ¡Ganancia!');
@@ -133,9 +148,10 @@ process.on('SIGINT', async () => {
     const ethBalance = parseFloat(balance.ETH || 0);
     
     if (ethBalance > 0) {
-      console.log(`🚨 Vendiendo ${ethBalance.toFixed(6)} ETH de emergencia...`);
+      console.log(`🚨 Vendiendo ${ethBalance.toFixed(8)} ETH de emergencia...`);
       const sellOrder = await exchange.createMarketOrder('sell', 'ETH/USD', ethBalance);
       console.log(`✅ Venta de emergencia completada: $${sellOrder.cost.toFixed(2)} USD`);
+      console.log(`   Cantidad vendida: ${sellOrder.amount} ETH`);
     } else {
       console.log('ℹ️  No hay ETH para vender');
     }
