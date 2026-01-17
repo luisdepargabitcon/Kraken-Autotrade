@@ -103,6 +103,12 @@
   - Alertas de circuit breaker
   - Prevención de spam de errores
 
+#### 12. **FIX - Arranque Docker no-interactivo (staging)**
+- **Archivos**: `Dockerfile`, `script/migrate.ts`
+- **Problema**: `drizzle-kit push` en el arranque bloqueaba el contenedor con prompts interactivos (y podía fallar por diferencias de esquema), dejando el bot inaccesible.
+- **Solución**: Arranque con migración no-interactiva (`npx tsx script/migrate.ts`) y migración ampliada para asegurar `telegram_chats` y el constraint `training_trades_buy_txid_unique` solo si es seguro.
+- **Resultado**: El contenedor arranca sin prompts y mantiene los datos existentes.
+
 ### ESTADÍSTICAS DE LA ACTUALIZACIÓN
 - **Commits**: 12 commits incrementales
 - **Archivos modificados**: 8 archivos principales

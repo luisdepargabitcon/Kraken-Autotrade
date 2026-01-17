@@ -31,6 +31,30 @@ async function runMigration() {
   const db = drizzle(pool);
   
   try {
+    // telegram_chats table (multi-chat support)
+    console.log("[migrate] Ensuring telegram_chats table exists...");
+    try {
+      await db.execute(sql.raw(`
+        CREATE TABLE IF NOT EXISTS telegram_chats (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          is_default BOOLEAN NOT NULL DEFAULT false,
+          alert_trades BOOLEAN NOT NULL DEFAULT true,
+          alert_errors BOOLEAN NOT NULL DEFAULT true,
+          alert_system BOOLEAN NOT NULL DEFAULT true,
+          alert_balance BOOLEAN NOT NULL DEFAULT false,
+          alert_heartbeat BOOLEAN NOT NULL DEFAULT true,
+          alert_preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+          updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+        );
+      `));
+    } catch (e) {
+      console.log("[migrate] telegram_chats table note:", e);
+    }
+
     // bot_config columns
     const botConfigMigrations = [
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_max_open_lots_per_pair INTEGER DEFAULT 1',
@@ -78,6 +102,41 @@ async function runMigration() {
       } catch (e) {
         // Ignore errors
       }
+    }
+
+    // training_trades: add unique constraint on buy_txid if safe
+    console.log("[migrate] Checking training_trades.buy_txid uniqueness...");
+    try {
+      const constraintExists = await db.execute(sql`
+        SELECT constraint_name FROM information_schema.table_constraints
+        WHERE table_name = 'training_trades' AND constraint_type = 'UNIQUE'
+          AND constraint_name IN ('training_trades_buy_txid_unique', 'training_trades_buy_txid_key')
+      `);
+
+      if (constraintExists.rows.length === 0) {
+        const duplicates = await db.execute(sql`
+          SELECT buy_txid, COUNT(*)::int AS cnt
+          FROM training_trades
+          WHERE buy_txid IS NOT NULL
+          GROUP BY buy_txid
+          HAVING COUNT(*) > 1
+          LIMIT 1
+        `);
+
+        if (duplicates.rows.length === 0) {
+          console.log("[migrate] Adding unique constraint on training_trades.buy_txid...");
+          await db.execute(sql`
+            ALTER TABLE training_trades
+            ADD CONSTRAINT training_trades_buy_txid_unique UNIQUE (buy_txid)
+          `);
+        } else {
+          console.log("[migrate] WARNING: Duplicate buy_txid found, skipping unique constraint");
+        }
+      } else {
+        console.log("[migrate] training_trades buy_txid unique constraint already exists");
+      }
+    } catch (e) {
+      console.log("[migrate] training_trades constraint note:", e);
     }
     
     // Backfill lot_id for existing positions
