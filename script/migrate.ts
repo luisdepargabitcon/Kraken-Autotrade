@@ -55,6 +55,20 @@ async function runMigration() {
       console.log("[migrate] telegram_chats table note:", e);
     }
 
+    // Ensure expected telegram_chats columns exist (for older DBs created before these columns)
+    console.log("[migrate] Ensuring telegram_chats columns exist...");
+    const telegramChatsMigrations = [
+      "ALTER TABLE telegram_chats ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false",
+      "ALTER TABLE telegram_chats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()",
+    ];
+    for (const migration of telegramChatsMigrations) {
+      try {
+        await db.execute(sql.raw(migration));
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
     // bot_config columns
     const botConfigMigrations = [
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_max_open_lots_per_pair INTEGER DEFAULT 1',

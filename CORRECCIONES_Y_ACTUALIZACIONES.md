@@ -109,6 +109,12 @@
 - **Solución**: Arranque con migración no-interactiva (`npx tsx script/migrate.ts`) y migración ampliada para asegurar `telegram_chats` y el constraint `training_trades_buy_txid_unique` solo si es seguro.
 - **Resultado**: El contenedor arranca sin prompts y mantiene los datos existentes.
 
+#### 13. **FIX - Migración robusta de `telegram_chats` (columna `is_default`)**
+- **Archivo**: `script/migrate.ts`
+- **Problema**: En bases de datos existentes, `telegram_chats` podía existir sin la columna `is_default`, causando crash del backend (`errorMissingColumn`).
+- **Solución**: Añadir migración no destructiva con `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` para asegurar `is_default` y `updated_at`.
+- **Resultado**: Arranque estable incluso con tablas creadas previamente sin las nuevas columnas.
+
 ### ESTADÍSTICAS DE LA ACTUALIZACIÓN
 - **Commits**: 12 commits incrementales
 - **Archivos modificados**: 8 archivos principales
