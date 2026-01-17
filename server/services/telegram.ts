@@ -183,7 +183,7 @@ class SinglePollerGuard {
       await db.execute(sql`SELECT pg_advisory_unlock(${this.lockKey})`);
       this.pollingActive = false;
       console.log(`[SinglePollerGuard] 🔓 Lock released for ${this.lockKey}`);
-      await botLogger.info("TELEGRAM_POLLING_STOPPED", "Single poller lock released", {
+      await botLogger.info("TELEGRAM_POLLING_STOPPED" as any, "Single poller lock released", {
         instanceId: environment.instanceId,
         envTag: environment.envTag,
         lockKey: this.lockKey
@@ -203,7 +203,7 @@ class SinglePollerGuard {
     this.lastErrorTime = now;
 
     console.error(`[SinglePollerGuard] 🔴 409 Conflict detected:`, error.message);
-    await botLogger.error("TELEGRAM_POLLING_409_CONFLICT", "409 Conflict - another poller detected", {
+    await botLogger.error("TELEGRAM_POLLING_409_CONFLICT" as any, "409 Conflict - another poller detected", {
       instanceId: environment.instanceId,
       envTag: environment.envTag,
       lockKey: this.lockKey,
@@ -236,7 +236,7 @@ class SinglePollerGuard {
     }
     
     console.log(`[SinglePollerGuard] ⚠️ Max backoff reached, switching to send-only mode`);
-    await botLogger.error("TELEGRAM_POLLING_MAX_BACKOFF", "Max backoff reached, switching to send-only", {
+    await botLogger.error("TELEGRAM_POLLING_MAX_BACKOFF" as any, "Max backoff reached, switching to send-only", {
       instanceId: environment.instanceId,
       envTag: environment.envTag,
       lockKey: this.lockKey,
@@ -511,38 +511,6 @@ interface OrphanSellContext {
   reasonCode: string;
 }
 
-function buildTradeBuyHTML(ctx: TradeBuyContext): string {
-  const lines = [
-    getBotBranding(),
-    `━━━━━━━━━━━━━━━━━━━`,
-    `🟢 <b>SEÑAL: COMPRAR ${escapeHtml(ctx.pair)}</b> 🟢`,
-    ``,
-    `💰 <b>Orden:</b>`,
-    `   • Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
-    `   • Precio: <code>$${escapeHtml(ctx.price)}</code>`,
-    `   • Total: <code>$${escapeHtml(ctx.total)}</code>`,
-    `   • Order ID: <code>${escapeHtml(ctx.orderId)}</code>`,
-    ``,
-    `🤖 <b>Estrategia:</b>`,
-    `   • Tipo: <code>${escapeHtml(ctx.strategyLabel)}</code>`,
-    `   • Confianza: <code>${escapeHtml(ctx.confPct)}</code>%`,
-    `   • Razón: <code>${escapeHtml(ctx.reason)}</code>`,
-    ``,
-    `⚙️ <b>Configuración:</b>`,
-    `   • Modo: <code>${escapeHtml(ctx.mode)}</code>`,
-    ``,
-    `📅 ${formatSpanishDate()}`,
-    `━━━━━━━━━━━━━━━━━━━`,
-    buildPanelUrlFooter()
-  ];
-  
-  if (ctx.signalsSummary) {
-    lines.splice(16, 0, `📊 <b>Señales:</b> ${ctx.signalsSummary}`);
-  }
-  
-  return lines.join("\n");
-}
-
 interface SignalContext {
   side: "BUY" | "SELL";
   symbol: string;
@@ -561,6 +529,7 @@ interface SignalContext {
   regimeReason?: string;
   routerStrategy?: string;
   signalsSummary?: string;
+  ts?: number;  // Agregar propiedad ts que falta
 }
 
 function buildSignalHTML(ctx: SignalContext): string {
@@ -660,7 +629,6 @@ export const telegramTemplates = {
   buildDailyReportHTML,
   buildTradeBuyHTML,
   buildTradeSellHTML,
-  buildOrphanSellHTML,
   buildSignalHTML,
   buildEntryIntentHTML,
 };

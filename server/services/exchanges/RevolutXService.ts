@@ -11,9 +11,9 @@ export class RevolutXService implements IExchangeService {
   private apiSecret: string | null = null;
   private publicKey: string | null = null;
   private privateKey: string | null = null;
-  public exchangeName = 'revolutx';
-  private takerFeePct = 0.09;
-  private makerFeePct = 0.00;
+  public readonly exchangeName = 'revolutx';
+  public readonly takerFeePct = 0.09;
+  public readonly makerFeePct = 0.00;
 
   // Circuit breaker para endpoints rotos
   private circuitBreakers = new Map<string, {
@@ -132,6 +132,9 @@ export class RevolutXService implements IExchangeService {
     const message = timestamp + method + path + (queryString || '') + (body || '');
     
     try {
+      if (!this.privateKey) {
+        throw new Error('Private key not initialized');
+      }
       const signatureBuffer = crypto.sign(null, Buffer.from(message), this.privateKey);
       return {
         timestamp,
@@ -147,7 +150,7 @@ export class RevolutXService implements IExchangeService {
     const { timestamp, signature } = this.sign(method, path, queryString, body);
     return {
       'Content-Type': 'application/json',
-      'X-Revx-Api-Key': this.apiKey,
+      'X-Revx-Api-Key': this.apiKey || '',
       'X-Revx-Timestamp': timestamp,
       'X-Revx-Signature': signature
     };
@@ -230,8 +233,7 @@ export class RevolutXService implements IExchangeService {
         bid: parseFloat(data.bid || '0'),
         ask: parseFloat(data.ask || '0'),
         last: parseFloat(data.last || data.price || '0'),
-        volume: parseFloat(data.volume || '0'),
-        timestamp: data.timestamp || new Date().toISOString()
+        volume24h: parseFloat(data.volume || '0')
       };
       
       // Reset circuit breaker on success
@@ -513,4 +515,4 @@ export class RevolutXService implements IExchangeService {
   }
 }
 
-export const revolutXService = new RevolutXService();
+export const revolutXService = RevolutXService.getInstance();
