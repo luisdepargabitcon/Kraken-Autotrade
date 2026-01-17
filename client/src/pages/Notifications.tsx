@@ -61,6 +61,10 @@ export default function Notifications() {
   const [newChatName, setNewChatName] = useState("");
   const [newChatId, setNewChatId] = useState("");
   const [customMessage, setCustomMessage] = useState("");
+  const [selectedDestination, setSelectedDestination] = useState<string>("default");
+  const [manualChatId, setManualChatId] = useState("");
+  const [saveManualChat, setSaveManualChat] = useState(false);
+  const [manualChatName, setManualChatName] = useState("");
   const [newAlertPreferences, setNewAlertPreferences] = useState<AlertPreferences>({
     trade_buy: true, trade_sell: true, trade_stoploss: true, trade_takeprofit: true,
     trade_breakeven: true, trade_trailing: true, trade_daily_pnl: true,
@@ -244,10 +248,36 @@ export default function Notifications() {
 
   const sendMessageMutation = useMutation({
     mutationFn: async () => {
+      let payload: any = { message: customMessage };
+      
+      if (selectedDestination === "manual") {
+        payload.chatId = manualChatId;
+        
+        if (saveManualChat && manualChatName.trim()) {
+          // First save the chat, then send message
+          const saveRes = await fetch("/api/telegram/chats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: manualChatName.trim(),
+              chatId: manualChatId,
+              alertPreferences: newAlertPreferences,
+            }),
+          });
+          if (!saveRes.ok) {
+            const error = await saveRes.json();
+            throw new Error(error.error || "Failed to save chat");
+          }
+          queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
+        }
+      } else if (selectedDestination !== "default") {
+        payload.chatRefId = parseInt(selectedDestination);
+      }
+      
       const res = await fetch("/api/telegram/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: customMessage }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error("Failed to send");
       return res.json();
@@ -255,6 +285,9 @@ export default function Notifications() {
     onSuccess: () => {
       toast.success("Mensaje enviado a Telegram");
       setCustomMessage("");
+      setManualChatId("");
+      setSaveManualChat(false);
+      setManualChatName("");
     },
     onError: () => {
       toast.error("Error al enviar mensaje");
@@ -328,6 +361,62 @@ export default function Notifications() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="destination">Destino del mensaje</Label>
+                    <Select value={selectedDestination} onValueChange={setSelectedDestination}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecciona destino" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Chat por defecto</SelectItem>
+                        {telegramChats?.map((chat) => (
+                          <SelectItem key={chat.id} value={chat.id.toString()}>
+                            {chat.name} ({chat.chatId})
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="manual">Chat manual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {selectedDestination === "manual" && (
+                    <div className="space-y-3 p-3 border border-border rounded-lg bg-card/30">
+                      <div className="space-y-2">
+                        <Label htmlFor="manualChatId">Chat ID (ej: -1001234567890)</Label>
+                        <Input
+                          id="manualChatId"
+                          placeholder="-1001234567890"
+                          value={manualChatId}
+                          onChange={(e) => setManualChatId(e.target.value)}
+                          className="font-mono"
+                        />
+                      </div>
+                      
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="saveManualChat"
+                          checked={saveManualChat}
+                          onCheckedChange={(checked) => setSaveManualChat(checked as boolean)}
+                        />
+                        <Label htmlFor="saveManualChat" className="text-sm">
+                          Guardar este chat
+                        </Label>
+                      </div>
+
+                      {saveManualChat && (
+                        <div className="space-y-2">
+                          <Label htmlFor="manualChatName">Nombre del chat</Label>
+                          <Input
+                            id="manualChatName"
+                            placeholder="Ej: Trades Técnicos"
+                            value={manualChatName}
+                            onChange={(e) => setManualChatName(e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <Textarea
                     placeholder="Escribe el mensaje que quieres enviar a Telegram… (ej: 'Estado del bot', 'Reinicia motor', 'Prueba de alerta')"
                     className="bg-background/50 min-h-[80px]"
@@ -335,15 +424,21 @@ export default function Notifications() {
                     onChange={(e) => setCustomMessage(e.target.value)}
                     data-testid="input-custom-message"
                   />
+                  
                   <Button 
                     className="w-full"
                     onClick={() => sendMessageMutation.mutate()}
-                    disabled={!customMessage.trim() || sendMessageMutation.isPending}
+                    disabled={
+                      !customMessage.trim() || 
+                      sendMessageMutation.isPending ||
+                      (selectedDestination === "manual" && !manualChatId.trim())
+                    }
                     data-testid="button-send-message"
                   >
                     <Send className="mr-2 h-4 w-4" />
                     {sendMessageMutation.isPending ? "Enviando..." : "Enviar Mensaje"}
                   </Button>
+                  
                   <p className="text-xs text-muted-foreground">
                     Comandos Telegram: /estado, /pausar, /reanudar, /ultimas, /ayuda, /balance, /cartera, /logs
                   </p>
