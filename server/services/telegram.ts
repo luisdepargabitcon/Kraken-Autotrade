@@ -786,14 +786,15 @@ export class TelegramService {
       for (const fill of sortedFills.slice(0, limit)) {
         const emoji = fill.type === "buy" ? "🟢" : "🔴";
         const tipo = fill.type === "buy" ? "Compra" : "Venta";
-        const fecha = fill.executedAt ? new Date(fill.executedAt).toLocaleDateString("es-ES", { timeZone: "Europe/Madrid" }) : "Pendiente";
-        const hora = fill.executedAt ? new Date(fill.executedAt).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid" }) : "";
+        const fecha = fill.executedAt ? formatSpanishDate(fill.executedAt) : "Pendiente";
+        const exchangeName = fill.exchange || "Desconocido";
         
         message += `${emoji} <b>${tipo}</b> ${escapeHtml(fill.pair)}\n`;
+        message += `   Exchange: <code>${exchangeName}</code>\n`;
         message += `   Precio: $${parseFloat(fill.price).toFixed(2)}\n`;
         message += `   Cantidad: ${escapeHtml(fill.amount)}\n`;
         message += `   Coste: $${parseFloat(fill.cost).toFixed(2)}\n`;
-        message += `   Fecha: ${fecha} ${hora}\n`;
+        message += `   Fecha: ${fecha}\n`;
         message += `   🆔 <code>${fill.txid.slice(0, 8)}...</code>\n\n`;
       }
 
