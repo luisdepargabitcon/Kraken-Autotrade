@@ -329,13 +329,55 @@ function EventsTab() {
                   </SelectContent>
                 </Select>
 
+                <div className="flex gap-1">
+                  {Object.entries(EVENT_TYPE_CATEGORIES).map(([category, types]) => {
+                    const visibleTypes = types.filter(t => availableEventTypes.includes(t));
+                    if (visibleTypes.length === 0) return null;
+                    
+                    const isActive = visibleTypes.some(t => typeFilter.includes(t));
+                    
+                    return (
+                      <Button
+                        key={category}
+                        variant="outline"
+                        size="sm"
+                        className={cn(
+                          "h-8 px-2 text-xs",
+                          isActive ? "bg-primary/20 text-primary border-primary/30" : "opacity-40"
+                        )}
+                        onClick={() => {
+                          const allTypes = visibleTypes;
+                          const currentlyActive = allTypes.filter(t => typeFilter.includes(t));
+                          
+                          if (currentlyActive.length === allTypes.length) {
+                            // All types in this category are active, deactivate all
+                            setTypeFilter(prev => prev.filter(t => !allTypes.includes(t)));
+                          } else {
+                            // Activate all types in this category
+                            setTypeFilter(prev => {
+                              const newFilter = [...prev];
+                              allTypes.forEach(t => {
+                                if (!newFilter.includes(t)) newFilter.push(t);
+                              });
+                              return newFilter;
+                            });
+                          }
+                        }}
+                        title={category}
+                      >
+                        {category}
+                      </Button>
+                    );
+                  })}
+                </div>
+
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-8 text-xs"
                   onClick={() => setShowFilters(!showFilters)}
                 >
-                  Filtros
+                  Detalles
                   {showFilters ? <ChevronDown className="ml-1 h-3 w-3" /> : <ChevronRight className="ml-1 h-3 w-3" />}
                 </Button>
               </div>
@@ -397,47 +439,8 @@ function EventsTab() {
 
             {showFilters && (
               <div className="mt-3 pt-3 border-t border-border/50 space-y-3">
-                <div className="space-y-2" data-testid="filter-type-container">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-muted-foreground">Tipos de eventos:</span>
-                    {typeFilter.length > 0 && (
-                      <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
-                        Limpiar ({typeFilter.length})
-                      </Button>
-                    )}
-                  </div>
-                  
-                  {Object.entries(EVENT_TYPE_CATEGORIES).map(([category, types]) => {
-                    const visibleTypes = types.filter(t => availableEventTypes.includes(t));
-                    if (visibleTypes.length === 0) return null;
-                    
-                    return (
-                      <div key={category} className="space-y-1">
-                        <span className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">{category}</span>
-                        <div className="flex flex-wrap gap-1">
-                          {visibleTypes.map((type: string) => (
-                            <Badge
-                              key={type}
-                              variant="outline"
-                              className={cn(
-                                "cursor-pointer text-xs",
-                                typeFilter.includes(type) ? "bg-primary/20 border-primary/50" : "opacity-50"
-                              )}
-                              onClick={() => setTypeFilter(prev => 
-                                prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-                              )}
-                              data-testid={`filter-type-${type}`}
-                            >
-                              {type.replace(/_/g, " ")}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
                 <div className="flex flex-wrap gap-1" data-testid="filter-pair-container">
-                  <span className="text-xs text-muted-foreground mr-2">Par:</span>
+                  <span className="text-xs text-muted-foreground mr-2">Pares:</span>
                   {availablePairs.map((pair: string) => (
                     <Badge
                       key={pair}
@@ -456,7 +459,32 @@ function EventsTab() {
                   ))}
                   {pairFilter.length > 0 && (
                     <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setPairFilter([])} data-testid="button-clear-pair-filter">
-                      Limpiar
+                      Limpiar pares
+                    </Button>
+                  )}
+                </div>
+                
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-xs text-muted-foreground mr-2">Tipos individuales:</span>
+                  {availableEventTypes.map((type: string) => (
+                    <Badge
+                      key={type}
+                      variant="outline"
+                      className={cn(
+                        "cursor-pointer text-xs",
+                        typeFilter.includes(type) ? "bg-primary/20 border-primary/50" : "opacity-50"
+                      )}
+                      onClick={() => setTypeFilter(prev => 
+                        prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                      )}
+                      data-testid={`filter-type-${type}`}
+                    >
+                      {type.replace(/_/g, " ")}
+                    </Badge>
+                  ))}
+                  {typeFilter.length > 0 && (
+                    <Button variant="ghost" size="sm" className="h-5 text-xs" onClick={() => setTypeFilter([])} data-testid="button-clear-type-filter">
+                      Limpiar tipos ({typeFilter.length})
                     </Button>
                   )}
                 </div>
