@@ -262,7 +262,8 @@ export class RevolutXService implements IExchangeService {
   async getTradesHistory(options?: { symbol?: string; limit?: number }): Promise<{ trades: any[] }> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const path = '/api/1.0/trades';
+    // RevolutX usa el path /market-data/trades para trades privados
+    const path = '/market-data/trades';
     const queryParams: string[] = [];
     
     if (options?.symbol) {
