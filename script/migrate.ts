@@ -120,6 +120,20 @@ async function runMigration() {
       "open_positions table"
     );
 
+    // Ensure open_positions timestamps exist even if table pre-existed (fix /api/open-positions 500)
+    console.log("[migrate] Ensuring open_positions timestamp columns exist...");
+    const openPositionsTimestampMigrations = [
+      "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS opened_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()",
+      "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()",
+    ];
+    for (const migration of openPositionsTimestampMigrations) {
+      try {
+        await db.execute(sql.raw(migration));
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
     // notifications table
     console.log("[migrate] Ensuring notifications table exists...");
     await tryExecute(
@@ -144,6 +158,50 @@ async function runMigration() {
         timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
       );`,
       "market_data table"
+    );
+
+    // ai_config table (AI diagnostics/status)
+    console.log("[migrate] Ensuring ai_config table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS ai_config (
+        id SERIAL PRIMARY KEY,
+        filter_enabled BOOLEAN DEFAULT false,
+        shadow_enabled BOOLEAN DEFAULT false,
+        model_path TEXT,
+        model_version TEXT,
+        last_train_ts TIMESTAMP WITHOUT TIME ZONE,
+        last_backfill_ts TIMESTAMP WITHOUT TIME ZONE,
+        last_backfill_error TEXT,
+        last_backfill_discard_reasons_json JSONB,
+        last_train_error TEXT,
+        n_samples INTEGER DEFAULT 0,
+        threshold DECIMAL(5,4) DEFAULT 0.60,
+        metrics_json JSONB,
+        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now()
+      );`,
+      "ai_config table"
+    );
+
+    // regime_state table (regime router stabilization)
+    console.log("[migrate] Ensuring regime_state table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS regime_state (
+        pair TEXT PRIMARY KEY,
+        current_regime TEXT NOT NULL DEFAULT 'TRANSITION',
+        confirmed_at TIMESTAMP WITHOUT TIME ZONE,
+        last_notified_at TIMESTAMP WITHOUT TIME ZONE,
+        hold_until TIMESTAMP WITHOUT TIME ZONE,
+        transition_since TIMESTAMP WITHOUT TIME ZONE,
+        candidate_regime TEXT,
+        candidate_count INTEGER NOT NULL DEFAULT 0,
+        last_params_hash TEXT,
+        last_reason_hash TEXT,
+        last_adx DECIMAL(5,2),
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now()
+      );`,
+      "regime_state table"
     );
 
     // telegram_chats table (multi-chat support)

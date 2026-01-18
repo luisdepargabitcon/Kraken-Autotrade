@@ -28,10 +28,17 @@ export class RevolutXService implements IExchangeService {
   private constructor() {}
 
   private generateClientOrderId(): string {
-    const timestampPart = Date.now().toString(36).toUpperCase();
-    const randomPart = crypto.randomBytes(10).toString('hex').toUpperCase();
-    const combined = `RX${timestampPart}${randomPart}`;
-    return combined.slice(0, 32);
+    // RevolutX order endpoint is Coinbase-style; it expects a UUID client_order_id.
+    // Using a non-UUID value is rejected with "Invalid client order ID".
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    // Fallback for older runtimes
+    const bytes = crypto.randomBytes(16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+    const hex = bytes.toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
   public static getInstance(): RevolutXService {
