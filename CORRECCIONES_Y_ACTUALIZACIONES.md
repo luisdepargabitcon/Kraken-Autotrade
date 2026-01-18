@@ -1234,6 +1234,41 @@ curl -s http://<HOST>:3020/api/balances/all | head
 - En Terminal se ven y se distinguen todas las operaciones.
 - El P&L del historial permanece **neto** (fees ida+vuelta) y no se “resetea” por recalculado.
 
+### 6. Trading Engine: Regla simple “por posición” (como Kraken) — NO vender HOLD
+
+**Objetivo:**
+- El bot opera “por posición”: si compra 1 unidad, solo puede vender hasta esa unidad (en 1 o varios tramos según estrategia), descontando fees/rounding.
+- El saldo total del wallet (HOLD/manual) **no** se mezcla con la posición del bot.
+
+**Archivos:**
+- `server/services/tradingEngine.ts`
+- `server/services/botLogger.ts`
+
+**Fixes aplicados:**
+
+**A) SELL: wallet solo para verificar disponibilidad (no para ampliar posición)**
+- En flujos de SELL (señal cycle/candles y SL/TP), el volumen final se calcula como:
+  - `sellQty = min(requested, trackedPositionAmount, walletBalance)`
+- Se evita usar el balance real para “subir” la posición salvo control dust.
+
+**B) Reconciliación UP (restos) solo si el extra es dust pequeño**
+- Si `walletBalance > trackedAmount`:
+  - Solo se ajusta hacia arriba si el extra (en USD) es pequeño (`<= DUST_THRESHOLD_USD`).
+  - Si el extra es grande (parece HOLD), se ignora la reconciliación UP para evitar vender holdings externos.
+
+**C) BUY: tracking de cantidad neta recibida (fees/rounding) por delta de balance**
+- En `executeTrade(BUY)` se captura:
+  - `preBalance(assetBase)` antes de enviar la orden
+  - `postBalance(assetBase)` después (con reintentos cortos)
+  - `netBought = max(0, post - pre)`
+- `open_positions.amount` se actualiza con `netBought` (tanto nueva posición como DCA), asegurando que el bot vende exactamente lo que compró neto.
+
+**D) Observabilidad: evento POSITION_RECONCILED**
+- Se añade `POSITION_RECONCILED` a `EventType` para registrar reconciliaciones (UP dust) antes de SELL.
+
+**E) RevolutX: txid string (no truncar)**
+- `order.txid` puede ser `string` o `string[]` según exchange. Se normaliza para evitar truncar a 1 carácter (caso RevolutX).
+
 ### Verificación
 
 ```bash

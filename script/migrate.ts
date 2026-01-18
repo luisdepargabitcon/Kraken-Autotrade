@@ -545,6 +545,129 @@ async function runMigration() {
       // Ignore
     }
 
+    // open_positions legacy compatibility: older DBs may have buy_* NOT NULL columns
+    // that are no longer written by the app (we use entry_*). Make sure they won't
+    // block inserts, and ensure opened_at has a default.
+    console.log("[migrate] Ensuring open_positions legacy columns won't block inserts...");
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'opened_at'
+         ) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN opened_at SET DEFAULT now()';
+         END IF;
+       END $$;`,
+      "open_positions.opened_at default"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'buy_price'
+         ) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN buy_price DROP NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.buy_price nullable"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'buy_amount'
+         ) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN buy_amount DROP NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.buy_amount nullable"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'buy_cost'
+         ) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN buy_cost DROP NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.buy_cost nullable"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'buy_fee'
+         ) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN buy_fee SET DEFAULT 0';
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN buy_fee DROP NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.buy_fee default/nullable"
+    );
+
+    // Backfill entry_* columns from legacy buy_* columns (safe no-op if columns don't exist)
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'buy_price'
+         ) THEN
+           UPDATE open_positions
+           SET
+             entry_price = COALESCE(entry_price, buy_price),
+             amount = COALESCE(amount, buy_amount),
+             highest_price = COALESCE(highest_price, buy_price),
+             entry_fee = CASE
+               WHEN (entry_fee IS NULL OR entry_fee = 0) AND buy_fee IS NOT NULL THEN buy_fee
+               ELSE entry_fee
+             END
+           WHERE (entry_price IS NULL OR amount IS NULL OR highest_price IS NULL);
+         END IF;
+       END $$;`,
+      "open_positions backfill entry_* from buy_*"
+    );
+
+    // Tighten constraints to match current app expectations when safe
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'lot_id'
+         ) AND NOT EXISTS (SELECT 1 FROM open_positions WHERE lot_id IS NULL) THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN lot_id SET NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.lot_id set NOT NULL when safe"
+    );
+    await tryExecute(
+      db,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'open_positions' AND column_name = 'exchange'
+         ) AND NOT EXISTS (SELECT 1 FROM open_positions WHERE exchange IS NULL OR exchange = '') THEN
+           EXECUTE 'ALTER TABLE open_positions ALTER COLUMN exchange SET NOT NULL';
+         END IF;
+       END $$;`,
+      "open_positions.exchange set NOT NULL when safe"
+    );
+
     // training_trades: add unique constraint on buy_txid if safe
     console.log("[migrate] Checking training_trades.buy_txid uniqueness...");
     try {

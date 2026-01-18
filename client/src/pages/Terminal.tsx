@@ -1167,6 +1167,12 @@ export default function Terminal() {
             const displayEntryFee = realEntryFee ?? estimatedEntryFee;
             const isEntryFeeReal = realEntryFee != null;
             const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * takerFeeRate;
+            const grossUsd = parseFloat(selectedPosition.unrealizedPnlUsd || "0");
+            const grossPct = parseFloat(selectedPosition.unrealizedPnlPct || "0");
+            const netUsd = parseFloat(selectedPosition.netPnlUsd || "0");
+            const netPct = parseFloat(selectedPosition.netPnlPct || "0");
+            const isGrossProfit = grossUsd >= 0;
+            const isNetProfit = netUsd >= 0;
             
             return (
               <div className="space-y-4">
@@ -1188,6 +1194,48 @@ export default function Terminal() {
                   </div>
                 )}
 
+                {/* Resumen (modo original): números clave visibles */}
+                <div className="p-3 rounded-lg bg-muted/20 border border-muted space-y-2">
+                  <div className="text-xs text-muted-foreground uppercase">Resumen</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-mono">Precio Entrada</div>
+                      <div className="font-mono text-sm">${formatPrice(selectedPosition.entryPrice)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-mono">Precio Actual</div>
+                      <div className="font-mono text-sm">${formatPrice(selectedPosition.currentPrice)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-mono">Valor Entrada</div>
+                      <div className="font-mono text-sm">${parseFloat(selectedPosition.entryValueUsd).toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-mono">Valor Actual</div>
+                      <div className="font-mono text-sm">${parseFloat(selectedPosition.currentValueUsd).toFixed(2)}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase font-mono">PnL (bruto)</div>
+                          <div className={`font-mono text-sm ${isGrossProfit ? 'text-green-400' : 'text-red-400'}`}>
+                            {isGrossProfit ? '+' : '-'}${Math.abs(grossUsd).toFixed(2)} ({grossPct >= 0 ? '+' : ''}{grossPct.toFixed(2)}%)
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] text-muted-foreground uppercase font-mono">PnL (neto)</div>
+                          <div className={`font-mono text-sm ${isNetProfit ? 'text-emerald-400' : 'text-orange-400'}`}>
+                            {isNetProfit ? '+' : '-'}${Math.abs(netUsd).toFixed(2)} ({netPct >= 0 ? '+' : ''}{netPct.toFixed(2)}%)
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Abierta: {formatDate(selectedPosition.openedAt)} · {exitStatus.hoursOpen.toFixed(1)}h
+                  </div>
+                </div>
+
                 {/* Break-Even */}
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
@@ -1201,6 +1249,9 @@ export default function Terminal() {
                       className={`h-full transition-all ${exitStatus.beActive ? 'bg-green-500' : 'bg-blue-500/50'}`}
                       style={{ width: `${Math.max(0, exitStatus.beProgress)}%` }}
                     />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    PnL actual: {exitStatus.currentPnlPct >= 0 ? '+' : ''}{exitStatus.currentPnlPct.toFixed(2)}%
                   </div>
                 </div>
 
@@ -1218,6 +1269,9 @@ export default function Terminal() {
                       style={{ width: `${Math.max(0, exitStatus.trailProgress)}%` }}
                     />
                   </div>
+                  <div className="text-xs text-muted-foreground">
+                    PnL actual: {exitStatus.currentPnlPct >= 0 ? '+' : ''}{exitStatus.currentPnlPct.toFixed(2)}%
+                  </div>
                 </div>
 
                 {/* Take-Profit */}
@@ -1233,6 +1287,9 @@ export default function Terminal() {
                       className={`h-full transition-all ${exitStatus.currentPnlPct >= exitStatus.tpPct ? 'bg-green-500' : 'bg-green-500/30'}`}
                       style={{ width: `${Math.max(0, exitStatus.tpProgress)}%` }}
                     />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    PnL actual: {exitStatus.currentPnlPct >= 0 ? '+' : ''}{exitStatus.currentPnlPct.toFixed(2)}%
                   </div>
                 </div>
 

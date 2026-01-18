@@ -985,6 +985,66 @@ export class TradingEngine {
     }
   }
 
+  async manualBuyForTest(
+    pair: string,
+    usdAmount: number,
+    correlationId: string,
+    reason: string
+  ): Promise<{ success: boolean; lotId?: string; requestedVolume?: number; netAdded?: number; price?: number; error?: string }> {
+    try {
+      const prePositions = this.getPositionsByPair(pair);
+      const preAmount = prePositions.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const preLotId = prePositions[0]?.lotId;
+
+      const krakenPair = this.formatKrakenPair(pair);
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
+      const currentPrice = Number((ticker as any)?.last ?? 0);
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        return { success: false, error: `Precio no válido para ${pair}: ${currentPrice}` };
+      }
+
+      const requestedVolume = usdAmount / currentPrice;
+      const normalizedVolume = this.normalizeVolume(pair, requestedVolume);
+      if (!Number.isFinite(normalizedVolume) || normalizedVolume <= 0) {
+        return { success: false, error: `Volumen no válido para ${pair}: ${normalizedVolume}` };
+      }
+
+      const ok = await this.executeTrade(
+        pair,
+        "buy",
+        normalizedVolume.toFixed(8),
+        currentPrice,
+        reason,
+        undefined,
+        { strategyId: "manual_test", timeframe: "manual", confidence: 1 },
+        undefined
+      );
+
+      if (!ok) {
+        return { success: false, error: "BUY falló" };
+      }
+
+      const postPositions = this.getPositionsByPair(pair);
+      const postAmount = postPositions.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const netAdded = postAmount - preAmount;
+
+      let lotId = postPositions[0]?.lotId;
+      if (preLotId && postPositions.some((p) => p.lotId === preLotId)) {
+        lotId = preLotId;
+      }
+
+      return {
+        success: true,
+        lotId,
+        requestedVolume: normalizedVolume,
+        netAdded,
+        price: currentPrice,
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message || String(error) };
+    }
+  }
+
   private getUniquePairs(): string[] {
     const pairs = new Set<string>();
     this.openPositions.forEach((position) => {
@@ -2279,6 +2339,29 @@ El bot ha pausado las operaciones de COMPRA.
       // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
       const freshBalances = await this.getTradingExchange().getBalance();
       const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+
+      // Reconciliación hacia ARRIBA: si el wallet tiene más de lo que trackea la posición,
+      // ajustar position.amount para poder cerrar todo y no dejar restos sin posición.
+      if (realAssetBalance > sellAmount * 1.005) {
+        const extraAmount = realAssetBalance - sellAmount;
+        const extraValueUsd = extraAmount * currentPrice;
+        if (extraValueUsd <= DUST_THRESHOLD_USD) {
+          log(`🔄 Discrepancia de balance (UP) en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
+          position.amount = realAssetBalance;
+          this.openPositions.set(lotId, position);
+          await this.savePositionToDB(pair, position);
+          await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) en ${pair}`, {
+            pair,
+            lotId,
+            direction: "UP",
+            registeredAmount: sellAmount,
+            realBalance: realAssetBalance,
+            extraValueUsd,
+          });
+        } else {
+          log(`⚠️ Balance real mayor al registrado en ${pair} (${lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
+        }
+      }
       
       // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
       if (realAssetBalance < sellAmount * 0.995) {
@@ -3523,8 +3606,42 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // === FIX: Vender lote completo, no 50% ===
         // Usar min(lot.amount, realAssetBalance) para evitar insufficient funds
         // Si no hay lot trackeado, usar balance real del wallet
-        const lotAmount = existingPosition?.amount ?? assetBalance;
-        const realAssetBalance = assetBalance;
+        let lotAmount = existingPosition?.amount ?? assetBalance;
+        
+        // Reconciliación hacia ARRIBA (SINGLE/DCA): si hay posición trackeada pero el wallet tiene más,
+        // ajustamos el amount del lote para evitar restos sin posición.
+        let realAssetBalance = assetBalance;
+        if (existingPosition?.lotId) {
+          try {
+            const freshBalances = await this.getTradingExchange().getBalance();
+            realAssetBalance = this.getAssetBalance(pair, freshBalances);
+          } catch (balErr: any) {
+            log(`${pair}: Error obteniendo balance fresco para reconciliación SELL: ${balErr.message}`, "trading");
+          }
+          if (realAssetBalance > lotAmount * 1.005) {
+            const extraAmount = realAssetBalance - lotAmount;
+            const extraValueUsd = extraAmount * currentPrice;
+            if (extraValueUsd <= DUST_THRESHOLD_USD) {
+              log(`🔄 Reconciliación (UP) pre-SELL señal en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
+              existingPosition.amount = realAssetBalance;
+              this.openPositions.set(existingPosition.lotId, existingPosition);
+              await this.savePositionToDB(pair, existingPosition);
+              await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) antes de SELL por señal en ${pair}`, {
+                pair,
+                lotId: existingPosition.lotId,
+                direction: "UP",
+                registeredAmount: lotAmount,
+                realBalance: realAssetBalance,
+                extraValueUsd,
+                trigger: "SIGNAL_SELL",
+              });
+              lotAmount = existingPosition.amount;
+            } else {
+              log(`⚠️ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
+            }
+          }
+        }
+
         const rawSellVolume = Math.min(lotAmount, realAssetBalance);
         
         // Normalizar al stepSize de Kraken para evitar errores de precisión
@@ -3571,6 +3688,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason, undefined, undefined, undefined, sellContext);
         if (success) {
+          if (existingPosition?.lotId) {
+            this.openPositions.delete(existingPosition.lotId);
+            await this.deletePositionFromDBByLotId(existingPosition.lotId);
+          }
           this.lastTradeTime.set(pair, Date.now());
         }
       }
@@ -4223,8 +4344,41 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         // === FIX: Vender lote completo, no 50% ===
         // Si no hay lot trackeado, usar balance real del wallet
-        const lotAmount = existingPosition?.amount ?? assetBalance;
-        const realAssetBalance = assetBalance;
+        let lotAmount = existingPosition?.amount ?? assetBalance;
+        
+        // Reconciliación hacia ARRIBA (SINGLE/DCA) antes de SELL por señal en candles
+        let realAssetBalance = assetBalance;
+        if (existingPosition?.lotId) {
+          try {
+            const freshBalances = await this.getTradingExchange().getBalance();
+            realAssetBalance = this.getAssetBalance(pair, freshBalances);
+          } catch (balErr: any) {
+            log(`${pair}: Error obteniendo balance fresco para reconciliación SELL (candles): ${balErr.message}`, "trading");
+          }
+          if (realAssetBalance > lotAmount * 1.005) {
+            const extraAmount = realAssetBalance - lotAmount;
+            const extraValueUsd = extraAmount * currentPrice;
+            if (extraValueUsd <= DUST_THRESHOLD_USD) {
+              log(`🔄 Reconciliación (UP) pre-SELL señal (candles) en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
+              existingPosition.amount = realAssetBalance;
+              this.openPositions.set(existingPosition.lotId, existingPosition);
+              await this.savePositionToDB(pair, existingPosition);
+              await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) antes de SELL por señal (candles) en ${pair}`, {
+                pair,
+                lotId: existingPosition.lotId,
+                direction: "UP",
+                registeredAmount: lotAmount,
+                realBalance: realAssetBalance,
+                extraValueUsd,
+                trigger: "SIGNAL_SELL_CANDLES",
+              });
+              lotAmount = existingPosition.amount;
+            } else {
+              log(`⚠️ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
+            }
+          }
+        }
+
         const rawSellVolume = Math.min(lotAmount, realAssetBalance);
         const sellVolume = this.normalizeVolume(pair, rawSellVolume);
         
@@ -4269,6 +4423,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${selectedStrategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
+          if (existingPosition?.lotId) {
+            this.openPositions.delete(existingPosition.lotId);
+            await this.deletePositionFromDBByLotId(existingPosition.lotId);
+          }
           this.lastTradeTime.set(pair, Date.now());
         }
       }
@@ -5913,6 +6071,16 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       }
       
       log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${this.getTradingExchangeType()}`, "trading");
+
+      let preAssetBalance: number | null = null;
+      if (type === "buy") {
+        try {
+          const preBalances = await this.getTradingExchange().getBalance();
+          preAssetBalance = this.getAssetBalance(pair, preBalances);
+        } catch (balErr: any) {
+          log(`${pair}: Error obteniendo balance previo (preBalance) para BUY neto: ${balErr.message}`, "trading");
+        }
+      }
       
       const order = await this.getTradingExchange().placeOrder({
         pair,
@@ -5921,8 +6089,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         volume,
       });
 
-      const txid = order.txid?.[0];
-      if (!txid) {
+      const txid = Array.isArray((order as any).txid) ? (order as any).txid[0] : (order as any).txid;
+      if (!txid || typeof txid !== "string") {
         log(`Orden sin txid - posible fallo`, "trading");
         return false;
       }
@@ -5981,6 +6149,32 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // volumeNum ya declarado arriba
       if (type === "buy") {
         this.currentUsdBalance -= volumeNum * price;
+
+        let netBought = volumeNum;
+        if (preAssetBalance != null) {
+          const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+          let postAssetBalance = preAssetBalance;
+          for (let i = 0; i < 3; i++) {
+            try {
+              const postBalances = await this.getTradingExchange().getBalance();
+              postAssetBalance = this.getAssetBalance(pair, postBalances);
+              if (postAssetBalance > preAssetBalance) break;
+            } catch (balErr: any) {
+              log(`${pair}: Error obteniendo balance post (postBalance) para BUY neto: ${balErr.message}`, "trading");
+            }
+            await sleep(500);
+          }
+
+          const delta = Math.max(0, postAssetBalance - preAssetBalance);
+          if (delta > 0 && delta <= volumeNum * 1.05) {
+            netBought = delta;
+          } else if (delta > volumeNum * 1.05) {
+            log(`${pair}: BUY neto fuera de rango (delta=${delta}, requested=${volumeNum}). Usando requested volume para evitar mezclar HOLD.`, "trading");
+          } else {
+            log(`${pair}: BUY neto no detectado (delta=${delta}). Usando requested volume.`, "trading");
+          }
+        }
+
         const existingPositions = this.getPositionsByPair(pair);
         const existing = existingPositions[0]; // First position for DCA mode
         let newPosition: OpenPosition;
@@ -5997,8 +6191,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         
         if (!shouldCreateNewLot && existing) {
           // DCA mode: update existing position
-          const totalAmount = existing.amount + volumeNum;
-          const avgPrice = (existing.amount * existing.entryPrice + volumeNum * price) / totalAmount;
+          const totalAmount = existing.amount + netBought;
+          const avgPrice = (existing.amount * existing.entryPrice + netBought * price) / totalAmount;
           // DCA: accumulate fees from both entries (use dynamic fee from active exchange)
           const additionalEntryFee = volumeNum * price * (getTakerFeePct() / 100);
           const totalEntryFee = (existing.entryFee || 0) + additionalEntryFee;
@@ -6099,7 +6293,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           newPosition = { 
             lotId,
             pair,
-            amount: volumeNum, 
+            amount: netBought, 
             entryPrice: price,
             entryFee,
             highestPrice: price,
@@ -6493,22 +6687,22 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     currentPrice: number,
     correlationId: string,
     reason: string,
-    lotId?: string // Optional: specify which lot to close (for multi-lot support)
+    specificLotId?: string
   ): Promise<{
     success: boolean;
-    error?: string;
-    orderId?: string;
     pnlUsd?: number;
     pnlPct?: number;
     dryRun?: boolean;
+    orderId?: string;
     lotId?: string;
+    error?: string;
     isDust?: boolean; // Flag para indicar que la posición es DUST y no se puede cerrar
   }> {
     try {
       // Find the position to close
       let position: OpenPosition | undefined;
-      if (lotId) {
-        position = this.openPositions.get(lotId);
+      if (specificLotId) {
+        position = this.openPositions.get(specificLotId);
       } else {
         // Close the first position for this pair
         const positions = this.getPositionsByPair(pair);
@@ -6645,8 +6839,8 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         volume: sellAmountFinal.toFixed(8),
       });
 
-      const txid = order.txid?.[0];
-      if (!txid) {
+      const txid = Array.isArray((order as any).txid) ? (order as any).txid[0] : (order as any).txid;
+      if (!txid || typeof txid !== "string") {
         return {
           success: false,
           error: "Orden enviada pero no se recibió txid de confirmación",

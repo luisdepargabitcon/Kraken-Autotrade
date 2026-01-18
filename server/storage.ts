@@ -40,7 +40,7 @@ import {
   trainingTrades as trainingTradesTable
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gt, lt, sql, isNull } from "drizzle-orm";
+import { eq, desc, and, gt, lt, sql, isNull, ne, or } from "drizzle-orm";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 
 export interface IStorage {
@@ -61,6 +61,7 @@ export interface IStorage {
   upsertTradeByKrakenId(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }>;
   getDuplicateTradesByKrakenId(): Promise<{ krakenOrderId: string; count: number; ids: number[] }[]>;
   deleteDuplicateTrades(): Promise<number>;
+  deleteInvalidFilledTrades(): Promise<number>;
   updateTradePnl(id: number, entryPrice: string, realizedPnlUsd: string, realizedPnlPct: string): Promise<void>;
   getUnmatchedBuys(pair: string): Promise<Trade[]>;
   
@@ -142,6 +143,21 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   private schemaMigrationAttempted = false;
+
+  private validateTradeForInsert(trade: InsertTrade) {
+    // Allow PENDING trades to exist without a known price (legacy endpoints may insert first and update later)
+    if ((trade.status || "pending") !== "filled") return;
+
+    const priceNum = parseFloat(String((trade as any).price ?? "0"));
+    const amountNum = parseFloat(String((trade as any).amount ?? "0"));
+
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      throw new Error(`Invalid filled trade price (must be > 0): ${trade.price}`);
+    }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      throw new Error(`Invalid filled trade amount (must be > 0): ${trade.amount}`);
+    }
+  }
   
   async getBotConfig(): Promise<BotConfig | undefined> {
     try {
@@ -218,6 +234,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTrade(trade: InsertTrade): Promise<Trade> {
+    this.validateTradeForInsert(trade);
     const [newTrade] = await db.insert(tradesTable).values(trade).returning();
     return newTrade;
   }
@@ -225,6 +242,7 @@ export class DatabaseStorage implements IStorage {
   // Upsert trade - inserta solo si no existe (por krakenOrderId)
   async upsertTradeByKrakenId(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }> {
     if (!trade.krakenOrderId) {
+      this.validateTradeForInsert(trade);
       const [newTrade] = await db.insert(tradesTable).values(trade).returning();
       return { inserted: true, trade: newTrade };
     }
@@ -236,6 +254,7 @@ export class DatabaseStorage implements IStorage {
     }
     
     try {
+      this.validateTradeForInsert(trade);
       const [newTrade] = await db.insert(tradesTable).values(trade).returning();
       return { inserted: true, trade: newTrade };
     } catch (e: any) {
@@ -280,6 +299,19 @@ export class DatabaseStorage implements IStorage {
     return deleted;
   }
 
+  // Eliminar trades inválidos históricos (artefactos) para que no contaminen la UI/PnL
+  // NOTA: Se limita a RevolutX y a trades sin executedAt, que son los casos típicos de price=0.
+  async deleteInvalidFilledTrades(): Promise<number> {
+    const result = await db.execute(sql`
+      DELETE FROM trades
+      WHERE status = 'filled'
+        AND exchange = 'revolutx'
+        AND executed_at IS NULL
+        AND (price <= 0 OR amount <= 0)
+    `);
+    return Number(result.rowCount || 0);
+  }
+
   // Actualizar P&L de un trade
   async updateTradePnl(id: number, entryPrice: string, realizedPnlUsd: string, realizedPnlPct: string): Promise<void> {
     await db.update(tradesTable)
@@ -299,7 +331,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTrades(limit: number = 50): Promise<Trade[]> {
-    return await db.select().from(tradesTable).orderBy(desc(tradesTable.createdAt)).limit(limit);
+    // Hide invalid historical artifacts (e.g. filled trades with price=0) from API/UI.
+    // Keep pending trades visible.
+    return await db.select().from(tradesTable)
+      .where(or(
+        ne(tradesTable.status, 'filled'),
+        and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
+      ))
+      .orderBy(desc(tradesTable.createdAt))
+      .limit(limit);
   }
 
   async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }> {
@@ -325,7 +365,14 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lt(tradesTable.realizedPnlUsd, '0'));
     }
     
-    const whereClause = conditions.length > 0 ? (conditions.length === 1 ? conditions[0] : and(...conditions)) : undefined;
+    // Always exclude invalid filled trades from listings.
+    const baseValidity = or(
+      ne(tradesTable.status, 'filled'),
+      and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
+    );
+    const whereClause = conditions.length > 0
+      ? and(baseValidity, ...(conditions.length === 1 ? [conditions[0]] : conditions))
+      : baseValidity;
     
     const tradesQuery = db.select().from(tradesTable)
       .orderBy(desc(tradesTable.executedAt))
@@ -334,8 +381,8 @@ export class DatabaseStorage implements IStorage {
     
     const countQuery = db.select({ count: sql<number>`count(*)` }).from(tradesTable);
     
-    const trades = whereClause ? await tradesQuery.where(whereClause) : await tradesQuery;
-    const countResult = whereClause ? await countQuery.where(whereClause) : await countQuery;
+    const trades = await tradesQuery.where(whereClause);
+    const countResult = await countQuery.where(whereClause);
     
     return { trades, total: Number(countResult[0]?.count || 0) };
   }

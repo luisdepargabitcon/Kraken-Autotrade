@@ -741,6 +741,39 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/positions/:pair/buy", async (req, res) => {
+    try {
+      const pair = req.params.pair.replace("-", "/");
+      const { usdAmount, reason, confirm } = req.body;
+
+      if (!tradingEngine) {
+        return res.status(503).json({ error: "Motor de trading no inicializado" });
+      }
+
+      if (!confirm) {
+        return res.status(400).json({
+          error: "CONFIRM_REQUIRED",
+          message: "Operación REAL: envía confirm=true para ejecutar la compra",
+        });
+      }
+
+      const usdAmountNum = typeof usdAmount === "number" ? usdAmount : parseFloat(String(usdAmount || "0"));
+      if (!Number.isFinite(usdAmountNum) || usdAmountNum <= 0) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", message: "usdAmount inválido" });
+      }
+
+      const correlationId = `MANUAL-BUY-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      const result = await tradingEngine.manualBuyForTest(pair, usdAmountNum, correlationId, reason || "Compra manual (API)");
+      if (!result.success) {
+        return res.status(400).json({ error: result.error || "BUY failed" });
+      }
+
+      res.json({ ...result, correlationId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to execute manual buy" });
+    }
+  });
+
   // === CIERRE MANUAL DE POSICIÓN ===
   app.post("/api/positions/:pair/close", async (req, res) => {
     try {
@@ -2131,6 +2164,16 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to cleanup duplicates" });
+    }
+  });
+
+  // Endpoint para limpiar trades inválidos históricos (p.ej. RevolutX price=0)
+  app.post("/api/trades/cleanup-invalid", async (req, res) => {
+    try {
+      const deleted = await storage.deleteInvalidFilledTrades();
+      res.json({ success: true, deleted });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to cleanup invalid trades" });
     }
   });
 
