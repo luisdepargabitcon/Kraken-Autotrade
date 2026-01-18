@@ -1845,6 +1845,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           if (existingTrade) {
             // B2: UPDATE - construir patch sin sobreescribir P&L existente
             const patch: any = {
+              pair,
               price: t.price,
               amount: t.vol,
               status: "filled",
@@ -1868,6 +1869,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             if (existingByFillId) {
               // B2: UPDATE por txid - misma lógica de patch
               const patchByFill: any = {
+                pair,
                 price: t.price,
                 amount: t.vol,
                 status: "filled",
