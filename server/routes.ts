@@ -1716,13 +1716,35 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       // Guardar en base de datos usando el ID de RevolutX
       const tradeId = order.orderId || `RX-${Date.now()}`;
+
+      let resolvedPrice = typeof order.price === 'number' ? order.price : parseFloat(String(order.price || '0'));
+      const resolvedVol = typeof order.volume === 'number' ? order.volume : parseFloat(String(order.volume || volume || '0'));
+      const resolvedCost = typeof order.cost === 'number' ? order.cost : parseFloat(String(order.cost || '0'));
+
+      if ((!Number.isFinite(resolvedPrice) || resolvedPrice <= 0) && Number.isFinite(resolvedCost) && resolvedCost > 0 && Number.isFinite(resolvedVol) && resolvedVol > 0) {
+        resolvedPrice = resolvedCost / resolvedVol;
+      }
+
+      if (!Number.isFinite(resolvedPrice) || resolvedPrice <= 0) {
+        try {
+          const ticker = await revolutXService.getTicker(pair);
+          resolvedPrice = type === 'buy' ? ticker.ask : ticker.bid;
+        } catch {
+          // Ignore
+        }
+      }
+
+      if (!Number.isFinite(resolvedPrice) || resolvedPrice <= 0) {
+        return res.status(400).json({ error: 'RevolutX order executed but price could not be determined (avoiding price=0 trade)' });
+      }
+
       const trade = await storage.createTrade({
         tradeId,
         exchange: 'revolutx',
         pair,
         type,
-        price: order.price?.toString() || "market",
-        amount: order.volume?.toString() || volume.toString(),
+        price: resolvedPrice.toString(),
+        amount: (Number.isFinite(resolvedVol) && resolvedVol > 0 ? resolvedVol : parseFloat(volume.toString())).toString(),
         status: "filled",
       });
       
@@ -1730,8 +1752,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       await telegramService.sendTradeNotification({
         type,
         pair,
-        price: order.price?.toString() || "market",
-        amount: order.volume?.toString() || volume.toString(),
+        price: resolvedPrice.toString(),
+        amount: (Number.isFinite(resolvedVol) && resolvedVol > 0 ? resolvedVol : parseFloat(volume.toString())).toString(),
         status: "filled",
       });
       

@@ -406,6 +406,16 @@ export class RevolutXService implements IExchangeService {
       // For market orders, Revolut X may not return executed_price immediately
       // We need to fetch the current ticker price as a fallback
       let executedPrice = parseFloat(data.executed_price || data.average_price || data.price || '0');
+
+      const executedVolume = parseFloat(data.executed_size || data.filled_size || params.volume);
+      const rawExecutedValue = data.executed_value || data.executed_notional || data.executed_quote_size || data.filled_value;
+      const executedValue = parseFloat(rawExecutedValue || '0');
+
+      // If API gives us value + size but no price, derive it.
+      if ((!Number.isFinite(executedPrice) || executedPrice <= 0) && Number.isFinite(executedValue) && executedValue > 0 && Number.isFinite(executedVolume) && executedVolume > 0) {
+        executedPrice = executedValue / executedVolume;
+        console.log(`[revolutx] Executed price derived from value/size: ${executedPrice}`);
+      }
       
       if (executedPrice === 0 && params.ordertype === 'market') {
         try {
@@ -414,14 +424,25 @@ export class RevolutXService implements IExchangeService {
           executedPrice = params.type === 'buy' ? ticker.ask : ticker.bid;
           console.log(`[revolutx] Market order price estimated from ticker: ${executedPrice}`);
         } catch (tickerError) {
-          console.warn('[revolutx] Could not fetch ticker for price estimation');
+          console.warn('[revolutx] Could not fetch ticker for price estimation, trying orderbook fallback');
+          try {
+            const ticker = await this.getTickerFromOrderbook(params.pair);
+            executedPrice = params.type === 'buy' ? ticker.ask : ticker.bid;
+            console.log(`[revolutx] Market order price estimated from orderbook: ${executedPrice}`);
+          } catch {
+            console.warn('[revolutx] Could not fetch orderbook for price estimation');
+          }
         }
       }
       
-      const executedVolume = parseFloat(data.executed_size || data.filled_size || params.volume);
-      const executedCost = executedPrice > 0 && executedVolume > 0 
-        ? executedPrice * executedVolume 
-        : parseFloat(data.executed_value || data.executed_notional || '0');
+      if (!Number.isFinite(executedPrice) || executedPrice <= 0) {
+        return {
+          success: false,
+          error: 'Could not determine executed price for RevolutX order (preventing price=0 trade record)'
+        };
+      }
+
+      const executedCost = executedPrice > 0 && executedVolume > 0 ? executedPrice * executedVolume : executedValue;
       
       return {
         success: true,
