@@ -998,13 +998,17 @@ export class TradingEngine {
       const preAmount = prePositions.reduce((sum, p) => sum + (p.amount || 0), 0);
       const preLotId = prePositions[0]?.lotId;
 
-      // Usar trading exchange (RevolutX) para precio, no data exchange (Kraken)
-      const ticker = await this.getTradingExchange().getTicker(pair);
+      // Usar data exchange (Kraken) para precio, igual que el bot automático
+      // RevolutX no tiene endpoint de ticker funcional
+      const krakenPair = this.formatKrakenPair(pair);
+      log(`[MANUAL_BUY] Obteniendo precio de Kraken para ${krakenPair}`, "trading");
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
       const currentPrice = Number((ticker as any)?.last ?? 0);
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         log(`[MANUAL_BUY] ERROR: Precio no válido para ${pair}: ${currentPrice}`, "trading");
         return { success: false, error: `Precio no válido para ${pair}: ${currentPrice}` };
       }
+      log(`[MANUAL_BUY] Precio obtenido: $${currentPrice.toFixed(4)}`, "trading");
 
       const requestedVolume = usdAmount / currentPrice;
       const normalizedVolume = this.normalizeVolume(pair, requestedVolume);
