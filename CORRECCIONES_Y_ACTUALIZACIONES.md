@@ -1345,4 +1345,93 @@ node ./scripts/test-real-trade.js
 - Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.
 - Implementar botón "SYNC REVOLUTX" en UI si es necesario (aunque RevolutX no tiene API de historial).
 
+---
+
+### 11. Fix CRÍTICO: "Body has already been read" en RevolutX getTicker()
+
+**Problema observado (VPS):**
+```
+[revolutx] getTicker error: Body is unusable: Body has already been read
+10:21:59 PM [trading] [MANUAL_BUY] EXCEPTION: Body is unusable: Body has already been read
+```
+
+**Causa raíz:**
+- `RevolutXService.getTicker()` intentaba leer el body HTTP **dos veces** cuando RevolutX API devolvía error (no 404):
+  1. Primera lectura: `await response.text()` (línea 219) para logging
+  2. Segunda lectura: `await response.json()` (línea 244) para parsear datos
+- El stream HTTP solo se puede leer una vez. La segunda lectura causaba "Body has already been read".
+
+**Fix aplicado:**
+- `server/services/exchanges/RevolutXService.ts`: cuando `response.ok === false` y no es 404, ahora lanza error inmediatamente con el texto ya leído, sin intentar `response.json()`.
+- Código antes:
+  ```typescript
+  if (!response.ok) {
+    const errorText = await response.text();
+    if (response.status === 404) { throw ... }
+    console.warn('Ticker endpoint failed, trying orderbook fallback');
+  }
+  const data = await response.json(); // ❌ Body ya consumido
+  ```
+- Código después:
+  ```typescript
+  if (!response.ok) {
+    const errorText = await response.text();
+    if (response.status === 404) { throw ... }
+    // Para otros errores, lanzar con texto ya leído
+    throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+  }
+  const data = await response.json(); // ✅ Solo se ejecuta si response.ok
+  ```
+
+**Commit:** `b1f38ce`
+
+**Verificación:**
+```bash
+curl -i -X POST "http://localhost:3020/api/positions/XRP-USD/buy" \
+  -H "Content-Type: application/json" \
+  -d '{"usdAmount":2,"confirm":true,"reason":"TEST"}'
+```
+- Antes: `{"error":"Body is unusable: Body has already been read"}`
+- Después: Error cambió a `403 Forbidden` (problema diferente, ver fix #12)
+
+---
+
+### 12. Fix: RevolutX getTicker() requiere autenticación (403 Forbidden)
+
+**Problema observado (VPS):**
+```
+HTTP/1.1 400 Bad Request
+{"error":"RevolutX API error 403: <!doctype html>...403 Forbidden"}
+```
+
+**Causa:**
+- El endpoint `/market-data/public/ticker` de RevolutX **NO es público** a pesar del nombre.
+- `getTicker()` hacía `fetch(fullUrl)` sin headers de autenticación.
+- RevolutX API rechazaba con 403 Forbidden.
+
+**Fix aplicado:**
+- `server/services/exchanges/RevolutXService.ts`: `getTicker()` ahora usa `this.getHeaders()` para añadir autenticación Ed25519.
+- Código antes:
+  ```typescript
+  const response = await fetch(fullUrl); // ❌ Sin auth
+  ```
+- Código después:
+  ```typescript
+  const headers = this.getHeaders('GET', path, queryString);
+  const response = await fetch(fullUrl, { headers }); // ✅ Con auth
+  ```
+
+**Commit:** `ba7c1c9`
+
+**Verificación:**
+```bash
+curl -i -X POST "http://localhost:3020/api/positions/XRP-USD/buy" \
+  -H "Content-Type: application/json" \
+  -d '{"usdAmount":2,"confirm":true,"reason":"TEST"}'
+```
+- Antes: `403 Forbidden`
+- Después: Debe devolver `success: true` con `lotId`, `netAdded`, `price`
+
+**Estado:** Pendiente de validación en VPS con trade real.
+
 
