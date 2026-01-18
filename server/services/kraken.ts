@@ -407,7 +407,27 @@ export class KrakenService implements IExchangeService {
       "ETHXBT": "ETH/BTC",
       "SOLETH": "SOL/ETH",
     };
-    return pairMap[krakenPair] || krakenPair;
+
+    const mapped = pairMap[krakenPair];
+    if (mapped) return mapped;
+
+    // Generic fallback: try to split krakenPair into base/quote using common quote lengths.
+    // Handles formats like: XXBTZUSD, XETHXXBT, USDCUSD, TONUSDC
+    if (!krakenPair || krakenPair.includes("/")) return krakenPair;
+
+    const s = krakenPair.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    for (const quoteLen of [4, 3]) {
+      if (s.length <= quoteLen) continue;
+      const left = s.slice(0, -quoteLen);
+      const right = s.slice(-quoteLen);
+      const base = this.normalizeAsset(left);
+      const quote = this.normalizeAsset(right);
+      if (/^[A-Z]{2,6}$/.test(base) && /^[A-Z]{2,6}$/.test(quote)) {
+        return `${base}/${quote}`;
+      }
+    }
+
+    return krakenPair;
   }
 
   formatPair(pair: string): string {
