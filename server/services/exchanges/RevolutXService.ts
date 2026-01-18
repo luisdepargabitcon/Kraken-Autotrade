@@ -237,8 +237,9 @@ export class RevolutXService implements IExchangeService {
           throw new Error(`Revolut X API error: ${response.status}`);
         }
 
-        // Fallback to orderbook if ticker endpoint fails (non-404)
-        console.warn('[revolutx] Ticker endpoint failed, trying orderbook fallback');
+        // Para otros errores (no 404), lanzar error con el texto ya leído
+        console.error('[revolutx] Ticker endpoint failed:', response.status, errorText);
+        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
       }
       
       const data = await response.json() as any;
