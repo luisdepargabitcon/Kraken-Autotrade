@@ -706,10 +706,23 @@ export default function Terminal() {
                     disabled={syncing}
                     className="text-xs font-mono border-border/50 hover:border-cyan-500/50 hover:text-cyan-400"
                     data-testid="button-sync-kraken"
-                    title="Sincroniza SOLO Kraken (RevolutX se registra en tiempo real)"
+                    title="Importa historial de trades desde Kraken API"
                   >
                     <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
                     SYNC KRAKEN
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => refetchClosed()}
+                    disabled={fetchingClosed}
+                    className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
+                    data-testid="button-refresh-revolutx"
+                    title="RevolutX no tiene API de historial. Los trades se guardan automáticamente al ejecutarse. Este botón refresca la vista."
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1 ${fetchingClosed ? 'animate-spin' : ''}`} />
+                    REFRESH REVOLUTX
                   </Button>
 
                   <Button 
