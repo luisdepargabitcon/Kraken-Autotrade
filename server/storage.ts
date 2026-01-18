@@ -904,7 +904,7 @@ export class DatabaseStorage implements IStorage {
   async getAllTradesForBackfill(): Promise<Trade[]> {
     return await db.select().from(tradesTable)
       .where(eq(tradesTable.status, 'filled'))
-      .orderBy(tradesTable.executedAt);
+      .orderBy(sql`COALESCE(${tradesTable.executedAt}, ${tradesTable.createdAt})`);
   }
 
   async runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }> {
@@ -915,23 +915,33 @@ export class DatabaseStorage implements IStorage {
     let labeled = 0;
     
     const KRAKEN_FEE_RATE = 0.004;
+    const REVOLUTX_FEE_RATE = 0.0009;
     const PNL_OUTLIER_THRESHOLD = 100; // Increased from 50% - crypto is volatile
     const MAX_HOLD_TIME_DAYS = 30;
     const MIN_FEE_PCT = 0.1; // Lowered from 0.5% - discount tiers exist
     const MAX_FEE_PCT = 2.5; // Raised from 2.0% - allow for spread costs
     const QTY_EPSILON = 0.00000001;
-    
-    const tradesByPair: Record<string, Trade[]> = {};
+
+    const feeRateByExchange = (ex?: string | null) => {
+      if (ex === 'revolutx') return REVOLUTX_FEE_RATE;
+      return KRAKEN_FEE_RATE;
+    };
+
+    const tradesByKey: Record<string, Trade[]> = {};
     for (const trade of allTrades) {
-      if (!tradesByPair[trade.pair]) tradesByPair[trade.pair] = [];
-      tradesByPair[trade.pair].push(trade);
+      const ex = ((trade as any).exchange as string | undefined) || 'kraken';
+      const key = `${trade.pair}::${ex}`;
+      if (!tradesByKey[key]) tradesByKey[key] = [];
+      tradesByKey[key].push(trade);
     }
     
-    for (const pair of Object.keys(tradesByPair)) {
+    for (const key of Object.keys(tradesByKey)) {
+      const [pair, exchange] = key.split('::');
+      const feeRate = feeRateByExchange(exchange);
       // Ordenación estable FIFO: timestamp + id (tie-breaker determinista)
-      const pairTrades = tradesByPair[pair].sort((a, b) => {
-        const timeA = a.executedAt ? new Date(a.executedAt).getTime() : 0;
-        const timeB = b.executedAt ? new Date(b.executedAt).getTime() : 0;
+      const pairTrades = tradesByKey[key].sort((a, b) => {
+        const timeA = a.executedAt ? new Date(a.executedAt).getTime() : new Date(a.createdAt).getTime();
+        const timeB = b.executedAt ? new Date(b.executedAt).getTime() : new Date(b.createdAt).getTime();
         if (timeA !== timeB) return timeA - timeB;
         // Tie-breaker: ID de base de datos (determinista)
         return a.id - b.id;
@@ -956,15 +966,10 @@ export class DatabaseStorage implements IStorage {
       const openLots: OpenLot[] = [];
       
       for (const trade of pairTrades) {
-        const tradeTime = trade.executedAt ? new Date(trade.executedAt) : null;
+        const tradeTime = trade.executedAt ? new Date(trade.executedAt) : new Date(trade.createdAt);
         const tradeAmount = parseFloat(trade.amount || '0');
         const tradePrice = parseFloat(trade.price || '0');
         const tradeTxid = trade.krakenOrderId || trade.tradeId;
-        
-        if (!tradeTime) {
-          discardReasons['sin_fecha_ejecucion'] = (discardReasons['sin_fecha_ejecucion'] || 0) + 1;
-          continue;
-        }
         
         if (tradeAmount <= 0 || tradePrice <= 0) {
           discardReasons['datos_invalidos'] = (discardReasons['datos_invalidos'] || 0) + 1;
@@ -1004,7 +1009,7 @@ export class DatabaseStorage implements IStorage {
           }
           
           const buyCost = tradeAmount * tradePrice;
-          const entryFee = buyCost * KRAKEN_FEE_RATE;
+          const entryFee = buyCost * feeRate;
           
           const trainingTrade: InsertTrainingTrade = {
             pair,
@@ -1054,7 +1059,7 @@ export class DatabaseStorage implements IStorage {
             const consumeQty = Math.min(remainingToSell, lot.qtyRemaining);
             const proportion = consumeQty / lot.entryAmount;
             const sellRevenue = consumeQty * sellPrice;
-            const sellFee = sellRevenue * KRAKEN_FEE_RATE;
+            const sellFee = sellRevenue * feeRate;
             
             lot.qtyRemaining -= consumeQty;
             remainingToSell -= consumeQty;
