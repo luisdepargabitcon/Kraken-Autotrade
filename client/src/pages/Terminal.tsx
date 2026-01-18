@@ -216,34 +216,6 @@ export default function Terminal() {
     }
   };
 
-  const handleSyncFromRevolutX = async () => {
-    setSyncing(true);
-    try {
-      const res = await fetch("/api/trades/sync-revolutx", { method: "POST" });
-      const data = await res.json();
-      if (res.ok) {
-        toast({
-          title: "Sincronizado",
-          description: `Se importaron ${data.synced} operaciones de RevolutX (${data.total} en historial)`,
-        });
-        refetchClosed();
-      } else {
-        toast({
-          title: "Error",
-          description: data.error || "No se pudo sincronizar",
-          variant: "destructive",
-        });
-      }
-    } catch (e) {
-      toast({
-        title: "Error",
-        description: "Error de conexión",
-        variant: "destructive",
-      });
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const closePositionMutation = useMutation({
     mutationFn: async ({ pair, lotId, amount }: { pair: string; lotId?: string | null; amount?: string }) => {
@@ -744,14 +716,14 @@ export default function Terminal() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={handleSyncFromRevolutX}
-                    disabled={syncing}
+                    onClick={() => refetchClosed()}
+                    disabled={fetchingClosed}
                     className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
-                    data-testid="button-sync-revolutx"
-                    title="Importa historial de trades desde RevolutX API"
+                    data-testid="button-refresh-revolutx"
+                    title="RevolutX no expone API de historial. Los trades se guardan automáticamente cuando el bot los ejecuta. Este botón refresca la vista."
                   >
-                    <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
-                    SYNC REVOLUTX
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1 ${fetchingClosed ? 'animate-spin' : ''}`} />
+                    REFRESH REVOLUTX
                   </Button>
 
                   <Button 
