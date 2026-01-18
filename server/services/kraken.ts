@@ -416,13 +416,19 @@ export class KrakenService implements IExchangeService {
     if (!krakenPair || krakenPair.includes("/")) return krakenPair;
 
     const s = krakenPair.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    const knownQuotes = new Set([
+      'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF',
+      'USDC', 'USDT',
+      'BTC', 'ETH',
+    ]);
     for (const quoteLen of [4, 3]) {
       if (s.length <= quoteLen) continue;
       const left = s.slice(0, -quoteLen);
       const right = s.slice(-quoteLen);
       const base = this.normalizeAsset(left);
       const quote = this.normalizeAsset(right);
-      if (/^[A-Z]{2,6}$/.test(base) && /^[A-Z]{2,6}$/.test(quote)) {
+      if (/^[A-Z]{2,6}$/.test(base) && knownQuotes.has(quote)) {
         return `${base}/${quote}`;
       }
     }
