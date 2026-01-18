@@ -922,6 +922,15 @@ export class DatabaseStorage implements IStorage {
     const MAX_FEE_PCT = 2.5; // Raised from 2.0% - allow for spread costs
     const QTY_EPSILON = 0.00000001;
 
+    const alreadyMatchedSellTxids = new Set<string>();
+    const existingSellTxids = await db.select({ sellTxidsJson: trainingTradesTable.sellTxidsJson }).from(trainingTradesTable);
+    for (const row of existingSellTxids) {
+      const txids = (row.sellTxidsJson as string[]) || [];
+      for (const txid of txids) {
+        if (txid) alreadyMatchedSellTxids.add(txid);
+      }
+    }
+
     const feeRateByExchange = (ex?: string | null) => {
       if (ex === 'revolutx') return REVOLUTX_FEE_RATE;
       return KRAKEN_FEE_RATE;
@@ -1045,6 +1054,9 @@ export class DatabaseStorage implements IStorage {
           });
           
         } else if (trade.type === 'sell') {
+          if (alreadyMatchedSellTxids.has(tradeTxid)) {
+            continue;
+          }
           let remainingToSell = tradeAmount;
           const sellPrice = tradePrice;
           const sellTime = tradeTime;
