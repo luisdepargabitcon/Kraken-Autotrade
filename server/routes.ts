@@ -1237,6 +1237,16 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const type = (req.query.type as 'all' | 'buy' | 'sell') || 'all';
       
       const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, exchange, result, type });
+
+      const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const normalizeExchange = (t: any): 'kraken' | 'revolutx' => {
+        const raw = (t?.exchange ?? '').toString().toLowerCase();
+        if (raw === 'kraken' || raw === 'revolutx') return raw;
+        const id = (t?.tradeId ?? '').toString();
+        if (id.startsWith('RX-') || uuidV4Regex.test(id)) return 'revolutx';
+        if (id.startsWith('KRAKEN-')) return 'kraken';
+        return 'kraken';
+      };
       
       res.json({
         trades: trades.map(t => {
@@ -1247,6 +1257,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           
           return {
             ...t,
+            exchange: normalizeExchange(t),
             totalUsd: totalUsd.toFixed(2),
             entryValueUsd: entryValueUsd?.toFixed(2) || null,
             realizedPnlUsd: t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,

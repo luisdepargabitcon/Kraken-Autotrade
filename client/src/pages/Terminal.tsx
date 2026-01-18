@@ -960,8 +960,16 @@ export default function Terminal() {
                               const pnlUsd = trade.realizedPnlUsd ? parseFloat(trade.realizedPnlUsd) : null;
                               const pnlPct = trade.realizedPnlPct ? parseFloat(trade.realizedPnlPct) : null;
                               const isProfit = pnlUsd !== null && pnlUsd >= 0;
-                              const ex = (trade.exchange || '').toLowerCase();
-                              const isRx = ex === 'revolutx';
+                              const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+                              const rawEx = (trade.exchange || '').toLowerCase();
+                              const inferredEx = (() => {
+                                if (rawEx === 'kraken' || rawEx === 'revolutx') return rawEx;
+                                const id = trade.tradeId || '';
+                                if (id.startsWith('RX-') || uuidV4Regex.test(id)) return 'revolutx';
+                                if (id.startsWith('KRAKEN-')) return 'kraken';
+                                return 'kraken';
+                              })();
+                              const isRx = inferredEx === 'revolutx';
                               
                               return (
                                 <tr 
@@ -1034,9 +1042,9 @@ export default function Terminal() {
                                       <Badge
                                         variant="outline"
                                         className={`font-mono text-[10px] px-1.5 py-0 ${isRx ? 'border-violet-500/50 text-violet-300' : 'border-cyan-500/50 text-cyan-400'}`}
-                                        title={isRx ? 'RevolutX' : 'Kraken'}
+                                        title={isRx ? 'Revolut X' : 'Kraken'}
                                       >
-                                        {isRx ? 'RX' : 'KR'}
+                                        {isRx ? 'REV. X' : 'KRAKEN'}
                                       </Badge>
                                     </div>
                                   </td>

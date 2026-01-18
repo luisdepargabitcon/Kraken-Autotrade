@@ -292,6 +292,22 @@ async function runMigration() {
       // Ignore
     }
 
+    // Correct legacy RevolutX trades that may have been fast-defaulted to 'kraken'
+    // (Postgres can show default for existing rows after ADD COLUMN DEFAULT)
+    try {
+      await db.execute(sql`
+        UPDATE trades
+        SET exchange = 'revolutx'
+        WHERE exchange <> 'revolutx'
+          AND (
+            trade_id LIKE 'RX-%'
+            OR trade_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          )
+      `);
+    } catch (e) {
+      // Ignore
+    }
+
     console.log("[migrate] Ensuring notifications columns exist...");
     const notificationsMigrations = [
       "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS telegram_sent BOOLEAN NOT NULL DEFAULT false",
