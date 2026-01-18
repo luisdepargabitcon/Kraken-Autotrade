@@ -1073,6 +1073,104 @@ Estimated amount for order is too small: QuoteAmount[amount=0.999...]
 - Añadido **buffer automático** (empieza en $1.05 y reintenta en escalones) hasta cumplir mínimo.
 - Cálculo de resultados por **delta real de balances** (USD/ETH antes y después), no por `order.cost`.
 
+### ⭐ Corrección destacada (la importante): compra-venta REAL (BUY+SELL) en RevolutX sin falsos positivos
+
+Esta corrección es la que desbloqueó el trade real tras múltiples intentos.
+
+#### Síntomas típicos cuando “vuelve a fallar”
+
+1) Rechazo al comprar por mínimo (aunque “parece” $1):
+```
+Estimated amount for order is too small: QuoteAmount[amount=0.999...]
+```
+
+2) Compra/Venta “parece exitosa” pero devuelve `Order ID: undefined` o `Cost: 0` (métricas falsas):
+- El endpoint interno responde OK, pero el exchange no retorna coste/price en el primer response.
+- El script calcula PnL con `order.cost` y da `-100%` o `0` aunque el balance real sí se movió.
+
+3) Fallo de trazabilidad:
+- Trades guardados con IDs tipo `RX-<timestamp>` o `undefined`, difícil de auditar.
+
+#### Causa raíz (por qué pasaba)
+
+- **Mínimo de orden:** el exchange valida el **quote amount estimado** (USD) y con 1.00 exacto puede quedar en `0.999...` por redondeos/spread y rechaza.
+- **Respuesta de orden incompleta:** para market orders, RevolutX puede no devolver `executed_price`/`cost` inmediatamente.
+- **IDs:** si el API no devolvía `id/order_id`, el backend devolvía `undefined` y el script lo imprimía como tal.
+
+#### Solución aplicada (qué se cambió exactamente)
+
+**A) Backend: orden siempre trazable**
+
+**Archivo:** `server/services/exchanges/RevolutXService.ts`
+
+- `generateClientOrderId()` usa UUID v4.
+- `placeOrder()` guarda `clientOrderId` y **fuerza**:
+  - `resolvedOrderId = data.id || data.order_id || clientOrderId`
+  - Devuelve `orderId: resolvedOrderId` y `txid: resolvedOrderId`
+
+Esto garantiza que en DB/UI/Logs siempre exista un identificador (mínimo el `client_order_id`).
+
+**B) Script: comprar con buffer + vender por delta y medir por delta**
+
+**Archivo:** `scripts/test-real-trade.js`
+
+1) **Compra con buffer/reintento**
+- Objetivo base: `usdTarget = 1.00`
+- Buffer inicial: `usdBuffer = 0.05` (primer intento ~$1.05)
+- Reintento: si el error contiene `Estimated amount for order is too small`, incrementar `usdBuffer += 0.05` hasta `maxUsdBuffer = 0.50`.
+
+2) **Cantidad a comprar**
+- `ethAmount = (usdTarget + usdBuffer) / ethPrice`
+- Se manda como `volume(base_size)`.
+
+3) **Vender lo realmente comprado (no lo “pedido”)**
+- `actualEthReceived = ethAfterBuy - ethBeforeBuy` (delta real)
+- Se vende `actualEthReceived`.
+
+4) **PnL y “cost” reales por delta de balances (evita 0 falsos)**
+- `usdSpentReal = usdBeforeBuy - usdAfterBuy`
+- `usdReceivedReal = usdAfterSell - usdAfterBuy`
+- `pnl = usdAfterSell - usdBeforeBuy`
+
+Esto es crítico porque `order.cost` puede ser 0/undefined al momento de respuesta.
+
+#### Señales de éxito (para validar en 10 segundos)
+
+Al ejecutar `node ./scripts/test-real-trade.js`, debes ver:
+- BUY: `Trade ID` y `Order ID` con UUID (no `undefined`).
+- BUY: `USD gastado (delta)` > 0.
+- BUY: `ETH comprado (delta)` > 0.
+- SELL: `USD recuperado (delta)` > 0.
+- Final: ETH vuelve a ~0 y USD baja ligeramente (spread/fees).
+
+Ejemplo real validado (VPS):
+- Buy gastado: `$1.0600`
+- Sell recuperado: `$1.0300`
+- PnL neto: `-$0.0300`
+
+#### Checklist “arreglar a la primera” si vuelve a fallar
+
+1) Si aparece `Invalid client order ID`:
+- Verificar que `generateClientOrderId()` genera UUID v4.
+- Verificar que `/api/trade/revolutx` usa `RevolutXService.placeOrder()` actualizado.
+
+2) Si aparece `Estimated amount ... too small`:
+- Subir `usdBuffer` inicial (p.ej. 0.10) o aumentar `maxUsdBuffer`.
+- Confirmar precio usado (endpoint `/api/prices/portfolio`) y que no está devolviendo 0.
+
+3) Si `orderId` vuelve a `undefined`:
+- Confirmar que `placeOrder()` usa `resolvedOrderId = data.id || data.order_id || clientOrderId`.
+
+4) Si `USD recuperado (delta sell)` sale 0:
+- Revisar que el script hace `postSellBalance = await getRevolutxBalances()` después de vender.
+- Aumentar el `sleep` entre BUY y SELL si el balance tarda en reflejarse.
+
+5) Verificación rápida por API:
+```bash
+curl -s http://<HOST>:3020/api/health
+curl -s http://<HOST>:3020/api/balances/all | head
+```
+
 ### 3. DB: tablas/columnas faltantes detectadas por logs
 
 **Archivo:** `script/migrate.ts`
