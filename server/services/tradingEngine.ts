@@ -992,22 +992,28 @@ export class TradingEngine {
     reason: string
   ): Promise<{ success: boolean; lotId?: string; requestedVolume?: number; netAdded?: number; price?: number; error?: string }> {
     try {
+      log(`[MANUAL_BUY] Iniciando compra manual: ${pair}, $${usdAmount}`, "trading");
+      
       const prePositions = this.getPositionsByPair(pair);
       const preAmount = prePositions.reduce((sum, p) => sum + (p.amount || 0), 0);
       const preLotId = prePositions[0]?.lotId;
 
-      const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.getDataExchange().getTicker(krakenPair);
+      // Usar trading exchange (RevolutX) para precio, no data exchange (Kraken)
+      const ticker = await this.getTradingExchange().getTicker(pair);
       const currentPrice = Number((ticker as any)?.last ?? 0);
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        log(`[MANUAL_BUY] ERROR: Precio no válido para ${pair}: ${currentPrice}`, "trading");
         return { success: false, error: `Precio no válido para ${pair}: ${currentPrice}` };
       }
 
       const requestedVolume = usdAmount / currentPrice;
       const normalizedVolume = this.normalizeVolume(pair, requestedVolume);
       if (!Number.isFinite(normalizedVolume) || normalizedVolume <= 0) {
+        log(`[MANUAL_BUY] ERROR: Volumen no válido para ${pair}: ${normalizedVolume}`, "trading");
         return { success: false, error: `Volumen no válido para ${pair}: ${normalizedVolume}` };
       }
+
+      log(`[MANUAL_BUY] Ejecutando BUY: ${normalizedVolume.toFixed(8)} ${pair} @ $${currentPrice.toFixed(2)}`, "trading");
 
       const ok = await this.executeTrade(
         pair,
@@ -1021,7 +1027,8 @@ export class TradingEngine {
       );
 
       if (!ok) {
-        return { success: false, error: "BUY falló" };
+        log(`[MANUAL_BUY] ERROR: executeTrade devolvió false`, "trading");
+        return { success: false, error: "executeTrade falló (ver logs para detalles)" };
       }
 
       const postPositions = this.getPositionsByPair(pair);
@@ -1033,6 +1040,8 @@ export class TradingEngine {
         lotId = preLotId;
       }
 
+      log(`[MANUAL_BUY] BUY exitoso: lotId=${lotId}, netAdded=${netAdded.toFixed(8)}`, "trading");
+
       return {
         success: true,
         lotId,
@@ -1041,6 +1050,7 @@ export class TradingEngine {
         price: currentPrice,
       };
     } catch (error: any) {
+      log(`[MANUAL_BUY] EXCEPTION: ${error.message}`, "trading");
       return { success: false, error: error.message || String(error) };
     }
   }
