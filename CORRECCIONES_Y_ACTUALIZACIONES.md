@@ -1278,4 +1278,71 @@ curl -i http://<HOST>:3020/api/ai/status
 node ./scripts/test-real-trade.js
 ```
 
+---
+
+## Sesión 18 Enero 2026 (Noche) - Fixes VPS y Manual Buy Endpoint
+
+### 7. Fix: Manual Buy endpoint usa RevolutX para precio (no Kraken)
+
+**Problema:**
+- El endpoint `POST /api/positions/:pair/buy` (para test manual de compra) usaba `getDataExchange()` (Kraken) para obtener el precio de `XRP/USD`.
+- Kraken no tiene `XRP/USD` directamente (usa `XXRPZUSD`), causando error "Precio no válido".
+- Las operaciones se ejecutan en **RevolutX**, no Kraken.
+
+**Fix aplicado:**
+- `server/services/tradingEngine.ts`: método `manualBuyForTest()` ahora usa `getTradingExchange()` (RevolutX) para obtener el ticker/precio.
+- Añadido logging detallado: `[MANUAL_BUY]` para diagnosticar errores.
+
+**Commit:** `f67db82`
+
+### 8. Fix: Error "Body has already been read" en endpoints API
+
+**Problema:**
+- Middleware `express.json({ verify: ... })` en `server/index.ts` guardaba `req.rawBody` consumiendo el stream del body.
+- Esto causaba error "Body has already been read" en endpoints que leían `req.body`.
+- El `rawBody` no se usaba en ningún lado del código.
+
+**Fix aplicado:**
+- `server/index.ts`: eliminado middleware `verify` y declaración de `rawBody`.
+- Simplificado a `app.use(express.json())` estándar.
+
+**Commit:** `6eee54c`
+
+### 9. Fix: VPS Docker build cache impide aplicar cambios en server/index.ts
+
+**Problema:**
+- El Dockerfile hace `npm run build` que compila TypeScript a `dist/index.cjs`.
+- Docker `--no-cache` solo afecta capas de Docker, no el build de TypeScript.
+- Cambios en `server/index.ts` no se aplicaban en VPS porque `dist/` estaba cacheado.
+
+**Solución:**
+- Crear script `vps-rebuild.sh` que borra `dist/` antes de rebuild.
+- Comandos VPS correctos:
+  ```bash
+  cd /opt/krakenbot-staging
+  rm -rf dist/
+  git pull origin main
+  docker compose -f docker-compose.staging.yml build --no-cache krakenbot-staging-app
+  docker compose -f docker-compose.staging.yml up -d
+  ```
+
+**Archivo:** `vps-rebuild.sh`
+
+### 10. Pendiente: Sync manual RevolutX y visibilidad de trades
+
+**Problema reportado:**
+- Usuario no ve trades RevolutX ejecutados entre 16:00-21:00 del 18-ENE.
+- No existe botón de sync manual para RevolutX en dashboard (solo Kraken).
+- Tooltip dice "RevolutX se registra en tiempo real" pero no funciona.
+
+**Investigación:**
+- RevolutX no tiene API `getTradesHistory()` como Kraken.
+- Los trades RevolutX se persisten en DB cuando se ejecutan vía `executeTrade()`.
+- Posible causa: trades no se persistieron correctamente o hay filtro de fecha/exchange en UI.
+
+**Acción pendiente:**
+- Verificar logs VPS para trades RevolutX entre 16:00-21:00.
+- Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.
+- Implementar botón "SYNC REVOLUTX" en UI si es necesario (aunque RevolutX no tiene API de historial).
+
 
