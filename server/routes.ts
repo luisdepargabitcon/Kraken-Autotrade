@@ -744,12 +744,6 @@ export async function registerRoutes(
   app.post("/api/positions/:pair/buy", async (req, res) => {
     try {
       const pair = req.params.pair.replace("-", "/");
-      
-      // Debug: verificar estado del body
-      console.log("[DEBUG /api/positions/:pair/buy] req.body:", req.body);
-      console.log("[DEBUG /api/positions/:pair/buy] req.readable:", req.readable);
-      console.log("[DEBUG /api/positions/:pair/buy] req.readableEnded:", req.readableEnded);
-      
       const { usdAmount, reason, confirm } = req.body;
 
       if (!tradingEngine) {

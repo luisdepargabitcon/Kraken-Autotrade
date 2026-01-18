@@ -1434,4 +1434,54 @@ curl -i -X POST "http://localhost:3020/api/positions/XRP-USD/buy" \
 
 **Estado:** Pendiente de validación en VPS con trade real.
 
+---
+
+### 13. Fix: manualBuyForTest debe usar Kraken para precio (no RevolutX)
+
+**Problema observado (VPS):**
+```
+{"error":"Revolut X API error: 404"}
+```
+
+**Causa:**
+- `manualBuyForTest()` usaba `getTradingExchange().getTicker(pair)` que es RevolutX.
+- RevolutX **NO tiene endpoint de ticker funcional** (ni público ni orderbook para todos los pares).
+- El bot automático usa **Kraken** (`getDataExchange()`) para datos de mercado y RevolutX solo para ejecutar trades.
+
+**Fix aplicado:**
+- `server/services/tradingEngine.ts`: `manualBuyForTest()` ahora usa `getDataExchange().getTicker(krakenPair)` igual que el bot automático.
+- Código antes:
+  ```typescript
+  const ticker = await this.getTradingExchange().getTicker(pair); // ❌ RevolutX
+  ```
+- Código después:
+  ```typescript
+  const krakenPair = this.formatKrakenPair(pair);
+  const ticker = await this.getDataExchange().getTicker(krakenPair); // ✅ Kraken
+  ```
+
+**Commit:** `0af769b`
+
+**Nota:** El endpoint manual `/api/positions/:pair/buy` sigue teniendo problemas de integración. La validación del comportamiento "Kraken-like" (no tocar HOLD, vender solo lo comprado) se hará observando trades automáticos por señal, que **SÍ funcionan correctamente**.
+
+---
+
+## Resumen Sesión 18 Enero 2026 (Noche)
+
+### Fixes aplicados:
+1. **#7** - Manual buy usa RevolutX para precio (commit `f67db82`)
+2. **#8** - Eliminado rawBody middleware (commit `6eee54c`)
+3. **#9** - Script VPS rebuild para limpiar cache
+4. **#11** - Double body read en getTicker (commit `b1f38ce`)
+5. **#12** - Auth en getTicker endpoint (commit `ba7c1c9`)
+6. **#13** - Usar Kraken para precio en manualBuyForTest (commit `0af769b`)
+
+### Estado del bot:
+- ✅ **Bot automático funciona correctamente** - ejecuta trades por señal
+- ✅ **Comportamiento Kraken-like implementado** - net tracking por delta de balance
+- ⚠️ **Endpoint manual `/api/positions/:pair/buy`** - tiene problemas de integración, no crítico
+
+### Validación pendiente:
+- Observar próximo trade automático para confirmar que `open_positions.amount` refleja solo lo comprado neto (no el HOLD externo).
+
 
