@@ -523,6 +523,28 @@ async function runMigration() {
       }
     }
 
+    // open_positions.exchange (multi-exchange support)
+    try {
+      await db.execute(sql.raw("ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS exchange TEXT DEFAULT 'kraken'"));
+    } catch (e) {
+      // Ignore
+    }
+
+    // Backfill open_positions.exchange where possible
+    try {
+      await db.execute(sql`
+        UPDATE open_positions
+        SET exchange = CASE
+          WHEN trade_id LIKE 'RX-%' THEN 'revolutx'
+          WHEN trade_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN 'revolutx'
+          ELSE 'kraken'
+        END
+        WHERE exchange IS NULL OR exchange = ''
+      `);
+    } catch (e) {
+      // Ignore
+    }
+
     // training_trades: add unique constraint on buy_txid if safe
     console.log("[migrate] Checking training_trades.buy_txid uniqueness...");
     try {

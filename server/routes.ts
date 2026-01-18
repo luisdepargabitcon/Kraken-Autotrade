@@ -1112,6 +1112,24 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         });
       }
 
+      // IMPORTANT: This reconcile compares against Kraken balances.
+      // When trading on RevolutX, Kraken balances will be 0 and all lots would look "orphan".
+      const krakenPositions = openPositions.filter((p: any) => {
+        const ex = (p?.exchange ?? 'kraken').toString().toLowerCase();
+        return ex !== 'revolutx';
+      });
+
+      if (krakenPositions.length === 0) {
+        return res.json({
+          success: true,
+          message: "No hay posiciones Kraken para reconciliar (posiciones RevolutX se omiten)",
+          reconciled: 0,
+          orphans: [],
+          valid: [],
+          cleaned: 0,
+        });
+      }
+
       // Obtener balances reales de Kraken
       const balances = await krakenService.getBalanceRaw();
       
@@ -1128,7 +1146,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const orphanPositions: Array<{ lotId: string; pair: string; amount: string; reason: string }> = [];
       const validPositions: Array<{ lotId: string; pair: string; amount: string }> = [];
       
-      for (const pos of openPositions) {
+      for (const pos of krakenPositions) {
         const assetMap: Record<string, string> = {
           "BTC/USD": "XXBT",
           "ETH/USD": "XETH",

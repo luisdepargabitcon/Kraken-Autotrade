@@ -1846,6 +1846,7 @@ ${positionsList}
     try {
       await storage.saveOpenPositionByLotId({
         lotId: position.lotId,
+        exchange: this.getTradingExchangeType(),
         pair,
         entryPrice: position.entryPrice.toString(),
         amount: position.amount.toString(),
@@ -5922,6 +5923,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       }
 
       const tradeId = `AUTO-${Date.now()}`;
+      const exchange = this.getTradingExchangeType();
       
       // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
       let tradeEntryPrice: string | null = null;
@@ -5958,13 +5960,13 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       
       await storage.createTrade({
         tradeId,
-        exchange: this.getTradingExchangeType(),
+        exchange,
         pair,
         type,
         price: price.toString(),
         amount: volume,
         status: "filled",
-        krakenOrderId: txid,
+        krakenOrderId: exchange === 'kraken' ? txid : undefined,
         executedAt: new Date(),
         entryPrice: tradeEntryPrice,
         realizedPnlUsd: tradeRealizedPnlUsd,
