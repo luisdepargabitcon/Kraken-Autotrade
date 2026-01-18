@@ -356,9 +356,11 @@ export class RevolutXService implements IExchangeService {
 
     const path = '/api/1.0/orders';
     const symbol = this.formatPair(params.pair);
+
+    const clientOrderId = this.generateClientOrderId();
     
     const orderBody: any = {
-      client_order_id: this.generateClientOrderId(),
+      client_order_id: clientOrderId,
       symbol: symbol,
       side: params.type.toUpperCase(),
       order_configuration: {}
@@ -397,7 +399,8 @@ export class RevolutXService implements IExchangeService {
         };
       }
       
-      console.log('[revolutx] Order placed successfully:', data.id || data.order_id);
+      const resolvedOrderId = data.id || data.order_id || clientOrderId;
+      console.log('[revolutx] Order placed successfully:', resolvedOrderId);
       console.log('[revolutx] Order response data:', JSON.stringify(data, null, 2));
       
       // For market orders, Revolut X may not return executed_price immediately
@@ -422,8 +425,8 @@ export class RevolutXService implements IExchangeService {
       
       return {
         success: true,
-        orderId: data.id || data.order_id,
-        txid: data.id || data.order_id,
+        orderId: resolvedOrderId,
+        txid: resolvedOrderId,
         price: executedPrice,
         volume: executedVolume,
         cost: executedCost

@@ -1038,3 +1038,56 @@ git pull origin main
 **Cambio:**
 - Generador `generateClientOrderId()` con formato alfanumérico en mayúsculas y sin guiones (hasta 32 chars) para cumplir restricciones del API.
 
+---
+
+## 🔄 Sesión 18 Enero 2026 (Trade REAL RevolutX + mínimos + métricas fiables)
+
+**Inicio trabajo:** 2026-01-18 01:00 UTC+01:00  
+**Fin trabajo:** 2026-01-18 02:20 UTC+01:00
+
+### 1. RevolutX: `client_order_id` debe ser UUID (fix definitivo)
+
+**Archivo:** `server/services/exchanges/RevolutXService.ts`
+
+**Problema observado (VPS):**
+```
+Invalid client order ID: 'RX...'
+```
+
+**Causa:** el endpoint `/api/1.0/orders` se comporta como API estilo Coinbase Advanced Trade y **requiere UUID** para `client_order_id`.
+
+**Solución:**
+- `generateClientOrderId()` ahora usa `crypto.randomUUID()` (con fallback a UUID v4 manual).
+- `placeOrder()` garantiza `orderId` no vacío (fallback a `client_order_id`) para trazabilidad.
+
+### 2. Trade real $1: buffer y reintento automático por mínimos del exchange
+
+**Archivo:** `scripts/test-real-trade.js`
+
+**Problema observado (VPS):**
+```
+Estimated amount for order is too small: QuoteAmount[amount=0.999...]
+```
+
+**Solución:**
+- Añadido **buffer automático** (empieza en $1.05 y reintenta en escalones) hasta cumplir mínimo.
+- Cálculo de resultados por **delta real de balances** (USD/ETH antes y después), no por `order.cost`.
+
+### 3. DB: tablas/columnas faltantes detectadas por logs
+
+**Archivo:** `script/migrate.ts`
+
+**Fixes:**
+- `open_positions.opened_at/updated_at` se añaden aunque la tabla ya exista.
+- Se crean tablas `ai_config` y `regime_state` si faltan (evita 500 en `/api/ai/*` y errores de régimen).
+
+### Verificación
+
+```bash
+curl -i http://<HOST>:3020/api/health
+curl -i http://<HOST>:3020/api/open-positions
+curl -i http://<HOST>:3020/api/ai/status
+node ./scripts/test-real-trade.js
+```
+
+
