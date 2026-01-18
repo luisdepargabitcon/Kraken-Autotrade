@@ -1200,8 +1200,9 @@ export class DatabaseStorage implements IStorage {
       console.warn(`[schema] Health check: missing columns detected: ${missingColumns.join(', ')}`);
       console.warn('[schema] Run "npx tsx script/migrate.ts" to fix schema issues');
     }
-    
-    return { healthy: missingColumns.length === 0, missingColumns, migrationRan: false };
+
+    const healthy = missingColumns.length === 0;
+    return { healthy, missingColumns, migrationRan: healthy };
   }
 
   async runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }> {

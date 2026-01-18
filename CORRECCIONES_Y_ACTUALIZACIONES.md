@@ -1179,6 +1179,21 @@ curl -s http://<HOST>:3020/api/balances/all | head
 - `open_positions.opened_at/updated_at` se añaden aunque la tabla ya exista.
 - Se crean tablas `ai_config` y `regime_state` si faltan (evita 500 en `/api/ai/*` y errores de régimen).
 
+### 4. Health: `migrationRan:false` aunque el schema esté OK
+
+**Archivo:** `server/storage.ts`
+
+**Síntoma (VPS):**
+```json
+{"schema":{"healthy":true,"missingColumns":[],"migrationRan":false}}
+```
+
+**Causa:** `checkSchemaHealth()` devolvía `migrationRan:false` **hardcodeado**.
+
+**Fix:**
+- `migrationRan` ahora refleja la salud del schema:
+  - `migrationRan: true` cuando `missingColumns.length === 0`.
+
 ### Verificación
 
 ```bash
