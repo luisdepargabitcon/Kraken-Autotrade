@@ -259,6 +259,45 @@ export class RevolutXService implements IExchangeService {
     return [];
   }
 
+  async getTradesHistory(options?: { symbol?: string; limit?: number }): Promise<{ trades: any[] }> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    const path = '/api/1.0/trades';
+    const queryParams: string[] = [];
+    
+    if (options?.symbol) {
+      queryParams.push(`symbol=${options.symbol}`);
+    }
+    if (options?.limit) {
+      queryParams.push(`limit=${options.limit}`);
+    }
+    
+    const queryString = queryParams.length > 0 ? queryParams.join('&') : '';
+    const fullUrl = `${API_BASE_URL}${path}${queryString ? '?' + queryString : ''}`;
+    
+    try {
+      const headers = this.getHeaders('GET', path, queryString);
+      const response = await fetch(fullUrl, { headers });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[revolutx] getTradesHistory response:', response.status, errorText);
+        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json() as any;
+      
+      // RevolutX devuelve array de trades directamente
+      const trades = Array.isArray(data) ? data : (data.trades || []);
+      
+      console.log(`[revolutx] Trades history fetched: ${trades.length} trades`);
+      return { trades };
+    } catch (error: any) {
+      console.error('[revolutx] getTradesHistory error:', error.message);
+      throw error;
+    }
+  }
+
   async placeOrder(params: {
     pair: string;
     type: "buy" | "sell";

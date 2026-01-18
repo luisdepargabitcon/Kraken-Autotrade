@@ -1823,6 +1823,65 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  app.post("/api/trades/sync-revolutx", async (req, res) => {
+    try {
+      if (!revolutXService.isInitialized()) {
+        return res.status(400).json({ error: "RevolutX not configured" });
+      }
+
+      // Obtener historial de trades de RevolutX
+      const tradesHistory = await revolutXService.getTradesHistory({ limit: 1000 });
+      const revolutxTrades = tradesHistory.trades || [];
+      
+      let synced = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+      
+      for (const trade of revolutxTrades) {
+        try {
+          const pair = trade.symbol?.replace('-', '/') || 'UNKNOWN';
+          const executedAt = new Date(trade.created_at || Date.now());
+          
+          // Verificar si ya existe por ID
+          const existingTrade = await storage.getTradeByKrakenOrderId(trade.id);
+          
+          if (existingTrade) {
+            skipped++;
+            continue;
+          }
+          
+          // Crear nuevo trade
+          await storage.createTrade({
+            tradeId: trade.id,
+            krakenOrderId: trade.id,
+            pair,
+            type: trade.side, // 'buy' o 'sell'
+            price: trade.price?.toString() || '0',
+            amount: trade.quantity?.toString() || '0',
+            status: 'filled',
+            executedAt,
+            exchange: 'revolutx',
+          });
+          
+          synced++;
+        } catch (error: any) {
+          console.error('[sync-revolutx] Error syncing trade:', trade.id, error.message);
+          errors.push(`${trade.id}: ${error.message}`);
+        }
+      }
+      
+      res.json({
+        synced,
+        skipped,
+        total: revolutxTrades.length,
+        errors: errors.length > 0 ? errors : undefined,
+      });
+    } catch (error: any) {
+      console.error('[sync-revolutx] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/trades/sync", async (req, res) => {
     try {
       if (!krakenService.isInitialized()) {

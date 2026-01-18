@@ -201,6 +201,35 @@ export default function Terminal() {
       } else {
         toast({
           title: "Error",
+          description: data.error || "Error al sincronizar",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Error de conexión",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleSyncFromRevolutX = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/trades/sync-revolutx", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: "Sincronizado",
+          description: `Se importaron ${data.synced} operaciones de RevolutX (${data.total} en historial)`,
+        });
+        refetchClosed();
+      } else {
+        toast({
+          title: "Error",
           description: data.error || "No se pudo sincronizar",
           variant: "destructive",
         });
@@ -715,14 +744,14 @@ export default function Terminal() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={() => refetchClosed()}
-                    disabled={fetchingClosed}
+                    onClick={handleSyncFromRevolutX}
+                    disabled={syncing}
                     className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
-                    data-testid="button-refresh-revolutx"
-                    title="RevolutX no tiene API de historial. Los trades se guardan automáticamente al ejecutarse. Este botón refresca la vista."
+                    data-testid="button-sync-revolutx"
+                    title="Importa historial de trades desde RevolutX API"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1 ${fetchingClosed ? 'animate-spin' : ''}`} />
-                    REFRESH REVOLUTX
+                    <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
+                    SYNC REVOLUTX
                   </Button>
 
                   <Button 
