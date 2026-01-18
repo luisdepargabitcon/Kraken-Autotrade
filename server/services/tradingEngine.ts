@@ -6534,15 +6534,16 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
         // Registrar el trade de cierre
         const tradeId = `MANUAL-${Date.now()}`;
+        const exchange = this.getTradingExchangeType();
         await storage.createTrade({
           tradeId,
-          exchange: this.getTradingExchangeType(),
+          exchange,
           pair,
           type: "sell",
           price: currentPrice.toString(),
           amount: amount.toFixed(8),
           status: "filled",
-          krakenOrderId: simTxid,
+          krakenOrderId: exchange === 'kraken' ? simTxid : undefined,
           entryPrice: entryPrice.toString(),
           realizedPnlUsd: pnlUsd.toString(),
           realizedPnlPct: pnlPct.toString(),
@@ -6651,15 +6652,16 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
 
       // Registrar el trade de cierre
       const tradeId = `MANUAL-${Date.now()}`;
+      const exchange = this.getTradingExchangeType();
       await storage.createTrade({
         tradeId,
-        exchange: this.getTradingExchangeType(),
+        exchange,
         pair,
         type: "sell",
         price: currentPrice.toString(),
         amount: sellAmountFinal.toFixed(8),
         status: "filled",
-        krakenOrderId: txid,
+        krakenOrderId: exchange === 'kraken' ? txid : undefined,
         entryPrice: entryPrice.toString(),
         realizedPnlUsd: actualPnlUsd.toString(),
         realizedPnlPct: actualPnlPct.toString(),

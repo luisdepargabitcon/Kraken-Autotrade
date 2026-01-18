@@ -308,6 +308,17 @@ async function runMigration() {
       // Ignore
     }
 
+    // kraken_order_id should be Kraken-only; clear it for RevolutX trades
+    try {
+      await db.execute(sql`
+        UPDATE trades
+        SET kraken_order_id = NULL
+        WHERE exchange = 'revolutx' AND kraken_order_id IS NOT NULL
+      `);
+    } catch (e) {
+      // Ignore
+    }
+
     console.log("[migrate] Ensuring notifications columns exist...");
     const notificationsMigrations = [
       "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS telegram_sent BOOLEAN NOT NULL DEFAULT false",
