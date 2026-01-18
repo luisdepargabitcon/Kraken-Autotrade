@@ -205,82 +205,9 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getTicker(pair: string): Promise<Ticker> {
-    const symbol = this.formatPair(pair);
-    // RevolutX ticker endpoint requiere autenticación (no es público a pesar del nombre)
-    const path = '/market-data/public/ticker';
-    const queryString = `symbol=${symbol}`;
-    const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
-    
-    try {
-      // Usar autenticación para ticker endpoint
-      const headers = this.getHeaders('GET', path, queryString);
-      const response = await fetch(fullUrl, { headers });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        // Avoid orderbook fallback for 404 (endpoint not found / unsupported)
-        if (response.status === 404) {
-          console.error('[revolutx] Ticker endpoint 404:', errorText);
-          
-          // Enviar alerta de error 404
-          const alert = ErrorAlertService.createCustomAlert(
-            'API_ERROR',
-            `Revolut X API endpoint no encontrado: ${response.status} - ${errorText}`,
-            'MEDIUM',
-            'getTicker',
-            'server/services/exchanges/RevolutXService.ts',
-            130,
-            pair,
-            { status: response.status, endpoint: fullUrl, errorText }
-          );
-          await errorAlertService.sendCriticalError(alert);
-          
-          throw new Error(`Revolut X API error: ${response.status}`);
-        }
-
-        // Para otros errores (no 404), lanzar error con el texto ya leído
-        console.error('[revolutx] Ticker endpoint failed:', response.status, errorText);
-        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
-      }
-      
-      const data = await response.json() as any;
-      
-      const ticker: Ticker = {
-        bid: parseFloat(data.bid || '0'),
-        ask: parseFloat(data.ask || '0'),
-        last: parseFloat(data.last || data.price || '0'),
-        volume24h: parseFloat(data.volume || '0')
-      };
-      
-      // Reset circuit breaker on success
-      const breaker = this.circuitBreakers.get(`ticker_${pair}`);
-      if (breaker?.isOpen) {
-        this.circuitBreakers.delete(`ticker_${pair}`);
-        console.log(`[revolutx] ✅ Circuit breaker closed for ticker_${pair} after successful request`);
-      }
-      
-      return ticker;
-    } catch (error: any) {
-      console.error('[revolutx] getTicker error:', error.message);
-      
-      // Record failure for circuit breaker
-      this.recordFailure(`ticker_${pair}`);
-      
-      // Send alert for errors generales de API
-      const alert = ErrorAlertService.createFromError(
-        error,
-        'API_ERROR',
-        'HIGH',
-        'getTicker',
-        'server/services/exchanges/RevolutXService.ts',
-        pair,
-        { endpoint: fullUrl, exchangeName: this.exchangeName }
-      );
-      await errorAlertService.sendCriticalError(alert);
-      
-      // No más fallback a orderbook - simplemente lanzar el error
-      throw error;
-    }
+    // RevolutX no tiene endpoint público de ticker que funcione
+    // Usar orderbook directamente (método que ya funciona)
+    return this.getTickerFromOrderbook(pair);
   }
 
   private async getTickerFromOrderbook(pair: string): Promise<Ticker> {
