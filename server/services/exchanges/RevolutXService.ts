@@ -206,14 +206,15 @@ export class RevolutXService implements IExchangeService {
 
   async getTicker(pair: string): Promise<Ticker> {
     const symbol = this.formatPair(pair);
-    // Use public market data endpoint for ticker
+    // RevolutX ticker endpoint requiere autenticación (no es público a pesar del nombre)
     const path = '/market-data/public/ticker';
     const queryString = `symbol=${symbol}`;
     const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
     
     try {
-      // Use public endpoint (no authentication needed for market data)
-      const response = await fetch(fullUrl);
+      // Usar autenticación para ticker endpoint
+      const headers = this.getHeaders('GET', path, queryString);
+      const response = await fetch(fullUrl, { headers });
       
       if (!response.ok) {
         const errorText = await response.text();
