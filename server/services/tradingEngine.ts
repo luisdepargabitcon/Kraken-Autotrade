@@ -2174,6 +2174,11 @@ El bot ha pausado las operaciones de COMPRA.
     balances: any
   ) {
     const lotId = position.lotId;
+
+    const isTestPosition = lotId?.startsWith("TEST-") || position.entryMode === "TEST";
+    if (isTestPosition) {
+      return;
+    }
     const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
 
     if (currentPrice > position.highestPrice) {
