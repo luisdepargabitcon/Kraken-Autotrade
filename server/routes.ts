@@ -1232,10 +1232,11 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = parseInt(req.query.offset as string) || 0;
       const pair = req.query.pair as string | undefined;
+      const exchange = (req.query.exchange as 'kraken' | 'revolutx' | undefined);
       const result = (req.query.result as 'winner' | 'loser' | 'all') || 'all';
       const type = (req.query.type as 'all' | 'buy' | 'sell') || 'all';
       
-      const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, result, type });
+      const { trades, total } = await storage.getClosedTrades({ limit, offset, pair, exchange, result, type });
       
       res.json({
         trades: trades.map(t => {
@@ -1611,6 +1612,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       const trade = await storage.createTrade({
         tradeId,
+        exchange: 'kraken',
         pair,
         type,
         price: price || "0",
@@ -1687,6 +1689,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const tradeId = order.orderId || `RX-${Date.now()}`;
       const trade = await storage.createTrade({
         tradeId,
+        exchange: 'revolutx',
         pair,
         type,
         price: order.price?.toString() || "market",
@@ -1841,6 +1844,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           // No existe duplicado, INSERT
           const result = await storage.upsertTradeByKrakenId({
             tradeId: `KRAKEN-${txid}`,
+            exchange: 'kraken',
             pair,
             type: t.type,
             price: t.price,
@@ -1907,7 +1911,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             const totalFees = totalBuyFees + sell.fee;
             const pnlGross = revenue - cost;
             const pnlNet = pnlGross - totalFees;
-            const pnlPct = cost > 0 ? (pnlGross / cost) * 100 : 0;
+            const pnlPct = cost > 0 ? (pnlNet / cost) * 100 : 0;
             
             // Actualizar el trade SELL con P&L
             const existingSell = await storage.getTradeByKrakenOrderId(sell.txid);
@@ -1945,14 +1949,21 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   app.post("/api/trades/recalculate-pnl", async (req, res) => {
     try {
       const allTrades = await storage.getTrades(1000);
+
+      const feePctByExchange = (ex?: string | null) => {
+        if (ex === 'revolutx') return 0.09;
+        return 0.40;
+      };
       
-      // Agrupar trades por par
-      const tradesByPair: Record<string, { buys: any[]; sells: any[] }> = {};
+      // Agrupar trades por par + exchange (para no mezclar Kraken/RevolutX)
+      const tradesByKey: Record<string, { pair: string; exchange: string; buys: any[]; sells: any[] }> = {};
       
       for (const trade of allTrades) {
         const pair = trade.pair;
-        if (!tradesByPair[pair]) {
-          tradesByPair[pair] = { buys: [], sells: [] };
+        const ex = ((trade as any).exchange as string | undefined) || 'kraken';
+        const key = `${pair}::${ex}`;
+        if (!tradesByKey[key]) {
+          tradesByKey[key] = { pair, exchange: ex, buys: [], sells: [] };
         }
         
         const tradeData = {
@@ -1961,37 +1972,38 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           type: trade.type,
           price: parseFloat(trade.price),
           amount: parseFloat(trade.amount),
+          exchange: ex,
           time: trade.executedAt ? new Date(trade.executedAt) : new Date(trade.createdAt),
         };
         
         if (trade.type === 'buy') {
-          tradesByPair[pair].buys.push(tradeData);
+          tradesByKey[key].buys.push(tradeData);
         } else {
-          tradesByPair[pair].sells.push(tradeData);
+          tradesByKey[key].sells.push(tradeData);
         }
       }
       
       // Calcular P&L para cada SELL usando FIFO
       let pnlCalculated = 0;
       let totalPnlUsd = 0;
-      const results: { pair: string; sellId: number; pnlUsd: number }[] = [];
+      const results: { pair: string; exchange: string; sellId: number; pnlUsd: number }[] = [];
       
-      for (const [pair, trades] of Object.entries(tradesByPair)) {
+      for (const { pair, exchange, buys, sells } of Object.values(tradesByKey)) {
         // Ordenar por tiempo
-        trades.buys.sort((a, b) => a.time.getTime() - b.time.getTime());
-        trades.sells.sort((a, b) => a.time.getTime() - b.time.getTime());
+        buys.sort((a, b) => a.time.getTime() - b.time.getTime());
+        sells.sort((a, b) => a.time.getTime() - b.time.getTime());
         
         let buyIndex = 0;
-        let buyRemaining = trades.buys[0]?.amount || 0;
+        let buyRemaining = buys[0]?.amount || 0;
         
-        for (const sell of trades.sells) {
+        for (const sell of sells) {
           let sellRemaining = sell.amount;
           let totalCost = 0;
           let totalAmount = 0;
           
           // Emparejar con BUYs (FIFO)
-          while (sellRemaining > 0.00000001 && buyIndex < trades.buys.length) {
-            const buy = trades.buys[buyIndex];
+          while (sellRemaining > 0.00000001 && buyIndex < buys.length) {
+            const buy = buys[buyIndex];
             const matchAmount = Math.min(buyRemaining, sellRemaining);
             
             totalCost += matchAmount * buy.price;
@@ -2002,7 +2014,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             
             if (buyRemaining <= 0.00000001) {
               buyIndex++;
-              buyRemaining = trades.buys[buyIndex]?.amount || 0;
+              buyRemaining = buys[buyIndex]?.amount || 0;
             }
           }
           
@@ -2012,18 +2024,22 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             const revenue = totalAmount * sell.price;
             const cost = totalCost;
             const pnlGross = revenue - cost;
-            const pnlPct = cost > 0 ? (pnlGross / cost) * 100 : 0;
+            const feePct = feePctByExchange(exchange);
+            const entryFee = cost * (feePct / 100);
+            const exitFee = revenue * (feePct / 100);
+            const pnlNet = pnlGross - entryFee - exitFee;
+            const pnlPct = cost > 0 ? (pnlNet / cost) * 100 : 0;
             
             // Actualizar el trade SELL con P&L
             await storage.updateTradePnl(
               sell.id,
               avgEntryPrice.toFixed(8),
-              pnlGross.toFixed(8),
+              pnlNet.toFixed(8),
               pnlPct.toFixed(4)
             );
             pnlCalculated++;
-            totalPnlUsd += pnlGross;
-            results.push({ pair, sellId: sell.id, pnlUsd: pnlGross });
+            totalPnlUsd += pnlNet;
+            results.push({ pair, exchange, sellId: sell.id, pnlUsd: pnlNet });
           }
         }
       }
@@ -2034,7 +2050,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         success: true, 
         pnlCalculated,
         totalPnlUsd: totalPnlUsd.toFixed(2),
-        pairs: Object.keys(tradesByPair).length,
+        pairs: Object.keys(tradesByKey).length,
         details: results.slice(-20),
       });
     } catch (error: any) {

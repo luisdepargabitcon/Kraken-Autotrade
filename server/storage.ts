@@ -52,7 +52,7 @@ export interface IStorage {
   
   createTrade(trade: InsertTrade): Promise<Trade>;
   getTrades(limit?: number): Promise<Trade[]>;
-  getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
+  getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
   updateTradeByKrakenOrderId(krakenOrderId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined>;
@@ -302,8 +302,8 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(tradesTable).orderBy(desc(tradesTable.createdAt)).limit(limit);
   }
 
-  async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }> {
-    const { limit = 10, offset = 0, pair, result = 'all', type = 'all' } = options;
+  async getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }> {
+    const { limit = 10, offset = 0, pair, exchange, result = 'all', type = 'all' } = options;
     
     const conditions: any[] = [];
     
@@ -313,6 +313,10 @@ export class DatabaseStorage implements IStorage {
     
     if (pair) {
       conditions.push(eq(tradesTable.pair, pair));
+    }
+
+    if (exchange) {
+      conditions.push(eq(tradesTable.exchange, exchange));
     }
     
     if (result === 'winner') {

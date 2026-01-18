@@ -78,6 +78,7 @@ interface OpenPosition {
 interface ClosedTrade {
   id: number;
   tradeId: string;
+  exchange?: string;
   pair: string;
   type: string;
   price: string;
@@ -103,6 +104,7 @@ export default function Terminal() {
   const [limit, setLimit] = useState(10);
   const [offset, setOffset] = useState(0);
   const [pairFilter, setPairFilter] = useState<string>("all");
+  const [exchangeFilter, setExchangeFilter] = useState<string>("all");
   const [resultFilter, setResultFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
@@ -165,7 +167,7 @@ export default function Terminal() {
   };
 
   const { data: closedData, isLoading: loadingClosed, refetch: refetchClosed, isFetching: fetchingClosed } = useQuery<ClosedTradesResponse>({
-    queryKey: ["closedTrades", limit, offset, pairFilter, resultFilter, typeFilter],
+    queryKey: ["closedTrades", limit, offset, pairFilter, exchangeFilter, resultFilter, typeFilter],
     queryFn: async () => {
       const params = new URLSearchParams({
         limit: limit.toString(),
@@ -175,6 +177,9 @@ export default function Terminal() {
       });
       if (pairFilter !== "all") {
         params.set("pair", pairFilter);
+      }
+      if (exchangeFilter !== "all") {
+        params.set("exchange", exchangeFilter);
       }
       const res = await fetch(`/api/trades/closed?${params}`);
       if (!res.ok) throw new Error("Failed to fetch closed trades");
@@ -647,6 +652,17 @@ export default function Terminal() {
                     </SelectContent>
                   </Select>
 
+                  <Select value={exchangeFilter} onValueChange={setExchangeFilter}>
+                    <SelectTrigger className="w-[110px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-exchange-filter">
+                      <SelectValue placeholder="Exchange" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">TODOS</SelectItem>
+                      <SelectItem value="kraken">KRAKEN</SelectItem>
+                      <SelectItem value="revolutx">REVOLUTX</SelectItem>
+                    </SelectContent>
+                  </Select>
+
                   <Select value={pairFilter} onValueChange={setPairFilter}>
                     <SelectTrigger className="w-[100px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-pair-filter">
                       <SelectValue placeholder="Par" />
@@ -690,9 +706,10 @@ export default function Terminal() {
                     disabled={syncing}
                     className="text-xs font-mono border-border/50 hover:border-cyan-500/50 hover:text-cyan-400"
                     data-testid="button-sync-kraken"
+                    title="Sincroniza SOLO Kraken (RevolutX se registra en tiempo real)"
                   >
                     <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
-                    SYNC
+                    SYNC KRAKEN
                   </Button>
 
                   <Button 
@@ -943,6 +960,8 @@ export default function Terminal() {
                               const pnlUsd = trade.realizedPnlUsd ? parseFloat(trade.realizedPnlUsd) : null;
                               const pnlPct = trade.realizedPnlPct ? parseFloat(trade.realizedPnlPct) : null;
                               const isProfit = pnlUsd !== null && pnlUsd >= 0;
+                              const ex = (trade.exchange || '').toLowerCase();
+                              const isRx = ex === 'revolutx';
                               
                               return (
                                 <tr 
@@ -998,6 +1017,28 @@ export default function Terminal() {
                                     >
                                       {trade.status === 'filled' ? 'OK' : trade.status.toUpperCase()}
                                     </Badge>
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center gap-2">
+                                      <Badge
+                                        variant="outline"
+                                        className={`font-mono text-[10px] px-1.5 py-0 ${trade.type === 'buy' ? 'border-green-500/50 text-green-400' : 'border-red-500/50 text-red-400'}`}
+                                      >
+                                        {trade.type === 'buy' ? (
+                                          <ArrowUpRight className="h-3 w-3 mr-0.5" />
+                                        ) : (
+                                          <ArrowDownRight className="h-3 w-3 mr-0.5" />
+                                        )}
+                                        {trade.type.toUpperCase()}
+                                      </Badge>
+                                      <Badge
+                                        variant="outline"
+                                        className={`font-mono text-[10px] px-1.5 py-0 ${isRx ? 'border-violet-500/50 text-violet-300' : 'border-cyan-500/50 text-cyan-400'}`}
+                                        title={isRx ? 'RevolutX' : 'Kraken'}
+                                      >
+                                        {isRx ? 'RX' : 'KR'}
+                                      </Badge>
+                                    </div>
                                   </td>
                                 </tr>
                               );

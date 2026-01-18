@@ -261,6 +261,7 @@ async function runMigration() {
 
     console.log("[migrate] Ensuring trades columns exist...");
     const tradesMigrations = [
+      "ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange TEXT DEFAULT 'kraken'",
       "ALTER TABLE trades ADD COLUMN IF NOT EXISTS kraken_order_id TEXT",
       "ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_price DECIMAL(18,8)",
       "ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl_usd DECIMAL(18,8)",
@@ -275,7 +276,22 @@ async function runMigration() {
       }
     }
 
-    // notifications table columns used by dashboard / telegram
+    // Backfill exchange for legacy rows
+    try {
+      await db.execute(sql`
+        UPDATE trades
+        SET exchange = CASE
+          WHEN trade_id LIKE 'KRAKEN-%' THEN 'kraken'
+          WHEN trade_id LIKE 'RX-%' THEN 'revolutx'
+          WHEN trade_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN 'revolutx'
+          ELSE 'kraken'
+        END
+        WHERE exchange IS NULL OR exchange = ''
+      `);
+    } catch (e) {
+      // Ignore
+    }
+
     console.log("[migrate] Ensuring notifications columns exist...");
     const notificationsMigrations = [
       "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS telegram_sent BOOLEAN NOT NULL DEFAULT false",

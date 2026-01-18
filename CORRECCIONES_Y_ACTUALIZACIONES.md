@@ -1194,6 +1194,46 @@ curl -s http://<HOST>:3020/api/balances/all | head
 - `migrationRan` ahora refleja la salud del schema:
   - `migrationRan: true` cuando `missingColumns.length === 0`.
 
+### 5. TERMINAL (Operaciones): RevolutX/Kraken visibles y P&L neto con fees
+
+**Problema (UI):**
+- La pestaña **Terminal → Historial** no distinguía claramente **Kraken vs RevolutX**.
+- El botón `SYNC` inducía a pensar que sincronizaba todo, pero era solo Kraken.
+- El P&L “volvía a la antigua” en algunos flujos (por recalculado bruto o mezcla de trades).
+
+**Causas raíz:**
+- La tabla `trades` no tenía columna `exchange`, así que no se podía filtrar/etiquetar.
+- `/api/trades/recalculate-pnl` agrupaba por `pair` y podía mezclar BUY/SELL de distintos exchanges.
+
+**Fix aplicado:**
+
+**A) DB/Schema**
+- `shared/schema.ts`: añadido `trades.exchange` (default `kraken`).
+- `script/migrate.ts`: migración idempotente:
+  - `ALTER TABLE trades ADD COLUMN IF NOT EXISTS exchange TEXT DEFAULT 'kraken'`
+  - backfill por patrón de `trade_id` (KRAKEN-*, RX-*, UUID → `revolutx`).
+
+**B) Backend**
+- `server/routes.ts`:
+  - `/api/trades/closed` acepta `?exchange=kraken|revolutx`.
+  - Inserciones de trades marcan `exchange`:
+    - Kraken (`/api/trade`, `/api/trades/sync`) → `kraken`
+    - RevolutX (`/api/trade/revolutx`) → `revolutx`
+  - `/api/trades/recalculate-pnl` ahora hace FIFO **por par+exchange** para no mezclar trades.
+
+**C) Trading Engine**
+- `server/services/tradingEngine.ts`: al persistir trades (AUTO/MANUAL) se setea `exchange` según el trading exchange activo.
+
+**D) UI Terminal**
+- `client/src/pages/Terminal.tsx`:
+  - Nuevo filtro `Exchange` (Kraken/RevolutX).
+  - Badges `KR` / `RX` por operación.
+  - Botón renombrado a `SYNC KRAKEN` y tooltip aclaratorio.
+
+**Resultado esperado:**
+- En Terminal se ven y se distinguen todas las operaciones.
+- El P&L del historial permanece **neto** (fees ida+vuelta) y no se “resetea” por recalculado.
+
 ### Verificación
 
 ```bash

@@ -5958,6 +5958,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       
       await storage.createTrade({
         tradeId,
+        exchange: this.getTradingExchangeType(),
         pair,
         type,
         price: price.toString(),
@@ -6535,6 +6536,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const tradeId = `MANUAL-${Date.now()}`;
         await storage.createTrade({
           tradeId,
+          exchange: this.getTradingExchangeType(),
           pair,
           type: "sell",
           price: currentPrice.toString(),
@@ -6651,6 +6653,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       const tradeId = `MANUAL-${Date.now()}`;
       await storage.createTrade({
         tradeId,
+        exchange: this.getTradingExchangeType(),
         pair,
         type: "sell",
         price: currentPrice.toString(),

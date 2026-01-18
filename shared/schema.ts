@@ -170,6 +170,7 @@ export const apiConfig = pgTable("api_config", {
 export const trades = pgTable("trades", {
   id: serial("id").primaryKey(),
   tradeId: text("trade_id").notNull().unique(),
+  exchange: text("exchange").notNull().default("kraken"),
   pair: text("pair").notNull(),
   type: text("type").notNull(),
   price: decimal("price", { precision: 18, scale: 8 }).notNull(),
