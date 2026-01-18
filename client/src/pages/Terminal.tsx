@@ -216,6 +216,51 @@ export default function Terminal() {
     }
   };
 
+  const handleSyncFromRevolutX = async () => {
+    if (pairFilter === "all") {
+      toast({
+        title: "Selecciona un par",
+        description: "Para sincronizar RevolutX debes elegir un par (ej: XRP/USD) en el filtro 'Par'.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const now = Date.now();
+      const startMs = now - 60 * 60 * 1000; // last 60 minutes
+      const res = await fetch("/api/trades/sync-revolutx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair: pairFilter, startMs, endMs: now, limit: 100 }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        toast({
+          title: "Sincronizado",
+          description: `RevolutX ${pairFilter}: +${data.synced} (fetched ${data.fetched}, skipped ${data.skipped})`,
+        });
+        refetchClosed();
+      } else {
+        toast({
+          title: "Error",
+          description: data.message || data.error || "Error al sincronizar RevolutX",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Error de conexión",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
 
   const closePositionMutation = useMutation({
     mutationFn: async ({ pair, lotId, amount }: { pair: string; lotId?: string | null; amount?: string }) => {
@@ -720,10 +765,23 @@ export default function Terminal() {
                     disabled={fetchingClosed}
                     className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
                     data-testid="button-refresh-revolutx"
-                    title="RevolutX no expone API de historial. Los trades se guardan automáticamente cuando el bot los ejecuta. Este botón refresca la vista."
+                    title="SYNC RevolutX (historial privado) para el par seleccionado. Requiere elegir un par en el filtro."
                   >
                     <RefreshCw className={`h-3.5 w-3.5 mr-1 ${fetchingClosed ? 'animate-spin' : ''}`} />
                     REFRESH REVOLUTX
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleSyncFromRevolutX}
+                    disabled={syncing}
+                    className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
+                    data-testid="button-sync-revolutx"
+                    title="Importa historial privado de RevolutX para el par seleccionado (últimos 60 minutos)."
+                  >
+                    <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
+                    SYNC REVOLUTX
                   </Button>
 
                   <Button 

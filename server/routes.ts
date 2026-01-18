@@ -11,6 +11,7 @@ import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { environment } from "./services/environment";
+import express, { type Request, Response, NextFunction } from "express";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
@@ -1829,52 +1830,144 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         return res.status(400).json({ error: "RevolutX not configured" });
       }
 
-      // Obtener historial de trades de RevolutX
-      const tradesHistory = await revolutXService.getTradesHistory({ limit: 1000 });
-      const revolutxTrades = tradesHistory.trades || [];
-      
+      const pairRaw = (req.body?.pair || req.query?.pair || '').toString();
+      if (!pairRaw) {
+        return res.status(400).json({ error: "PAIR_REQUIRED", message: "Debes enviar pair, por ejemplo BTC/USD" });
+      }
+
+      const symbol = pairRaw.replace('/', '-');
+      const pair = symbol.replace('-', '/');
+
+      const nowMs = Date.now();
+      const startMs = Number(req.body?.startMs ?? req.query?.startMs ?? (nowMs - 60 * 60 * 1000));
+      const endMs = Number(req.body?.endMs ?? req.query?.endMs ?? nowMs);
+      const limit = Math.min(100, Math.max(1, Number(req.body?.limit ?? req.query?.limit ?? 100)));
+      const debug = String(req.body?.debug ?? req.query?.debug ?? '').toLowerCase() === 'true' || String(req.query?.debug) === '1';
+
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs <= 0 || endMs <= 0 || endMs < startMs) {
+        return res.status(400).json({ error: "INVALID_RANGE", message: "startMs/endMs inválidos" });
+      }
+
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
       let synced = 0;
       let skipped = 0;
       const errors: string[] = [];
-      
-      for (const trade of revolutxTrades) {
-        try {
-          const pair = trade.symbol?.replace('-', '/') || 'UNKNOWN';
-          const executedAt = new Date(trade.created_at || Date.now());
-          
-          // Verificar si ya existe por ID
-          const existingTrade = await storage.getTradeByKrakenOrderId(trade.id);
-          
-          if (existingTrade) {
-            skipped++;
-            continue;
-          }
-          
-          // Crear nuevo trade
-          await storage.createTrade({
-            tradeId: trade.id,
-            krakenOrderId: trade.id,
-            pair,
-            type: trade.side, // 'buy' o 'sell'
-            price: trade.price?.toString() || '0',
-            amount: trade.quantity?.toString() || '0',
-            status: 'filled',
-            executedAt,
-            exchange: 'revolutx',
+      let totalFetched = 0;
+
+      const normalizeTrade = (t: any) => {
+        const tradeId = t?.tid || t?.id || t?.trade_id || t?.transaction_id || t?.txid;
+
+        const tsRaw = t?.tdt ?? t?.timestamp ?? t?.time ?? t?.date ?? t?.created_at ?? t?.published_at;
+        const tsNum = typeof tsRaw === 'string' ? Number(tsRaw) : tsRaw;
+        const executedAt = Number.isFinite(tsNum) ? new Date(tsNum) : new Date(tsRaw);
+
+        const priceRaw = t?.p ?? t?.price;
+        const qtyRaw = t?.q ?? t?.quantity ?? t?.qty;
+        const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? '').toString().toLowerCase();
+        const type = sideRaw === 'buy' || sideRaw === 'sell' ? sideRaw : null;
+
+        return {
+          tradeId,
+          executedAt,
+          price: priceRaw,
+          amount: qtyRaw,
+          type,
+        };
+      };
+
+      const fetchWindow = async (windowStart: number, windowEnd: number) => {
+        let cursor: string | undefined = undefined;
+        let page = 0;
+        while (true) {
+          page++;
+          const { trades, nextCursor } = await revolutXService.listPrivateTrades({
+            symbol,
+            startMs: windowStart,
+            endMs: windowEnd,
+            cursor,
+            limit,
+            debug,
           });
-          
-          synced++;
-        } catch (error: any) {
-          console.error('[sync-revolutx] Error syncing trade:', trade.id, error.message);
-          errors.push(`${trade.id}: ${error.message}`);
+
+          totalFetched += trades.length;
+
+          for (const t of trades) {
+            const n = normalizeTrade(t);
+            if (!n.tradeId) {
+              skipped++;
+              continue;
+            }
+            if (!n.type) {
+              errors.push(`${n.tradeId}: missing side/type`);
+              skipped++;
+              continue;
+            }
+            if (!(n.executedAt instanceof Date) || isNaN(n.executedAt.getTime())) {
+              errors.push(`${n.tradeId}: invalid executedAt`);
+              skipped++;
+              continue;
+            }
+
+            const priceStr = n.price != null ? String(n.price) : '';
+            const amountStr = n.amount != null ? String(n.amount) : '';
+
+            try {
+              const existingTrade = await storage.getTradeByKrakenOrderId(String(n.tradeId));
+              if (existingTrade) {
+                skipped++;
+                continue;
+              }
+
+              await storage.createTrade({
+                tradeId: String(n.tradeId),
+                krakenOrderId: String(n.tradeId),
+                pair,
+                type: n.type,
+                price: priceStr,
+                amount: amountStr,
+                status: 'filled',
+                executedAt: n.executedAt,
+                exchange: 'revolutx',
+              });
+              synced++;
+            } catch (e: any) {
+              console.error('[sync-revolutx] Error syncing trade:', n.tradeId, e.message);
+              errors.push(`${n.tradeId}: ${e.message}`);
+            }
+          }
+
+          if (!nextCursor || nextCursor === cursor) break;
+          cursor = nextCursor;
+
+          if (page > 2000) {
+            errors.push(`Pagination safety break after ${page} pages for ${symbol}`);
+            break;
+          }
+        }
+      };
+
+      if (endMs - startMs <= WEEK_MS) {
+        await fetchWindow(startMs, endMs);
+      } else {
+        let ws = startMs;
+        while (ws < endMs) {
+          const we = Math.min(endMs, ws + WEEK_MS);
+          await fetchWindow(ws, we);
+          ws = we;
         }
       }
-      
+
       res.json({
         synced,
         skipped,
-        total: revolutxTrades.length,
-        errors: errors.length > 0 ? errors : undefined,
+        fetched: totalFetched,
+        pair,
+        symbol,
+        startMs,
+        endMs,
+        limit,
+        errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
       });
     } catch (error: any) {
       console.error('[sync-revolutx] Error:', error.message);

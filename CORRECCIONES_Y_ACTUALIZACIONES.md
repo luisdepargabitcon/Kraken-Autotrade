@@ -1336,14 +1336,17 @@ node ./scripts/test-real-trade.js
 - Tooltip dice "RevolutX se registra en tiempo real" pero no funciona.
 
 **Investigación:**
-- RevolutX no tiene API `getTradesHistory()` como Kraken.
-- Los trades RevolutX se persisten en DB cuando se ejecutan vía `executeTrade()`.
-- Posible causa: trades no se persistieron correctamente o hay filtro de fecha/exchange en UI.
+- RevolutX **SÍ expone historial privado** (fills) vía REST API:
+  - `GET https://revx.revolut.com/api/1.0/trades/private/{symbol}`
+  - `symbol` ejemplo: `BTC-USD` (guion, no slash)
+  - Query: `start_date`, `end_date` (epoch ms), `cursor`, `limit`
+  - Limitación: ventana máxima **1 semana** entre `start_date` y `end_date`; para backfill grande hay que iterar por semanas y paginar por cursor.
+  - Autenticación: requiere firma Ed25519 y headers `X-Revx-API-Key`, `X-Revx-Timestamp`, `X-Revx-Signature`.
 
 **Acción pendiente:**
 - Verificar logs VPS para trades RevolutX entre 16:00-21:00.
 - Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.
-- Implementar botón "SYNC REVOLUTX" en UI si es necesario (aunque RevolutX no tiene API de historial).
+- Implementar/usar botón "SYNC REVOLUTX" en UI para importar historial privado desde el endpoint correcto.
 
 ---
 

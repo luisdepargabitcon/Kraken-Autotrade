@@ -143,7 +143,7 @@ export class RevolutXService implements IExchangeService {
 
   private sign(method: string, path: string, queryString?: string, body?: string): { timestamp: string; signature: string } {
     const timestamp = Date.now().toString();
-    const message = timestamp + method + path + (queryString || '') + (body || '');
+    const message = timestamp + method.toUpperCase() + path + (queryString || '') + (body || '');
     
     try {
       if (!this.privateKey) {
@@ -164,10 +164,89 @@ export class RevolutXService implements IExchangeService {
     const { timestamp, signature } = this.sign(method, path, queryString, body);
     return {
       'Content-Type': 'application/json',
-      'X-Revx-Api-Key': this.apiKey || '',
+      'X-Revx-API-Key': this.apiKey || '',
       'X-Revx-Timestamp': timestamp,
       'X-Revx-Signature': signature
     };
+  }
+
+  private buildQueryString(params: Record<string, string | number | undefined>, orderedKeys: string[]): string {
+    const parts: string[] = [];
+    for (const key of orderedKeys) {
+      const value = params[key];
+      if (value === undefined || value === null || value === '') continue;
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    }
+    return parts.join('&');
+  }
+
+  async listPrivateTrades(params: {
+    symbol: string;
+    startMs?: number;
+    endMs?: number;
+    cursor?: string;
+    limit?: number;
+    debug?: boolean;
+  }): Promise<{ trades: any[]; nextCursor?: string }> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    const symbol = params.symbol;
+    const path = `/api/1.0/trades/private/${symbol}`;
+
+    const queryString = this.buildQueryString(
+      {
+        start_date: params.startMs,
+        end_date: params.endMs,
+        cursor: params.cursor,
+        limit: params.limit,
+      },
+      ['start_date', 'end_date', 'cursor', 'limit']
+    );
+
+    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
+    const headers = this.getHeaders('GET', path, queryString, '');
+
+    try {
+      const response = await fetch(fullUrl, { headers });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (params.debug) {
+          const timestamp = headers['X-Revx-Timestamp'] || '';
+          const message = timestamp + 'GET' + path + (queryString || '') + '';
+          const msgHash = crypto.createHash('sha256').update(message).digest('hex');
+          const sigPrefix = (headers['X-Revx-Signature'] || '').slice(0, 12);
+          console.error('[revolutx] listPrivateTrades DEBUG:', {
+            status: response.status,
+            path,
+            queryString,
+            msgHash,
+            sigPrefix,
+          });
+        }
+        console.error('[revolutx] listPrivateTrades response:', response.status, errorText);
+        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json() as any;
+
+      const trades = Array.isArray(data)
+        ? data
+        : (data.data || data.trades || data.items || []);
+
+      const nextCursor =
+        data?.metadata?.next_cursor ||
+        data?.metadata?.nextCursor ||
+        data?.metadata?.cursor ||
+        data?.next_cursor ||
+        data?.nextCursor ||
+        undefined;
+
+      return { trades, nextCursor };
+    } catch (error: any) {
+      console.error('[revolutx] listPrivateTrades error:', error.message);
+      throw error;
+    }
   }
 
   async getBalance(): Promise<Record<string, number>> {
@@ -257,46 +336,6 @@ export class RevolutXService implements IExchangeService {
   async getOHLC(pair: string, interval: number = 5): Promise<OHLC[]> {
     console.log(`[revolutx] getOHLC called for ${pair} - Revolut X REST API does not provide OHLC data`);
     return [];
-  }
-
-  async getTradesHistory(options?: { symbol?: string; limit?: number }): Promise<{ trades: any[] }> {
-    if (!this.initialized) throw new Error('Revolut X client not initialized');
-
-    // RevolutX usa el path /market-data/trades para trades privados
-    const path = '/market-data/trades';
-    const queryParams: string[] = [];
-    
-    if (options?.symbol) {
-      queryParams.push(`symbol=${options.symbol}`);
-    }
-    if (options?.limit) {
-      queryParams.push(`limit=${options.limit}`);
-    }
-    
-    const queryString = queryParams.length > 0 ? queryParams.join('&') : '';
-    const fullUrl = `${API_BASE_URL}${path}${queryString ? '?' + queryString : ''}`;
-    
-    try {
-      const headers = this.getHeaders('GET', path, queryString);
-      const response = await fetch(fullUrl, { headers });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[revolutx] getTradesHistory response:', response.status, errorText);
-        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
-      }
-      
-      const data = await response.json() as any;
-      
-      // RevolutX devuelve array de trades directamente
-      const trades = Array.isArray(data) ? data : (data.trades || []);
-      
-      console.log(`[revolutx] Trades history fetched: ${trades.length} trades`);
-      return { trades };
-    } catch (error: any) {
-      console.error('[revolutx] getTradesHistory error:', error.message);
-      throw error;
-    }
   }
 
   async placeOrder(params: {
