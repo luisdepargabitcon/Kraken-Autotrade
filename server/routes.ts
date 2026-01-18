@@ -2974,6 +2974,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           timestamp: new Date().toISOString(),
           lotId,
           strategy: "test",
+          entryMode: "TEST",
           signalConfidence: 0.8,
           // SMART_GUARD flags
           sgBreakEvenActivated: false,
@@ -2989,6 +2990,31 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         };
         
         tradingEngine.getOpenPositions().set(lotId, position);
+
+        let parsedSnapshot: any = null;
+        try {
+          parsedSnapshot = position.configSnapshotJson ? JSON.parse(position.configSnapshotJson) : null;
+        } catch {
+          parsedSnapshot = null;
+        }
+
+        const exchangeType = ExchangeFactory.getTradingExchangeType();
+        const saved = await storage.saveOpenPositionByLotId({
+          lotId,
+          exchange: exchangeType,
+          pair,
+          entryPrice: entryPrice.toString(),
+          amount: amount.toString(),
+          highestPrice: entryPrice.toString(),
+          entryFee: "0",
+          entryStrategyId: "test",
+          entrySignalTf: "test",
+          signalConfidence: "0.8",
+          entryMode: "TEST",
+          configSnapshotJson: parsedSnapshot,
+        } as any);
+
+        const dbPosition = await storage.getOpenPositionByLotId(lotId);
         
         // Count lots for this pair
         const allPositions = tradingEngine.getOpenPositions();
@@ -3005,6 +3031,9 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           success: true,
           lotId,
           position,
+          dbSaved: !!dbPosition,
+          dbPosition: dbPosition || null,
+          saved,
           pairLotsCount: pairLots,
         });
       } else {
@@ -3033,7 +3062,14 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       if (tradingEngine) {
         const deleted = tradingEngine.getOpenPositions().delete(lotId);
-        res.json({ success: true, deleted, lotId });
+        let dbDeleted = false;
+        try {
+          await storage.deleteOpenPositionByLotId(lotId);
+          dbDeleted = true;
+        } catch {
+          dbDeleted = false;
+        }
+        res.json({ success: true, deleted, dbDeleted, lotId });
       } else {
         res.status(500).json({ error: "ENGINE_NOT_READY" });
       }
