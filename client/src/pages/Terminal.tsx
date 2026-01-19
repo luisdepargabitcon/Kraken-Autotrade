@@ -233,7 +233,7 @@ export default function Terminal() {
       const res = await fetch("/api/trades/sync-revolutx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pair: pairFilter, startMs, endMs: now, limit: 100 }),
+        body: JSON.stringify({ pair: pairFilter, startMs, endMs: now, limit: 100, allowAssumedSide: true }),
       });
       const data = await res.json();
 

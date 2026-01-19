@@ -1342,6 +1342,7 @@ node ./scripts/test-real-trade.js
   - Query: `start_date`, `end_date` (epoch ms), `cursor`, `limit`
   - Limitación: ventana máxima **1 semana** entre `start_date` y `end_date`; para backfill grande hay que iterar por semanas y paginar por cursor.
   - Autenticación: requiere firma Ed25519 y headers `X-Revx-API-Key`, `X-Revx-Timestamp`, `X-Revx-Signature`.
+  - Nota: el payload real de `trades/private` puede venir sin `side/type` (buy/sell). En ese caso el sync puede usar `allowAssumedSide=true` para asumir BUY si `q>0` (y SELL si `q<0`), contabilizando `assumedSideCount`.
 
 **Acción pendiente:**
 - Verificar logs VPS para trades RevolutX entre 16:00-21:00.
