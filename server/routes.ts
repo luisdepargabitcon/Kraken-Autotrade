@@ -1854,6 +1854,26 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       let skipped = 0;
       const errors: string[] = [];
       let totalFetched = 0;
+      const debugSamples: any[] = [];
+
+      const inferSide = (t: any, qtyRaw: any): "buy" | "sell" | null => {
+        const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? t?.taker_side ?? t?.maker_side ?? t?.aggressor_side ?? '').toString().toLowerCase();
+        if (sideRaw === 'buy' || sideRaw === 'sell') return sideRaw;
+        if (sideRaw === 'b' || sideRaw === 'bid') return 'buy';
+        if (sideRaw === 's' || sideRaw === 'ask') return 'sell';
+
+        const isBuyer = t?.is_buyer ?? t?.isBuyer ?? t?.buyer;
+        if (typeof isBuyer === 'boolean') return isBuyer ? 'buy' : 'sell';
+
+        const qtyNum = typeof qtyRaw === 'string' ? Number(qtyRaw) : qtyRaw;
+        if (Number.isFinite(qtyNum)) {
+          if (qtyNum < 0) return 'sell';
+          if (qtyNum > 0) return null;
+        }
+        if (typeof qtyRaw === 'string' && qtyRaw.trim().startsWith('-')) return 'sell';
+
+        return null;
+      };
 
       const normalizeTrade = (t: any) => {
         const tradeId = t?.tid || t?.id || t?.trade_id || t?.transaction_id || t?.txid;
@@ -1864,8 +1884,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
         const priceRaw = t?.p ?? t?.price;
         const qtyRaw = t?.q ?? t?.quantity ?? t?.qty;
-        const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? '').toString().toLowerCase();
-        const type = sideRaw === 'buy' || sideRaw === 'sell' ? sideRaw : null;
+        const type = inferSide(t, qtyRaw);
 
         return {
           tradeId,
@@ -1899,6 +1918,13 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               continue;
             }
             if (!n.type) {
+              if (debug && debugSamples.length < 5) {
+                debugSamples.push({
+                  tradeId: String(n.tradeId),
+                  keys: Object.keys(t || {}),
+                  sample: t,
+                });
+              }
               errors.push(`${n.tradeId}: missing side/type`);
               skipped++;
               continue;
@@ -1968,6 +1994,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         endMs,
         limit,
         errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
+        debugSamples: debug ? debugSamples : undefined,
       });
     } catch (error: any) {
       console.error('[sync-revolutx] Error:', error.message);
