@@ -1843,6 +1843,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const endMs = Number(req.body?.endMs ?? req.query?.endMs ?? nowMs);
       const limit = Math.min(100, Math.max(1, Number(req.body?.limit ?? req.query?.limit ?? 100)));
       const debug = String(req.body?.debug ?? req.query?.debug ?? '').toLowerCase() === 'true' || String(req.query?.debug) === '1';
+      const allowAssumedSide = String(req.body?.allowAssumedSide ?? req.query?.allowAssumedSide ?? '').toLowerCase() === 'true' || String(req.query?.allowAssumedSide) === '1';
 
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs <= 0 || endMs <= 0 || endMs < startMs) {
         return res.status(400).json({ error: "INVALID_RANGE", message: "startMs/endMs inválidos" });
@@ -1852,27 +1853,30 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
       let synced = 0;
       let skipped = 0;
+      let assumedSideCount = 0;
       const errors: string[] = [];
       let totalFetched = 0;
       const debugSamples: any[] = [];
 
-      const inferSide = (t: any, qtyRaw: any): "buy" | "sell" | null => {
+      const inferSide = (t: any, qtyRaw: any): { side: "buy" | "sell" | null; assumed: boolean } => {
         const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? t?.taker_side ?? t?.maker_side ?? t?.aggressor_side ?? '').toString().toLowerCase();
-        if (sideRaw === 'buy' || sideRaw === 'sell') return sideRaw;
-        if (sideRaw === 'b' || sideRaw === 'bid') return 'buy';
-        if (sideRaw === 's' || sideRaw === 'ask') return 'sell';
+        if (sideRaw === 'buy' || sideRaw === 'sell') return { side: sideRaw, assumed: false };
+        if (sideRaw === 'b' || sideRaw === 'bid') return { side: 'buy', assumed: false };
+        if (sideRaw === 's' || sideRaw === 'ask') return { side: 'sell', assumed: false };
 
         const isBuyer = t?.is_buyer ?? t?.isBuyer ?? t?.buyer;
-        if (typeof isBuyer === 'boolean') return isBuyer ? 'buy' : 'sell';
+        if (typeof isBuyer === 'boolean') return { side: isBuyer ? 'buy' : 'sell', assumed: false };
 
         const qtyNum = typeof qtyRaw === 'string' ? Number(qtyRaw) : qtyRaw;
         if (Number.isFinite(qtyNum)) {
-          if (qtyNum < 0) return 'sell';
-          if (qtyNum > 0) return null;
+          if (qtyNum < 0) return { side: 'sell', assumed: false };
+          if (qtyNum > 0) {
+            return allowAssumedSide ? { side: 'buy', assumed: true } : { side: null, assumed: false };
+          }
         }
-        if (typeof qtyRaw === 'string' && qtyRaw.trim().startsWith('-')) return 'sell';
+        if (typeof qtyRaw === 'string' && qtyRaw.trim().startsWith('-')) return { side: 'sell', assumed: false };
 
-        return null;
+        return { side: null, assumed: false };
       };
 
       const normalizeTrade = (t: any) => {
@@ -1884,14 +1888,18 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
         const priceRaw = t?.p ?? t?.price;
         const qtyRaw = t?.q ?? t?.quantity ?? t?.qty;
-        const type = inferSide(t, qtyRaw);
+        const { side: type, assumed } = inferSide(t, qtyRaw);
+
+        const qtyNum = typeof qtyRaw === 'string' ? Number(qtyRaw) : qtyRaw;
+        const amountAbs = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : qtyRaw;
 
         return {
           tradeId,
           executedAt,
           price: priceRaw,
-          amount: qtyRaw,
+          amount: amountAbs,
           type,
+          assumed,
         };
       };
 
@@ -1928,6 +1936,9 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               errors.push(`${n.tradeId}: missing side/type`);
               skipped++;
               continue;
+            }
+            if (n.assumed) {
+              assumedSideCount++;
             }
             if (!(n.executedAt instanceof Date) || isNaN(n.executedAt.getTime())) {
               errors.push(`${n.tradeId}: invalid executedAt`);
@@ -1987,12 +1998,14 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.json({
         synced,
         skipped,
+        assumedSideCount: assumedSideCount > 0 ? assumedSideCount : undefined,
         fetched: totalFetched,
         pair,
         symbol,
         startMs,
         endMs,
         limit,
+        allowAssumedSide: allowAssumedSide ? true : undefined,
         errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
         debugSamples: debug ? debugSamples : undefined,
       });
