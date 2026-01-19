@@ -40,7 +40,7 @@ import {
   trainingTrades as trainingTradesTable
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gt, lt, sql, isNull, ne, or } from "drizzle-orm";
+import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 
 type ExchangeSyncScope = 'ALL' | string;
@@ -103,9 +103,13 @@ export interface IStorage {
   updateOpenPositionLotId(id: number, lotId: string): Promise<void>;
   deleteOpenPosition(pair: string): Promise<void>;
   deleteOpenPositionByLotId(lotId: string): Promise<void>;
+  deleteOpenPositionsByExchange(exchange: string): Promise<number>;
   getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]>;
   updateOpenPositionQty(lotId: string, qtyRemaining: string, qtyFilled: string): Promise<void>;
   initializeQtyRemainingForAll(): Promise<number>;
+
+  listTradesForRebuild(params: { exchanges: string[]; origin: 'bot'; since: Date }): Promise<Trade[]>;
+  getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number>;
   
   // Trade fills
   upsertTradeFill(fill: InsertTradeFill): Promise<{ inserted: boolean; fill?: TradeFill }>;
@@ -349,6 +353,33 @@ export class DatabaseStorage implements IStorage {
         AND (price <= 0 OR amount <= 0)
     `);
     return Number(result.rowCount || 0);
+  }
+
+  async listTradesForRebuild(params: { exchanges: string[]; origin: 'bot'; since: Date }): Promise<Trade[]> {
+    const { exchanges, origin, since } = params;
+    if (!Array.isArray(exchanges) || exchanges.length === 0) return [];
+
+    return await db.select().from(tradesTable)
+      .where(and(
+        inArray(tradesTable.exchange, exchanges),
+        eq(tradesTable.origin, origin),
+        gt(tradesTable.executedAt, since),
+      ))
+      .orderBy(tradesTable.executedAt);
+  }
+
+  async getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number> {
+    const { since, exchange } = params;
+    const conditions: any[] = [
+      eq(tradesTable.origin, 'bot'),
+      gt(tradesTable.executedAt, since),
+    ];
+    if (exchange) {
+      conditions.push(eq(tradesTable.exchange, exchange));
+    }
+    const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+    const result = await db.select({ count: sql<number>`count(*)` }).from(tradesTable).where(whereClause);
+    return Number(result[0]?.count || 0);
   }
 
   // Actualizar P&L de un trade
@@ -686,6 +717,14 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOpenPositionByLotId(lotId: string): Promise<void> {
     await db.delete(openPositionsTable).where(eq(openPositionsTable.lotId, lotId));
+  }
+
+  async deleteOpenPositionsByExchange(exchange: string): Promise<number> {
+    const result = await db.execute(sql`
+      DELETE FROM open_positions
+      WHERE exchange = ${exchange}
+    `);
+    return Number(result.rowCount || 0);
   }
 
   async getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]> {

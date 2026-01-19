@@ -18,6 +18,7 @@ import { z } from "zod";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 import cron from "node-cron";
 import http from "http";
+import { computeDeterministicTradeId } from "./utils/tradeId";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -759,21 +760,28 @@ export async function registerRoutes(
         let currentPrice = 0;
         let unrealizedPnlUsd = 0;
         let unrealizedPnlPct = 0;
-        
-        if (krakenService.isInitialized()) {
-          try {
+
+        const ex = ((pos as any).exchange as string | undefined) || 'kraken';
+        try {
+          if (ex === 'revolutx' && revolutXService.isInitialized()) {
+            const ticker = await revolutXService.getTicker(pos.pair);
+            currentPrice = ticker.last;
+          } else if (krakenService.isInitialized()) {
             const krakenPair = krakenService.formatPair(pos.pair);
             const ticker = await krakenService.getTickerRaw(krakenPair);
             const tickerData: any = Object.values(ticker)[0];
             if (tickerData?.c?.[0]) {
               currentPrice = parseFloat(tickerData.c[0]);
-              const entryPrice = parseFloat(pos.entryPrice);
-              const amount = parseFloat(pos.amount);
-              unrealizedPnlUsd = (currentPrice - entryPrice) * amount;
-              unrealizedPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
             }
-          } catch (e) {}
-        }
+          }
+
+          if (currentPrice > 0) {
+            const entryPrice = parseFloat(pos.entryPrice);
+            const amount = parseFloat(pos.amount);
+            unrealizedPnlUsd = (currentPrice - entryPrice) * amount;
+            unrealizedPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+          }
+        } catch (e) {}
         
         const amount = parseFloat(pos.amount);
         const entryPrice = parseFloat(pos.entryPrice);
@@ -805,10 +813,141 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/rebuild-positions", async (req, res) => {
+    try {
+      const expectedToken = process.env.TERMINAL_TOKEN;
+      if (!expectedToken) {
+        return res.status(500).json({ error: "TERMINAL_TOKEN_NOT_CONFIGURED" });
+      }
+
+      const authHeader = req.headers.authorization;
+      const headerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      const queryToken = (req.query?.token as string | undefined) || undefined;
+      const token = headerToken || queryToken;
+      if (!token || token !== expectedToken) {
+        return res.status(403).json({ error: "FORBIDDEN" });
+      }
+
+      const schema = z.object({
+        exchange: z.enum(["all", "kraken", "revolutx"]).optional().default("all"),
+        origin: z.enum(["bot"]).optional().default("bot"),
+        since: z.string().optional(),
+      });
+
+      const parsed = schema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: parsed.error.issues });
+      }
+
+      const { exchange, since: sinceRaw } = parsed.data;
+      const since = sinceRaw ? new Date(sinceRaw) : new Date('2026-01-17T00:00:00Z');
+      if (isNaN(since.getTime())) {
+        return res.status(400).json({ error: "INVALID_SINCE" });
+      }
+
+      const exchangesToProcess = exchange === 'all' ? ['kraken', 'revolutx'] : [exchange];
+
+      let deleted = 0;
+      for (const ex of exchangesToProcess) {
+        deleted += await storage.deleteOpenPositionsByExchange(ex);
+      }
+
+      const trades = await storage.listTradesForRebuild({
+        exchanges: exchangesToProcess,
+        origin: 'bot',
+        since,
+      });
+
+      type Lot = { lotId: string; exchange: string; pair: string; entryPrice: number; qty: number };
+      const lotsByKey = new Map<string, Lot[]>();
+
+      const krakenFeePct = parseFloat((await storage.getBotConfig())?.takerFeePct || "0.40") / 100;
+
+      const feePctForExchange = (ex: string) => {
+        if (ex === 'revolutx') return 0.09 / 100;
+        return krakenFeePct;
+      };
+
+      for (const t of trades) {
+        const key = `${t.exchange}::${t.pair}`;
+        if (!lotsByKey.has(key)) lotsByKey.set(key, []);
+        const lots = lotsByKey.get(key)!;
+
+        const qty = Number(t.amount);
+        const price = Number(t.price);
+        if (!Number.isFinite(qty) || !Number.isFinite(price) || qty <= 0 || price <= 0) continue;
+
+        if (t.type === 'buy') {
+          const lotId = `RB-${t.exchange}-${t.pair.replace('/', '')}-${t.tradeId}`;
+          lots.push({ lotId, exchange: t.exchange, pair: t.pair, entryPrice: price, qty });
+        } else if (t.type === 'sell') {
+          let remaining = qty;
+          while (remaining > 0 && lots.length > 0) {
+            const head = lots[0];
+            const take = Math.min(head.qty, remaining);
+            head.qty -= take;
+            remaining -= take;
+            if (head.qty <= 0.00000001) {
+              lots.shift();
+            }
+          }
+        }
+      }
+
+      let created = 0;
+      const byPair: Record<string, number> = {};
+
+      for (const lots of lotsByKey.values()) {
+        for (const lot of lots) {
+          if (!Number.isFinite(lot.qty) || lot.qty <= 0) continue;
+          const feePct = feePctForExchange(lot.exchange);
+          const entryFee = lot.qty * lot.entryPrice * feePct;
+
+          await storage.saveOpenPositionByLotId({
+            lotId: lot.lotId,
+            exchange: lot.exchange as any,
+            pair: lot.pair,
+            entryPrice: lot.entryPrice.toFixed(8),
+            amount: lot.qty.toFixed(8),
+            highestPrice: lot.entryPrice.toFixed(8),
+            entryFee: entryFee.toFixed(8),
+            entryStrategyId: 'rebuild',
+            entrySignalTf: 'rebuild',
+            entryMode: 'REBUILD',
+          } as any);
+
+          created++;
+          const key = `${lot.exchange}:${lot.pair}`;
+          byPair[key] = (byPair[key] || 0) + 1;
+        }
+      }
+
+      res.json({
+        success: true,
+        exchange,
+        since: since.toISOString(),
+        deleted,
+        tradesConsidered: trades.length,
+        created,
+        byPair,
+      });
+    } catch (e: any) {
+      console.error('[admin/rebuild-positions] Error:', e?.message || e);
+      res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
   app.post("/api/positions/:pair/buy", async (req, res) => {
     try {
       const pair = req.params.pair.replace("-", "/");
       const { usdAmount, reason, confirm } = req.body;
+
+      if (String(process.env.TRADING_ENABLED || '').toLowerCase() !== 'true') {
+        return res.status(403).json({
+          error: 'TRADING_DISABLED',
+          message: 'Trading deshabilitado por kill-switch (TRADING_ENABLED!=true).',
+        });
+      }
 
       if (!tradingEngine) {
         return res.status(503).json({ error: "Motor de trading no inicializado" });
@@ -1889,6 +2028,13 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   app.post("/api/trades/sync-revolutx", async (req, res) => {
     try {
+      if (String(process.env.REVOLUTX_SYNC_ENABLED || '').toLowerCase() !== 'true') {
+        return res.status(403).json({
+          error: 'REVOLUTX_SYNC_DISABLED',
+          message: 'RevolutX sync deshabilitado en este entorno (REVOLUTX_SYNC_ENABLED!=true). RevolutX real solo funciona en VPS con IP whitelisted.',
+        });
+      }
+
       if (!revolutXService.isInitialized()) {
         return res.status(400).json({ error: "RevolutX not configured" });
       }
@@ -2065,10 +2211,21 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               const priceStr = n.price != null ? String(n.price) : '';
               const amountStr = n.amount != null ? String(n.amount) : '';
 
+              const tradeIdFinal = n.tradeId
+                ? String(n.tradeId)
+                : computeDeterministicTradeId({
+                  exchange: 'revolutx',
+                  pair,
+                  executedAt: n.executedAt,
+                  type: n.type,
+                  price: priceStr,
+                  amount: amountStr,
+                });
+
               try {
                 const { inserted } = await storage.insertTradeIgnoreDuplicate({
-                  tradeId: String(n.tradeId),
-                  krakenOrderId: String(n.tradeId),
+                  tradeId: tradeIdFinal,
+                  krakenOrderId: undefined,
                   pair,
                   type: n.type,
                   price: priceStr,
@@ -2076,6 +2233,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                   status: 'filled',
                   executedAt: n.executedAt,
                   exchange: 'revolutx',
+                  origin: 'sync',
                 });
 
                 if (inserted) {
@@ -2279,6 +2437,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             status: "filled",
             krakenOrderId: txid,
             executedAt,
+            origin: 'sync',
           });
           
           if (result.inserted) {

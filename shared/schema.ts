@@ -169,8 +169,9 @@ export const apiConfig = pgTable("api_config", {
 
 export const trades = pgTable("trades", {
   id: serial("id").primaryKey(),
-  tradeId: text("trade_id").notNull().unique(),
+  tradeId: text("trade_id").notNull(),
   exchange: text("exchange").notNull().default("kraken"),
+  origin: text("origin").notNull().default("sync"),
   pair: text("pair").notNull(),
   type: text("type").notNull(),
   price: decimal("price", { precision: 18, scale: 8 }).notNull(),
@@ -182,7 +183,9 @@ export const trades = pgTable("trades", {
   realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
   executedAt: timestamp("executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  exchangePairTradeIdUnique: unique().on(table.exchange, table.pair, table.tradeId),
+}));
 
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),

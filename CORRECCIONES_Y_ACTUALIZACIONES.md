@@ -1371,6 +1371,50 @@ node ./scripts/test-real-trade.js
   - `REVOLUTX_DAILY_SYNC_TZ` (default `UTC`)
   - `REVOLUTX_SYNC_SINCE_DEFAULT` (default `2026-01-17T00:00:00Z`)
 
+---
+
+### 12) INCIDENTE CRÍTICO: Historial OK pero posiciones abiertas = 0 (FIX + CONTENCIÓN)
+
+**Objetivo:**
+- Separar origen de operaciones:
+  - `origin='bot'` => trades ejecutados por el motor (únicos que alimentan posiciones/FIFO)
+  - `origin='sync'` => trades importados por sync (NO alimentan posiciones)
+- Evitar compras a ciegas si el motor perdió estado.
+
+**Cambios implementados (DB + Backend + Motor):**
+
+1) **DB: columna `origin` y dedupe robusto**
+- Migración: `db/migrations/005_trades_origin_and_dedupe.sql`
+- `ALTER TABLE trades ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'sync'`
+- Cambio de constraint:
+  - Se elimina `UNIQUE(trade_id)` global
+  - Se añade `UNIQUE(exchange, pair, trade_id)`
+
+2) **APP: trade_id determinista (cuando falta/inestable)**
+- Helper: `server/utils/tradeId.ts`
+- Regla: `sha256(exchange|pair|executed_at_iso|side|price_norm|amount_norm)` (norm a 8 decimales)
+
+3) **Motor: trades del bot marcados como `origin='bot'` + trade_id estable**
+- Se elimina `AUTO-<timestamp_now>`.
+- Para Kraken/RevolutX: `tradeId = ${EXCHANGE}-${txid}`.
+
+4) **VPS-only RevolutX sync (IP whitelist)**
+- Guard por env en `POST /api/trades/sync-revolutx`:
+  - si `REVOLUTX_SYNC_ENABLED!=true` => `403 REVOLUTX_SYNC_DISABLED`.
+
+5) **Kill-switch / Fail-closed**
+- Env: `TRADING_ENABLED=true|false`
+  - Si `TRADING_ENABLED!=true` => se bloquean BUYs (motor y endpoint manual).
+- Seguridad adicional: si `openPositionsCount=0` pero existen trades recientes `origin='bot'`, el motor bloquea BUYs con razón `POSITIONS_INCONSISTENT`.
+
+6) **Materializador posiciones (admin)**
+- Endpoint: `POST /api/admin/rebuild-positions` (protegido por `TERMINAL_TOKEN`)
+- Borra `open_positions` por exchange y reconstruye FIFO desde `trades origin='bot'` ordenado por `executed_at`.
+
+**Notas importantes:**
+- `open_positions` NO se reconstruye desde trades `origin='sync'` (para no mezclar wallet/HOLD).
+- Para RevolutX sync, NO se utiliza `kraken_order_id` (constraint UNIQUE), sólo `trade_id`.
+
 **Acción pendiente:**
 - Verificar logs VPS para trades RevolutX entre 16:00-21:00.
 - Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.

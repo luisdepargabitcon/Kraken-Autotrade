@@ -69,6 +69,11 @@ async function runMigration() {
     const exchangeSyncStateSqlPath = path.resolve(process.cwd(), "db", "migrations", "004_create_exchange_sync_state.sql");
     await tryExecuteFile(db, exchangeSyncStateSqlPath, "exchange_sync_state");
 
+    // trades.origin + dedupe constraints
+    console.log("[migrate] Ensuring trades origin/dedupe constraints exist...");
+    const tradesOriginSqlPath = path.resolve(process.cwd(), "db", "migrations", "005_trades_origin_and_dedupe.sql");
+    await tryExecuteFile(db, tradesOriginSqlPath, "trades.origin/dedupe");
+
     // api_config table (credentials)
     console.log("[migrate] Ensuring api_config table exists...");
     await tryExecute(

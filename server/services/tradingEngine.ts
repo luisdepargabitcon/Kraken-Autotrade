@@ -11,6 +11,7 @@ import { createHash } from "crypto";
 import { regimeState, type RegimeState } from "@shared/schema";
 import { db } from "../db";
 import { eq } from "drizzle-orm";
+import { computeDeterministicTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
@@ -122,6 +123,8 @@ type BlockReasonCode =
   | "CONFIDENCE_LOW"          // Confianza < umbral mínimo
   | "REGIME_ERROR"            // Error detectando régimen
   | "DAILY_LIMIT"             // Límite de pérdida diaria alcanzado
+  | "TRADING_DISABLED"         // Kill-switch por env
+  | "POSITIONS_INCONSISTENT"   // Fail-closed: trades bot recientes pero sin open positions
   | "SELL_BLOCKED"            // SELL bloqueado por SMART_GUARD
   | "RSI_OVERBOUGHT"          // BUY bloqueado por RSI >= 70
   | "RSI_OVERSOLD"            // SELL bloqueado por RSI <= 30
@@ -992,6 +995,21 @@ export class TradingEngine {
     reason: string
   ): Promise<{ success: boolean; lotId?: string; requestedVolume?: number; netAdded?: number; price?: number; error?: string }> {
     try {
+      const tradingEnabled = String(process.env.TRADING_ENABLED || '').toLowerCase() === 'true';
+      if (!tradingEnabled) {
+        return { success: false, error: 'TRADING_DISABLED' };
+      }
+
+      // Fail-closed safety: if in-memory positions are empty but we have recent bot trades,
+      // block manual buys until positions are rebuilt.
+      if (this.openPositions.size === 0) {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentBotTrades = await storage.getRecentBotTradesCount({ since });
+        if (recentBotTrades > 0) {
+          return { success: false, error: 'POSITIONS_INCONSISTENT_RECENT_TRADES' };
+        }
+      }
+
       log(`[MANUAL_BUY] Iniciando compra manual: ${pair}, $${usdAmount}`, "trading");
       
       const prePositions = this.getPositionsByPair(pair);
@@ -1969,6 +1987,15 @@ ${positionsList}
         return;
       }
 
+      // Kill-switch: environment can disable all BUY entries (sells/SL/TP still run)
+      const tradingEnabled = String(process.env.TRADING_ENABLED || '').toLowerCase() === 'true';
+
+      // Fail-closed: positions should not be empty if we have bot-origin trades recently.
+      // This prevents "compras a ciegas" after a restart/desync.
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentBotTrades = await storage.getRecentBotTradesCount({ since: since24h });
+      const positionsInconsistent = this.openPositions.size === 0 && recentBotTrades > 0;
+
       // Actualizar tiempo de escaneo y limpiar resultados anteriores
       this.lastScanTime = Date.now();
       this.lastScanResults.clear();
@@ -2040,6 +2067,24 @@ El bot ha pausado las operaciones de COMPRA.
       // Stop-Loss y Take-Profit siempre se verifican (incluso con límite alcanzado)
       for (const pair of config.activePairs) {
         await this.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
+      }
+
+      // Safety: if trading disabled, do not open new positions
+      if (!tradingEnabled || positionsInconsistent) {
+        for (const pair of config.activePairs || []) {
+          const expCheck = this.getAvailableExposure(pair, config, this.currentUsdBalance);
+          this.initPairTrace(pair, expCheck.maxAllowed, true);
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: !tradingEnabled ? "TRADING_DISABLED" : "POSITIONS_INCONSISTENT",
+            blockDetails: !tradingEnabled
+              ? { env: "TRADING_ENABLED" }
+              : { recentBotTrades, openPositionsCount: this.openPositions.size },
+            finalSignal: "NONE",
+            finalReason: !tradingEnabled ? "TRADING_ENABLED=false" : "Positions inconsistent: openPositions=0 but recent bot trades exist",
+          });
+        }
+        return;
       }
 
       // No abrir nuevas posiciones si se alcanzó el límite diario
@@ -6109,8 +6154,17 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         return false;
       }
 
-      const tradeId = `AUTO-${Date.now()}`;
       const exchange = this.getTradingExchangeType();
+      const tradeId = exchange === 'kraken' || exchange === 'revolutx'
+        ? `${exchange.toUpperCase()}-${txid}`
+        : computeDeterministicTradeId({
+          exchange,
+          pair,
+          executedAt: new Date(),
+          type,
+          price: price.toString(),
+          amount: volume,
+        });
       
       // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
       let tradeEntryPrice: string | null = null;
@@ -6148,6 +6202,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       await storage.createTrade({
         tradeId,
         exchange,
+        origin: 'bot',
         pair,
         type,
         price: price.toString(),
