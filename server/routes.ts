@@ -17,6 +17,7 @@ import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 import cron from "node-cron";
+import http from "http";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -130,6 +131,44 @@ export async function registerRoutes(
     try {
       const revolutxCron = process.env.REVOLUTX_DAILY_SYNC_CRON || '0 2 * * *';
       const revolutxTz = process.env.REVOLUTX_DAILY_SYNC_TZ || 'UTC';
+
+      const postJson = async (urlRaw: string, body: any) => {
+        const f = (globalThis as any).fetch as undefined | ((...args: any[]) => Promise<any>);
+        if (typeof f === 'function') {
+          await f(urlRaw, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          return;
+        }
+
+        const u = new URL(urlRaw);
+        const payload = Buffer.from(JSON.stringify(body));
+
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request(
+            {
+              hostname: u.hostname,
+              port: u.port ? Number(u.port) : 80,
+              path: u.pathname + u.search,
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': payload.length,
+              },
+            },
+            (resp) => {
+              resp.on('data', () => undefined);
+              resp.on('end', () => resolve());
+            }
+          );
+          req.on('error', reject);
+          req.write(payload);
+          req.end();
+        });
+      };
+
       cron.schedule(
         revolutxCron,
         async () => {
@@ -137,11 +176,7 @@ export async function registerRoutes(
             if (!revolutXService.isInitialized()) return;
             const port = parseInt(process.env.PORT || '5000', 10);
             const url = `http://127.0.0.1:${port}/api/trades/sync-revolutx`;
-            await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ allowAssumedSide: true }),
-            });
+            await postJson(url, { allowAssumedSide: true });
           } catch (e: any) {
             console.error('[revolutx-daily-sync] Error:', e?.message || e);
           }
