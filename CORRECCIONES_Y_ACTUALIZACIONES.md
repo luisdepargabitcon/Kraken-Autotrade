@@ -1344,10 +1344,50 @@ node ./scripts/test-real-trade.js
   - Autenticación: requiere firma Ed25519 y headers `X-Revx-API-Key`, `X-Revx-Timestamp`, `X-Revx-Signature`.
   - Nota: el payload real de `trades/private` puede venir sin `side/type` (buy/sell). En ese caso el sync puede usar `allowAssumedSide=true` para asumir BUY si `q>0` (y SELL si `q<0`), contabilizando `assumedSideCount`.
 
+**FIX IMPLEMENTADO (RevolutX Sync ALL + incremental + cursor):**
+- Se añadió tabla de estado de sincronización `exchange_sync_state` (cursor por `exchange + scope`).
+  - Migración: `db/migrations/004_create_exchange_sync_state.sql`
+  - Aplicación automática en arranque Docker/NAS: `script/migrate.ts`
+- Endpoint: `POST /api/trades/sync-revolutx`
+  - `pair` ahora es **opcional**:
+    - Si NO se envía `pair` => `scope=ALL` y se sincronizan los pares desde `botConfig.activePairs`.
+    - Si se envía `pair` => `scope=<PAIR>` y sincroniza solo ese par (modo debug).
+  - `since` opcional (ISO). Si no se envía:
+    - usa `exchange_sync_state.cursor_value` si existe,
+    - si no existe, usa `REVOLUTX_SYNC_SINCE_DEFAULT` (default `2026-01-17T00:00:00Z`).
+  - Dedupe robusto: insert idempotente ignorando duplicados (constraint UNIQUE existente) sin pre-select.
+  - Retorna métricas: `byPair`, `synced`, `skipped`, `fetched`, `assumedSideCount`, `cursorBefore/After`.
+
+**UI (Terminal → Historial):**
+- Botón **SYNC REVOLUTX** ya no obliga a seleccionar par.
+  - Si `Par = TODOS` => no envía `pair` y sincroniza ALL.
+  - Si se selecciona un par => envía `pair` (debug).
+- Lista de pares del filtro ahora usa `botConfig.activePairs` (cuando está disponible).
+
+**AUTO-SYNC DIARIO (RevolutX):**
+- Job diario con `node-cron` que llama al endpoint `POST /api/trades/sync-revolutx` en modo ALL (incremental por cursor).
+- Variables de entorno:
+  - `REVOLUTX_DAILY_SYNC_CRON` (default `0 2 * * *`)
+  - `REVOLUTX_DAILY_SYNC_TZ` (default `UTC`)
+  - `REVOLUTX_SYNC_SINCE_DEFAULT` (default `2026-01-17T00:00:00Z`)
+
 **Acción pendiente:**
 - Verificar logs VPS para trades RevolutX entre 16:00-21:00.
 - Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.
 - Implementar/usar botón "SYNC REVOLUTX" en UI para importar historial privado desde el endpoint correcto.
+
+**Validación (SQL / Checklist):**
+- Verificar rango desde 2026-01-17:
+  - `SELECT min(executed_at) AS min_ts, max(executed_at) AS max_ts, count(*) AS n FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-17';`
+  - `SELECT pair, count(*) AS n FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-17' GROUP BY pair ORDER BY n DESC;`
+- Verificar sync state:
+  - `SELECT * FROM exchange_sync_state WHERE exchange='revolutx' AND scope='ALL';`
+- UI:
+  - Terminal → Historial
+  - Exchange=REVOLUTX
+  - Par=TODOS
+  - Limit=200 (o más)
+  - Click SYNC REVOLUTX (debe funcionar sin seleccionar par)
 
 ---
 

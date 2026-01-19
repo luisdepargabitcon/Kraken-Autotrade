@@ -123,6 +123,7 @@ export default function Terminal() {
 
   const { data: botConfig } = useQuery<{ 
     positionMode?: string; 
+    activePairs?: string[];
     sgMaxOpenLotsPerPair?: number;
     sgBePct?: string;
     sgTrailStartPct?: string;
@@ -217,30 +218,19 @@ export default function Terminal() {
   };
 
   const handleSyncFromRevolutX = async () => {
-    if (pairFilter === "all") {
-      toast({
-        title: "Selecciona un par",
-        description: "Para sincronizar RevolutX debes elegir un par (ej: XRP/USD) en el filtro 'Par'.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setSyncing(true);
     try {
-      const now = Date.now();
-      const startMs = now - 60 * 60 * 1000; // last 60 minutes
       const res = await fetch("/api/trades/sync-revolutx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pair: pairFilter, startMs, endMs: now, limit: 100, allowAssumedSide: true }),
+        body: JSON.stringify({ ...(pairFilter !== "all" ? { pair: pairFilter } : {}), limit: 100, allowAssumedSide: true }),
       });
       const data = await res.json();
 
       if (res.ok) {
         toast({
           title: "Sincronizado",
-          description: `RevolutX ${pairFilter}: +${data.synced} (fetched ${data.fetched}, skipped ${data.skipped})`,
+          description: `RevolutX ${data.scope || (pairFilter !== "all" ? pairFilter : "ALL")}: +${data.synced} (fetched ${data.fetched}, skipped ${data.skipped})`,
         });
         refetchClosed();
       } else {
@@ -583,7 +573,9 @@ export default function Terminal() {
     setOffset(0);
   };
 
-  const availablePairs = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
+  const availablePairs = (botConfig?.activePairs && botConfig.activePairs.length > 0)
+    ? botConfig.activePairs
+    : ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
 
   const totalUnrealizedPnl = openPositions?.reduce((sum, pos) => sum + parseFloat(pos.unrealizedPnlUsd), 0) || 0;
   const positionsCount = openPositions?.length || 0;
@@ -778,7 +770,7 @@ export default function Terminal() {
                     disabled={syncing}
                     className="text-xs font-mono border-border/50 hover:border-purple-500/50 hover:text-purple-400"
                     data-testid="button-sync-revolutx"
-                    title="Importa historial privado de RevolutX para el par seleccionado (últimos 60 minutos)."
+                    title="Importa historial privado de RevolutX (ALL por defecto; si eliges un par, sincroniza solo ese par)."
                   >
                     <Download className={`h-3.5 w-3.5 mr-1 ${syncing ? 'animate-pulse' : ''}`} />
                     SYNC REVOLUTX

@@ -64,6 +64,11 @@ async function runMigration() {
     const configSqlPath = path.resolve(process.cwd(), "db", "migrations", "001_create_config_tables.sql");
     await tryExecuteFile(db, configSqlPath, "trading_config/config_preset/config_change");
 
+    // exchange_sync_state table (exchange sync cursors)
+    console.log("[migrate] Ensuring exchange_sync_state table exists...");
+    const exchangeSyncStateSqlPath = path.resolve(process.cwd(), "db", "migrations", "004_create_exchange_sync_state.sql");
+    await tryExecuteFile(db, exchangeSyncStateSqlPath, "exchange_sync_state");
+
     // api_config table (credentials)
     console.log("[migrate] Ensuring api_config table exists...");
     await tryExecute(

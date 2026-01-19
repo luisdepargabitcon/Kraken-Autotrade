@@ -16,6 +16,7 @@ import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { z } from "zod";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
+import cron from "node-cron";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -124,6 +125,33 @@ export async function registerRoutes(
     
     // Start daily report scheduler (14:00 Europe/Madrid)
     telegramService.startDailyReport();
+
+    // RevolutX daily sync scheduler (default: 02:00 UTC)
+    try {
+      const revolutxCron = process.env.REVOLUTX_DAILY_SYNC_CRON || '0 2 * * *';
+      const revolutxTz = process.env.REVOLUTX_DAILY_SYNC_TZ || 'UTC';
+      cron.schedule(
+        revolutxCron,
+        async () => {
+          try {
+            if (!revolutXService.isInitialized()) return;
+            const port = parseInt(process.env.PORT || '5000', 10);
+            const url = `http://127.0.0.1:${port}/api/trades/sync-revolutx`;
+            await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ allowAssumedSide: true }),
+            });
+          } catch (e: any) {
+            console.error('[revolutx-daily-sync] Error:', e?.message || e);
+          }
+        },
+        { timezone: revolutxTz }
+      );
+      console.log(`[startup] RevolutX daily sync scheduled: ${revolutxCron} (${revolutxTz})`);
+    } catch (e: any) {
+      console.error('[startup] Failed to schedule RevolutX daily sync:', e?.message || e);
+    }
     
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();
@@ -1830,26 +1858,27 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         return res.status(400).json({ error: "RevolutX not configured" });
       }
 
-      const pairRaw = (req.body?.pair || req.query?.pair || '').toString();
-      if (!pairRaw) {
-        return res.status(400).json({ error: "PAIR_REQUIRED", message: "Debes enviar pair, por ejemplo BTC/USD" });
-      }
+      const pairRaw = (req.body?.pair ?? req.query?.pair ?? '').toString().trim();
+      const scope = pairRaw ? pairRaw : 'ALL';
 
-      const symbol = pairRaw.replace('/', '-');
-      const pair = symbol.replace('-', '/');
+      const now = new Date();
+      const nowMs = now.getTime();
 
-      const nowMs = Date.now();
-      const startMs = Number(req.body?.startMs ?? req.query?.startMs ?? (nowMs - 60 * 60 * 1000));
-      const endMs = Number(req.body?.endMs ?? req.query?.endMs ?? nowMs);
       const limit = Math.min(100, Math.max(1, Number(req.body?.limit ?? req.query?.limit ?? 100)));
       const debug = String(req.body?.debug ?? req.query?.debug ?? '').toLowerCase() === 'true' || String(req.query?.debug) === '1';
       const allowAssumedSide = String(req.body?.allowAssumedSide ?? req.query?.allowAssumedSide ?? '').toLowerCase() === 'true' || String(req.query?.allowAssumedSide) === '1';
 
-      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs <= 0 || endMs <= 0 || endMs < startMs) {
-        return res.status(400).json({ error: "INVALID_RANGE", message: "startMs/endMs inválidos" });
+      const sinceDefaultIso = (process.env.REVOLUTX_SYNC_SINCE_DEFAULT || '2026-01-17T00:00:00Z');
+      const sinceDefault = new Date(sinceDefaultIso);
+      if (isNaN(sinceDefault.getTime())) {
+        return res.status(500).json({ error: 'INVALID_REVOLUTX_SYNC_SINCE_DEFAULT', message: `REVOLUTX_SYNC_SINCE_DEFAULT inválido: ${sinceDefaultIso}` });
       }
 
-      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      const sinceOverrideRaw = (req.body?.since ?? req.query?.since ?? '').toString().trim();
+      const sinceOverride = sinceOverrideRaw ? new Date(sinceOverrideRaw) : null;
+      if (sinceOverrideRaw && (!sinceOverride || isNaN(sinceOverride.getTime()))) {
+        return res.status(400).json({ error: 'INVALID_SINCE', message: `since inválido: ${sinceOverrideRaw}` });
+      }
 
       let synced = 0;
       let skipped = 0;
@@ -1857,6 +1886,39 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const errors: string[] = [];
       let totalFetched = 0;
       const debugSamples: any[] = [];
+
+      const botConfig = await storage.getBotConfig();
+      const activePairs = (botConfig as any)?.activePairs as string[] | undefined;
+      const pairsToSync = pairRaw ? [pairRaw] : (Array.isArray(activePairs) && activePairs.length > 0 ? activePairs : []);
+      if (!pairRaw && pairsToSync.length === 0) {
+        return res.status(400).json({
+          error: 'ACTIVE_PAIRS_REQUIRED',
+          message: 'No hay pares activos en config (botConfig.activePairs). Define activePairs o envía pair específico para debug.',
+        });
+      }
+
+      const stateBefore = await storage.getExchangeSyncState('revolutx', scope);
+      const sinceFromState = stateBefore?.cursorValue ? new Date(stateBefore.cursorValue) : null;
+      const since = sinceOverride || sinceFromState || sinceDefault;
+
+      await storage.upsertExchangeSyncState({
+        exchange: 'revolutx',
+        scope,
+        cursorType: 'timestamp',
+        cursorValue: stateBefore?.cursorValue ?? null,
+        lastRunAt: now,
+        lastOkAt: stateBefore?.lastOkAt ?? null,
+        lastError: null,
+      });
+
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      const sinceMs = since.getTime();
+      if (!Number.isFinite(sinceMs) || sinceMs <= 0 || sinceMs > nowMs) {
+        return res.status(400).json({ error: 'INVALID_SINCE_RANGE', message: `since fuera de rango: ${since.toISOString()}` });
+      }
+
+      const byPair: Record<string, { fetched: number; inserted: number; skipped: number; assumedSideCount: number; errors: number }> = {};
+      let maxExecutedAtSeenMs = sinceMs;
 
       const inferSide = (t: any, qtyRaw: any): { side: "buy" | "sell" | null; assumed: boolean } => {
         const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? t?.taker_side ?? t?.maker_side ?? t?.aggressor_side ?? '').toString().toLowerCase();
@@ -1903,112 +1965,164 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         };
       };
 
-      const fetchWindow = async (windowStart: number, windowEnd: number) => {
-        let cursor: string | undefined = undefined;
-        let page = 0;
-        while (true) {
-          page++;
-          const { trades, nextCursor } = await revolutXService.listPrivateTrades({
-            symbol,
-            startMs: windowStart,
-            endMs: windowEnd,
-            cursor,
-            limit,
-            debug,
-          });
+      const syncPair = async (pairToSync: string) => {
+        const symbol = pairToSync.replace('/', '-');
+        const pair = symbol.replace('-', '/');
+        if (!byPair[pair]) {
+          byPair[pair] = { fetched: 0, inserted: 0, skipped: 0, assumedSideCount: 0, errors: 0 };
+        }
 
-          totalFetched += trades.length;
+        const fetchWindow = async (windowStart: number, windowEnd: number) => {
+          let cursor: string | undefined = undefined;
+          let page = 0;
+          while (true) {
+            page++;
+            const { trades, nextCursor } = await revolutXService.listPrivateTrades({
+              symbol,
+              startMs: windowStart,
+              endMs: windowEnd,
+              cursor,
+              limit,
+              debug,
+            });
 
-          for (const t of trades) {
-            const n = normalizeTrade(t);
-            if (!n.tradeId) {
-              skipped++;
-              continue;
-            }
-            if (!n.type) {
-              if (debug && debugSamples.length < 5) {
-                debugSamples.push({
-                  tradeId: String(n.tradeId),
-                  keys: Object.keys(t || {}),
-                  sample: t,
-                });
-              }
-              errors.push(`${n.tradeId}: missing side/type`);
-              skipped++;
-              continue;
-            }
-            if (n.assumed) {
-              assumedSideCount++;
-            }
-            if (!(n.executedAt instanceof Date) || isNaN(n.executedAt.getTime())) {
-              errors.push(`${n.tradeId}: invalid executedAt`);
-              skipped++;
-              continue;
-            }
+            totalFetched += trades.length;
+            byPair[pair].fetched += trades.length;
 
-            const priceStr = n.price != null ? String(n.price) : '';
-            const amountStr = n.amount != null ? String(n.amount) : '';
-
-            try {
-              const existingTrade = await storage.getTradeByKrakenOrderId(String(n.tradeId));
-              if (existingTrade) {
+            for (const t of trades) {
+              const n = normalizeTrade(t);
+              if (!n.tradeId) {
                 skipped++;
+                byPair[pair].skipped++;
+                continue;
+              }
+              if (!n.type) {
+                if (debug && debugSamples.length < 5) {
+                  debugSamples.push({
+                    tradeId: String(n.tradeId),
+                    keys: Object.keys(t || {}),
+                    sample: t,
+                  });
+                }
+                errors.push(`${pair}:${n.tradeId}: missing side/type`);
+                byPair[pair].errors++;
+                skipped++;
+                byPair[pair].skipped++;
+                continue;
+              }
+              if (n.assumed) {
+                assumedSideCount++;
+                byPair[pair].assumedSideCount++;
+              }
+              if (!(n.executedAt instanceof Date) || isNaN(n.executedAt.getTime())) {
+                errors.push(`${pair}:${n.tradeId}: invalid executedAt`);
+                byPair[pair].errors++;
+                skipped++;
+                byPair[pair].skipped++;
                 continue;
               }
 
-              await storage.createTrade({
-                tradeId: String(n.tradeId),
-                krakenOrderId: String(n.tradeId),
-                pair,
-                type: n.type,
-                price: priceStr,
-                amount: amountStr,
-                status: 'filled',
-                executedAt: n.executedAt,
-                exchange: 'revolutx',
-              });
-              synced++;
-            } catch (e: any) {
-              console.error('[sync-revolutx] Error syncing trade:', n.tradeId, e.message);
-              errors.push(`${n.tradeId}: ${e.message}`);
+              const executedAtMs = n.executedAt.getTime();
+              if (Number.isFinite(executedAtMs) && executedAtMs > maxExecutedAtSeenMs) {
+                maxExecutedAtSeenMs = executedAtMs;
+              }
+
+              const priceStr = n.price != null ? String(n.price) : '';
+              const amountStr = n.amount != null ? String(n.amount) : '';
+
+              try {
+                const { inserted } = await storage.insertTradeIgnoreDuplicate({
+                  tradeId: String(n.tradeId),
+                  krakenOrderId: String(n.tradeId),
+                  pair,
+                  type: n.type,
+                  price: priceStr,
+                  amount: amountStr,
+                  status: 'filled',
+                  executedAt: n.executedAt,
+                  exchange: 'revolutx',
+                });
+
+                if (inserted) {
+                  synced++;
+                  byPair[pair].inserted++;
+                } else {
+                  skipped++;
+                  byPair[pair].skipped++;
+                }
+              } catch (e: any) {
+                console.error('[sync-revolutx] Error syncing trade:', n.tradeId, e.message);
+                errors.push(`${pair}:${n.tradeId}: ${e.message}`);
+                byPair[pair].errors++;
+              }
+            }
+
+            if (!nextCursor || nextCursor === cursor) break;
+            cursor = nextCursor;
+
+            if (page > 2000) {
+              errors.push(`Pagination safety break after ${page} pages for ${symbol}`);
+              break;
             }
           }
+        };
 
-          if (!nextCursor || nextCursor === cursor) break;
-          cursor = nextCursor;
-
-          if (page > 2000) {
-            errors.push(`Pagination safety break after ${page} pages for ${symbol}`);
-            break;
+        if (nowMs - sinceMs <= WEEK_MS) {
+          await fetchWindow(sinceMs, nowMs);
+        } else {
+          let ws = sinceMs;
+          while (ws < nowMs) {
+            const we = Math.min(nowMs, ws + WEEK_MS);
+            await fetchWindow(ws, we);
+            ws = we;
           }
         }
       };
 
-      if (endMs - startMs <= WEEK_MS) {
-        await fetchWindow(startMs, endMs);
-      } else {
-        let ws = startMs;
-        while (ws < endMs) {
-          const we = Math.min(endMs, ws + WEEK_MS);
-          await fetchWindow(ws, we);
-          ws = we;
+      try {
+        for (const p of pairsToSync) {
+          await syncPair(p);
         }
-      }
 
-      res.json({
-        synced,
-        skipped,
-        assumedSideCount: assumedSideCount > 0 ? assumedSideCount : undefined,
-        fetched: totalFetched,
-        pair,
-        symbol,
-        startMs,
-        endMs,
-        limit,
-        allowAssumedSide: allowAssumedSide ? true : undefined,
-        errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
-        debugSamples: debug ? debugSamples : undefined,
-      });
+        const cursorValueToSave = maxExecutedAtSeenMs > sinceMs ? new Date(maxExecutedAtSeenMs) : since;
+        await storage.upsertExchangeSyncState({
+          exchange: 'revolutx',
+          scope,
+          cursorType: 'timestamp',
+          cursorValue: cursorValueToSave,
+          lastRunAt: now,
+          lastOkAt: now,
+          lastError: null,
+        });
+
+        res.json({
+          scope,
+          pairsToSync,
+          since: since.toISOString(),
+          cursorBefore: stateBefore?.cursorValue ? new Date(stateBefore.cursorValue).toISOString() : undefined,
+          cursorAfter: cursorValueToSave.toISOString(),
+          synced,
+          skipped,
+          assumedSideCount: assumedSideCount > 0 ? assumedSideCount : undefined,
+          fetched: totalFetched,
+          byPair,
+          limit,
+          allowAssumedSide: allowAssumedSide ? true : undefined,
+          errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
+          debugSamples: debug ? debugSamples : undefined,
+        });
+      } catch (e: any) {
+        await storage.upsertExchangeSyncState({
+          exchange: 'revolutx',
+          scope,
+          cursorType: 'timestamp',
+          cursorValue: stateBefore?.cursorValue ?? null,
+          lastRunAt: now,
+          lastOkAt: stateBefore?.lastOkAt ?? null,
+          lastError: e?.message || String(e),
+        });
+        throw e;
+      }
     } catch (error: any) {
       console.error('[sync-revolutx] Error:', error.message);
       res.status(500).json({ error: error.message });

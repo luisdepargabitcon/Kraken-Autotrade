@@ -43,6 +43,18 @@ import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or } from "drizzle-orm";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 
+type ExchangeSyncScope = 'ALL' | string;
+
+export type ExchangeSyncStateRow = {
+  exchange: string;
+  scope: string;
+  cursorType: string;
+  cursorValue: Date | null;
+  lastRunAt: Date | null;
+  lastOkAt: Date | null;
+  lastError: string | null;
+};
+
 export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
@@ -51,6 +63,7 @@ export interface IStorage {
   updateApiConfig(config: Partial<InsertApiConfig>): Promise<ApiConfig>;
   
   createTrade(trade: InsertTrade): Promise<Trade>;
+  insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean }>;
   getTrades(limit?: number): Promise<Trade[]>;
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
@@ -132,6 +145,18 @@ export interface IStorage {
   // Schema health check and auto-migration
   checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }>;
   runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }>;
+
+  // Exchange sync cursor state
+  getExchangeSyncState(exchange: string, scope: ExchangeSyncScope): Promise<ExchangeSyncStateRow | undefined>;
+  upsertExchangeSyncState(state: {
+    exchange: string;
+    scope: ExchangeSyncScope;
+    cursorType: string;
+    cursorValue?: Date | null;
+    lastRunAt?: Date | null;
+    lastOkAt?: Date | null;
+    lastError?: string | null;
+  }): Promise<void>;
   
   // Signal configuration methods
   getSignalConfig(): Promise<any | undefined>;
@@ -237,6 +262,20 @@ export class DatabaseStorage implements IStorage {
     this.validateTradeForInsert(trade);
     const [newTrade] = await db.insert(tradesTable).values(trade).returning();
     return newTrade;
+  }
+
+  // Fast insert for idempotent sync: attempt insert and ignore unique violations
+  async insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean }> {
+    try {
+      this.validateTradeForInsert(trade);
+      await db.insert(tradesTable).values(trade);
+      return { inserted: true };
+    } catch (e: any) {
+      if (e?.code === '23505') {
+        return { inserted: false };
+      }
+      throw e;
+    }
   }
 
   // Upsert trade - inserta solo si no existe (por krakenOrderId)
@@ -1349,6 +1388,60 @@ export class DatabaseStorage implements IStorage {
       console.error('[schema] Migration failed:', errorMessage);
       return { success: false, columnsAdded, error: errorMessage };
     }
+  }
+
+  async getExchangeSyncState(exchange: string, scope: ExchangeSyncScope): Promise<ExchangeSyncStateRow | undefined> {
+    const result = await db.execute(sql`
+      SELECT exchange, scope, cursor_type, cursor_value, last_run_at, last_ok_at, last_error
+      FROM exchange_sync_state
+      WHERE exchange = ${exchange} AND scope = ${scope}
+      LIMIT 1
+    `);
+
+    const row = (result.rows as any[])[0];
+    if (!row) return undefined;
+
+    return {
+      exchange: row.exchange,
+      scope: row.scope,
+      cursorType: row.cursor_type,
+      cursorValue: row.cursor_value ? new Date(row.cursor_value) : null,
+      lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
+      lastOkAt: row.last_ok_at ? new Date(row.last_ok_at) : null,
+      lastError: row.last_error ?? null,
+    };
+  }
+
+  async upsertExchangeSyncState(state: {
+    exchange: string;
+    scope: ExchangeSyncScope;
+    cursorType: string;
+    cursorValue?: Date | null;
+    lastRunAt?: Date | null;
+    lastOkAt?: Date | null;
+    lastError?: string | null;
+  }): Promise<void> {
+    const {
+      exchange,
+      scope,
+      cursorType,
+      cursorValue = null,
+      lastRunAt = null,
+      lastOkAt = null,
+      lastError = null,
+    } = state;
+
+    await db.execute(sql`
+      INSERT INTO exchange_sync_state (exchange, scope, cursor_type, cursor_value, last_run_at, last_ok_at, last_error)
+      VALUES (${exchange}, ${scope}, ${cursorType}, ${cursorValue}, ${lastRunAt}, ${lastOkAt}, ${lastError})
+      ON CONFLICT (exchange, scope)
+      DO UPDATE SET
+        cursor_type = EXCLUDED.cursor_type,
+        cursor_value = COALESCE(EXCLUDED.cursor_value, exchange_sync_state.cursor_value),
+        last_run_at = EXCLUDED.last_run_at,
+        last_ok_at = EXCLUDED.last_ok_at,
+        last_error = EXCLUDED.last_error
+    `);
   }
 
   // Signal configuration methods
