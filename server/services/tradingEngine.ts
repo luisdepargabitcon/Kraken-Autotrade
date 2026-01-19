@@ -991,11 +991,10 @@ export class TradingEngine {
   async manualBuyForTest(
     pair: string,
     usdAmount: number,
-    correlationId: string,
     reason: string
   ): Promise<{ success: boolean; lotId?: string; requestedVolume?: number; netAdded?: number; price?: number; error?: string }> {
     try {
-      const tradingEnabled = String(process.env.TRADING_ENABLED || '').toLowerCase() === 'true';
+      const tradingEnabled = String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() === 'true';
       if (!tradingEnabled) {
         return { success: false, error: 'TRADING_DISABLED' };
       }
@@ -1988,7 +1987,7 @@ ${positionsList}
       }
 
       // Kill-switch: environment can disable all BUY entries (sells/SL/TP still run)
-      const tradingEnabled = String(process.env.TRADING_ENABLED || '').toLowerCase() === 'true';
+      const tradingEnabled = String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() === 'true';
 
       // Fail-closed: positions should not be empty if we have bot-origin trades recently.
       // This prevents "compras a ciegas" after a restart/desync.

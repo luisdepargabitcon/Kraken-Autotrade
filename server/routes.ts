@@ -22,6 +22,8 @@ import { computeDeterministicTradeId } from "./utils/tradeId";
 
 let tradingEngine: TradingEngine | null = null;
 
+const externalTradeAlertThrottle = new Map<string, number>();
+
 export function initializeWebSockets(httpServer: Server): void {
   eventsWs.initialize(httpServer);
   terminalWsServer.initialize(httpServer);
@@ -942,7 +944,7 @@ export async function registerRoutes(
       const pair = req.params.pair.replace("-", "/");
       const { usdAmount, reason, confirm } = req.body;
 
-      if (String(process.env.TRADING_ENABLED || '').toLowerCase() !== 'true') {
+      if (String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() !== 'true') {
         return res.status(403).json({
           error: 'TRADING_DISABLED',
           message: 'Trading deshabilitado por kill-switch (TRADING_ENABLED!=true).',
@@ -966,7 +968,8 @@ export async function registerRoutes(
       }
 
       const correlationId = `MANUAL-BUY-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-      const result = await tradingEngine.manualBuyForTest(pair, usdAmountNum, correlationId, reason || "Compra manual (API)");
+      const reasonWithCorrelation = `${reason || "Compra manual (API)"} [${correlationId}]`;
+      const result = await tradingEngine.manualBuyForTest(pair, usdAmountNum, reasonWithCorrelation);
       if (!result.success) {
         return res.status(400).json({ error: result.error || "BUY failed" });
       }
@@ -1867,6 +1870,13 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   app.post("/api/trade", async (req, res) => {
     try {
+      if (String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() !== 'true') {
+        return res.status(403).json({
+          error: 'TRADING_DISABLED',
+          message: 'Trading deshabilitado por kill-switch (TRADING_ENABLED!=true).',
+        });
+      }
+
       if (!krakenService.isInitialized()) {
         return res.status(400).json({ error: "Kraken not configured" });
       }
@@ -1878,6 +1888,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const trade = await storage.createTrade({
         tradeId,
         exchange: 'kraken',
+        origin: 'bot',
         pair,
         type,
         price: price || "0",
@@ -1912,6 +1923,13 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   // Endpoint para trading con RevolutX
   app.post("/api/trade/revolutx", async (req, res) => {
     try {
+      if (String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() !== 'true') {
+        return res.status(403).json({
+          error: 'TRADING_DISABLED',
+          message: 'Trading deshabilitado por kill-switch (TRADING_ENABLED!=true).',
+        });
+      }
+
       const { pair, type, ordertype, volume } = req.body;
       
       if (!pair || !type || !volume) {
@@ -1977,6 +1995,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const trade = await storage.createTrade({
         tradeId,
         exchange: 'revolutx',
+        origin: 'bot',
         pair,
         type,
         price: resolvedPrice.toString(),
@@ -2239,6 +2258,31 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 if (inserted) {
                   synced++;
                   byPair[pair].inserted++;
+
+                  if (String(process.env.ALERT_EXTERNAL_TRADES ?? 'false').toLowerCase() === 'true') {
+                    const executedAt = n.executedAt instanceof Date ? n.executedAt : null;
+                    const windowMin = Math.max(1, Number(process.env.EXTERNAL_ALERT_WINDOW_MIN ?? 10));
+                    const rateLimitSec = Math.max(10, Number(process.env.EXTERNAL_ALERT_RATE_LIMIT_SEC ?? 60));
+                    const key = `revolutx:${pair}`;
+                    const lastSent = externalTradeAlertThrottle.get(key) || 0;
+                    const nowTs = Date.now();
+
+                    if (executedAt && (nowTs - executedAt.getTime()) <= windowMin * 60 * 1000 && (nowTs - lastSent) >= rateLimitSec * 1000) {
+                      externalTradeAlertThrottle.set(key, nowTs);
+                      if (telegramService?.isInitialized()) {
+                        const msg = [
+                          `<b>⚠️ Trade importado detectado (SYNC)</b>`,
+                          `Exchange: <code>REVOLUTX</code>`,
+                          `Par: <code>${pair}</code>`,
+                          `Tipo: <code>${n.type}</code>`,
+                          `Cantidad: <code>${amountStr}</code>`,
+                          `Precio: <code>${priceStr}</code>`,
+                          `ExecutedAt: <code>${executedAt.toISOString()}</code>`,
+                        ].join("\n");
+                        await telegramService.sendAlertToMultipleChats(msg, "trades");
+                      }
+                    }
+                  }
                 } else {
                   skipped++;
                   byPair[pair].skipped++;

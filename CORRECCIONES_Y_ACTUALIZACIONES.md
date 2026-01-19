@@ -1415,6 +1415,16 @@ node ./scripts/test-real-trade.js
 - `open_positions` NO se reconstruye desde trades `origin='sync'` (para no mezclar wallet/HOLD).
 - Para RevolutX sync, NO se utiliza `kraken_order_id` (constraint UNIQUE), sólo `trade_id`.
 
+**Ajustes adicionales (alineación + observabilidad):**
+- `TRADING_ENABLED` ahora es *fail-open por defecto*: si la env no existe, se considera `true`.
+  - Solo bloquea BUYs si `TRADING_ENABLED!=true`.
+- Endpoints legacy de trading manual:
+  - `POST /api/trade` y `POST /api/trade/revolutx` guardan trades con `origin='bot'`.
+- Alerta Telegram opcional para trades importados por sync (por defecto desactivada):
+  - `ALERT_EXTERNAL_TRADES=true`
+  - `EXTERNAL_ALERT_WINDOW_MIN` (default 10)
+  - `EXTERNAL_ALERT_RATE_LIMIT_SEC` (default 60)
+
 **Acción pendiente:**
 - Verificar logs VPS para trades RevolutX entre 16:00-21:00.
 - Verificar DB: `SELECT * FROM trades WHERE exchange='revolutx' AND executed_at >= '2026-01-18 16:00' AND executed_at <= '2026-01-18 21:00'`.
