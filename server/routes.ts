@@ -768,13 +768,19 @@ export async function registerRoutes(
           if (ex === 'revolutx' && revolutXService.isInitialized()) {
             const ticker = await revolutXService.getTicker(pos.pair);
             currentPrice = ticker.last;
+            console.log(`[open-positions] ${pos.pair} (RevolutX): precio actual = $${currentPrice}`);
           } else if (krakenService.isInitialized()) {
             const krakenPair = krakenService.formatPair(pos.pair);
             const ticker = await krakenService.getTickerRaw(krakenPair);
             const tickerData: any = Object.values(ticker)[0];
             if (tickerData?.c?.[0]) {
               currentPrice = parseFloat(tickerData.c[0]);
+              console.log(`[open-positions] ${pos.pair} (Kraken): precio actual = $${currentPrice}`);
+            } else {
+              console.warn(`[open-positions] ${pos.pair} (Kraken): ticker sin precio válido`, tickerData);
             }
+          } else {
+            console.warn(`[open-positions] ${pos.pair}: exchange ${ex} no inicializado`);
           }
 
           if (currentPrice > 0) {
@@ -782,8 +788,12 @@ export async function registerRoutes(
             const amount = parseFloat(pos.amount);
             unrealizedPnlUsd = (currentPrice - entryPrice) * amount;
             unrealizedPnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+          } else {
+            console.warn(`[open-positions] ${pos.pair}: precio actual = 0, no se puede calcular PnL`);
           }
-        } catch (e) {}
+        } catch (e: any) {
+          console.error(`[open-positions] Error obteniendo precio para ${pos.pair} (${ex}):`, e.message || e);
+        }
         
         const amount = parseFloat(pos.amount);
         const entryPrice = parseFloat(pos.entryPrice);
