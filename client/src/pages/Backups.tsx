@@ -65,10 +65,20 @@ export default function Backups() {
   const loadBackups = async () => {
     try {
       const response = await fetch('/api/backups');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
       const result = await response.json();
       setData(result);
     } catch (error) {
       console.error('Error loading backups:', error);
+      // Set empty data structure on error
+      setData({
+        backups: [],
+        diskSpace: { total: '0', used: '0', available: '0', percentage: '0%' },
+        masters: [],
+        stats: { total: 0, masterCount: 0 }
+      });
     } finally {
       setLoading(false);
     }
@@ -238,7 +248,7 @@ export default function Backups() {
   }
 
   const masterBackups = data?.masters || [];
-  const regularBackups = data?.backups.filter(b => !b.isMaster) || [];
+  const regularBackups = (data?.backups || []).filter(b => !b.isMaster);
 
   return (
     <div className="p-6 space-y-6">

@@ -56,15 +56,16 @@ export class BackupService {
    * List all available backups (files + master info)
    */
   async listBackups(): Promise<BackupFile[]> {
-    const [dbFiles, codeFiles, masters] = await Promise.all([
-      this.listBackupFiles('database'),
-      this.listBackupFiles('code'),
-      this.getMasterBackups(),
-    ]);
+    try {
+      const [dbFiles, codeFiles, masters] = await Promise.all([
+        this.listBackupFiles('database'),
+        this.listBackupFiles('code'),
+        this.getMasterBackups(),
+      ]);
 
-    const masterMap = new Map(masters.map(m => [m.name, m]));
+      const masterMap = new Map(masters.map(m => [m.name, m]));
 
-    const allBackups: BackupFile[] = [];
+      const allBackups: BackupFile[] = [];
 
     // Process database backups
     for (const file of dbFiles) {
@@ -96,10 +97,14 @@ export class BackupService {
       });
     }
 
-    // Sort by creation date (newest first)
-    allBackups.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      // Sort by creation date (newest first)
+      allBackups.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    return allBackups;
+      return allBackups;
+    } catch (error) {
+      console.error('[BackupService] Error listing backups:', error);
+      return [];
+    }
   }
 
   /**
