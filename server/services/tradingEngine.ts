@@ -6175,6 +6175,20 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         volume,
       });
 
+      // CRITICAL: Validate order success before continuing
+      if ((order as any)?.success === false) {
+        const errorMsg = (order as any)?.error || 'Unknown error';
+        log(`[ORDER_FAILED] ${pair} ${type.toUpperCase()}: ${errorMsg}`, "trading");
+        await botLogger.error("ORDER_FAILED", `Failed to place ${type} order for ${pair}`, {
+          pair,
+          type,
+          volume,
+          error: errorMsg,
+          exchange: this.getTradingExchangeType()
+        });
+        return false;
+      }
+
       const exchange = this.getTradingExchangeType();
       const rawTxid = Array.isArray((order as any)?.txid)
         ? (order as any)?.txid?.[0]
@@ -6980,6 +6994,23 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         ordertype: "market",
         volume: sellAmountFinal.toFixed(8),
       });
+
+      // CRITICAL: Validate order success before continuing
+      if ((order as any)?.success === false) {
+        const errorMsg = (order as any)?.error || 'Unknown error';
+        log(`[ORDER_FAILED] ${pair} SELL: ${errorMsg}`, "trading");
+        await botLogger.error("ORDER_FAILED", `Failed to place sell order for ${pair}`, {
+          pair,
+          type: "sell",
+          volume: sellAmountFinal.toFixed(8),
+          error: errorMsg,
+          exchange: this.getTradingExchangeType()
+        });
+        return {
+          success: false,
+          error: errorMsg,
+        };
+      }
 
       const txid = Array.isArray((order as any).txid) ? (order as any).txid[0] : (order as any).txid;
       if (!txid || typeof txid !== "string") {
