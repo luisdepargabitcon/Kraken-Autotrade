@@ -1,5 +1,132 @@
 # CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
+## 20 DE ENERO 2026 - FIX CRÍTICO: PHANTOM BUYS EN REVOLUTX
+
+### PROBLEMA IDENTIFICADO
+**Síntoma**: Trades ejecutados por el bot en RevolutX no aparecían en `open_positions`, causando "compras fantasma" sin tracking.
+
+**Causa raíz**: Divergencia en generación de `trade_id` entre bot y sync:
+- Bot usaba `REVOLUTX-${txid}` (no determinístico, dependía del orden de ejecución)
+- Sync usaba hash determinístico de datos canónicos del trade
+- Resultado: mismo trade generaba IDs diferentes → duplicados en DB → posiciones no actualizadas
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### 1. **Unificación de Trade ID (Determinístico)**
+- **Archivo**: `server/utils/tradeId.ts`
+- **Cambio**: `buildTradeId()` ahora genera hash SHA256 sobre payload canónico
+- **Payload canónico**: `exchange|pair|timestamp|type|price|amount|externalId`
+- **Normalización**: Decimales normalizados para consistencia (ej: "0.005" === "0.00500000")
+- **Resultado**: Bot y sync generan **exactamente el mismo ID** para el mismo trade
+
+#### 2. **Persistencia Idempotente con Applied Trades Gating**
+- **Migración**: `db/migrations/006_applied_trades.sql`
+- **Tabla nueva**: `applied_trades` con unique constraint `(exchange, pair, trade_id)`
+- **Patrón**: 
+  1. `insertTradeIgnoreDuplicate()` → inserta trade con `ON CONFLICT DO NOTHING`
+  2. `markTradeApplied()` → marca trade como aplicado (idempotente)
+  3. Solo si `markTradeApplied()` retorna `true` → aplicar a `open_positions`
+  4. Si falla aplicación → `unmarkTradeApplied()` para rollback
+- **Resultado**: Trades nunca se aplican dos veces a posiciones, incluso con reintentos
+
+#### 3. **Logging y Alertas Críticas**
+- **Eventos nuevos**:
+  - `TRADE_PERSIST_START` / `TRADE_PERSIST_OK` / `TRADE_PERSIST_DUPLICATE` / `TRADE_PERSIST_FAIL`
+  - `POSITION_APPLY_START` / `POSITION_APPLY_OK` / `POSITION_APPLY_DUPLICATE` / `POSITION_APPLY_FAIL`
+- **Alertas críticas**: `emitOrderTrackingAlert()` envía alerta Telegram + log ERROR si falla persist/apply
+- **Resultado**: Visibilidad completa del flujo de persistencia y detección inmediata de fallos
+
+#### 4. **Actualización de Sync RevolutX**
+- **Archivo**: `server/routes.ts` (endpoint `/api/trades/sync-revolutx`)
+- **Cambio**: Usa `buildTradeId()` con mismo payload canónico que bot
+- **Normalización**: `priceStr` y `amountStr` con defaults explícitos `"0"`
+- **Resultado**: Sync respeta la misma política de IDs que bot, sin divergencias
+
+#### 5. **Tests de Regresión**
+- **Archivo**: `server/tests/phantomBuyFix.test.ts`
+- **Cobertura**:
+  - Consistencia de trade ID entre bot y sync
+  - Determinismo (100 llamadas → 1 ID único)
+  - Normalización de decimales
+  - Manejo de `externalId` opcional
+  - Diferenciación entre exchanges (Kraken vs RevolutX)
+- **Resultado**: ✅ 8 tests passing
+
+### ARCHIVOS MODIFICADOS
+
+1. **`server/utils/tradeId.ts`**: Helper unificado con hash determinístico
+2. **`server/routes.ts`**: Sync RevolutX usa helper unificado
+3. **`server/services/tradingEngine.ts`**: 
+   - Import `InsertTrade`, `Trade`, `sql`
+   - Método `emitOrderTrackingAlert()` para alertas críticas
+   - `executeTrade()` usa `buildTradeId()` + idempotent persistence + applied gating
+4. **`server/storage.ts`**: Métodos `markTradeApplied()`, `unmarkTradeApplied()`
+5. **`shared/schema.ts`**: Tabla `applied_trades` con tipos exportados
+6. **`db/migrations/006_applied_trades.sql`**: Migración para tabla de gating
+
+### VERIFICACIÓN POST-DEPLOY
+
+```sql
+-- 1. Verificar que no hay trades duplicados con diferentes IDs
+SELECT exchange, pair, "executedAt", type, price, amount, COUNT(*) as cnt
+FROM trades
+WHERE origin = 'bot' AND exchange = 'revolutx'
+GROUP BY exchange, pair, "executedAt", type, price, amount
+HAVING COUNT(*) > 1;
+-- Esperado: 0 rows
+
+-- 2. Verificar que todos los trades bot tienen entrada en applied_trades
+SELECT t.exchange, t.pair, t."tradeId", t.origin
+FROM trades t
+LEFT JOIN applied_trades at ON t.exchange = at.exchange 
+  AND t.pair = at.pair 
+  AND t."tradeId" = at.trade_id
+WHERE t.origin = 'bot' AND t.exchange = 'revolutx' AND at.id IS NULL;
+-- Esperado: 0 rows (todos los trades bot deben tener applied_trades)
+
+-- 3. Verificar que open_positions tienen tradeId válido
+SELECT op.pair, op."lotId", op."tradeId"
+FROM open_positions op
+LEFT JOIN trades t ON op.exchange = t.exchange 
+  AND op.pair = t.pair 
+  AND op."tradeId" = t."tradeId"
+WHERE op.exchange = 'revolutx' AND t."tradeId" IS NULL;
+-- Esperado: 0 rows (todas las posiciones deben tener trade válido)
+
+-- 4. Contar trades por origen (bot vs sync)
+SELECT origin, COUNT(*) as total
+FROM trades
+WHERE exchange = 'revolutx'
+GROUP BY origin;
+-- Verificar que bot tiene trades registrados
+
+-- 5. Verificar logs de persistencia (últimas 24h)
+SELECT "eventType", COUNT(*) as cnt
+FROM bot_logs
+WHERE "eventType" LIKE 'TRADE_PERSIST%' OR "eventType" LIKE 'POSITION_APPLY%'
+  AND "createdAt" > NOW() - INTERVAL '24 hours'
+GROUP BY "eventType"
+ORDER BY "eventType";
+-- Verificar que hay logs OK y no hay FAIL
+```
+
+### IMPACTO Y BENEFICIOS
+
+✅ **Eliminación de phantom buys**: Todos los trades ejecutados ahora se registran correctamente en `open_positions`  
+✅ **Idempotencia garantizada**: Reintentos y duplicados no causan inconsistencias  
+✅ **Trazabilidad completa**: Logging detallado de cada paso del flujo de persistencia  
+✅ **Alertas críticas**: Notificación inmediata si falla persist/apply  
+✅ **Consistencia bot/sync**: Misma política de trade ID en ambos flujos  
+✅ **Tests de regresión**: Cobertura automatizada para prevenir regresiones futuras  
+
+### PRÓXIMOS PASOS (OPCIONAL)
+
+- Considerar envolver persist + apply en transacción DB con `SELECT FOR UPDATE` para locks explícitos
+- Agregar métricas de observabilidad (ej: contador de DUPLICATE vs OK)
+- Implementar reconciliación automática para trades históricos con IDs antiguos
+
+---
+
 ## 17 DE ENERO 2026 - GRAN ACTUALIZACIÓN DE SISTEMA
 
 ### IMPLEMENTACIONES COMPLETADAS

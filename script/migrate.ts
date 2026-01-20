@@ -74,6 +74,11 @@ async function runMigration() {
     const tradesOriginSqlPath = path.resolve(process.cwd(), "db", "migrations", "005_trades_origin_and_dedupe.sql");
     await tryExecuteFile(db, tradesOriginSqlPath, "trades.origin/dedupe");
 
+    // applied_trades table for idempotent position updates
+    console.log("[migrate] Ensuring applied_trades table exists...");
+    const appliedTradesSqlPath = path.resolve(process.cwd(), "db", "migrations", "006_applied_trades.sql");
+    await tryExecuteFile(db, appliedTradesSqlPath, "applied_trades");
+
     // api_config table (credentials)
     console.log("[migrate] Ensuring api_config table exists...");
     await tryExecute(

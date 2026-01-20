@@ -25,8 +25,10 @@ import {
   type LotMatch,
   type InsertTradeFill,
   type InsertLotMatch,
+  type AppliedTrade,
   botConfig as botConfigTable,
   trades as tradesTable,
+  appliedTrades as appliedTradesTable,
   notifications as notificationsTable,
   marketData as marketDataTable,
   apiConfig as apiConfigTable,
@@ -63,11 +65,12 @@ export interface IStorage {
   updateApiConfig(config: Partial<InsertApiConfig>): Promise<ApiConfig>;
   
   createTrade(trade: InsertTrade): Promise<Trade>;
-  insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean }>;
+  insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }>;
   getTrades(limit?: number): Promise<Trade[]>;
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
+  getTradeByComposite(exchange: string, pair: string, tradeId: string): Promise<Trade | undefined>;
   updateTradeByKrakenOrderId(krakenOrderId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined>;
   getTradeByLotId(lotId: string): Promise<Trade | undefined>;
   getSellMatchingBuy(pair: string, buyLotId: string): Promise<Trade | undefined>;
@@ -105,6 +108,8 @@ export interface IStorage {
   deleteOpenPositionByLotId(lotId: string): Promise<void>;
   deleteOpenPositionsByExchange(exchange: string): Promise<number>;
   getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]>;
+  markTradeApplied(params: { exchange: string; pair: string; tradeId: string }): Promise<boolean>;
+  unmarkTradeApplied(params: { exchange: string; pair: string; tradeId: string }): Promise<void>;
   updateOpenPositionQty(lotId: string, qtyRemaining: string, qtyFilled: string): Promise<void>;
   initializeQtyRemainingForAll(): Promise<number>;
 
@@ -269,14 +274,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Fast insert for idempotent sync: attempt insert and ignore unique violations
-  async insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean }> {
+  async insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }> {
     try {
       this.validateTradeForInsert(trade);
-      await db.insert(tradesTable).values(trade);
-      return { inserted: true };
+      const [newTrade] = await db.insert(tradesTable).values(trade).returning();
+      return { inserted: true, trade: newTrade };
     } catch (e: any) {
       if (e?.code === '23505') {
-        return { inserted: false };
+        const exchange = trade.exchange || 'kraken';
+        const existing = await this.getTradeByComposite(exchange, trade.pair, trade.tradeId);
+        return { inserted: false, trade: existing };
       }
       throw e;
     }
@@ -466,6 +473,17 @@ export class DatabaseStorage implements IStorage {
   async getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined> {
     const trades = await db.select().from(tradesTable)
       .where(eq(tradesTable.krakenOrderId, krakenOrderId))
+      .limit(1);
+    return trades[0];
+  }
+
+  async getTradeByComposite(exchange: string, pair: string, tradeId: string): Promise<Trade | undefined> {
+    const trades = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.exchange, exchange),
+        eq(tradesTable.pair, pair),
+        eq(tradesTable.tradeId, tradeId)
+      ))
       .limit(1);
     return trades[0];
   }
@@ -748,6 +766,28 @@ export class DatabaseStorage implements IStorage {
       WHERE qty_remaining IS NULL
     `);
     return Number(result.rowCount || 0);
+  }
+
+  async markTradeApplied(params: { exchange: string; pair: string; tradeId: string }): Promise<boolean> {
+    const { exchange, pair, tradeId } = params;
+    const result = await db.execute(sql`
+      INSERT INTO applied_trades (exchange, pair, trade_id)
+      VALUES (${exchange}, ${pair}, ${tradeId})
+      ON CONFLICT (exchange, pair, trade_id)
+      DO NOTHING
+      RETURNING id
+    `);
+    return Number(result.rowCount || 0) > 0;
+  }
+
+  async unmarkTradeApplied(params: { exchange: string; pair: string; tradeId: string }): Promise<void> {
+    const { exchange, pair, tradeId } = params;
+    await db.delete(appliedTradesTable)
+      .where(and(
+        eq(appliedTradesTable.exchange, exchange),
+        eq(appliedTradesTable.pair, pair),
+        eq(appliedTradesTable.tradeId, tradeId)
+      ));
   }
 
   // Trade fills

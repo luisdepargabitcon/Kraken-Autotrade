@@ -187,6 +187,16 @@ export const trades = pgTable("trades", {
   exchangePairTradeIdUnique: unique().on(table.exchange, table.pair, table.tradeId),
 }));
 
+export const appliedTrades = pgTable("applied_trades", {
+  id: serial("id").primaryKey(),
+  exchange: text("exchange").notNull(),
+  pair: text("pair").notNull(),
+  tradeId: text("trade_id").notNull(),
+  appliedAt: timestamp("applied_at").notNull().defaultNow(),
+}, (table) => ({
+  exchangePairTradeUnique: unique().on(table.exchange, table.pair, table.tradeId),
+}));
+
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(),
@@ -451,5 +461,7 @@ export type InsertAiTradeSample = z.infer<typeof insertAiTradeSampleSchema>;
 export type InsertAiShadowDecision = z.infer<typeof insertAiShadowDecisionSchema>;
 export type InsertAiConfig = z.infer<typeof insertAiConfigSchema>;
 export type InsertTrainingTrade = z.infer<typeof insertTrainingTradeSchema>;
+export type AppliedTrade = typeof appliedTrades.$inferSelect;
+export type InsertAppliedTrade = typeof appliedTrades.$inferInsert;
 export type RegimeState = typeof regimeState.$inferSelect;
 export type InsertRegimeState = z.infer<typeof insertRegimeStateSchema>;

@@ -8,10 +8,10 @@ import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
 import { createHash } from "crypto";
-import { regimeState, type RegimeState } from "@shared/schema";
+import { regimeState, type RegimeState, type InsertTrade, type Trade } from "@shared/schema";
 import { db } from "../db";
-import { eq } from "drizzle-orm";
-import { computeDeterministicTradeId } from "../utils/tradeId";
+import { eq, sql } from "drizzle-orm";
+import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
@@ -878,6 +878,34 @@ export class TradingEngine {
     }
     this.sgAlertThrottle.set(key, now);
     return true;
+  }
+
+  private async emitOrderTrackingAlert(
+    alertType: "TRADE_PERSIST_FAIL" | "POSITION_APPLY_FAIL" | "ORDER_FILLED_BUT_UNTRACKED",
+    context: { pair: string; tradeId: string; exchange: string; type: string; error?: string }
+  ): Promise<void> {
+    const envInfo = environment.getInfo();
+    await botLogger.error("TRADE_FAILED", `Critical order tracking issue: ${alertType}`, {
+      alertType,
+      ...context,
+      env: envInfo.env,
+      instanceId: envInfo.instanceId,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (this.telegramService.isInitialized()) {
+      const emoji = "🚨";
+      const message = `${emoji} <b>ALERTA CRÍTICA</b> ${emoji}\n\n` +
+        `<b>${alertType}</b>\n\n` +
+        `Par: ${context.pair}\n` +
+        `Exchange: ${context.exchange}\n` +
+        `Tipo: ${context.type}\n` +
+        `Trade ID: <code>${context.tradeId}</code>\n` +
+        (context.error ? `Error: ${context.error}\n` : "") +
+        `\n⚠️ Requiere revisión manual inmediata`;
+      
+      await this.telegramService.sendAlertToMultipleChats(message, "errors");
+    }
   }
 
   private async sendSgEventAlert(
@@ -6009,8 +6037,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
         return false;
       }
       
-      const volumeNum = parseFloat(volume);
-      const totalUSD = volumeNum * price;
+      let volumeNum = parseFloat(volume);
+      let totalUSD = volumeNum * price;
       
       // === PUNTO 2: Autocompletar strategyMeta desde posición si falta ===
       if (!strategyMeta?.strategyId || !strategyMeta?.timeframe) {
@@ -6147,29 +6175,55 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         volume,
       });
 
-      const txid = Array.isArray((order as any).txid) ? (order as any).txid[0] : (order as any).txid;
-      if (!txid || typeof txid !== "string") {
+      const exchange = this.getTradingExchangeType();
+      const rawTxid = Array.isArray((order as any)?.txid)
+        ? (order as any)?.txid?.[0]
+        : (order as any)?.txid;
+      const rawOrderId = (order as any)?.orderId;
+      const txid = typeof rawTxid === 'string' ? rawTxid : undefined;
+      const externalOrderId = typeof rawOrderId === 'string' ? rawOrderId : undefined;
+      const externalId = txid ?? externalOrderId;
+
+      if (exchange === 'kraken' && (!externalId || typeof externalId !== 'string')) {
         log(`Orden sin txid - posible fallo`, "trading");
         return false;
       }
 
-      const exchange = this.getTradingExchangeType();
-      const tradeId = exchange === 'kraken' || exchange === 'revolutx'
-        ? `${exchange.toUpperCase()}-${txid}`
-        : computeDeterministicTradeId({
-          exchange,
-          pair,
-          executedAt: new Date(),
-          type,
-          price: price.toString(),
-          amount: volume,
-        });
-      
+      const resolvedOrderPrice = Number((order as any)?.price ?? (order as any)?.executedPrice ?? (order as any)?.average_price ?? (order as any)?.executed_price);
+      const resolvedOrderVolume = Number((order as any)?.volume ?? (order as any)?.executedVolume ?? (order as any)?.executed_size ?? (order as any)?.filled_size);
+      const resolvedOrderCost = Number((order as any)?.cost ?? (order as any)?.executed_value ?? (order as any)?.executed_notional ?? (order as any)?.executed_quote_size ?? (order as any)?.filled_value);
+
+      if (Number.isFinite(resolvedOrderPrice) && resolvedOrderPrice > 0) {
+        price = resolvedOrderPrice;
+      }
+      if (Number.isFinite(resolvedOrderVolume) && resolvedOrderVolume > 0) {
+        volumeNum = resolvedOrderVolume;
+      }
+      if ((!Number.isFinite(price) || price <= 0) && Number.isFinite(resolvedOrderCost) && resolvedOrderCost > 0 && volumeNum > 0) {
+        price = resolvedOrderCost / volumeNum;
+      }
+      volume = volumeNum.toFixed(8);
+      totalUSD = volumeNum * price;
+
+      const executedAt = new Date();
+      const priceStr = price.toString();
+      const amountStr = volumeNum.toFixed(8);
+      const tradeId = buildTradeId({
+        exchange,
+        pair,
+        executedAt,
+        type,
+        price: priceStr,
+        amount: amountStr,
+        externalId,
+      });
+
       // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
       let tradeEntryPrice: string | null = null;
       let tradeRealizedPnlUsd: string | null = null;
       let tradeRealizedPnlPct: string | null = null;
       let reasonWithContext = reason;
+
       
       if (type === "sell") {
         const entryPrice = sellContext?.entryPrice ?? null;
@@ -6198,270 +6252,290 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         }
       }
       
-      await storage.createTrade({
+      const tradeRecord: InsertTrade = {
         tradeId,
         exchange,
         origin: 'bot',
         pair,
         type,
-        price: price.toString(),
-        amount: volume,
+        price: priceStr,
+        amount: amountStr,
         status: "filled",
-        krakenOrderId: exchange === 'kraken' ? txid : undefined,
-        executedAt: new Date(),
-        entryPrice: tradeEntryPrice,
-        realizedPnlUsd: tradeRealizedPnlUsd,
-        realizedPnlPct: tradeRealizedPnlPct,
-      });
+        krakenOrderId: exchange === 'kraken' ? externalId : undefined,
+        executedAt,
+        entryPrice: tradeEntryPrice ?? undefined,
+        realizedPnlUsd: tradeRealizedPnlUsd ?? undefined,
+        realizedPnlPct: tradeRealizedPnlPct ?? undefined,
+      };
 
-      // volumeNum ya declarado arriba
-      if (type === "buy") {
-        this.currentUsdBalance -= volumeNum * price;
+      log(`[TRADE_PERSIST_START] ${pair} ${tradeId}`, "trading");
+      let persistedTrade: Trade | undefined;
+      try {
+        const { inserted, trade } = await storage.insertTradeIgnoreDuplicate(tradeRecord);
+        persistedTrade = trade ?? await storage.getTradeByComposite(exchange, pair, tradeId);
+        log(`[TRADE_PERSIST_${inserted ? 'OK' : 'DUPLICATE'}] ${pair} ${tradeId}`, "trading");
+      } catch (persistErr: any) {
+        await this.emitOrderTrackingAlert("TRADE_PERSIST_FAIL", {
+          pair,
+          tradeId,
+          exchange,
+          type,
+          error: persistErr?.message ?? String(persistErr),
+        });
+        throw persistErr;
+      }
 
-        let netBought = volumeNum;
-        if (preAssetBalance != null) {
-          const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-          let postAssetBalance = preAssetBalance;
-          for (let i = 0; i < 3; i++) {
-            try {
-              const postBalances = await this.getTradingExchange().getBalance();
-              postAssetBalance = this.getAssetBalance(pair, postBalances);
-              if (postAssetBalance > preAssetBalance) break;
-            } catch (balErr: any) {
-              log(`${pair}: Error obteniendo balance post (postBalance) para BUY neto: ${balErr.message}`, "trading");
-            }
-            await sleep(500);
-          }
-
-          const delta = Math.max(0, postAssetBalance - preAssetBalance);
-          if (delta > 0 && delta <= volumeNum * 1.05) {
-            netBought = delta;
-          } else if (delta > volumeNum * 1.05) {
-            log(`${pair}: BUY neto fuera de rango (delta=${delta}, requested=${volumeNum}). Usando requested volume para evitar mezclar HOLD.`, "trading");
-          } else {
-            log(`${pair}: BUY neto no detectado (delta=${delta}). Usando requested volume.`, "trading");
-          }
-        }
-
-        const existingPositions = this.getPositionsByPair(pair);
-        const existing = existingPositions[0]; // First position for DCA mode
-        let newPosition: OpenPosition;
-        
-        const entryStrategyId = strategyMeta?.strategyId || "momentum_cycle";
-        const entrySignalTf = strategyMeta?.timeframe || "cycle";
-        const signalConfidence = strategyMeta?.confidence;
-        
-        const currentConfig = await storage.getBotConfig();
-        const entryMode = currentConfig?.positionMode || "SINGLE";
-        
-        // In SMART_GUARD with multi-lot, always create new positions
-        const shouldCreateNewLot = entryMode === "SMART_GUARD" || !existing || existing.amount <= 0;
-        
-        if (!shouldCreateNewLot && existing) {
-          // DCA mode: update existing position
-          const totalAmount = existing.amount + netBought;
-          const avgPrice = (existing.amount * existing.entryPrice + netBought * price) / totalAmount;
-          // DCA: accumulate fees from both entries (use dynamic fee from active exchange)
-          const additionalEntryFee = volumeNum * price * (getTakerFeePct() / 100);
-          const totalEntryFee = (existing.entryFee || 0) + additionalEntryFee;
-          newPosition = { 
-            ...existing,
-            amount: totalAmount, 
-            entryPrice: avgPrice,
-            entryFee: totalEntryFee,
-            highestPrice: Math.max(existing.highestPrice, price),
-          };
-          this.openPositions.set(existing.lotId, newPosition);
-          log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry, totalFee=$${totalEntryFee.toFixed(4)}`, "trading");
+      const applyKey = { exchange, pair, tradeId };
+      let applyLockAcquired = false;
+      try {
+        const shouldApply = await storage.markTradeApplied(applyKey);
+        if (!shouldApply) {
+          log(`[POSITION_APPLY_DUPLICATE] ${pair} ${tradeId} (${type})`, "trading");
         } else {
-          // NEW POSITION: create snapshot of current config with unique lotId
-          const lotId = generateLotId(pair);
-          
-          const configSnapshot: ConfigSnapshot = {
-            stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
-            takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
-            trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
-            trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
-            positionMode: entryMode,
-          };
-          
-          // Add SMART_GUARD specific params using getSmartGuardParams() for per-pair override support
-          if (entryMode === "SMART_GUARD") {
-            const sgParams = this.getSmartGuardParams(pair, currentConfig);
-            configSnapshot.sgMinEntryUsd = sgParams.sgMinEntryUsd;
-            configSnapshot.sgAllowUnderMin = sgParams.sgAllowUnderMin;
-            configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
-            configSnapshot.sgFeeCushionPct = sgParams.sgFeeCushionPct;
-            configSnapshot.sgFeeCushionAuto = sgParams.sgFeeCushionAuto;
-            configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
-            configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
-            configSnapshot.sgTrailStepPct = sgParams.sgTrailStepPct;
-            configSnapshot.sgTpFixedEnabled = sgParams.sgTpFixedEnabled;
-            configSnapshot.sgTpFixedPct = sgParams.sgTpFixedPct;
-            configSnapshot.sgScaleOutEnabled = sgParams.sgScaleOutEnabled;
-            configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
-            configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
-            configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
-            
-            // Apply regime-based adjustments if enabled
-            const regimeEnabled = currentConfig?.regimeDetectionEnabled ?? false;
-            const adaptiveExitEnabled = currentConfig?.adaptiveExitEnabled ?? false;
-            
-            if (regimeEnabled || adaptiveExitEnabled) {
-              try {
-                const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
-                
-                // If adaptive exit is enabled, use ATR-based dynamic calculation
-                if (adaptiveExitEnabled) {
-                  // Get ATR from price history
-                  const history = this.priceHistory.get(pair) || [];
-                  const atrPercent = this.calculateATRPercent(history, 14);
-                  
-                  // Get configurable minBeFloorPct (default 2.0%)
-                  const minBeFloorPct = parseFloat(currentConfig?.minBeFloorPct?.toString() || "2.0");
-                  
-                  const atrExits = this.calculateAtrBasedExits(
-                    pair, price, atrPercent, regimeAnalysis.regime, true, history.length, minBeFloorPct
-                  );
-                  
-                  configSnapshot.stopLossPercent = atrExits.slPct;
-                  configSnapshot.sgBeAtPct = atrExits.beAtPct;
-                  configSnapshot.sgTrailDistancePct = atrExits.trailPct;
-                  configSnapshot.sgTpFixedPct = atrExits.tpPct;
-                  
-                  const fallbackNote = atrExits.usedFallback ? " [FALLBACK]" : "";
-                  log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied → SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
-                } else if (regimeEnabled) {
-                  // Static regime adjustments
-                  const regimeAdjusted = this.getRegimeAdjustedParams(
-                    {
-                      sgBeAtPct: configSnapshot.sgBeAtPct!,
-                      sgTrailDistancePct: configSnapshot.sgTrailDistancePct!,
-                      sgTrailStepPct: configSnapshot.sgTrailStepPct!,
-                      sgTpFixedPct: configSnapshot.sgTpFixedPct!,
-                    },
-                    regimeAnalysis.regime,
-                    true
-                  );
-                  configSnapshot.sgBeAtPct = regimeAdjusted.sgBeAtPct;
-                  configSnapshot.sgTrailDistancePct = regimeAdjusted.sgTrailDistancePct;
-                  configSnapshot.sgTrailStepPct = regimeAdjusted.sgTrailStepPct;
-                  configSnapshot.sgTpFixedPct = regimeAdjusted.sgTpFixedPct;
-                  log(`[REGIME] ${pair}: Snapshot ajustado para ${regimeAnalysis.regime} (BE=${regimeAdjusted.sgBeAtPct}%, Trail=${regimeAdjusted.sgTrailDistancePct}%, TP=${regimeAdjusted.sgTpFixedPct}%)`, "trading");
+          applyLockAcquired = true;
+          log(`[POSITION_APPLY_START] ${pair} ${tradeId} (${type})`, "trading");
+
+          if (type === "buy") {
+            this.currentUsdBalance -= volumeNum * price;
+
+            let netBought = volumeNum;
+            if (preAssetBalance != null) {
+              const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+              let postAssetBalance = preAssetBalance;
+              for (let i = 0; i < 3; i++) {
+                try {
+                  const postBalances = await this.getTradingExchange().getBalance();
+                  postAssetBalance = this.getAssetBalance(pair, postBalances);
+                  if (postAssetBalance > preAssetBalance) break;
+                } catch (balErr: any) {
+                  log(`${pair}: Error obteniendo balance post (postBalance) para BUY neto: ${balErr.message}`, "trading");
                 }
-              } catch (regimeErr: any) {
-                log(`[REGIME] ${pair}: Error ajustando snapshot, usando params base: ${regimeErr.message}`, "trading");
+                await sleep(500);
+              }
+
+              const delta = Math.max(0, postAssetBalance - preAssetBalance);
+              if (delta > 0 && delta <= volumeNum * 1.05) {
+                netBought = delta;
+              } else if (delta > volumeNum * 1.05) {
+                log(`${pair}: BUY neto fuera de rango (delta=${delta}, requested=${volumeNum}). Usando requested volume para evitar mezclar HOLD.`, "trading");
+              } else {
+                log(`${pair}: BUY neto no detectado (delta=${delta}). Usando requested volume.`, "trading");
               }
             }
-          }
-          
-          // Calculate entry fee for accurate P&L (two legs) - use dynamic fee from active exchange
-          const entryFee = volumeNum * price * (getTakerFeePct() / 100);
-          
-          newPosition = { 
-            lotId,
-            pair,
-            amount: netBought, 
-            entryPrice: price,
-            entryFee,
-            highestPrice: price,
-            openedAt: Date.now(),
-            entryStrategyId,
-            entrySignalTf,
-            signalConfidence,
-            signalReason: reason,
-            entryMode,
-            configSnapshot,
-            // SMART_GUARD initial state
-            sgBreakEvenActivated: false,
-            sgCurrentStopPrice: undefined,
-            sgTrailingActivated: false,
-            sgScaleOutDone: false,
-          };
-          this.openPositions.set(lotId, newPosition);
-          
-          const lotCount = this.countLotsForPair(pair);
-          if (entryMode === "SMART_GUARD") {
-            log(`NEW LOT #${lotCount}: ${pair} (${lotId}) - SMART_GUARD snapshot saved (BE=${configSnapshot.sgBeAtPct}%, trail=${configSnapshot.sgTrailDistancePct}%, TP=${configSnapshot.sgTpFixedEnabled ? configSnapshot.sgTpFixedPct + '%' : 'OFF'})`, "trading");
+
+            const existingPositions = this.getPositionsByPair(pair);
+            const existing = existingPositions[0];
+            let newPosition: OpenPosition;
+
+            const entryStrategyId = strategyMeta?.strategyId || "momentum_cycle";
+            const entrySignalTf = strategyMeta?.timeframe || "cycle";
+            const signalConfidence = strategyMeta?.confidence;
+
+            const currentConfig = await storage.getBotConfig();
+            const entryMode = currentConfig?.positionMode || "SINGLE";
+
+            const shouldCreateNewLot = entryMode === "SMART_GUARD" || !existing || existing.amount <= 0;
+
+            if (!shouldCreateNewLot && existing) {
+              const totalAmount = existing.amount + netBought;
+              const avgPrice = (existing.amount * existing.entryPrice + netBought * price) / totalAmount;
+              const additionalEntryFee = volumeNum * price * (getTakerFeePct() / 100);
+              const totalEntryFee = (existing.entryFee || 0) + additionalEntryFee;
+              newPosition = {
+                ...existing,
+                amount: totalAmount,
+                entryPrice: avgPrice,
+                entryFee: totalEntryFee,
+                highestPrice: Math.max(existing.highestPrice, price),
+              };
+              this.openPositions.set(existing.lotId, newPosition);
+              log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry, totalFee=$${totalEntryFee.toFixed(4)}`, "trading");
+            } else {
+              const lotId = generateLotId(pair);
+
+              const configSnapshot: ConfigSnapshot = {
+                stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+                takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+                trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+                trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+                positionMode: entryMode,
+              };
+
+              if (entryMode === "SMART_GUARD") {
+                const sgParams = this.getSmartGuardParams(pair, currentConfig);
+                configSnapshot.sgMinEntryUsd = sgParams.sgMinEntryUsd;
+                configSnapshot.sgAllowUnderMin = sgParams.sgAllowUnderMin;
+                configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
+                configSnapshot.sgFeeCushionPct = sgParams.sgFeeCushionPct;
+                configSnapshot.sgFeeCushionAuto = sgParams.sgFeeCushionAuto;
+                configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
+                configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
+                configSnapshot.sgTrailStepPct = sgParams.sgTrailStepPct;
+                configSnapshot.sgTpFixedEnabled = sgParams.sgTpFixedEnabled;
+                configSnapshot.sgTpFixedPct = sgParams.sgTpFixedPct;
+                configSnapshot.sgScaleOutEnabled = sgParams.sgScaleOutEnabled;
+                configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
+                configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
+                configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
+
+                const regimeEnabled = currentConfig?.regimeDetectionEnabled ?? false;
+                const adaptiveExitEnabled = currentConfig?.adaptiveExitEnabled ?? false;
+
+                if (regimeEnabled || adaptiveExitEnabled) {
+                  try {
+                    const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
+
+                    if (adaptiveExitEnabled) {
+                      const history = this.priceHistory.get(pair) || [];
+                      const atrPercent = this.calculateATRPercent(history, 14);
+                      const minBeFloorPct = parseFloat(currentConfig?.minBeFloorPct?.toString() || "2.0");
+
+                      const atrExits = this.calculateAtrBasedExits(
+                        pair, price, atrPercent, regimeAnalysis.regime, true, history.length, minBeFloorPct
+                      );
+
+                      configSnapshot.stopLossPercent = atrExits.slPct;
+                      configSnapshot.sgBeAtPct = atrExits.beAtPct;
+                      configSnapshot.sgTrailDistancePct = atrExits.trailPct;
+                      configSnapshot.sgTpFixedPct = atrExits.tpPct;
+
+                      const fallbackNote = atrExits.usedFallback ? " [FALLBACK]" : "";
+                      log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied → SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
+                    } else if (regimeEnabled) {
+                      const regimeAdjusted = this.getRegimeAdjustedParams(
+                        {
+                          sgBeAtPct: configSnapshot.sgBeAtPct!,
+                          sgTrailDistancePct: configSnapshot.sgTrailDistancePct!,
+                          sgTrailStepPct: configSnapshot.sgTrailStepPct!,
+                          sgTpFixedPct: configSnapshot.sgTpFixedPct!,
+                        },
+                        regimeAnalysis.regime,
+                        true
+                      );
+                      configSnapshot.sgBeAtPct = regimeAdjusted.sgBeAtPct;
+                      configSnapshot.sgTrailDistancePct = regimeAdjusted.sgTrailDistancePct;
+                      configSnapshot.sgTrailStepPct = regimeAdjusted.sgTrailStepPct;
+                      configSnapshot.sgTpFixedPct = regimeAdjusted.sgTpFixedPct;
+                      log(`[REGIME] ${pair}: Snapshot ajustado para ${regimeAnalysis.regime} (BE=${regimeAdjusted.sgBeAtPct}%, Trail=${regimeAdjusted.sgTrailDistancePct}%, TP=${regimeAdjusted.sgTpFixedPct}%)`, "trading");
+                    }
+                  } catch (regimeErr: any) {
+                    log(`[REGIME] ${pair}: Error ajustando snapshot, usando params base: ${regimeErr.message}`, "trading");
+                  }
+                }
+              }
+
+              const entryFee = volumeNum * price * (getTakerFeePct() / 100);
+
+              newPosition = {
+                lotId,
+                pair,
+                amount: netBought,
+                entryPrice: price,
+                entryFee,
+                highestPrice: price,
+                openedAt: Date.now(),
+                entryStrategyId,
+                entrySignalTf,
+                signalConfidence,
+                signalReason: reason,
+                entryMode,
+                configSnapshot,
+                sgBreakEvenActivated: false,
+                sgCurrentStopPrice: undefined,
+                sgTrailingActivated: false,
+                sgScaleOutDone: false,
+              };
+              this.openPositions.set(lotId, newPosition);
+
+              const lotCount = this.countLotsForPair(pair);
+              if (entryMode === "SMART_GUARD") {
+                log(`NEW LOT #${lotCount}: ${pair} (${lotId}) - SMART_GUARD snapshot saved (BE=${configSnapshot.sgBeAtPct}%, trail=${configSnapshot.sgTrailDistancePct}%, TP=${configSnapshot.sgTpFixedEnabled ? configSnapshot.sgTpFixedPct + '%' : 'OFF'})`, "trading");
+              } else {
+                log(`NEW POSITION: ${pair} (${lotId}) - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
+              }
+            }
+
+            if (!newPosition.aiSampleId) {
+              try {
+                const features = aiService.extractFeatures({
+                  rsi: 50,
+                  confidence: toConfidencePct(signalConfidence, 50),
+                });
+                const sampleTradeId = `SAMPLE-${Date.now()}-${pair}`;
+                const sample = await storage.saveAiSample({
+                  tradeId: sampleTradeId,
+                  pair,
+                  side: "buy",
+                  entryPrice: price.toString(),
+                  entryTs: new Date(),
+                  featuresJson: features,
+                });
+                if (sample?.id) {
+                  newPosition.aiSampleId = sample.id;
+                  log(`[AI] Sample #${sample.id} guardado para ${pair}`, "trading");
+                }
+              } catch (aiErr: any) {
+                log(`[AI] Error guardando sample: ${aiErr.message}`, "trading");
+              }
+            }
+
+            await this.savePositionToDB(pair, newPosition);
           } else {
-            log(`NEW POSITION: ${pair} (${lotId}) - snapshot saved (SL=${configSnapshot.stopLossPercent}%, TP=${configSnapshot.takeProfitPercent}%, trailing=${configSnapshot.trailingStopEnabled}, mode=${entryMode})`, "trading");
+            this.currentUsdBalance += volumeNum * price;
+
+            if (sellContext) {
+              const pnlGross = (price - sellContext.entryPrice) * volumeNum;
+              const exitFee = volumeNum * price * (getTakerFeePct() / 100);
+              const sellRatio = (sellContext.sellAmount && sellContext.positionAmount && sellContext.positionAmount > 0)
+                ? sellContext.sellAmount / sellContext.positionAmount
+                : 1;
+              const proratedEntryFee = (sellContext.entryFee || 0) * sellRatio;
+              const pnlNet = pnlGross - proratedEntryFee - exitFee;
+
+              this.dailyPnL += pnlNet;
+
+              log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${getTakerFeePct()}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
+              log(`P&L de operación: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
+
+              if (sellContext.aiSampleId) {
+                try {
+                  await storage.updateAiSample(sellContext.aiSampleId, {
+                    exitPrice: price.toString(),
+                    exitTs: new Date(),
+                    pnlGross: pnlGross.toString(),
+                    pnlNet: pnlNet.toString(),
+                    labelWin: pnlNet > 0 ? 1 : 0,
+                    isComplete: true,
+                  });
+                  log(`[AI] Sample #${sellContext.aiSampleId} actualizado: PnLGross=${pnlGross.toFixed(2)}, PnLNet=${pnlNet.toFixed(2)} (${pnlNet > 0 ? 'WIN' : 'LOSS'})`, "trading");
+                } catch (aiErr: any) {
+                  log(`[AI] Error actualizando sample: ${aiErr.message}`, "trading");
+                }
+              }
+            } else {
+              log(`[WARN] Emergency SELL completado sin sellContext para ${pair} - P&L no registrado.`, "trading");
+            }
           }
+
+          log(`[POSITION_APPLY_OK] ${pair} ${tradeId} (${type})`, "trading");
         }
-        
-        // AI Sample collection: save features for ALL buy entries (not just new positions)
-        if (!newPosition.aiSampleId) {
+      } catch (applyErr: any) {
+        log(`[POSITION_APPLY_FAIL] ${pair} ${tradeId} (${type}): ${applyErr.message}`, "trading");
+        if (applyLockAcquired) {
           try {
-            const features = aiService.extractFeatures({
-              rsi: 50, // Will be enriched from actual indicators in future
-              confidence: toConfidencePct(signalConfidence, 50),
-            });
-            const sampleTradeId = `SAMPLE-${Date.now()}-${pair}`;
-            const sample = await storage.saveAiSample({
-              tradeId: sampleTradeId,
-              pair,
-              side: "buy",
-              entryPrice: price.toString(),
-              entryTs: new Date(),
-              featuresJson: features,
-            });
-            if (sample?.id) {
-              newPosition.aiSampleId = sample.id;
-              log(`[AI] Sample #${sample.id} guardado para ${pair}`, "trading");
-            }
-          } catch (aiErr: any) {
-            log(`[AI] Error guardando sample: ${aiErr.message}`, "trading");
+            await storage.unmarkTradeApplied(applyKey);
+          } catch (rollbackErr: any) {
+            log(`[POSITION_APPLY_ROLLBACK_FAIL] ${pair} ${tradeId}: ${rollbackErr.message}`, "trading");
           }
         }
-        
-        await this.savePositionToDB(pair, newPosition);
-      } else {
-        // SELL: Update balance and P&L tracking
-        // Note: Position management for sells is now handled by the callers 
-        // (checkSinglePositionSLTP, checkSmartGuardExit, forceClosePosition)
-        // which have the lotId context. This block only updates balance/P&L metrics.
-        this.currentUsdBalance += volumeNum * price;
-        
-        // Calculate P&L using sellContext if provided (for correct per-lot tracking)
-        // TWO-LEG FEE CALCULATION: pnlNet = pnlGross - entryFee - exitFee
-        if (sellContext) {
-          const pnlGross = (price - sellContext.entryPrice) * volumeNum;
-          
-          // Calculate fees for this sale (prorate entryFee if partial sell) - use dynamic fee
-          const exitFee = volumeNum * price * (getTakerFeePct() / 100);
-          const sellRatio = (sellContext.sellAmount && sellContext.positionAmount && sellContext.positionAmount > 0) 
-            ? sellContext.sellAmount / sellContext.positionAmount 
-            : 1;
-          const proratedEntryFee = (sellContext.entryFee || 0) * sellRatio;
-          const pnlNet = pnlGross - proratedEntryFee - exitFee;
-          
-          this.dailyPnL += pnlNet;
-          
-          // [FEES_DIAG] Diagnostic log for fee tracking
-          log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${getTakerFeePct()}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
-          log(`P&L de operación: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
-          
-          // AI Sample update: mark sample complete with PnL result
-          if (sellContext.aiSampleId) {
-            try {
-              await storage.updateAiSample(sellContext.aiSampleId, {
-                exitPrice: price.toString(),
-                exitTs: new Date(),
-                pnlGross: pnlGross.toString(),
-                pnlNet: pnlNet.toString(),
-                labelWin: pnlNet > 0 ? 1 : 0,
-                isComplete: true,
-              });
-              log(`[AI] Sample #${sellContext.aiSampleId} actualizado: PnLGross=${pnlGross.toFixed(2)}, PnLNet=${pnlNet.toFixed(2)} (${pnlNet > 0 ? 'WIN' : 'LOSS'})`, "trading");
-            } catch (aiErr: any) {
-              log(`[AI] Error actualizando sample: ${aiErr.message}`, "trading");
-            }
-          }
-        } else {
-          // C1: sellContext no proporcionado - ya validado antes de ejecutar orden
-          // Si llegamos aquí, es emergency exit permitido (P&L no registrado)
-          log(`[WARN] Emergency SELL completado sin sellContext para ${pair} - P&L no registrado.`, "trading");
-        }
-        // Position deletion is handled by the caller (checkSinglePositionSLTP, checkSmartGuardExit, etc.)
+        await this.emitOrderTrackingAlert("POSITION_APPLY_FAIL", {
+          pair,
+          tradeId,
+          exchange,
+          type,
+          error: applyErr?.message ?? String(applyErr),
+        });
+        throw applyErr;
       }
 
       const emoji = type === "buy" ? "🟢" : "🔴";
@@ -6533,12 +6607,12 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // Only runs for real sells - DRY_RUN returns early at line ~3161
       // Triple guard: check dryRunMode AND executionMeta.dryRun for belt-and-suspenders safety
       const isSimulation = this.dryRunMode || (executionMeta?.dryRun ?? false);
-      if (type === "sell" && !isSimulation) {
+      if (type === "sell" && !isSimulation && externalId) {
         try {
           const fee = volumeNum * price * (getTakerFeePct() / 100); // Use dynamic fee from active exchange
           await storage.upsertTradeFill({
-            txid,
-            orderId: txid,
+            txid: externalId,
+            orderId: externalId,
             pair,
             type: "sell",
             price: price.toString(),
@@ -6549,7 +6623,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             matched: false,
           });
           
-          const sellFill = await storage.getTradeFillByTxid(txid);
+          const sellFill = await storage.getTradeFillByTxid(externalId);
           if (sellFill) {
             const matchResult = await fifoMatcher.processSellFill(sellFill);
             log(`[FIFO] Auto-matched sell ${txid}: matched=${matchResult.totalMatched.toFixed(8)}, lots_closed=${matchResult.lotsClosed}, pnl=$${matchResult.pnlNet.toFixed(2)}`, "trading");

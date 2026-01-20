@@ -18,7 +18,7 @@ import { z } from "zod";
 import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertService";
 import cron from "node-cron";
 import http from "http";
-import { computeDeterministicTradeId } from "./utils/tradeId";
+import { buildTradeId } from "./utils/tradeId";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -2227,19 +2227,20 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 maxExecutedAtSeenMs = executedAtMs;
               }
 
-              const priceStr = n.price != null ? String(n.price) : '';
-              const amountStr = n.amount != null ? String(n.amount) : '';
+              const priceStr = n.price != null ? String(n.price) : "0";
+              const amountStr = n.amount != null ? String(n.amount) : "0";
 
-              const tradeIdFinal = n.tradeId
-                ? String(n.tradeId)
-                : computeDeterministicTradeId({
-                  exchange: 'revolutx',
-                  pair,
-                  executedAt: n.executedAt,
-                  type: n.type,
-                  price: priceStr,
-                  amount: amountStr,
-                });
+              const canonicalTrade = {
+                exchange: "revolutx",
+                pair,
+                executedAt: n.executedAt,
+                type: n.type,
+                price: priceStr,
+                amount: amountStr,
+                externalId: n.tradeId ? String(n.tradeId) : undefined,
+              } as const;
+
+              const tradeIdFinal = buildTradeId(canonicalTrade);
 
               try {
                 const { inserted } = await storage.insertTradeIgnoreDuplicate({
