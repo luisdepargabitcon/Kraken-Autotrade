@@ -765,22 +765,19 @@ export async function registerRoutes(
 
         const ex = ((pos as any).exchange as string | undefined) || 'kraken';
         try {
-          if (ex === 'revolutx' && revolutXService.isInitialized()) {
-            const ticker = await revolutXService.getTicker(pos.pair);
-            currentPrice = ticker.last;
-            console.log(`[open-positions] ${pos.pair} (RevolutX): precio actual = $${currentPrice}`);
-          } else if (krakenService.isInitialized()) {
+          // RevolutX no tiene endpoint de ticker - usar Kraken para precio actual
+          if (krakenService.isInitialized()) {
             const krakenPair = krakenService.formatPair(pos.pair);
             const ticker = await krakenService.getTickerRaw(krakenPair);
             const tickerData: any = Object.values(ticker)[0];
             if (tickerData?.c?.[0]) {
               currentPrice = parseFloat(tickerData.c[0]);
-              console.log(`[open-positions] ${pos.pair} (Kraken): precio actual = $${currentPrice}`);
+              console.log(`[open-positions] ${pos.pair} (${ex}): precio actual de Kraken = $${currentPrice}`);
             } else {
-              console.warn(`[open-positions] ${pos.pair} (Kraken): ticker sin precio válido`, tickerData);
+              console.warn(`[open-positions] ${pos.pair} (${ex}): ticker sin precio válido`, tickerData);
             }
           } else {
-            console.warn(`[open-positions] ${pos.pair}: exchange ${ex} no inicializado`);
+            console.warn(`[open-positions] ${pos.pair}: Kraken no inicializado, no se puede obtener precio`);
           }
 
           if (currentPrice > 0) {

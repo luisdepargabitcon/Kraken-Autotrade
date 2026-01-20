@@ -284,53 +284,16 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getTicker(pair: string): Promise<Ticker> {
-    // RevolutX no tiene endpoint público de ticker que funcione
-    // Usar orderbook directamente (método que ya funciona)
-    return this.getTickerFromOrderbook(pair);
+    // RevolutX NO tiene endpoint público de ticker ni orderbook
+    // El endpoint /api/1.0/orderbook NO EXISTE (404)
+    // Usar último trade del historial como fallback
+    throw new Error(`RevolutX ticker not available - use Kraken for price data. Pair: ${pair}`);
   }
 
   private async getTickerFromOrderbook(pair: string): Promise<Ticker> {
-    const symbol = this.formatPair(pair);
-    // Fallback to authenticated orderbook endpoint
-    const path = '/api/1.0/orderbook';
-    const queryString = `symbol=${symbol}`;
-    const fullUrl = `${API_BASE_URL}${path}?${queryString}`;
-    
-    try {
-      const headers = this.initialized ? this.getHeaders('GET', path, queryString) : {};
-      const response = await fetch(fullUrl, { headers });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[revolutx] getTickerFromOrderbook response:', response.status, errorText);
-        throw new Error(`Revolut X API error: ${response.status}`);
-      }
-      
-      const data = await response.json() as any;
-      
-      const bids = data.bids || [];
-      const asks = data.asks || [];
-      
-      const bestBid = bids.length > 0 ? parseFloat(bids[0].price || bids[0][0] || '0') : 0;
-      const bestAsk = asks.length > 0 ? parseFloat(asks[0].price || asks[0][0] || '0') : 0;
-      const last = (bestBid + bestAsk) / 2;
-      
-      // SAFETY: Validate prices are finite
-      if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || !Number.isFinite(last)) {
-        console.error('[revolutx] getTickerFromOrderbook INVALID_PRICE:', { pair, bestBid, bestAsk, last });
-        throw new Error(`Invalid ticker price for ${pair}: bid=${bestBid}, ask=${bestAsk}`);
-      }
-      
-      return {
-        bid: bestBid,
-        ask: bestAsk,
-        last: last,
-        volume24h: 0
-      };
-    } catch (error: any) {
-      console.error('[revolutx] getTickerFromOrderbook error:', error.message);
-      throw error;
-    }
+    // DISABLED: Este endpoint NO EXISTE en RevolutX API (404)
+    // El endpoint /api/1.0/orderbook devuelve "Endpoint GET /api/1.0/orderbook not found"
+    throw new Error(`RevolutX orderbook endpoint does not exist (404). Use Kraken for market data.`);
   }
 
   async getOHLC(pair: string, interval: number = 5): Promise<OHLC[]> {
