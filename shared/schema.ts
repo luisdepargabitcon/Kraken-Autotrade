@@ -465,3 +465,30 @@ export type AppliedTrade = typeof appliedTrades.$inferSelect;
 export type InsertAppliedTrade = typeof appliedTrades.$inferInsert;
 export type RegimeState = typeof regimeState.$inferSelect;
 export type InsertRegimeState = z.infer<typeof insertRegimeStateSchema>;
+
+// Master Backups Table
+export const masterBackups = pgTable("master_backups", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  originalName: text("original_name"),
+  type: text("type").notNull(), // 'database', 'code', 'full'
+  filePath: text("file_path").notNull(),
+  size: text("size").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  markedAsMasterAt: timestamp("marked_as_master_at").notNull().defaultNow(),
+  metrics: jsonb("metrics"), // Bot metrics at backup time
+  systemInfo: jsonb("system_info"), // System info at backup time
+  tags: text("tags").array().notNull().default(sql`ARRAY[]::text[]`),
+  priority: integer("priority").notNull().default(10),
+  protection: text("protection").notNull().default('permanent'),
+});
+
+export const insertMasterBackupSchema = createInsertSchema(masterBackups).omit({
+  id: true,
+  createdAt: true,
+  markedAsMasterAt: true,
+});
+
+export type MasterBackup = typeof masterBackups.$inferSelect;
+export type InsertMasterBackup = z.infer<typeof insertMasterBackupSchema>;

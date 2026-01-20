@@ -208,6 +208,165 @@ tail -f /opt/krakenbot-staging/backups/cron.log
 
 ---
 
+## 💎 SISTEMA DE BACKUPS MAESTROS (GOLDEN BACKUPS)
+
+### **¿Qué es un Backup Maestro?**
+
+Un backup maestro es un **punto de restauración confiable** marcado cuando el bot está funcionando perfectamente. Sirve como última línea de defensa ante fallos graves.
+
+### **Características de Backups Maestros**
+
+- ⭐ **Protección absoluta**: NUNCA se borran automáticamente
+- 🔒 **Inmutables**: No se pueden modificar (solo reemplazar)
+- 📌 **Fácil identificación**: Badge dorado en UI
+- 🚀 **Restauración rápida**: Botón destacado "Restaurar Maestro"
+- 📝 **Metadata extendida**: Notas del usuario, métricas del bot
+- 🎯 **Límite**: Máximo 2 backups maestros simultáneos
+
+### **Cómo Marcar un Backup como Maestro**
+
+#### **Desde la UI:**
+1. Ir a la pestaña "Backups"
+2. Localizar el backup deseado en la lista
+3. Click en el icono de estrella ⭐
+4. Agregar notas descriptivas (opcional)
+5. Confirmar
+
+#### **Desde API:**
+```bash
+curl -X POST http://localhost:3020/api/backups/backup_20260120/set-master \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notes": "Bot estable después de fix phantom buys. PnL positivo, sin errores en 48h",
+    "captureMetrics": true
+  }'
+```
+
+### **Metadata Capturada Automáticamente**
+
+Cuando marcas un backup como maestro, el sistema captura:
+
+```json
+{
+  "metrics": {
+    "totalTrades": 156,
+    "openPositions": 3,
+    "totalPnlUsd": 234.50,
+    "uptimeHours": 48,
+    "lastErrorAt": null,
+    "activeExchange": "revolutx",
+    "activePairs": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "botVersion": "commit-14be6b7",
+    "gitBranch": "main"
+  },
+  "systemInfo": {
+    "nodeVersion": "20.x",
+    "dbVersion": "PostgreSQL 16",
+    "diskSpace": "45GB available",
+    "memoryUsage": "512MB"
+  }
+}
+```
+
+### **Cuándo Crear un Backup Maestro**
+
+✅ **Momentos ideales:**
+- Después de un fix exitoso (ej: phantom buys resuelto)
+- Bot funcionando establemente por 24-48 horas
+- PnL positivo y sin errores
+- Antes de cambios arriesgados
+- Después de optimización de estrategia exitosa
+
+❌ **Evitar marcar cuando:**
+- Bot tiene errores recientes
+- Cambios no probados
+- PnL negativo o inestable
+- Menos de 12 horas de uptime
+
+### **Restaurar un Backup Maestro**
+
+#### **Desde la UI:**
+1. Ir a sección "Backups Maestros"
+2. Click en "Restaurar" en el backup maestro
+3. Leer advertencias cuidadosamente
+4. Escribir "RESTAURAR MAESTRO" exactamente
+5. Confirmar
+
+⚠️ **ADVERTENCIA**: La restauración es irreversible. Se perderán todos los cambios posteriores al backup.
+
+#### **Desde Terminal:**
+```bash
+cd /opt/krakenbot-staging/scripts
+./restore-database.sh db_golden_stable_20260120
+```
+
+### **Gestión de Backups Maestros**
+
+#### **Desmarcar un Maestro:**
+```bash
+curl -X POST http://localhost:3020/api/backups/golden_stable/unmark-master
+```
+
+#### **Reemplazar Maestro:**
+Cuando intentas marcar un 3er backup como maestro, el sistema pregunta:
+- Reemplazar el anterior (pasa a regular)
+- Mantener ambos (máximo 2)
+- Cancelar
+
+#### **Protección en Scripts Bash:**
+Los scripts de limpieza automática NUNCA eliminan:
+- Backups que empiezan con `golden_`, `master_`, `pre_`, `db_`
+- Backups marcados como maestros en la base de datos
+- Solo se eliminan backups automáticos (`backup_*`) mayores a 3 días
+
+### **Flujos de Trabajo Recomendados**
+
+#### **Flujo 1: Después de Fix Exitoso**
+```
+1. Fix implementado y testeado
+2. Bot corriendo 24-48h sin errores
+3. Crear backup completo: "golden_post_phantom_fix"
+4. Marcar como maestro con notas detalladas
+5. Sistema captura métricas automáticamente
+6. Badge dorado aparece en UI
+```
+
+#### **Flujo 2: Antes de Cambio Arriesgado**
+```
+1. Bot estable actualmente
+2. Crear backup maestro: "golden_pre_risky_change"
+3. Hacer cambios arriesgados
+4. Si falla → Restaurar maestro en 1 click
+5. Si funciona → Crear nuevo maestro, reemplazar anterior
+```
+
+#### **Flujo 3: Mantenimiento de Maestros**
+```
+1. Mantener siempre 1 maestro "actual" (última versión estable)
+2. Mantener 1 maestro "anterior" (versión estable previa)
+3. Al crear nuevo maestro, eliminar el más antiguo
+4. Rotar maestros cada 1-2 semanas si bot está estable
+```
+
+### **Acceso desde Panel UI**
+
+El panel de backups muestra:
+
+**Sección de Backups Maestros:**
+- Card destacado con fondo dorado
+- Nombre del backup
+- Notas del usuario
+- Fecha de creación
+- Métricas al momento del backup
+- Botones: Restaurar | Editar Notas | Desmarcar
+
+**Sección de Backups Regulares:**
+- Tabla con todos los backups
+- Icono de estrella para marcar como maestro
+- Acciones: Restaurar | Descargar | Eliminar
+
+---
+
 ## 📚 MEJORES PRÁCTICAS
 
 ### **1. Frecuencia de Backups**

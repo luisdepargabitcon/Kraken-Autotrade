@@ -95,12 +95,14 @@ echo ""
 echo -e "${YELLOW}=== BACKUPS DISPONIBLES ===${NC}"
 ls -lh "${BACKUP_DIR}" | grep -v "^total" | tail -5
 
-# Limpiar backups antiguos (mantener últimos 7 días)
+# Limpiar backups antiguos (mantener últimos 3 días, NUNCA eliminar maestros)
 echo ""
-echo -e "${YELLOW}[Limpieza] Eliminando backups antiguos (>7 días)...${NC}"
-find "${BACKUP_DIR}" -name "backup_*.sql.gz" -type f -mtime +7 -delete
-DELETED_COUNT=$(find "${BACKUP_DIR}" -name "backup_*.sql.gz" -type f -mtime +7 2>/dev/null | wc -l)
-echo "Backups antiguos eliminados: ${DELETED_COUNT}"
+echo -e "${YELLOW}[Limpieza] Eliminando backups automáticos antiguos (>3 días)...${NC}"
+# Solo eliminar backups automáticos (backup_*), NUNCA los que empiezan con db_, pre_, golden_, master_
+find "${BACKUP_DIR}" -name "backup_*.sql.gz" -type f -mtime +3 -delete
+DELETED_COUNT=$(find "${BACKUP_DIR}" -name "backup_*.sql.gz" -type f -mtime +3 2>/dev/null | wc -l)
+echo "Backups automáticos antiguos eliminados: ${DELETED_COUNT}"
+echo -e "${GREEN}✓ Backups maestros y manuales protegidos (nunca se eliminan automáticamente)${NC}"
 
 echo ""
 echo -e "${GREEN}=== BACKUP COMPLETADO EXITOSAMENTE ===${NC}"
