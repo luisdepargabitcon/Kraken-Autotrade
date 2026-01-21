@@ -4,8 +4,9 @@
 
 set -eu
 
-# Configuración
-BACKUP_DIR="/opt/krakenbot-staging/backups/database"
+# Configuración - usar env variable o fallback
+BACKUP_BASE_DIR="${BACKUP_DIR:-/app/backups}"
+BACKUP_DIR="${BACKUP_BASE_DIR}/database"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="${1:-backup_${TIMESTAMP}}"
 BACKUP_FILE="${BACKUP_DIR}/${BACKUP_NAME}.sql"

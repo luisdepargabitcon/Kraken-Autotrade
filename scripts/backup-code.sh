@@ -4,12 +4,13 @@
 
 set -eu
 
-# Configuración
-BACKUP_DIR="/opt/krakenbot-staging/backups/code"
+# Configuración - usar env variables o fallback
+BACKUP_BASE_DIR="${BACKUP_DIR:-/app/backups}"
+BACKUP_DIR="${BACKUP_BASE_DIR}/code"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="${1:-code_${TIMESTAMP}}"
 BACKUP_FILE="${BACKUP_DIR}/${BACKUP_NAME}.tar.gz"
-PROJECT_DIR="/opt/krakenbot-staging"
+PROJECT_DIR="${PROJECT_DIR:-/app}"
 
 # Colores para output
 GREEN='\033[0;32m'

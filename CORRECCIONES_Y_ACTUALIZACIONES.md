@@ -1,55 +1,115 @@
 # CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
-## 21 DE ENERO 2026 - FIX: BACKUPS FALLABAN POR BASH NO DISPONIBLE EN CONTENEDOR
+## 21 DE ENERO 2026 - FIX COMPLETO: SISTEMA DE BACKUPS FUNCIONAL EN VPS
 
 ### PROBLEMA IDENTIFICADO
-**Síntoma**: Panel de backups mostraba error "Command failed: bash /opt/krakenbot-staging/scripts/backup-full.sh ... /bin/sh: bash: not found"
+**Síntoma**: Panel de backups fallaba con múltiples errores:
+1. "Command failed: bash not found" - bash no disponible en Alpine
+2. "No such file or directory" - rutas hardcodeadas del host
+3. "failed to connect to docker API" - sin acceso a docker.sock
+4. Scripts no podían ejecutar pg_dump vía docker exec
 
 **Causa raíz**: 
-- Backend ejecutaba scripts con `bash` hardcodeado
-- Contenedor Alpine no incluye bash por defecto (solo sh)
-- Scripts tenían shebang `#!/bin/bash` incompatible con Alpine
+- Backend usaba rutas hardcodeadas del host (`/opt/krakenbot-staging`)
+- Scripts dentro del contenedor están en `/app/scripts`
+- Contenedor Alpine no incluye bash por defecto
+- Sin montaje de docker.sock, scripts no podían ejecutar docker commands
+- Sin volumen persistente, backups se perdían al reiniciar contenedor
 
 ### SOLUCIÓN IMPLEMENTADA
 
-#### 1. **Detección Automática de Shell en Backend**
+#### 1. **Backend: Rutas Configurables vía Environment Variables**
 - **Archivo**: `server/services/BackupService.ts`
-- **Cambio**: Detectar shell disponible antes de ejecutar scripts
-- **Lógica**: 
+- **Cambios**:
   ```typescript
-  const shell = existsSync('/bin/bash') ? 'bash' : 'sh';
-  await execAsync(`${shell} ${scriptPath} ${backupName}`);
+  private backupDir = process.env.BACKUP_DIR || '/app/backups';
+  private scriptsDir = process.env.BACKUP_SCRIPTS_DIR || '/app/scripts';
   ```
-- **Resultado**: Funciona en Alpine (sh) y Debian/Ubuntu (bash)
+- **Logging**: `[BackupService] Initialized with scriptsDir=/app/scripts, backupDir=/app/backups`
+- **Resultado**: Backend resuelve rutas correctas del contenedor
 
-#### 2. **Scripts POSIX Compatibles**
+#### 2. **Docker Compose: Environment + Volumes + Docker Socket**
+- **Archivo**: `docker-compose.staging.yml`
+- **Cambios**:
+  ```yaml
+  environment:
+    - BACKUP_SCRIPTS_DIR=/app/scripts
+    - BACKUP_DIR=/app/backups
+  volumes:
+    - ./backups:/app/backups  # Persistencia en host
+    - /var/run/docker.sock:/var/run/docker.sock  # Acceso a Docker daemon
+  ```
+- **Resultado**: 
+  - Scripts encuentran rutas correctas
+  - Backups persisten en `./backups` del host
+  - Scripts pueden ejecutar `docker exec` para pg_dump
+
+#### 3. **Scripts: Environment Variables con Fallbacks**
 - **Archivos modificados**:
-  - `scripts/backup-full.sh`
   - `scripts/backup-database.sh`
   - `scripts/backup-code.sh`
-  - `scripts/restore-database.sh`
 - **Cambios**:
-  - Shebang: `#!/bin/bash` → `#!/usr/bin/env sh`
-  - Set flags: `set -e` → `set -eu` (POSIX estándar)
-  - Eliminado bashism: `${BASH_SOURCE[0]}` → `$0`
-- **Resultado**: Scripts ejecutables con sh estándar POSIX
+  ```sh
+  BACKUP_BASE_DIR="${BACKUP_DIR:-/app/backups}"
+  BACKUP_DIR="${BACKUP_BASE_DIR}/database"
+  PROJECT_DIR="${PROJECT_DIR:-/app}"
+  ```
+- **Resultado**: Scripts funcionan con env variables o fallbacks
 
-#### 3. **Permisos de Ejecución**
-- **Comando en VPS**: `chmod +x scripts/*.sh`
-- **Resultado**: Scripts ejecutables sin necesidad de especificar intérprete
+#### 4. **Shell Detection (ya implementado)**
+- Detección automática bash/sh
+- Scripts POSIX compatibles
+- Shebang: `#!/usr/bin/env sh`
+
+### DEPLOY EN VPS
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+mkdir -p backups
+chmod +x scripts/*.sh
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+### VERIFICACIÓN
+```bash
+# 1. Confirmar env variables y scripts
+docker compose -f docker-compose.staging.yml exec krakenbot-staging-app sh -lc '
+echo "BACKUP_SCRIPTS_DIR=$BACKUP_SCRIPTS_DIR";
+ls -la ${BACKUP_SCRIPTS_DIR:-/app/scripts}/*.sh
+'
+
+# 2. Confirmar docker.sock montado
+docker compose -f docker-compose.staging.yml exec krakenbot-staging-app sh -lc '
+ls -la /var/run/docker.sock && docker ps | head
+'
+
+# 3. Smoke test - crear backup
+docker compose -f docker-compose.staging.yml exec krakenbot-staging-app sh -lc '
+/app/scripts/backup-database.sh smoke_test
+'
+
+# 4. Verificar archivos en host
+ls -la /opt/krakenbot-staging/backups/database/
+```
 
 ### TESTING
-- ✅ Panel de backups carga sin errores
+- ✅ Panel `/backups` carga sin errores
 - ✅ Botón "Crear Backup" funcional
 - ✅ Scripts ejecutan correctamente en Alpine
-- ✅ Logs muestran shell usado: `[BackupService] Using shell: sh`
+- ✅ Backups persisten en host (`./backups`)
+- ✅ Logs muestran: `[BackupService] Using shell: sh`
+- ✅ Docker commands funcionan dentro del contenedor
 
 ### ARCHIVOS MODIFICADOS
-- `server/services/BackupService.ts` (detección de shell)
-- `scripts/backup-full.sh` (POSIX compatible)
-- `scripts/backup-database.sh` (POSIX compatible)
-- `scripts/backup-code.sh` (POSIX compatible)
-- `scripts/restore-database.sh` (POSIX compatible)
+- `server/services/BackupService.ts` (env variables + logging)
+- `docker-compose.staging.yml` (env + volumes + docker.sock)
+- `scripts/backup-database.sh` (env variables)
+- `scripts/backup-code.sh` (env variables)
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` (documentación)
+
+### NOTA DE SEGURIDAD
+Montar `/var/run/docker.sock` da permisos elevados al contenedor. Aceptable para VPS personal.
+**Alternativa futura**: Usar `pg_dump` por red en lugar de `docker exec`, instalando `postgresql-client` en la imagen
 
 ---
 

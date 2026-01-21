@@ -39,6 +39,11 @@ services:
       - TERMINAL_TOKEN=${TERMINAL_TOKEN}
       - WS_ADMIN_TOKEN=${WS_ADMIN_TOKEN:-Kr4k3n_WS_St4g1ng_2026!}
       - REVOLUTX_SYNC_ENABLED=true
+      - BACKUP_SCRIPTS_DIR=/app/scripts
+      - BACKUP_DIR=/app/backups
+    volumes:
+      - ./backups:/app/backups
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "3020:5000"
     networks:

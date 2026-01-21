@@ -41,10 +41,12 @@ interface SystemInfo {
 
 export class BackupService {
   private static instance: BackupService;
-  private backupDir = '/opt/krakenbot-staging/backups';
-  private scriptsDir = '/opt/krakenbot-staging/scripts';
+  private backupDir = process.env.BACKUP_DIR || '/app/backups';
+  private scriptsDir = process.env.BACKUP_SCRIPTS_DIR || '/app/scripts';
 
-  private constructor() {}
+  private constructor() {
+    console.log(`[BackupService] Initialized with scriptsDir=${this.scriptsDir}, backupDir=${this.backupDir}`);
+  }
 
   static getInstance(): BackupService {
     if (!BackupService.instance) {
