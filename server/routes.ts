@@ -2413,6 +2413,97 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // RECONCILE: Create positions for BUY trades that don't have open_positions
+  app.post("/api/positions/reconcile-from-trades", async (req, res) => {
+    try {
+      const { exchange = 'revolutx', since, dryRun = false } = req.body;
+      
+      // Get all BUY trades from the specified exchange
+      const sinceDate = since ? new Date(since) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Default: last 7 days
+      
+      const allTrades = await storage.getTrades();
+      const buyTrades = allTrades.filter(t => 
+        t.exchange === exchange && 
+        t.type === 'buy' && 
+        t.status === 'filled' &&
+        t.executedAt && new Date(t.executedAt) >= sinceDate
+      );
+      
+      // Get existing positions
+      const existingPositions = await storage.getOpenPositions();
+      const existingPairs = new Set(existingPositions.filter(p => p.exchange === exchange).map(p => p.pair));
+      
+      const results: any[] = [];
+      let created = 0;
+      let skipped = 0;
+      
+      for (const trade of buyTrades) {
+        const pair = trade.pair;
+        
+        // Skip if position already exists for this pair
+        if (existingPairs.has(pair)) {
+          results.push({ pair, tradeId: trade.tradeId, status: 'skipped', reason: 'position_exists' });
+          skipped++;
+          continue;
+        }
+        
+        const priceNum = parseFloat(trade.price || '0');
+        const amountNum = parseFloat(trade.amount || '0');
+        
+        if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(amountNum) || amountNum <= 0) {
+          results.push({ pair, tradeId: trade.tradeId, status: 'skipped', reason: 'invalid_price_or_amount' });
+          skipped++;
+          continue;
+        }
+        
+        if (dryRun) {
+          results.push({ pair, tradeId: trade.tradeId, status: 'would_create', price: priceNum, amount: amountNum });
+          continue;
+        }
+        
+        // Create position
+        const lotId = `reconcile-${trade.tradeId?.slice(0, 16) || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await storage.saveOpenPositionByLotId({
+          pair,
+          exchange: exchange,
+          lotId,
+          amount: amountNum.toFixed(8),
+          entryPrice: priceNum.toFixed(8),
+          highestPrice: priceNum.toFixed(8),
+          tradeId: trade.tradeId,
+        });
+        
+        existingPairs.add(pair); // Prevent duplicates in same run
+        
+        await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position reconciled from historical BUY trade`, {
+          pair,
+          amount: amountNum.toFixed(8),
+          entryPrice: priceNum.toFixed(8),
+          lotId,
+          tradeId: trade.tradeId,
+          exchange,
+          reconcileSource: 'manual_reconcile',
+        });
+        
+        results.push({ pair, tradeId: trade.tradeId, status: 'created', lotId, price: priceNum, amount: amountNum });
+        created++;
+      }
+      
+      res.json({
+        exchange,
+        since: sinceDate.toISOString(),
+        dryRun,
+        totalBuyTrades: buyTrades.length,
+        created,
+        skipped,
+        results,
+      });
+    } catch (error: any) {
+      console.error('[reconcile-from-trades] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/trades/sync", async (req, res) => {
     try {
       if (!krakenService.isInitialized()) {
