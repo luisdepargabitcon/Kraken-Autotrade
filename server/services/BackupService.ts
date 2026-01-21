@@ -142,12 +142,28 @@ export class BackupService {
   }
 
   /**
+   * Slugify a string for safe filesystem usage
+   */
+  private slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')
+      .slice(0, 64) || `backup_${Date.now()}`;
+  }
+
+  /**
    * Create a new backup
    */
   async createBackup(type: 'full' | 'database' | 'code', name?: string): Promise<{ success: boolean; name: string; error?: string }> {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-      const backupName = name || `backup_${timestamp}`;
+      const displayName = name?.trim() || `backup_${timestamp}`;
+      const backupId = this.slugify(displayName);
+
+      console.log(`[BackupService] Creating backup: displayName="${displayName}", backupId="${backupId}", type="${type}"`);
 
       let scriptName: string;
       if (type === 'full') {
@@ -164,15 +180,43 @@ export class BackupService {
       const shell = existsSync('/bin/bash') ? 'bash' : 'sh';
       console.log(`[BackupService] Using shell: ${shell}`);
       
-      const { stdout, stderr } = await execAsync(`${shell} ${scriptPath} ${backupName}`);
+      // Pass backupId (slugified) to script - ALWAYS quote to prevent word splitting
+      const { stdout, stderr } = await execAsync(`${shell} "${scriptPath}" "${backupId}"`);
 
       console.log('[BackupService] Backup created:', stdout);
       if (stderr) console.error('[BackupService] Backup stderr:', stderr);
 
-      return { success: true, name: backupName };
+      // Save metadata for display purposes
+      await this.saveBackupMetadata(backupId, displayName, type);
+
+      return { success: true, name: backupId };
     } catch (error: any) {
       console.error('[BackupService] Error creating backup:', error);
       return { success: false, name: '', error: error.message };
+    }
+  }
+
+  /**
+   * Save backup metadata
+   */
+  private async saveBackupMetadata(backupId: string, displayName: string, type: string): Promise<void> {
+    try {
+      const metaDir = path.join(this.backupDir, 'meta');
+      await fs.mkdir(metaDir, { recursive: true });
+      
+      const metaFile = path.join(metaDir, `${backupId}.json`);
+      const metadata = {
+        backupId,
+        displayName,
+        type,
+        createdAt: new Date().toISOString()
+      };
+      
+      await fs.writeFile(metaFile, JSON.stringify(metadata, null, 2));
+      console.log(`[BackupService] Metadata saved: ${metaFile}`);
+    } catch (error) {
+      console.error('[BackupService] Error saving metadata:', error);
+      // Non-fatal, continue
     }
   }
 

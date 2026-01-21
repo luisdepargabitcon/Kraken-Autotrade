@@ -44,7 +44,7 @@ echo -e "${YELLOW}PASO 1/2: BACKUP DE BASE DE DATOS${NC}"
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 
-"${SCRIPT_DIR}/backup-database.sh" "db_${BACKUP_NAME}"
+"${SCRIPT_DIR}/backup-database.sh" "${BACKUP_NAME}"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}ERROR: Fallo el backup de base de datos${NC}"
@@ -57,7 +57,7 @@ echo -e "${YELLOW}PASO 2/2: BACKUP DE CÓDIGO${NC}"
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 
-"${SCRIPT_DIR}/backup-code.sh" "code_${BACKUP_NAME}"
+"${SCRIPT_DIR}/backup-code.sh" "${BACKUP_NAME}"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}ERROR: Fallo el backup de código${NC}"
@@ -69,9 +69,8 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║  BACKUP COMPLETO FINALIZADO EXITOSAMENTE                   ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}✓ Base de datos: /opt/krakenbot-staging/backups/database/db_${BACKUP_NAME}.sql.gz${NC}"
-echo -e "${GREEN}✓ Código: /opt/krakenbot-staging/backups/code/code_${BACKUP_NAME}.tar.gz${NC}"
+echo -e "${GREEN}✓ Base de datos: db_${BACKUP_NAME}.sql.gz${NC}"
+echo -e "${GREEN}✓ Código: code_${BACKUP_NAME}.tar.gz${NC}"
 echo ""
 echo "Para restaurar este backup completo:"
-echo "  1. Restaurar código: ./restore-code.sh code_${BACKUP_NAME}"
-echo "  2. Restaurar base de datos: ./restore-database.sh db_${BACKUP_NAME}"
+echo "  1. Restaurar base de datos: ./restore-database.sh ${BACKUP_NAME}"

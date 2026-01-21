@@ -1,15 +1,21 @@
 #!/usr/bin/env sh
 # Script de backup de base de datos PostgreSQL para KrakenBot Staging
-# Uso: ./backup-database.sh [nombre_backup_opcional]
+# Uso: ./backup-database.sh <backup_id>
 
 set -eu
+
+# Validar que se pasó un nombre
+if [ -z "${1:-}" ]; then
+    echo "ERROR: Falta nombre de backup"
+    echo "Uso: $0 <backup_id>"
+    exit 1
+fi
 
 # Configuración - usar env variable o fallback
 BACKUP_BASE_DIR="${BACKUP_DIR:-/app/backups}"
 BACKUP_DIR="${BACKUP_BASE_DIR}/database"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_NAME="${1:-backup_${TIMESTAMP}}"
-BACKUP_FILE="${BACKUP_DIR}/${BACKUP_NAME}.sql"
+BACKUP_NAME="$1"
+BACKUP_FILE="${BACKUP_DIR}/db_${BACKUP_NAME}.sql"
 BACKUP_FILE_COMPRESSED="${BACKUP_FILE}.gz"
 
 # Colores para output

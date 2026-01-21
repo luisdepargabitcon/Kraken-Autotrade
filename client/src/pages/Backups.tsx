@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Trash2, Star, RefreshCw, Database, Code, HardDrive, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { Download, Trash2, Star, RefreshCw, Database, Code, HardDrive, AlertTriangle, CheckCircle, Clock, RotateCcw } from 'lucide-react';
 
 interface BackupFile {
   name: string;
@@ -455,7 +455,7 @@ export default function Backups() {
                         className="p-1.5 text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
                         title="Restaurar"
                       >
-                        <RefreshCw className="w-4 h-4" />
+                        <RotateCcw className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => deleteBackup(backup.name)}

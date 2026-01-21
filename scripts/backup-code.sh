@@ -1,15 +1,21 @@
 #!/usr/bin/env sh
 # Script de backup de código y configuración para KrakenBot Staging
-# Uso: ./backup-code.sh [nombre_backup_opcional]
+# Uso: ./backup-code.sh <backup_id>
 
 set -eu
+
+# Validar que se pasó un nombre
+if [ -z "${1:-}" ]; then
+    echo "ERROR: Falta nombre de backup"
+    echo "Uso: $0 <backup_id>"
+    exit 1
+fi
 
 # Configuración - usar env variables o fallback
 BACKUP_BASE_DIR="${BACKUP_DIR:-/app/backups}"
 BACKUP_DIR="${BACKUP_BASE_DIR}/code"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_NAME="${1:-code_${TIMESTAMP}}"
-BACKUP_FILE="${BACKUP_DIR}/${BACKUP_NAME}.tar.gz"
+BACKUP_NAME="$1"
+BACKUP_FILE="${BACKUP_DIR}/code_${BACKUP_NAME}.tar.gz"
 PROJECT_DIR="${PROJECT_DIR:-/app}"
 
 # Colores para output

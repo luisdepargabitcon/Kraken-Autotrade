@@ -1,5 +1,110 @@
 # CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
+## 21 DE ENERO 2026 - FIX: NOMBRES PERSONALIZADOS Y UI MEJORADA EN BACKUPS
+
+### PROBLEMA IDENTIFICADO
+**Síntomas**:
+1. Nombre personalizado no se usaba - siempre generaba nombre con fecha
+2. Scripts recibían nombre con espacios y hacían word-splitting ("21 ENE 2026" → "db_21.sql.gz")
+3. Botones del modal sin texto (labels vacíos)
+4. Icono de restore era RefreshCw (confuso con refresh)
+
+**Causa raíz**:
+- Backend pasaba nombre sin slugificar a scripts
+- Scripts no validaban entrada y hacían word-splitting con espacios
+- Sin metadata para preservar displayName original
+- Frontend usaba input controlado pero backend no slugificaba
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### 1. **Backend: Slugify + Metadata**
+- **Archivo**: `server/services/BackupService.ts`
+- **Función slugify**:
+  ```typescript
+  private slugify(text: string): string {
+    return text.toLowerCase().trim()
+      .replace(/[^a-z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')
+      .slice(0, 64) || `backup_${Date.now()}`;
+  }
+  ```
+- **Flujo**:
+  1. Recibe `name` del frontend
+  2. Genera `displayName` (original) y `backupId` (slugificado)
+  3. Pasa `backupId` a scripts con comillas: `"${shell}" "${scriptPath}" "${backupId}"`
+  4. Guarda metadata en `/app/backups/meta/${backupId}.json`
+- **Logging**: Muestra displayName y backupId para debugging
+
+#### 2. **Scripts: Validación + Prefijos Correctos**
+- **Archivos modificados**:
+  - `scripts/backup-database.sh`
+  - `scripts/backup-code.sh`
+  - `scripts/backup-full.sh`
+- **Cambios**:
+  ```sh
+  # Validar entrada
+  if [ -z "${1:-}" ]; then
+    echo "ERROR: Falta nombre de backup"
+    exit 1
+  fi
+  
+  BACKUP_NAME="$1"
+  BACKUP_FILE="${BACKUP_DIR}/db_${BACKUP_NAME}.sql"  # Prefijo db_
+  # o
+  BACKUP_FILE="${BACKUP_DIR}/code_${BACKUP_NAME}.tar.gz"  # Prefijo code_
+  ```
+- **Resultado**: Scripts usan nombre completo sin word-splitting
+
+#### 3. **Frontend: Icono Correcto**
+- **Archivo**: `client/src/pages/Backups.tsx`
+- **Cambios**:
+  - Importar `RotateCcw` de lucide-react
+  - Cambiar icono de restore: `RefreshCw` → `RotateCcw`
+- **Resultado**: Icono visualmente diferente de refresh
+
+#### 4. **Metadata para Display**
+- Estructura guardada en `/app/backups/meta/<backupId>.json`:
+  ```json
+  {
+    "backupId": "golden_post_phantom_fix",
+    "displayName": "Golden Post Phantom Fix",
+    "type": "full",
+    "createdAt": "2026-01-21T15:30:00.000Z"
+  }
+  ```
+- Permite mostrar nombre original en UI futura
+
+### EJEMPLO DE USO
+
+**Input en UI**: `Golden Post Phantom Fix`
+
+**Backend procesa**:
+- `displayName`: "Golden Post Phantom Fix"
+- `backupId`: "golden_post_phantom_fix"
+
+**Archivos creados**:
+- `/app/backups/database/db_golden_post_phantom_fix.sql.gz`
+- `/app/backups/code/code_golden_post_phantom_fix.tar.gz`
+- `/app/backups/meta/golden_post_phantom_fix.json`
+
+### TESTING
+- ✅ Crear backup con nombre "test backup 123" → archivos: `db_test_backup_123.sql.gz`
+- ✅ Crear backup con espacios y caracteres especiales → slugificado correctamente
+- ✅ Botones del modal tienen texto visible
+- ✅ Icono de restore es RotateCcw (diferente de refresh)
+- ✅ Metadata guardada correctamente
+
+### ARCHIVOS MODIFICADOS
+- `server/services/BackupService.ts` (slugify + metadata + logging)
+- `scripts/backup-database.sh` (validación + prefijo db_)
+- `scripts/backup-code.sh` (validación + prefijo code_)
+- `scripts/backup-full.sh` (pasar backupId sin prefijos extra)
+- `client/src/pages/Backups.tsx` (icono RotateCcw)
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` (documentación)
+
+---
+
 ## 21 DE ENERO 2026 - FIX COMPLETO: SISTEMA DE BACKUPS FUNCIONAL EN VPS
 
 ### PROBLEMA IDENTIFICADO
