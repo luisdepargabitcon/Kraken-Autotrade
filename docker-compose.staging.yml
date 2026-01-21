@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   krakenbot-staging-db:
     image: postgres:16-alpine
