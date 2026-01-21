@@ -46,7 +46,12 @@ interface BackupsData {
 }
 
 export default function Backups() {
-  const [data, setData] = useState<BackupsData | null>(null);
+  const [data, setData] = useState<BackupsData>({
+    backups: [],
+    diskSpace: { total: '0', used: '0', available: '0', percentage: '0%' },
+    masters: [],
+    stats: { total: 0, masterCount: 0 }
+  });
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -247,8 +252,8 @@ export default function Backups() {
     );
   }
 
-  const masterBackups = data?.masters || [];
-  const regularBackups = (data?.backups || []).filter(b => !b.isMaster);
+  const masterBackups = data.masters || [];
+  const regularBackups = (data.backups || []).filter(b => !b.isMaster);
 
   return (
     <div className="p-6 space-y-6">
