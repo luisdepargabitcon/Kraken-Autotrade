@@ -1894,11 +1894,46 @@ El motor de trading ha sido desactivado.
   private async loadOpenPositionsFromDB() {
     try {
       const positions = await storage.getOpenPositions();
+      const currentConfig = await storage.getBotConfig();
       this.openPositions.clear();
       
       for (const pos of positions) {
         const hasSnapshot = pos.configSnapshotJson && pos.entryMode;
-        const configSnapshot = hasSnapshot ? (pos.configSnapshotJson as ConfigSnapshot) : undefined;
+        let configSnapshot = hasSnapshot ? (pos.configSnapshotJson as ConfigSnapshot) : undefined;
+        let entryMode = pos.entryMode || undefined;
+        let needsBackfill = false;
+        
+        // BACKFILL: If position lacks snapshot, create one from current config (SMART_GUARD by default)
+        if (!configSnapshot && currentConfig) {
+          needsBackfill = true;
+          entryMode = currentConfig.positionMode || "SMART_GUARD";
+          
+          configSnapshot = {
+            stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+            takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+            trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+            trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+            positionMode: entryMode,
+          };
+          
+          if (entryMode === "SMART_GUARD") {
+            const sgParams = this.getSmartGuardParams(pos.pair, currentConfig);
+            configSnapshot.sgMinEntryUsd = sgParams.sgMinEntryUsd;
+            configSnapshot.sgAllowUnderMin = sgParams.sgAllowUnderMin;
+            configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
+            configSnapshot.sgFeeCushionPct = sgParams.sgFeeCushionPct;
+            configSnapshot.sgFeeCushionAuto = sgParams.sgFeeCushionAuto;
+            configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
+            configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
+            configSnapshot.sgTrailStepPct = sgParams.sgTrailStepPct;
+            configSnapshot.sgTpFixedEnabled = sgParams.sgTpFixedEnabled;
+            configSnapshot.sgTpFixedPct = sgParams.sgTpFixedPct;
+            configSnapshot.sgScaleOutEnabled = sgParams.sgScaleOutEnabled;
+            configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
+            configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
+            configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
+          }
+        }
         
         // Use existing lotId or generate one for legacy positions
         const lotId = pos.lotId || generateLotId(pos.pair);
@@ -1909,7 +1944,7 @@ El motor de trading ha sido desactivado.
           ? storedEntryFee 
           : parseFloat(pos.amount) * parseFloat(pos.entryPrice) * (getTakerFeePct() / 100);
         
-        this.openPositions.set(lotId, {
+        const openPosition: OpenPosition = {
           lotId,
           pair: pos.pair,
           amount: parseFloat(pos.amount),
@@ -1921,22 +1956,39 @@ El motor de trading ha sido desactivado.
           entrySignalTf: pos.entrySignalTf || "cycle",
           signalConfidence: pos.signalConfidence ? toConfidenceUnit(pos.signalConfidence) : undefined,
           signalReason: pos.signalReason || undefined,
-          entryMode: pos.entryMode || undefined,
+          entryMode,
           configSnapshot,
           // SMART_GUARD state
           sgBreakEvenActivated: pos.sgBreakEvenActivated ?? false,
           sgCurrentStopPrice: pos.sgCurrentStopPrice ? parseFloat(pos.sgCurrentStopPrice) : undefined,
           sgTrailingActivated: pos.sgTrailingActivated ?? false,
           sgScaleOutDone: pos.sgScaleOutDone ?? false,
-        });
+        };
         
-        // If position lacked lotId, update DB
-        if (!pos.lotId) {
-          await storage.updateOpenPositionLotId(pos.id, lotId);
-          log(`Migrated legacy position ${pos.pair} -> lotId: ${lotId}`, "trading");
+        this.openPositions.set(lotId, openPosition);
+        
+        // If position lacked lotId or snapshot, update DB
+        if (!pos.lotId || needsBackfill) {
+          if (!pos.lotId) {
+            await storage.updateOpenPositionLotId(pos.id, lotId);
+          }
+          if (needsBackfill) {
+            // Persist the backfilled snapshot to DB
+            await this.savePositionToDB(pos.pair, openPosition);
+            log(`[BACKFILL] ${pos.pair} (${lotId}): snapshot creado desde config actual (mode=${entryMode})`, "trading");
+            await botLogger.info("SG_SNAPSHOT_BACKFILLED", `Snapshot backfilled for position ${pos.pair}`, {
+              pair: pos.pair,
+              lotId,
+              entryMode,
+              sgBeAtPct: configSnapshot?.sgBeAtPct,
+              sgTrailStartPct: configSnapshot?.sgTrailStartPct,
+              sgTrailDistancePct: configSnapshot?.sgTrailDistancePct,
+              source: "loadOpenPositionsFromDB",
+            });
+          }
         }
         
-        const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : "[legacy: uses current config]";
+        const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : needsBackfill ? `[BACKFILLED: ${entryMode}]` : "[legacy: uses current config]";
         log(`Posición recuperada: ${pos.pair} (${lotId}) - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
       }
       

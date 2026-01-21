@@ -2414,9 +2414,45 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   });
 
   // RECONCILE: Create positions for BUY trades that don't have open_positions
+  // Includes SMART_GUARD config snapshot for proper position management
   app.post("/api/positions/reconcile-from-trades", async (req, res) => {
     try {
       const { exchange = 'revolutx', since, dryRun = false } = req.body;
+      
+      // Get current config for SMART_GUARD snapshot
+      const currentConfig = await storage.getBotConfig();
+      const positionMode = currentConfig?.positionMode || "SMART_GUARD";
+      
+      // Build config snapshot from current settings
+      const buildConfigSnapshot = (pair: string) => {
+        const snapshot: any = {
+          stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+          takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+          trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+          trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+          positionMode,
+        };
+        
+        if (positionMode === "SMART_GUARD") {
+          // Get SMART_GUARD params (with pair overrides if any)
+          const overrides = (currentConfig?.sgPairOverrides as Record<string, any>)?.[pair];
+          snapshot.sgMinEntryUsd = parseFloat(overrides?.sgMinEntryUsd?.toString() || currentConfig?.sgMinEntryUsd?.toString() || "100");
+          snapshot.sgAllowUnderMin = overrides?.sgAllowUnderMin ?? currentConfig?.sgAllowUnderMin ?? true;
+          snapshot.sgBeAtPct = parseFloat(overrides?.sgBeAtPct?.toString() || currentConfig?.sgBeAtPct?.toString() || "1.5");
+          snapshot.sgFeeCushionPct = parseFloat(overrides?.sgFeeCushionPct?.toString() || currentConfig?.sgFeeCushionPct?.toString() || "0.45");
+          snapshot.sgFeeCushionAuto = overrides?.sgFeeCushionAuto ?? currentConfig?.sgFeeCushionAuto ?? true;
+          snapshot.sgTrailStartPct = parseFloat(overrides?.sgTrailStartPct?.toString() || currentConfig?.sgTrailStartPct?.toString() || "2");
+          snapshot.sgTrailDistancePct = parseFloat(overrides?.sgTrailDistancePct?.toString() || currentConfig?.sgTrailDistancePct?.toString() || "1.5");
+          snapshot.sgTrailStepPct = parseFloat(overrides?.sgTrailStepPct?.toString() || currentConfig?.sgTrailStepPct?.toString() || "0.25");
+          snapshot.sgTpFixedEnabled = overrides?.sgTpFixedEnabled ?? currentConfig?.sgTpFixedEnabled ?? false;
+          snapshot.sgTpFixedPct = parseFloat(overrides?.sgTpFixedPct?.toString() || currentConfig?.sgTpFixedPct?.toString() || "10");
+          snapshot.sgScaleOutEnabled = overrides?.sgScaleOutEnabled ?? currentConfig?.sgScaleOutEnabled ?? false;
+          snapshot.sgScaleOutPct = parseFloat(overrides?.sgScaleOutPct?.toString() || currentConfig?.sgScaleOutPct?.toString() || "35");
+          snapshot.sgMinPartUsd = parseFloat(overrides?.sgMinPartUsd?.toString() || currentConfig?.sgMinPartUsd?.toString() || "50");
+          snapshot.sgScaleOutThreshold = parseFloat(overrides?.sgScaleOutThreshold?.toString() || currentConfig?.sgScaleOutThreshold?.toString() || "80");
+        }
+        return snapshot;
+      };
       
       // Get all BUY trades from the specified exchange
       const sinceDate = since ? new Date(since) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Default: last 7 days
@@ -2456,13 +2492,23 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           continue;
         }
         
+        const configSnapshot = buildConfigSnapshot(pair);
+        
         if (dryRun) {
-          results.push({ pair, tradeId: trade.tradeId, status: 'would_create', price: priceNum, amount: amountNum });
+          results.push({ 
+            pair, tradeId: trade.tradeId, status: 'would_create', 
+            price: priceNum, amount: amountNum, 
+            entryMode: positionMode,
+            sgBeAtPct: configSnapshot.sgBeAtPct,
+            sgTrailStartPct: configSnapshot.sgTrailStartPct,
+          });
           continue;
         }
         
-        // Create position
+        // Create position with SMART_GUARD snapshot
         const lotId = `reconcile-${trade.tradeId?.slice(0, 16) || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const entryFee = priceNum * amountNum * 0.0026; // Estimate 0.26% fee
+        
         await storage.saveOpenPositionByLotId({
           pair,
           exchange: exchange,
@@ -2470,22 +2516,38 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           amount: amountNum.toFixed(8),
           entryPrice: priceNum.toFixed(8),
           highestPrice: priceNum.toFixed(8),
+          entryFee: entryFee.toFixed(8),
           tradeId: trade.tradeId,
+          entryMode: positionMode,
+          configSnapshotJson: configSnapshot,
+          // Initialize SG state
+          sgBreakEvenActivated: false,
+          sgTrailingActivated: false,
+          sgScaleOutDone: false,
         });
         
         existingPairs.add(pair); // Prevent duplicates in same run
         
-        await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position reconciled from historical BUY trade`, {
+        await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position reconciled from historical BUY trade with SMART_GUARD snapshot`, {
           pair,
           amount: amountNum.toFixed(8),
           entryPrice: priceNum.toFixed(8),
           lotId,
           tradeId: trade.tradeId,
           exchange,
+          entryMode: positionMode,
+          sgBeAtPct: configSnapshot.sgBeAtPct,
+          sgTrailStartPct: configSnapshot.sgTrailStartPct,
+          sgTrailDistancePct: configSnapshot.sgTrailDistancePct,
           reconcileSource: 'manual_reconcile',
         });
         
-        results.push({ pair, tradeId: trade.tradeId, status: 'created', lotId, price: priceNum, amount: amountNum });
+        results.push({ 
+          pair, tradeId: trade.tradeId, status: 'created', lotId, 
+          price: priceNum, amount: amountNum,
+          entryMode: positionMode,
+          sgBeAtPct: configSnapshot.sgBeAtPct,
+        });
         created++;
       }
       
@@ -2493,6 +2555,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         exchange,
         since: sinceDate.toISOString(),
         dryRun,
+        positionMode,
         totalBuyTrades: buyTrades.length,
         created,
         skipped,
