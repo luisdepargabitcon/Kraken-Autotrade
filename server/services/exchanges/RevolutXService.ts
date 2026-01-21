@@ -406,10 +406,19 @@ export class RevolutXService implements IExchangeService {
         }
       }
       
+      // FIX: If order was ACCEPTED by exchange (we have order_id) but price couldn't be determined,
+      // this is NOT a failure. The order was submitted and likely filled.
+      // Return success with pendingFill flag so the engine can reconcile.
       if (!Number.isFinite(executedPrice) || executedPrice <= 0) {
+        console.warn(`[revolutx] Order ${resolvedOrderId} SUBMITTED but executed price not available. Marking as pendingFill for reconciliation.`);
         return {
-          success: false,
-          error: 'Could not determine executed price for RevolutX order (preventing price=0 trade record)'
+          success: true,
+          pendingFill: true,
+          orderId: resolvedOrderId,
+          txid: resolvedOrderId,
+          clientOrderId: clientOrderId,
+          // price is undefined - must be resolved via reconcile
+          volume: executedVolume,
         };
       }
 
@@ -419,6 +428,7 @@ export class RevolutXService implements IExchangeService {
         success: true,
         orderId: resolvedOrderId,
         txid: resolvedOrderId,
+        clientOrderId: clientOrderId,
         price: executedPrice,
         volume: executedVolume,
         cost: executedCost

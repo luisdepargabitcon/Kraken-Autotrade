@@ -113,7 +113,7 @@ export interface IStorage {
   updateOpenPositionQty(lotId: string, qtyRemaining: string, qtyFilled: string): Promise<void>;
   initializeQtyRemainingForAll(): Promise<number>;
 
-  listTradesForRebuild(params: { exchanges: string[]; origin: 'bot'; since: Date }): Promise<Trade[]>;
+  listTradesForRebuild(params: { exchanges: string[]; origin: 'bot' | 'engine'; since: Date }): Promise<Trade[]>;
   getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number>;
   
   // Trade fills
@@ -362,7 +362,7 @@ export class DatabaseStorage implements IStorage {
     return Number(result.rowCount || 0);
   }
 
-  async listTradesForRebuild(params: { exchanges: string[]; origin: 'bot'; since: Date }): Promise<Trade[]> {
+  async listTradesForRebuild(params: { exchanges: string[]; origin: 'bot' | 'engine'; since: Date }): Promise<Trade[]> {
     const { exchanges, origin, since } = params;
     if (!Array.isArray(exchanges) || exchanges.length === 0) return [];
 
@@ -377,8 +377,9 @@ export class DatabaseStorage implements IStorage {
 
   async getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number> {
     const { since, exchange } = params;
+    // Include both 'bot' (legacy) and 'engine' (new) origins
     const conditions: any[] = [
-      eq(tradesTable.origin, 'bot'),
+      or(eq(tradesTable.origin, 'bot'), eq(tradesTable.origin, 'engine')),
       gt(tradesTable.executedAt, since),
     ];
     if (exchange) {

@@ -6156,7 +6156,21 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         log(`[WARN] Emergency SELL sin sellContext para ${pair} - permitido. Razón: ${reason}`, "trading");
       }
       
-      log(`Ejecutando ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${this.getTradingExchangeType()}`, "trading");
+      // CRITICAL: Generate correlation_id for full traceability
+      const correlationId = `${Date.now()}-${pair.replace('/', '')}-${type}-${Math.random().toString(36).slice(2, 8)}`;
+      
+      // ORDER_ATTEMPT: Log before execution for forensic traceability
+      log(`[ORDER_ATTEMPT] ${correlationId} | ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${this.getTradingExchangeType()}`, "trading");
+      await botLogger.info("ORDER_ATTEMPT", `Attempting ${type.toUpperCase()} order`, {
+        correlationId,
+        pair,
+        type,
+        volume,
+        price,
+        exchange: this.getTradingExchangeType(),
+        reason,
+        telegramInitialized: this.telegramService.isInitialized(),
+      });
 
       let preAssetBalance: number | null = null;
       if (type === "buy") {
@@ -6178,8 +6192,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // CRITICAL: Validate order success before continuing
       if ((order as any)?.success === false) {
         const errorMsg = (order as any)?.error || 'Unknown error';
-        log(`[ORDER_FAILED] ${pair} ${type.toUpperCase()}: ${errorMsg}`, "trading");
+        log(`[ORDER_FAILED] ${correlationId} | ${pair} ${type.toUpperCase()}: ${errorMsg}`, "trading");
         await botLogger.error("ORDER_FAILED", `Failed to place ${type} order for ${pair}`, {
+          correlationId,
           pair,
           type,
           volume,
@@ -6190,6 +6205,46 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       }
 
       const exchange = this.getTradingExchangeType();
+      
+      // FIX: Handle pendingFill case (order submitted but price not immediately available)
+      // This is NOT a failure - the order was accepted by the exchange
+      if ((order as any)?.pendingFill === true) {
+        const pendingOrderId = (order as any)?.orderId || (order as any)?.txid || (order as any)?.clientOrderId;
+        log(`[ORDER_PENDING_FILL] ${correlationId} | ${pair} ${type.toUpperCase()} submitted (orderId=${pendingOrderId}). Will reconcile via sync.`, "trading");
+        await botLogger.info("ORDER_PENDING_FILL", `Order submitted but fill not yet confirmed - will reconcile`, {
+          correlationId,
+          pair,
+          type,
+          volume,
+          orderId: pendingOrderId,
+          clientOrderId: (order as any)?.clientOrderId,
+          exchange,
+          telegramInitialized: this.telegramService.isInitialized(),
+        });
+        
+        // Send Telegram notification about pending order
+        if (this.telegramService.isInitialized()) {
+          try {
+            const assetName = pair.replace("/USD", "");
+            await this.telegramService.sendAlertWithSubtype(
+              `⏳ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
+              `Par: <code>${assetName}</code>\n` +
+              `Cantidad: <code>${volume}</code>\n` +
+              `Estado: Pendiente de confirmación\n` +
+              `ID: <code>${pendingOrderId}</code>\n\n` +
+              `<i>La orden fue aceptada por ${exchange}. El precio se confirmará en el próximo sync.</i>`,
+              "trades",
+              type === "buy" ? "trade_buy" : "trade_sell"
+            );
+          } catch (tgErr: any) {
+            log(`[TELEGRAM_FAIL] ${correlationId} | Error notificando orden pendiente: ${tgErr.message}`, "trading");
+          }
+        }
+        
+        // Return true because the order WAS submitted successfully
+        // The sync job will import the filled trade and create the position
+        return true;
+      }
       const rawTxid = Array.isArray((order as any)?.txid)
         ? (order as any)?.txid?.[0]
         : (order as any)?.txid;
@@ -6269,7 +6324,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       const tradeRecord: InsertTrade = {
         tradeId,
         exchange,
-        origin: 'bot',
+        origin: 'engine',  // FIX: 'engine' for trades executed by trading engine (vs 'sync' for imported)
         pair,
         type,
         price: priceStr,
@@ -6555,54 +6610,78 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       const emoji = type === "buy" ? "🟢" : "🔴";
       const totalUSDFormatted = totalUSD.toFixed(2);
       
+      // CRITICAL: Variables para tracking de notificación
+      let notificationSent = false;
+      let notificationError: string | null = null;
+      
+      const strategyLabel = strategyMeta?.strategyId ? 
+        ((strategyMeta?.timeframe && strategyMeta.timeframe !== "cycle") ? 
+          `Momentum (Velas ${strategyMeta.timeframe})` : 
+          "Momentum (Ciclos)") : 
+        "Momentum (Ciclos)";
+      const confidenceValue = strategyMeta?.confidence ? toConfidencePct(strategyMeta.confidence, 0).toFixed(0) : "N/A";
+      
       if (this.telegramService.isInitialized()) {
-        const strategyLabel = strategyMeta?.strategyId ? 
-          ((strategyMeta?.timeframe && strategyMeta.timeframe !== "cycle") ? 
-            `Momentum (Velas ${strategyMeta.timeframe})` : 
-            "Momentum (Ciclos)") : 
-          "Momentum (Ciclos)";
-        const confidenceValue = strategyMeta?.confidence ? toConfidencePct(strategyMeta.confidence, 0).toFixed(0) : "N/A";
-        const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
-        
-        // Build natural language messages for Telegram with essential data
-        if (type === "buy") {
-          const regimeText = strategyMeta?.regime 
-            ? (strategyMeta.regime === "TREND" ? "tendencia alcista" : 
-               strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transición")
-            : "";
-          
-          const assetName = pair.replace("/USD", "");
-          const confNum = parseInt(confidenceValue);
-          const confidenceLevel = !isNaN(confNum) 
-            ? (confNum >= 80 ? "alta" : confNum >= 60 ? "buena" : "moderada")
-            : "";
-          
-          let naturalMessage = `🟢 <b>Nueva compra de ${assetName}</b>\n\n`;
-          naturalMessage += `He comprado <b>${volume}</b> ${assetName} (<b>$${totalUSDFormatted}</b>) a <b>$${price.toFixed(2)}</b>.\n\n`;
-          
-          if (regimeText && confidenceLevel) {
-            naturalMessage += `📊 Mercado en ${regimeText}, confianza ${confidenceLevel} (${confidenceValue}%).\n`;
-          } else if (confidenceLevel) {
-            naturalMessage += `📊 Confianza ${confidenceLevel} (${confidenceValue}%).\n`;
+        try {
+          // Build natural language messages for Telegram with essential data
+          if (type === "buy") {
+            const regimeText = strategyMeta?.regime 
+              ? (strategyMeta.regime === "TREND" ? "tendencia alcista" : 
+                 strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transición")
+              : "";
+            
+            const assetName = pair.replace("/USD", "");
+            const confNum = parseInt(confidenceValue);
+            const confidenceLevel = !isNaN(confNum) 
+              ? (confNum >= 80 ? "alta" : confNum >= 60 ? "buena" : "moderada")
+              : "";
+            
+            let naturalMessage = `🟢 <b>Nueva compra de ${assetName}</b>\n\n`;
+            naturalMessage += `He comprado <b>${volume}</b> ${assetName} (<b>$${totalUSDFormatted}</b>) a <b>$${price.toFixed(2)}</b>.\n\n`;
+            
+            if (regimeText && confidenceLevel) {
+              naturalMessage += `📊 Mercado en ${regimeText}, confianza ${confidenceLevel} (${confidenceValue}%).\n`;
+            } else if (confidenceLevel) {
+              naturalMessage += `📊 Confianza ${confidenceLevel} (${confidenceValue}%).\n`;
+            }
+            
+            naturalMessage += `🧠 Estrategia: ${strategyLabel}\n`;
+            naturalMessage += `🔗 ID: <code>${txid}</code>\n\n`;
+            naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
+            
+            await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_buy");
+          } else {
+            const assetName = pair.replace("/USD", "");
+            let naturalMessage = `🔴 <b>Venta de ${assetName}</b>\n\n`;
+            naturalMessage += `He vendido <b>${volume}</b> ${assetName} a <b>$${price.toFixed(2)}</b> ($${totalUSDFormatted}).\n\n`;
+            naturalMessage += `📝 ${reason}\n`;
+            naturalMessage += `🔗 ID: <code>${txid}</code>`;
+            
+            await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
           }
-          
-          naturalMessage += `🧠 Estrategia: ${strategyLabel}\n`;
-          naturalMessage += `🔗 ID: <code>${txid}</code>\n\n`;
-          naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
-          
-          await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_buy");
-        } else {
-          const assetName = pair.replace("/USD", "");
-          let naturalMessage = `🔴 <b>Venta de ${assetName}</b>\n\n`;
-          naturalMessage += `He vendido <b>${volume}</b> ${assetName} a <b>$${price.toFixed(2)}</b> ($${totalUSDFormatted}).\n\n`;
-          naturalMessage += `📝 ${reason}\n`;
-          naturalMessage += `🔗 ID: <code>${txid}</code>`;
-          
-          await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
+          notificationSent = true;
+        } catch (telegramErr: any) {
+          notificationError = telegramErr.message;
+          log(`[TELEGRAM_FAIL] ${correlationId} | Error enviando notificación: ${telegramErr.message}`, "trading");
         }
+      } else {
+        notificationError = "Telegram not initialized";
+        log(`[TELEGRAM_NOT_INIT] ${correlationId} | Telegram no inicializado - orden ejecutada SIN notificación`, "trading");
       }
+      
+      // CRITICAL: Log notification status for forensic traceability
+      await botLogger.info(notificationSent ? "NOTIFICATION_SENT" : "NOTIFICATION_FAILED", 
+        notificationSent ? `Notification sent for ${type} order` : `FAILED to notify ${type} order`, {
+        correlationId,
+        pair,
+        type,
+        txid,
+        notificationSent,
+        notificationError,
+        totalUsd: totalUSD,
+      });
 
-      log(`Orden ejecutada: ${txid}`, "trading");
+      log(`[ORDER_COMPLETED] ${correlationId} | Orden ejecutada: ${txid} | Notificación: ${notificationSent ? 'OK' : 'FAILED'}`, "trading");
       
       await botLogger.info("TRADE_EXECUTED", `Trade ${type.toUpperCase()} ejecutado en ${pair}`, {
         pair,

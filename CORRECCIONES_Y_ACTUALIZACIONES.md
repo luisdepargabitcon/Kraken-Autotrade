@@ -1,5 +1,118 @@
 # CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
+## 21 DE ENERO 2026 - FIX CRÍTICO: COMPRAS SILENCIOSAS Y NOTIFICACIONES TELEGRAM
+
+### INCIDENTE
+**Fecha:** 21/01/2026  
+**Síntomas:**
+- 4 órdenes BUY Market ejecutadas en Revolut X sin notificaciones Telegram
+- Sin trazabilidad entre orden → notificación
+- Bot operando sin alertas al usuario
+
+**Fills afectados:**
+- ETH-USD 08:30 — BUY Market — ~100$
+- ETH-USD 14:08 — BUY Market — ~100$
+- TON-USD 15:00 — BUY Market — ~100$
+- BTC-USD 15:15 — BUY Market — ~100$
+
+### ROOT CAUSE IDENTIFICADO
+**Ubicación:** `server/services/tradingEngine.ts` líneas 6558-6603
+
+```typescript
+// PROBLEMA: Notificación omitida silenciosamente
+if (this.telegramService.isInitialized()) {
+  // Solo envía si está inicializado - SIN else, SIN catch, SIN log
+  await this.telegramService.sendAlertWithSubtype(...);
+}
+```
+
+**Deficiencias:**
+1. Sin fallback si Telegram no está inicializado
+2. Sin try-catch para errores de envío
+3. Sin logging de éxito/fallo de notificación
+4. Sin correlation_id para trazabilidad
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### 1. **Correlation ID y ORDER_ATTEMPT** (línea ~6159)
+```typescript
+// NUEVO: Generar correlation_id para trazabilidad completa
+const correlationId = `${Date.now()}-${pair.replace('/', '')}-${type}-${Math.random().toString(36).slice(2, 8)}`;
+
+// NUEVO: Log ORDER_ATTEMPT antes de ejecutar
+log(`[ORDER_ATTEMPT] ${correlationId} | ${type.toUpperCase()} ${volume} ${pair}...`, "trading");
+await botLogger.info("ORDER_ATTEMPT", `Attempting ${type.toUpperCase()} order`, {
+  correlationId,
+  pair,
+  type,
+  volume,
+  price,
+  exchange: this.getTradingExchangeType(),
+  reason,
+  telegramInitialized: this.telegramService.isInitialized(),
+});
+```
+
+#### 2. **Try-Catch y Logging Obligatorio** (líneas ~6572-6643)
+```typescript
+let notificationSent = false;
+let notificationError: string | null = null;
+
+if (this.telegramService.isInitialized()) {
+  try {
+    // ... envío de mensaje ...
+    notificationSent = true;
+  } catch (telegramErr: any) {
+    notificationError = telegramErr.message;
+    log(`[TELEGRAM_FAIL] ${correlationId} | Error: ${telegramErr.message}`, "trading");
+  }
+} else {
+  notificationError = "Telegram not initialized";
+  log(`[TELEGRAM_NOT_INIT] ${correlationId} | Orden ejecutada SIN notificación`, "trading");
+}
+
+// CRÍTICO: Log de estado de notificación
+await botLogger.info(notificationSent ? "NOTIFICATION_SENT" : "NOTIFICATION_FAILED", ...);
+log(`[ORDER_COMPLETED] ${correlationId} | txid: ${txid} | Notificación: ${notificationSent ? 'OK' : 'FAILED'}`, "trading");
+```
+
+#### 3. **Nuevos EventType** (`server/services/botLogger.ts`)
+```typescript
+// Order traceability events (forensic)
+| "ORDER_ATTEMPT"
+| "ORDER_FAILED"
+| "NOTIFICATION_SENT"
+| "NOTIFICATION_FAILED";
+```
+
+### ARCHIVOS MODIFICADOS
+| Archivo | Cambio |
+|---------|--------|
+| `server/services/tradingEngine.ts` | correlationId, ORDER_ATTEMPT, try-catch, logging |
+| `server/services/botLogger.ts` | 4 nuevos EventType para trazabilidad |
+
+### VERIFICACIÓN POST-FIX
+Los logs ahora mostrarán:
+```
+[ORDER_ATTEMPT] 1737550000000-ETHUSD-buy-a1b2c3 | BUY 0.05 ETH/USD @ $3200.00 via revolutx
+[ORDER_COMPLETED] 1737550000000-ETHUSD-buy-a1b2c3 | txid: ORD123 | Notificación: OK
+```
+
+O en caso de fallo:
+```
+[TELEGRAM_NOT_INIT] 1737550000000-ETHUSD-buy-a1b2c3 | Orden ejecutada SIN notificación
+[ORDER_COMPLETED] 1737550000000-ETHUSD-buy-a1b2c3 | txid: ORD123 | Notificación: FAILED
+```
+
+### DEPLOY
+```bash
+cd /opt/krakenbot-staging
+git pull
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+---
+
 ## 21 DE ENERO 2026 - FIX: NOMBRES PERSONALIZADOS Y UI MEJORADA EN BACKUPS
 
 ### PROBLEMA IDENTIFICADO

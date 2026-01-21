@@ -79,7 +79,15 @@ export type EventType =
   | "CONFIG_IMPORTED"
   | "CONFIG_LOADED"
   | "PRESET_CREATED"
-  | "PRESET_ACTIVATED";
+  | "PRESET_ACTIVATED"
+  // Order traceability events (forensic)
+  | "ORDER_ATTEMPT"
+  | "ORDER_PENDING_FILL"
+  | "ORDER_FILLED_VIA_SYNC"
+  | "ORDER_FAILED"
+  | "NOTIFICATION_SENT"
+  | "NOTIFICATION_FAILED"
+  | "POSITION_CREATED_VIA_SYNC";
 
 interface LogMeta {
   [key: string]: any;

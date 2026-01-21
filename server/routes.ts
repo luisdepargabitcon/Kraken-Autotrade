@@ -1895,7 +1895,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const trade = await storage.createTrade({
         tradeId,
         exchange: 'kraken',
-        origin: 'bot',
+        origin: 'manual',  // Manual API call
         pair,
         type,
         price: price || "0",
@@ -2002,7 +2002,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const trade = await storage.createTrade({
         tradeId,
         exchange: 'revolutx',
-        origin: 'bot',
+        origin: 'manual',  // Manual API call
         pair,
         type,
         price: resolvedPrice.toString(),
@@ -2266,6 +2266,45 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 if (inserted) {
                   synced++;
                   byPair[pair].inserted++;
+
+                  // FIX: Create/update position for BUY trades imported via sync
+                  // This ensures open_positions reflects trades even if engine didn't create them
+                  if (n.type === 'buy') {
+                    try {
+                      const priceNum = parseFloat(priceStr);
+                      const amountNum = parseFloat(amountStr);
+                      if (Number.isFinite(priceNum) && priceNum > 0 && Number.isFinite(amountNum) && amountNum > 0) {
+                        // Check if position already exists for this pair
+                        const existingPositions = await storage.getOpenPositions();
+                        const existingForPair = existingPositions.filter(p => p.pair === pair && p.exchange === 'revolutx');
+                        
+                        if (existingForPair.length === 0) {
+                          // Create new position
+                          const lotId = `sync-${n.tradeId || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                          await storage.saveOpenPositionByLotId({
+                            pair,
+                            exchange: 'revolutx',
+                            lotId,
+                            amount: amountStr,
+                            entryPrice: priceStr,
+                            highestPrice: priceStr,
+                          });
+                          console.log(`[sync-revolutx] Created position for ${pair}: ${amountStr} @ ${priceStr}`);
+                          
+                          await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position created from synced BUY trade`, {
+                            pair,
+                            amount: amountStr,
+                            entryPrice: priceStr,
+                            lotId,
+                            tradeId: tradeIdFinal,
+                            exchange: 'revolutx',
+                          });
+                        }
+                      }
+                    } catch (posErr: any) {
+                      console.error(`[sync-revolutx] Error creating position for ${pair}:`, posErr.message);
+                    }
+                  }
 
                   if (String(process.env.ALERT_EXTERNAL_TRADES ?? 'false').toLowerCase() === 'true') {
                     const executedAt = n.executedAt instanceof Date ? n.executedAt : null;

@@ -22,6 +22,10 @@ export interface OrderResult {
   price?: number;
   volume?: number;
   cost?: number;
+  // NEW: For RevolutX orders that were SUBMITTED but price couldn't be determined immediately
+  // This is NOT a failure - the order was accepted by the exchange
+  pendingFill?: boolean;
+  clientOrderId?: string;
 }
 
 export interface PairMetadata {
