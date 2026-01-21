@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env sh
 # Script de restauración de base de datos PostgreSQL para KrakenBot Staging
 # Uso: ./restore-database.sh <nombre_backup>
 
-set -e
+set -eu
 
 # Configuración
 BACKUP_DIR="/opt/krakenbot-staging/backups/database"

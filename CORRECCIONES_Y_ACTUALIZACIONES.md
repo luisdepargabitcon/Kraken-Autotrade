@@ -1,5 +1,58 @@
 # CORRECCIONES Y ACTUALIZACIONES - WINDSURF CHESTER BOT
 
+## 21 DE ENERO 2026 - FIX: BACKUPS FALLABAN POR BASH NO DISPONIBLE EN CONTENEDOR
+
+### PROBLEMA IDENTIFICADO
+**Síntoma**: Panel de backups mostraba error "Command failed: bash /opt/krakenbot-staging/scripts/backup-full.sh ... /bin/sh: bash: not found"
+
+**Causa raíz**: 
+- Backend ejecutaba scripts con `bash` hardcodeado
+- Contenedor Alpine no incluye bash por defecto (solo sh)
+- Scripts tenían shebang `#!/bin/bash` incompatible con Alpine
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### 1. **Detección Automática de Shell en Backend**
+- **Archivo**: `server/services/BackupService.ts`
+- **Cambio**: Detectar shell disponible antes de ejecutar scripts
+- **Lógica**: 
+  ```typescript
+  const shell = existsSync('/bin/bash') ? 'bash' : 'sh';
+  await execAsync(`${shell} ${scriptPath} ${backupName}`);
+  ```
+- **Resultado**: Funciona en Alpine (sh) y Debian/Ubuntu (bash)
+
+#### 2. **Scripts POSIX Compatibles**
+- **Archivos modificados**:
+  - `scripts/backup-full.sh`
+  - `scripts/backup-database.sh`
+  - `scripts/backup-code.sh`
+  - `scripts/restore-database.sh`
+- **Cambios**:
+  - Shebang: `#!/bin/bash` → `#!/usr/bin/env sh`
+  - Set flags: `set -e` → `set -eu` (POSIX estándar)
+  - Eliminado bashism: `${BASH_SOURCE[0]}` → `$0`
+- **Resultado**: Scripts ejecutables con sh estándar POSIX
+
+#### 3. **Permisos de Ejecución**
+- **Comando en VPS**: `chmod +x scripts/*.sh`
+- **Resultado**: Scripts ejecutables sin necesidad de especificar intérprete
+
+### TESTING
+- ✅ Panel de backups carga sin errores
+- ✅ Botón "Crear Backup" funcional
+- ✅ Scripts ejecutan correctamente en Alpine
+- ✅ Logs muestran shell usado: `[BackupService] Using shell: sh`
+
+### ARCHIVOS MODIFICADOS
+- `server/services/BackupService.ts` (detección de shell)
+- `scripts/backup-full.sh` (POSIX compatible)
+- `scripts/backup-database.sh` (POSIX compatible)
+- `scripts/backup-code.sh` (POSIX compatible)
+- `scripts/restore-database.sh` (POSIX compatible)
+
+---
+
 ## 20 DE ENERO 2026 - FIX CRÍTICO: PHANTOM BUYS EN REVOLUTX
 
 ### PROBLEMA IDENTIFICADO
@@ -124,6 +177,267 @@ ORDER BY "eventType";
 - Considerar envolver persist + apply en transacción DB con `SELECT FOR UPDATE` para locks explícitos
 - Agregar métricas de observabilidad (ej: contador de DUPLICATE vs OK)
 - Implementar reconciliación automática para trades históricos con IDs antiguos
+
+---
+
+## 20 DE ENERO 2026 - FIX CRÍTICO: VALIDACIÓN DE ORDENES EN REVOLUTX
+
+### PROBLEMA IDENTIFICADO
+**Síntoma**: Posición fantasma de BTC/USD creada el 20-01-2026 a las 13:30, NO existe en RevolutX pero SÍ en la base de datos.
+
+**Causa raíz**: El bot NO validaba el campo `success` en la respuesta de `placeOrder()` de RevolutX. Cuando la API fallaba (ej: balance insuficiente), el bot continuaba creando trades y posiciones como si la orden hubiera sido exitosa.
+
+**Evidencia del error**:
+```
+[revolutx] placeOrder error response: {
+  message: 'Insufficient balance of $39.78; required $40.83 (extra $1.05 is required)',
+  error_id: '927a0257-8d26-4dec-bd1a-7530de3d3384'
+}
+```
+**Después del error, el bot continuó**:
+```
+1:30:21 PM [trading] [TRADE_PERSIST_START] BTC/USD 7f08d1bc...
+1:30:21 PM [trading] [TRADE_PERSIST_OK] BTC/USD 7f08d1bc...
+1:30:21 PM [trading] [POSITION_APPLY_START] BTC/USD 7f08d1bc...
+```
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### 1. **Validación Crítica de Success en placeOrder()**
+- **Archivo**: `server/services/tradingEngine.ts`
+- **Cambios**: Líneas 6178-6190 (compras) y 6998-7013 (ventas)
+- **Validación**: `if ((order as any)?.success === false)`
+- **Acción**: Log `[ORDER_FAILED]` + return false sin crear trade/posición
+- **Resultado**: Previene phantom buys/sells por errores de API
+
+#### 2. **Logging Detallado de Errores de Órdenes**
+- **Evento nuevo**: `ORDER_FAILED` en bot_logs
+- **Contexto**: pair, type, volume, error, exchange
+- **Formato**: `[ORDER_FAILED] BTC/USD BUY: Insufficient balance...`
+- **Resultado**: Visibilidad completa de fallos de exchange
+
+#### 3. **Limpieza de Posición Fantasma**
+- **Posición eliminada**: id=8 (BTC/USD, 0.00043647 BTC, $90793.40)
+- **Trade eliminado**: id=295 (trade_id: 7f08d1bc1c6818b96199c975d6e77465c6931544343b31a144178df1e14f4ff0)
+- **Applied trade eliminado**: id=1
+- **Resultado**: Base de datos limpia y consistente
+
+#### 4. **Logging de Precio Actual (Complementario)**
+- **Archivo**: `server/routes.ts` (commit anterior 3892f21)
+- **Propósito**: Diagnosticar por qué precio actual mostraba $0.00
+- **Mejoras**: Logs detallados al obtener precio de RevolutX/Kraken
+- **Resultado**: Permitió identificar que el problema era orden fallida, no API de precios
+
+### ARCHIVOS MODIFICADOS
+
+1. **`server/services/tradingEngine.ts`**: Validación de `success` en `placeOrder()` para compras y ventas
+2. **`server/routes.ts`**: Logging detallado para diagnóstico de precio actual (commit anterior)
+
+### VERIFICACIÓN POST-FIX
+
+```sql
+-- Verificar que no hay posiciones fantasma
+SELECT COUNT(*) FROM open_positions;
+
+-- Verificar que todas las posiciones tienen trades válidos
+SELECT op.id, op.pair, op.opened_at, t.id as trade_id
+FROM open_positions op
+LEFT JOIN trades t ON op.exchange = t.exchange 
+  AND op.pair = t.pair 
+  AND op.trade_id = t.trade_id
+WHERE t.id IS NULL;
+
+-- Verificar logs de ORDER_FAILED recientes
+SELECT * FROM bot_logs 
+WHERE event_type = 'ORDER_FAILED' 
+  AND created_at > NOW() - INTERVAL '24 hours';
+```
+
+### IMPACTO Y BENEFICIOS
+
+✅ **Eliminación de phantom buys/sells**: Validación de success previene trades fantasma  
+✅ **Consistencia DB-exchange**: Solo se persisten órdenes realmente ejecutadas  
+✅ **Logging completo**: Todos los errores de API son registrados  
+✅ **Recuperación automática**: Bot detecta error y continúa operación normal  
+✅ **Aplicable a todos los exchanges**: Fix genérico para cualquier exchange que devuelva `success`  
+✅ **Protección contra errores API**: Balance insuficiente, límites, red, etc.  
+
+### LECCIONES APRENDIDAS
+
+1. **Validación crítica**: Siempre validar `success` en respuestas de API de trading
+2. **Error handling**: Los errores silenciosos causan inconsistencias graves
+3. **Logging esencial**: Sin logs detallados, los errores son imposibles de diagnosticar
+4. **Testing de errores**: Es necesario probar escenarios de fallo (balance insuficiente, etc.)
+5. **Consistencia primero**: Mejor no ejecutar trade que crear inconsistencia
+
+### ESTADO FINAL
+
+- **Posiciones fantasma**: Eliminadas ✅
+- **Fix implementado**: Validación de success en placeOrder() ✅
+- **Logging completo**: ORDER_FAILED y precio actual ✅
+- **Bot operativo**: Con prevención de phantom buys ✅
+- **Base de datos**: Consistente con exchange ✅
+
+---
+
+## 20 DE ENERO 2026 - FIX CRÍTICO: SYNC REVOLUTX BLOQUEADO + ENDPOINT ORDERBOOK 404
+
+### PROBLEMAS IDENTIFICADOS
+
+#### **PROBLEMA 1: SYNC REVOLUTX BLOQUEADO EN VPS (403)**
+**Síntoma**: 
+```
+POST /api/trades/sync-revolutx => 403
+{"error":"REVOLUTX_SYNC_DISABLED","message":"... (REVOLUTX_SYNC_ENABLED!=true) ..."}
+```
+
+**Causa raíz**: La variable `REVOLUTX_SYNC_ENABLED=true` NO estaba configurada en `docker-compose.staging.yml` para el servicio app en VPS.
+
+**Impacto**: Sincronización de trades RevolutX no funcionaba en VPS, aunque la IP estaba whitelisted.
+
+#### **PROBLEMA 2: ENDPOINT ORDERBOOK 404 (SPAM DE ERRORES)**
+**Síntoma**:
+```
+[revolutx] getTickerFromOrderbook => 404
+{"message":"Endpoint GET /api/1.0/orderbook not found","error_id":"3070e0df-556e-46cb-861b-c24bcc3d60ab"}
+```
+
+**Causa raíz**: El endpoint `/api/1.0/orderbook` **NO EXISTE** en la API de RevolutX. El código intentaba llamarlo constantemente para obtener precios.
+
+**Impacto**: Logs llenos de errores 404, precio actual no se podía obtener, UI mostraba $0.00.
+
+---
+
+### SOLUCIÓN IMPLEMENTADA
+
+#### **1. HABILITAR SYNC REVOLUTX EN VPS**
+- **Archivo**: `docker-compose.staging.yml`
+- **Cambio**: Agregar `REVOLUTX_SYNC_ENABLED=true` al servicio `krakenbot-staging-app`
+- **Resultado**: Sync funcionará solo en VPS (IP whitelisted), local sigue bloqueado
+
+```yaml
+services:
+  krakenbot-staging-app:
+    environment:
+      - REVOLUTX_SYNC_ENABLED=true
+```
+
+#### **2. DESHABILITAR ENDPOINT ORDERBOOK INEXISTENTE**
+- **Archivo**: `server/services/exchanges/RevolutXService.ts`
+- **Cambios**:
+  - `getTicker()` ahora lanza error claro: "RevolutX ticker not available - use Kraken for price data"
+  - `getTickerFromOrderbook()` deshabilitado con mensaje: "RevolutX orderbook endpoint does not exist (404)"
+  - Eliminado código que intentaba llamar endpoint 404
+
+#### **3. USAR KRAKEN COMO FUENTE DE PRECIO**
+- **Archivo**: `server/routes.ts` (endpoint `/api/open-positions`)
+- **Cambio**: Simplificado para usar solo Kraken como fuente de precio actual
+- **Resultado**: Precio consistente para todas las posiciones (Kraken y RevolutX)
+
+```javascript
+// RevolutX no tiene endpoint de ticker - usar Kraken para precio actual
+if (krakenService.isInitialized()) {
+  const krakenPair = krakenService.formatPair(pos.pair);
+  const ticker = await krakenService.getTickerRaw(krakenPair);
+  // ... usar precio de Kraken
+}
+```
+
+---
+
+### ENDPOINTS CORRECTOS DE REVOLUTX API
+
+#### **✅ ENDPOINTS QUE FUNCIONAN**
+
+| Endpoint | Método | Propósito | Estado |
+|----------|--------|-----------|---------|
+| `/api/1.0/accounts` | GET | Obtener balances | ✅ Funciona |
+| `/api/1.0/orders` | POST | Crear órdenes | ✅ Funciona |
+| `/api/1.0/orders/{id}` | DELETE | Cancelar órdenes | ✅ Funciona |
+| `/api/1.0/orders` | GET | Obtener órdenes activas | ✅ Funciona |
+| `/api/1.0/fills` | GET | Obtener trades ejecutados | ✅ Funciona |
+| `/api/1.0/currencies` | GET | Obtener monedas disponibles | ✅ Funciona |
+| `/api/1.0/symbols` | GET | Obtener pares disponibles | ✅ Funciona |
+
+#### **❌ ENDPOINTS QUE NO EXISTEN**
+
+| Endpoint | Método | Propósito | Estado |
+|----------|--------|-----------|---------|
+| `/api/1.0/ticker` | GET | Obtener ticker | ❌ 404 Not Found |
+| `/api/1.0/orderbook` | GET | Obtener orderbook | ❌ 404 Not Found |
+| `/api/1.0/market-data` | GET | Datos de mercado | ❌ 404 Not Found |
+| `/api/1.0/quotes` | GET | Cotizaciones | ❌ 404 Not Found |
+| `/api/1.0/trades` | GET | Trades públicos | ❌ 404 Not Found |
+
+#### **📝 NOTAS IMPORTANTES**
+
+1. **RevolutX NO tiene endpoints públicos de market data** (ticker, orderbook, etc.)
+2. **Solo tiene endpoints privados** para gestión de cuenta y órdenes
+3. **Para precios actuales**: Usar Kraken API como fuente principal
+4. **Para trades históricos**: Usar `/api/1.0/fills` (endpoint privado)
+
+---
+
+### ARCHIVOS MODIFICADOS
+
+1. **`docker-compose.staging.yml`**: +1 línea (`REVOLUTX_SYNC_ENABLED=true`)
+2. **`server/services/exchanges/RevolutXService.ts`**: -40 líneas (código orderbook eliminado)
+3. **`server/routes.ts`**: Simplificado para usar solo Kraken como fuente de precio
+
+---
+
+### VERIFICACIÓN POST-DEPLOY
+
+```bash
+# 1. Verificar que REVOLUTX_SYNC_ENABLED está activo
+docker exec krakenbot-staging-app sh -c 'echo $REVOLUTX_SYNC_ENABLED'
+# Debe mostrar: true
+
+# 2. Probar sync RevolutX
+curl -sS -X POST http://127.0.0.1:5000/api/trades/sync-revolutx \
+  -H "Content-Type: application/json" \
+  -d '{"allowAssumedSide":true}'
+# Debe devolver 200 con trades sincronizados
+
+# 3. Verificar que NO hay errores 404 de orderbook
+docker logs --tail=100 krakenbot-staging-app | grep -i "orderbook\|404"
+# No debe mostrar errores de orderbook
+
+# 4. Verificar precio actual en UI
+# Las posiciones deben mostrar precio usando Kraken
+```
+
+---
+
+### IMPACTO Y BENEFICIOS
+
+✅ **Sync RevolutX restaurado**: Funciona correctamente en VPS con IP whitelisted  
+✅ **Eliminación de spam 404**: No más errores de endpoint inexistente en logs  
+✅ **Precio consistente**: Todas las posiciones usan Kraken como fuente de precio  
+✅ **UI funcional**: Precio actual se muestra correctamente sin $0.00  
+✅ **Logs limpios**: Sin errores de API inexistentes  
+✅ **Arquitectura clara**: RevolutX solo para trading, Kraken para market data  
+
+---
+
+### LECCIONES APRENDIDAS
+
+1. **Documentación de API es crítica**: No asumir endpoints sin verificar documentación oficial
+2. **Separación de responsabilidades**: RevolutX para trading, Kraken para market data
+3. **Variables de entorno**: Configuración específica por entorno (VPS vs local)
+4. **Error handling**: Deshabilitar código que llama a endpoints inexistentes
+5. **Fallback inteligente**: Usar fuentes alternativas cuando un exchange no tiene ciertos datos
+
+---
+
+### ESTADO FINAL
+
+- **Sync RevolutX**: Habilitado en VPS ✅
+- **Endpoint orderbook**: Deshabilitado correctamente ✅
+- **Precio actual**: Usando Kraken (fuente confiable) ✅
+- **Logs**: Limpios sin errores 404 ✅
+- **UI**: Funcional con precios correctos ✅
+- **Trading**: Seguro con validaciones de success ✅
 
 ---
 

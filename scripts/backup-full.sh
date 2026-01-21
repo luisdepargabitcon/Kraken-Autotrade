@@ -1,13 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env sh
 # Script de backup completo (base de datos + código) para KrakenBot Staging
 # Uso: ./backup-full.sh [nombre_backup_opcional]
 
-set -e
+set -eu
 
 # Configuración
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="${1:-full_${TIMESTAMP}}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Colores para output
 GREEN='\033[0;32m'

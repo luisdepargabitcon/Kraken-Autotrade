@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
+import { existsSync } from 'fs';
 import * as path from 'path';
 import { db } from '../db';
 import { masterBackups, type InsertMasterBackup, type MasterBackup } from '@shared/schema';
@@ -156,7 +157,12 @@ export class BackupService {
       }
 
       const scriptPath = path.join(this.scriptsDir, scriptName);
-      const { stdout, stderr } = await execAsync(`bash ${scriptPath} ${backupName}`);
+      
+      // Detect shell: prefer bash, fallback to sh if bash not available (Alpine containers)
+      const shell = existsSync('/bin/bash') ? 'bash' : 'sh';
+      console.log(`[BackupService] Using shell: ${shell}`);
+      
+      const { stdout, stderr } = await execAsync(`${shell} ${scriptPath} ${backupName}`);
 
       console.log('[BackupService] Backup created:', stdout);
       if (stderr) console.error('[BackupService] Backup stderr:', stderr);
