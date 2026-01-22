@@ -8,6 +8,7 @@ import { revolutXService } from "./services/exchanges/RevolutXService";
 import { telegramService } from "./services/telegram";
 import { TradingEngine } from "./services/tradingEngine";
 import { botLogger } from "./services/botLogger";
+import { serverLogsService } from "./services/serverLogsService";
 import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
@@ -3284,6 +3285,109 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     } catch (error: any) {
       console.error("[api/admin/create-indexes] Error:", error.message);
       res.status(500).json({ error: "Failed to create indexes" });
+    }
+  });
+
+  // ============================================================================
+  // SERVER LOGS ENDPOINTS (Terminal tab - persisted logs with 7-day retention)
+  // ============================================================================
+
+  // Get server logs with filters
+  app.get("/api/logs", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 500, 10000);
+      const from = req.query.from ? new Date(req.query.from as string) : undefined;
+      const to = req.query.to ? new Date(req.query.to as string) : undefined;
+      const source = req.query.source as string | undefined;
+      const level = req.query.level as string | undefined;
+      const search = req.query.search as string | undefined;
+
+      // Validate dates
+      if (from && isNaN(from.getTime())) {
+        return res.status(400).json({ error: "Invalid 'from' date format. Use ISO 8601." });
+      }
+      if (to && isNaN(to.getTime())) {
+        return res.status(400).json({ error: "Invalid 'to' date format. Use ISO 8601." });
+      }
+
+      const logs = await serverLogsService.getLogs({ limit, from, to, source, level, search });
+      const total = await serverLogsService.getLogsCount(from, to);
+
+      res.json({
+        logs,
+        total,
+        limit,
+        from: from?.toISOString() || null,
+        to: to?.toISOString() || null,
+      });
+    } catch (error: any) {
+      console.error("[api/logs] Error:", error.message);
+      res.status(500).json({ error: "Failed to get logs" });
+    }
+  });
+
+  // Export server logs
+  app.get("/api/logs/export", async (req, res) => {
+    try {
+      const from = req.query.from ? new Date(req.query.from as string) : undefined;
+      const to = req.query.to ? new Date(req.query.to as string) : undefined;
+      const source = req.query.source as string | undefined;
+      const level = req.query.level as string | undefined;
+      const search = req.query.search as string | undefined;
+      const format = (req.query.format as 'ndjson' | 'csv' | 'txt') || 'txt';
+
+      const { content, contentType, filename } = await serverLogsService.exportLogs({
+        from, to, source, level, search, format,
+      });
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(content);
+    } catch (error: any) {
+      console.error("[api/logs/export] Error:", error.message);
+      res.status(500).json({ error: "Failed to export logs" });
+    }
+  });
+
+  // Purge old server logs (admin endpoint)
+  app.post("/api/admin/purge-logs", async (req, res) => {
+    try {
+      const { retentionDays = 7, dryRun = true } = req.body;
+
+      if (retentionDays < 1 || retentionDays > 365) {
+        return res.status(400).json({ error: "retentionDays must be between 1 and 365" });
+      }
+
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+      const countBefore = await serverLogsService.getLogsCount();
+      const countToDelete = await serverLogsService.getLogsCount(undefined, cutoffDate);
+
+      if (dryRun) {
+        return res.json({
+          success: true,
+          dryRun: true,
+          retentionDays,
+          cutoffDate: cutoffDate.toISOString(),
+          logsToDelete: countToDelete,
+          logsToKeep: countBefore - countToDelete,
+        });
+      }
+
+      const deletedCount = await serverLogsService.purgeOldLogs(retentionDays);
+
+      res.json({
+        success: true,
+        dryRun: false,
+        retentionDays,
+        cutoffDate: cutoffDate.toISOString(),
+        deletedCount,
+        remainingCount: countBefore - deletedCount,
+      });
+    } catch (error: any) {
+      console.error("[api/admin/purge-logs] Error:", error.message);
+      res.status(500).json({ error: "Failed to purge logs" });
     }
   });
 

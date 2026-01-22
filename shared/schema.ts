@@ -259,6 +259,16 @@ export const botEvents = pgTable("bot_events", {
   meta: text("meta"),
 });
 
+// Server/application logs for Terminal tab (persisted for 7 days)
+export const serverLogs = pgTable("server_logs", {
+  id: serial("id").primaryKey(),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  source: text("source").notNull(), // 'app_stdout', 'docker_compose', 'krakenbot_container', etc.
+  level: text("level").notNull().default("INFO"), // INFO, WARN, ERROR, DEBUG
+  line: text("line").notNull(), // Raw log line
+  isError: boolean("is_error").default(false),
+});
+
 export const openPositions = pgTable("open_positions", {
   id: serial("id").primaryKey(),
   lotId: text("lot_id").notNull().unique(), // Unique identifier for each lot (multi-lot support)

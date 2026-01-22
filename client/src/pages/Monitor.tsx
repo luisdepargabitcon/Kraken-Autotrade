@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { useEventsFeed } from "@/context/EventsWebSocketContext";
 import { BotEvent } from "@/hooks/useEventsWebSocket";
@@ -757,12 +757,76 @@ function TerminalTab() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [logsCopied, setLogsCopied] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [timeRange, setTimeRange] = useState<string>("live");
+  const [historicalLogs, setHistoricalLogs] = useState<any[]>([]);
+  const [historicalTotal, setHistoricalTotal] = useState(0);
+  const [loadingHistorical, setLoadingHistorical] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevLinesLengthRef = useRef(lines.length);
 
+  // Calculate from/to dates based on timeRange
+  const getTimeRangeParams = useCallback(() => {
+    if (timeRange === "live") return { from: undefined, to: undefined };
+    const now = new Date();
+    let from: Date;
+    switch (timeRange) {
+      case "1h": from = new Date(now.getTime() - 1 * 60 * 60 * 1000); break;
+      case "6h": from = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
+      case "24h": from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
+      case "7d": from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+      default: from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    }
+    return { from: from.toISOString(), to: now.toISOString() };
+  }, [timeRange]);
+
+  // Fetch historical logs when timeRange changes (not "live")
+  useEffect(() => {
+    if (timeRange === "live") {
+      setHistoricalLogs([]);
+      setHistoricalTotal(0);
+      return;
+    }
+    
+    const fetchHistorical = async () => {
+      setLoadingHistorical(true);
+      try {
+        const { from, to } = getTimeRangeParams();
+        const params = new URLSearchParams();
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+        if (searchText) params.set("search", searchText);
+        params.set("limit", "1000");
+        
+        const res = await fetch(`/api/logs?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          setHistoricalLogs(data.logs || []);
+          setHistoricalTotal(data.total || 0);
+        }
+      } catch (err) {
+        console.error("Error fetching historical logs:", err);
+      } finally {
+        setLoadingHistorical(false);
+      }
+    };
+    
+    fetchHistorical();
+  }, [timeRange, searchText, getTimeRangeParams]);
+
+  // Filter live lines by search text
+  const filteredLines = useMemo(() => {
+    if (!searchText) return lines;
+    const lowerSearch = searchText.toLowerCase();
+    return lines.filter(l => l.line.toLowerCase().includes(lowerSearch));
+  }, [lines, searchText]);
+
   const handleCopyLogs = async () => {
-    if (lines.length === 0) return;
-    const text = lines.map(l => l.line).join("\n");
+    const logsToUse = timeRange === "live" ? filteredLines : historicalLogs;
+    if (logsToUse.length === 0) return;
+    const text = timeRange === "live" 
+      ? logsToUse.map((l: any) => l.line).join("\n")
+      : logsToUse.map((l: any) => `[${new Date(l.timestamp).toISOString()}] [${l.level}] ${l.line}`).join("\n");
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(text);
@@ -784,17 +848,29 @@ function TerminalTab() {
   };
 
   const handleDownloadLogs = () => {
-    if (lines.length === 0) return;
-    const text = lines.map(l => l.line).join("\n");
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `app-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    if (timeRange === "live") {
+      // Download current live logs
+      if (filteredLines.length === 0) return;
+      const text = filteredLines.map(l => l.line).join("\n");
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `app-logs-live-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      // Download historical logs via API
+      const { from, to } = getTimeRangeParams();
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (searchText) params.set("search", searchText);
+      params.set("format", "txt");
+      window.open(`/api/logs/export?${params}`, "_blank");
+    }
   };
 
   useEffect(() => {
@@ -807,7 +883,9 @@ function TerminalTab() {
     prevLinesLengthRef.current = lines.length;
   }, [lines.length, autoScroll, isPaused]);
 
-  const displayLines = isPaused ? lines.slice(0, prevLinesLengthRef.current) : lines;
+  const displayLines = isPaused ? filteredLines.slice(0, prevLinesLengthRef.current) : filteredLines;
+  const logsToDisplay = timeRange === "live" ? displayLines : historicalLogs;
+  const totalCount = timeRange === "live" ? filteredLines.length : historicalTotal;
 
   return (
     <div className="space-y-4">
@@ -817,28 +895,54 @@ function TerminalTab() {
             variant="outline" 
             className={cn(
               "gap-1",
-              isConnected ? "border-green-500 text-green-400" : 
-              status === "reconnecting" ? "border-yellow-500 text-yellow-400" :
-              "border-red-500 text-red-400"
+              timeRange === "live" 
+                ? (isConnected ? "border-green-500 text-green-400" : 
+                   status === "reconnecting" ? "border-yellow-500 text-yellow-400" :
+                   "border-red-500 text-red-400")
+                : "border-blue-500 text-blue-400"
             )}
             data-testid="terminal-ws-status"
           >
-            {isConnected ? <Wifi className="h-3 w-3" /> : 
-             status === "reconnecting" ? <RefreshCw className="h-3 w-3 animate-spin" /> :
-             <WifiOff className="h-3 w-3" />}
-            {status === "connected" ? "Conectado" : 
-             status === "reconnecting" ? "Reconectando..." : 
-             status === "connecting" ? "Conectando..." : "Desconectado"}
+            {timeRange === "live" ? (
+              <>
+                {isConnected ? <Wifi className="h-3 w-3" /> : 
+                 status === "reconnecting" ? <RefreshCw className="h-3 w-3 animate-spin" /> :
+                 <WifiOff className="h-3 w-3" />}
+                {status === "connected" ? "En vivo" : 
+                 status === "reconnecting" ? "Reconectando..." : 
+                 status === "connecting" ? "Conectando..." : "Desconectado"}
+              </>
+            ) : (
+              <>
+                <Database className="h-3 w-3" />
+                Histórico
+              </>
+            )}
           </Badge>
           
-          {isConnected && (
+          {/* Time range selector */}
+          <Select value={timeRange} onValueChange={setTimeRange}>
+            <SelectTrigger className="w-[120px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="live">🔴 En vivo</SelectItem>
+              <SelectItem value="1h">Última 1h</SelectItem>
+              <SelectItem value="6h">Últimas 6h</SelectItem>
+              <SelectItem value="24h">Últimas 24h</SelectItem>
+              <SelectItem value="7d">Últimos 7 días</SelectItem>
+            </SelectContent>
+          </Select>
+          
+          {/* Source selector (only in live mode) */}
+          {timeRange === "live" && isConnected && (
             <Select
               value={activeSource || ""}
               onValueChange={(value) => {
                 if (value) startSource(value);
               }}
             >
-              <SelectTrigger className="w-[200px] h-8" data-testid="terminal-source-select">
+              <SelectTrigger className="w-[180px] h-8" data-testid="terminal-source-select">
                 <SelectValue placeholder="Seleccionar fuente..." />
               </SelectTrigger>
               <SelectContent>
@@ -857,7 +961,7 @@ function TerminalTab() {
             </Select>
           )}
           
-          {activeSource && (
+          {timeRange === "live" && activeSource && (
             <Button
               variant="outline"
               size="sm"
@@ -868,12 +972,34 @@ function TerminalTab() {
               Detener
             </Button>
           )}
+          
+          {/* Search input */}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              className="pl-8 h-8 w-32 sm:w-48"
+              data-testid="terminal-search"
+            />
+            {searchText && (
+              <button 
+                onClick={() => setSearchText("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+              >
+                <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+              </button>
+            )}
+          </div>
         </div>
         
         <div className="flex items-center gap-2">
           <div className="text-xs text-muted-foreground hidden sm:flex gap-3">
-            <span>Líneas: {lineCount}</span>
-            {lastLineTime && (
+            <span className="text-cyan-400 font-medium">
+              {loadingHistorical ? "Cargando..." : `Mostrando ${logsToDisplay.length} de ${totalCount}`}
+            </span>
+            {timeRange === "live" && lastLineTime && (
               <span className="text-cyan-400" data-testid="terminal-last-line-time">
                 Último: {lastLineTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
@@ -953,36 +1079,80 @@ function TerminalTab() {
         <CardContent className="p-0">
           <ScrollArea className="h-[calc(100vh-280px)]" ref={scrollRef}>
             <div className="font-mono text-xs p-3 text-green-400 whitespace-pre-wrap">
-              {!isConnected ? (
-                <div className="text-muted-foreground">
-                  {status === "connecting" ? "Conectando al servidor..." : "Desconectado. Haz clic en 'Reconectar'."}
-                </div>
-              ) : !activeSource ? (
-                <div className="text-muted-foreground">
-                  Selecciona una fuente de logs para comenzar...
-                  {!dockerEnabled && (
-                    <div className="mt-2 text-yellow-400">
-                      Docker deshabilitado. Configura ENABLE_DOCKER_LOGS_STREAM=true en el servidor para habilitar logs de Docker.
-                    </div>
-                  )}
-                </div>
-              ) : displayLines.length === 0 ? (
-                <div className="text-muted-foreground">
-                  Esperando líneas de log...
-                </div>
-              ) : (
-                displayLines.map((logLine) => (
-                  <div 
-                    key={logLine.id} 
-                    className={cn(
-                      "py-0.5",
-                      logLine.isError && "text-red-400"
-                    )}
-                    data-testid={`log-line-${logLine.id}`}
-                  >
-                    {logLine.line}
+              {timeRange === "live" ? (
+                // Live mode
+                !isConnected ? (
+                  <div className="text-muted-foreground">
+                    {status === "connecting" ? "Conectando al servidor..." : "Desconectado. Haz clic en 'Reconectar'."}
                   </div>
-                ))
+                ) : !activeSource ? (
+                  <div className="text-muted-foreground">
+                    Selecciona una fuente de logs para comenzar...
+                    {!dockerEnabled && (
+                      <div className="mt-2 text-yellow-400">
+                        Docker deshabilitado. Configura ENABLE_DOCKER_LOGS_STREAM=true en el servidor para habilitar logs de Docker.
+                      </div>
+                    )}
+                  </div>
+                ) : displayLines.length === 0 ? (
+                  <div className="text-muted-foreground">
+                    {searchText ? `Sin resultados para "${searchText}"` : "Esperando líneas de log..."}
+                  </div>
+                ) : (
+                  displayLines.map((logLine) => (
+                    <div 
+                      key={logLine.id} 
+                      className={cn(
+                        "py-0.5",
+                        logLine.isError && "text-red-400"
+                      )}
+                      data-testid={`log-line-${logLine.id}`}
+                    >
+                      {logLine.line}
+                    </div>
+                  ))
+                )
+              ) : (
+                // Historical mode
+                loadingHistorical ? (
+                  <div className="text-muted-foreground flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Cargando logs históricos...
+                  </div>
+                ) : historicalLogs.length === 0 ? (
+                  <div className="text-muted-foreground">
+                    {searchText ? `Sin resultados para "${searchText}"` : "No hay logs en el rango seleccionado"}
+                  </div>
+                ) : (
+                  historicalLogs.map((log: any, idx: number) => (
+                    <div 
+                      key={log.id || idx} 
+                      className={cn(
+                        "py-0.5",
+                        log.isError && "text-red-400",
+                        log.level === "ERROR" && "text-red-400",
+                        log.level === "WARN" && "text-yellow-400"
+                      )}
+                      data-testid={`historical-log-${log.id || idx}`}
+                    >
+                      <span className="text-muted-foreground/60">
+                        [{new Date(log.timestamp).toLocaleString("es-ES", { 
+                          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" 
+                        })}]
+                      </span>{" "}
+                      <span className={cn(
+                        "font-semibold",
+                        log.level === "ERROR" && "text-red-400",
+                        log.level === "WARN" && "text-yellow-400",
+                        log.level === "INFO" && "text-blue-400",
+                        log.level === "DEBUG" && "text-gray-400"
+                      )}>
+                        [{log.level}]
+                      </span>{" "}
+                      {log.line}
+                    </div>
+                  ))
+                )
               )}
             </div>
           </ScrollArea>

@@ -3,6 +3,7 @@ import type { Server } from "http";
 import { spawn, ChildProcess } from "child_process";
 import { log } from "../utils/logger";
 import { logStreamService } from "./logStreamService";
+import { serverLogsService } from "./serverLogsService";
 
 const WS_PATH = "/ws/logs";
 const MAX_LOG_HISTORY = 200;
@@ -234,6 +235,8 @@ class TerminalWebSocketServer {
         const line = `[${time}] [${levelTag}] ${entry.message}`;
         const isError = entry.level === "error" || entry.level === "warn";
         this.sendMessage(client, { type: "LOG_LINE", payload: { line, sourceId, isError } });
+        // Persist log to DB for historical queries
+        serverLogsService.persistLog(sourceId, line, isError);
       });
 
       client.logStreamUnsubscribe = unsubscribe;
@@ -277,6 +280,8 @@ class TerminalWebSocketServer {
         const lines = data.toString().split("\n").filter((l: string) => l.trim());
         lines.forEach((line: string) => {
           this.sendMessage(client, { type: "LOG_LINE", payload: { line, sourceId } });
+          // Persist log to DB for historical queries
+          serverLogsService.persistLog(sourceId, line, false);
         });
       });
 
@@ -284,6 +289,8 @@ class TerminalWebSocketServer {
         const lines = data.toString().split("\n").filter((l: string) => l.trim());
         lines.forEach((line: string) => {
           this.sendMessage(client, { type: "LOG_LINE", payload: { line, sourceId, isError: true } });
+          // Persist log to DB for historical queries
+          serverLogsService.persistLog(sourceId, line, true);
         });
       });
 
