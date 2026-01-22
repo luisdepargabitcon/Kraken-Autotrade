@@ -5,56 +5,39 @@
 
 ---
 
-## 2026-01-22 21:15 (Europe/Madrid) — [ENV: VPS/STG] — P1-CRITICAL: Fix adopción/inflado de posiciones + modo SAFE
+## 2026-01-22 21:30 (Europe/Madrid) — [ENV: VPS/STG] — REGLA ÚNICA: open_positions = solo posiciones del bot
 
 ### Resumen
-El reconcile anterior seguía creando posiciones desde balances externos y Smart-Guard intentaba gestionarlas. Esto causaba que holdings externos fueran "adoptados" y luego vendidos automáticamente.
+Eliminados modos SAFE/ADOPT. Implementada regla única: `open_positions` contiene únicamente posiciones abiertas por el bot (engine), nunca balances externos del exchange.
 
 ### Evidencia Forense
 1. **2026-01-21 22:30:44Z** — CREACIÓN MASIVA por MANUAL RECONCILE desde BUY históricos
-   - `POSITION_CREATED_VIA_SYNC` "Position reconciled from historical BUY trade"
-   - Pairs: SOL/USD, ETH/USD, BTC/USD, TON/USD
-
 2. **2026-01-22 08:14:29Z** — Smart-Guard intenta VENDER ETH por Break-even
-   - `SG_STOP_HIT` + `ORDER_ATTEMPT` sell volume=0.03356482
-   - Luego `POSITION_CREATED_VIA_SYNC` "Position created from synced BUY trade"
+3. **2026-01-22 14:57:27Z** — RECONCILE ADOPTA holdings y ACTUALIZA cantidades (365%+ inflado)
 
-3. **2026-01-22 14:57:27Z** — RECONCILE ADOPTA holdings y ACTUALIZA cantidades
-   - `POSITION_CREATED_RECONCILE`: XRP/USD (balance 177.72), SOL/USD (balance 2.04)
-   - `POSITION_UPDATED_RECONCILE`: ETH 0.03356 -> 0.15630 (diff 365.69%)
-   - `POSITION_UPDATED_RECONCILE`: BTC 0.00111 -> 0.00625 (diff 459.20%)
+### REGLA ÚNICA Implementada
+> `open_positions` = solo posiciones abiertas por el bot (engine), nunca balances externos
 
-### Root Cause
-1. Reconcile creaba posiciones desde balances externos (adoptMode implícito)
-2. Reconcile actualizaba qty de posiciones no gestionadas (inflado)
-3. Smart-Guard gestionaba posiciones sin configSnapshot (reconcile/sync/adopt)
+### Cambios Concretos
 
-### Fix Aplicado (P1-CRITICAL)
+**A) Reconcile simplificado (sin modos):**
+- Eliminado `adoptMode` - ya no existe modo ADOPT
+- Solo elimina posiciones del bot si balance real = 0
+- Solo actualiza qty de posiciones del bot (con configSnapshot)
+- PROHIBIDO crear posiciones desde balances externos
 
-**A) Modo SAFE por defecto en reconcile:**
-- `adoptMode=false` por defecto
-- NO crea posiciones desde balances externos
-- Solo limpia huérfanas (balance=0) y actualiza qty de posiciones GESTIONADAS
+**B) Smart-Guard solo gestiona posiciones del bot:**
+- Verifica: `configSnapshot != null` + `entryMode === 'SMART_GUARD'` + sin prefijos especiales
+- Posiciones con lotId `reconcile-`, `sync-`, `adopt-` → ignoradas
 
-**B) Protección de actualización de qty:**
-- Solo actualiza posiciones con `configSnapshot != null` Y `entryMode === 'SMART_GUARD'`
-- Posiciones con lotId prefijo `reconcile-`, `sync-`, `adopt-` sin snapshot → NO se actualizan
-
-**C) Bloqueo de Smart-Guard para posiciones no gestionadas:**
-- `tradingEngine.checkSinglePositionSLTP` ahora verifica:
-  - Si lotId empieza por `reconcile`, `sync`, `adopt` Y no tiene configSnapshot → SKIP
-  - Esto previene que Smart-Guard intente vender holdings externos
-
-**D) Modo ADOPT explícito (peligroso):**
-- Solo con `adoptMode=true` se crean posiciones desde balances
-- Posiciones adoptadas tienen `entryMode: "MANUAL"` y `configSnapshotJson: null`
-- Smart-Guard NO las gestiona
+**C) Sync de RevolutX:**
+- Solo importa trades a tabla `trades`
+- Nunca crea/modifica `open_positions`
 
 ### Archivos Tocados
-- `server/routes.ts` (reconcile con adoptMode, protección de update)
-- `server/services/tradingEngine.ts` (bloqueo Smart-Guard para unmanaged)
-- `server/services/botLogger.ts` (nuevos EventTypes)
-- `client/src/pages/Terminal.tsx` (UI modo SAFE)
+- `server/routes.ts` (reconcile sin modos, solo bot positions)
+- `server/services/tradingEngine.ts` (Smart-Guard solo bot positions)
+- `client/src/pages/Terminal.tsx` (UI sin mención de modos)
 
 ### Deploy/Comandos
 ```bash
@@ -65,27 +48,24 @@ docker compose -f docker-compose.staging.yml up -d --build --force-recreate
 
 ### Verificación Post-Deploy
 ```bash
-# 1) Ejecutar reconcile RX (modo SAFE)
+# 1) Ejecutar reconcile RX
 curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
   -H "Content-Type: application/json" \
   -d '{"exchange":"revolutx","autoClean":true}'
 
-# Debe retornar: mode: "SAFE", created: 0, y skipped_no_adopt para balances sin posición
+# Debe retornar: created: 0, y skipped_external_balance para holdings sin posición del bot
 
-# 2) Verificar que NO se crearon nuevas posiciones
+# 2) Verificar que NO se crearon posiciones desde balances
 docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
 SELECT pair, amount, entry_mode, lot_id, (config_snapshot_json IS NOT NULL) as has_snapshot
 FROM open_positions WHERE exchange='revolutx' ORDER BY pair;"
-
-# 3) Verificar que Smart-Guard NO intenta vender posiciones sin snapshot
-docker logs krakenbot-staging-app 2>&1 | grep -E "SG_STOP_HIT|ORDER_ATTEMPT" | tail -20
 ```
 
 ### Definition of Done
-- ✅ Pulsar "Reconciliar RX" (modo SAFE) NO crea XRP/SOL ni infla ETH/BTC
-- ✅ No vuelven a aparecer eventos "Position reconciled from historical BUY trade"
-- ✅ Smart-Guard NO intenta vender posiciones adoptadas/sync (managed=false)
-- ⏳ Los SELL de RevolutX aparecen en DB/UI (pendiente verificar)
+- ✅ Reconcile NO crea posiciones desde balances externos
+- ✅ Smart-Guard solo gestiona posiciones del bot
+- ✅ open_positions = solo posiciones engine-managed
+- ✅ UI sin confusión de modos
 
 ---
 

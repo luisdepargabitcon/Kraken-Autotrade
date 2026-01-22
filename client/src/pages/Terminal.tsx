@@ -367,16 +367,16 @@ export default function Terminal() {
     },
     onSuccess: (data) => {
       const { summary } = data;
-      if (summary?.deleted > 0 || summary?.created > 0 || summary?.updated > 0) {
+      if (summary?.deleted > 0 || summary?.updated > 0) {
         toast({
           title: "Reconciliación Completada",
-          description: `${data.exchange}: ${summary.deleted} eliminadas, ${summary.created} creadas, ${summary.updated} actualizadas`,
+          description: `${data.exchange}: ${summary.deleted} eliminadas, ${summary.updated} actualizadas`,
         });
         queryClient.invalidateQueries({ queryKey: ["openPositions"] });
       } else {
         toast({
           title: "Todo OK",
-          description: `${data.exchange}: Posiciones sincronizadas con balances reales`,
+          description: `${data.exchange}: Posiciones del bot sincronizadas`,
         });
       }
     },
@@ -408,13 +408,13 @@ export default function Terminal() {
   };
 
   const handleReconcileRevolutX = () => {
-    if (confirm(`¿Reconciliar posiciones con Revolut X? (MODO SAFE)\n\n✅ Posiciones sin balance → ELIMINADAS\n✅ Posiciones gestionadas con qty diferente → ACTUALIZADAS\n❌ Balances externos SIN posición → NO se crean (modo SAFE)\n\nEsto NO adoptará holdings externos ni inflará posiciones existentes.`)) {
+    if (confirm(`¿Reconciliar posiciones con Revolut X?\n\n✅ Posiciones del bot sin balance → ELIMINADAS\n✅ Posiciones del bot con qty diferente → ACTUALIZADAS\n❌ Holdings externos SIN posición del bot → NO se crean\n\nREGLA: open_positions = solo posiciones del bot, nunca balances externos.`)) {
       reconcileMutation.mutate({ exchange: 'revolutx', autoClean: true });
     }
   };
 
   const handleReconcileKraken = () => {
-    if (confirm(`¿Reconciliar posiciones con Kraken? (MODO SAFE)\n\n✅ Posiciones sin balance → ELIMINADAS\n✅ Posiciones gestionadas con qty diferente → ACTUALIZADAS\n❌ Balances externos SIN posición → NO se crean (modo SAFE)\n\nEsto NO adoptará holdings externos ni inflará posiciones existentes.`)) {
+    if (confirm(`¿Reconciliar posiciones con Kraken?\n\n✅ Posiciones del bot sin balance → ELIMINADAS\n✅ Posiciones del bot con qty diferente → ACTUALIZADAS\n❌ Holdings externos SIN posición del bot → NO se crean\n\nREGLA: open_positions = solo posiciones del bot, nunca balances externos.`)) {
       reconcileMutation.mutate({ exchange: 'kraken', autoClean: true });
     }
   };

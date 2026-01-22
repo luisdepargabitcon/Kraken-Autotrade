@@ -236,8 +236,8 @@ BACKUP_SCRIPTS_DIR=/app/scripts
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
 | GET | `/api/trades` | Historial de trades |
-| POST | `/api/trades/sync-revolutx` | Sync trades RevolutX |
-| POST | `/api/positions/reconcile-from-trades` | Reconciliar posiciones |
+| POST | `/api/trades/sync-revolutx` | Sync trades RevolutX (solo importa trades) |
+| POST | `/api/positions/reconcile` | Reconciliar posiciones del bot |
 
 ### Configuración
 | Método | Endpoint | Descripción |
@@ -262,7 +262,7 @@ BACKUP_SCRIPTS_DIR=/app/scripts
 ### Sync RevolutX (Automático)
 - **Frecuencia**: Cada 6 horas
 - **Endpoint**: `POST /api/trades/sync-revolutx`
-- **Función**: Importa trades ejecutados en RevolutX
+- **Función**: Importa trades ejecutados en RevolutX (solo tabla `trades`, nunca crea posiciones)
 
 ### Reporte Diario
 - **Frecuencia**: Diario a las 08:00
@@ -347,9 +347,9 @@ ORDER BY timestamp DESC LIMIT 20;
 ### Posiciones sin Smart-Guard
 **Síntoma:** `sg_break_even_activated = false` permanentemente
 
-**Causa:** Posición sin `config_snapshot_json`
+**Causa:** Posición sin `config_snapshot_json` (no es posición del bot)
 
-**Fix:** Reiniciar bot (backfill automático) o ejecutar reconcile
+**Fix:** Solo las posiciones del bot (engine-managed) tienen Smart-Guard
 
 ### Sync RevolutX falla (403)
 **Causa:** `REVOLUTX_SYNC_ENABLED` no configurado
@@ -397,7 +397,38 @@ ORDER BY timestamp DESC LIMIT 10;
 
 ---
 
-## 11. SEGURIDAD
+## 11. REGLA FUNDAMENTAL: POSICIONES DEL BOT
+
+### open_positions = solo posiciones del bot
+
+**Principio básico:**
+- La tabla `open_positions` contiene únicamente posiciones abiertas por el bot (engine)
+- NUNCA refleja balances externos del exchange
+- NUNCA "adopta" holdings existentes
+
+### Implicaciones:
+
+**Sync de RevolutX:**
+- Solo importa trades a la tabla `trades`
+- NUNCA crea/modifica `open_positions`
+
+**Reconcile:**
+- Elimina posiciones del bot si balance real = 0
+- Actualiza qty solo de posiciones del bot (con configSnapshot)
+- PROHIBIDO crear posiciones desde balances externos
+
+**Smart-Guard:**
+- Solo gestiona posiciones del bot (engine-managed)
+- Ignora posiciones sin configSnapshot o con prefijos especiales
+
+Esta regla previene:
+- Venta accidental de holdings personales
+- "Resurrección" de posiciones vendidas
+- Inflado de posiciones con balances externos
+
+---
+
+## 12. SEGURIDAD
 
 ### API Keys
 - **NUNCA** activar permisos de retiro en Kraken
@@ -418,7 +449,7 @@ SELECT dry_run_mode FROM bot_config WHERE id = 1;
 
 ---
 
-## 12. ROADMAP / NUEVAS FUNCIONES
+## 13. ROADMAP / NUEVAS FUNCIONES
 
 ### Implementado ✅
 - [x] Smart-Guard con BE, Trailing, TP fijo
@@ -426,8 +457,9 @@ SELECT dry_run_mode FROM bot_config WHERE id = 1;
 - [x] Configuración dinámica con presets
 - [x] Sistema de backups con golden backups
 - [x] Telegram multi-chat
-- [x] Reconciliación de posiciones
+- [x] Reconciliación de posiciones (solo bot positions)
 - [x] Eventos de auditoría SG_*
+- [x] Regla única: open_positions = solo posiciones del bot
 
 ### Pendiente 📋
 - [ ] Separar `ALLOW_NEW_ENTRIES` vs `ALLOW_POSITION_MANAGEMENT`

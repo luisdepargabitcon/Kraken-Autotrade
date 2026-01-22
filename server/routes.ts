@@ -2227,18 +2227,16 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
-  // RECONCILE: Sync positions with REAL BALANCES from exchange
-  // P1-CRITICAL FIX: Modo SAFE por defecto - NO crea posiciones desde balances externos
+  // RECONCILE: Limpia posiciones del bot que no tienen balance real
+  // REGLA ÚNICA: open_positions = solo posiciones del bot (engine), nunca balances externos
   // 
-  // MODOS:
-  // - SAFE (default): Solo limpia huérfanas (balance=0) y actualiza qty de posiciones GESTIONADAS
-  //   NO crea posiciones nuevas desde balances externos (evita "adoptar" holdings)
-  // - ADOPT (explícito): Crea posiciones desde balances externos, pero marcadas managed=false
-  //
-  // REGLA DE ORO: Smart-Guard solo gestiona posiciones creadas por el engine o manualmente
+  // FUNCIONAMIENTO:
+  // - Elimina posiciones del bot si balance real del asset es 0 (autoClean)
+  // - Actualiza qty SOLO si la posición es del bot (engine-managed)
+  // - PROHIBIDO: crear posiciones desde balances externos
   app.post("/api/positions/reconcile", async (req, res) => {
     try {
-      const { exchange = 'kraken', dryRun = false, autoClean = true, adoptMode = false } = req.body;
+      const { exchange = 'kraken', dryRun = false, autoClean = true } = req.body;
       
       // Dust threshold per asset (minimum tradeable amount)
       const dustThresholds: Record<string, number> = {
@@ -2372,76 +2370,39 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         } else {
           // Balance > dust
           if (!existingPos) {
-            // No position but has balance
-            // P1-CRITICAL: En modo SAFE (default), NO crear posiciones desde balances externos
-            // Esto evita "adoptar" holdings y que Smart-Guard intente gestionarlos
-            if (!adoptMode) {
-              // SAFE MODE: Solo reportar, no crear
-              results.push({ 
-                pair, asset, action: 'skipped_no_adopt', balance, 
-                reason: 'Balance exists but no position - use adoptMode=true to create (DANGEROUS)' 
-              });
-            } else {
-              // ADOPT MODE (explícito): Crear posición pero marcar como NO gestionada
-              // Try to get entry price from recent trades
-              const allTrades = await storage.getTrades();
-              const recentBuys = allTrades
-                .filter(t => t.exchange === exchange && t.pair === pair && t.type === 'buy' && t.status === 'filled')
-                .sort((a, b) => new Date(b.executedAt || 0).getTime() - new Date(a.executedAt || 0).getTime());
-              
-              const entryPrice = recentBuys[0]?.price ? parseFloat(recentBuys[0].price) : 0;
-              // ADOPT mode: NO Smart-Guard snapshot, posición read-only
-              const configSnapshot = null; // Sin snapshot = Smart-Guard no la gestiona
-              
-              if (dryRun) {
-                results.push({ pair, asset, action: 'would_adopt', balance, entryPrice, managed: false, warning: 'ADOPT mode - position will NOT be managed by Smart-Guard' });
-              } else {
-                const lotId = `adopt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                await storage.saveOpenPositionByLotId({
-                  pair,
-                  exchange,
-                  lotId,
-                  amount: balance.toFixed(8),
-                  entryPrice: entryPrice > 0 ? entryPrice.toFixed(8) : "0",
-                  highestPrice: entryPrice > 0 ? entryPrice.toFixed(8) : "0",
-                  entryMode: "MANUAL", // NOT SMART_GUARD - prevents auto-management
-                  configSnapshotJson: configSnapshot, // null = no Smart-Guard
-                  sgBreakEvenActivated: false,
-                  sgTrailingActivated: false,
-                  sgScaleOutDone: false,
-                });
-                await botLogger.warn("POSITION_ADOPTED", `Position ADOPTED from external balance (NOT managed by Smart-Guard)`, {
-                  pair, asset, balance, entryPrice, lotId, exchange, managed: false,
-                });
-                results.push({ pair, asset, action: 'adopted', balance, entryPrice, lotId, managed: false });
-                created++;
-              }
-            }
+            // REGLA ÚNICA: NO crear posiciones desde balances externos
+            // Los balances del exchange NO se reflejan como open_positions
+            results.push({ 
+              pair, asset, action: 'skipped_external_balance', balance, 
+              reason: 'External balance exists - NOT creating position (open_positions = bot positions only)' 
+            });
           } else {
             // Position exists and has balance → check if qty matches
             const posAmount = parseFloat(existingPos.amount || '0');
             const diff = Math.abs(balance - posAmount);
             const diffPct = posAmount > 0 ? (diff / posAmount) * 100 : 100;
             
-            // P1-CRITICAL: Solo actualizar qty si la posición es GESTIONADA (tiene configSnapshot)
-            // Posiciones adoptadas/sync sin snapshot no deben ser "infladas" con balance externo
-            const isManaged = existingPos.configSnapshotJson != null && existingPos.entryMode === 'SMART_GUARD';
-            const lotIdPrefix = (existingPos.lotId || '').split('-')[0];
-            const isEngineOrManual = !['reconcile', 'sync', 'adopt'].includes(lotIdPrefix);
+            // REGLA ÚNICA: Solo actualizar qty si la posición es del bot (engine-managed)
+            // Las posiciones del bot tienen configSnapshot y lotId sin prefijos especiales
+            const isBotPosition = existingPos.configSnapshotJson != null && 
+                                 existingPos.entryMode === 'SMART_GUARD' &&
+                                 !existingPos.lotId?.startsWith('reconcile-') &&
+                                 !existingPos.lotId?.startsWith('sync-') &&
+                                 !existingPos.lotId?.startsWith('adopt-');
             
             if (diffPct > 5) { // More than 5% difference
-              if (!isManaged && !isEngineOrManual) {
-                // P1-CRITICAL: NO actualizar posiciones no gestionadas (evita "inflar" con balance externo)
+              if (!isBotPosition) {
+                // NO actualizar posiciones que no son del bot
                 results.push({ 
-                  pair, asset, action: 'skipped_update_unmanaged', 
+                  pair, asset, action: 'skipped_not_bot_position', 
                   balance, posAmount, diffPct: diffPct.toFixed(2),
-                  reason: 'Position is not managed (no configSnapshot or lotId prefix is reconcile/sync/adopt)',
+                  reason: 'Position is not a bot position (no configSnapshot or has special lotId prefix)',
                   lotId: existingPos.lotId,
                 });
               } else if (dryRun) {
-                results.push({ pair, asset, action: 'would_update', balance, posAmount, diffPct: diffPct.toFixed(2), managed: isManaged });
+                results.push({ pair, asset, action: 'would_update', balance, posAmount, diffPct: diffPct.toFixed(2) });
               } else {
-                // Update position amount to match real balance (only for managed positions)
+                // Update position amount to match real balance (only for bot positions)
                 await storage.saveOpenPositionByLotId({
                   pair: existingPos.pair,
                   exchange: existingPos.exchange,
@@ -2455,14 +2416,14 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                   sgTrailingActivated: existingPos.sgTrailingActivated ?? false,
                   sgScaleOutDone: existingPos.sgScaleOutDone ?? false,
                 });
-                await botLogger.info("POSITION_UPDATED_RECONCILE", `Position qty updated to match real balance`, {
-                  pair, asset, oldAmount: posAmount, newAmount: balance, diffPct: diffPct.toFixed(2), exchange, managed: isManaged,
+                await botLogger.info("POSITION_UPDATED_RECONCILE", `Bot position qty updated to match real balance`, {
+                  pair, asset, oldAmount: posAmount, newAmount: balance, diffPct: diffPct.toFixed(2), exchange,
                 });
-                results.push({ pair, asset, action: 'updated', balance, oldAmount: posAmount, diffPct: diffPct.toFixed(2), managed: isManaged });
+                results.push({ pair, asset, action: 'updated', balance, oldAmount: posAmount, diffPct: diffPct.toFixed(2) });
                 updated++;
               }
             } else {
-              results.push({ pair, asset, action: 'unchanged', balance, posAmount, managed: isManaged });
+              results.push({ pair, asset, action: 'unchanged', balance, posAmount });
               unchanged++;
             }
           }
@@ -2497,7 +2458,6 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.json({
         success: true,
         exchange,
-        mode: adoptMode ? 'ADOPT' : 'SAFE',
         dryRun,
         autoClean,
         positionMode,
