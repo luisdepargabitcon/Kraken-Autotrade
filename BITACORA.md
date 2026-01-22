@@ -41,10 +41,12 @@ curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
   -d '{"exchange":"revolutx","dryRun":false,"confirm":true}'
 ```
 
-### P2 Pendiente: SELLs en UI
-- Hay 1 SELL en DB (`SELECT type, COUNT(*) FROM trades WHERE exchange='revolutx' GROUP BY type` → buy=52, sell=1)
-- La UI usa `/api/trades/closed` con `typeFilter=all` por defecto
-- Investigar si el SELL tiene `status != 'filled'` o `price = 0` que lo excluye
+### P2 Resuelto: SELLs en UI
+- Hay 1 SELL en DB (tradeId: AUTO-1768713310978, 2026-01-18, BTC/USD)
+- El endpoint `/api/trades/closed?type=sell&exchange=revolutx` SÍ devuelve el SELL
+- El problema: la UI muestra trades paginados (20 por página) y el SELL es antiguo (18-01)
+- Los trades recientes (últimos 20) son todos BUY, el SELL está en páginas posteriores
+- Solución: Usuario debe hacer scroll o usar paginador para ver trades más antiguos
 
 ---
 

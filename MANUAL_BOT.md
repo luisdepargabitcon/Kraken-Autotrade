@@ -378,6 +378,14 @@ ORDER BY timestamp DESC LIMIT 10;
 
 **Solución:** El bot usa Kraken para precios (ya implementado)
 
+### SELLs de RevolutX no aparecen en UI
+**Causa:** La UI muestra trades paginados (20 por página). Los SELLs antiguos están en páginas posteriores.
+
+**Solución:** 
+- Usar filtro de tipo "Sell" en la UI
+- Hacer scroll hacia abajo para ver trades más antiguos
+- El endpoint `/api/trades/closed` funciona correctamente
+
 ---
 
 ## 10. COMANDOS TELEGRAM

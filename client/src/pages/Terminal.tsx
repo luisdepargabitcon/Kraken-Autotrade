@@ -568,6 +568,26 @@ export default function Terminal() {
     }
   };
 
+  const handleTypeFilterChange = (value: string) => {
+    setTypeFilter(value);
+    setOffset(0);
+  };
+
+  const handleExchangeFilterChange = (value: string) => {
+    setExchangeFilter(value);
+    setOffset(0);
+  };
+
+  const handlePairFilterChange = (value: string) => {
+    setPairFilter(value);
+    setOffset(0);
+  };
+
+  const handleResultFilterChange = (value: string) => {
+    setResultFilter(value);
+    setOffset(0);
+  };
+
   const handleLimitChange = (value: string) => {
     const newLimit = value === "all" ? 1000 : parseInt(value);
     setLimit(newLimit);
@@ -680,7 +700,7 @@ export default function Terminal() {
 
               {activeTab === "history" && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <Select value={typeFilter} onValueChange={handleTypeFilterChange}>
                     <SelectTrigger className="w-[90px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-type-filter">
                       <SelectValue placeholder="Tipo" />
                     </SelectTrigger>
@@ -691,7 +711,7 @@ export default function Terminal() {
                     </SelectContent>
                   </Select>
 
-                  <Select value={exchangeFilter} onValueChange={setExchangeFilter}>
+                  <Select value={exchangeFilter} onValueChange={handleExchangeFilterChange}>
                     <SelectTrigger className="w-[110px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-exchange-filter">
                       <SelectValue placeholder="Exchange" />
                     </SelectTrigger>
@@ -702,7 +722,7 @@ export default function Terminal() {
                     </SelectContent>
                   </Select>
 
-                  <Select value={pairFilter} onValueChange={setPairFilter}>
+                  <Select value={pairFilter} onValueChange={handlePairFilterChange}>
                     <SelectTrigger className="w-[100px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-pair-filter">
                       <SelectValue placeholder="Par" />
                     </SelectTrigger>
@@ -714,7 +734,7 @@ export default function Terminal() {
                     </SelectContent>
                   </Select>
                   
-                  <Select value={resultFilter} onValueChange={setResultFilter}>
+                  <Select value={resultFilter} onValueChange={handleResultFilterChange}>
                     <SelectTrigger className="w-[100px] h-8 text-xs font-mono bg-card/50 border-border/50" data-testid="select-result-filter">
                       <SelectValue placeholder="Resultado" />
                     </SelectTrigger>
@@ -1018,6 +1038,15 @@ export default function Terminal() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {exchangeFilter === 'revolutx' && typeFilter === 'all' && closedData?.trades?.length ? (
+                    closedData.trades.some(t => t.type === 'sell') ? null : (
+                      <div className="px-4 py-2 border-b border-border/20 bg-amber-500/5">
+                        <div className="font-mono text-xs text-amber-300">
+                          No hay VENTAS (SELL) en esta página. Puede haber SELLs en páginas posteriores. Prueba el filtro "VENTAS" o aumenta el límite.
+                        </div>
+                      </div>
+                    )
+                  ) : null}
                   {loadingClosed ? (
                     <div className="flex items-center justify-center py-16">
                       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-400"></div>
