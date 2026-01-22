@@ -5,6 +5,52 @@
 
 ---
 
+## 2026-01-22 23:05 (Europe/Madrid) — [ENV: VPS/STG] — P1-CRITICAL cerrado: open_positions = solo posiciones del bot
+
+### Resumen
+Deploy y verificación completados. P1-CRITICAL resuelto con evidencia:
+- No hay posiciones resurrected
+- Reconcile NO crea/infla posiciones desde balances externos
+- No quedan legacy positions (reconcile-/sync-) en RevolutX
+- Smart-Guard ignora posiciones con prefijos legacy
+
+### Verificación final (VPS/STG)
+**Commit activo:** `ad8f1b0` (incluye todos los fixes P1 + P2)
+
+**Legacy positions:** `GET /api/admin/legacy-positions?exchange=revolutx`
+```json
+{"success":true,"exchange":"revolutx","summary":{"totalPositions":0,"legacyCount":0,"botCount":0},"legacyPositions":[]}
+```
+
+**Reconcile RevolutX:** `POST /api/positions/reconcile`
+```json
+{
+  "summary": {"created":0,"deleted":0,"updated":0,"unchanged":0,"total":5},
+  "results": [
+    {"action":"skipped_external_balance","reason":"External balance exists - NOT creating position (open_positions = bot positions only)"}
+  ]
+}
+```
+
+### Estado final
+- ✅ `open_positions RevolutX = 0` (ni legacy ni bot)
+- ✅ Reconcile solo skip_external_balance (5 assets con balance)
+- ✅ Smart-Guard bloqueado para lotId reconcile-/sync-/adopt-
+- ✅ Regla única implementada y operativa
+
+### Comandos de verificación post-deploy
+```bash
+# Verificar que no hay legacy positions
+curl "http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx"
+
+# Verificar reconcile no crea posiciones
+curl -X POST "http://127.0.0.1:3020/api/positions/reconcile" \
+  -H "Content-Type: application/json" \
+  -d '{"exchange":"revolutx","autoClean":true}'
+```
+
+---
+
 ## 2026-01-22 22:00 (Europe/Madrid) — [ENV: VPS/STG] — Endpoints admin para cleanup legacy positions
 
 ### Contexto
@@ -55,7 +101,7 @@ curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
 ### Resumen
 Eliminados modos SAFE/ADOPT. Implementada regla única: `open_positions` contiene únicamente posiciones abiertas por el bot (engine), nunca balances externos del exchange.
 
-### Evidencia Forense
+### Evidencia Forense (histórico)
 1. **2026-01-21 22:30:44Z** — CREACIÓN MASIVA por MANUAL RECONCILE desde BUY históricos
 2. **2026-01-22 08:14:29Z** — Smart-Guard intenta VENDER ETH por Break-even
 3. **2026-01-22 14:57:27Z** — RECONCILE ADOPTA holdings y ACTUALIZA cantidades (365%+ inflado)
@@ -79,10 +125,20 @@ Eliminados modos SAFE/ADOPT. Implementada regla única: `open_positions` contien
 - Solo importa trades a tabla `trades`
 - Nunca crea/modifica `open_positions`
 
+**D) Endpoints admin para cleanup legacy:**
+- `GET /api/admin/legacy-positions` - lista posiciones legacy
+- `POST /api/admin/purge-legacy-positions` - purga posiciones legacy (dryRun + confirm)
+
+**E) UX mejoras:**
+- Reset paginación al cambiar filtros en historial
+- Hint cuando RevolutX + TODAS no muestra SELLs en página actual
+
 ### Archivos Tocados
-- `server/routes.ts` (reconcile sin modos, solo bot positions)
+- `server/routes.ts` (reconcile sin modos, solo bot positions, endpoints admin)
 - `server/services/tradingEngine.ts` (Smart-Guard solo bot positions)
-- `client/src/pages/Terminal.tsx` (UI sin mención de modos)
+- `server/services/botLogger.ts` (eventos LEGACY_POSITION_PURGED)
+- `client/src/pages/Terminal.tsx` (UX reset offset + hint SELL)
+- `BITACORA.md` y `MANUAL_BOT.md` (documentación actualizada)
 
 ### Deploy/Comandos
 ```bash
@@ -93,24 +149,21 @@ docker compose -f docker-compose.staging.yml up -d --build --force-recreate
 
 ### Verificación Post-Deploy
 ```bash
-# 1) Ejecutar reconcile RX
-curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
+# 1) Verificar que no hay legacy positions
+curl "http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx"
+
+# 2) Verificar reconcile no crea posiciones
+curl -X POST "http://127.0.0.1:3020/api/positions/reconcile" \
   -H "Content-Type: application/json" \
   -d '{"exchange":"revolutx","autoClean":true}'
-
-# Debe retornar: created: 0, y skipped_external_balance para holdings sin posición del bot
-
-# 2) Verificar que NO se crearon posiciones desde balances
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
-SELECT pair, amount, entry_mode, lot_id, (config_snapshot_json IS NOT NULL) as has_snapshot
-FROM open_positions WHERE exchange='revolutx' ORDER BY pair;"
 ```
 
 ### Definition of Done
 - ✅ Reconcile NO crea posiciones desde balances externos
 - ✅ Smart-Guard solo gestiona posiciones del bot
 - ✅ open_positions = solo posiciones engine-managed
-- ✅ UI sin confusión de modos
+- ✅ No quedan legacy positions en RevolutX
+- ✅ UI sin confusión de modos + UX mejorada
 
 ---
 
