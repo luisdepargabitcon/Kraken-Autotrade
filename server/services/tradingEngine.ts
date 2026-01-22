@@ -2377,6 +2377,17 @@ El bot ha pausado las operaciones de COMPRA.
     if (isTestPosition) {
       return;
     }
+
+    // P1-CRITICAL: Skip unmanaged positions (reconcile/sync/adopt without configSnapshot)
+    // These positions should NOT be auto-managed by Smart-Guard to prevent selling external holdings
+    const lotIdPrefix = (lotId || '').split('-')[0].toLowerCase();
+    const isUnmanagedSource = ['reconcile', 'sync', 'adopt'].includes(lotIdPrefix);
+    const hasNoSnapshot = !position.configSnapshot;
+    
+    if (isUnmanagedSource && hasNoSnapshot) {
+      // Position was created by reconcile/sync/adopt without proper config - skip management
+      return;
+    }
     const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
 
     if (currentPrice > position.highestPrice) {

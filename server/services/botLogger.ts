@@ -93,7 +93,12 @@ export type EventType =
   | "SG_BE_ACTIVATED"
   | "SG_TRAIL_ACTIVATED"
   | "SG_STOP_UPDATED"
-  | "SG_EXIT_TRIGGERED";
+  | "SG_EXIT_TRIGGERED"
+  // Reconcile events (P1-CRITICAL)
+  | "POSITION_CREATED_RECONCILE"
+  | "POSITION_UPDATED_RECONCILE"
+  | "POSITION_DELETED_RECONCILE"
+  | "POSITION_ADOPTED";
 
 interface LogMeta {
   [key: string]: any;

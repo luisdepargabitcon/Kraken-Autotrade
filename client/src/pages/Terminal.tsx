@@ -408,13 +408,13 @@ export default function Terminal() {
   };
 
   const handleReconcileRevolutX = () => {
-    if (confirm(`¿Reconciliar posiciones con Revolut X?\n\nEsto sincronizará las posiciones con los balances REALES del exchange:\n- Posiciones sin balance → eliminadas\n- Balances sin posición → creadas con Smart-Guard\n- Cantidades diferentes → actualizadas`)) {
+    if (confirm(`¿Reconciliar posiciones con Revolut X? (MODO SAFE)\n\n✅ Posiciones sin balance → ELIMINADAS\n✅ Posiciones gestionadas con qty diferente → ACTUALIZADAS\n❌ Balances externos SIN posición → NO se crean (modo SAFE)\n\nEsto NO adoptará holdings externos ni inflará posiciones existentes.`)) {
       reconcileMutation.mutate({ exchange: 'revolutx', autoClean: true });
     }
   };
 
   const handleReconcileKraken = () => {
-    if (confirm(`¿Reconciliar posiciones con Kraken?\n\nEsto sincronizará las posiciones con los balances REALES del exchange:\n- Posiciones sin balance → eliminadas\n- Balances sin posición → creadas con Smart-Guard\n- Cantidades diferentes → actualizadas`)) {
+    if (confirm(`¿Reconciliar posiciones con Kraken? (MODO SAFE)\n\n✅ Posiciones sin balance → ELIMINADAS\n✅ Posiciones gestionadas con qty diferente → ACTUALIZADAS\n❌ Balances externos SIN posición → NO se crean (modo SAFE)\n\nEsto NO adoptará holdings externos ni inflará posiciones existentes.`)) {
       reconcileMutation.mutate({ exchange: 'kraken', autoClean: true });
     }
   };

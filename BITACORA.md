@@ -5,6 +5,90 @@
 
 ---
 
+## 2026-01-22 21:15 (Europe/Madrid) — [ENV: VPS/STG] — P1-CRITICAL: Fix adopción/inflado de posiciones + modo SAFE
+
+### Resumen
+El reconcile anterior seguía creando posiciones desde balances externos y Smart-Guard intentaba gestionarlas. Esto causaba que holdings externos fueran "adoptados" y luego vendidos automáticamente.
+
+### Evidencia Forense
+1. **2026-01-21 22:30:44Z** — CREACIÓN MASIVA por MANUAL RECONCILE desde BUY históricos
+   - `POSITION_CREATED_VIA_SYNC` "Position reconciled from historical BUY trade"
+   - Pairs: SOL/USD, ETH/USD, BTC/USD, TON/USD
+
+2. **2026-01-22 08:14:29Z** — Smart-Guard intenta VENDER ETH por Break-even
+   - `SG_STOP_HIT` + `ORDER_ATTEMPT` sell volume=0.03356482
+   - Luego `POSITION_CREATED_VIA_SYNC` "Position created from synced BUY trade"
+
+3. **2026-01-22 14:57:27Z** — RECONCILE ADOPTA holdings y ACTUALIZA cantidades
+   - `POSITION_CREATED_RECONCILE`: XRP/USD (balance 177.72), SOL/USD (balance 2.04)
+   - `POSITION_UPDATED_RECONCILE`: ETH 0.03356 -> 0.15630 (diff 365.69%)
+   - `POSITION_UPDATED_RECONCILE`: BTC 0.00111 -> 0.00625 (diff 459.20%)
+
+### Root Cause
+1. Reconcile creaba posiciones desde balances externos (adoptMode implícito)
+2. Reconcile actualizaba qty de posiciones no gestionadas (inflado)
+3. Smart-Guard gestionaba posiciones sin configSnapshot (reconcile/sync/adopt)
+
+### Fix Aplicado (P1-CRITICAL)
+
+**A) Modo SAFE por defecto en reconcile:**
+- `adoptMode=false` por defecto
+- NO crea posiciones desde balances externos
+- Solo limpia huérfanas (balance=0) y actualiza qty de posiciones GESTIONADAS
+
+**B) Protección de actualización de qty:**
+- Solo actualiza posiciones con `configSnapshot != null` Y `entryMode === 'SMART_GUARD'`
+- Posiciones con lotId prefijo `reconcile-`, `sync-`, `adopt-` sin snapshot → NO se actualizan
+
+**C) Bloqueo de Smart-Guard para posiciones no gestionadas:**
+- `tradingEngine.checkSinglePositionSLTP` ahora verifica:
+  - Si lotId empieza por `reconcile`, `sync`, `adopt` Y no tiene configSnapshot → SKIP
+  - Esto previene que Smart-Guard intente vender holdings externos
+
+**D) Modo ADOPT explícito (peligroso):**
+- Solo con `adoptMode=true` se crean posiciones desde balances
+- Posiciones adoptadas tienen `entryMode: "MANUAL"` y `configSnapshotJson: null`
+- Smart-Guard NO las gestiona
+
+### Archivos Tocados
+- `server/routes.ts` (reconcile con adoptMode, protección de update)
+- `server/services/tradingEngine.ts` (bloqueo Smart-Guard para unmanaged)
+- `server/services/botLogger.ts` (nuevos EventTypes)
+- `client/src/pages/Terminal.tsx` (UI modo SAFE)
+
+### Deploy/Comandos
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+```
+
+### Verificación Post-Deploy
+```bash
+# 1) Ejecutar reconcile RX (modo SAFE)
+curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
+  -H "Content-Type: application/json" \
+  -d '{"exchange":"revolutx","autoClean":true}'
+
+# Debe retornar: mode: "SAFE", created: 0, y skipped_no_adopt para balances sin posición
+
+# 2) Verificar que NO se crearon nuevas posiciones
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+SELECT pair, amount, entry_mode, lot_id, (config_snapshot_json IS NOT NULL) as has_snapshot
+FROM open_positions WHERE exchange='revolutx' ORDER BY pair;"
+
+# 3) Verificar que Smart-Guard NO intenta vender posiciones sin snapshot
+docker logs krakenbot-staging-app 2>&1 | grep -E "SG_STOP_HIT|ORDER_ATTEMPT" | tail -20
+```
+
+### Definition of Done
+- ✅ Pulsar "Reconciliar RX" (modo SAFE) NO crea XRP/SOL ni infla ETH/BTC
+- ✅ No vuelven a aparecer eventos "Position reconciled from historical BUY trade"
+- ✅ Smart-Guard NO intenta vender posiciones adoptadas/sync (managed=false)
+- ⏳ Los SELL de RevolutX aparecen en DB/UI (pendiente verificar)
+
+---
+
 ## 2026-01-22 15:45 (Europe/Madrid) — [ENV: VPS/STG] — CRÍTICO: Fix "resurrección de posiciones" + reconcile multi-exchange
 
 ### Resumen
@@ -45,19 +129,34 @@ docker compose -f docker-compose.staging.yml up -d --build --force-recreate
 
 ### Verificación Post-Deploy
 ```bash
+# A) Ver que el SELL está en DB (debe aparecer BUY y SELL)
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+SELECT executed_at, type, price, amount, origin
+FROM trades
+WHERE exchange='revolutx' AND pair='ETH/USD' AND executed_at::date='2026-01-22'
+ORDER BY executed_at ASC;"
+
+# B) Ver que reconcile RX NO deja posición si balance real es 0
 # 1) Ejecutar reconcile RevolutX
 curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
   -H "Content-Type: application/json" \
   -d '{"exchange":"revolutx","autoClean":true}'
 
-# 2) Verificar que posiciones reflejan balances reales
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging \
-  -c "SELECT pair, amount, entry_mode, (config_snapshot_json IS NOT NULL) as has_snapshot FROM open_positions WHERE exchange='revolutx';"
+# 2) Verificar que ETH/USD fue eliminada
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+SELECT * FROM open_positions WHERE exchange='revolutx' AND pair='ETH/USD';"
 
-# 3) Verificar que ETH/USD NO existe si balance=0
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging \
-  -c "SELECT * FROM open_positions WHERE pair='ETH/USD' AND exchange='revolutx';"
+# C) Validar en UI que después de sync + reconcile la posición NO reaparece
+# - Ir a dashboard > Posiciones Abiertas
+# - Verificar que ETH/USD no aparece
+# - Ir a Operaciones y verificar que SELL del 22/01 aparece (depende de query de UI)
 ```
+
+### NOTA: UI de Operaciones
+- Este fix NO garantiza que la UI muestre SELLs
+- Si la UI lista desde tabla `trades` y sync importa SELL → aparecerá
+- Si la UI filtra mal o usa otra tabla → seguirá sin verse
+- Próximo PR si es necesario: revisar endpoint/query de operaciones para incluir SELLs de RevolutX
 
 ### Rollback
 ```bash
@@ -67,7 +166,7 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ### Pendientes
 - Verificar en VPS que el fix funciona correctamente
-- Confirmar que UI muestra SELLs (requiere verificar query de trades en UI)
+- Si UI no muestra SELLs → próximo PR: revisar endpoint/query de operaciones para incluir SELLs de RevolutX desde tabla `trades`
 
 ---
 
