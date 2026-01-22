@@ -98,7 +98,8 @@ export type EventType =
   | "POSITION_CREATED_RECONCILE"
   | "POSITION_UPDATED_RECONCILE"
   | "POSITION_DELETED_RECONCILE"
-  | "POSITION_ADOPTED";
+  | "POSITION_ADOPTED"
+  | "LEGACY_POSITION_PURGED";
 
 interface LogMeta {
   [key: string]: any;

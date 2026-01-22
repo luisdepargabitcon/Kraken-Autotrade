@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-01-22 22:00 (Europe/Madrid) — [ENV: VPS/STG] — Endpoints admin para cleanup legacy positions
+
+### Contexto
+Tras deploy del fix anterior, reconcile ya NO crea/infla posiciones. Pero quedan 5 posiciones legacy en VPS con prefijos `reconcile-`/`sync-` que tienen `has_snapshot=true` y `entry_mode=SMART_GUARD`.
+
+### Problema
+Las posiciones legacy serían ignoradas por Smart-Guard (código ya tiene bloqueo por prefix), pero necesitan ser limpiadas manualmente.
+
+### Solución
+Añadidos 2 endpoints admin:
+
+**GET `/api/admin/legacy-positions`**
+- Lista posiciones con prefijos `reconcile-`, `sync-`, `adopt-`
+- Muestra resumen de legacy vs bot positions
+
+**POST `/api/admin/purge-legacy-positions`**
+- `dryRun=true` (default): preview de posiciones a eliminar
+- `dryRun=false, confirm=true`: elimina posiciones legacy
+- Registra evento `LEGACY_POSITION_PURGED` en bot_events
+
+### Uso post-deploy
+```bash
+# 1) Ver posiciones legacy
+curl http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx
+
+# 2) Preview de purge
+curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
+  -H "Content-Type: application/json" \
+  -d '{"exchange":"revolutx","dryRun":true}'
+
+# 3) Ejecutar purge (PELIGROSO)
+curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
+  -H "Content-Type: application/json" \
+  -d '{"exchange":"revolutx","dryRun":false,"confirm":true}'
+```
+
+### P2 Pendiente: SELLs en UI
+- Hay 1 SELL en DB (`SELECT type, COUNT(*) FROM trades WHERE exchange='revolutx' GROUP BY type` → buy=52, sell=1)
+- La UI usa `/api/trades/closed` con `typeFilter=all` por defecto
+- Investigar si el SELL tiene `status != 'filled'` o `price = 0` que lo excluye
+
+---
+
 ## 2026-01-22 21:30 (Europe/Madrid) — [ENV: VPS/STG] — REGLA ÚNICA: open_positions = solo posiciones del bot
 
 ### Resumen

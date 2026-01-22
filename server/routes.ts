@@ -2471,6 +2471,122 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // ADMIN: Listar y purgar posiciones legacy (reconcile-/sync-/adopt-)
+  // Estas posiciones NO son del bot (engine) y no deben existir en open_positions
+  app.get("/api/admin/legacy-positions", async (req, res) => {
+    try {
+      const { exchange } = req.query;
+      const allPositions = await storage.getOpenPositions();
+      
+      const legacyPrefixes = ['reconcile-', 'sync-', 'adopt-'];
+      const legacyPositions = allPositions.filter(pos => {
+        const matchesExchange = !exchange || pos.exchange === exchange;
+        const isLegacy = legacyPrefixes.some(prefix => pos.lotId?.startsWith(prefix));
+        return matchesExchange && isLegacy;
+      });
+      
+      const botPositions = allPositions.filter(pos => {
+        const matchesExchange = !exchange || pos.exchange === exchange;
+        const isLegacy = legacyPrefixes.some(prefix => pos.lotId?.startsWith(prefix));
+        return matchesExchange && !isLegacy;
+      });
+      
+      res.json({
+        success: true,
+        exchange: exchange || 'all',
+        summary: {
+          totalPositions: allPositions.length,
+          legacyCount: legacyPositions.length,
+          botCount: botPositions.length,
+        },
+        legacyPositions: legacyPositions.map(p => ({
+          lotId: p.lotId,
+          pair: p.pair,
+          exchange: p.exchange,
+          amount: p.amount,
+          entryPrice: p.entryPrice,
+          entryMode: p.entryMode,
+          hasSnapshot: p.configSnapshotJson != null,
+          openedAt: p.openedAt,
+          prefix: legacyPrefixes.find(prefix => p.lotId?.startsWith(prefix)) || 'unknown',
+        })),
+      });
+    } catch (error: any) {
+      console.error('[admin/legacy-positions] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/purge-legacy-positions", async (req, res) => {
+    try {
+      const { exchange, dryRun = true, confirm = false } = req.body;
+      
+      if (!confirm && !dryRun) {
+        return res.status(400).json({ 
+          error: 'Must set confirm=true to actually delete positions, or use dryRun=true to preview' 
+        });
+      }
+      
+      const allPositions = await storage.getOpenPositions();
+      const legacyPrefixes = ['reconcile-', 'sync-', 'adopt-'];
+      
+      const legacyPositions = allPositions.filter(pos => {
+        const matchesExchange = !exchange || pos.exchange === exchange;
+        const isLegacy = legacyPrefixes.some(prefix => pos.lotId?.startsWith(prefix));
+        return matchesExchange && isLegacy;
+      });
+      
+      if (dryRun) {
+        return res.json({
+          success: true,
+          dryRun: true,
+          exchange: exchange || 'all',
+          wouldDelete: legacyPositions.length,
+          positions: legacyPositions.map(p => ({
+            lotId: p.lotId,
+            pair: p.pair,
+            exchange: p.exchange,
+            amount: p.amount,
+          })),
+          message: 'Set dryRun=false and confirm=true to actually delete these positions',
+        });
+      }
+      
+      // Actually delete
+      let deleted = 0;
+      const deletedPositions: any[] = [];
+      
+      for (const pos of legacyPositions) {
+        await storage.deleteOpenPositionByLotId(pos.lotId);
+        await botLogger.warn("LEGACY_POSITION_PURGED", `Legacy position purged (not bot-managed)`, {
+          lotId: pos.lotId,
+          pair: pos.pair,
+          exchange: pos.exchange,
+          amount: pos.amount,
+          prefix: legacyPrefixes.find(prefix => pos.lotId?.startsWith(prefix)),
+        });
+        deletedPositions.push({
+          lotId: pos.lotId,
+          pair: pos.pair,
+          exchange: pos.exchange,
+        });
+        deleted++;
+      }
+      
+      res.json({
+        success: true,
+        dryRun: false,
+        exchange: exchange || 'all',
+        deleted,
+        deletedPositions,
+        message: `Purged ${deleted} legacy positions`,
+      });
+    } catch (error: any) {
+      console.error('[admin/purge-legacy-positions] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/trades/sync", async (req, res) => {
     try {
       if (!krakenService.isInitialized()) {
