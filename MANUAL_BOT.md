@@ -264,6 +264,34 @@ BACKUP_SCRIPTS_DIR=/app/scripts
 - **Endpoint**: `POST /api/trades/sync-revolutx`
 - **Función**: Importa trades ejecutados en RevolutX (solo tabla `trades`, nunca crea posiciones)
 
+### Purga de Eventos (Manual/Cron)
+- **Frecuencia recomendada**: Diario a las 03:30 UTC
+- **Endpoint**: `POST /api/admin/purge-events`
+- **Script**: `scripts/purge-events.sh`
+- **Función**: Elimina eventos de `bot_events` con más de 7 días de antigüedad
+
+**Configurar cron en VPS:**
+```bash
+# Editar crontab
+crontab -e
+
+# Añadir línea (03:30 UTC diario)
+30 3 * * * /opt/krakenbot-staging/scripts/purge-events.sh >> /var/log/krakenbot-purge.log 2>&1
+```
+
+**Ejecutar manualmente:**
+```bash
+# DryRun (ver qué se borraría)
+curl -X POST "http://127.0.0.1:3020/api/admin/purge-events" \
+  -H "Content-Type: application/json" \
+  -d '{"retentionDays":7,"dryRun":true}'
+
+# Purga real
+curl -X POST "http://127.0.0.1:3020/api/admin/purge-events" \
+  -H "Content-Type: application/json" \
+  -d '{"retentionDays":7,"dryRun":false,"confirm":true}'
+```
+
 ### Reporte Diario
 - **Frecuencia**: Diario a las 08:00
 - **Función**: Envía resumen de P&L y posiciones a Telegram
@@ -275,6 +303,19 @@ BACKUP_SCRIPTS_DIR=/app/scripts
 ### Trading Cycle
 - **Frecuencia**: Cada 10-30 segundos (según estrategia)
 - **Función**: Análisis de mercado y ejecución de trades
+
+### Crear Índices DB (Una vez post-deploy)
+- **Endpoint**: `POST /api/admin/create-indexes`
+- **Función**: Crea índices para optimizar queries de eventos, trades y posiciones
+
+```bash
+curl -X POST "http://127.0.0.1:3020/api/admin/create-indexes"
+```
+
+Índices creados:
+- `idx_bot_events_ts` — Acelera filtrado de eventos por fecha
+- `idx_trades_executed_at` — Acelera historial de trades
+- `idx_open_positions_exchange` — Acelera queries por exchange
 
 ---
 

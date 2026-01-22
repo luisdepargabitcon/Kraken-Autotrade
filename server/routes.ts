@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { pool } from "./db";
+import { pool, db } from "./db";
+import { sql } from "drizzle-orm";
 import { krakenService } from "./services/kraken";
 import { revolutXService } from "./services/exchanges/RevolutXService";
 import { telegramService } from "./services/telegram";
@@ -3229,6 +3230,60 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     } catch (error: any) {
       console.error("[api/admin/purge-events] Error:", error.message);
       res.status(500).json({ error: "Failed to purge events" });
+    }
+  });
+
+  // Create database indexes for performance optimization
+  app.post("/api/admin/create-indexes", async (req, res) => {
+    try {
+      const results: { index: string; status: string; error?: string }[] = [];
+      
+      // Index for bot_events timestamp (critical for time-range queries)
+      try {
+        await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bot_events_ts ON bot_events(timestamp DESC)`);
+        results.push({ index: "idx_bot_events_ts", status: "created" });
+      } catch (e: any) {
+        if (e.message?.includes("already exists")) {
+          results.push({ index: "idx_bot_events_ts", status: "already_exists" });
+        } else {
+          results.push({ index: "idx_bot_events_ts", status: "error", error: e.message });
+        }
+      }
+      
+      // Index for trades executed_at (useful for history queries)
+      try {
+        await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_trades_executed_at ON trades(executed_at DESC)`);
+        results.push({ index: "idx_trades_executed_at", status: "created" });
+      } catch (e: any) {
+        if (e.message?.includes("already exists")) {
+          results.push({ index: "idx_trades_executed_at", status: "already_exists" });
+        } else {
+          results.push({ index: "idx_trades_executed_at", status: "error", error: e.message });
+        }
+      }
+      
+      // Index for open_positions by exchange
+      try {
+        await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_open_positions_exchange ON open_positions(exchange)`);
+        results.push({ index: "idx_open_positions_exchange", status: "created" });
+      } catch (e: any) {
+        if (e.message?.includes("already exists")) {
+          results.push({ index: "idx_open_positions_exchange", status: "already_exists" });
+        } else {
+          results.push({ index: "idx_open_positions_exchange", status: "error", error: e.message });
+        }
+      }
+      
+      const hasErrors = results.some(r => r.status === "error");
+      
+      res.json({
+        success: !hasErrors,
+        message: hasErrors ? "Some indexes failed to create" : "All indexes created successfully",
+        results,
+      });
+    } catch (error: any) {
+      console.error("[api/admin/create-indexes] Error:", error.message);
+      res.status(500).json({ error: "Failed to create indexes" });
     }
   });
 
