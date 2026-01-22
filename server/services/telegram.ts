@@ -1422,7 +1422,7 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
       const typeFilter = args?.find(arg => arg.startsWith('type='))?.split('=')[1]?.toUpperCase();
       const page = args?.find(arg => arg.startsWith('page=')) ? parseInt(args.find(arg => arg.startsWith('page='))!.split('=')[1]) : 1;
       
-      const events = await botLogger.getDbEvents(Math.min(limit * 3, 300)); // Get more for pagination
+      const events = await botLogger.getDbEvents({ limit: Math.min(limit * 3, 300) }); // Get more for pagination
       
       if (events.length === 0) {
         await this.bot?.sendMessage(chatId, "<b>📭 Sin logs recientes</b>\n\nNo hay eventos registrados.", { parse_mode: "HTML" });
@@ -1523,7 +1523,7 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
     }
     
     try {
-      const events = await botLogger.getDbEvents(1000);
+      const events = await botLogger.getDbEvents({ limit: 1000 });
       const event = events.find(e => e.id === parseInt(logId));
       
       if (!event) {

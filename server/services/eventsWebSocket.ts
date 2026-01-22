@@ -2,11 +2,12 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { db } from "../db";
 import { botEvents } from "@shared/schema";
-import { desc } from "drizzle-orm";
+import { desc, gte, and } from "drizzle-orm";
 import { log } from "../utils/logger";
 
 const WS_PATH = "/ws/events";
-const SNAPSHOT_LIMIT = 50;
+const SNAPSHOT_LIMIT = 500;
+const DEFAULT_HOURS = 24; // Default to last 24 hours for snapshot
 const HEARTBEAT_INTERVAL = 30000;
 
 interface WsClient extends WebSocket {
@@ -138,10 +139,14 @@ class EventsWebSocketServer {
     }
   }
 
-  private async getEventsSnapshot(): Promise<any[]> {
+  private async getEventsSnapshot(hours: number = DEFAULT_HOURS): Promise<any[]> {
     try {
+      const fromDate = new Date();
+      fromDate.setHours(fromDate.getHours() - hours);
+      
       const events = await db.select()
         .from(botEvents)
+        .where(gte(botEvents.timestamp, fromDate))
         .orderBy(desc(botEvents.timestamp))
         .limit(SNAPSHOT_LIMIT);
 

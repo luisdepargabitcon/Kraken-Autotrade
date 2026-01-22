@@ -213,14 +213,54 @@ function EventsTab() {
     navigator.clipboard.writeText(JSON.stringify(filteredEvents, null, 2));
   };
 
+  // Calculate from/to based on timeRange for API calls
+  const getTimeRangeDates = () => {
+    const to = new Date();
+    let from: Date | undefined;
+    
+    if (timeRange === "1h") {
+      from = new Date(to.getTime() - 60 * 60 * 1000);
+    } else if (timeRange === "6h") {
+      from = new Date(to.getTime() - 6 * 60 * 60 * 1000);
+    } else if (timeRange === "24h") {
+      from = new Date(to.getTime() - 24 * 60 * 60 * 1000);
+    } else {
+      // "all" = last 7 days (retention period)
+      from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+    
+    return { from, to };
+  };
+
   const handleDownload = () => {
-    const blob = new Blob([JSON.stringify(filteredEvents, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+    const { from, to } = getTimeRangeDates();
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      format: 'ndjson',
+    });
+    
+    // Use the export API endpoint
+    const url = `/api/events/export?${params}`;
     const a = document.createElement("a");
     a.href = url;
-    a.download = `krakenbot-logs-${new Date().toISOString().split("T")[0]}.json`;
+    a.download = `events_${from.toISOString().split('T')[0]}_to_${to.toISOString().split('T')[0]}.ndjson`;
     a.click();
-    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadCsv = () => {
+    const { from, to } = getTimeRangeDates();
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      format: 'csv',
+    });
+    
+    const url = `/api/events/export?${params}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `events_${from.toISOString().split('T')[0]}_to_${to.toISOString().split('T')[0]}.csv`;
+    a.click();
   };
 
   const toggleLevel = (level: string) => {
@@ -317,7 +357,10 @@ function EventsTab() {
           
           <div className="flex items-center gap-2">
             <div className="text-xs text-muted-foreground hidden sm:flex gap-3">
-              <span>Eventos: {stats.total}</span>
+              <span className="text-cyan-400 font-medium" data-testid="events-counter">
+                Mostrando {filteredEvents.length} de {events.length}
+              </span>
+              <span className="text-muted-foreground/60">|</span>
               <span className="text-red-400">Errores 24h: {stats.errors}</span>
               <span className="text-yellow-400">Avisos 24h: {stats.warnings}</span>
               <span className="text-green-400">Trades 24h: {stats.trades}</span>
@@ -326,6 +369,9 @@ function EventsTab() {
                   Último: {lastMessageTime.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                 </span>
               )}
+              <span className="text-muted-foreground/50 text-[10px]" title="Timestamps en hora local">
+                (UTC{new Date().getTimezoneOffset() > 0 ? '-' : '+'}{Math.abs(new Date().getTimezoneOffset() / 60)})
+              </span>
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { botEvents } from "@shared/schema";
 import type { BotEvent, InsertBotEvent } from "@shared/schema";
-import { desc } from "drizzle-orm";
+import { desc, gte, lte, lt, eq, and, sql } from "drizzle-orm";
 import { eventsWs } from "./eventsWebSocket";
 import { environment } from "./environment";
 
@@ -192,15 +192,81 @@ class BotLogger {
     return this.memoryEvents.slice(0, limit);
   }
 
-  async getDbEvents(limit: number = 50): Promise<BotEvent[]> {
+  async getDbEvents(options: { 
+    limit?: number; 
+    from?: Date; 
+    to?: Date;
+    level?: string;
+    type?: string;
+  } = {}): Promise<BotEvent[]> {
+    const { limit = 500, from, to, level, type } = options;
     try {
-      return await db.select()
-        .from(botEvents)
+      let query = db.select().from(botEvents);
+      
+      const conditions: any[] = [];
+      
+      if (from) {
+        conditions.push(gte(botEvents.timestamp, from));
+      }
+      if (to) {
+        conditions.push(lte(botEvents.timestamp, to));
+      }
+      if (level) {
+        conditions.push(eq(botEvents.level, level.toUpperCase()));
+      }
+      if (type) {
+        conditions.push(eq(botEvents.type, type));
+      }
+      
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+      
+      return await query
         .orderBy(desc(botEvents.timestamp))
         .limit(limit);
     } catch (error) {
       console.error("[BotLogger] Error fetching events from DB:", error);
       return [];
+    }
+  }
+
+  async purgeOldEvents(retentionDays: number = 7): Promise<number> {
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+      
+      const result = await db.delete(botEvents)
+        .where(lt(botEvents.timestamp, cutoffDate))
+        .returning({ id: botEvents.id });
+      
+      const deletedCount = result.length;
+      if (deletedCount > 0) {
+        console.log(`[BotLogger] Purged ${deletedCount} events older than ${retentionDays} days`);
+      }
+      return deletedCount;
+    } catch (error) {
+      console.error("[BotLogger] Error purging old events:", error);
+      return 0;
+    }
+  }
+
+  async getEventsCount(from?: Date, to?: Date): Promise<number> {
+    try {
+      const conditions: any[] = [];
+      if (from) conditions.push(gte(botEvents.timestamp, from));
+      if (to) conditions.push(lte(botEvents.timestamp, to));
+      
+      let query = db.select({ count: sql<number>`count(*)` }).from(botEvents);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+      
+      const result = await query;
+      return Number(result[0]?.count || 0);
+    } catch (error) {
+      console.error("[BotLogger] Error counting events:", error);
+      return 0;
     }
   }
 

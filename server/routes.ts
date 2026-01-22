@@ -3088,30 +3088,147 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
   app.get("/api/events", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 500, 1000);
-      const level = req.query.level as string;
+      const level = req.query.level as string | undefined;
+      const type = req.query.type as string | undefined;
+      const fromParam = req.query.from as string | undefined;
+      const toParam = req.query.to as string | undefined;
       
-      const events = await botLogger.getDbEvents(limit);
+      // Parse ISO date strings to Date objects
+      const from = fromParam ? new Date(fromParam) : undefined;
+      const to = toParam ? new Date(toParam) : undefined;
       
-      const filtered = level 
-        ? events.filter(e => e.level === level.toUpperCase())
-        : events;
+      // Validate dates
+      if (from && isNaN(from.getTime())) {
+        return res.status(400).json({ error: "Invalid 'from' date format. Use ISO 8601." });
+      }
+      if (to && isNaN(to.getTime())) {
+        return res.status(400).json({ error: "Invalid 'to' date format. Use ISO 8601." });
+      }
       
-      res.json(filtered.map(e => {
-        const meta = e.meta ? JSON.parse(e.meta) : null;
-        return {
-          id: e.id,
-          timestamp: e.timestamp,
-          level: e.level,
-          type: e.type,
-          message: e.message,
-          meta,
-          env: meta?.env || null,
-          instanceId: meta?.instanceId || null,
-        };
-      }));
+      const events = await botLogger.getDbEvents({ limit, from, to, level, type });
+      const total = await botLogger.getEventsCount(from, to);
+      
+      res.json({
+        events: events.map(e => {
+          const meta = e.meta ? JSON.parse(e.meta) : null;
+          return {
+            id: e.id,
+            timestamp: e.timestamp,
+            level: e.level,
+            type: e.type,
+            message: e.message,
+            meta,
+            env: meta?.env || null,
+            instanceId: meta?.instanceId || null,
+          };
+        }),
+        total,
+        limit,
+        from: from?.toISOString() || null,
+        to: to?.toISOString() || null,
+      });
     } catch (error: any) {
       console.error("[api/events] Error:", error.message);
       res.status(500).json({ error: "Failed to fetch events" });
+    }
+  });
+
+  // Export events endpoint (streaming for large datasets)
+  app.get("/api/events/export", async (req, res) => {
+    try {
+      const fromParam = req.query.from as string | undefined;
+      const toParam = req.query.to as string | undefined;
+      const format = (req.query.format as string) || "ndjson";
+      
+      const from = fromParam ? new Date(fromParam) : undefined;
+      const to = toParam ? new Date(toParam) : new Date();
+      
+      if (from && isNaN(from.getTime())) {
+        return res.status(400).json({ error: "Invalid 'from' date format" });
+      }
+      if (to && isNaN(to.getTime())) {
+        return res.status(400).json({ error: "Invalid 'to' date format" });
+      }
+      
+      // Get all events in range (no limit for export)
+      const events = await botLogger.getDbEvents({ limit: 100000, from, to });
+      
+      const fromStr = from ? from.toISOString().split('T')[0] : 'all';
+      const toStr = to.toISOString().split('T')[0];
+      const filename = `events_${fromStr}_to_${toStr}.${format === 'csv' ? 'csv' : 'ndjson'}`;
+      
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv');
+        res.write('id,timestamp,level,type,message,meta\n');
+        for (const e of events) {
+          const meta = e.meta ? e.meta.replace(/"/g, '""') : '';
+          const message = e.message.replace(/"/g, '""');
+          res.write(`${e.id},"${e.timestamp}","${e.level}","${e.type}","${message}","${meta}"\n`);
+        }
+      } else {
+        res.setHeader('Content-Type', 'application/x-ndjson');
+        for (const e of events) {
+          const meta = e.meta ? JSON.parse(e.meta) : null;
+          res.write(JSON.stringify({
+            id: e.id,
+            timestamp: e.timestamp,
+            level: e.level,
+            type: e.type,
+            message: e.message,
+            meta,
+          }) + '\n');
+        }
+      }
+      
+      res.end();
+    } catch (error: any) {
+      console.error("[api/events/export] Error:", error.message);
+      res.status(500).json({ error: "Failed to export events" });
+    }
+  });
+
+  // Purge old events (admin endpoint)
+  app.post("/api/admin/purge-events", async (req, res) => {
+    try {
+      const { retentionDays = 7, dryRun = true } = req.body;
+      
+      if (retentionDays < 1 || retentionDays > 365) {
+        return res.status(400).json({ error: "retentionDays must be between 1 and 365" });
+      }
+      
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+      
+      // Count events to be deleted
+      const countBefore = await botLogger.getEventsCount();
+      const countToDelete = await botLogger.getEventsCount(undefined, cutoffDate);
+      
+      if (dryRun) {
+        return res.json({
+          success: true,
+          dryRun: true,
+          retentionDays,
+          cutoffDate: cutoffDate.toISOString(),
+          eventsToDelete: countToDelete,
+          eventsToKeep: countBefore - countToDelete,
+        });
+      }
+      
+      const deletedCount = await botLogger.purgeOldEvents(retentionDays);
+      
+      res.json({
+        success: true,
+        dryRun: false,
+        retentionDays,
+        cutoffDate: cutoffDate.toISOString(),
+        deletedCount,
+        remainingCount: countBefore - deletedCount,
+      });
+    } catch (error: any) {
+      console.error("[api/admin/purge-events] Error:", error.message);
+      res.status(500).json({ error: "Failed to purge events" });
     }
   });
 
