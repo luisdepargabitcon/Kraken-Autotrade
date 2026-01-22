@@ -5,6 +5,72 @@
 
 ---
 
+## 2026-01-22 15:45 (Europe/Madrid) — [ENV: VPS/STG] — CRÍTICO: Fix "resurrección de posiciones" + reconcile multi-exchange
+
+### Resumen
+Incidente crítico: posiciones vendidas en Revolut X "resucitaban" tras sync/reconcile. La UI no mostraba SELLs y el botón Reconciliar solo soportaba Kraken.
+
+### Síntomas Reportados
+1. Posición ETH/USD vendida por señal reaparecía como abierta tras sync
+2. UI de trades no mostraba la venta del 22/01 (solo venta del 18/01)
+3. Posición BUY 09:14 ETH/USD sin etiqueta "Smart Guard" en UI
+4. Botón "Reconciliar" hardcoded a Kraken (modal decía "Reconciliar con Kraken")
+
+### Root Cause
+1. **sync-revolutx** creaba posiciones para cada BUY importado, ignorando SELLs
+2. **reconcile-from-trades** solo miraba BUY trades, no balances reales
+3. **UI Terminal.tsx** hardcoded a `/api/positions/reconcile` (Kraken-only)
+
+### Fix Aplicado
+**REGLA DE ORO**: `open_positions` debe reflejar BALANCES reales del exchange, no historial de trades.
+
+1. **sync-revolutx**: Ya NO crea posiciones automáticamente. Solo importa trades a DB.
+2. **Nuevo endpoint `/api/positions/reconcile`** (multi-exchange):
+   - Obtiene balances REALES del exchange (RevolutX o Kraken)
+   - Si balance = 0 → ELIMINA posición (evita resurrección)
+   - Si balance > 0 y no hay posición → CREA con snapshot SMART_GUARD
+   - Si balance > 0 y posición existe → ACTUALIZA qty si difiere >5%
+3. **UI Terminal.tsx**: Dos botones "RECONCILIAR RX" y "RECONCILIAR KR"
+
+### Archivos Tocados
+- `server/routes.ts` (sync-revolutx simplificado, nuevo reconcile multi-exchange)
+- `client/src/pages/Terminal.tsx` (botones reconcile por exchange)
+
+### Deploy/Comandos
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+```
+
+### Verificación Post-Deploy
+```bash
+# 1) Ejecutar reconcile RevolutX
+curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
+  -H "Content-Type: application/json" \
+  -d '{"exchange":"revolutx","autoClean":true}'
+
+# 2) Verificar que posiciones reflejan balances reales
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging \
+  -c "SELECT pair, amount, entry_mode, (config_snapshot_json IS NOT NULL) as has_snapshot FROM open_positions WHERE exchange='revolutx';"
+
+# 3) Verificar que ETH/USD NO existe si balance=0
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging \
+  -c "SELECT * FROM open_positions WHERE pair='ETH/USD' AND exchange='revolutx';"
+```
+
+### Rollback
+```bash
+git revert HEAD
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+### Pendientes
+- Verificar en VPS que el fix funciona correctamente
+- Confirmar que UI muestra SELLs (requiere verificar query de trades en UI)
+
+---
+
 ## 2026-01-22 00:30 (Europe/Madrid) — [ENV: VPS/STG] — Fix sistémico Smart-Guard posiciones reconcile/sync
 
 ### Resumen

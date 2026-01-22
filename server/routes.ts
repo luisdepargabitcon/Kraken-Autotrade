@@ -1336,160 +1336,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
-  // === RECONCILIAR POSICIONES CON KRAKEN ===
-  // Compara balances reales con posiciones en BD y elimina huérfanas
-  app.post("/api/positions/reconcile", async (req, res) => {
-    try {
-      if (!krakenService) {
-        return res.status(503).json({ 
-          success: false, 
-          error: "Kraken service not initialized" 
-        });
-      }
-
-      // Obtener todas las posiciones abiertas de BD
-      const openPositions = await storage.getOpenPositions();
-      if (openPositions.length === 0) {
-        return res.json({
-          success: true,
-          message: "No hay posiciones abiertas en BD",
-          reconciled: 0,
-          orphans: [],
-        });
-      }
-
-      // IMPORTANT: This reconcile compares against Kraken balances.
-      // When trading on RevolutX, Kraken balances will be 0 and all lots would look "orphan".
-      const krakenPositions = openPositions.filter((p: any) => {
-        const ex = (p?.exchange ?? 'kraken').toString().toLowerCase();
-        return ex !== 'revolutx';
-      });
-
-      if (krakenPositions.length === 0) {
-        return res.json({
-          success: true,
-          message: "No hay posiciones Kraken para reconciliar (posiciones RevolutX se omiten)",
-          reconciled: 0,
-          orphans: [],
-          valid: [],
-          cleaned: 0,
-        });
-      }
-
-      // Obtener balances reales de Kraken
-      const balances = await krakenService.getBalanceRaw();
-      
-      // Mínimos de orden por par (hardcoded ya que getAssetPairs es para todos los pares)
-      const orderMinMap: Record<string, number> = {
-        "BTC/USD": 0.0001,
-        "ETH/USD": 0.004,
-        "SOL/USD": 0.2,
-        "XRP/USD": 10,
-        "TON/USD": 10,
-      };
-      
-      // Obtener mínimos de orden por par
-      const orphanPositions: Array<{ lotId: string; pair: string; amount: string; reason: string }> = [];
-      const validPositions: Array<{ lotId: string; pair: string; amount: string }> = [];
-      
-      for (const pos of krakenPositions) {
-        const assetMap: Record<string, string> = {
-          "BTC/USD": "XXBT",
-          "ETH/USD": "XETH",
-          "SOL/USD": "SOL",
-          "XRP/USD": "XXRP",
-          "TON/USD": "TON",
-        };
-        const assetKey = assetMap[pos.pair];
-        if (!assetKey) {
-          // Par desconocido, marcar como huérfana
-          orphanPositions.push({
-            lotId: pos.lotId,
-            pair: pos.pair,
-            amount: pos.amount,
-            reason: "Par no reconocido",
-          });
-          continue;
-        }
-
-        const realBalance = parseFloat(balances[assetKey] || "0");
-        const positionAmount = parseFloat(pos.amount);
-        
-        // Obtener mínimo de orden para este par
-        const orderMin = orderMinMap[pos.pair] || 0.0001;
-        
-        // Si el balance real es menor al mínimo de orden, es huérfana
-        if (realBalance < orderMin) {
-          orphanPositions.push({
-            lotId: pos.lotId,
-            pair: pos.pair,
-            amount: pos.amount,
-            reason: `Balance real (${realBalance.toFixed(8)}) < mínimo (${orderMin})`,
-          });
-        } else {
-          validPositions.push({
-            lotId: pos.lotId,
-            pair: pos.pair,
-            amount: pos.amount,
-          });
-        }
-      }
-
-      // Auto-limpiar huérfanas si se solicita
-      const autoClean = req.body?.autoClean === true;
-      let cleaned = 0;
-      
-      if (autoClean && orphanPositions.length > 0) {
-        for (const orphan of orphanPositions) {
-          try {
-            await storage.deleteOpenPositionByLotId(orphan.lotId);
-            if (tradingEngine) {
-              tradingEngine.getOpenPositions().delete(orphan.lotId);
-            }
-            cleaned++;
-          } catch (err) {
-            console.error(`Error limpiando huérfana ${orphan.lotId}:`, err);
-          }
-        }
-        
-        await botLogger.info("ORPHAN_POSITION_DELETED", `Reconciliación completada`, {
-          total: openPositions.length,
-          orphans: orphanPositions.length,
-          cleaned,
-          valid: validPositions.length,
-        });
-        
-        if (telegramService?.isInitialized()) {
-          await telegramService.sendMessage(`
-🔄 *Reconciliación Completada*
-
-*Total posiciones:* ${openPositions.length}
-*Huérfanas eliminadas:* ${cleaned}
-*Válidas:* ${validPositions.length}
-          `.trim());
-        }
-      }
-
-      res.json({
-        success: true,
-        total: openPositions.length,
-        orphans: orphanPositions,
-        valid: validPositions,
-        cleaned,
-        message: autoClean 
-          ? `Reconciliación completada: ${cleaned} huérfanas eliminadas`
-          : `Encontradas ${orphanPositions.length} posiciones huérfanas`,
-      });
-      
-    } catch (error: any) {
-      console.error("[api/positions/reconcile] Error:", error.message);
-      res.status(500).json({
-        success: false,
-        error: "INTERNAL_ERROR",
-        message: error.message,
-      });
-    }
-  });
+  // NOTE: /api/positions/reconcile endpoint moved to after sync-revolutx
+  // Now supports multi-exchange (kraken, revolutx) with real balance reconciliation
 
   app.get("/api/trades/closed", async (req, res) => {
     try {
@@ -2267,44 +2115,10 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                   synced++;
                   byPair[pair].inserted++;
 
-                  // FIX: Create/update position for BUY trades imported via sync
-                  // This ensures open_positions reflects trades even if engine didn't create them
-                  if (n.type === 'buy') {
-                    try {
-                      const priceNum = parseFloat(priceStr);
-                      const amountNum = parseFloat(amountStr);
-                      if (Number.isFinite(priceNum) && priceNum > 0 && Number.isFinite(amountNum) && amountNum > 0) {
-                        // Check if position already exists for this pair
-                        const existingPositions = await storage.getOpenPositions();
-                        const existingForPair = existingPositions.filter(p => p.pair === pair && p.exchange === 'revolutx');
-                        
-                        if (existingForPair.length === 0) {
-                          // Create new position
-                          const lotId = `sync-${n.tradeId || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                          await storage.saveOpenPositionByLotId({
-                            pair,
-                            exchange: 'revolutx',
-                            lotId,
-                            amount: amountStr,
-                            entryPrice: priceStr,
-                            highestPrice: priceStr,
-                          });
-                          console.log(`[sync-revolutx] Created position for ${pair}: ${amountStr} @ ${priceStr}`);
-                          
-                          await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position created from synced BUY trade`, {
-                            pair,
-                            amount: amountStr,
-                            entryPrice: priceStr,
-                            lotId,
-                            tradeId: tradeIdFinal,
-                            exchange: 'revolutx',
-                          });
-                        }
-                      }
-                    } catch (posErr: any) {
-                      console.error(`[sync-revolutx] Error creating position for ${pair}:`, posErr.message);
-                    }
-                  }
+                  // NOTE: Position creation/deletion is now handled by reconcile-with-balance
+                  // Sync only imports trades to DB, reconcile handles position state based on real balances
+                  // This prevents "resurrection" of sold positions
+                  console.log(`[sync-revolutx] Trade synced: ${n.type} ${pair} ${amountStr} @ ${priceStr}`);
 
                   if (String(process.env.ALERT_EXTERNAL_TRADES ?? 'false').toLowerCase() === 'true') {
                     const executedAt = n.executedAt instanceof Date ? n.executedAt : null;
@@ -2413,17 +2227,72 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
-  // RECONCILE: Create positions for BUY trades that don't have open_positions
-  // Includes SMART_GUARD config snapshot for proper position management
-  app.post("/api/positions/reconcile-from-trades", async (req, res) => {
+  // RECONCILE: Sync positions with REAL BALANCES from exchange
+  // REGLA DE ORO: open_positions debe reflejar BALANCES reales, no historial de trades
+  // - Si balance = 0 → eliminar posición (evita "resurrección")
+  // - Si balance > 0 y no hay posición → crear con snapshot SMART_GUARD
+  // - Si balance > 0 y hay posición → actualizar qty si difiere
+  app.post("/api/positions/reconcile", async (req, res) => {
     try {
-      const { exchange = 'revolutx', since, dryRun = false } = req.body;
+      const { exchange = 'kraken', dryRun = false, autoClean = true } = req.body;
+      
+      // Dust threshold per asset (minimum tradeable amount)
+      const dustThresholds: Record<string, number> = {
+        BTC: 0.0001,
+        ETH: 0.001,
+        SOL: 0.01,
+        XRP: 1,
+        TON: 1,
+        USD: 1,
+        EUR: 1,
+      };
+      
+      // Asset to pair mapping
+      const assetToPair: Record<string, string> = {
+        BTC: 'BTC/USD',
+        ETH: 'ETH/USD',
+        SOL: 'SOL/USD',
+        XRP: 'XRP/USD',
+        TON: 'TON/USD',
+      };
+      
+      let realBalances: Record<string, number> = {};
+      
+      // Get real balances from exchange
+      if (exchange === 'revolutx') {
+        if (!revolutXService.isInitialized()) {
+          return res.status(400).json({ error: 'RevolutX not configured' });
+        }
+        realBalances = await revolutXService.getBalance();
+      } else if (exchange === 'kraken') {
+        if (!krakenService.isInitialized()) {
+          return res.status(400).json({ error: 'Kraken not configured' });
+        }
+        const krakenBalances = await krakenService.getBalanceRaw();
+        // Map Kraken asset names to standard names
+        const krakenAssetMap: Record<string, string> = {
+          XXBT: 'BTC', XBT: 'BTC',
+          XETH: 'ETH', ETH: 'ETH',
+          SOL: 'SOL',
+          XXRP: 'XRP', XRP: 'XRP',
+          TON: 'TON',
+          ZUSD: 'USD', USD: 'USD',
+          ZEUR: 'EUR', EUR: 'EUR',
+        };
+        for (const [key, val] of Object.entries(krakenBalances)) {
+          const standardAsset = krakenAssetMap[key] || key;
+          realBalances[standardAsset] = parseFloat(String(val) || '0');
+        }
+      } else {
+        return res.status(400).json({ error: `Exchange '${exchange}' not supported for reconcile` });
+      }
+      
+      console.log(`[reconcile] Real balances from ${exchange}:`, realBalances);
       
       // Get current config for SMART_GUARD snapshot
       const currentConfig = await storage.getBotConfig();
       const positionMode = currentConfig?.positionMode || "SMART_GUARD";
       
-      // Build config snapshot from current settings
       const buildConfigSnapshot = (pair: string) => {
         const snapshot: any = {
           stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
@@ -2432,9 +2301,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
           positionMode,
         };
-        
         if (positionMode === "SMART_GUARD") {
-          // Get SMART_GUARD params (with pair overrides if any)
           const overrides = (currentConfig?.sgPairOverrides as Record<string, any>)?.[pair];
           snapshot.sgMinEntryUsd = parseFloat(overrides?.sgMinEntryUsd?.toString() || currentConfig?.sgMinEntryUsd?.toString() || "100");
           snapshot.sgAllowUnderMin = overrides?.sgAllowUnderMin ?? currentConfig?.sgAllowUnderMin ?? true;
@@ -2454,115 +2321,152 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         return snapshot;
       };
       
-      // Get all BUY trades from the specified exchange
-      const sinceDate = since ? new Date(since) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Default: last 7 days
-      
-      const allTrades = await storage.getTrades();
-      const buyTrades = allTrades.filter(t => 
-        t.exchange === exchange && 
-        t.type === 'buy' && 
-        t.status === 'filled' &&
-        t.executedAt && new Date(t.executedAt) >= sinceDate
-      );
-      
-      // Get existing positions
+      // Get existing positions for this exchange
       const existingPositions = await storage.getOpenPositions();
-      const existingPairs = new Set(existingPositions.filter(p => p.exchange === exchange).map(p => p.pair));
+      const exchangePositions = existingPositions.filter(p => 
+        (p.exchange || 'kraken').toLowerCase() === exchange.toLowerCase()
+      );
       
       const results: any[] = [];
       let created = 0;
-      let skipped = 0;
+      let deleted = 0;
+      let updated = 0;
+      let unchanged = 0;
       
-      for (const trade of buyTrades) {
-        const pair = trade.pair;
+      // Build set of pairs with positions
+      const positionsByPair = new Map<string, typeof exchangePositions[0]>();
+      for (const pos of exchangePositions) {
+        positionsByPair.set(pos.pair, pos);
+      }
+      
+      // 1) Check each asset with balance > dust → create position if missing
+      for (const [asset, balance] of Object.entries(realBalances)) {
+        const pair = assetToPair[asset];
+        if (!pair) continue; // Skip non-tradeable assets (USD, EUR, etc.)
         
-        // Skip if position already exists for this pair
-        if (existingPairs.has(pair)) {
-          results.push({ pair, tradeId: trade.tradeId, status: 'skipped', reason: 'position_exists' });
-          skipped++;
-          continue;
+        const dust = dustThresholds[asset] || 0.0001;
+        const existingPos = positionsByPair.get(pair);
+        
+        if (balance <= dust) {
+          // Balance is dust or zero
+          if (existingPos) {
+            // Position exists but balance is 0 → DELETE (prevent resurrection)
+            if (dryRun) {
+              results.push({ pair, asset, action: 'would_delete', reason: 'balance_zero', balance, dust, lotId: existingPos.lotId });
+            } else if (autoClean) {
+              await storage.deleteOpenPositionByLotId(existingPos.lotId);
+              await botLogger.info("POSITION_DELETED_RECONCILE", `Position deleted: balance is zero/dust`, {
+                pair, asset, balance, dust, lotId: existingPos.lotId, exchange,
+              });
+              results.push({ pair, asset, action: 'deleted', reason: 'balance_zero', balance, dust, lotId: existingPos.lotId });
+              deleted++;
+            } else {
+              results.push({ pair, asset, action: 'orphan', reason: 'balance_zero_no_autoclean', balance, dust, lotId: existingPos.lotId });
+            }
+          }
+          // No position and no balance → nothing to do
+        } else {
+          // Balance > dust
+          if (!existingPos) {
+            // No position but has balance → CREATE
+            // Try to get entry price from recent trades
+            const allTrades = await storage.getTrades();
+            const recentBuys = allTrades
+              .filter(t => t.exchange === exchange && t.pair === pair && t.type === 'buy' && t.status === 'filled')
+              .sort((a, b) => new Date(b.executedAt || 0).getTime() - new Date(a.executedAt || 0).getTime());
+            
+            const entryPrice = recentBuys[0]?.price ? parseFloat(recentBuys[0].price) : 0;
+            const configSnapshot = buildConfigSnapshot(pair);
+            
+            if (dryRun) {
+              results.push({ pair, asset, action: 'would_create', balance, entryPrice, entryMode: positionMode });
+            } else {
+              const lotId = `reconcile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+              await storage.saveOpenPositionByLotId({
+                pair,
+                exchange,
+                lotId,
+                amount: balance.toFixed(8),
+                entryPrice: entryPrice > 0 ? entryPrice.toFixed(8) : "0",
+                highestPrice: entryPrice > 0 ? entryPrice.toFixed(8) : "0",
+                entryMode: positionMode,
+                configSnapshotJson: configSnapshot,
+                sgBreakEvenActivated: false,
+                sgTrailingActivated: false,
+                sgScaleOutDone: false,
+              });
+              await botLogger.info("POSITION_CREATED_RECONCILE", `Position created from real balance`, {
+                pair, asset, balance, entryPrice, lotId, exchange, entryMode: positionMode,
+              });
+              results.push({ pair, asset, action: 'created', balance, entryPrice, lotId, entryMode: positionMode });
+              created++;
+            }
+          } else {
+            // Position exists and has balance → check if qty matches
+            const posAmount = parseFloat(existingPos.amount || '0');
+            const diff = Math.abs(balance - posAmount);
+            const diffPct = posAmount > 0 ? (diff / posAmount) * 100 : 100;
+            
+            if (diffPct > 5) { // More than 5% difference
+              if (dryRun) {
+                results.push({ pair, asset, action: 'would_update', balance, posAmount, diffPct: diffPct.toFixed(2) });
+              } else {
+                // Update position amount to match real balance
+                await storage.saveOpenPositionByLotId({
+                  ...existingPos,
+                  amount: balance.toFixed(8),
+                });
+                await botLogger.info("POSITION_UPDATED_RECONCILE", `Position qty updated to match real balance`, {
+                  pair, asset, oldAmount: posAmount, newAmount: balance, diffPct: diffPct.toFixed(2), exchange,
+                });
+                results.push({ pair, asset, action: 'updated', balance, oldAmount: posAmount, diffPct: diffPct.toFixed(2) });
+                updated++;
+              }
+            } else {
+              results.push({ pair, asset, action: 'unchanged', balance, posAmount });
+              unchanged++;
+            }
+          }
         }
+      }
+      
+      // 2) Check positions without corresponding balance (orphans)
+      for (const pos of exchangePositions) {
+        const asset = pos.pair.split('/')[0]; // e.g., "BTC" from "BTC/USD"
+        const balance = realBalances[asset] || 0;
+        const dust = dustThresholds[asset] || 0.0001;
         
-        const priceNum = parseFloat(trade.price || '0');
-        const amountNum = parseFloat(trade.amount || '0');
+        // Skip if already processed above
+        if (results.some(r => r.pair === pos.pair)) continue;
         
-        if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(amountNum) || amountNum <= 0) {
-          results.push({ pair, tradeId: trade.tradeId, status: 'skipped', reason: 'invalid_price_or_amount' });
-          skipped++;
-          continue;
+        if (balance <= dust) {
+          if (dryRun) {
+            results.push({ pair: pos.pair, asset, action: 'would_delete', reason: 'no_balance', balance, lotId: pos.lotId });
+          } else if (autoClean) {
+            await storage.deleteOpenPositionByLotId(pos.lotId);
+            await botLogger.info("POSITION_DELETED_RECONCILE", `Orphan position deleted: no balance`, {
+              pair: pos.pair, asset, lotId: pos.lotId, exchange,
+            });
+            results.push({ pair: pos.pair, asset, action: 'deleted', reason: 'no_balance', lotId: pos.lotId });
+            deleted++;
+          } else {
+            results.push({ pair: pos.pair, asset, action: 'orphan', reason: 'no_balance_no_autoclean', lotId: pos.lotId });
+          }
         }
-        
-        const configSnapshot = buildConfigSnapshot(pair);
-        
-        if (dryRun) {
-          results.push({ 
-            pair, tradeId: trade.tradeId, status: 'would_create', 
-            price: priceNum, amount: amountNum, 
-            entryMode: positionMode,
-            sgBeAtPct: configSnapshot.sgBeAtPct,
-            sgTrailStartPct: configSnapshot.sgTrailStartPct,
-          });
-          continue;
-        }
-        
-        // Create position with SMART_GUARD snapshot
-        const lotId = `reconcile-${trade.tradeId?.slice(0, 16) || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const entryFee = priceNum * amountNum * 0.0026; // Estimate 0.26% fee
-        
-        await storage.saveOpenPositionByLotId({
-          pair,
-          exchange: exchange,
-          lotId,
-          amount: amountNum.toFixed(8),
-          entryPrice: priceNum.toFixed(8),
-          highestPrice: priceNum.toFixed(8),
-          entryFee: entryFee.toFixed(8),
-          tradeId: trade.tradeId,
-          entryMode: positionMode,
-          configSnapshotJson: configSnapshot,
-          // Initialize SG state
-          sgBreakEvenActivated: false,
-          sgTrailingActivated: false,
-          sgScaleOutDone: false,
-        });
-        
-        existingPairs.add(pair); // Prevent duplicates in same run
-        
-        await botLogger.info("POSITION_CREATED_VIA_SYNC", `Position reconciled from historical BUY trade with SMART_GUARD snapshot`, {
-          pair,
-          amount: amountNum.toFixed(8),
-          entryPrice: priceNum.toFixed(8),
-          lotId,
-          tradeId: trade.tradeId,
-          exchange,
-          entryMode: positionMode,
-          sgBeAtPct: configSnapshot.sgBeAtPct,
-          sgTrailStartPct: configSnapshot.sgTrailStartPct,
-          sgTrailDistancePct: configSnapshot.sgTrailDistancePct,
-          reconcileSource: 'manual_reconcile',
-        });
-        
-        results.push({ 
-          pair, tradeId: trade.tradeId, status: 'created', lotId, 
-          price: priceNum, amount: amountNum,
-          entryMode: positionMode,
-          sgBeAtPct: configSnapshot.sgBeAtPct,
-        });
-        created++;
       }
       
       res.json({
+        success: true,
         exchange,
-        since: sinceDate.toISOString(),
         dryRun,
+        autoClean,
         positionMode,
-        totalBuyTrades: buyTrades.length,
-        created,
-        skipped,
+        summary: { created, deleted, updated, unchanged, total: results.length },
+        realBalances,
         results,
       });
     } catch (error: any) {
-      console.error('[reconcile-from-trades] Error:', error.message);
+      console.error('[reconcile] Error:', error.message);
       res.status(500).json({ error: error.message });
     }
   });

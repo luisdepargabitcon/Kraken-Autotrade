@@ -351,37 +351,32 @@ export default function Terminal() {
     },
   });
 
-  // Mutation for reconciling positions with Kraken
+  // Mutation for reconciling positions with exchange (multi-exchange support)
   const reconcileMutation = useMutation({
-    mutationFn: async ({ autoClean }: { autoClean: boolean }) => {
+    mutationFn: async ({ exchange, autoClean }: { exchange: string; autoClean: boolean }) => {
       const res = await fetch("/api/positions/reconcile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoClean }),
+        body: JSON.stringify({ exchange, autoClean }),
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.message || "Error al reconciliar");
+        throw new Error(data.error || data.message || "Error al reconciliar");
       }
       return res.json();
     },
     onSuccess: (data) => {
-      if (data.cleaned > 0) {
+      const { summary } = data;
+      if (summary?.deleted > 0 || summary?.created > 0 || summary?.updated > 0) {
         toast({
           title: "Reconciliación Completada",
-          description: `${data.cleaned} posiciones huérfanas eliminadas`,
+          description: `${data.exchange}: ${summary.deleted} eliminadas, ${summary.created} creadas, ${summary.updated} actualizadas`,
         });
         queryClient.invalidateQueries({ queryKey: ["openPositions"] });
-      } else if (data.orphans?.length > 0) {
-        toast({
-          title: "Huérfanas Detectadas",
-          description: `${data.orphans.length} posiciones huérfanas encontradas`,
-          variant: "destructive",
-        });
       } else {
         toast({
           title: "Todo OK",
-          description: "No hay posiciones huérfanas",
+          description: `${data.exchange}: Posiciones sincronizadas con balances reales`,
         });
       }
     },
@@ -412,9 +407,15 @@ export default function Terminal() {
     }
   };
 
-  const handleReconcile = () => {
-    if (confirm("¿Reconciliar posiciones con Kraken? Esto eliminará automáticamente las posiciones huérfanas (sin balance real).")) {
-      reconcileMutation.mutate({ autoClean: true });
+  const handleReconcileRevolutX = () => {
+    if (confirm(`¿Reconciliar posiciones con Revolut X?\n\nEsto sincronizará las posiciones con los balances REALES del exchange:\n- Posiciones sin balance → eliminadas\n- Balances sin posición → creadas con Smart-Guard\n- Cantidades diferentes → actualizadas`)) {
+      reconcileMutation.mutate({ exchange: 'revolutx', autoClean: true });
+    }
+  };
+
+  const handleReconcileKraken = () => {
+    if (confirm(`¿Reconciliar posiciones con Kraken?\n\nEsto sincronizará las posiciones con los balances REALES del exchange:\n- Posiciones sin balance → eliminadas\n- Balances sin posición → creadas con Smart-Guard\n- Cantidades diferentes → actualizadas`)) {
+      reconcileMutation.mutate({ exchange: 'kraken', autoClean: true });
     }
   };
 
@@ -802,22 +803,40 @@ export default function Terminal() {
                       <span className="text-xs font-mono text-muted-foreground">
                         {openPositions?.length || 0} activa{openPositions?.length !== 1 ? 's' : ''}
                       </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleReconcile}
-                        disabled={reconcileMutation.isPending}
-                        className="h-7 text-[10px] font-mono border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
-                        data-testid="button-reconcile"
-                        title="Compara balances reales de Kraken y elimina posiciones huérfanas"
-                      >
-                        {reconcileMutation.isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3 mr-1" />
-                        )}
-                        RECONCILIAR
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleReconcileRevolutX}
+                          disabled={reconcileMutation.isPending}
+                          className="h-7 text-[10px] font-mono border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
+                          data-testid="button-reconcile-revolutx"
+                          title="Sincroniza posiciones con balances reales de Revolut X"
+                        >
+                          {reconcileMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                          )}
+                          RECONCILIAR RX
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleReconcileKraken}
+                          disabled={reconcileMutation.isPending}
+                          className="h-7 text-[10px] font-mono border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
+                          data-testid="button-reconcile-kraken"
+                          title="Sincroniza posiciones con balances reales de Kraken"
+                        >
+                          {reconcileMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                          )}
+                          RECONCILIAR KR
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </CardHeader>
