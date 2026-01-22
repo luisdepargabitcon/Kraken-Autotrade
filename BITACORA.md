@@ -5,6 +5,62 @@
 
 ---
 
+## 2026-01-22 23:15 (Europe/Madrid) — [ENV: LOCAL] — Filtrado eventos por rango temporal + exportación + retención
+
+### Resumen
+Implementado sistema completo de filtrado por rango temporal para eventos, exportación y retención de 7 días.
+
+### Problema detectado
+El filtro de rango (1h/6h/24h/Todo) en Monitor > Eventos **no filtraba realmente** porque:
+- WebSocket enviaba snapshot con LIMIT fijo (50 eventos) sin filtro de tiempo
+- Frontend filtraba localmente sobre datos ya cargados
+- Si los últimos 50 eventos eran de 2h, el filtro "24h" solo mostraba esos 2h
+
+### Solución implementada
+
+**Backend:**
+- `getDbEvents()` ahora acepta `{ limit, from, to, level, type }`
+- `GET /api/events` acepta parámetros `from` y `to` (ISO 8601)
+- `GET /api/events/export?from=&to=&format=ndjson|csv` para descargas
+- `POST /api/admin/purge-events` para purga manual con retención configurable
+- WebSocket snapshot ahora envía últimas 24h por defecto (no solo limit)
+- Añadido `purgeOldEvents(retentionDays)` y `getEventsCount(from, to)`
+
+**Frontend:**
+- `handleDownload` usa API export con `from/to` según `timeRange` seleccionado
+- Contador "Mostrando N de M" en cabecera de eventos
+- Indicador de timezone (UTC offset) visible
+
+### Archivos modificados
+- `server/services/botLogger.ts` (getDbEvents con filtros, purgeOldEvents, getEventsCount)
+- `server/services/eventsWebSocket.ts` (snapshot con filtro 24h)
+- `server/routes.ts` (endpoints /api/events, /api/events/export, /api/admin/purge-events)
+- `server/services/telegram.ts` (fix llamadas a getDbEvents)
+- `client/src/pages/Monitor.tsx` (handleDownload, contador, timezone)
+
+### Commit
+`1ff3ca3` - feat(events): filtrado por rango temporal + exportación + retención 7 días
+
+### Verificación post-deploy
+```bash
+# Verificar filtrado por rango
+curl "http://127.0.0.1:3020/api/events?from=2026-01-22T00:00:00Z&to=2026-01-22T23:59:59Z&limit=100"
+
+# Exportar eventos (descarga)
+curl "http://127.0.0.1:3020/api/events/export?from=2026-01-22T00:00:00Z&format=ndjson" -o events.ndjson
+
+# Purga manual (dryRun primero)
+curl -X POST "http://127.0.0.1:3020/api/admin/purge-events" \
+  -H "Content-Type: application/json" \
+  -d '{"retentionDays":7,"dryRun":true}'
+```
+
+### Pendiente
+- [ ] Configurar cron/job automático para purga diaria (03:30 UTC)
+- [ ] Añadir índice `CREATE INDEX idx_bot_events_ts ON bot_events(timestamp DESC)` en DB
+
+---
+
 ## 2026-01-22 23:05 (Europe/Madrid) — [ENV: VPS/STG] — P1-CRITICAL cerrado: open_positions = solo posiciones del bot
 
 ### Resumen
