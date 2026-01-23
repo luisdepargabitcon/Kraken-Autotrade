@@ -11,6 +11,45 @@
 
 ## 📊 POSICIONES Y RECONCILE
 
+### 2026-01-23 — Posiciones instantáneas con Average Entry Price
+
+**Problema:** Las posiciones tardaban 10+ minutos en aparecer en UI (dependían de sync + reconcile).
+
+**Solución:** Posición visible en 0-2s tras aceptar orden (estado PENDING_FILL), confirmada a OPEN cuando llegan fills.
+
+**Nuevos campos `open_positions`:**
+- `status`: PENDING_FILL → OPEN → FAILED/CANCELLED
+- `client_order_id`: UUID para upsert idempotente
+- `total_cost_quote`, `total_amount_base`: Agregados para coste medio
+- `average_entry_price`: total_cost_quote / total_amount_base
+- `fill_count`, `first_fill_at`, `last_fill_at`: Tracking de fills
+
+**Flujo nuevo:**
+1. `placeOrder()` → Crea posición PENDING_FILL inmediatamente
+2. `FillWatcher` → Polling 3s monitorea fills
+3. Fill recibido → Actualiza agregados + status=OPEN + emite WS
+4. `reconcile` → Backup/repair si hay drift
+
+**Archivos:**
+- `db/migrations/009_instant_positions.sql` (migración)
+- `server/services/FillWatcher.ts` (nuevo)
+- `server/services/positionsWebSocket.ts` (nuevo)
+- `server/services/tradingEngine.ts` (crea PENDING_FILL + inicia watcher)
+- `server/storage.ts` (métodos createPendingPosition, updatePositionWithFill)
+- `server/routes.ts` (reconcile recalcula avgPrice)
+- `client/src/pages/Terminal.tsx` (badge status + coste medio)
+
+**Deploy:**
+```bash
+git pull origin main
+cat db/migrations/009_instant_positions.sql | docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
+docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+```
+
+**Commit:** `9c41b45`
+
+---
+
 ### 2026-01-23 — Sistema de atribución de órdenes del bot
 
 **Problema:** Las órdenes BUY del bot no creaban posiciones abiertas. El sync importaba trades con `origin='sync'` pero no distinguía trades del bot de trades manuales/externos.
