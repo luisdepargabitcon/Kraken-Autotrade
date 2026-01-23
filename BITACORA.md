@@ -1,725 +1,212 @@
 # 📋 BITÁCORA - WINDSURF CHESTER BOT
 
-## 2026-01-23 12:15 (Europe/Madrid) — [ENV: LOCAL] — FIX COMPLETO: Sistema de atribución de órdenes del bot
+> **Fuente de verdad** para registro de cambios, incidentes, deploys y verificaciones.  
+> Organizado por **categorías** con entradas en orden cronológico inverso.
 
-### Problema identificado
-Las órdenes BUY enviadas por el bot (ORDER_PENDING_FILL) no creaban posiciones abiertas porque:
-1. El sync importaba trades con `origin='sync'` pero no había forma de distinguir trades del bot de trades manuales/externos
-2. El reconciliador aplicaba la regla `skipped_external_balance` para TODOS los balances sin posición
+---
 
-### Solución implementada: Sistema de atribución de órdenes
+# 🔧 CORRECCIONES POR CATEGORÍA
 
-**1. Nueva tabla `order_intents`** (`shared/schema.ts`, `db/migrations/007_order_intents.sql`)
-- Persiste la intención del bot ANTES de enviar la orden
-- Campos: `clientOrderId`, `exchange`, `pair`, `side`, `volume`, `status`, `exchangeOrderId`, `matchedTradeId`
-- Estados: pending → accepted → filled/failed/expired
+---
 
-**2. Nuevo campo `executed_by_bot` en `trades`**
-- Boolean que indica si el trade fue iniciado por el bot
-- Se marca `true` cuando sync hace match con un order_intent
+## 📊 POSICIONES Y RECONCILE
 
-**3. Modificaciones al flujo:**
+### 2026-01-23 — Sistema de atribución de órdenes del bot
 
-**tradingEngine.ts:**
-- Genera `clientOrderId` (UUID) antes de enviar orden
-- Persiste `order_intent` con status='pending' ANTES de llamar a `placeOrder()`
-- Actualiza status a 'accepted' cuando la orden es aceptada (pendingFill)
-- Actualiza status a 'failed' si la orden falla
+**Problema:** Las órdenes BUY del bot no creaban posiciones abiertas. El sync importaba trades con `origin='sync'` pero no distinguía trades del bot de trades manuales/externos.
 
-**sync-revolutx (routes.ts):**
-- Al insertar un trade, busca order_intents pendientes/aceptados que coincidan (pair, side, volume ±5%)
-- Si encuentra match: marca el trade como `executed_by_bot=true` y el intent como `filled`
-- Loguea `TRADE_MATCHED_TO_BOT` para trazabilidad
+**Solución:**
+1. **Nueva tabla `order_intents`**: Persiste la intención del bot ANTES de enviar la orden
+   - Campos: `clientOrderId`, `exchange`, `pair`, `side`, `volume`, `status`
+   - Estados: pending → accepted → filled/failed/expired
 
-**reconcile (routes.ts):**
-- Ahora busca trades con `executed_by_bot=true` en lugar de solo `origin='sync'`
-- Solo crea posiciones para trades confirmados del bot
-- Mantiene `skipped_external_balance` para balances sin trades del bot
+2. **Campo `executed_by_bot` en trades**: Boolean marcado `true` cuando sync hace match con order_intent
 
-**storage.ts:**
-- Nuevos métodos: `createOrderIntent`, `getOrderIntentByClientOrderId`, `updateOrderIntentStatus`, `matchOrderIntentToTrade`, `getPendingOrderIntents`, `markTradeAsExecutedByBot`
-- `getRecentTradesForReconcile` ahora acepta parámetro `executedByBot`
+3. **Flujo modificado:**
+   - `tradingEngine.ts`: Genera `clientOrderId` UUID y persiste intent antes de `placeOrder()`
+   - `sync-revolutx`: Match trades con intents por pair, side, volume ±5%
+   - `reconcile`: Solo crea posiciones para trades con `executed_by_bot=true`
 
-### Archivos modificados
-- `shared/schema.ts` (tabla order_intents, campos executed_by_bot y order_intent_id en trades)
-- `server/storage.ts` (métodos de order_intents, filtro executedByBot)
-- `server/services/tradingEngine.ts` (persistencia de order_intent antes de placeOrder)
-- `server/routes.ts` (matching en sync-revolutx, reconcile con executed_by_bot)
-- `db/migrations/007_order_intents.sql` (migración SQL)
+**Archivos:** `shared/schema.ts`, `server/storage.ts`, `server/services/tradingEngine.ts`, `server/routes.ts`, `db/migrations/007_order_intents.sql`
 
-### Deploy
+**Deploy:**
 ```bash
-cd /opt/krakenbot-staging
 git pull origin main
-# Ejecutar migración
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /dev/stdin < db/migrations/007_order_intents.sql
-# Rebuild
+cat db/migrations/007_order_intents.sql | docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
 docker compose -f docker-compose.staging.yml up -d --build --force-recreate
 ```
 
-### Verificación post-deploy
-```bash
-# 1. Verificar que la tabla order_intents existe
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "\\d order_intents"
-
-# 2. Verificar campos en trades
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SELECT id, pair, executed_by_bot, order_intent_id FROM trades WHERE exchange='revolutx' ORDER BY id DESC LIMIT 10;"
-
-# 3. Ejecutar reconcile y verificar que crea posiciones solo para executed_by_bot=true
-curl -s -X POST "http://127.0.0.1:3020/api/positions/reconcile" -H "Content-Type: application/json" -d '{"exchange": "revolutx", "dryRun": false}'
-
-# 4. Verificar posiciones creadas
-curl -s "http://127.0.0.1:3020/api/open-positions"
-```
-
-### Nota sobre trades históricos
-Los trades ya importados antes de este fix NO tienen `executed_by_bot=true`. Para atribuirlos retroactivamente, se puede ejecutar un backfill manual si se conocen los IDs de las órdenes del bot (ver Telegram).
-
----
-
-## 2026-01-23 09:25 (Europe/Madrid) — [ENV: LOCAL] — Intento #1: Reconcile crea posiciones solo si hay trades recientes
-
-### Resumen
-- Se agregó `storage.getRecentTradesForReconcile()` para filtrar trades por par, exchange, origen y ventana temporal.
-- El endpoint `/api/positions/reconcile` ahora usa este helper para detectar compras recientes (`origin: sync`) y crear posiciones con snapshot SMART_GUARD cuando exista balance real.
-- Primer deploy aún muestra `skipped_external_balance`; se requiere validar que los trades importados tengan `executedAt` y cumplan los filtros (próximo paso en VPS).
-
-### Archivos afectados
-- `server/storage.ts`
-- `server/routes.ts`
-
-### Próximos pasos
-1. Revisar en VPS si los trades importados de RevolutX tienen `executedAt` y `origin='sync'` (SQL).
-2. Re-ejecutar `/api/positions/reconcile` para confirmar creación de posiciones.
-3. Actualizar doc cuando se valide en entorno real.
-
----
-
-> **Fuente de verdad** para registro cronológico de cambios, incidentes, deploys y verificaciones.  
-> Entradas en **orden cronológico inverso** (más reciente arriba).
-
----
-
-## 2026-01-22 23:15 (Europe/Madrid) — [ENV: LOCAL] — Filtrado eventos por rango temporal + exportación + retención
-
-### Resumen
-Implementado sistema completo de filtrado por rango temporal para eventos, exportación y retención de 7 días.
-
-### Problema detectado
-El filtro de rango (1h/6h/24h/Todo) en Monitor > Eventos **no filtraba realmente** porque:
-- WebSocket enviaba snapshot con LIMIT fijo (50 eventos) sin filtro de tiempo
-- Frontend filtraba localmente sobre datos ya cargados
-- Si los últimos 50 eventos eran de 2h, el filtro "24h" solo mostraba esos 2h
-
-### Solución implementada
-
-**Backend:**
-- `getDbEvents()` ahora acepta `{ limit, from, to, level, type }`
-- `GET /api/events` acepta parámetros `from` y `to` (ISO 8601)
-- `GET /api/events/export?from=&to=&format=ndjson|csv` para descargas
-- `POST /api/admin/purge-events` para purga manual con retención configurable
-- WebSocket snapshot ahora envía últimas 24h por defecto (no solo limit)
-- Añadido `purgeOldEvents(retentionDays)` y `getEventsCount(from, to)`
-
-**Frontend:**
-- `handleDownload` usa API export con `from/to` según `timeRange` seleccionado
-- Contador "Mostrando N de M" en cabecera de eventos
-- Indicador de timezone (UTC offset) visible
-
-### Archivos modificados
-- `server/services/botLogger.ts` (getDbEvents con filtros, purgeOldEvents, getEventsCount)
-- `server/services/eventsWebSocket.ts` (snapshot con filtro 24h)
-- `server/routes.ts` (endpoints /api/events, /api/events/export, /api/admin/purge-events)
-- `server/services/telegram.ts` (fix llamadas a getDbEvents)
-- `client/src/pages/Monitor.tsx` (handleDownload, contador, timezone)
-
-### Commit
-`1ff3ca3` - feat(events): filtrado por rango temporal + exportación + retención 7 días
-
-### Verificación post-deploy
-```bash
-# Verificar filtrado por rango
-curl "http://127.0.0.1:3020/api/events?from=2026-01-22T00:00:00Z&to=2026-01-22T23:59:59Z&limit=100"
-
-# Exportar eventos (descarga)
-curl "http://127.0.0.1:3020/api/events/export?from=2026-01-22T00:00:00Z&format=ndjson" -o events.ndjson
-
-# Purga manual (dryRun primero)
-curl -X POST "http://127.0.0.1:3020/api/admin/purge-events" \
-  -H "Content-Type: application/json" \
-  -d '{"retentionDays":7,"dryRun":true}'
-```
-
-### Pendiente
-- [ ] Configurar cron/job automático para purga diaria (03:30 UTC)
-- [ ] Añadir índice `CREATE INDEX idx_bot_events_ts ON bot_events(timestamp DESC)` en DB
-
----
-
-## 2026-01-22 23:05 (Europe/Madrid) — [ENV: VPS/STG] — P1-CRITICAL cerrado: open_positions = solo posiciones del bot
-
-### Resumen
-Deploy y verificación completados. P1-CRITICAL resuelto con evidencia:
-- No hay posiciones resurrected
-- Reconcile NO crea/infla posiciones desde balances externos
-- No quedan legacy positions (reconcile-/sync-) en RevolutX
-- Smart-Guard ignora posiciones con prefijos legacy
-
-### Verificación final (VPS/STG)
-**Commit activo:** `ad8f1b0` (incluye todos los fixes P1 + P2)
-
-**Legacy positions:** `GET /api/admin/legacy-positions?exchange=revolutx`
-```json
-{"success":true,"exchange":"revolutx","summary":{"totalPositions":0,"legacyCount":0,"botCount":0},"legacyPositions":[]}
-```
-
-**Reconcile RevolutX:** `POST /api/positions/reconcile`
-```json
-{
-  "summary": {"created":0,"deleted":0,"updated":0,"unchanged":0,"total":5},
-  "results": [
-    {"action":"skipped_external_balance","reason":"External balance exists - NOT creating position (open_positions = bot positions only)"}
-  ]
-}
-```
-
-### Estado final
-- ✅ `open_positions RevolutX = 0` (ni legacy ni bot)
-- ✅ Reconcile solo skip_external_balance (5 assets con balance)
-- ✅ Smart-Guard bloqueado para lotId reconcile-/sync-/adopt-
-- ✅ Regla única implementada y operativa
-
-### Comandos de verificación post-deploy
-```bash
-# Verificar que no hay legacy positions
-curl "http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx"
-
-# Verificar reconcile no crea posiciones
-curl -X POST "http://127.0.0.1:3020/api/positions/reconcile" \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","autoClean":true}'
-```
-
----
-
-## 2026-01-22 22:00 (Europe/Madrid) — [ENV: VPS/STG] — Endpoints admin para cleanup legacy positions
-
-### Contexto
-Tras deploy del fix anterior, reconcile ya NO crea/infla posiciones. Pero quedan 5 posiciones legacy en VPS con prefijos `reconcile-`/`sync-` que tienen `has_snapshot=true` y `entry_mode=SMART_GUARD`.
-
-### Problema
-Las posiciones legacy serían ignoradas por Smart-Guard (código ya tiene bloqueo por prefix), pero necesitan ser limpiadas manualmente.
-
-### Solución
-Añadidos 2 endpoints admin:
-
-**GET `/api/admin/legacy-positions`**
-- Lista posiciones con prefijos `reconcile-`, `sync-`, `adopt-`
-- Muestra resumen de legacy vs bot positions
-
-**POST `/api/admin/purge-legacy-positions`**
-- `dryRun=true` (default): preview de posiciones a eliminar
-- `dryRun=false, confirm=true`: elimina posiciones legacy
-- Registra evento `LEGACY_POSITION_PURGED` en bot_events
-
-### Uso post-deploy
-```bash
-# 1) Ver posiciones legacy
-curl http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx
-
-# 2) Preview de purge
-curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","dryRun":true}'
-
-# 3) Ejecutar purge (PELIGROSO)
-curl -X POST http://127.0.0.1:3020/api/admin/purge-legacy-positions \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","dryRun":false,"confirm":true}'
-```
-
-### P2 Resuelto: SELLs en UI
-- Hay 1 SELL en DB (tradeId: AUTO-1768713310978, 2026-01-18, BTC/USD)
-- El endpoint `/api/trades/closed?type=sell&exchange=revolutx` SÍ devuelve el SELL
-- El problema: la UI muestra trades paginados (20 por página) y el SELL es antiguo (18-01)
-- Los trades recientes (últimos 20) son todos BUY, el SELL está en páginas posteriores
-- Solución: Usuario debe hacer scroll o usar paginador para ver trades más antiguos
-
----
-
-## 2026-01-22 21:30 (Europe/Madrid) — [ENV: VPS/STG] — REGLA ÚNICA: open_positions = solo posiciones del bot
-
-### Resumen
-Eliminados modos SAFE/ADOPT. Implementada regla única: `open_positions` contiene únicamente posiciones abiertas por el bot (engine), nunca balances externos del exchange.
-
-### Evidencia Forense (histórico)
-1. **2026-01-21 22:30:44Z** — CREACIÓN MASIVA por MANUAL RECONCILE desde BUY históricos
-2. **2026-01-22 08:14:29Z** — Smart-Guard intenta VENDER ETH por Break-even
-3. **2026-01-22 14:57:27Z** — RECONCILE ADOPTA holdings y ACTUALIZA cantidades (365%+ inflado)
-
-### REGLA ÚNICA Implementada
-> `open_positions` = solo posiciones abiertas por el bot (engine), nunca balances externos
-
-### Cambios Concretos
-
-**A) Reconcile simplificado (sin modos):**
-- Eliminado `adoptMode` - ya no existe modo ADOPT
-- Solo elimina posiciones del bot si balance real = 0
-- Solo actualiza qty de posiciones del bot (con configSnapshot)
-- PROHIBIDO crear posiciones desde balances externos
-
-**B) Smart-Guard solo gestiona posiciones del bot:**
-- Verifica: `configSnapshot != null` + `entryMode === 'SMART_GUARD'` + sin prefijos especiales
-- Posiciones con lotId `reconcile-`, `sync-`, `adopt-` → ignoradas
-
-**C) Sync de RevolutX:**
-- Solo importa trades a tabla `trades`
-- Nunca crea/modifica `open_positions`
-
-**D) Endpoints admin para cleanup legacy:**
-- `GET /api/admin/legacy-positions` - lista posiciones legacy
-- `POST /api/admin/purge-legacy-positions` - purga posiciones legacy (dryRun + confirm)
-
-**E) UX mejoras:**
-- Reset paginación al cambiar filtros en historial
-- Hint cuando RevolutX + TODAS no muestra SELLs en página actual
-
-### Archivos Tocados
-- `server/routes.ts` (reconcile sin modos, solo bot positions, endpoints admin)
-- `server/services/tradingEngine.ts` (Smart-Guard solo bot positions)
-- `server/services/botLogger.ts` (eventos LEGACY_POSITION_PURGED)
-- `client/src/pages/Terminal.tsx` (UX reset offset + hint SELL)
-- `BITACORA.md` y `MANUAL_BOT.md` (documentación actualizada)
-
-### Deploy/Comandos
-```bash
-cd /opt/krakenbot-staging
-git pull origin main
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
-```
-
-### Verificación Post-Deploy
-```bash
-# 1) Verificar que no hay legacy positions
-curl "http://127.0.0.1:3020/api/admin/legacy-positions?exchange=revolutx"
-
-# 2) Verificar reconcile no crea posiciones
-curl -X POST "http://127.0.0.1:3020/api/positions/reconcile" \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","autoClean":true}'
-```
-
-### Definition of Done
-- ✅ Reconcile NO crea posiciones desde balances externos
-- ✅ Smart-Guard solo gestiona posiciones del bot
-- ✅ open_positions = solo posiciones engine-managed
-- ✅ No quedan legacy positions en RevolutX
-- ✅ UI sin confusión de modos + UX mejorada
-
----
-
-## 2026-01-22 15:45 (Europe/Madrid) — [ENV: VPS/STG] — CRÍTICO: Fix "resurrección de posiciones" + reconcile multi-exchange
-
-### Resumen
-Incidente crítico: posiciones vendidas en Revolut X "resucitaban" tras sync/reconcile. La UI no mostraba SELLs y el botón Reconciliar solo soportaba Kraken.
-
-### Síntomas Reportados
-1. Posición ETH/USD vendida por señal reaparecía como abierta tras sync
-2. UI de trades no mostraba la venta del 22/01 (solo venta del 18/01)
-3. Posición BUY 09:14 ETH/USD sin etiqueta "Smart Guard" en UI
-4. Botón "Reconciliar" hardcoded a Kraken (modal decía "Reconciliar con Kraken")
-
-### Root Cause
-1. **sync-revolutx** creaba posiciones para cada BUY importado, ignorando SELLs
-2. **reconcile-from-trades** solo miraba BUY trades, no balances reales
-3. **UI Terminal.tsx** hardcoded a `/api/positions/reconcile` (Kraken-only)
-
-### Fix Aplicado
-**REGLA DE ORO**: `open_positions` debe reflejar BALANCES reales del exchange, no historial de trades.
-
-1. **sync-revolutx**: Ya NO crea posiciones automáticamente. Solo importa trades a DB.
-2. **Nuevo endpoint `/api/positions/reconcile`** (multi-exchange):
-   - Obtiene balances REALES del exchange (RevolutX o Kraken)
-   - Si balance = 0 → ELIMINA posición (evita resurrección)
-   - Si balance > 0 y no hay posición → CREA con snapshot SMART_GUARD
-   - Si balance > 0 y posición existe → ACTUALIZA qty si difiere >5%
-3. **UI Terminal.tsx**: Dos botones "RECONCILIAR RX" y "RECONCILIAR KR"
-
-### Archivos Tocados
-- `server/routes.ts` (sync-revolutx simplificado, nuevo reconcile multi-exchange)
-- `client/src/pages/Terminal.tsx` (botones reconcile por exchange)
-
-### Deploy/Comandos
-```bash
-cd /opt/krakenbot-staging
-git pull origin main
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
-```
-
-### Verificación Post-Deploy
-```bash
-# A) Ver que el SELL está en DB (debe aparecer BUY y SELL)
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
-SELECT executed_at, type, price, amount, origin
-FROM trades
-WHERE exchange='revolutx' AND pair='ETH/USD' AND executed_at::date='2026-01-22'
-ORDER BY executed_at ASC;"
-
-# B) Ver que reconcile RX NO deja posición si balance real es 0
-# 1) Ejecutar reconcile RevolutX
-curl -X POST http://127.0.0.1:3020/api/positions/reconcile \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","autoClean":true}'
-
-# 2) Verificar que ETH/USD fue eliminada
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
-SELECT * FROM open_positions WHERE exchange='revolutx' AND pair='ETH/USD';"
-
-# C) Validar en UI que después de sync + reconcile la posición NO reaparece
-# - Ir a dashboard > Posiciones Abiertas
-# - Verificar que ETH/USD no aparece
-# - Ir a Operaciones y verificar que SELL del 22/01 aparece (depende de query de UI)
-```
-
-### NOTA: UI de Operaciones
-- Este fix NO garantiza que la UI muestre SELLs
-- Si la UI lista desde tabla `trades` y sync importa SELL → aparecerá
-- Si la UI filtra mal o usa otra tabla → seguirá sin verse
-- Próximo PR si es necesario: revisar endpoint/query de operaciones para incluir SELLs de RevolutX
-
-### Rollback
-```bash
-git revert HEAD
-docker compose -f docker-compose.staging.yml up -d --build
-```
-
-### Pendientes
-- Verificar en VPS que el fix funciona correctamente
-- Si UI no muestra SELLs → próximo PR: revisar endpoint/query de operaciones para incluir SELLs de RevolutX desde tabla `trades`
-
----
-
-## 2026-01-22 00:30 (Europe/Madrid) — [ENV: VPS/STG] — Fix sistémico Smart-Guard posiciones reconcile/sync
-
-### Resumen
-Las 4 posiciones de Revolut X (BTC/USD, ETH/USD, SOL/USD, TON/USD) creadas por reconcile/sync no eran gestionadas por Smart-Guard debido a `configSnapshotJson` nulo.
-
-### Impacto
-- Smart-Guard visual pero no ejecutable (sin BE/trailing)
-- Posiciones sin protección automática
-
-### Root Cause
-- `checkSmartGuardExit` requiere `position.configSnapshot` para ejecutarse
-- Posiciones reconcile/sync se creaban sin `configSnapshotJson` ni `entryMode`
-
-### Fix Aplicado
-**Commit:** `cf66b96`
-
-1. **Backfill automático** en `loadOpenPositionsFromDB`: crea snapshot desde config actual
-2. **Endpoint reconcile** con snapshot SMART_GUARD completo
-3. **Eventos SG_***: Nuevos tipos para auditoría (`SG_SNAPSHOT_BACKFILLED`, `SG_BE_ACTIVATED`, `SG_TRAIL_ACTIVATED`, `SG_STOP_UPDATED`, `SG_EXIT_TRIGGERED`)
-
-### Archivos Tocados
-- `server/services/tradingEngine.ts` (backfill en loadOpenPositionsFromDB)
-- `server/routes.ts` (endpoint reconcile con snapshot)
-- `server/services/botLogger.ts` (nuevos EventTypes SG_*)
-
-### Deploy/Comandos
-```bash
-cd /opt/krakenbot-staging
-git pull origin main
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
-```
-
-### Verificación (SQL/logs)
+**Backfill históricos:**
 ```sql
--- Posiciones con snapshot SMART_GUARD
-SELECT pair, entry_mode, config_snapshot_json->>'sgBeAtPct' as be_pct,
-       sg_break_even_activated, sg_trailing_activated
-FROM open_positions ORDER BY pair;
-
--- Eventos SG_* en bot_events
-SELECT type, message, timestamp 
-FROM bot_events 
-WHERE type LIKE 'SG_%' 
-ORDER BY timestamp DESC LIMIT 10;
-```
-
-**Resultado validado:**
-```
-SG_SNAPSHOT_BACKFILLED | Snapshot backfilled for position BTC/USD
-SG_BREAK_EVEN_ACTIVATED | SG_BREAK_EVEN_ACTIVATED en SOL/USD  
-SG_TRAILING_ACTIVATED   | SG_TRAILING_ACTIVATED en TON/USD
-```
-
-### Rollback
-```bash
-git revert cf66b96
-docker compose -f docker-compose.staging.yml up -d --build
-```
-
-### Pendientes
-- Ninguno. Incidente cerrado.
-
----
-
-## 2026-01-21 23:00 (Europe/Madrid) — [ENV: VPS/STG] — Endpoint reconcile-from-trades
-
-### Resumen
-Implementación de endpoint para crear posiciones desde trades históricos importados por sync.
-
-### Impacto
-- Trades BUY importados sin posición asociada ahora pueden reconciliarse
-
-### Fix Aplicado
-**Commit:** `616b4f1`
-
-- Nuevo endpoint `POST /api/positions/reconcile-from-trades`
-- Soporta dry-run para preview
-- Crea posiciones con lotId único
-
-### Archivos Tocados
-- `server/routes.ts`
-
-### Deploy/Comandos
-```bash
-curl -X POST http://127.0.0.1:3020/api/positions/reconcile-from-trades \
-  -H "Content-Type: application/json" \
-  -d '{"exchange":"revolutx","since":"2026-01-21T00:00:00Z","dryRun":false}'
+UPDATE trades SET executed_by_bot = true 
+WHERE exchange = 'revolutx' AND type = 'buy' AND origin = 'sync' 
+AND executed_at > NOW() - INTERVAL '24 hours';
 ```
 
 ---
 
-## 2026-01-21 22:00 (Europe/Madrid) — [ENV: VPS/STG] — Fix pendingFill RevolutX
+### 2026-01-22 — REGLA ÚNICA: open_positions = solo posiciones del bot
 
-### Resumen
-Órdenes aceptadas por RevolutX sin precio ejecutado inmediato se marcaban incorrectamente como ORDER_FAILED.
+**Problema:** Posiciones vendidas "resucitaban" tras sync/reconcile. Reconcile creaba posiciones desde balances externos.
 
-### Impacto
-- Órdenes realmente ejecutadas aparecían como fallidas
-- Sin posición creada, sin notificación Telegram
+**Solución:** Regla única implementada: `open_positions` contiene ÚNICAMENTE posiciones abiertas por el bot (engine).
 
-### Root Cause
-`RevolutXService.placeOrder()` marcaba `success: false` si no había `executed_price` inmediato, aunque la orden fue aceptada.
+**Cambios:**
+- Reconcile: Solo elimina/actualiza posiciones del bot; PROHIBIDO crear desde balances externos
+- Smart-Guard: Solo gestiona posiciones con `configSnapshot != null` + `entryMode === 'SMART_GUARD'`
+- Sync RevolutX: Solo importa trades a tabla `trades`, nunca crea posiciones
 
-### Fix Aplicado
-**Commit:** `153ba06`
+**Endpoints admin:**
+- `GET /api/admin/legacy-positions` - Lista posiciones legacy
+- `POST /api/admin/purge-legacy-positions` - Purga posiciones legacy
 
-1. **RevolutXService.ts**: Si orden aceptada pero sin precio → `success: true, pendingFill: true`
-2. **tradingEngine.ts**: Manejo de `ORDER_PENDING_FILL`, notificación Telegram
-3. **botLogger.ts**: Nuevos EventTypes (`ORDER_PENDING_FILL`, `ORDER_FILLED_VIA_SYNC`, `POSITION_CREATED_VIA_SYNC`)
-4. **routes.ts**: Sync crea posiciones automáticamente para BUY trades
-
-### Archivos Tocados
-- `server/services/exchanges/RevolutXService.ts`
-- `server/services/exchanges/IExchangeService.ts`
-- `server/services/tradingEngine.ts`
-- `server/services/botLogger.ts`
-- `server/routes.ts`
+**Archivos:** `server/routes.ts`, `server/services/tradingEngine.ts`
 
 ---
 
-## 2026-01-21 15:00 (Europe/Madrid) — [ENV: VPS/STG] — Análisis forense 4 compras silenciosas
+### 2026-01-22 — Fix Smart-Guard para posiciones reconcile/sync
 
-### Resumen
-Investigación de 4 órdenes BUY Market en Revolut X sin notificaciones Telegram.
+**Problema:** Posiciones creadas por reconcile/sync no eran gestionadas por Smart-Guard (`configSnapshotJson` nulo).
 
-### Fills Afectados
-| executed_at (UTC) | pair | type | price | amount | origin |
-|-------------------|------|------|-------|--------|--------|
-| 2026-01-21 07:30:03 | ETH/USD | buy | $2979.04 | 0.03356482 | sync |
-| 2026-01-21 13:08:30 | ETH/USD | buy | $2941.81 | 0.03399776 | sync |
-| 2026-01-21 14:00:30 | TON/USD | buy | $1.5318 | 65.35947 | sync |
-| 2026-01-21 14:15:30 | BTC/USD | buy | $89412.28 | 0.00111823 | sync |
+**Solución:**
+- Backfill automático en `loadOpenPositionsFromDB`: crea snapshot desde config actual
+- Endpoint reconcile con snapshot SMART_GUARD completo
+- Nuevos eventos: `SG_SNAPSHOT_BACKFILLED`, `SG_BE_ACTIVATED`, `SG_TRAIL_ACTIVATED`
 
-### Root Cause Identificado
-**H6 confirmada**: Las compras fueron ejecutadas EXTERNAMENTE (Auto-Invest Revolut X o manual), NO por el bot. El job `sync-revolutx` las importó con `origin='sync'`.
-
-### Archivos Tocados
-- `ROOT_CAUSE_ANALYSIS_4_BUYS.md` (documentación)
-- `ANALISIS_FORENSE_COMPRAS_SILENCIOSAS.md` (documentación)
+**Archivos:** `server/services/tradingEngine.ts`, `server/routes.ts`, `server/services/botLogger.ts`
 
 ---
 
-## 2026-01-21 12:00 (Europe/Madrid) — [ENV: VPS/STG] — Fix nombres personalizados backups
+## 📈 TRADES Y SYNC
 
-### Resumen
-Nombre personalizado de backup no se usaba; scripts hacían word-splitting con espacios.
+### 2026-01-21 — Fix pendingFill RevolutX
 
-### Fix Aplicado
-1. **Backend**: Función `slugify()` + metadata JSON
-2. **Scripts**: Validación de entrada + prefijos correctos (`db_`, `code_`)
-3. **Frontend**: Icono restore cambiado a `RotateCcw`
+**Problema:** Órdenes aceptadas por RevolutX sin precio inmediato se marcaban como ORDER_FAILED.
 
-### Archivos Tocados
-- `server/services/BackupService.ts`
-- `scripts/backup-database.sh`
-- `scripts/backup-code.sh`
-- `scripts/backup-full.sh`
-- `client/src/pages/Backups.tsx`
+**Solución:**
+- `RevolutXService.ts`: Si orden aceptada pero sin precio → `success: true, pendingFill: true`
+- `tradingEngine.ts`: Manejo de `ORDER_PENDING_FILL`, notificación Telegram
+- Nuevos eventos: `ORDER_PENDING_FILL`, `ORDER_FILLED_VIA_SYNC`, `POSITION_CREATED_VIA_SYNC`
+
+**Archivos:** `server/services/exchanges/RevolutXService.ts`, `server/services/tradingEngine.ts`, `server/services/botLogger.ts`
 
 ---
 
-## 2026-01-21 10:00 (Europe/Madrid) — [ENV: VPS/STG] — Sistema de backups funcional en VPS
+### 2026-01-20 — Fix phantom buys RevolutX
 
-### Resumen
-Panel de backups fallaba con múltiples errores: bash not found, rutas hardcodeadas, sin docker.sock.
+**Problema:** Trades ejecutados por el bot no aparecían en `open_positions` (compras fantasma).
 
-### Fix Aplicado
-1. **Backend**: Rutas configurables vía env variables (`BACKUP_DIR`, `BACKUP_SCRIPTS_DIR`)
-2. **Docker Compose**: Volumes + docker.sock montado
-3. **Scripts**: Environment variables con fallbacks
+**Root Cause:** Divergencia en generación de `trade_id` entre bot y sync.
 
-### Archivos Tocados
-- `server/services/BackupService.ts`
-- `docker-compose.staging.yml`
-- `scripts/backup-database.sh`
-- `scripts/backup-code.sh`
+**Solución:**
+- Unificación con `buildTradeId()` usando hash SHA256 determinístico
+- Tabla `applied_trades` con gating idempotente
+- Eventos `TRADE_PERSIST_*`, `POSITION_APPLY_*`
 
-### Deploy/Comandos
-```bash
-cd /opt/krakenbot-staging
-git pull origin main
-mkdir -p backups
-chmod +x scripts/*.sh
-docker compose -f docker-compose.staging.yml up -d --build
-```
+**Archivos:** `server/utils/tradeId.ts`, `server/routes.ts`, `server/services/tradingEngine.ts`, `db/migrations/006_applied_trades.sql`
 
 ---
 
-## 2026-01-20 18:00 (Europe/Madrid) — [ENV: VPS/STG] — Fix phantom buys RevolutX
+### 2026-01-20 — Fix validación órdenes RevolutX
 
-### Resumen
-Trades ejecutados por el bot en RevolutX no aparecían en `open_positions`, causando "compras fantasma" sin tracking.
+**Problema:** Posición fantasma creada aunque la orden falló (balance insuficiente).
 
-### Root Cause
-Divergencia en generación de `trade_id` entre bot y sync:
-- Bot usaba `REVOLUTX-${txid}` (no determinístico)
-- Sync usaba hash determinístico
+**Solución:** Validación crítica: `if ((order as any)?.success === false)` → log `ORDER_FAILED` + return false
 
-### Fix Aplicado
-**Commit:** `4244df0`
-
-1. **Unificación de Trade ID**: `buildTradeId()` con hash SHA256 determinístico
-2. **Persistencia idempotente**: Tabla `applied_trades` con gating
-3. **Logging y alertas**: Eventos `TRADE_PERSIST_*`, `POSITION_APPLY_*`
-
-### Archivos Tocados
-- `server/utils/tradeId.ts`
-- `server/routes.ts`
-- `server/services/tradingEngine.ts`
-- `server/storage.ts`
-- `shared/schema.ts`
-- `db/migrations/006_applied_trades.sql`
+**Archivos:** `server/services/tradingEngine.ts`
 
 ---
 
-## 2026-01-20 14:00 (Europe/Madrid) — [ENV: VPS/STG] — Fix validación órdenes RevolutX
+### 2026-01-20 — Fix sync RevolutX bloqueado
 
-### Resumen
-Posición fantasma de BTC/USD creada aunque la orden falló (balance insuficiente).
+**Problema:** Sync devolvía 403 (`REVOLUTX_SYNC_ENABLED` no configurada); endpoint orderbook 404.
 
-### Root Cause
-El bot NO validaba el campo `success` en la respuesta de `placeOrder()`.
+**Solución:**
+- `docker-compose.staging.yml`: Añadir `REVOLUTX_SYNC_ENABLED=true`
+- `RevolutXService.ts`: Deshabilitar endpoint orderbook inexistente
+- Usar Kraken como fuente de precio
 
-### Fix Aplicado
-Validación crítica: `if ((order as any)?.success === false)` → log `ORDER_FAILED` + return false
-
-### Archivos Tocados
-- `server/services/tradingEngine.ts`
+**Archivos:** `docker-compose.staging.yml`, `server/services/exchanges/RevolutXService.ts`
 
 ---
 
-## 2026-01-20 10:00 (Europe/Madrid) — [ENV: VPS/STG] — Fix sync RevolutX bloqueado + endpoint orderbook 404
+## 📋 EVENTOS Y LOGS
 
-### Resumen
-- Sync RevolutX devolvía 403 (variable `REVOLUTX_SYNC_ENABLED` no configurada)
-- Endpoint orderbook causaba spam de errores 404 (no existe en API RevolutX)
+### 2026-01-22 — Filtrado eventos por rango temporal + exportación
 
-### Fix Aplicado
-1. **docker-compose.staging.yml**: Añadir `REVOLUTX_SYNC_ENABLED=true`
-2. **RevolutXService.ts**: Deshabilitar endpoint orderbook inexistente
-3. **routes.ts**: Usar Kraken como fuente de precio
+**Problema:** Filtro de rango (1h/6h/24h) no filtraba realmente; WebSocket enviaba solo últimos 50 eventos.
 
-### Archivos Tocados
-- `docker-compose.staging.yml`
-- `server/services/exchanges/RevolutXService.ts`
-- `server/routes.ts`
+**Solución:**
+- `getDbEvents()` acepta `{ limit, from, to, level, type }`
+- Endpoints: `/api/events`, `/api/events/export`, `/api/admin/purge-events`
+- WebSocket snapshot envía últimas 24h por defecto
+- Frontend con contador y timezone visible
+
+**Archivos:** `server/services/botLogger.ts`, `server/services/eventsWebSocket.ts`, `server/routes.ts`, `client/src/pages/Monitor.tsx`
 
 ---
 
-## 2026-01-17 (Europe/Madrid) — [ENV: VPS/STG] — Gran actualización de sistema
+## 💾 BACKUPS
 
-### Resumen
-Actualización masiva con 13 fixes/features implementados.
+### 2026-01-21 — Nombres personalizados en backups
 
-### Implementaciones
-1. **FIX**: Invalid Date en reporte diario
-2. **FIX**: Unificación de links "Ver Panel"
-3. **FIX**: Branding consistente (WINDSURF CHESTER BOT)
-4. **FEAT**: /logs detallado con filtros y paginación
-5. **FEAT**: /balance multi-exchange y /cartera
-6. **FIX**: /ganancias desde DB real
-7. **FIX**: /ultimas operaciones reales
-8. **UI**: CRIPTOFONÍA y actualización de microcopy
-9. **Telegram MULTI-CHAT** + envío manual
-10. **MITIGACIÓN**: Telegram polling 409 Conflict (SinglePollerGuard)
-11. **MITIGACIÓN**: RevolutX ticker falla + price discovery (Circuit Breaker)
-12. **FIX**: Arranque Docker no-interactivo (staging)
-13. **FIX**: Migración robusta de `telegram_chats`
+**Problema:** Nombre personalizado no se usaba; scripts hacían word-splitting con espacios.
+
+**Solución:**
+- Función `slugify()` + metadata JSON
+- Validación de entrada + prefijos correctos (`db_`, `code_`)
+
+**Archivos:** `server/services/BackupService.ts`, `scripts/backup-*.sh`
 
 ---
 
-## 2026-01-15 (Europe/Madrid) — [ENV: VPS/STG] — Sistema de configuración dinámica
+### 2026-01-21 — Sistema de backups funcional en VPS
 
-### Resumen
-Sistema completo de configuración dinámica para el bot de trading.
+**Problema:** Panel de backups fallaba: bash not found, rutas hardcodeadas, sin docker.sock.
 
-### Implementaciones
-- **ConfigService**: Servicio singleton con cache, locking y validación
-- **API REST**: 15 endpoints para gestión de configuración
-- **Base de Datos**: 3 nuevas tablas (`trading_config`, `config_change`, `config_preset`)
-- **Hot-Reload**: Integración con tradingEngine
-- **Dashboard UI**: Componente React con tabs (Presets/Custom)
-- **Presets**: Conservative/Balanced/Aggressive
+**Solución:**
+- Rutas configurables vía env (`BACKUP_DIR`, `BACKUP_SCRIPTS_DIR`)
+- Docker Compose con volumes + docker.sock montado
 
-### Archivos Tocados
-- `shared/config-schema.ts`
-- `server/services/ConfigService.ts`
-- `server/routes/config.ts`
-- `db/migrations/001_create_config_tables.sql`
-- `client/src/components/dashboard/TradingConfigDashboard.tsx`
+**Archivos:** `server/services/BackupService.ts`, `docker-compose.staging.yml`, `scripts/backup-*.sh`
 
 ---
 
-## 2026-01-14 (Europe/Madrid) — [ENV: VPS/STG] — Diagnóstico bot no compra
+## ⚙️ CONFIGURACIÓN Y SISTEMA
 
-### Resumen
-El bot NO compra principalmente por filtros de entrada demasiado restrictivos, NO por bugs de código.
+### 2026-01-17 — Gran actualización de sistema
 
-### Root Cause
-- Exposición al límite (60% = $719, exposición actual $1,565)
-- Señales insuficientes (requiere ≥5, mercado genera <5)
-
-### Fixes Aplicados
-**Commit:** `b95cfe0`
-
-- Fix crash `pnl is not defined`
-- Fix crash `cooldownSec` undefined
-- Otros fixes de tipado
-
-### Recomendaciones
-1. Aumentar `maxTotalExposurePct` de 60% a 80%
-2. Reducir `sgMinEntryUsd` de $100 a $80
-3. Activar `sgAllowUnderMin: true`
+Actualización masiva con múltiples fixes:
+- Fix Invalid Date en reporte diario
+- Branding consistente (WINDSURF CHESTER BOT)
+- `/logs` detallado con filtros y paginación
+- `/balance` multi-exchange y `/cartera`
+- `/ganancias` desde DB real
+- Telegram MULTI-CHAT + envío manual
+- SinglePollerGuard para Telegram polling 409
+- Circuit Breaker para RevolutX ticker
 
 ---
 
-# ANEXOS
+### 2026-01-15 — Sistema de configuración dinámica
+
+**Implementaciones:**
+- ConfigService: singleton con cache, locking y validación
+- API REST: 15 endpoints para gestión de configuración
+- Base de Datos: 3 tablas (`trading_config`, `config_change`, `config_preset`)
+- Hot-Reload integrado con tradingEngine
+- Dashboard UI con tabs (Presets/Custom)
+- Presets: Conservative/Balanced/Aggressive
+
+**Archivos:** `shared/config-schema.ts`, `server/services/ConfigService.ts`, `server/routes/config.ts`, `client/src/components/dashboard/TradingConfigDashboard.tsx`
+
+---
+
+# 📚 ANEXOS
 
 ## Anexo A: Endpoints RevolutX API
 
-### ✅ Endpoints que funcionan
+### ✅ Endpoints funcionales
 | Endpoint | Método | Propósito |
 |----------|--------|-----------|
 | `/api/1.0/accounts` | GET | Obtener balances |
@@ -730,51 +217,41 @@ El bot NO compra principalmente por filtros de entrada demasiado restrictivos, N
 | `/api/1.0/currencies` | GET | Obtener monedas disponibles |
 | `/api/1.0/symbols` | GET | Obtener pares disponibles |
 
-### ❌ Endpoints que NO existen
-| Endpoint | Método | Estado |
-|----------|--------|--------|
-| `/api/1.0/ticker` | GET | 404 Not Found |
-| `/api/1.0/orderbook` | GET | 404 Not Found |
-| `/api/1.0/market-data` | GET | 404 Not Found |
+### ❌ Endpoints inexistentes
+| Endpoint | Estado |
+|----------|--------|
+| `/api/1.0/ticker` | 404 |
+| `/api/1.0/orderbook` | 404 |
 
 ## Anexo B: Significado de `origin` en trades
 
-| Valor | Significado | Código |
-|-------|-------------|--------|
-| `engine` | Trade ejecutado por el motor de trading | `tradingEngine.ts` |
-| `manual` | Trade ejecutado via API endpoint (dashboard) | `routes.ts` |
-| `sync` | Trade importado desde exchange vía sync | `routes.ts` |
+| Valor | Significado |
+|-------|-------------|
+| `engine` | Trade ejecutado por el motor de trading |
+| `manual` | Trade ejecutado via API (dashboard) |
+| `sync` | Trade importado desde exchange vía sync |
 
-## Anexo C: Queries de verificación comunes
+## Anexo C: Queries de verificación
 
 ```sql
--- Verificar posiciones con snapshot
-SELECT pair, entry_mode, config_snapshot_json IS NOT NULL as has_snapshot,
-       sg_break_even_activated, sg_trailing_activated
+-- Posiciones con snapshot
+SELECT pair, entry_mode, config_snapshot_json IS NOT NULL as has_snapshot
 FROM open_positions ORDER BY pair;
 
--- Verificar eventos recientes
-SELECT type, message, timestamp 
-FROM bot_events 
-ORDER BY timestamp DESC LIMIT 20;
+-- Trades por origen
+SELECT origin, COUNT(*) FROM trades WHERE exchange = 'revolutx' GROUP BY origin;
 
--- Verificar trades por origen
-SELECT origin, COUNT(*) as total
-FROM trades
-WHERE exchange = 'revolutx'
-GROUP BY origin;
+-- Verificar order_intents
+SELECT id, client_order_id, pair, side, status, created_at 
+FROM order_intents ORDER BY created_at DESC LIMIT 10;
 
--- Verificar phantom buys
-SELECT t."tradeId", t.pair, t.type, t."executedAt",
-       CASE WHEN op."lotId" IS NOT NULL THEN 'HAS_POSITION' ELSE 'PHANTOM' END as status
-FROM trades t
-LEFT JOIN open_positions op ON t.exchange = op.exchange 
-  AND t.pair = op.pair AND t."tradeId" = op."tradeId"
-WHERE t.type = 'buy' AND t.exchange = 'revolutx'
-ORDER BY t."executedAt" DESC LIMIT 20;
+-- Trades con executed_by_bot
+SELECT id, pair, type, executed_by_bot, executed_at 
+FROM trades WHERE exchange='revolutx' AND executed_by_bot = true 
+ORDER BY executed_at DESC;
 ```
 
 ---
 
-*Última actualización: 2026-01-22*  
+*Última actualización: 2026-01-23*  
 *Mantenido por: Windsurf Cascade AI*
