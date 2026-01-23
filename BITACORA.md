@@ -9,7 +9,101 @@
 
 ---
 
-## 📊 POSICIONES Y RECONCILE
+## �️ SMART_GUARD Y LOGS
+
+### 2026-01-23 — Arreglo Definitivo SMART_GUARD (no acumulación) + clientOrderId linking + logs duplicados
+
+**Problema:** 
+1. **SMART_GUARD permitía acumulación** - El bot podía abrir múltiples posiciones del mismo par a pesar del límite
+2. **clientOrderId perdido** - RevolutXService generaba su propio ID, rompiendo la cadena de atribución
+3. **Logs duplicados** - Cada cliente WebSocket persistía logs, creando duplicados en DB
+4. **Gate inconsistente** - Solo contaba posiciones OPEN, ignorando PENDING_FILL e intents
+
+**Solución Integral:**
+
+#### 1️⃣ SMART_GUARD Gate Robusto
+**Nueva lógica de bloqueo:**
+```typescript
+// Cuenta todos los slots ocupados (OPEN + PENDING_FILL + intents)
+const occupiedSlots = await storage.countOccupiedSlotsForPair(exchange, pair);
+// openPositions: number; pendingFillPositions: number; 
+// pendingIntents: number; acceptedIntents: number; total: number
+
+// Anti-burst cooldown: mínimo 120s entre entradas por par
+const lastOrderTime = await storage.getLastOrderTimeForPair(exchange, pair);
+if (secondsSinceLastOrder < 120) {
+  // Bloquear con cooldown remaining
+}
+
+// Gate único para SINGLE y SMART_GUARD
+if (currentOpenLots >= maxLotsForMode) {
+  // Bloquear con detalle: OPEN=X, PENDING=Y, intents=Z
+}
+```
+
+**Nuevas funciones storage:**
+- `countOccupiedSlotsForPair()` - Query SQL que cuenta OPEN + PENDING_FILL + pending/accepted intents
+- `getLastOrderTimeForPair()` - Para cooldown anti-ráfaga
+
+**Logs mejorados:**
+```
+TON/USD: Compra bloqueada - slots ocupados 1/1 (OPEN=0, PENDING=1, intents=0)
+SOL/USD: Compra bloqueada - Cooldown anti-ráfaga: 87s
+```
+
+#### 2️⃣ Fix Crítico: Propagación clientOrderId
+**Problema:** `RevolutXService.placeOrder()` ignoraba el `clientOrderId` del caller
+```typescript
+// ANTES (rompía la cadena)
+const clientOrderId = this.generateClientOrderId(); // Siempre nuevo
+
+// AHORA (preserva la cadena)
+const clientOrderId = params.clientOrderId || this.generateClientOrderId();
+console.log(`[revolutx] Using clientOrderId: ${clientOrderId} (caller-provided: ${!!params.clientOrderId})`);
+```
+
+**Interface actualizada:**
+```typescript
+// IExchangeService.placeOrder
+placeOrder(params: {
+  pair: string;
+  type: "buy" | "sell";
+  ordertype: string;
+  price?: string;
+  volume: string;
+  clientOrderId?: string; // Nuevo: opcional para traceabilidad
+}): Promise<OrderResult>;
+```
+
+#### 3️⃣ Logs Centralizados (Fix Duplicación)
+**Problema:** Cada cliente WS en `terminalWebSocket.ts` persistía logs
+```typescript
+// ANTES: Cada cliente persistía
+serverLogsService.persistLog("app_stdout", line, isError);
+
+// AHORA: Persistencia única centralizada
+// En logStreamService.addEntry()
+serverLogsService.persistLog("app_stdout", line, isError);
+```
+
+**Cambio implementado:**
+- `logStreamService.ts`: Centraliza persistencia en `addEntry()`
+- `terminalWebSocket.ts`: Solo envía a clientes, sin persistir
+
+#### 4️⃣ Configuración y Defaults
+**SMART_GUARD por defecto:**
+- `sgMaxOpenLotsPerPair = 1` (configurable)
+- `sgMinSecondsBetweenEntries = 120s` (anti-burst)
+- `sgAllowScaleIn = false` (no acumular por defecto)
+
+**Comportamiento resultante:**
+- **SINGLE**: Máximo 1 posición por par
+- **SMART_GUARD**: Máximo configurable (default 1), sin scale-in
+- **Cooldown**: 120s mínimo entre entradas del mismo par
+
+---
+
+### � POSICIONES Y RECONCILE
 
 ### 2026-01-23 — Posiciones instantáneas con Average Entry Price
 
@@ -30,7 +124,41 @@
 3. Fill recibido → Actualiza agregados + status=OPEN + emite WS
 4. `reconcile` → Backup/repair si hay drift
 
-**Archivos:**
+**Archivos modificados (SMART_GUARD + clientOrderId + logs):**
+- `server/services/exchanges/RevolutXService.ts` - Usa clientOrderId del caller
+- `server/services/exchanges/IExchangeService.ts` - Interface actualizada con clientOrderId?
+- `server/services/tradingEngine.ts` - Gate robusto en analyzePairAndTrade + analyzePairAndTradeWithCandles
+- `server/storage.ts` - countOccupiedSlotsForPair + getLastOrderTimeForPair + IStorage interface
+- `server/services/logStreamService.ts` - Persistencia centralizada en addEntry()
+- `server/services/terminalWebSocket.ts` - Removida persistencia duplicada
+
+**Deploy STG:**
+```bash
+cd /opt/krakenbot-staging
+git pull origin main  # Commit: adbc9c3
+docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+```
+
+**Verificación post-deploy:**
+```bash
+# SMART_GUARD gate visible
+docker compose -f docker-compose.staging.yml logs | grep "openLotsThisPair"
+
+# clientOrderId linking (próxima orden)
+docker compose -f docker-compose.staging.yml logs | grep "caller-provided"
+
+# No duplicación logs
+docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
+SELECT line, COUNT(*) FROM server_logs
+WHERE timestamp > NOW() - INTERVAL '10 minutes'
+GROUP BY line HAVING COUNT(*) > 1;"
+```
+
+**Commit:** `adbc9c3` - "fix: SMART_GUARD no-accumulate + clientOrderId linking + logs duplicados"
+
+---
+
+**Archivos (posiciones instantáneas):**
 - `db/migrations/009_instant_positions.sql` (migración)
 - `server/services/FillWatcher.ts` (nuevo)
 - `server/services/positionsWebSocket.ts` (nuevo)
@@ -39,7 +167,7 @@
 - `server/routes.ts` (reconcile recalcula avgPrice)
 - `client/src/pages/Terminal.tsx` (badge status + coste medio)
 
-**Deploy:**
+**Deploy (posiciones instantáneas):**
 ```bash
 git pull origin main
 cat db/migrations/009_instant_positions.sql | docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
@@ -47,6 +175,40 @@ docker compose -f docker-compose.staging.yml up -d --build --force-recreate
 ```
 
 **Commit:** `9c41b45`
+
+---
+
+## 📋 RESULTADOS VERIFICACIÓN STG (2026-01-23)
+
+### ✅ SMART_GUARD Gate
+- **Estado:** Funcionando correctamente
+- **Evidencia:** `openLotsThisPair:1, maxLotsPerPair:2` visible en PAIR_DECISION_TRACE
+- **Logs:** Bloqueos con detalle `slots ocupados X/Y (OPEN=A, PENDING=B, intents=C)`
+
+### ✅ clientOrderId Linking  
+- **Estado:** Código desplegado, pendiente de verificar con próxima orden
+- **Esperado:** `[revolutx] Using clientOrderId: XXX (caller-provided: true)`
+
+### ✅ Logs Centralizados
+- **Estado:** Sin duplicaciones confirmado
+- **Evidencia:** `0 rows` con COUNT(*) > 1 en últimos 10 minutos
+- **IDs:** Secuenciales únicos (12331-12346)
+
+### ⚠️ AEP en Posiciones Existentes
+- **Estado:** `total_cost_quote=0` en posiciones pre-fix
+- **Causa:** Posiciones creadas antes del sistema de agregados
+- **Solución:** Las nuevas posiciones tendrán AEP correcto
+
+### 📊 Trades Disponibles
+- **Evidencia:** Trades con `order_intent_id` presente (ej: XRP/USD con id=1)
+- **Backfill:** Posible para posiciones históricas si se requiere
+
+---
+
+**Próximos pasos:**
+1. Esperar próxima orden real para verificar `caller-provided: true`
+2. Verificar PENDING_FILL → OPEN con AEP calculado
+3. Monitorear que SMART_GUARD bloque segundas entradas del mismo par
 
 ---
 

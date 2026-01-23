@@ -21,6 +21,7 @@ import { errorAlertService, ErrorAlertService } from "./services/ErrorAlertServi
 import cron from "node-cron";
 import http from "http";
 import { buildTradeId } from "./utils/tradeId";
+import backfillRoutes from "./routes/backfill";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -2586,6 +2587,9 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       res.status(500).json({ error: error.message });
     }
   });
+
+  // Register backfill routes
+  app.use("/api/admin", backfillRoutes);
 
   // ADMIN: Listar y purgar posiciones legacy (reconcile-/sync-/adopt-)
   // Estas posiciones NO son del bot (engine) y no deben existir en open_positions

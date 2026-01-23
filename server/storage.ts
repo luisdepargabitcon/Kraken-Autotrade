@@ -202,6 +202,26 @@ export interface IStorage {
     total: number;
   }>;
   getLastOrderTimeForPair(exchange: string, pair: string): Promise<Date | null>;
+  
+  // Backfill functions for legacy positions
+  getLegacyPositionsNeedingBackfill(): Promise<OpenPosition[]>;
+  findTradesForPositionBackfill(position: OpenPosition): Promise<Trade[]>;
+  updatePositionWithBackfill(positionId: number, data: {
+    totalCostQuote: number;
+    totalAmountBase: number;
+    averageEntryPrice: number | null;
+    fillCount: number;
+    firstFillAt: Date;
+    lastFillAt: Date;
+    entryPrice: number | null;
+  }): Promise<void>;
+  updatePositionAsImported(positionId: number): Promise<void>;
+  getBackfillStatus(): Promise<{
+    totalPositions: number;
+    legacyPositions: number;
+    backfilledPositions: number;
+    importedPositions: number;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2018,6 +2038,93 @@ export class DatabaseStorage implements IStorage {
 
     console.log(`[storage] Recalculated position ${position.pair}: avgPrice=${avgPrice.toFixed(8)}, totalAmount=${totalAmount}`);
     return updated;
+  }
+
+  // Backfill functions for legacy positions
+  async getLegacyPositionsNeedingBackfill(): Promise<OpenPosition[]> {
+    return await db.select().from(openPositionsTable)
+      .where(and(
+        eq(openPositionsTable.status, 'OPEN'),
+        sql`total_amount_base = 0`,
+        isNull(openPositionsTable.clientOrderId)
+      ));
+  }
+
+  async findTradesForPositionBackfill(position: OpenPosition): Promise<Trade[]> {
+    const positionTime = new Date(position.createdAt);
+    const windowStart = new Date(positionTime.getTime() - 24 * 60 * 60 * 1000); // 24h before
+    const windowEnd = new Date(positionTime.getTime() + 2 * 60 * 60 * 1000); // 2h after
+
+    return await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.exchange, position.exchange),
+        eq(tradesTable.pair, position.pair),
+        eq(tradesTable.type, 'buy'),
+        gt(tradesTable.executedAt, windowStart),
+        lt(tradesTable.executedAt, windowEnd)
+      ))
+      .orderBy(tradesTable.executedAt);
+  }
+
+  async updatePositionWithBackfill(positionId: number, data: {
+    totalCostQuote: number;
+    totalAmountBase: number;
+    averageEntryPrice: number | null;
+    fillCount: number;
+    firstFillAt: Date;
+    lastFillAt: Date;
+    entryPrice: number | null;
+  }): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({
+        totalCostQuote: data.totalCostQuote.toString(),
+        totalAmountBase: data.totalAmountBase.toString(),
+        averageEntryPrice: data.averageEntryPrice?.toString(),
+        entryPrice: data.entryPrice?.toString(),
+        fillCount: data.fillCount,
+        firstFillAt: data.firstFillAt,
+        lastFillAt: data.lastFillAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.id, positionId));
+  }
+
+  async updatePositionAsImported(positionId: number): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({
+        entryMode: 'IMPORTED',
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.id, positionId));
+  }
+
+  async getBackfillStatus(): Promise<{
+    totalPositions: number;
+    legacyPositions: number;
+    backfilledPositions: number;
+    importedPositions: number;
+  }> {
+    const [totalResult] = await db.select({ count: sql`count(*)` }).from(openPositionsTable);
+    const [legacyResult] = await db.select({ count: sql`count(*)` }).from(openPositionsTable)
+      .where(and(
+        eq(openPositionsTable.status, 'OPEN'),
+        sql`total_amount_base = 0`,
+        isNull(openPositionsTable.clientOrderId)
+      ));
+    const [backfilledResult] = await db.select({ count: sql`count(*)` }).from(openPositionsTable)
+      .where(and(
+        eq(openPositionsTable.status, 'OPEN'),
+        sql`total_amount_base > 0`
+      ));
+    const [importedResult] = await db.select({ count: sql`count(*)` }).from(openPositionsTable)
+      .where(eq(openPositionsTable.entryMode, 'IMPORTED'));
+
+    return {
+      totalPositions: Number(totalResult.count),
+      legacyPositions: Number(legacyResult.count),
+      backfilledPositions: Number(backfilledResult.count),
+      importedPositions: Number(importedResult.count),
+    };
   }
 }
 
