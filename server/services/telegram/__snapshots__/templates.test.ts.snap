@@ -1,0 +1,161 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Template Snapshots > DailyReport empty snapshot 1`] = `
+"[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+📋 <b>REPORTE DIARIO (14:00)</b>
+🕒 23/01/2026, 15:00:00 (Europe/Madrid)
+
+🔌 <b>Conexiones:</b>
+  ✅ Kraken | ✅ DB | ✅ Telegram | ✅ RevolutX
+
+🧠 <b>Sistema:</b>
+  CPU: 1.2%
+  Memoria: 2.1/7.7 GB (27.3%)
+  Disco: 42.1/232.4 GB (18.1%)
+  Uptime: 5d 2h 30m
+
+🤖 <b>Bot:</b>
+  Entorno: <code>NAS/PROD</code> | DRY_RUN: <code>SÍ</code>
+  Modo: <code>SINGLE</code> | Estrategia: <code>mean_reversion</code>
+  Pares: <code>BTC/USD, ETH/USD</code>
+
+💰 <b>Portfolio (confirmado):</b>
+  Posiciones: 0 | Exposición: $0.00
+
+🧾 <b>Órdenes pendientes:</b>
+  Sin órdenes pendientes
+
+🔄 <b>Sincronización:</b>
+  Kraken lastSync: N/D (sin sincronizar)
+  RevolutX lastSync: 14:55:00 (hace 5m 0s)
+━━━━━━━━━━━━━━━━━━━
+
+Panel: http://localhost:5000"
+`;
+
+exports[`Template Snapshots > DailyReport full snapshot 1`] = `
+"[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+📋 <b>REPORTE DIARIO (14:00)</b>
+🕒 23/01/2026, 15:00:00 (Europe/Madrid)
+
+🔌 <b>Conexiones:</b>
+  ✅ Kraken | ✅ DB | ✅ Telegram | ✅ RevolutX
+
+🧠 <b>Sistema:</b>
+  CPU: 0.4%
+  Memoria: 7.4/7.7 GB (96.4%) ⚠️
+  Disco: 42.1/232.4 GB (18.1%)
+  Uptime: 17d 16h 13m
+
+🤖 <b>Bot:</b>
+  Entorno: <code>NAS/PROD</code> | DRY_RUN: <code>NO</code>
+  Modo: <code>SMART_GUARD</code> | Estrategia: <code>momentum</code>
+  Pares: <code>TON/USD, BTC/USD, ETH/USD, SOL/USD, XRP/USD</code>
+
+💰 <b>Portfolio (confirmado):</b>
+  Posiciones: 3 | Exposición: $1087.32
+  • XRP/USD (RevolutX): $345.19 @ $3.1500
+  • ETH/USD (RevolutX): $563.14 @ $3218.4500
+  • TON/USD (RevolutX): $178.99 @ $5.2300
+
+🧾 <b>Órdenes pendientes:</b>
+  Sin órdenes pendientes
+
+🔄 <b>Sincronización:</b>
+  Kraken lastSync: 14:58:10 (hace 1m 50s)
+  RevolutX lastSync: 14:52:05 (hace 7m 55s)
+━━━━━━━━━━━━━━━━━━━
+
+Panel: http://localhost:5000"
+`;
+
+exports[`Template Snapshots > DailyReport with pending orders snapshot 1`] = `
+"[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+📋 <b>REPORTE DIARIO (14:00)</b>
+🕒 23/01/2026, 15:00:00 (Europe/Madrid)
+
+🔌 <b>Conexiones:</b>
+  ✅ Kraken | ✅ DB | ✅ Telegram | ✅ RevolutX
+
+🧠 <b>Sistema:</b>
+  CPU: 1.2%
+  Memoria: 2.1/7.7 GB (27.3%)
+  Disco: 42.1/232.4 GB (18.1%)
+  Uptime: 5d 2h 30m
+
+🤖 <b>Bot:</b>
+  Entorno: <code>NAS/PROD</code> | DRY_RUN: <code>SÍ</code>
+  Modo: <code>SINGLE</code> | Estrategia: <code>mean_reversion</code>
+  Pares: <code>BTC/USD, ETH/USD</code>
+
+💰 <b>Portfolio (confirmado):</b>
+  Posiciones: 0 | Exposición: $0.00
+
+🧾 <b>Órdenes pendientes:</b>
+  2 pendientes (RevolutX) | Última: BUY SOL/USD | ID: <code>188c4g3b...</code>
+
+🔄 <b>Sincronización:</b>
+  Kraken lastSync: N/D (sin sincronizar)
+  RevolutX lastSync: 14:55:00 (hace 5m 0s)
+━━━━━━━━━━━━━━━━━━━
+
+Panel: http://localhost:5000"
+`;
+
+exports[`Template Snapshots > TradeBuy snapshot 1`] = `
+"[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🟢 <b>COMPRA XRP/USD</b> 🟢
+
+🏦 <b>Exchange:</b> <code>RevolutX</code>
+💵 <b>Precio:</b> <code>$3.15</code>
+📦 <b>Cantidad:</b> <code>109.58</code>
+💰 <b>Total:</b> <code>$345.19</code>
+
+📊 <b>Indicadores:</b>
+EMA10&gt;EMA20 ✓, MACD+ ✓, Vol 1.8x ✓, RSI 42
+
+🧭 <b>Régimen:</b> <code>TREND</code>
+   ↳ Tendencia alcista (ADX=32, EMAs alineadas)
+🔀 <b>Estrategia Router:</b> <code>momentum_candles_15m</code>
+
+⚙️ <b>Modo:</b> <code>SMART_GUARD</code>
+🔗 <b>OrderID:</b> <code>177b3f2a-1234-5678-9abc-def012345678</code>
+🎫 <b>LotID:</b> <code>engine-1769186188930-XRPUSD</code>
+
+📅 23/01/2026, 11:30:00
+━━━━━━━━━━━━━━━━━━━
+
+Panel: http://localhost:5000"
+`;
+
+exports[`Template Snapshots > TradeSell snapshot 1`] = `
+"[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🔴 <b>VENTA ETH/USD</b> 🔴
+
+🏦 <b>Exchange:</b> <code>RevolutX</code>
+💵 <b>Precio:</b> <code>$3350.00</code>
+📦 <b>Cantidad:</b> <code>0.175</code>
+💰 <b>Total:</b> <code>$586.25</code>
+⏱️ <b>Duración:</b> <code>1d 2h 15m</code>
+
+📈 <b>Resultado:</b>
+   • PnL: <code>+$23.11</code> (<code>+4.10%</code>)
+   • Fee: <code>$1.17</code>
+
+🛡️ <b>Tipo de salida:</b> <code>TRAILING_STOP</code>
+⚡ <b>Trigger:</b> <code>Trail activado en $3380, ejecutado en $3350</code>
+
+⚙️ <b>Modo:</b> <code>SMART_GUARD</code>
+🔗 <b>OrderID:</b> <code>288c4g3b-9876-5432-1fed-cba987654321</code>
+🎫 <b>LotID:</b> <code>engine-1769172237672-ETHUSD</code>
+
+📅 23/01/2026, 11:30:00
+━━━━━━━━━━━━━━━━━━━
+
+Panel: http://localhost:5000"
+`;

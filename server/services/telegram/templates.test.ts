@@ -36,7 +36,7 @@ import {
 // ============================================================
 
 const mockDailyReportFull: DailyReportContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   timestamp: new Date("2026-01-23T14:00:00Z"),
   connections: {
     kraken: true,
@@ -77,7 +77,7 @@ const mockDailyReportFull: DailyReportContext = {
 };
 
 const mockDailyReportEmpty: DailyReportContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   timestamp: new Date("2026-01-23T14:00:00Z"),
   connections: {
     kraken: true,
@@ -130,7 +130,7 @@ const mockDailyReportWithPending: DailyReportContext = {
 };
 
 const mockTradeBuy: TradeBuyContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   exchange: "RevolutX",
   pair: "XRP/USD",
   amount: "109.58",
@@ -151,7 +151,7 @@ const mockTradeBuy: TradeBuyContext = {
 };
 
 const mockTradeSell: TradeSellContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   exchange: "RevolutX",
   pair: "ETH/USD",
   amount: "0.175",
@@ -175,7 +175,7 @@ const mockTradeSell: TradeSellContext = {
 };
 
 const mockBotStarted: BotStartedContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   strategy: "momentum",
   risk: "medium",
   pairs: ["TON/USD", "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD"],
@@ -188,7 +188,7 @@ const mockBotStarted: BotStartedContext = {
 };
 
 const mockHeartbeat: HeartbeatContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   cpu: "2.1%",
   mem: "5.2/7.7 GB (67.5%)",
   disk: "42.1/232.4 GB (18.1%)",
@@ -203,7 +203,7 @@ const mockHeartbeat: HeartbeatContext = {
 };
 
 const mockPositionsUpdate: PositionsUpdateContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   positions: [
     {
       pair: "XRP/USD",
@@ -224,7 +224,7 @@ const mockPositionsUpdate: PositionsUpdateContext = {
 };
 
 const mockEntryIntent: EntryIntentContext = {
-  env: "VPS/STG",
+  env: "NAS/PROD",
   exchange: "RevolutX",
   pair: "SOL/USD",
   amountUsd: "140.50",
@@ -313,7 +313,7 @@ describe("Daily Report Template", () => {
     
     // Check header
     expect(html).toContain("CHESTER BOT");
-    expect(html).toContain("[VPS/STG]");
+    expect(html).toContain("[NAS/PROD]");
     
     // Check connections
     expect(html).toContain("✅ Kraken");
@@ -357,8 +357,8 @@ describe("Daily Report Template", () => {
     // Should show pending orders even when positions = 0
     expect(html).toContain("2 pendientes");
     expect(html).toContain("BUY");
-    expect(html).toContain("XRP/USD");
-    expect(html).toContain("177b3f2a");
+    expect(html).toContain("SOL/USD");
+    expect(html).toContain("188c4g3b");
   });
 
   it("should never contain placeholders", () => {
@@ -410,7 +410,7 @@ describe("Trade Buy Template", () => {
     expect(html).toContain("ADX=32");
     
     // Check signals summary
-    expect(html).toContain("EMA10>EMA20");
+    expect(html).toContain("EMA10&gt;EMA20");
   });
 
   it("should validate buy context with Zod", () => {
@@ -463,7 +463,7 @@ describe("Trade Sell Template", () => {
     };
     const html = buildTradeSellHTML(lossTrade);
     
-    expect(html).toContain("-$15.50");
+    expect(html).toContain("$-15.50");
     expect(html).toContain("-2.80%");
     expect(html).toContain("📉"); // Negative PnL emoji
   });
@@ -532,7 +532,7 @@ describe("Positions Update Template", () => {
 
   it("should render empty positions", () => {
     const emptyCtx: PositionsUpdateContext = {
-      env: "VPS/STG",
+      env: "NAS/PROD",
       positions: [],
       totalExposureUsd: 0,
       timestamp: new Date(),
@@ -609,7 +609,7 @@ describe("Anti-Placeholder Compliance", () => {
       expect(html).not.toContain(">undefined<");
       
       // Should contain env tag
-      expect(html).toContain("VPS/STG");
+      expect(html).toContain("NAS/PROD");
       
       // Should contain timestamp
       expect(html).toMatch(/\d{2}\/\d{2}\/\d{4}/);
