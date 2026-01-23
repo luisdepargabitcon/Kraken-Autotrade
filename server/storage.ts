@@ -192,6 +192,16 @@ export interface IStorage {
   matchOrderIntentToTrade(clientOrderId: string, tradeId: number): Promise<void>;
   getPendingOrderIntents(exchange: string): Promise<OrderIntent[]>;
   markTradeAsExecutedByBot(tradeId: number, orderIntentId: number): Promise<void>;
+  
+  // SMART_GUARD gate functions
+  countOccupiedSlotsForPair(exchange: string, pair: string): Promise<{
+    openPositions: number;
+    pendingFillPositions: number;
+    pendingIntents: number;
+    acceptedIntents: number;
+    total: number;
+  }>;
+  getLastOrderTimeForPair(exchange: string, pair: string): Promise<Date | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1829,6 +1839,115 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(openPositionsTable.clientOrderId, clientOrderId));
     console.log(`[storage] Marked position CANCELLED: ${clientOrderId}`);
+  }
+
+  /**
+   * SMART_GUARD GATE: Count active positions + pending intents for a pair
+   * Returns the total "occupied slots" that should block new BUYs:
+   * - Positions with status PENDING_FILL or OPEN
+   * - Order intents with status pending or accepted (not yet filled)
+   */
+  async countOccupiedSlotsForPair(exchange: string, pair: string): Promise<{
+    openPositions: number;
+    pendingFillPositions: number;
+    pendingIntents: number;
+    acceptedIntents: number;
+    total: number;
+  }> {
+    // Normalize pair format
+    const normalizedPair = pair.replace('-', '/').toUpperCase();
+    const altPair = pair.replace('/', '-').toUpperCase();
+    
+    // Count OPEN positions
+    const openPositions = await db.select({ count: sql<number>`count(*)` })
+      .from(openPositionsTable)
+      .where(and(
+        eq(openPositionsTable.exchange, exchange),
+        or(
+          eq(openPositionsTable.pair, normalizedPair),
+          eq(openPositionsTable.pair, altPair)
+        ),
+        eq(openPositionsTable.status, 'OPEN')
+      ));
+    
+    // Count PENDING_FILL positions
+    const pendingFillPositions = await db.select({ count: sql<number>`count(*)` })
+      .from(openPositionsTable)
+      .where(and(
+        eq(openPositionsTable.exchange, exchange),
+        or(
+          eq(openPositionsTable.pair, normalizedPair),
+          eq(openPositionsTable.pair, altPair)
+        ),
+        eq(openPositionsTable.status, 'PENDING_FILL')
+      ));
+    
+    // Count pending order intents (BUY only)
+    const pendingIntents = await db.select({ count: sql<number>`count(*)` })
+      .from(orderIntentsTable)
+      .where(and(
+        eq(orderIntentsTable.exchange, exchange),
+        or(
+          eq(orderIntentsTable.pair, normalizedPair),
+          eq(orderIntentsTable.pair, altPair)
+        ),
+        eq(orderIntentsTable.side, 'buy'),
+        eq(orderIntentsTable.status, 'pending')
+      ));
+    
+    // Count accepted order intents (BUY only, submitted but not yet filled/position created)
+    const acceptedIntents = await db.select({ count: sql<number>`count(*)` })
+      .from(orderIntentsTable)
+      .where(and(
+        eq(orderIntentsTable.exchange, exchange),
+        or(
+          eq(orderIntentsTable.pair, normalizedPair),
+          eq(orderIntentsTable.pair, altPair)
+        ),
+        eq(orderIntentsTable.side, 'buy'),
+        eq(orderIntentsTable.status, 'accepted')
+      ));
+    
+    const openCount = Number(openPositions[0]?.count || 0);
+    const pendingFillCount = Number(pendingFillPositions[0]?.count || 0);
+    const pendingIntentCount = Number(pendingIntents[0]?.count || 0);
+    const acceptedIntentCount = Number(acceptedIntents[0]?.count || 0);
+    
+    // Total occupied = positions (OPEN + PENDING_FILL) + intents still in flight
+    // Note: We don't double-count - accepted intents that created PENDING_FILL positions 
+    // are counted only once via the position
+    const total = openCount + pendingFillCount + pendingIntentCount;
+    
+    return {
+      openPositions: openCount,
+      pendingFillPositions: pendingFillCount,
+      pendingIntents: pendingIntentCount,
+      acceptedIntents: acceptedIntentCount,
+      total,
+    };
+  }
+
+  /**
+   * Get the last order submission time for a pair (for cooldown)
+   */
+  async getLastOrderTimeForPair(exchange: string, pair: string): Promise<Date | null> {
+    const normalizedPair = pair.replace('-', '/').toUpperCase();
+    const altPair = pair.replace('/', '-').toUpperCase();
+    
+    const results = await db.select({ createdAt: orderIntentsTable.createdAt })
+      .from(orderIntentsTable)
+      .where(and(
+        eq(orderIntentsTable.exchange, exchange),
+        or(
+          eq(orderIntentsTable.pair, normalizedPair),
+          eq(orderIntentsTable.pair, altPair)
+        ),
+        eq(orderIntentsTable.side, 'buy')
+      ))
+      .orderBy(desc(orderIntentsTable.createdAt))
+      .limit(1);
+    
+    return results[0]?.createdAt || null;
   }
 
   /**

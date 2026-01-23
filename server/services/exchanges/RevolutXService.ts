@@ -307,6 +307,7 @@ export class RevolutXService implements IExchangeService {
     ordertype: string;
     price?: string;
     volume: string;
+    clientOrderId?: string; // CRITICAL: Use caller-provided clientOrderId for ID linking
   }): Promise<OrderResult> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
@@ -328,7 +329,10 @@ export class RevolutXService implements IExchangeService {
     const path = '/api/1.0/orders';
     const symbol = this.formatPair(params.pair);
 
-    const clientOrderId = this.generateClientOrderId();
+    // CRITICAL FIX: Use caller-provided clientOrderId if available, otherwise generate new one
+    // This ensures the tradingEngine's clientOrderId propagates to the exchange for ID linking
+    const clientOrderId = params.clientOrderId || this.generateClientOrderId();
+    console.log(`[revolutx] Using clientOrderId: ${clientOrderId} (caller-provided: ${!!params.clientOrderId})`);
     
     const orderBody: any = {
       client_order_id: clientOrderId,

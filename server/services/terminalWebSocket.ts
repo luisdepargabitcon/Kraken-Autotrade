@@ -235,8 +235,8 @@ class TerminalWebSocketServer {
         const line = `[${time}] [${levelTag}] ${entry.message}`;
         const isError = entry.level === "error" || entry.level === "warn";
         this.sendMessage(client, { type: "LOG_LINE", payload: { line, sourceId, isError } });
-        // Persist log to DB for historical queries
-        serverLogsService.persistLog(sourceId, line, isError);
+        // NOTE: Log persistence is now centralized in logStreamService.addEntry()
+        // to avoid duplicate logs when multiple clients are connected
       });
 
       client.logStreamUnsubscribe = unsubscribe;

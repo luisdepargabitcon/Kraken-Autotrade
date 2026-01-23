@@ -3106,26 +3106,54 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
+        // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
         const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
+        const exchangeForGate = this.getTradingExchangeType();
         
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        const currentOpenLots = this.countLotsForPair(pair);
+        
+        // ROBUST GATE: Query DB for all occupied slots (OPEN + PENDING_FILL + pending intents)
+        const occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGate, pair);
+        const currentOpenLots = occupiedSlots.total;
+        
+        // Anti-burst cooldown: minimum 120s between entries per pair
+        const sgMinSecondsBetweenEntries = 120;
+        const lastOrderTime = await storage.getLastOrderTimeForPair(exchangeForGate, pair);
+        if (lastOrderTime) {
+          const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
+          if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
+            const remainingSec = Math.ceil(sgMinSecondsBetweenEntries - secondsSinceLastOrder);
+            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
+              pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
+              secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntries, remainingSeconds: remainingSec,
+            });
+            this.updatePairTrace(pair, {
+              openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
+              smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
+              blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
+              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
+            });
+            return;
+          }
+        }
         
         if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
           const reasonCode = positionMode === "SMART_GUARD" 
             ? "SMART_GUARD_MAX_LOTS_REACHED" 
             : "SINGLE_MODE_POSITION_EXISTS";
           
-          log(`${pair}: Compra bloqueada - Modo ${positionMode}, lotes abiertos ${currentOpenLots}/${maxLotsForMode}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de lotes alcanzado`, {
+          log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
             pair,
             signal: "BUY",
             reason: reasonCode,
             currentOpenLots,
             maxOpenLots: maxLotsForMode,
+            occupiedSlots,
             existingAmount: existingPosition?.amount || 0,
             signalReason: signal.reason,
           });
@@ -3139,9 +3167,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             maxLotsPerPair: maxLotsForMode,
             smartGuardDecision: "BLOCK",
             blockReasonCode: "MAX_LOTS_PER_PAIR",
-            blockDetails: { currentOpenLots, maxLotsForMode },
+            blockDetails: { currentOpenLots, maxLotsForMode, occupiedSlots },
             finalSignal: "NONE",
-            finalReason: `Max lotes: ${currentOpenLots}/${maxLotsForMode}`,
+            finalReason: `Max slots: ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions})`,
           });
           return;
         }
@@ -4040,26 +4068,54 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
+        // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
         const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
+        const exchangeForGateCandles = this.getTradingExchangeType();
         
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        const currentOpenLots = this.countLotsForPair(pair);
+        
+        // ROBUST GATE: Query DB for all occupied slots (OPEN + PENDING_FILL + pending intents)
+        const occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGateCandles, pair);
+        const currentOpenLots = occupiedSlots.total;
+        
+        // Anti-burst cooldown: minimum 120s between entries per pair
+        const sgMinSecondsBetweenEntriesCandles = 120;
+        const lastOrderTimeCandles = await storage.getLastOrderTimeForPair(exchangeForGateCandles, pair);
+        if (lastOrderTimeCandles) {
+          const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
+          if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
+            const remainingSec = Math.ceil(sgMinSecondsBetweenEntriesCandles - secondsSinceLastOrder);
+            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
+              pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
+              secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntriesCandles, remainingSeconds: remainingSec,
+            });
+            this.updatePairTrace(pair, {
+              openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
+              smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
+              blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
+              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
+            });
+            return;
+          }
+        }
         
         if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
           const reasonCode = positionMode === "SMART_GUARD" 
             ? "SMART_GUARD_MAX_LOTS_REACHED" 
             : "SINGLE_MODE_POSITION_EXISTS";
           
-          log(`${pair}: Compra bloqueada - Modo ${positionMode}, lotes abiertos ${currentOpenLots}/${maxLotsForMode}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de lotes alcanzado`, {
+          log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
             pair,
             signal: "BUY",
             reason: reasonCode,
             currentOpenLots,
             maxOpenLots: maxLotsForMode,
+            occupiedSlots,
             existingAmount: existingPosition?.amount || 0,
             signalReason: signal.reason,
           });
@@ -4073,9 +4129,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             maxLotsPerPair: maxLotsForMode,
             smartGuardDecision: "BLOCK",
             blockReasonCode: "MAX_LOTS_PER_PAIR",
-            blockDetails: { currentOpenLots, maxLotsForMode },
+            blockDetails: { currentOpenLots, maxLotsForMode, occupiedSlots },
             finalSignal: "NONE",
-            finalReason: `Max lotes: ${currentOpenLots}/${maxLotsForMode}`,
+            finalReason: `Max slots: ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions})`,
           });
           return;
         }
@@ -6320,7 +6376,23 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         // === INSTANT POSITION: Create PENDING_FILL position immediately ===
         if (type === 'buy') {
           try {
-            const configSnapshot = this.buildConfigSnapshot();
+            // Build config snapshot inline for PENDING_FILL position
+            const currentConfig = await storage.getBotConfig();
+            const entryModeSnapshot = currentConfig?.positionMode || 'SMART_GUARD';
+            const configSnapshot: ConfigSnapshot = {
+              stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+              takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+              trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+              trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+              positionMode: entryModeSnapshot,
+            };
+            if (entryModeSnapshot === 'SMART_GUARD' && currentConfig) {
+              const sgParams = this.getSmartGuardParams(pair, currentConfig);
+              configSnapshot.sgMinEntryUsd = sgParams.sgMinEntryUsd;
+              configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
+              configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
+              configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
+            }
             const lotId = `engine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             
             // Create position in PENDING_FILL state
@@ -6361,7 +6433,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 exchangeOrderId: pendingOrderId,
                 exchange,
                 pair,
-                expectedAmount: volume,
+                expectedAmount: parseFloat(volume),
                 pollIntervalMs: 3000, // Poll every 3 seconds
                 timeoutMs: 120000, // 2 minute timeout
                 onFillReceived: (fill, position) => {

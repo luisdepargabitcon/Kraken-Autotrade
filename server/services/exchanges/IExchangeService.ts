@@ -60,6 +60,7 @@ export interface IExchangeService {
     ordertype: string;
     price?: string;
     volume: string;
+    clientOrderId?: string; // Optional: caller-provided order ID for traceability
   }): Promise<OrderResult>;
 
   cancelOrder(orderId: string): Promise<boolean>;

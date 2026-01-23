@@ -1,3 +1,5 @@
+import { serverLogsService } from "./serverLogsService";
+
 type LogLevel = "log" | "info" | "warn" | "error" | "debug";
 
 interface LogEntry {
@@ -90,6 +92,13 @@ class LogStreamService {
     if (this.buffer.length > this.maxBufferSize) {
       this.buffer.shift();
     }
+
+    // CENTRALIZED PERSISTENCE: Persist log to DB once here, not per-client
+    const time = entry.timestamp.toISOString().slice(11, 23);
+    const levelTag = entry.level.toUpperCase().padEnd(5);
+    const line = `[${time}] [${levelTag}] ${entry.message}`;
+    const isError = entry.level === "error" || entry.level === "warn";
+    serverLogsService.persistLog("app_stdout", line, isError);
 
     for (const listener of this.listeners) {
       try {
