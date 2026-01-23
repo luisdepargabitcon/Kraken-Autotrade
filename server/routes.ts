@@ -2485,23 +2485,57 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 results.push({ pair, asset, action: 'would_update', balance, posAmount, diffPct: diffPct.toFixed(2) });
               } else {
                 // Update position amount to match real balance (only for bot positions)
+                // Also recalculate average_entry_price from trades if available
+                let newAvgPrice = existingPos.entryPrice;
+                let totalCost = parseFloat(existingPos.totalCostQuote || '0');
+                let totalAmount = parseFloat(existingPos.totalAmountBase || '0');
+                
+                // Recalculate aggregates from trades if position has clientOrderId
+                if (existingPos.clientOrderId) {
+                  const positionTrades = await storage.getRecentTradesForReconcile({
+                    pair,
+                    exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
+                    origin: 'sync',
+                    since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days
+                    limit: 100,
+                    executedByBot: true,
+                  });
+                  
+                  if (positionTrades.length > 0) {
+                    totalCost = 0;
+                    totalAmount = 0;
+                    for (const trade of positionTrades) {
+                      const tradePrice = parseFloat(trade.price);
+                      const tradeAmount = parseFloat(trade.amount);
+                      totalCost += tradePrice * tradeAmount;
+                      totalAmount += tradeAmount;
+                    }
+                    newAvgPrice = totalAmount > 0 ? (totalCost / totalAmount).toFixed(8) : existingPos.entryPrice;
+                  }
+                }
+                
                 await storage.saveOpenPositionByLotId({
                   pair: existingPos.pair,
                   exchange: existingPos.exchange,
                   lotId: existingPos.lotId,
                   amount: balance.toFixed(8),
-                  entryPrice: existingPos.entryPrice,
+                  entryPrice: newAvgPrice,
                   highestPrice: existingPos.highestPrice,
                   entryMode: existingPos.entryMode || undefined,
                   configSnapshotJson: existingPos.configSnapshotJson as any,
                   sgBreakEvenActivated: existingPos.sgBreakEvenActivated ?? false,
                   sgTrailingActivated: existingPos.sgTrailingActivated ?? false,
                   sgScaleOutDone: existingPos.sgScaleOutDone ?? false,
-                });
-                await botLogger.info("POSITION_UPDATED_RECONCILE", `Bot position qty updated to match real balance`, {
+                  // Include new fields for average entry price
+                  totalCostQuote: totalCost.toFixed(8),
+                  totalAmountBase: totalAmount.toFixed(8),
+                  averageEntryPrice: newAvgPrice,
+                } as any);
+                await botLogger.info("POSITION_UPDATED_RECONCILE", `Bot position updated (qty + avgPrice recalculated)`, {
                   pair, asset, oldAmount: posAmount, newAmount: balance, diffPct: diffPct.toFixed(2), exchange,
+                  avgPrice: newAvgPrice, totalCost, totalAmount,
                 });
-                results.push({ pair, asset, action: 'updated', balance, oldAmount: posAmount, diffPct: diffPct.toFixed(2) });
+                results.push({ pair, asset, action: 'updated', balance, oldAmount: posAmount, diffPct: diffPct.toFixed(2), avgPrice: newAvgPrice });
                 updated++;
               }
             } else {

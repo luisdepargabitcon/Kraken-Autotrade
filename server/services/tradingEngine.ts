@@ -6317,6 +6317,75 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           telegramInitialized: this.telegramService.isInitialized(),
         });
         
+        // === INSTANT POSITION: Create PENDING_FILL position immediately ===
+        if (type === 'buy') {
+          try {
+            const configSnapshot = this.buildConfigSnapshot();
+            const lotId = `engine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            
+            // Create position in PENDING_FILL state
+            const pendingPosition = await storage.createPendingPosition({
+              lotId,
+              exchange,
+              pair,
+              clientOrderId,
+              expectedAmount: volume.toString(),
+              entryMode: 'SMART_GUARD',
+              configSnapshotJson: configSnapshot,
+              entryStrategyId: 'momentum_cycle',
+              signalReason: reason,
+            });
+            
+            log(`[POSITION_PENDING_FILL] ${correlationId} | Created PENDING_FILL position for ${pair} (lotId=${lotId})`, "trading");
+            await botLogger.info("POSITION_PENDING_FILL", `Created PENDING_FILL position for ${pair}`, {
+              correlationId,
+              lotId,
+              pair,
+              clientOrderId,
+              expectedAmount: volume,
+            });
+            
+            // Emit WebSocket event for instant UI update
+            try {
+              const { positionsWs } = await import('./positionsWebSocket');
+              positionsWs.emitPositionCreated(pendingPosition);
+            } catch (wsErr: any) {
+              log(`[WS_ERROR] ${correlationId} | Failed to emit position created: ${wsErr.message}`, "trading");
+            }
+            
+            // === START FILL WATCHER: Monitor for fills ===
+            try {
+              const { startFillWatcher } = await import('./FillWatcher');
+              startFillWatcher({
+                clientOrderId,
+                exchangeOrderId: pendingOrderId,
+                exchange,
+                pair,
+                expectedAmount: volume,
+                pollIntervalMs: 3000, // Poll every 3 seconds
+                timeoutMs: 120000, // 2 minute timeout
+                onFillReceived: (fill, position) => {
+                  log(`[FILL_RECEIVED] ${pair}: +${fill.amount} @ $${fill.price}`, "trading");
+                },
+                onPositionOpen: (position) => {
+                  log(`[POSITION_OPEN] ${pair}: Position fully filled, avgPrice=${position.averageEntryPrice}`, "trading");
+                },
+                onTimeout: (coid) => {
+                  log(`[FILL_WATCHER_TIMEOUT] ${pair}: No fills after 2 minutes (clientOrderId=${coid})`, "trading");
+                },
+              });
+              log(`[FILL_WATCHER_STARTED] ${correlationId} | Started FillWatcher for ${pair}`, "trading");
+            } catch (fwErr: any) {
+              log(`[FILL_WATCHER_ERROR] ${correlationId} | Failed to start FillWatcher: ${fwErr.message}`, "trading");
+              // Continue anyway - sync will handle it as backup
+            }
+          } catch (posErr: any) {
+            log(`[POSITION_PENDING_ERROR] ${correlationId} | Failed to create PENDING_FILL position: ${posErr.message}`, "trading");
+            // Continue anyway - sync will create position as backup
+          }
+        }
+        // === END INSTANT POSITION ===
+        
         // Send Telegram notification about pending order
         if (this.telegramService.isInitialized()) {
           try {
@@ -6327,7 +6396,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               `Cantidad: <code>${volume}</code>\n` +
               `Estado: Pendiente de confirmación\n` +
               `ID: <code>${pendingOrderId}</code>\n\n` +
-              `<i>La orden fue aceptada por ${exchange}. El precio se confirmará en el próximo sync.</i>`,
+              `<i>La orden fue aceptada por ${exchange}. La posición aparecerá en UI en segundos.</i>`,
               "trades",
               type === "buy" ? "trade_buy" : "trade_sell"
             );
@@ -6337,7 +6406,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         }
         
         // Return true because the order WAS submitted successfully
-        // The sync job will import the filled trade and create the position
+        // FillWatcher will update position when fills arrive
         return true;
       }
       const rawTxid = Array.isArray((order as any)?.txid)

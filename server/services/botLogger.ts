@@ -99,7 +99,13 @@ export type EventType =
   | "POSITION_UPDATED_RECONCILE"
   | "POSITION_DELETED_RECONCILE"
   | "POSITION_ADOPTED"
-  | "LEGACY_POSITION_PURGED";
+  | "LEGACY_POSITION_PURGED"
+  // Instant Position events (FillWatcher)
+  | "ORDER_FILLED"
+  | "FILL_WATCHER_STARTED"
+  | "FILL_WATCHER_TIMEOUT"
+  | "POSITION_PENDING_FILL"
+  | "POSITION_UPDATED";
 
 interface LogMeta {
   [key: string]: any;

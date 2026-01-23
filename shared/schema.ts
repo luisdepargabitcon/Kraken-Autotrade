@@ -287,6 +287,9 @@ export const serverLogs = pgTable("server_logs", {
   isError: boolean("is_error").default(false),
 });
 
+// Position status lifecycle
+export type PositionStatus = 'PENDING_FILL' | 'OPEN' | 'FAILED' | 'CANCELLED';
+
 export const openPositions = pgTable("open_positions", {
   id: serial("id").primaryKey(),
   lotId: text("lot_id").notNull().unique(), // Unique identifier for each lot (multi-lot support)
@@ -317,6 +320,27 @@ export const openPositions = pgTable("open_positions", {
   timeStopExpiredAt: timestamp("time_stop_expired_at"),
   // Break-even progressive level (1, 2, 3) for fee-aware BE
   beProgressiveLevel: integer("be_progressive_level").default(0),
+  // === NEW: Instant Position & Average Entry Price ===
+  // Position lifecycle status: PENDING_FILL → OPEN (or FAILED/CANCELLED)
+  status: text("status").default("OPEN"),
+  // Link to order_intent for idempotent upsert
+  clientOrderId: text("client_order_id"), // UUID from placeOrder
+  orderIntentId: integer("order_intent_id"),
+  // Expected amount before fills confirm
+  expectedAmount: decimal("expected_amount", { precision: 18, scale: 8 }),
+  // Cost aggregation for Average Entry Price (coste medio)
+  // total_cost_quote = Σ (fill.amount * fill.price) in quote currency (USD)
+  totalCostQuote: decimal("total_cost_quote", { precision: 18, scale: 8 }).default("0"),
+  // total_amount_base = Σ fill.amount in base currency (TON, ETH, etc.)
+  totalAmountBase: decimal("total_amount_base", { precision: 18, scale: 8 }).default("0"),
+  // average_entry_price = total_cost_quote / total_amount_base
+  averageEntryPrice: decimal("average_entry_price", { precision: 18, scale: 8 }),
+  // Fill tracking
+  fillCount: integer("fill_count").default(0),
+  lastFillId: text("last_fill_id"),
+  firstFillAt: timestamp("first_fill_at"),
+  lastFillAt: timestamp("last_fill_at"),
+  // === END NEW ===
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

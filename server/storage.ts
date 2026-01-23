@@ -1696,6 +1696,210 @@ export class DatabaseStorage implements IStorage {
       .set({ executedByBot: true, orderIntentId })
       .where(eq(tradesTable.id, tradeId));
   }
+
+  // === INSTANT POSITION CREATION & AVERAGE ENTRY PRICE ===
+
+  /**
+   * Create a new position in PENDING_FILL state (before fills arrive)
+   * Called immediately when order is accepted by exchange
+   */
+  async createPendingPosition(data: {
+    lotId: string;
+    exchange: string;
+    pair: string;
+    clientOrderId: string;
+    orderIntentId?: number;
+    expectedAmount: string;
+    entryMode?: string;
+    configSnapshotJson?: any;
+    entryStrategyId?: string;
+    signalReason?: string;
+  }): Promise<any> {
+    const [position] = await db.insert(openPositionsTable).values({
+      lotId: data.lotId,
+      exchange: data.exchange,
+      pair: data.pair,
+      clientOrderId: data.clientOrderId,
+      orderIntentId: data.orderIntentId,
+      expectedAmount: data.expectedAmount,
+      status: 'PENDING_FILL',
+      entryPrice: '0', // Will be set when fills arrive
+      amount: '0', // Will be updated with fills
+      highestPrice: '0', // Will be set when fills arrive
+      totalCostQuote: '0',
+      totalAmountBase: '0',
+      averageEntryPrice: null,
+      fillCount: 0,
+      entryMode: data.entryMode || 'SMART_GUARD',
+      configSnapshotJson: data.configSnapshotJson,
+      entryStrategyId: data.entryStrategyId || 'momentum_cycle',
+      signalReason: data.signalReason,
+      openedAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+    
+    console.log(`[storage] Created PENDING_FILL position: ${data.pair} (clientOrderId: ${data.clientOrderId})`);
+    return position;
+  }
+
+  /**
+   * Get position by clientOrderId (for upsert/update)
+   */
+  async getPositionByClientOrderId(clientOrderId: string): Promise<any | undefined> {
+    const results = await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.clientOrderId, clientOrderId))
+      .limit(1);
+    return results[0];
+  }
+
+  /**
+   * Update position with a new fill (aggregates cost and amount)
+   * Calculates average_entry_price = total_cost_quote / total_amount_base
+   */
+  async updatePositionWithFill(clientOrderId: string, fill: {
+    fillId: string;
+    price: number;
+    amount: number;
+    executedAt: Date;
+  }): Promise<any | undefined> {
+    // Get current position
+    const position = await this.getPositionByClientOrderId(clientOrderId);
+    if (!position) {
+      console.error(`[storage] Position not found for clientOrderId: ${clientOrderId}`);
+      return undefined;
+    }
+
+    // Calculate new aggregates
+    const currentCost = parseFloat(position.totalCostQuote || '0');
+    const currentAmount = parseFloat(position.totalAmountBase || '0');
+    const fillCost = fill.price * fill.amount;
+    
+    const newTotalCost = currentCost + fillCost;
+    const newTotalAmount = currentAmount + fill.amount;
+    const newAvgPrice = newTotalAmount > 0 ? newTotalCost / newTotalAmount : 0;
+    const newFillCount = (position.fillCount || 0) + 1;
+    
+    const isFirstFill = currentAmount === 0;
+    
+    // Update position
+    const [updated] = await db.update(openPositionsTable)
+      .set({
+        status: 'OPEN',
+        totalCostQuote: newTotalCost.toString(),
+        totalAmountBase: newTotalAmount.toString(),
+        averageEntryPrice: newAvgPrice.toString(),
+        entryPrice: newAvgPrice.toString(), // Keep entryPrice in sync
+        amount: newTotalAmount.toString(),
+        highestPrice: newAvgPrice.toString(), // Initialize highest to entry
+        fillCount: newFillCount,
+        lastFillId: fill.fillId,
+        firstFillAt: isFirstFill ? fill.executedAt : position.firstFillAt,
+        lastFillAt: fill.executedAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.clientOrderId, clientOrderId))
+      .returning();
+
+    console.log(`[storage] Updated position ${position.pair} with fill: +${fill.amount} @ ${fill.price}, avgPrice=${newAvgPrice.toFixed(8)}, total=${newTotalAmount}`);
+    return updated;
+  }
+
+  /**
+   * Mark position as FAILED (e.g., order rejected, timeout with no fills)
+   */
+  async markPositionFailed(clientOrderId: string, reason?: string): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({
+        status: 'FAILED',
+        signalReason: reason ? `FAILED: ${reason}` : 'FAILED',
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.clientOrderId, clientOrderId));
+    console.log(`[storage] Marked position FAILED: ${clientOrderId} - ${reason}`);
+  }
+
+  /**
+   * Mark position as CANCELLED
+   */
+  async markPositionCancelled(clientOrderId: string): Promise<void> {
+    await db.update(openPositionsTable)
+      .set({
+        status: 'CANCELLED',
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.clientOrderId, clientOrderId));
+    console.log(`[storage] Marked position CANCELLED: ${clientOrderId}`);
+  }
+
+  /**
+   * Get all pending fill positions (for recovery/cleanup)
+   */
+  async getPendingFillPositions(exchange?: string): Promise<any[]> {
+    if (exchange) {
+      return await db.select().from(openPositionsTable)
+        .where(and(
+          eq(openPositionsTable.status, 'PENDING_FILL'),
+          eq(openPositionsTable.exchange, exchange)
+        ))
+        .orderBy(desc(openPositionsTable.openedAt));
+    }
+    return await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.status, 'PENDING_FILL'))
+      .orderBy(desc(openPositionsTable.openedAt));
+  }
+
+  /**
+   * Recalculate position aggregates from trades (for reconcile/repair)
+   */
+  async recalculatePositionAggregates(positionId: number): Promise<any | undefined> {
+    // Get position
+    const [position] = await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.id, positionId))
+      .limit(1);
+    
+    if (!position) return undefined;
+
+    // Get all trades linked to this position
+    const trades = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.exchange, position.exchange),
+        eq(tradesTable.pair, position.pair),
+        eq(tradesTable.type, 'buy'),
+        eq(tradesTable.executedByBot, true)
+      ))
+      .orderBy(tradesTable.executedAt);
+
+    if (trades.length === 0) return position;
+
+    // Recalculate aggregates
+    let totalCost = 0;
+    let totalAmount = 0;
+    for (const trade of trades) {
+      const price = parseFloat(trade.price);
+      const amount = parseFloat(trade.amount);
+      totalCost += price * amount;
+      totalAmount += amount;
+    }
+
+    const avgPrice = totalAmount > 0 ? totalCost / totalAmount : 0;
+
+    // Update position
+    const [updated] = await db.update(openPositionsTable)
+      .set({
+        totalCostQuote: totalCost.toString(),
+        totalAmountBase: totalAmount.toString(),
+        averageEntryPrice: avgPrice.toString(),
+        entryPrice: avgPrice.toString(),
+        amount: totalAmount.toString(),
+        fillCount: trades.length,
+        updatedAt: new Date(),
+      })
+      .where(eq(openPositionsTable.id, positionId))
+      .returning();
+
+    console.log(`[storage] Recalculated position ${position.pair}: avgPrice=${avgPrice.toFixed(8)}, totalAmount=${totalAmount}`);
+    return updated;
+  }
 }
 
 export const storage = new DatabaseStorage();

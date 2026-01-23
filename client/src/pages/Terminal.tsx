@@ -73,6 +73,13 @@ interface OpenPosition {
   timeStopDisabled?: boolean;
   timeStopExpiredAt?: string | null;
   entryFee?: string | null;
+  // New fields for instant positions
+  status?: string | null; // PENDING_FILL | OPEN | FAILED | CANCELLED
+  averageEntryPrice?: string | null; // Coste medio
+  totalCostQuote?: string | null;
+  totalAmountBase?: string | null;
+  fillCount?: number | null;
+  expectedAmount?: string | null;
 }
 
 interface ClosedTrade {
@@ -900,6 +907,17 @@ export default function Terminal() {
                                       {pos.entryMode}
                                     </Badge>
                                   )}
+                                  {/* Status badge for PENDING_FILL */}
+                                  {pos.status === 'PENDING_FILL' && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono border-yellow-500/50 text-yellow-400 animate-pulse">
+                                      ⏳ Pendiente
+                                    </Badge>
+                                  )}
+                                  {pos.status === 'FAILED' && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono border-red-500/50 text-red-400">
+                                      ❌ Fallida
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
                                   <Clock className="h-3 w-3" />
@@ -921,8 +939,15 @@ export default function Terminal() {
                                   <div className="font-mono font-medium text-sm">{parseFloat(pos.amount).toFixed(6)}</div>
                                 </div>
                                 <div>
-                                  <div className="font-mono text-[10px] text-muted-foreground uppercase">Precio Entrada</div>
-                                  <div className="font-mono font-medium text-sm">${formatPrice(pos.entryPrice)}</div>
+                                  <div className="font-mono text-[10px] text-muted-foreground uppercase" title={pos.averageEntryPrice ? "Coste medio calculado de todos los fills" : "Precio de entrada"}>
+                                    {pos.averageEntryPrice ? "Coste Medio" : "Precio Entrada"}
+                                  </div>
+                                  <div className="font-mono font-medium text-sm">
+                                    ${formatPrice(pos.averageEntryPrice || pos.entryPrice)}
+                                    {pos.fillCount && pos.fillCount > 1 && (
+                                      <span className="text-[9px] text-muted-foreground ml-1">({pos.fillCount} fills)</span>
+                                    )}
+                                  </div>
                                 </div>
                                 <div>
                                   <div className="font-mono text-[10px] text-muted-foreground uppercase" title="Valor de entrada en USD">Valor Entrada</div>
