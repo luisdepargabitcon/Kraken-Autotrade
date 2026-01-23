@@ -2136,7 +2136,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                       await storage.markTradeAsExecutedByBot(insertedTrade.id, matchingIntent.id);
                       await storage.matchOrderIntentToTrade(matchingIntent.clientOrderId, insertedTrade.id);
                       console.log(`[sync-revolutx] Trade ${insertedTrade.id} matched to bot order intent ${matchingIntent.clientOrderId}`);
-                      await botLogger.info("TRADE_MATCHED_TO_BOT", `Trade matched to bot order intent`, {
+                      await botLogger.info("TRADE_EXECUTED" as any, `Trade matched to bot order intent`, {
                         tradeId: insertedTrade.id,
                         clientOrderId: matchingIntent.clientOrderId,
                         pair,

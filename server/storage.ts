@@ -2051,7 +2051,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async findTradesForPositionBackfill(position: OpenPosition): Promise<Trade[]> {
-    const positionTime = new Date(position.createdAt);
+    const positionTime = new Date(position.openedAt);
     const windowStart = new Date(positionTime.getTime() - 24 * 60 * 60 * 1000); // 24h before
     const windowEnd = new Date(positionTime.getTime() + 2 * 60 * 60 * 1000); // 2h after
 

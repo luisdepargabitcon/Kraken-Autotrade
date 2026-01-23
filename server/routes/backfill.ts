@@ -34,8 +34,8 @@ router.post('/backfill-legacy-positions', async (req, res) => {
           totalAmountBase,
           averageEntryPrice,
           fillCount: matchingTrades.length,
-          firstFillAt: new Date(Math.min(...matchingTrades.map(t => new Date(t.executed_at).getTime()))),
-          lastFillAt: new Date(Math.max(...matchingTrades.map(t => new Date(t.executed_at).getTime()))),
+          firstFillAt: new Date(Math.min(...matchingTrades.map(t => new Date(t.executedAt!).getTime()))),
+          lastFillAt: new Date(Math.max(...matchingTrades.map(t => new Date(t.executedAt!).getTime()))),
           entryPrice: averageEntryPrice
         });
         
@@ -59,12 +59,12 @@ router.post('/backfill-legacy-positions', async (req, res) => {
       }
     };
     
-    await botLogger.info("BACKFILL_COMPLETED", "Legacy positions backfill completed", result.summary);
+    await botLogger.info("SYSTEM_INFO" as any, "Legacy positions backfill completed", result.summary);
     
     res.json(result);
   } catch (error: any) {
     console.error('[BACKFILL] Error:', error);
-    await botLogger.error("BACKFILL_ERROR", "Legacy positions backfill failed", { error: error.message });
+    await botLogger.error("SYSTEM_ERROR" as any, "Legacy positions backfill failed", { error: error.message });
     res.status(500).json({ 
       success: false, 
       error: error.message 
