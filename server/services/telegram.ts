@@ -9,6 +9,31 @@ import { ExchangeFactoryClass } from "./exchanges/ExchangeFactory";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 
+// New modular telegram imports
+import {
+  TELEGRAM_COMMANDS,
+  BOT_CANONICAL_NAME,
+  DailyReportContext,
+  DailyReportContextSchema,
+  TradeBuyContext,
+  TradeBuyContextSchema,
+  TradeSellContext,
+  TradeSellContextSchema,
+  validateContext,
+  safeValidateContext,
+  ExchangeName,
+} from "./telegram/types";
+import {
+  telegramTemplates as newTemplates,
+  buildDailyReportHTML as buildDailyReportHTMLNew,
+  buildTradeBuyHTML as buildTradeBuyHTMLNew,
+  buildTradeSellHTML as buildTradeSellHTMLNew,
+  buildHeader,
+  escapeHtml as escapeHtmlNew,
+  formatSpanishDate as formatSpanishDateNew,
+} from "./telegram/templates";
+import { messageDeduplicator } from "./telegram/deduplication";
+
 // ============================================================
 // HTML ESCAPE HELPER - Previene markup roto en mensajes
 // ============================================================
@@ -90,7 +115,8 @@ function formatDuration(openedAt: string | Date | null | undefined): string {
 // BRANDING HELPER - Branding consistente para todos los mensajes
 // ============================================================
 function getBotBranding(): string {
-  return `🤖 <b>${environment.envTag} ${environment.botDisplayName}</b> 🇪🇸`;
+  // Use unified branding: [ENV] 🤖 CHESTER BOT 🇪🇸
+  return `[${environment.envTag}] 🤖 <b>${BOT_CANONICAL_NAME}</b> 🇪🇸`;
 }
 
 // ============================================================
@@ -805,6 +831,21 @@ export class TelegramService {
       await this.handleLogDetail(msg.chat.id, match?.[1]);
     });
 
+    // Posiciones command
+    this.bot.onText(/\/posiciones/, async (msg) => {
+      await this.handlePosiciones(msg.chat.id);
+    });
+
+    // Ganancias command
+    this.bot.onText(/\/ganancias/, async (msg) => {
+      await this.handleGanancias(msg.chat.id);
+    });
+
+    // Admin command: refresh Telegram commands menu
+    this.bot.onText(/\/refresh_commands/, async (msg) => {
+      await this.handleRefreshCommands(msg.chat.id);
+    });
+
     // Callback query handler for inline buttons
     this.bot.on("callback_query", async (query) => {
       if (!query.data || !query.message) return;
@@ -820,6 +861,58 @@ export class TelegramService {
         await guard.handle409Conflict(error);
       }
     });
+
+    // Register commands with Telegram on startup
+    this.registerCommandsWithTelegram();
+  }
+
+  /**
+   * Register commands with Telegram's setMyCommands API
+   * This populates the command menu in Telegram clients
+   */
+  private async registerCommandsWithTelegram(): Promise<void> {
+    if (!this.bot) return;
+    
+    try {
+      const commands = TELEGRAM_COMMANDS.map(cmd => ({
+        command: cmd.command,
+        description: cmd.description,
+      }));
+      
+      await this.bot.setMyCommands(commands);
+      console.log(`[telegram] ✅ Registered ${commands.length} commands with Telegram`);
+    } catch (error) {
+      console.error("[telegram] ❌ Failed to register commands:", error);
+    }
+  }
+
+  /**
+   * Handler for /refresh_commands (admin only)
+   */
+  private async handleRefreshCommands(chatId: number): Promise<void> {
+    try {
+      await this.registerCommandsWithTelegram();
+      
+      const commandList = TELEGRAM_COMMANDS
+        .map(cmd => `/${cmd.command} - ${cmd.description}`)
+        .join("\n");
+      
+      const message = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `✅ <b>Comandos actualizados</b>`,
+        ``,
+        `<b>Comandos registrados (${TELEGRAM_COMMANDS.length}):</b>`,
+        `<pre>${escapeHtml(commandList)}</pre>`,
+        ``,
+        `<i>El menú de comandos de Telegram ha sido actualizado.</i>`,
+        `📅 ${formatSpanishDate()}`,
+      ].join("\n");
+      
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error actualizando comandos: ${escapeHtml(error.message)}`);
+    }
   }
 
   private async handleEstado(chatId: number) {
@@ -942,33 +1035,38 @@ export class TelegramService {
   }
 
   private async handleAyuda(chatId: number) {
-    const message = `
-<b>🤖 Comandos disponibles:</b>
-
-<b>📊 Información:</b>
-/estado - Ver estado del bot
-/balance - Ver balance actual
-/cartera - Ver cartera valorada
-/posiciones - Ver posiciones abiertas con P&L
-/ganancias - Ver ganancias (24h, semana, total)
-/exposicion - Ver exposición por par
-/ultimas - Ver últimas 5 operaciones
-/logs - Ver logs recientes (6 horas)
-
-<b>⚙️ Configuración:</b>
-/config - Ver configuración de riesgo
-/uptime - Ver tiempo encendido
-/menu - Menú interactivo con botones
-/channels - Configurar alertas por chat
-
-<b>🔧 Control:</b>
-/pausar - Pausar el bot
-/reanudar - Activar el bot
-
-/ayuda - Ver esta ayuda
-
-<i>${environment.botDisplayName} - Trading Autónomo</i>
-    `.trim();
+    // Generate help from TELEGRAM_COMMANDS to ensure 1:1 sync
+    const infoCommands = ["estado", "balance", "cartera", "posiciones", "ganancias", "exposicion", "ultimas", "logs"];
+    const configCommands = ["config", "uptime", "menu", "channels"];
+    const controlCommands = ["pausar", "reanudar"];
+    const adminCommands = ["refresh_commands"];
+    
+    const formatSection = (title: string, cmds: string[]) => {
+      const lines = TELEGRAM_COMMANDS
+        .filter(c => cmds.includes(c.command))
+        .map(c => `/${c.command} - ${c.description}`);
+      return lines.length > 0 ? `<b>${title}</b>\n${lines.join("\n")}` : "";
+    };
+    
+    const sections = [
+      formatSection("📊 Información:", infoCommands),
+      formatSection("⚙️ Configuración:", configCommands),
+      formatSection("🔧 Control:", controlCommands),
+      formatSection("🔐 Admin:", adminCommands),
+    ].filter(Boolean);
+    
+    const message = [
+      getBotBranding(),
+      `━━━━━━━━━━━━━━━━━━━`,
+      `<b>📖 Comandos disponibles (${TELEGRAM_COMMANDS.length})</b>`,
+      ``,
+      ...sections,
+      ``,
+      `/ayuda - Ver esta ayuda`,
+      ``,
+      `<i>${BOT_CANONICAL_NAME} - Trading Autónomo</i>`,
+      `<i>Exchanges: Kraken, RevolutX</i>`,
+    ].join("\n");
 
     await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
   }

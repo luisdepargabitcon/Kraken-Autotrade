@@ -51,16 +51,50 @@ class ServerLogsService {
   }
 
   private detectLevel(line: string): string {
-    const upperLine = line.toUpperCase();
-    if (upperLine.includes("ERROR") || upperLine.includes("FATAL") || upperLine.includes("EXCEPTION")) {
-      return "ERROR";
+    // Check for real log level patterns, not JSON content like "isError":false
+    // Priority: check explicit log level markers first
+    
+    // Real ERROR patterns: [ERROR], (ERROR), ERROR:, level":"ERROR, "level":"ERROR"
+    const errorPatterns = [
+      /\[ERROR\]/i,
+      /\(ERROR\)/i,
+      /^ERROR:/i,
+      /\bERROR\b.*:/,  // ERROR followed by colon (not inside JSON)
+      /\[FATAL\]/i,
+      /\bFATAL\b/i,
+      /\bEXCEPTION\b/i,
+      /\bUncaught\b/i,
+      /\bUnhandled\b/i,
+    ];
+    
+    // Check if this is a JSON response log (contains large JSON payloads)
+    // These should NOT be marked as ERROR just because nested content has "isError"
+    const isJsonResponseLog = line.includes('{"logs":') || line.includes('"isError"');
+    
+    if (!isJsonResponseLog) {
+      for (const pattern of errorPatterns) {
+        if (pattern.test(line)) {
+          return "ERROR";
+        }
+      }
+    } else {
+      // For JSON response logs, only mark as ERROR if the HTTP status is error (4xx/5xx)
+      const httpStatusMatch = line.match(/\s([45]\d{2})\s+in\s+\d+ms/);
+      if (httpStatusMatch) {
+        return "ERROR";
+      }
     }
-    if (upperLine.includes("WARN") || upperLine.includes("WARNING")) {
+    
+    // WARN patterns
+    if (/\[WARN(ING)?\]/i.test(line) || /\bWARN(ING)?:/i.test(line)) {
       return "WARN";
     }
-    if (upperLine.includes("DEBUG")) {
+    
+    // DEBUG patterns
+    if (/\[DEBUG\]/i.test(line)) {
       return "DEBUG";
     }
+    
     return "INFO";
   }
 
