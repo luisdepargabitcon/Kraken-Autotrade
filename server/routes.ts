@@ -2100,7 +2100,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               const tradeIdFinal = buildTradeId(canonicalTrade);
 
               try {
-                const { inserted } = await storage.insertTradeIgnoreDuplicate({
+                const { inserted, trade: insertedTrade } = await storage.insertTradeIgnoreDuplicate({
                   tradeId: tradeIdFinal,
                   krakenOrderId: undefined,
                   pair,
@@ -2113,9 +2113,39 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                   origin: 'sync',
                 });
 
-                if (inserted) {
+                if (inserted && insertedTrade) {
                   synced++;
                   byPair[pair].inserted++;
+
+                  // BOT ORDER ATTRIBUTION: Try to match this trade with a pending order intent
+                  try {
+                    const pendingIntents = await storage.getPendingOrderIntents('revolutx');
+                    
+                    // Find matching intent by pair, side, and approximate volume (within 5%)
+                    const tradeVolume = parseFloat(amountStr);
+                    const matchingIntent = pendingIntents.find(intent => {
+                      if (intent.pair !== pair || intent.side !== n.type) return false;
+                      const intentVolume = parseFloat(intent.volume);
+                      const volumeDiff = Math.abs(tradeVolume - intentVolume) / intentVolume;
+                      return volumeDiff < 0.05; // Within 5% tolerance
+                    });
+                    
+                    if (matchingIntent) {
+                      // Mark trade as executed by bot
+                      await storage.markTradeAsExecutedByBot(insertedTrade.id, matchingIntent.id);
+                      await storage.matchOrderIntentToTrade(matchingIntent.clientOrderId, insertedTrade.id);
+                      console.log(`[sync-revolutx] Trade ${insertedTrade.id} matched to bot order intent ${matchingIntent.clientOrderId}`);
+                      await botLogger.info("TRADE_MATCHED_TO_BOT", `Trade matched to bot order intent`, {
+                        tradeId: insertedTrade.id,
+                        clientOrderId: matchingIntent.clientOrderId,
+                        pair,
+                        type: n.type,
+                        volume: amountStr,
+                      });
+                    }
+                  } catch (matchErr: any) {
+                    console.error(`[sync-revolutx] Error matching trade to intent:`, matchErr.message);
+                  }
 
                   // NOTE: Position creation/deletion is now handled by reconcile-with-balance
                   // Sync only imports trades to DB, reconcile handles position state based on real balances
@@ -2372,12 +2402,62 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         } else {
           // Balance > dust
           if (!existingPos) {
-            // REGLA ÚNICA: NO crear posiciones desde balances externos
-            // Los balances del exchange NO se reflejan como open_positions
-            results.push({ 
-              pair, asset, action: 'skipped_external_balance', balance, 
-              reason: 'External balance exists - NOT creating position (open_positions = bot positions only)' 
+            // CHECK: ¿Hay trades recientes EJECUTADOS POR EL BOT para este asset?
+            // REGLA: Crear posición SOLO si balance>0 Y existe trade BUY con executed_by_bot=true
+            // Esto distingue trades del bot de trades manuales/externos
+            const botTrades = await storage.getRecentTradesForReconcile({
+              pair,
+              exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
+              origin: 'sync',
+              since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+              limit: 20,
+              executedByBot: true, // Solo trades marcados como ejecutados por el bot
             });
+            
+            if (botTrades.length > 0) {
+              // Hay trades CONFIRMADOS del bot → crear posición con precio del último trade
+              const lastTrade = botTrades[0]; // Ya ordenado por fecha descendente
+              const configSnapshot = buildConfigSnapshot(pair);
+              
+              if (dryRun) {
+                results.push({ 
+                  pair, asset, action: 'would_create_from_bot_trade', balance,
+                  reason: `Creating position from BOT trade (id: ${lastTrade.id}, price: ${lastTrade.price}, executed_by_bot=true)`,
+                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, executedByBot: true
+                });
+              } else {
+                const lotId = `engine-${Date.now()}-${pair.replace('/', '')}`;
+                await storage.saveOpenPositionByLotId({
+                  pair,
+                  exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
+                  lotId,
+                  amount: balance.toFixed(8),
+                  entryPrice: lastTrade.price,
+                  highestPrice: lastTrade.price,
+                  entryMode: 'SMART_GUARD',
+                  configSnapshotJson: configSnapshot,
+                  sgBreakEvenActivated: false,
+                  sgTrailingActivated: false,
+                  sgScaleOutDone: false,
+                });
+                await botLogger.info("POSITION_CREATED_RECONCILE", `Position created from BOT trade (executed_by_bot=true)`, {
+                  pair, asset, balance, exchange, 
+                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, lotId, executedByBot: true
+                });
+                results.push({ 
+                  pair, asset, action: 'created_from_bot_trade', balance,
+                  reason: `Created position from BOT trade (id: ${lastTrade.id}, price: ${lastTrade.price}, executed_by_bot=true)`,
+                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, lotId, executedByBot: true
+                });
+                created++;
+              }
+            } else {
+              // NO hay trades del bot con executed_by_bot=true → mantener regla original
+              results.push({ 
+                pair, asset, action: 'skipped_external_balance', balance, 
+                reason: 'External balance exists - NOT creating position (open_positions = bot positions only)' 
+              });
+            }
           } else {
             // Position exists and has balance → check if qty matches
             const posAmount = parseFloat(existingPos.amount || '0');

@@ -26,6 +26,8 @@ import {
   type InsertTradeFill,
   type InsertLotMatch,
   type AppliedTrade,
+  type OrderIntent,
+  type InsertOrderIntent,
   botConfig as botConfigTable,
   trades as tradesTable,
   appliedTrades as appliedTradesTable,
@@ -39,7 +41,8 @@ import {
   aiTradeSamples as aiTradeSamplesTable,
   aiShadowDecisions as aiShadowDecisionsTable,
   aiConfig as aiConfigTable,
-  trainingTrades as trainingTradesTable
+  trainingTrades as trainingTradesTable,
+  orderIntents as orderIntentsTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -67,6 +70,14 @@ export interface IStorage {
   createTrade(trade: InsertTrade): Promise<Trade>;
   insertTradeIgnoreDuplicate(trade: InsertTrade): Promise<{ inserted: boolean; trade?: Trade }>;
   getTrades(limit?: number): Promise<Trade[]>;
+  getRecentTradesForReconcile(params: {
+    pair: string;
+    exchange: 'kraken' | 'revolutx';
+    origin?: string;
+    since?: Date;
+    limit?: number;
+    executedByBot?: boolean;
+  }): Promise<Trade[]>;
   getClosedTrades(options: { limit?: number; offset?: number; pair?: string; exchange?: 'kraken' | 'revolutx'; result?: 'winner' | 'loser' | 'all'; type?: 'all' | 'buy' | 'sell' }): Promise<{ trades: Trade[]; total: number }>;
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
@@ -173,6 +184,14 @@ export interface IStorage {
   getRecentScans(limit?: number): Promise<any[]>;
   getRecentScansByTimeframe(timeframe: string): Promise<any[]>;
   getTradesByTimeframe(timeframe: string): Promise<any[]>;
+  
+  // Order intents (bot order attribution)
+  createOrderIntent(intent: InsertOrderIntent): Promise<OrderIntent>;
+  getOrderIntentByClientOrderId(clientOrderId: string): Promise<OrderIntent | undefined>;
+  updateOrderIntentStatus(clientOrderId: string, status: string, exchangeOrderId?: string): Promise<void>;
+  matchOrderIntentToTrade(clientOrderId: string, tradeId: number): Promise<void>;
+  getPendingOrderIntents(exchange: string): Promise<OrderIntent[]>;
+  markTradeAsExecutedByBot(tradeId: number, orderIntentId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -417,6 +436,44 @@ export class DatabaseStorage implements IStorage {
         and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
       ))
       .orderBy(desc(tradesTable.createdAt))
+      .limit(limit);
+  }
+
+  async getRecentTradesForReconcile(params: {
+    pair: string;
+    exchange: 'kraken' | 'revolutx';
+    origin?: string;
+    since?: Date;
+    limit?: number;
+    executedByBot?: boolean;
+  }): Promise<Trade[]> {
+    const {
+      pair,
+      exchange,
+      origin = 'sync',
+      since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      limit = 100,
+      executedByBot,
+    } = params;
+
+    const conditions: any[] = [
+      eq(tradesTable.pair, pair),
+      eq(tradesTable.exchange, exchange),
+      eq(tradesTable.status, 'filled'),
+      gt(tradesTable.executedAt, since),
+    ];
+
+    if (origin) {
+      conditions.push(eq(tradesTable.origin, origin));
+    }
+    
+    if (executedByBot !== undefined) {
+      conditions.push(eq(tradesTable.executedByBot, executedByBot));
+    }
+
+    return await db.select().from(tradesTable)
+      .where(and(...conditions))
+      .orderBy(desc(tradesTable.executedAt))
       .limit(limit);
   }
 
@@ -1589,6 +1646,55 @@ export class DatabaseStorage implements IStorage {
       console.error('[storage] Error getting trades by timeframe:', error);
       return [];
     }
+  }
+
+  // === ORDER INTENTS (bot order attribution) ===
+  
+  async createOrderIntent(intent: InsertOrderIntent): Promise<OrderIntent> {
+    const [newIntent] = await db.insert(orderIntentsTable).values(intent).returning();
+    return newIntent;
+  }
+
+  async getOrderIntentByClientOrderId(clientOrderId: string): Promise<OrderIntent | undefined> {
+    const results = await db.select().from(orderIntentsTable)
+      .where(eq(orderIntentsTable.clientOrderId, clientOrderId))
+      .limit(1);
+    return results[0];
+  }
+
+  async updateOrderIntentStatus(clientOrderId: string, status: string, exchangeOrderId?: string): Promise<void> {
+    const updates: any = { status, updatedAt: new Date() };
+    if (exchangeOrderId) {
+      updates.exchangeOrderId = exchangeOrderId;
+    }
+    await db.update(orderIntentsTable)
+      .set(updates)
+      .where(eq(orderIntentsTable.clientOrderId, clientOrderId));
+  }
+
+  async matchOrderIntentToTrade(clientOrderId: string, tradeId: number): Promise<void> {
+    await db.update(orderIntentsTable)
+      .set({ matchedTradeId: tradeId, status: 'filled', updatedAt: new Date() })
+      .where(eq(orderIntentsTable.clientOrderId, clientOrderId));
+  }
+
+  async getPendingOrderIntents(exchange: string): Promise<OrderIntent[]> {
+    // Return both 'pending' and 'accepted' intents (accepted = order sent but not yet filled)
+    return await db.select().from(orderIntentsTable)
+      .where(and(
+        eq(orderIntentsTable.exchange, exchange),
+        or(
+          eq(orderIntentsTable.status, 'pending'),
+          eq(orderIntentsTable.status, 'accepted')
+        )
+      ))
+      .orderBy(desc(orderIntentsTable.createdAt));
+  }
+
+  async markTradeAsExecutedByBot(tradeId: number, orderIntentId: number): Promise<void> {
+    await db.update(tradesTable)
+      .set({ executedByBot: true, orderIntentId })
+      .where(eq(tradesTable.id, tradeId));
   }
 }
 

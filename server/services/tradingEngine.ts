@@ -6224,15 +6224,36 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // CRITICAL: Generate correlation_id for full traceability
       const correlationId = `${Date.now()}-${pair.replace('/', '')}-${type}-${Math.random().toString(36).slice(2, 8)}`;
       
+      // Generate clientOrderId for bot order attribution (used to match synced trades)
+      const clientOrderId = crypto.randomUUID();
+      const exchange = this.getTradingExchangeType();
+      
+      // PERSIST ORDER INTENT: Store intent BEFORE sending to exchange for attribution
+      try {
+        await storage.createOrderIntent({
+          clientOrderId,
+          exchange,
+          pair,
+          side: type,
+          volume: volume.toString(),
+          status: 'pending',
+        });
+        log(`[ORDER_INTENT_CREATED] ${correlationId} | clientOrderId=${clientOrderId}`, "trading");
+      } catch (intentErr: any) {
+        log(`[ORDER_INTENT_ERROR] ${correlationId} | Failed to persist order intent: ${intentErr.message}`, "trading");
+        // Continue anyway - order attribution is best-effort
+      }
+      
       // ORDER_ATTEMPT: Log before execution for forensic traceability
-      log(`[ORDER_ATTEMPT] ${correlationId} | ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${this.getTradingExchangeType()}`, "trading");
+      log(`[ORDER_ATTEMPT] ${correlationId} | ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} via ${exchange}`, "trading");
       await botLogger.info("ORDER_ATTEMPT", `Attempting ${type.toUpperCase()} order`, {
         correlationId,
+        clientOrderId,
         pair,
         type,
         volume,
         price,
-        exchange: this.getTradingExchangeType(),
+        exchange,
         reason,
         telegramInitialized: this.telegramService.isInitialized(),
       });
@@ -6252,6 +6273,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         type,
         ordertype: "market",
         volume,
+        clientOrderId, // Pass clientOrderId to exchange for matching
       });
 
       // CRITICAL: Validate order success before continuing
@@ -6264,25 +6286,33 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           type,
           volume,
           error: errorMsg,
-          exchange: this.getTradingExchangeType()
+          exchange
         });
+        // Update order intent status to failed
+        try {
+          await storage.updateOrderIntentStatus(clientOrderId, 'failed');
+        } catch (e) { /* best-effort */ }
         return false;
       }
-
-      const exchange = this.getTradingExchangeType();
       
       // FIX: Handle pendingFill case (order submitted but price not immediately available)
       // This is NOT a failure - the order was accepted by the exchange
       if ((order as any)?.pendingFill === true) {
-        const pendingOrderId = (order as any)?.orderId || (order as any)?.txid || (order as any)?.clientOrderId;
-        log(`[ORDER_PENDING_FILL] ${correlationId} | ${pair} ${type.toUpperCase()} submitted (orderId=${pendingOrderId}). Will reconcile via sync.`, "trading");
+        const pendingOrderId = (order as any)?.orderId || (order as any)?.txid || clientOrderId;
+        
+        // Update order intent status to accepted (pending fill)
+        try {
+          await storage.updateOrderIntentStatus(clientOrderId, 'accepted', pendingOrderId);
+        } catch (e) { /* best-effort */ }
+        
+        log(`[ORDER_PENDING_FILL] ${correlationId} | ${pair} ${type.toUpperCase()} submitted (orderId=${pendingOrderId}, clientOrderId=${clientOrderId}). Will reconcile via sync.`, "trading");
         await botLogger.info("ORDER_PENDING_FILL", `Order submitted but fill not yet confirmed - will reconcile`, {
           correlationId,
           pair,
           type,
           volume,
           orderId: pendingOrderId,
-          clientOrderId: (order as any)?.clientOrderId,
+          clientOrderId,
           exchange,
           telegramInitialized: this.telegramService.isInitialized(),
         });

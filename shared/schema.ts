@@ -167,11 +167,29 @@ export const apiConfig = pgTable("api_config", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Order intents: persiste la intención del bot ANTES de enviar orden al exchange
+// Permite atribuir trades importados por sync al bot (executed_by_bot)
+export const orderIntents = pgTable("order_intents", {
+  id: serial("id").primaryKey(),
+  clientOrderId: text("client_order_id").notNull().unique(), // UUID generado por el bot
+  exchange: text("exchange").notNull(),
+  pair: text("pair").notNull(),
+  side: text("side").notNull(), // 'buy' | 'sell'
+  volume: decimal("volume", { precision: 18, scale: 8 }).notNull(),
+  status: text("status").notNull().default("pending"), // pending, accepted, filled, failed, expired
+  exchangeOrderId: text("exchange_order_id"), // ID devuelto por el exchange
+  matchedTradeId: integer("matched_trade_id"), // FK a trades.id cuando se hace match
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const trades = pgTable("trades", {
   id: serial("id").primaryKey(),
   tradeId: text("trade_id").notNull(),
   exchange: text("exchange").notNull().default("kraken"),
   origin: text("origin").notNull().default("sync"),
+  executedByBot: boolean("executed_by_bot").default(false), // true si el trade fue iniciado por el bot
+  orderIntentId: integer("order_intent_id"), // FK a order_intents.id (opcional)
   pair: text("pair").notNull(),
   type: text("type").notNull(),
   price: decimal("price", { precision: 18, scale: 8 }).notNull(),
@@ -441,6 +459,7 @@ export const insertTrainingTradeSchema = createInsertSchema(trainingTrades).omit
 export const insertTradeFillSchema = createInsertSchema(tradeFills).omit({ id: true, createdAt: true });
 export const insertLotMatchSchema = createInsertSchema(lotMatches).omit({ id: true, createdAt: true });
 export const insertRegimeStateSchema = createInsertSchema(regimeState).omit({ updatedAt: true });
+export const insertOrderIntentSchema = createInsertSchema(orderIntents).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type BotConfig = typeof botConfig.$inferSelect;
 export type Trade = typeof trades.$inferSelect;
@@ -475,6 +494,8 @@ export type AppliedTrade = typeof appliedTrades.$inferSelect;
 export type InsertAppliedTrade = typeof appliedTrades.$inferInsert;
 export type RegimeState = typeof regimeState.$inferSelect;
 export type InsertRegimeState = z.infer<typeof insertRegimeStateSchema>;
+export type OrderIntent = typeof orderIntents.$inferSelect;
+export type InsertOrderIntent = z.infer<typeof insertOrderIntentSchema>;
 
 // Master Backups Table
 export const masterBackups = pgTable("master_backups", {

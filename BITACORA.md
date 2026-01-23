@@ -1,5 +1,100 @@
 # 📋 BITÁCORA - WINDSURF CHESTER BOT
 
+## 2026-01-23 12:15 (Europe/Madrid) — [ENV: LOCAL] — FIX COMPLETO: Sistema de atribución de órdenes del bot
+
+### Problema identificado
+Las órdenes BUY enviadas por el bot (ORDER_PENDING_FILL) no creaban posiciones abiertas porque:
+1. El sync importaba trades con `origin='sync'` pero no había forma de distinguir trades del bot de trades manuales/externos
+2. El reconciliador aplicaba la regla `skipped_external_balance` para TODOS los balances sin posición
+
+### Solución implementada: Sistema de atribución de órdenes
+
+**1. Nueva tabla `order_intents`** (`shared/schema.ts`, `db/migrations/007_order_intents.sql`)
+- Persiste la intención del bot ANTES de enviar la orden
+- Campos: `clientOrderId`, `exchange`, `pair`, `side`, `volume`, `status`, `exchangeOrderId`, `matchedTradeId`
+- Estados: pending → accepted → filled/failed/expired
+
+**2. Nuevo campo `executed_by_bot` en `trades`**
+- Boolean que indica si el trade fue iniciado por el bot
+- Se marca `true` cuando sync hace match con un order_intent
+
+**3. Modificaciones al flujo:**
+
+**tradingEngine.ts:**
+- Genera `clientOrderId` (UUID) antes de enviar orden
+- Persiste `order_intent` con status='pending' ANTES de llamar a `placeOrder()`
+- Actualiza status a 'accepted' cuando la orden es aceptada (pendingFill)
+- Actualiza status a 'failed' si la orden falla
+
+**sync-revolutx (routes.ts):**
+- Al insertar un trade, busca order_intents pendientes/aceptados que coincidan (pair, side, volume ±5%)
+- Si encuentra match: marca el trade como `executed_by_bot=true` y el intent como `filled`
+- Loguea `TRADE_MATCHED_TO_BOT` para trazabilidad
+
+**reconcile (routes.ts):**
+- Ahora busca trades con `executed_by_bot=true` en lugar de solo `origin='sync'`
+- Solo crea posiciones para trades confirmados del bot
+- Mantiene `skipped_external_balance` para balances sin trades del bot
+
+**storage.ts:**
+- Nuevos métodos: `createOrderIntent`, `getOrderIntentByClientOrderId`, `updateOrderIntentStatus`, `matchOrderIntentToTrade`, `getPendingOrderIntents`, `markTradeAsExecutedByBot`
+- `getRecentTradesForReconcile` ahora acepta parámetro `executedByBot`
+
+### Archivos modificados
+- `shared/schema.ts` (tabla order_intents, campos executed_by_bot y order_intent_id en trades)
+- `server/storage.ts` (métodos de order_intents, filtro executedByBot)
+- `server/services/tradingEngine.ts` (persistencia de order_intent antes de placeOrder)
+- `server/routes.ts` (matching en sync-revolutx, reconcile con executed_by_bot)
+- `db/migrations/007_order_intents.sql` (migración SQL)
+
+### Deploy
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+# Ejecutar migración
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /dev/stdin < db/migrations/007_order_intents.sql
+# Rebuild
+docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+```
+
+### Verificación post-deploy
+```bash
+# 1. Verificar que la tabla order_intents existe
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "\\d order_intents"
+
+# 2. Verificar campos en trades
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SELECT id, pair, executed_by_bot, order_intent_id FROM trades WHERE exchange='revolutx' ORDER BY id DESC LIMIT 10;"
+
+# 3. Ejecutar reconcile y verificar que crea posiciones solo para executed_by_bot=true
+curl -s -X POST "http://127.0.0.1:3020/api/positions/reconcile" -H "Content-Type: application/json" -d '{"exchange": "revolutx", "dryRun": false}'
+
+# 4. Verificar posiciones creadas
+curl -s "http://127.0.0.1:3020/api/open-positions"
+```
+
+### Nota sobre trades históricos
+Los trades ya importados antes de este fix NO tienen `executed_by_bot=true`. Para atribuirlos retroactivamente, se puede ejecutar un backfill manual si se conocen los IDs de las órdenes del bot (ver Telegram).
+
+---
+
+## 2026-01-23 09:25 (Europe/Madrid) — [ENV: LOCAL] — Intento #1: Reconcile crea posiciones solo si hay trades recientes
+
+### Resumen
+- Se agregó `storage.getRecentTradesForReconcile()` para filtrar trades por par, exchange, origen y ventana temporal.
+- El endpoint `/api/positions/reconcile` ahora usa este helper para detectar compras recientes (`origin: sync`) y crear posiciones con snapshot SMART_GUARD cuando exista balance real.
+- Primer deploy aún muestra `skipped_external_balance`; se requiere validar que los trades importados tengan `executedAt` y cumplan los filtros (próximo paso en VPS).
+
+### Archivos afectados
+- `server/storage.ts`
+- `server/routes.ts`
+
+### Próximos pasos
+1. Revisar en VPS si los trades importados de RevolutX tienen `executedAt` y `origin='sync'` (SQL).
+2. Re-ejecutar `/api/positions/reconcile` para confirmar creación de posiciones.
+3. Actualizar doc cuando se valide en entorno real.
+
+---
+
 > **Fuente de verdad** para registro cronológico de cambios, incidentes, deploys y verificaciones.  
 > Entradas en **orden cronológico inverso** (más reciente arriba).
 
