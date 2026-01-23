@@ -5,11 +5,38 @@
 
 ---
 
-# 🔧 CORRECCIONES POR CATEGORÍA
+# CORRECCIONES POR CATEGORÍA
 
 ---
 
-## 🛡️ SMART_GUARD Y LOGS
+## SMART_GUARD Y LOGS
+
+### 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
+
+**Objetivo:**
+Crear inventario completo de todas las alertas Telegram, cuándo se activan y cómo se configuran.
+
+**Cambios implementados:**
+
+#### ALERTAS_TELEGRAM.md
+- Documentación completa de 25+ tipos de alertas
+- Tablas con cuándo se activa cada alerta
+- Cooldowns configurables por tipo
+- Sistema de deduplicación v2.0
+- Comandos para gestión de alertas
+
+**Alertas categorizadas:**
+- Programadas (Heartbeat, Reporte Diario)
+- Ciclo de vida del bot (Inicio/Detenido)
+- Trading (Compras/Ventas/SL/TP/Trailing)
+- Smart Guard (BE/Trailing/Scale-Out)
+- Riesgos y Límites (Drawdown, Cooldown)
+- Reconciliación (Posiciones huérfanas)
+- Errores (Críticos, API)
+
+**Archivo creado:** `ALERTAS_TELEGRAM.md`
+
+---
 
 ### 2026-01-24 00:00 — Refactorización Telegram: Branding Unificado + Anti-Placeholders + Comandos
 

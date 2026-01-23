@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
+
+### Objetivo
+Crear inventario completo de todas las alertas Telegram, cuándo se activan y cómo se configuran.
+
+### Archivo Creado
+`ALERTAS_TELEGRAM.md` - Documentación exhaustiva del sistema de alertas
+
+### Contenido
+- **25+ tipos de alertas** categorizadas por tipo
+- **Tablas detalladas** con cuándo se activa cada alerta
+- **Cooldowns configurables** por tipo de evento
+- **Sistema de deduplicación v2.0** con hash/throttle
+- **Comandos de gestión** (/channels, /menu, /refresh_commands)
+
+### Categorías Documentadas
+- 🕐 Programadas (Heartbeat, Reporte Diario)
+- 🚀 Ciclo de vida del bot (Inicio/Detenido)
+- 💰 Trading (Compras/Ventas/SL/TP/Trailing)
+- 🛡️ Smart Guard (BE/Trailing/Scale-Out)
+- ⚠️ Riesgos y Límites (Drawdown, Cooldown)
+- 🔧 Reconciliación (Posiciones huérfanas)
+- 🚨 Errores (Críticos, API)
+
+### Configuración
+- 6 tipos de alertas configurables en `/channels`
+- Cooldowns personalizables por evento
+- Sistema de deduplicación por tipo de mensaje
+
+---
+
 ## 2026-01-24 00:00 — Refactorización Completa Sistema Telegram
 
 ### Objetivo
