@@ -6401,6 +6401,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               exchange,
               pair,
               clientOrderId,
+              venueOrderId: pendingOrderId, // CRITICAL: Persist exchange order ID for FillWatcher queries
               expectedAmount: volume.toString(),
               entryMode: 'SMART_GUARD',
               configSnapshotJson: configSnapshot,

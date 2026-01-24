@@ -4,6 +4,76 @@
 
 ---
 
+## 2026-01-24 20:45 — FIX CRÍTICO: Órdenes ejecutadas marcadas como FALLIDA
+
+### Problema Reportado
+Orden BUY TON ejecutada correctamente en RevolutX (32.72251 TON @ $1.5323), pero en UI:
+- Aparece lote 2/2 marcado como "FALLIDA"
+- La cantidad comprada se suma a la posición TON existente (lote 1) en lugar del lote 2
+
+### Causa Raíz Identificada
+**RevolutXService NO tenía implementado el método `getFills`**. El FillWatcher:
+1. Intentaba llamar `exchangeService.getFills?.({ limit: 50 })`
+2. Al no existir, retornaba array vacío
+3. Después de 120s de timeout sin fills, marcaba la posición como FAILED
+4. La orden SÍ estaba ejecutada pero el bot no podía verificarlo
+
+### Archivos Modificados
+
+#### `server/services/exchanges/RevolutXService.ts`
+- **NUEVO**: Método `getOrder(orderId)` - Consulta estado de orden específica
+  - Usa endpoint `GET /api/1.0/orders/{orderId}`
+  - Retorna filledSize, executedValue, averagePrice, status
+- **NUEVO**: Método `getFills(params)` - Obtiene fills recientes
+  - Usa `listPrivateTrades()` para symbol específico
+  - Fallback a `getOrder()` para construir fill sintético
+  - Fallback a endpoint `/api/1.0/fills`
+
+#### `server/services/FillWatcher.ts`
+- **MEJORADO**: Función `fetchFillsForOrder()` con 3 estrategias:
+  1. **ESTRATEGIA 1**: Si hay `exchangeOrderId`, consulta `getOrder()` directamente
+  2. **ESTRATEGIA 2**: Si hay `pair`, usa `getFills({ symbol })` con filtro temporal
+  3. **ESTRATEGIA 3**: Fallback genérico `getFills({ limit: 50 })`
+
+#### `shared/schema.ts`
+- **NUEVO**: Campo `venueOrderId` en tabla `open_positions`
+  - Almacena ID de orden del exchange para consultas de estado
+
+#### `server/storage.ts`
+- **ACTUALIZADO**: `createPendingPosition()` acepta `venueOrderId`
+- **NUEVO**: Método `getPositionByVenueOrderId()`
+
+#### `server/services/tradingEngine.ts`
+- **ACTUALIZADO**: Pasa `venueOrderId: pendingOrderId` a `createPendingPosition()`
+
+#### `db/migrations/011_add_venue_order_id.sql`
+- Migración para agregar columna `venue_order_id` a `open_positions`
+- Índice para búsqueda eficiente
+
+### Flujo Corregido
+1. `placeOrder()` → exchange acepta orden → retorna `orderId`
+2. `createPendingPosition()` guarda `clientOrderId` + `venueOrderId`
+3. `FillWatcher` inicia polling cada 3s
+4. `getOrder(venueOrderId)` consulta estado real de la orden
+5. Si orden tiene fills → actualiza posición a OPEN con precio medio
+6. UI muestra lote 2/2 como OPEN (no FAILED)
+
+### Migración Requerida
+```sql
+-- Ejecutar en BD antes de deploy:
+ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS venue_order_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_open_positions_venue_order_id 
+ON open_positions(venue_order_id) WHERE venue_order_id IS NOT NULL;
+```
+
+### Criterio de Éxito (Validación)
+- Repetir compra TON con `sgMaxOpenLotsPerPair=2`
+- La compra nueva queda en lote 2 (OPEN), NO se suma al lote 1
+- No aparece ningún lote "FALLIDA" para órdenes ejecutadas
+- IDs (client_order_id y venue_order_id) persistidos y trazables
+
+---
+
 ## 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
 
 ### Objetivo

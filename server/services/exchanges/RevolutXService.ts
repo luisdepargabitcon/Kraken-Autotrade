@@ -536,6 +536,180 @@ export class RevolutXService implements IExchangeService {
   normalizePairFromExchange(exchangePair: string): string {
     return exchangePair.replace('-', '/');
   }
+
+  /**
+   * Get a specific order by ID
+   * Used by FillWatcher to check order status and get fill details
+   */
+  async getOrder(orderId: string): Promise<{
+    id: string;
+    clientOrderId?: string;
+    symbol: string;
+    side: string;
+    status: string;
+    filledSize?: number;
+    executedValue?: number;
+    averagePrice?: number;
+    createdAt?: Date;
+  } | null> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    const path = `/api/1.0/orders/${orderId}`;
+    const headers = this.getHeaders('GET', path);
+
+    try {
+      const response = await fetch(API_BASE_URL + path, { headers });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log(`[revolutx] Order not found: ${orderId}`);
+          return null;
+        }
+        const errorText = await response.text();
+        console.error(`[revolutx] getOrder error: ${response.status} ${errorText}`);
+        return null;
+      }
+
+      const data = await response.json() as any;
+      console.log(`[revolutx] getOrder response:`, JSON.stringify(data, null, 2));
+
+      const filledSize = parseFloat(data.filled_size || data.executed_size || '0');
+      const executedValue = parseFloat(data.executed_value || data.filled_value || '0');
+      const averagePrice = filledSize > 0 && executedValue > 0 ? executedValue / filledSize : 0;
+
+      return {
+        id: data.id || data.order_id || orderId,
+        clientOrderId: data.client_order_id,
+        symbol: data.symbol || '',
+        side: data.side || '',
+        status: data.status || 'UNKNOWN',
+        filledSize,
+        executedValue,
+        averagePrice,
+        createdAt: data.created_at ? new Date(data.created_at) : undefined,
+      };
+    } catch (error: any) {
+      console.error(`[revolutx] getOrder exception:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get recent fills/trades for the account
+   * FillWatcher uses this to find fills matching pending orders
+   */
+  async getFills(params?: {
+    symbol?: string;
+    orderId?: string;
+    limit?: number;
+    startMs?: number;
+    endMs?: number;
+  }): Promise<Array<{
+    fill_id: string;
+    order_id: string;
+    client_order_id?: string;
+    symbol: string;
+    side: string;
+    price: number;
+    quantity: number;
+    fee?: number;
+    created_at: string;
+  }>> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    // If we have a symbol, use listPrivateTrades for that symbol
+    if (params?.symbol) {
+      try {
+        const symbol = this.formatPair(params.symbol);
+        const result = await this.listPrivateTrades({
+          symbol,
+          startMs: params.startMs,
+          endMs: params.endMs,
+          limit: params.limit || 50,
+        });
+
+        return result.trades.map((t: any) => ({
+          fill_id: t.id || t.trade_id || t.txid || `${t.created_at}-${t.price}`,
+          order_id: t.order_id || '',
+          client_order_id: t.client_order_id,
+          symbol: t.symbol || symbol,
+          side: t.side || 'BUY',
+          price: parseFloat(t.price || '0'),
+          quantity: parseFloat(t.quantity || t.amount || t.vol || '0'),
+          fee: parseFloat(t.fee || t.commission || '0'),
+          created_at: t.created_at || t.timestamp || new Date().toISOString(),
+        }));
+      } catch (error: any) {
+        console.error(`[revolutx] getFills error for ${params.symbol}:`, error.message);
+        return [];
+      }
+    }
+
+    // If we have an orderId, try to get order details first
+    if (params?.orderId) {
+      const order = await this.getOrder(params.orderId);
+      if (order && order.filledSize && order.filledSize > 0) {
+        // Order has fills - construct a synthetic fill from order data
+        return [{
+          fill_id: `${params.orderId}-fill`,
+          order_id: params.orderId,
+          client_order_id: order.clientOrderId,
+          symbol: order.symbol,
+          side: order.side,
+          price: order.averagePrice || 0,
+          quantity: order.filledSize,
+          fee: 0,
+          created_at: order.createdAt?.toISOString() || new Date().toISOString(),
+        }];
+      }
+    }
+
+    // Fallback: try to get fills from /api/1.0/fills endpoint
+    const path = '/api/1.0/fills';
+    const queryParams: Record<string, string | number | undefined> = {
+      limit: params?.limit || 50,
+    };
+    if (params?.orderId) queryParams.order_id = params.orderId;
+    if (params?.startMs) queryParams.start_date = params.startMs;
+    if (params?.endMs) queryParams.end_date = params.endMs;
+
+    const queryString = this.buildQueryString(queryParams, ['order_id', 'start_date', 'end_date', 'limit']);
+    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
+    const headers = this.getHeaders('GET', path, queryString, '');
+
+    try {
+      const response = await fetch(fullUrl, { headers });
+
+      if (!response.ok) {
+        // If /fills endpoint doesn't exist, that's OK - we'll use getOrder fallback
+        if (response.status === 404) {
+          console.log(`[revolutx] /fills endpoint not available, using getOrder fallback`);
+          return [];
+        }
+        const errorText = await response.text();
+        console.error(`[revolutx] getFills error: ${response.status} ${errorText}`);
+        return [];
+      }
+
+      const data = await response.json() as any;
+      const fills = Array.isArray(data) ? data : (data.data || data.fills || data.items || []);
+
+      return fills.map((f: any) => ({
+        fill_id: f.id || f.fill_id || f.trade_id || `${f.created_at}-${f.price}`,
+        order_id: f.order_id || '',
+        client_order_id: f.client_order_id,
+        symbol: f.symbol || '',
+        side: f.side || 'BUY',
+        price: parseFloat(f.price || '0'),
+        quantity: parseFloat(f.quantity || f.amount || f.size || '0'),
+        fee: parseFloat(f.fee || f.commission || '0'),
+        created_at: f.created_at || f.timestamp || new Date().toISOString(),
+      }));
+    } catch (error: any) {
+      console.error(`[revolutx] getFills exception:`, error.message);
+      return [];
+    }
+  }
 }
 
 export const revolutXService = RevolutXService.getInstance();

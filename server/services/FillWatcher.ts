@@ -231,6 +231,7 @@ export function getActiveWatcherCount(): number {
 
 /**
  * Fetch fills for a specific order from exchange
+ * IMPROVED: Uses getOrder for direct order status check + getFills with symbol filtering
  */
 async function fetchFillsForOrder(
   exchangeService: any,
@@ -241,30 +242,81 @@ async function fetchFillsForOrder(
 ): Promise<Fill[]> {
   try {
     if (exchange === 'revolutx') {
-      // RevolutX: Use getFills API
-      const fills = await exchangeService.getFills?.({ limit: 50 });
-      if (!fills) return [];
+      // STRATEGY 1: If we have exchangeOrderId, check order status directly
+      if (exchangeOrderId && typeof exchangeService.getOrder === 'function') {
+        const order = await exchangeService.getOrder(exchangeOrderId);
+        if (order && order.filledSize && order.filledSize > 0 && order.averagePrice && order.averagePrice > 0) {
+          console.log(`[FillWatcher] Found fill via getOrder: ${order.filledSize} @ ${order.averagePrice}`);
+          return [{
+            fillId: `${exchangeOrderId}-fill-${Date.now()}`,
+            orderId: exchangeOrderId,
+            pair: exchangeService.normalizePairFromExchange?.(order.symbol) || order.symbol || pair || '',
+            side: order.side?.toLowerCase() || 'buy',
+            price: order.averagePrice,
+            amount: order.filledSize,
+            cost: order.averagePrice * order.filledSize,
+            fee: 0,
+            executedAt: order.createdAt || new Date(),
+          }];
+        }
+      }
 
-      // Filter fills by pair and recent time (last 5 minutes)
+      // STRATEGY 2: Get fills by symbol and filter by time
+      if (pair && typeof exchangeService.getFills === 'function') {
+        const recentCutoff = Date.now() - 5 * 60 * 1000; // Last 5 minutes
+        const fills = await exchangeService.getFills({ 
+          symbol: pair,
+          startMs: recentCutoff,
+          limit: 50 
+        });
+        
+        if (fills && fills.length > 0) {
+          console.log(`[FillWatcher] Found ${fills.length} fills for ${pair} via getFills`);
+          return fills
+            .filter((f: any) => {
+              const fillTime = new Date(f.created_at).getTime();
+              return fillTime > recentCutoff && 
+                     (f.side?.toLowerCase() === 'buy');
+            })
+            .map((f: any) => ({
+              fillId: f.fill_id || `${exchange}-${f.created_at}-${f.price}`,
+              orderId: f.order_id || exchangeOrderId || '',
+              pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
+              side: f.side?.toLowerCase() || 'buy',
+              price: f.price,
+              amount: f.quantity,
+              cost: f.price * f.quantity,
+              fee: f.fee || 0,
+              executedAt: new Date(f.created_at),
+            }));
+        }
+      }
+
+      // STRATEGY 3: Legacy fallback - generic getFills without params
+      const fills = await exchangeService.getFills?.({ limit: 50 });
+      if (!fills || fills.length === 0) return [];
+
       const recentCutoff = Date.now() - 5 * 60 * 1000;
+      const normalizedPair = pair?.replace('/', '-').toUpperCase();
+      const altPair = pair?.replace('-', '/').toUpperCase();
       
       return fills
         .filter((f: any) => {
-          const fillTime = new Date(f.created_at || f.timestamp).getTime();
-          return fillTime > recentCutoff && 
-                 (!pair || f.symbol === pair || f.pair === pair) &&
-                 f.side === 'buy';
+          const fillTime = new Date(f.created_at).getTime();
+          const fillSymbol = f.symbol?.toUpperCase();
+          const matchesPair = !pair || fillSymbol === normalizedPair || fillSymbol === altPair;
+          return fillTime > recentCutoff && matchesPair && f.side?.toLowerCase() === 'buy';
         })
         .map((f: any) => ({
-          fillId: f.fill_id || f.id || f.txid || `${exchange}-${f.created_at}-${f.price}`,
+          fillId: f.fill_id || `${exchange}-${f.created_at}-${f.price}`,
           orderId: f.order_id || exchangeOrderId || '',
-          pair: f.symbol || f.pair || pair || '',
-          side: f.side || 'buy',
-          price: parseFloat(f.price),
-          amount: parseFloat(f.quantity || f.amount || f.vol),
-          cost: parseFloat(f.price) * parseFloat(f.quantity || f.amount || f.vol),
-          fee: parseFloat(f.fee || f.commission || '0'),
-          executedAt: new Date(f.created_at || f.timestamp),
+          pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
+          side: f.side?.toLowerCase() || 'buy',
+          price: f.price,
+          amount: f.quantity,
+          cost: f.price * f.quantity,
+          fee: f.fee || 0,
+          executedAt: new Date(f.created_at),
         }));
     }
 

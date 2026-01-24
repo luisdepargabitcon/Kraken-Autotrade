@@ -325,6 +325,7 @@ export const openPositions = pgTable("open_positions", {
   status: text("status").default("OPEN"),
   // Link to order_intent for idempotent upsert
   clientOrderId: text("client_order_id"), // UUID from placeOrder
+  venueOrderId: text("venue_order_id"), // ID returned by exchange (for order status queries)
   orderIntentId: integer("order_intent_id"),
   // Expected amount before fills confirm
   expectedAmount: decimal("expected_amount", { precision: 18, scale: 8 }),

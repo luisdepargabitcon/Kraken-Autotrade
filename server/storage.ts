@@ -1738,6 +1738,7 @@ export class DatabaseStorage implements IStorage {
     exchange: string;
     pair: string;
     clientOrderId: string;
+    venueOrderId?: string; // ID returned by exchange for order status queries
     orderIntentId?: number;
     expectedAmount: string;
     entryMode?: string;
@@ -1750,6 +1751,7 @@ export class DatabaseStorage implements IStorage {
       exchange: data.exchange,
       pair: data.pair,
       clientOrderId: data.clientOrderId,
+      venueOrderId: data.venueOrderId,
       orderIntentId: data.orderIntentId,
       expectedAmount: data.expectedAmount,
       status: 'PENDING_FILL',
@@ -1768,7 +1770,7 @@ export class DatabaseStorage implements IStorage {
       updatedAt: new Date(),
     }).returning();
     
-    console.log(`[storage] Created PENDING_FILL position: ${data.pair} (clientOrderId: ${data.clientOrderId})`);
+    console.log(`[storage] Created PENDING_FILL position: ${data.pair} (clientOrderId: ${data.clientOrderId}, venueOrderId: ${data.venueOrderId})`);
     return position;
   }
 
@@ -1778,6 +1780,16 @@ export class DatabaseStorage implements IStorage {
   async getPositionByClientOrderId(clientOrderId: string): Promise<any | undefined> {
     const results = await db.select().from(openPositionsTable)
       .where(eq(openPositionsTable.clientOrderId, clientOrderId))
+      .limit(1);
+    return results[0];
+  }
+
+  /**
+   * Get position by venueOrderId (exchange order ID for fill matching)
+   */
+  async getPositionByVenueOrderId(venueOrderId: string): Promise<any | undefined> {
+    const results = await db.select().from(openPositionsTable)
+      .where(eq(openPositionsTable.venueOrderId, venueOrderId))
       .limit(1);
     return results[0];
   }
