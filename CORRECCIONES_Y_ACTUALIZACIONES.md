@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-01-25 12:35 — FIX: P&L Neto usaba fee incorrecto para RevolutX
+
+### Problema
+El cálculo de P&L Neto en `/api/open-positions` usaba siempre `takerFeePct` (0.40% Kraken) en lugar del fee real según el exchange de la posición.
+
+Para posiciones RevolutX (fee real 0.09%), las comisiones estimadas estaban infladas 4.4x.
+
+### Causa Raíz
+```typescript
+// ANTES: Siempre usaba takerFeePct (0.40%)
+const entryFeeUsd = entryValueUsd * takerFeePct;
+const exitFeeUsd = currentValueUsd * takerFeePct;
+```
+
+### Solución
+```typescript
+// AHORA: Usa fee según exchange
+const feePctForExchange = (exchange: string) => {
+  if (exchange === 'revolutx') return 0.09 / 100;  // 0.09%
+  return krakenFeePct;  // config (default 0.40%)
+};
+
+const feePct = feePctForExchange(ex);
+const entryFeeUsd = entryValueUsd * feePct;
+const exitFeeUsd = currentValueUsd * feePct;
+```
+
+### Archivo Modificado
+- `server/routes.ts` líneas 762-812
+
+### Impacto
+- Posiciones RevolutX: comisiones correctas (0.09% vs 0.40%)
+- P&L Neto más preciso para trading real
+- Sin cambio para posiciones Kraken
+
+---
+
 ## 2026-01-24 20:45 — FIX CRÍTICO: Órdenes ejecutadas marcadas como FALLIDA
 
 ### Problema Reportado

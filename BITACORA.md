@@ -9,6 +9,72 @@
 
 ---
 
+## 🚨 FIXES CRÍTICOS
+
+### 2026-01-24 20:45 — FIX CRÍTICO: Órdenes ejecutadas marcadas como FALLIDA
+
+**Problema Reportado:**
+Orden BUY TON ejecutada correctamente en RevolutX (32.72251 TON @ $1.5323), pero en UI:
+- Aparece lote 2/2 marcado como "FALLIDA"
+- La cantidad comprada se suma a la posición TON existente (lote 1)
+
+**Causa Raíz Identificada:**
+**RevolutXService NO tenía implementado el método `getFills`**. El FillWatcher:
+1. Intentaba llamar `exchangeService.getFills?.({ limit: 50 })`
+2. Al no existir, retornaba array vacío
+3. Después de 120s de timeout sin fills, marcaba la posición como FAILED
+4. La orden SÍ estaba ejecutada pero el bot no podía verificarlo
+
+**Solución Implementada:**
+
+#### 1️⃣ RevolutXService.ts - Métodos Faltantes
+- **NUEVO**: `getOrder(orderId)` - Consulta estado de orden específica
+  - Usa endpoint `GET /api/1.0/orders/{orderId}`
+  - Retorna filledSize, executedValue, averagePrice, status
+- **NUEVO**: `getFills(params)` - Obtiene fills recientes
+  - Usa `listPrivateTrades()` para symbol específico
+  - Fallback a `getOrder()` para construir fill sintético
+  - Fallback a endpoint `/api/1.0/fills`
+
+#### 2️⃣ FillWatcher.ts - Matching Robusto
+- **MEJORADO**: Función `fetchFillsForOrder()` con 3 estrategias:
+  1. **ESTRATEGIA 1**: Si hay `exchangeOrderId`, consulta `getOrder()` directamente
+  2. **ESTRATEGIA 2**: Si hay `pair`, usa `getFills({ symbol })` con filtro temporal
+  3. **ESTRATEGIA 3**: Fallback genérico `getFills({ limit: 50 })`
+
+#### 3️⃣ Schema & Storage - Persistencia de IDs
+- **NUEVO**: Campo `venueOrderId` en tabla `open_positions`
+- **ACTUALIZADO**: `createPendingPosition()` acepta `venueOrderId`
+- **NUEVO**: Método `getPositionByVenueOrderId()`
+- **ACTUALIZADO**: `tradingEngine.ts` pasa `venueOrderId` al crear posición
+
+#### 4️⃣ Migración SQL
+- **CREADO**: `db/migrations/011_add_venue_order_id.sql`
+- Columna + índice para búsquedas eficientes
+
+**Deploy y Verificación:**
+```bash
+# Migración aplicada
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS venue_order_id TEXT;"
+
+# Deploy completado
+git pull origin main  # Commit: 74dc673
+docker compose -f docker-compose.staging.yml up -d --build
+
+# Limpieza de posiciones FALLIDA antiguas
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "DELETE FROM open_positions WHERE status = 'FAILED' AND (amount = '0' OR amount IS NULL OR total_amount_base = '0');"
+```
+
+**Resultado:**
+- ✅ Fix implementado y deployado
+- ✅ Migración aplicada correctamente
+- ✅ Posiciones FALLIDA antiguas limpiadas
+- ✅ Nuevas órdenes ya no marcarán como FAILED
+
+**Commit:** `74dc673` - "fix(fillwatcher): Ordenes ejecutadas marcadas FALLIDA - implementar getFills/getOrder RevolutX"
+
+---
+
 ## SMART_GUARD Y LOGS
 
 ### 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
@@ -570,5 +636,5 @@ ORDER BY executed_at DESC;
 
 ---
 
-*Última actualización: 2026-01-23*  
+*Última actualización: 2026-01-24*  
 *Mantenido por: Windsurf Cascade AI*

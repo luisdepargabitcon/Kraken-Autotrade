@@ -759,7 +759,13 @@ export async function registerRoutes(
       const positions = await storage.getOpenPositions();
       
       const botConfig = await storage.getBotConfig();
-      const takerFeePct = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+      const krakenFeePct = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+      
+      // Fee % según exchange (RevolutX 0.09%, Kraken según config)
+      const feePctForExchange = (exchange: string) => {
+        if (exchange === 'revolutx') return 0.09 / 100;  // 0.09%
+        return krakenFeePct;
+      };
       
       const positionsWithPnl = await Promise.all(positions.map(async (pos) => {
         let currentPrice = 0;
@@ -800,9 +806,10 @@ export async function registerRoutes(
         const entryValueUsd = entryPrice * amount;
         const currentValueUsd = currentPrice * amount;
         
+        const feePct = feePctForExchange(ex);  // Fee según exchange (RevolutX 0.09%, Kraken ~0.40%)
         const storedEntryFee = pos.entryFee != null ? parseFloat(pos.entryFee.toString()) : null;
-        const entryFeeUsd = storedEntryFee != null && !isNaN(storedEntryFee) ? storedEntryFee : (entryValueUsd * takerFeePct);
-        const exitFeeUsd = currentValueUsd * takerFeePct;
+        const entryFeeUsd = storedEntryFee != null && !isNaN(storedEntryFee) ? storedEntryFee : (entryValueUsd * feePct);
+        const exitFeeUsd = currentValueUsd * feePct;
         const netPnlUsd = currentPrice > 0 ? (unrealizedPnlUsd - entryFeeUsd - exitFeeUsd) : 0;
         const netPnlPct = entryValueUsd > 0 && currentPrice > 0 ? (netPnlUsd / entryValueUsd) * 100 : 0;
         
