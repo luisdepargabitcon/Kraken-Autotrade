@@ -11,6 +11,43 @@
 
 ## 🚨 FIXES CRÍTICOS
 
+### 2026-01-25 12:50 — FIX: Modal Comisiones usaba fee incorrecto (Frontend)
+
+**Problema:**
+El bloque "COMISIONES" en el modal de detalles de posición usaba siempre 0.40% (Kraken) para calcular "Salida (estimada)", aunque el P&L Neto ya usaba 0.09% (RevolutX).
+
+**Síntomas:**
+- XRP: Salida mostraba -$1.36 (0.40%) en vez de ~$0.31 (0.09%)
+- ETH: Salida mostraba -$2.23 (0.40%) en vez de ~$0.50 (0.09%)
+- Desincronización entre P&L Neto y Comisiones mostradas
+
+**Solución:**
+```typescript
+// ANTES: Siempre usaba config Kraken
+const takerFeeRate = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+
+// AHORA: Fee según exchange de la posición
+const posExchange = selectedPosition.exchange || 'kraken';
+const feeRate = posExchange === 'revolutx' ? 0.09 / 100 : krakenFeeRate;
+```
+
+**Archivos Modificados:**
+- `client/src/pages/Terminal.tsx` - Interfaz OpenPosition + cálculo fees modal
+
+---
+
+### 2026-01-25 12:35 — FIX: P&L Neto usaba fee incorrecto (Backend)
+
+**Problema:**
+El cálculo de P&L Neto en `/api/open-positions` usaba siempre 0.40% para todas las posiciones.
+
+**Solución:**
+Agregar `feePctForExchange()` que retorna 0.09% para RevolutX, config para Kraken.
+
+**Archivo:** `server/routes.ts` líneas 762-812
+
+---
+
 ### 2026-01-24 20:45 — FIX CRÍTICO: Órdenes ejecutadas marcadas como FALLIDA
 
 **Problema Reportado:**

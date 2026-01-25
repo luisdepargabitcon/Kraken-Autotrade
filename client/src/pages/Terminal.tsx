@@ -54,6 +54,7 @@ import { useToast } from "@/hooks/use-toast";
 interface OpenPosition {
   id: number;
   pair: string;
+  exchange?: string; // kraken | revolutx
   entryPrice: string;
   amount: string;
   highestPrice: string;
@@ -1297,13 +1298,17 @@ export default function Terminal() {
           
           {selectedPosition && (() => {
             const exitStatus = calculateExitStatus(selectedPosition);
-            const takerFeeRate = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+            // Fee % según exchange (RevolutX 0.09%, Kraken según config)
+            const krakenFeeRate = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
+            const posExchange = selectedPosition.exchange || 'kraken';
+            const feeRate = posExchange === 'revolutx' ? 0.09 / 100 : krakenFeeRate;
+            
             const storedEntryFee = selectedPosition.entryFee ? parseFloat(selectedPosition.entryFee) : null;
-            const realEntryFee = storedEntryFee != null && !isNaN(storedEntryFee) ? storedEntryFee : null;
-            const estimatedEntryFee = parseFloat(selectedPosition.entryValueUsd) * takerFeeRate;
+            const realEntryFee = storedEntryFee != null && !isNaN(storedEntryFee) && storedEntryFee > 0 ? storedEntryFee : null;
+            const estimatedEntryFee = parseFloat(selectedPosition.entryValueUsd) * feeRate;
             const displayEntryFee = realEntryFee ?? estimatedEntryFee;
             const isEntryFeeReal = realEntryFee != null;
-            const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * takerFeeRate;
+            const estimatedExitFee = parseFloat(selectedPosition.currentValueUsd) * feeRate;
             const grossUsd = parseFloat(selectedPosition.unrealizedPnlUsd || "0");
             const grossPct = parseFloat(selectedPosition.unrealizedPnlPct || "0");
             const netUsd = parseFloat(selectedPosition.netPnlUsd || "0");
