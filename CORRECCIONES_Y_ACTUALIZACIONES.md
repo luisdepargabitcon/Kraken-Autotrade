@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-01-25 13:55 — FIX CRÍTICO: Reconciliación creaba posiciones desde balances externos
+
+### Problema Reportado
+Al darle a "Reconciliar", se creó una posición de BTC/USD sin señal válida. El usuario tenía balance de BTC en el exchange (probablemente depósito externo), y la reconciliación creó una posición basándose en trades históricos del bot.
+
+### Causa Raíz
+La lógica de reconciliación buscaba trades con `executed_by_bot=true` en los últimos 7 días, pero **no verificaba si hubo ventas posteriores** al último BUY del bot.
+
+Escenario problemático:
+1. Hace 5 días el bot compró BTC
+2. Hace 3 días se vendió (manual o por bot)
+3. Hoy el usuario depositó BTC externamente
+4. Reconciliación: balance BTC > 0 + trade BUY del bot histórico → crea posición incorrecta
+
+### Solución
+```typescript
+// ANTES: Solo verificaba si existía trade BUY del bot
+const botTrades = await storage.getRecentTradesForReconcile({...});
+if (botTrades.length > 0) {
+  // Crear posición con último trade
+}
+
+// AHORA: Verifica que NO haya SELL posterior al último BUY
+const buyTrades = botBuyTrades.filter(t => t.type === 'buy');
+if (buyTrades.length > 0) {
+  const lastBuyTime = new Date(buyTrades[0].executedAt).getTime();
+  
+  // Buscar cualquier SELL posterior al BUY
+  const allRecentTrades = await storage.getRecentTradesForReconcile({
+    since: new Date(lastBuyTime), // Desde el último BUY
+    // Sin filtrar por executedByBot para capturar ventas manuales
+  });
+  
+  const sellAfterBuy = allRecentTrades.find(t => 
+    t.type === 'sell' && new Date(t.executedAt).getTime() > lastBuyTime
+  );
+  
+  if (sellAfterBuy) {
+    // Balance es externo - NO crear posición
+    results.push({ action: 'skipped_sold_after_buy', ... });
+  } else {
+    // Sin ventas posteriores → crear posición
+  }
+}
+```
+
+### Archivo Modificado
+- `server/routes.ts` líneas 2410-2505 (endpoint `/api/positions/reconcile`)
+
+### Impacto
+- Reconciliación ya NO crea posiciones de balances externos
+- Solo crea posiciones si el último trade BUY del bot NO tiene ventas posteriores
+- Previene "resurrecciones" de posiciones ya vendidas
+
+### Acción Manual Requerida
+- Eliminar manualmente la posición BTC/USD incorrecta desde el dashboard
+- Verificar que las posiciones SOL/USD con status FAILED se limpien
+
+---
+
 ## 2026-01-25 12:35 — FIX: P&L Neto usaba fee incorrecto para RevolutX
 
 ### Problema

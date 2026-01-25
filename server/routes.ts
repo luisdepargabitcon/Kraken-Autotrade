@@ -2411,9 +2411,11 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           // Balance > dust
           if (!existingPos) {
             // CHECK: ¿Hay trades recientes EJECUTADOS POR EL BOT para este asset?
-            // REGLA: Crear posición SOLO si balance>0 Y existe trade BUY con executed_by_bot=true
-            // Esto distingue trades del bot de trades manuales/externos
-            const botTrades = await storage.getRecentTradesForReconcile({
+            // REGLA: Crear posición SOLO si:
+            // 1. balance>0 
+            // 2. existe trade BUY con executed_by_bot=true
+            // 3. NO hay trades SELL posteriores al último BUY (indicaría que el balance actual es externo)
+            const botBuyTrades = await storage.getRecentTradesForReconcile({
               pair,
               exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
               origin: 'sync',
@@ -2422,48 +2424,83 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               executedByBot: true, // Solo trades marcados como ejecutados por el bot
             });
             
-            if (botTrades.length > 0) {
-              // Hay trades CONFIRMADOS del bot → crear posición con precio del último trade
-              const lastTrade = botTrades[0]; // Ya ordenado por fecha descendente
-              const configSnapshot = buildConfigSnapshot(pair);
+            // Filtrar solo BUYs del bot
+            const buyTrades = botBuyTrades.filter(t => t.type === 'buy');
+            
+            if (buyTrades.length > 0) {
+              const lastBuyTrade = buyTrades[0]; // Ya ordenado por fecha descendente
+              const lastBuyTime = new Date(lastBuyTrade.executedAt).getTime();
               
-              if (dryRun) {
+              // NUEVO CHECK: Verificar si hay trades SELL (de cualquier origen) posteriores al último BUY
+              // Esto detecta ventas manuales o del bot que invalidan el BUY anterior
+              const allRecentTrades = await storage.getRecentTradesForReconcile({
+                pair,
+                exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
+                origin: 'sync',
+                since: new Date(lastBuyTime), // Desde el último BUY
+                limit: 50,
+                // No filtrar por executedByBot para capturar ventas manuales también
+              });
+              
+              // Buscar cualquier SELL posterior al BUY
+              const sellAfterBuy = allRecentTrades.find(t => 
+                t.type === 'sell' && 
+                new Date(t.executedAt).getTime() > lastBuyTime
+              );
+              
+              if (sellAfterBuy) {
+                // Hay una venta posterior → el balance actual NO corresponde al BUY del bot
+                // El balance actual es probablemente un depósito externo
                 results.push({ 
-                  pair, asset, action: 'would_create_from_bot_trade', balance,
-                  reason: `Creating position from BOT trade (id: ${lastTrade.id}, price: ${lastTrade.price}, executed_by_bot=true)`,
-                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, executedByBot: true
+                  pair, asset, action: 'skipped_sold_after_buy', balance,
+                  reason: `Balance exists but SELL detected after last BOT BUY - treating as external balance`,
+                  lastBuyTradeId: lastBuyTrade.id, 
+                  lastBuyTime: new Date(lastBuyTime).toISOString(),
+                  sellTradeId: sellAfterBuy.id,
+                  sellTime: new Date(sellAfterBuy.executedAt).toISOString(),
                 });
               } else {
-                const lotId = `engine-${Date.now()}-${pair.replace('/', '')}`;
-                await storage.saveOpenPositionByLotId({
-                  pair,
-                  exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
-                  lotId,
-                  amount: balance.toFixed(8),
-                  entryPrice: lastTrade.price,
-                  highestPrice: lastTrade.price,
-                  entryMode: 'SMART_GUARD',
-                  configSnapshotJson: configSnapshot,
-                  sgBreakEvenActivated: false,
-                  sgTrailingActivated: false,
-                  sgScaleOutDone: false,
-                });
-                await botLogger.info("POSITION_CREATED_RECONCILE", `Position created from BOT trade (executed_by_bot=true)`, {
-                  pair, asset, balance, exchange, 
-                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, lotId, executedByBot: true
-                });
-                results.push({ 
-                  pair, asset, action: 'created_from_bot_trade', balance,
-                  reason: `Created position from BOT trade (id: ${lastTrade.id}, price: ${lastTrade.price}, executed_by_bot=true)`,
-                  lastTradeId: lastTrade.id, lastTradePrice: lastTrade.price, lotId, executedByBot: true
-                });
-                created++;
+                // No hay ventas posteriores → crear posición con precio del último BUY
+                const configSnapshot = buildConfigSnapshot(pair);
+                
+                if (dryRun) {
+                  results.push({ 
+                    pair, asset, action: 'would_create_from_bot_trade', balance,
+                    reason: `Creating position from BOT trade (id: ${lastBuyTrade.id}, price: ${lastBuyTrade.price}, executed_by_bot=true, no SELL after)`,
+                    lastTradeId: lastBuyTrade.id, lastTradePrice: lastBuyTrade.price, executedByBot: true
+                  });
+                } else {
+                  const lotId = `engine-${Date.now()}-${pair.replace('/', '')}`;
+                  await storage.saveOpenPositionByLotId({
+                    pair,
+                    exchange: exchange === 'revolutx' ? 'revolutx' : 'kraken',
+                    lotId,
+                    amount: balance.toFixed(8),
+                    entryPrice: lastBuyTrade.price,
+                    highestPrice: lastBuyTrade.price,
+                    entryMode: 'SMART_GUARD',
+                    configSnapshotJson: configSnapshot,
+                    sgBreakEvenActivated: false,
+                    sgTrailingActivated: false,
+                    sgScaleOutDone: false,
+                  });
+                  await botLogger.info("POSITION_CREATED_RECONCILE", `Position created from BOT trade (no SELL after BUY)`, {
+                    pair, asset, balance, exchange, 
+                    lastTradeId: lastBuyTrade.id, lastTradePrice: lastBuyTrade.price, lotId, executedByBot: true
+                  });
+                  results.push({ 
+                    pair, asset, action: 'created_from_bot_trade', balance,
+                    reason: `Created position from BOT trade (id: ${lastBuyTrade.id}, price: ${lastBuyTrade.price}, no SELL after)`,
+                    lastTradeId: lastBuyTrade.id, lastTradePrice: lastBuyTrade.price, lotId, executedByBot: true
+                  });
+                  created++;
+                }
               }
             } else {
-              // NO hay trades del bot con executed_by_bot=true → mantener regla original
+              // NO hay trades BUY del bot con executed_by_bot=true → balance es externo
               results.push({ 
                 pair, asset, action: 'skipped_external_balance', balance, 
-                reason: 'External balance exists - NOT creating position (open_positions = bot positions only)' 
+                reason: 'External balance exists - NOT creating position (no BOT BUY trades found)' 
               });
             }
           } else {
