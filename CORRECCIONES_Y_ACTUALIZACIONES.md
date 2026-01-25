@@ -56,6 +56,46 @@ private calculatePairExposure(pair: string): number {
 
 ---
 
+## 2026-01-25 16:45 — MEJORA: Alertas Telegram para Time-Stop en ambos modos
+
+### Mejora Solicitada
+Añadir alertas Telegram cuando una posición alcanza el Time-Stop, tanto en modo SOFT como HARD.
+
+### Cambios Realizados
+- **Modo SOFT**: Ya existía alerta, se añadió nota sobre cierre manual
+- **Modo HARD**: Nueva alerta Telegram notificando cierre inmediato
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts`:
+  - Líneas 744-760: Alerta Telegram para modo HARD
+  - Línea 823: Nota sobre cierre manual en modo SOFT
+
+### Alertas Enviadas
+
+**Modo SOFT (cuando expira):**
+```
+⏰ Posición en espera
+📦 Detalles: Par, tiempo abierta, límite, cierre forzado
+📊 Estado: Ganancia actual, mínimo para cerrar
+💡 La posición se cerrará cuando supere X% o al llegar a 54h
+⚠️ Puedes cerrarla manualmente si lo prefieres
+```
+
+**Modo HARD (cuando expira):**
+```
+⏰ Time-Stop HARD - Cierre Inmediato
+📦 Detalles: Par, tiempo abierta, límite
+📊 Estado: Ganancia actual
+⚡ ACCIÓN: La posición se cerrará INMEDIATAMENTE [modo HARD]
+```
+
+### Impacto
+- Notificación inmediata cuando Time-Stop se activa
+- Opción de intervención manual en modo SOFT
+- Claridad sobre acción automática en modo HARD
+
+---
+
 ## 2026-01-25 14:15 — FIX: Time-Stop SOFT no cerraba posiciones en pérdida
 
 ### Problema Reportado

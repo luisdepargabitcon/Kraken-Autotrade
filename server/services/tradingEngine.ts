@@ -740,6 +740,25 @@ export class TradingEngine {
     
     if (exitConfig.timeStopMode === "hard") {
       log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard FORCE_CLOSE`, "trading");
+      
+      // Enviar alerta Telegram para modo HARD
+      if (this.telegramService.isInitialized()) {
+        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite configurado: <code>${timeStopHours} horas</code>
+
+📊 <b>Estado:</b>
+   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+
+⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
+━━━━━━━━━━━━━━━━━━━`, "trades");
+      }
+      
       return {
         triggered: true,
         expired: true,
@@ -801,6 +820,7 @@ export class TradingEngine {
    • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
 💡 La posición se cerrará cuando supere ${minCloseNetPct.toFixed(2)}% o al llegar a ${maxAbsoluteHours.toFixed(0)}h.
+⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
 ━━━━━━━━━━━━━━━━━━━`, "trades");
       }
     }
