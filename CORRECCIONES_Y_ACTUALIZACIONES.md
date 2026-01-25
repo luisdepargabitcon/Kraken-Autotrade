@@ -96,6 +96,56 @@ Añadir alertas Telegram cuando una posición alcanza el Time-Stop, tanto en mod
 
 ---
 
+## 2026-01-25 16:48 — FIX CRÍTICO: Alertas Time-Stop no llegaban para posiciones ya expiradas
+
+### Problema Reportado
+Las alertas de Time-Stop no llegaban para ETH/USD y TON/USD porque expiraron ANTES de implementar las alertas. El código solo enviaba alerta la primera vez que expiraba una posición.
+
+### Causa Raíz
+- Las posiciones expiraron hace 15 horas
+- `timeStopExpiredAt` estaba vacío en BD
+- El código solo notificaba si `!position.timeStopExpiredAt`
+- Al iniciar el bot, no se verificaban posiciones ya expiradas
+
+### Solución
+Implementado `checkExpiredTimeStopPositions()` que se ejecuta al iniciar el bot:
+
+```typescript
+// Se ejecuta después de cargar posiciones desde BD
+await this.checkExpiredTimeStopPositions();
+
+// Verifica posiciones expiradas no notificadas y envía alerta
+private async checkExpiredTimeStopPositions(): Promise<void> {
+  for (const [lotId, position] of this.openPositions) {
+    if (position.timeStopExpiredAt) continue;  // Ya notificada
+    if (position.timeStopDisabled) continue;  // Time-Stop pausado
+    
+    if (ageHours >= exitConfig.timeStopHours) {
+      // Enviar alerta SOFT o HARD según configuración
+      // Marcar como notificada para evitar duplicados
+    }
+  }
+}
+```
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts`:
+  - Línea 1894: Llamada a `checkExpiredTimeStopPositions()` al iniciar
+  - Líneas 1208-1288: Nueva función de verificación startup
+
+### Comportamiento
+- **Al iniciar bot**: Verifica todas las posiciones abiertas
+- **Si expiraron y no notificadas**: Envía alerta inmediata
+- **Marca como notificada**: Evita alertas duplicadas
+- **Funciona para ambos modos**: SOFT y HARD
+
+### Impacto
+- Ahora recibirás alertas para posiciones ya expiradas (ETH, TON)
+- Futuras expiraciones seguirán notificándose correctamente
+- No se enviarán alertas duplicadas
+
+---
+
 ## 2026-01-25 14:15 — FIX: Time-Stop SOFT no cerraba posiciones en pérdida
 
 ### Problema Reportado
