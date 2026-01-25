@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-01-25 14:15 — FIX: Time-Stop SOFT no cerraba posiciones en pérdida
+
+### Problema Reportado
+Posición TON/USD con Time-Stop (48h) marcado como "EXPIRED" pero la posición seguía abierta. En modo SOFT, si la posición tiene pérdida, el bot esperaba indefinidamente a que tuviera profit.
+
+### Causa Raíz
+El Time-Stop en modo SOFT solo cerraba posiciones si el profit era suficiente para cubrir fees. Posiciones con pérdida quedaban abiertas indefinidamente.
+
+### Solución
+Añadido **tiempo máximo absoluto** del 50% adicional al Time-Stop configurado:
+- Time-Stop 48h → Cierre forzado a las 72h
+- Time-Stop 36h → Cierre forzado a las 54h
+
+```typescript
+// NUEVO: Force close after 50% additional time
+const maxAbsoluteHours = timeStopHours * 1.5;
+if (ageHours >= maxAbsoluteHours) {
+  return {
+    triggered: true,
+    expired: true,
+    shouldClose: true,
+    reason: `Time-stop máximo absoluto - forzando cierre`,
+  };
+}
+```
+
+### Archivo Modificado
+- `server/services/tradingEngine.ts` líneas 760-772
+
+### Impacto
+- Posiciones con Time-Stop expirado ya NO quedan abiertas indefinidamente
+- Después del 50% de tiempo adicional, se fuerza el cierre aunque esté en pérdida
+- Notificación de Telegram actualizada con hora de cierre forzado
+
+---
+
+## 2026-01-25 14:10 — FIX CRÍTICO: Reconciliación NUNCA crea posiciones
+
+### Problema Reportado
+Al darle a "Reconciliar", se creó una posición de BTC/USD sin señal válida.
+
+### Regla Establecida
+**Las posiciones SOLO las crea el bot por señal válida.** La reconciliación:
+- ✅ Sincroniza cantidades de posiciones existentes
+- ✅ Elimina posiciones huérfanas (balance=0)
+- ❌ NUNCA crea nuevas posiciones
+
+### Solución
+Eliminada completamente la lógica de creación de posiciones en reconciliación. Si hay balance sin posición, se registra como "balance externo" sin crear posición.
+
+### Archivo Modificado
+- `server/routes.ts` líneas 2412-2419
+
+---
+
 ## 2026-01-25 13:55 — FIX CRÍTICO: Reconciliación creaba posiciones desde balances externos
 
 ### Problema Reportado

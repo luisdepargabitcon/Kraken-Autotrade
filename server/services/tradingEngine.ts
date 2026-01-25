@@ -745,6 +745,7 @@ export class TradingEngine {
       };
     }
     
+    // SOFT MODE: Check if profit is sufficient to close
     if (priceChange >= minCloseNetPct) {
       log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} PROFIT_EXIT_OK`, "trading");
       return {
@@ -752,6 +753,20 @@ export class TradingEngine {
         expired: true,
         shouldClose: true,
         reason: `Time-stop expirado + profit suficiente (+${priceChange.toFixed(2)}% >= ${minCloseNetPct.toFixed(2)}%)`,
+        ageHours,
+      };
+    }
+    
+    // SOFT MODE: Force close after 50% additional time (e.g., 48h soft -> 72h max)
+    // This prevents positions from staying open indefinitely when in loss
+    const maxAbsoluteHours = timeStopHours * 1.5;
+    if (ageHours >= maxAbsoluteHours) {
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft MAX_TIME_REACHED grossPnl=${priceChange.toFixed(2)} FORCE_CLOSE`, "trading");
+      return {
+        triggered: true,
+        expired: true,
+        shouldClose: true,
+        reason: `Time-stop máximo absoluto (${ageHours.toFixed(0)}h >= ${maxAbsoluteHours.toFixed(0)}h) - forzando cierre`,
         ageHours,
       };
     }
@@ -764,7 +779,7 @@ export class TradingEngine {
       position.timeStopExpiredAt = now;
       this.openPositions.set(lotId, position);
       await this.savePositionToDB(pair, position);
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT`, "trading");
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT (max: ${maxAbsoluteHours.toFixed(0)}h)`, "trading");
       
       if (this.telegramService.isInitialized()) {
         await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
@@ -775,12 +790,13 @@ export class TradingEngine {
    • Par: <code>${pair}</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
    • Límite configurado: <code>${timeStopHours} horas</code>
+   • Cierre forzado: <code>${maxAbsoluteHours.toFixed(0)} horas</code>
 
 📊 <b>Estado:</b>
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
    • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
-💡 La posición se cerrará automáticamente cuando la ganancia supere ${minCloseNetPct.toFixed(2)}% (para cubrir comisiones).
+💡 La posición se cerrará cuando supere ${minCloseNetPct.toFixed(2)}% o al llegar a ${maxAbsoluteHours.toFixed(0)}h.
 ━━━━━━━━━━━━━━━━━━━`, "trades");
       }
     }
@@ -789,7 +805,7 @@ export class TradingEngine {
       triggered: true,
       expired: true,
       shouldClose: false,
-      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft BLOCKED_FEES`,
+      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft BLOCKED_FEES (force at ${maxAbsoluteHours.toFixed(0)}h)`,
       ageHours,
     };
   }
