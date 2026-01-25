@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-01-25 14:20 — FIX CRÍTICO: Exposición no contaba posiciones PENDING_FILL
+
+### Problema Reportado
+Una posición SOL/USD se creó a las 12:45 cuando el límite de exposición ya estaba alcanzado. El siguiente ciclo de scan (12:50) bloqueó correctamente por exposición, pero la orden ya había sido enviada.
+
+### Causa Raíz
+La verificación de exposición usaba `this.openPositions` (memoria) que NO incluía posiciones `PENDING_FILL`:
+- Verificación de **slots** (BD): Incluía PENDING_FILL ✓
+- Verificación de **exposición** (memoria): NO incluía PENDING_FILL ✗
+
+Las posiciones PENDING_FILL tienen `amount: '0'` y `entryPrice: '0'` en BD, por lo que aunque se cargaran, su contribución a la exposición era 0.
+
+### Solución
+Implementado **tracking de exposición pendiente** en memoria:
+
+```typescript
+// Nuevo Map para trackear exposición de posiciones PENDING_FILL
+private pendingFillExposure: Map<string, { pair: string; expectedUsd: number }> = new Map();
+
+// calculatePairExposure y calculateTotalExposure ahora incluyen pendingFillExposure
+private calculatePairExposure(pair: string): number {
+  let total = 0;
+  // OPEN positions
+  this.openPositions.forEach((position) => {...});
+  // PENDING_FILL positions
+  this.pendingFillExposure.forEach((pending) => {...});
+  return total;
+}
+```
+
+**Ciclo de vida del tracking:**
+1. `addPendingExposure()` - Al crear posición PENDING_FILL
+2. `removePendingExposure()` - Cuando posición pasa a OPEN, timeout, o se carga desde BD
+3. `clearAllPendingExposure()` - Al iniciar el engine (limpiar datos stale)
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts`:
+  - Líneas 483-485: Nuevo Map `pendingFillExposure`
+  - Líneas 1135-1186: Funciones de cálculo y tracking de exposición
+  - Línea 1869: Limpieza al inicio del engine
+  - Línea 2026: Limpieza al cargar posición desde BD
+  - Líneas 6476-6478: Añadir exposición al crear PENDING_FILL
+  - Líneas 6504-6510: Remover exposición en callbacks de FillWatcher
+  - Líneas 6727-6728, 6825-6826: Remover exposición al confirmar posición
+
+### Impacto
+- La exposición ahora cuenta PENDING_FILL positions correctamente
+- No se pueden crear nuevas órdenes si hay órdenes pendientes que ya ocupan la exposición
+- Previene sobre-asignación de capital cuando hay órdenes en vuelo
+
+---
+
 ## 2026-01-25 14:15 — FIX: Time-Stop SOFT no cerraba posiciones en pérdida
 
 ### Problema Reportado

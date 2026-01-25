@@ -479,6 +479,10 @@ export class TradingEngine {
   private pairCooldowns: Map<string, number> = new Map();
   private lastExposureAlert: Map<string, number> = new Map();
   private stopLossCooldowns: Map<string, number> = new Map();
+  
+  // Track PENDING_FILL exposure to prevent over-allocation
+  // Key: lotId, Value: { pair, expectedUsd }
+  private pendingFillExposure: Map<string, { pair: string; expectedUsd: number }> = new Map();
   private spreadFilterEnabled: boolean = true;
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
@@ -1130,9 +1134,16 @@ export class TradingEngine {
 
   private calculatePairExposure(pair: string): number {
     let total = 0;
+    // Include OPEN positions
     this.openPositions.forEach((position) => {
       if (position.pair === pair) {
         total += position.amount * position.entryPrice;
+      }
+    });
+    // Include PENDING_FILL positions (not yet filled but order sent)
+    this.pendingFillExposure.forEach((pending) => {
+      if (pending.pair === pair) {
+        total += pending.expectedUsd;
       }
     });
     return total;
@@ -1140,10 +1151,38 @@ export class TradingEngine {
 
   private calculateTotalExposure(): number {
     let total = 0;
+    // Include OPEN positions
     this.openPositions.forEach((position) => {
       total += position.amount * position.entryPrice;
     });
+    // Include PENDING_FILL positions
+    this.pendingFillExposure.forEach((pending) => {
+      total += pending.expectedUsd;
+    });
     return total;
+  }
+  
+  // Track pending exposure when order is sent
+  private addPendingExposure(lotId: string, pair: string, expectedUsd: number): void {
+    this.pendingFillExposure.set(lotId, { pair, expectedUsd });
+    log(`[PENDING_EXPOSURE] Added: ${pair} $${expectedUsd.toFixed(2)} (lotId=${lotId}, total pending=${this.pendingFillExposure.size})`, "trading");
+  }
+  
+  // Remove pending exposure when position becomes OPEN or is cancelled
+  private removePendingExposure(lotId: string): void {
+    const removed = this.pendingFillExposure.delete(lotId);
+    if (removed) {
+      log(`[PENDING_EXPOSURE] Removed: lotId=${lotId} (remaining=${this.pendingFillExposure.size})`, "trading");
+    }
+  }
+  
+  // Clear stale pending exposure (e.g., on startup or after timeout)
+  private clearAllPendingExposure(): void {
+    const count = this.pendingFillExposure.size;
+    this.pendingFillExposure.clear();
+    if (count > 0) {
+      log(`[PENDING_EXPOSURE] Cleared ${count} stale entries`, "trading");
+    }
   }
 
   private getAvailableExposure(pair: string, config: any, freshUsdBalance?: number): { 
@@ -1826,6 +1865,9 @@ export class TradingEngine {
     this.isRunning = true;
     log("Motor de trading iniciado", "trading");
     
+    // Clear any stale pending exposure from previous runs
+    this.clearAllPendingExposure();
+    
     await this.loadOpenPositionsFromDB();
     
     const modeLabel = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE (órdenes reales)";
@@ -1982,6 +2024,9 @@ El motor de trading ha sido desactivado.
         };
         
         this.openPositions.set(lotId, openPosition);
+        
+        // Clean up any pending exposure for this position (now it's OPEN)
+        this.removePendingExposure(lotId);
         
         // If position lacked lotId or snapshot, update DB
         if (!pos.lotId || needsBackfill) {
@@ -6434,6 +6479,10 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               expectedAmount: volume,
             });
             
+            // CRITICAL: Track pending exposure to prevent over-allocation
+            const expectedUsd = parseFloat(volume) * price;
+            this.addPendingExposure(lotId, pair, expectedUsd);
+            
             // Emit WebSocket event for instant UI update
             try {
               const { positionsWs } = await import('./positionsWebSocket');
@@ -6458,9 +6507,13 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 },
                 onPositionOpen: (position) => {
                   log(`[POSITION_OPEN] ${pair}: Position fully filled, avgPrice=${position.averageEntryPrice}`, "trading");
+                  // Remove pending exposure now that position is OPEN
+                  this.removePendingExposure(lotId);
                 },
                 onTimeout: (coid) => {
                   log(`[FILL_WATCHER_TIMEOUT] ${pair}: No fills after 2 minutes (clientOrderId=${coid})`, "trading");
+                  // Remove pending exposure on timeout (order may have failed)
+                  this.removePendingExposure(lotId);
                 },
               });
               log(`[FILL_WATCHER_STARTED] ${correlationId} | Started FillWatcher for ${pair}`, "trading");
@@ -6671,6 +6724,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 highestPrice: Math.max(existing.highestPrice, price),
               };
               this.openPositions.set(existing.lotId, newPosition);
+              // Clean up any pending exposure for this DCA entry
+              this.removePendingExposure(existing.lotId);
               log(`DCA entry: ${pair} (${existing.lotId}) - preserved snapshot from original entry, totalFee=$${totalEntryFee.toFixed(4)}`, "trading");
             } else {
               const lotId = generateLotId(pair);
@@ -6768,6 +6823,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 sgScaleOutDone: false,
               };
               this.openPositions.set(lotId, newPosition);
+              
+              // Clean up pending exposure now that position is confirmed OPEN
+              this.removePendingExposure(lotId);
 
               const lotCount = this.countLotsForPair(pair);
               if (entryMode === "SMART_GUARD") {
