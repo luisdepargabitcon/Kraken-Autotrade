@@ -28,9 +28,17 @@ import {
   buildDailyReportHTML as buildDailyReportHTMLNew,
   buildTradeBuyHTML as buildTradeBuyHTMLNew,
   buildTradeSellHTML as buildTradeSellHTMLNew,
+  buildErrorAlertHTML,
+  buildErrorAlertHTMLSimple,
+  buildTradePendingHTML,
   buildHeader,
   escapeHtml as escapeHtmlNew,
   formatSpanishDate as formatSpanishDateNew,
+  type ErrorAlertContext,
+  type ErrorSeverity,
+  type TradeStatus,
+  type SimpleTradeBuyContext,
+  type SimpleTradeSellContext,
 } from "./telegram/templates";
 import { messageDeduplicator } from "./telegram/deduplication";
 
@@ -2403,7 +2411,106 @@ _KrakenBot.AI - Trading Autónomo_
     await this.sendAlertToMultipleChats(message, "trades");
   }
 
-  async sendAlert(title: string, description: string) {
+  /**
+   * Send visual BUY notification with status (PENDING/COMPLETED/FAILED)
+   */
+  async sendBuyAlert(ctx: {
+    pair: string;
+    exchange: string;
+    price: string;
+    amount: string;
+    total: string;
+    orderId: string;
+    lotId?: string;
+    mode: string;
+    status: TradeStatus;
+    errorMessage?: string;
+    signalsSummary?: string;
+    regime?: string;
+    regimeReason?: string;
+    routerStrategy?: string;
+  }) {
+    const buyCtx: SimpleTradeBuyContext = {
+      env: environment.envTag,
+      exchange: ctx.exchange as ExchangeName,
+      pair: ctx.pair,
+      price: ctx.price,
+      amount: ctx.amount,
+      total: ctx.total,
+      orderId: ctx.orderId,
+      lotId: ctx.lotId,
+      mode: ctx.mode,
+      timestamp: new Date(),
+      signalsSummary: ctx.signalsSummary,
+      regime: ctx.regime,
+      regimeReason: ctx.regimeReason,
+      routerStrategy: ctx.routerStrategy,
+      status: ctx.status,
+      errorMessage: ctx.errorMessage,
+    };
+    const message = buildTradeBuyHTMLNew(buyCtx);
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
+  /**
+   * Send visual SELL notification with real P&L (including fees)
+   */
+  async sendSellAlert(ctx: {
+    pair: string;
+    exchange: string;
+    price: string;
+    amount: string;
+    total: string;
+    orderId: string;
+    lotId?: string;
+    mode: string;
+    exitType: string;
+    status: TradeStatus;
+    errorMessage?: string;
+    pnlUsd?: number | null;
+    pnlPct?: number | null;
+    feeUsd?: number;
+    netPnlUsd?: number;
+    openedAt?: string | Date;
+    holdDuration?: string;
+    trigger?: string;
+  }) {
+    const openedAtDate = ctx.openedAt ? (typeof ctx.openedAt === 'string' ? new Date(ctx.openedAt) : ctx.openedAt) : null;
+    const sellCtx: SimpleTradeSellContext = {
+      env: environment.envTag,
+      exchange: ctx.exchange as ExchangeName,
+      pair: ctx.pair,
+      price: ctx.price,
+      amount: ctx.amount,
+      total: ctx.total,
+      orderId: ctx.orderId,
+      lotId: ctx.lotId,
+      mode: ctx.mode,
+      exitType: ctx.exitType,
+      timestamp: new Date(),
+      pnlUsd: ctx.pnlUsd ?? null,
+      pnlPct: ctx.pnlPct ?? null,
+      feeUsd: ctx.feeUsd ?? null,
+      openedAt: openedAtDate,
+      holdDuration: ctx.holdDuration,
+      trigger: ctx.trigger,
+      status: ctx.status,
+      errorMessage: ctx.errorMessage,
+      netPnlUsd: ctx.netPnlUsd,
+    };
+    const message = buildTradeSellHTMLNew(sellCtx);
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
+  /**
+   * Send pending order notification (order sent, waiting confirmation)
+   */
+  async sendOrderPending(type: "BUY" | "SELL", pair: string, exchange: string, amount: string, price: string, orderId: string) {
+    const message = buildTradePendingHTML(type, pair, exchange, amount, price, orderId);
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
+  async sendAlert(title: string, description: string, meta?: Record<string, unknown>) {
     // Check cooldown for errors
     const cooldownCheck = await this.checkCooldown("errors");
     if (!cooldownCheck.allowed) {
@@ -2411,14 +2518,33 @@ _KrakenBot.AI - Trading Autónomo_
       return;
     }
     
-    const message = `
-⚠️ *${title}*
+    // Use new visual error template
+    const message = buildErrorAlertHTMLSimple(title, description, meta);
 
-${description}
+    await this.sendAlertToMultipleChats(message, "errors");
+    this.markEventSent("errors");
+  }
 
-_KrakenBot.AI - Sistema de Alertas_
-    `.trim();
+  /**
+   * Send a detailed error alert with severity and context
+   */
+  async sendErrorAlert(ctx: ErrorAlertContext) {
+    const cooldownCheck = await this.checkCooldown("errors");
+    if (!cooldownCheck.allowed) {
+      console.log(`[telegram] Error alert cooldown active (${cooldownCheck.remaining}s remaining): ${ctx.errorType}`);
+      return;
+    }
+    
+    const message = buildErrorAlertHTML(ctx);
+    await this.sendAlertToMultipleChats(message, "errors");
+    this.markEventSent("errors");
+  }
 
+  /**
+   * Send a critical error alert (always sent, bypasses cooldown)
+   */
+  async sendCriticalError(ctx: Omit<ErrorAlertContext, 'severity'>) {
+    const message = buildErrorAlertHTML({ ...ctx, severity: "CRITICAL" });
     await this.sendAlertToMultipleChats(message, "errors");
     this.markEventSent("errors");
   }

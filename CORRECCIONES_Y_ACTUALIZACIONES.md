@@ -111,6 +111,127 @@ ON open_positions(venue_order_id) WHERE venue_order_id IS NOT NULL;
 
 ---
 
+## 2026-01-25 13:20 — Mejora Visual de Alertas Telegram (Compras/Ventas/Errores)
+
+### Objetivo
+Mejorar el formato visual de las alertas de Telegram para que sean más claras y atractivas, con estados de proceso y P&L real.
+
+### Cambios Implementados
+
+#### 1️⃣ Alertas de Error con Severidad Visual
+- **ERROR CRITICAL** 🔴 - Errores graves que requieren atención inmediata
+- **ERROR MEDIUM** 🟡 - Errores moderados
+- **ERROR LOW** 🟢 - Advertencias menores
+
+Formato nuevo:
+```
+🔴 ERROR CRITICAL 🔴
+━━━━━━━━━━━━━━━━━━━
+🏷️ Tipo: TRADING_ERROR
+📊 Par: ETH/USD
+🏦 Exchange: RevolutX
+🕐 Hora: 25/01/2026, 13:15:00
+📁 Archivo: tradingEngine.ts
+🔧 Función: executeTrade
+📍 Línea: 1234
+
+❌ Error al ejecutar orden de compra
+
+📋 Contexto:
+   • orderId: abc123...
+   • reason: Insufficient funds
+━━━━━━━━━━━━━━━━━━━
+```
+
+#### 2️⃣ Alertas de COMPRA con Estados
+- **🟡 COMPRA ENVIADA** - Orden enviada, esperando confirmación
+- **🟢 COMPRA REALIZADA** - Orden ejecutada exitosamente
+- **🔴 COMPRA FALLIDA** - Error en la ejecución
+
+Formato nuevo:
+```
+🟢🟢🟢 COMPRA REALIZADA 🟢🟢🟢
+━━━━━━━━━━━━━━━━━━━
+✅ XRP/USD
+
+🏦 Exchange: RevolutX
+💵 Precio: $3.15
+📦 Cantidad: 109.58
+💰 Total invertido: $345.19
+
+📊 Indicadores:
+EMA10>EMA20 ✓, MACD+ ✓
+
+🧭 Régimen: TREND
+   ↳ Tendencia alcista
+
+⚙️ Modo: SMART_GUARD
+🔗 OrderID: 177b3f2a...
+🎫 LotID: engine-17691...
+━━━━━━━━━━━━━━━━━━━
+🕐 25/01/2026, 13:15:00
+```
+
+#### 3️⃣ Alertas de VENTA con P&L Real (incluyendo fees)
+- **🟠 VENTA ENVIADA** - Orden enviada
+- **🔴 VENTA REALIZADA** - Con resultado real
+- **⚫ VENTA FALLIDA** - Error
+
+Formato nuevo con P&L NETO:
+```
+🔴🔴🔴 VENTA REALIZADA 🔴🔴🔴
+━━━━━━━━━━━━━━━━━━━
+💰 ETH/USD
+
+🏦 Exchange: RevolutX
+💵 Precio venta: $3350.00
+📦 Cantidad: 0.175
+💰 Total recibido: $586.25
+⏱️ Duración: 1d 2h 15m
+
+━━━━━━━━━━━━━━━━━━━
+🎉 RESULTADO REAL 🎉
+
+📈 Beneficio/Pérdida NETO:
+   💵 +$21.94 (+3.89%)
+
+📊 Desglose:
+   • P&L Bruto: +$23.11
+   • Fees pagados: -$1.17
+   • NETO: +$21.94
+━━━━━━━━━━━━━━━━━━━
+
+🛡️ Tipo salida: TRAILING_STOP
+⚡ Trigger: Trail activado en $3380
+
+⚙️ Modo: SMART_GUARD
+🔗 OrderID: 288c4g3b...
+━━━━━━━━━━━━━━━━━━━
+🕐 25/01/2026, 13:30:00
+```
+
+### Archivos Modificados
+- `server/services/telegram/templates.ts` - Nuevos templates visuales
+- `server/services/telegram.ts` - Nuevos métodos de envío
+
+### Nuevos Métodos en TelegramService
+```typescript
+// Errores con severidad
+sendErrorAlert(ctx: ErrorAlertContext)
+sendCriticalError(ctx: Omit<ErrorAlertContext, 'severity'>)
+
+// Compras visuales
+sendBuyAlert(ctx: { status: 'PENDING' | 'COMPLETED' | 'FAILED', ... })
+
+// Ventas con P&L real
+sendSellAlert(ctx: { pnlUsd, feeUsd, netPnlUsd, ... })
+
+// Orden pendiente
+sendOrderPending(type: 'BUY' | 'SELL', pair, exchange, amount, price, orderId)
+```
+
+---
+
 ## 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
 
 ### Objetivo

@@ -261,53 +261,143 @@ export function buildHeartbeatHTML(ctx: HeartbeatContext): string {
 }
 
 // ============================================================
-// TRADE BUY TEMPLATE
+// TRADE STATUS TYPE
 // ============================================================
-export function buildTradeBuyHTML(ctx: TradeBuyContext): string {
+export type TradeStatus = "PENDING" | "COMPLETED" | "FAILED";
+
+// ============================================================
+// SIMPLIFIED TRADE CONTEXT (for visual alerts without full Zod validation)
+// ============================================================
+export interface SimpleTradeBuyContext {
+  env: string;
+  exchange: ExchangeName;
+  pair: string;
+  price: string;
+  amount: string;
+  total: string;
+  orderId: string;
+  lotId?: string;
+  mode: string;
+  timestamp: Date;
+  signalsSummary?: string;
+  regime?: string;
+  regimeReason?: string;
+  routerStrategy?: string;
+  status?: TradeStatus;
+  errorMessage?: string;
+  // Optional fields from full context
+  reason?: string;
+  strategyLabel?: string;
+  confPct?: string;
+}
+
+export interface SimpleTradeSellContext {
+  env: string;
+  exchange: ExchangeName;
+  pair: string;
+  price: string;
+  amount: string;
+  total: string;
+  orderId: string;
+  lotId?: string;
+  mode: string;
+  exitType: string;
+  timestamp: Date;
+  pnlUsd: number | null;
+  pnlPct: number | null;
+  feeUsd?: number | null;
+  openedAt?: Date | null;
+  holdDuration?: string;
+  trigger?: string;
+  status?: TradeStatus;
+  errorMessage?: string;
+  netPnlUsd?: number;
+  // Optional fields from full context
+  reason?: string;
+  strategyLabel?: string;
+  confPct?: string;
+}
+
+// ============================================================
+// TRADE BUY TEMPLATE - VISUAL FORMAT
+// ============================================================
+export function buildTradeBuyHTML(ctx: SimpleTradeBuyContext): string {
+  const status = ctx.status || "COMPLETED";
+  
+  // Status-based styling
+  let statusEmoji: string;
+  let statusLabel: string;
+  let headerColor: string;
+  
+  switch (status) {
+    case "PENDING":
+      statusEmoji = "⏳";
+      statusLabel = "COMPRA EN PROCESO";
+      headerColor = "🟡";
+      break;
+    case "FAILED":
+      statusEmoji = "❌";
+      statusLabel = "COMPRA FALLIDA";
+      headerColor = "🔴";
+      break;
+    case "COMPLETED":
+    default:
+      statusEmoji = "✅";
+      statusLabel = "COMPRA REALIZADA";
+      headerColor = "🟢";
+      break;
+  }
+
   const lines: string[] = [
-    buildHeader(),
+    `${headerColor}${headerColor}${headerColor} <b>${statusLabel}</b> ${headerColor}${headerColor}${headerColor}`,
     `━━━━━━━━━━━━━━━━━━━`,
-    `🟢 <b>COMPRA ${escapeHtml(ctx.pair)}</b> 🟢`,
     ``,
-    `🏦 <b>Exchange:</b> <code>${ctx.exchange}</code>`,
-    `💵 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
-    `📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.amount)}</code>`,
-    `💰 <b>Total:</b> <code>$${escapeHtml(ctx.total)}</code>`,
+    `${statusEmoji} <b>${escapeHtml(ctx.pair)}</b>`,
     ``,
+    `🏦 Exchange: <code>${ctx.exchange}</code>`,
+    `💵 Precio: <code>$${escapeHtml(ctx.price)}</code>`,
+    `📦 Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
+    `💰 Total invertido: <code>$${escapeHtml(ctx.total)}</code>`,
   ];
 
-  if (ctx.signalsSummary) {
+  // Show error message if failed
+  if (status === "FAILED" && ctx.errorMessage) {
+    lines.push(``, `❌ <b>Error:</b> <code>${escapeHtml(ctx.errorMessage)}</code>`);
+  }
+
+  if (ctx.signalsSummary && status !== "FAILED") {
     lines.push(
+      ``,
       `📊 <b>Indicadores:</b>`,
-      `${escapeHtml(ctx.signalsSummary)}`,
-      ``
+      `${escapeHtml(ctx.signalsSummary)}`
     );
   }
 
-  if (ctx.regime) {
-    lines.push(`🧭 <b>Régimen:</b> <code>${escapeHtml(ctx.regime)}</code>`);
+  if (ctx.regime && status !== "FAILED") {
+    lines.push(``, `🧭 Régimen: <code>${escapeHtml(ctx.regime)}</code>`);
+    if (ctx.regimeReason) {
+      lines.push(`   ↳ <i>${escapeHtml(ctx.regimeReason)}</i>`);
+    }
   }
-  if (ctx.regimeReason) {
-    lines.push(`   ↳ ${escapeHtml(ctx.regimeReason)}`);
-  }
-  if (ctx.routerStrategy) {
-    lines.push(`🔀 <b>Estrategia Router:</b> <code>${escapeHtml(ctx.routerStrategy)}</code>`);
+
+  if (ctx.routerStrategy && status !== "FAILED") {
+    lines.push(`🔀 Estrategia: <code>${escapeHtml(ctx.routerStrategy)}</code>`);
   }
 
   lines.push(
     ``,
-    `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
-    `🔗 <b>OrderID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    `⚙️ Modo: <code>${escapeHtml(ctx.mode)}</code>`,
+    `🔗 OrderID: <code>${escapeHtml(ctx.orderId.substring(0, 12))}...</code>`,
   );
 
   if (ctx.lotId) {
-    lines.push(`🎫 <b>LotID:</b> <code>${escapeHtml(ctx.lotId)}</code>`);
+    lines.push(`🎫 LotID: <code>${escapeHtml(ctx.lotId.substring(0, 15))}...</code>`);
   }
 
   lines.push(
     ``,
-    `📅 ${formatSpanishDate(ctx.timestamp)}`,
     `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate(ctx.timestamp)}`,
     buildPanelFooter()
   );
 
@@ -315,52 +405,107 @@ export function buildTradeBuyHTML(ctx: TradeBuyContext): string {
 }
 
 // ============================================================
-// TRADE SELL TEMPLATE
+// TRADE SELL TEMPLATE - VISUAL FORMAT WITH REAL P&L
 // ============================================================
-export function buildTradeSellHTML(ctx: TradeSellContext): string {
-  const pnlSign = ctx.pnlUsd !== null && ctx.pnlUsd >= 0 ? "+" : "";
-  const pnlEmoji = ctx.pnlUsd !== null && ctx.pnlUsd >= 0 ? "📈" : "📉";
-  const pnlUsdTxt = ctx.pnlUsd === null ? "N/D" : `${pnlSign}$${ctx.pnlUsd.toFixed(2)}`;
-  const pnlPctTxt = ctx.pnlPct !== null ? `${pnlSign}${ctx.pnlPct.toFixed(2)}%` : "";
-  const feeTxt = ctx.feeUsd === null || ctx.feeUsd === undefined ? "N/D" : `$${ctx.feeUsd.toFixed(2)}`;
+export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
+  const status = ctx.status || "COMPLETED";
+  
+  // Calculate NET P&L (including fees)
+  const feeUsd = ctx.feeUsd || 0;
+  const grossPnl = ctx.pnlUsd || 0;
+  const netPnl = ctx.netPnlUsd !== undefined ? ctx.netPnlUsd : (grossPnl - feeUsd);
+  
+  // Status-based styling
+  let statusEmoji: string;
+  let statusLabel: string;
+  let headerColor: string;
+  
+  switch (status) {
+    case "PENDING":
+      statusEmoji = "⏳";
+      statusLabel = "VENTA EN PROCESO";
+      headerColor = "🟡";
+      break;
+    case "FAILED":
+      statusEmoji = "❌";
+      statusLabel = "VENTA FALLIDA";
+      headerColor = "⚫";
+      break;
+    case "COMPLETED":
+    default:
+      statusEmoji = netPnl >= 0 ? "💰" : "💸";
+      statusLabel = "VENTA REALIZADA";
+      headerColor = "🔴";
+      break;
+  }
+
+  // P&L formatting
+  const pnlSign = netPnl >= 0 ? "+" : "";
+  const pnlEmoji = netPnl >= 0 ? "📈" : "📉";
+  const resultEmoji = netPnl >= 0 ? "🎉" : "😔";
+  const pnlPctTxt = ctx.pnlPct !== null ? `${pnlSign}${ctx.pnlPct?.toFixed(2)}%` : "";
+  const feeTxt = feeUsd > 0 ? `$${feeUsd.toFixed(2)}` : "$0.00";
   const durationTxt = ctx.holdDuration || formatDuration(ctx.openedAt);
 
   const lines: string[] = [
-    buildHeader(),
+    `${headerColor}${headerColor}${headerColor} <b>${statusLabel}</b> ${headerColor}${headerColor}${headerColor}`,
     `━━━━━━━━━━━━━━━━━━━`,
-    `🔴 <b>VENTA ${escapeHtml(ctx.pair)}</b> 🔴`,
     ``,
-    `🏦 <b>Exchange:</b> <code>${ctx.exchange}</code>`,
-    `💵 <b>Precio:</b> <code>$${escapeHtml(ctx.price)}</code>`,
-    `📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.amount)}</code>`,
-    `💰 <b>Total:</b> <code>$${escapeHtml(ctx.total)}</code>`,
-    `⏱️ <b>Duración:</b> <code>${escapeHtml(durationTxt)}</code>`,
+    `${statusEmoji} <b>${escapeHtml(ctx.pair)}</b>`,
     ``,
-    `${pnlEmoji} <b>Resultado:</b>`,
-    `   • PnL: <code>${escapeHtml(pnlUsdTxt)}</code>${pnlPctTxt ? ` (<code>${escapeHtml(pnlPctTxt)}</code>)` : ""}`,
-    `   • Fee: <code>${escapeHtml(feeTxt)}</code>`,
-    ``,
-    `🛡️ <b>Tipo de salida:</b> <code>${escapeHtml(ctx.exitType)}</code>`,
+    `🏦 Exchange: <code>${ctx.exchange}</code>`,
+    `💵 Precio venta: <code>$${escapeHtml(ctx.price)}</code>`,
+    `📦 Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
+    `💰 Total recibido: <code>$${escapeHtml(ctx.total)}</code>`,
+    `⏱️ Duración: <code>${escapeHtml(durationTxt)}</code>`,
   ];
 
-  if (ctx.trigger) {
-    lines.push(`⚡ <b>Trigger:</b> <code>${escapeHtml(ctx.trigger)}</code>`);
+  // Show error message if failed
+  if (status === "FAILED" && ctx.errorMessage) {
+    lines.push(``, `❌ <b>Error:</b> <code>${escapeHtml(ctx.errorMessage)}</code>`);
+  }
+
+  // RESULTADO REAL (NET P&L) - Most important part!
+  if (status === "COMPLETED") {
+    lines.push(
+      ``,
+      `━━━━━━━━━━━━━━━━━━━`,
+      `${resultEmoji} <b>RESULTADO REAL</b> ${resultEmoji}`,
+      ``,
+      `${pnlEmoji} <b>Beneficio/Pérdida NETO:</b>`,
+      `   💵 <code>${pnlSign}$${netPnl.toFixed(2)}</code> ${pnlPctTxt ? `(${pnlPctTxt})` : ""}`,
+      ``,
+      `📊 <b>Desglose:</b>`,
+      `   • P&L Bruto: <code>${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(2)}</code>`,
+      `   • Fees pagados: <code>-${feeTxt}</code>`,
+      `   • <b>NETO:</b> <code>${pnlSign}$${netPnl.toFixed(2)}</code>`,
+      `━━━━━━━━━━━━━━━━━━━`,
+    );
   }
 
   lines.push(
     ``,
-    `⚙️ <b>Modo:</b> <code>${escapeHtml(ctx.mode)}</code>`,
-    `🔗 <b>OrderID:</b> <code>${escapeHtml(ctx.orderId)}</code>`,
+    `🛡️ Tipo salida: <code>${escapeHtml(ctx.exitType)}</code>`,
+  );
+
+  if (ctx.trigger) {
+    lines.push(`⚡ Trigger: <code>${escapeHtml(ctx.trigger)}</code>`);
+  }
+
+  lines.push(
+    ``,
+    `⚙️ Modo: <code>${escapeHtml(ctx.mode)}</code>`,
+    `🔗 OrderID: <code>${escapeHtml(ctx.orderId.substring(0, 12))}...</code>`,
   );
 
   if (ctx.lotId) {
-    lines.push(`🎫 <b>LotID:</b> <code>${escapeHtml(ctx.lotId)}</code>`);
+    lines.push(`🎫 LotID: <code>${escapeHtml(ctx.lotId.substring(0, 15))}...</code>`);
   }
 
   lines.push(
     ``,
-    `📅 ${formatSpanishDate(ctx.timestamp)}`,
     `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate(ctx.timestamp)}`,
     buildPanelFooter()
   );
 
@@ -457,31 +602,128 @@ export function buildEntryIntentHTML(ctx: EntryIntentContext): string {
 }
 
 // ============================================================
-// ERROR ALERT TEMPLATE
+// ERROR ALERT TEMPLATE - VISUAL FORMAT
 // ============================================================
-export function buildErrorAlertHTML(title: string, description: string, meta?: Record<string, unknown>): string {
+export type ErrorSeverity = "CRITICAL" | "MEDIUM" | "LOW";
+
+export interface ErrorAlertContext {
+  severity: ErrorSeverity;
+  errorType: string;
+  pair?: string;
+  exchange?: string;
+  file?: string;
+  function?: string;
+  line?: number;
+  message: string;
+  context?: Record<string, unknown>;
+  codeSnippet?: string;
+  timestamp?: Date | string;
+}
+
+function getSeverityEmoji(severity: ErrorSeverity): string {
+  switch (severity) {
+    case "CRITICAL": return "🔴";
+    case "MEDIUM": return "🟡";
+    case "LOW": return "🟢";
+  }
+}
+
+function getSeverityLabel(severity: ErrorSeverity): string {
+  switch (severity) {
+    case "CRITICAL": return "ERROR CRITICAL";
+    case "MEDIUM": return "ERROR MEDIUM";
+    case "LOW": return "ERROR LOW";
+  }
+}
+
+export function buildErrorAlertHTML(ctx: ErrorAlertContext): string {
+  const emoji = getSeverityEmoji(ctx.severity);
+  const label = getSeverityLabel(ctx.severity);
+  
   const lines: string[] = [
-    buildHeader(),
+    `${emoji} <b>${label}</b> ${emoji}`,
     `━━━━━━━━━━━━━━━━━━━`,
-    `⚠️ <b>${escapeHtml(title)}</b>`,
-    ``,
-    `${escapeHtml(description)}`,
   ];
 
-  if (meta && Object.keys(meta).length > 0) {
-    lines.push(``, `<b>Detalles:</b>`);
-    for (const [key, value] of Object.entries(meta).slice(0, 5)) {
-      lines.push(`   • ${escapeHtml(key)}: <code>${escapeHtml(String(value))}</code>`);
+  // Error type and location
+  lines.push(`🏷️ Tipo: <code>${escapeHtml(ctx.errorType)}</code>`);
+  
+  if (ctx.pair) {
+    lines.push(`📊 Par: <code>${escapeHtml(ctx.pair)}</code>`);
+  }
+  if (ctx.exchange) {
+    lines.push(`🏦 Exchange: <code>${escapeHtml(ctx.exchange)}</code>`);
+  }
+  
+  lines.push(`🕐 Hora: <code>${formatSpanishDate(ctx.timestamp)}</code>`);
+  
+  if (ctx.file) {
+    lines.push(`📁 Archivo: <code>${escapeHtml(ctx.file)}</code>`);
+  }
+  if (ctx.function) {
+    lines.push(`🔧 Función: <code>${escapeHtml(ctx.function)}</code>`);
+  }
+  if (ctx.line) {
+    lines.push(`📍 Línea: <code>${ctx.line}</code>`);
+  }
+
+  // Error message
+  lines.push(``, `❌ ${escapeHtml(ctx.message)}`);
+
+  // Context details
+  if (ctx.context && Object.keys(ctx.context).length > 0) {
+    lines.push(``, `📋 <b>Contexto:</b>`);
+    for (const [key, value] of Object.entries(ctx.context).slice(0, 8)) {
+      const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      lines.push(`   • <b>${escapeHtml(key)}:</b> <code>${escapeHtml(valueStr.substring(0, 100))}</code>`);
     }
   }
 
-  lines.push(
-    ``,
-    `📅 ${formatSpanishDate()}`,
-    `━━━━━━━━━━━━━━━━━━━`,
-  );
+  // Code snippet if provided
+  if (ctx.codeSnippet) {
+    lines.push(``, `📝 <b>Código Implicado:</b>`);
+    lines.push(`<pre>${escapeHtml(ctx.codeSnippet.substring(0, 500))}</pre>`);
+  }
+
+  lines.push(`━━━━━━━━━━━━━━━━━━━`);
 
   return lines.join("\n");
+}
+
+// Legacy wrapper for backward compatibility
+export function buildErrorAlertHTMLSimple(title: string, description: string, meta?: Record<string, unknown>): string {
+  return buildErrorAlertHTML({
+    severity: "MEDIUM",
+    errorType: "SYSTEM_ERROR",
+    message: `${title}: ${description}`,
+    context: meta,
+    timestamp: new Date(),
+  });
+}
+
+// ============================================================
+// TRADE PENDING TEMPLATE (for order sent)
+// ============================================================
+export function buildTradePendingHTML(type: "BUY" | "SELL", pair: string, exchange: string, amount: string, price: string, orderId: string): string {
+  const emoji = type === "BUY" ? "🟡" : "🟠";
+  const label = type === "BUY" ? "COMPRA ENVIADA" : "VENTA ENVIADA";
+  
+  return [
+    `${emoji}${emoji}${emoji} <b>${label}</b> ${emoji}${emoji}${emoji}`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `⏳ <b>${escapeHtml(pair)}</b>`,
+    ``,
+    `🏦 Exchange: <code>${escapeHtml(exchange)}</code>`,
+    `💵 Precio: <code>$${escapeHtml(price)}</code>`,
+    `📦 Cantidad: <code>${escapeHtml(amount)}</code>`,
+    `🔗 OrderID: <code>${escapeHtml(orderId.substring(0, 12))}...</code>`,
+    ``,
+    `⏳ <i>Esperando confirmación del exchange...</i>`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
 }
 
 // ============================================================
@@ -502,4 +744,6 @@ export const telegramTemplates = {
   buildPositionsUpdateHTML,
   buildEntryIntentHTML,
   buildErrorAlertHTML,
+  buildErrorAlertHTMLSimple,
+  buildTradePendingHTML,
 };
