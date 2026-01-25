@@ -1286,6 +1286,80 @@ export class TradingEngine {
       }
     }
   }
+  
+  // Force Time-Stop alerts (ignoring previous notifications)
+  public async forceTimeStopAlerts(): Promise<void> {
+    if (!this.telegramService.isInitialized()) return;
+    
+    const exitConfig = {
+      takerFeePct: 0.40,
+      makerFeePct: 0.25,
+      profitBufferPct: 1.00,
+      timeStopHours: 36,
+      timeStopMode: "soft" as "soft" | "hard",
+    };
+    const now = Date.now();
+    
+    for (const [lotId, position] of this.openPositions) {
+      // Skip if Time-Stop is manually disabled
+      if (position.timeStopDisabled) continue;
+      
+      const ageMs = now - position.openedAt;
+      const ageHours = ageMs / (1000 * 60 * 60);
+      
+      // Check if Time-Stop is expired
+      if (ageHours >= exitConfig.timeStopHours) {
+        // Get current price using data exchange
+        const krakenPair = this.formatKrakenPair(position.pair);
+        const ticker = await this.getDataExchange().getTicker(krakenPair);
+        const currentPrice = Number((ticker as any)?.last ?? 0);
+        
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
+        
+        const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+        const minCloseNetPct = this.calculateMinCloseNetPct(exitConfig.takerFeePct, exitConfig.takerFeePct, exitConfig.profitBufferPct);
+        
+        // Send appropriate alert based on mode
+        if (exitConfig.timeStopMode === "hard") {
+          await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${position.pair}</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite configurado: <code>${exitConfig.timeStopHours} horas</code>
+
+📊 <b>Estado:</b>
+   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+
+⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
+━━━━━━━━━━━━━━━━━━━`, "trades");
+        } else {
+          const maxAbsoluteHours = exitConfig.timeStopHours * 1.5;
+          await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Posición en espera</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${position.pair}</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite configurado: <code>${exitConfig.timeStopHours} horas</code>
+   • Cierre forzado: <code>${maxAbsoluteHours.toFixed(0)} horas</code>
+
+📊 <b>Estado:</b>
+   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+   • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
+
+💡 La posición se cerrará cuando supere ${minCloseNetPct.toFixed(2)}% o al llegar a ${maxAbsoluteHours.toFixed(0)}h.
+⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
+━━━━━━━━━━━━━━━━━━━`, "trades");
+        }
+        
+        log(`[TIME_STOP_EXPIRED_FORCED] ${position.pair} (${lotId}): age=${ageHours.toFixed(1)}h mode=${exitConfig.timeStopMode} - Alert sent (forced)`, "trading");
+      }
+    }
+  }
 
   private getAvailableExposure(pair: string, config: any, freshUsdBalance?: number): { 
     maxPairAvailable: number; 

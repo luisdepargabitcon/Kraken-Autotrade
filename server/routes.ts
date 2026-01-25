@@ -4721,5 +4721,28 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // DEBUG: Forzar alertas de Time-Stop (incluso si ya fueron notificadas)
+  app.post("/api/debug/time-stop-alerts-force", async (req, res) => {
+    try {
+      if (!tradingEngine) {
+        return res.status(400).json({ error: "Trading engine not initialized" });
+      }
+      
+      console.log('[DEBUG] Forzando Time-Stop alerts (IGNORando notificaciones previas)...');
+      
+      // Forzar alertas ignorando si ya fueron notificadas
+      await (tradingEngine as any).forceTimeStopAlerts();
+      
+      res.json({ 
+        success: true, 
+        message: "Time-Stop alerts force sent (ignoring previous notifications)",
+        timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      console.error('[DEBUG] Error forcing Time-Stop alerts:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
