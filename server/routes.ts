@@ -4698,5 +4698,28 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // DEBUG: Forzar alertas de Time-Stop expiradas
+  app.post("/api/debug/time-stop-alerts", async (req, res) => {
+    try {
+      if (!tradingEngine) {
+        return res.status(400).json({ error: "Trading engine not initialized" });
+      }
+      
+      console.log('[DEBUG] Forzando Time-Stop alerts check...');
+      
+      // Forzar la verificación de posiciones expiradas
+      await (tradingEngine as any).checkExpiredTimeStopPositions();
+      
+      res.json({ 
+        success: true, 
+        message: "Time-Stop alerts check completed",
+        timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      console.error('[DEBUG] Error forcing Time-Stop alerts:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
