@@ -4730,12 +4730,13 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       console.log('[DEBUG] Forzando Time-Stop alerts (IGNORando notificaciones previas)...');
       
-      // Forzar alertas ignorando si ya fueron notificadas
-      await (tradingEngine as any).forceTimeStopAlerts();
+      // Forzar alertas ignorando si ya fueron notificadas - returns stats
+      const stats = await (tradingEngine as any).forceTimeStopAlerts();
       
       res.json({ 
         success: true, 
-        message: "Time-Stop alerts force sent (ignoring previous notifications)",
+        message: "Time-Stop alerts force completed",
+        stats,
         timestamp: new Date().toISOString()
       });
     } catch (error: any) {

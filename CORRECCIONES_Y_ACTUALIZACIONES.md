@@ -96,6 +96,89 @@ Añadir alertas Telegram cuando una posición alcanza el Time-Stop, tanto en mod
 
 ---
 
+## 2026-01-25 19:05 — MEJORA ROBUSTA: Refactorización del Sistema de Alertas Time-Stop
+
+### Problemas Identificados en Revisión
+1. **Configuración Hardcodeada**: Las funciones usaban valores fijos (36h, soft) en lugar de leer de BD
+2. **Código Duplicado**: Alertas Telegram repetidas en 3 lugares diferentes
+3. **Sin Manejo de Errores**: getTicker(), sendAlertToMultipleChats() y savePositionToDB() sin try/catch
+4. **Sin Estadísticas**: Endpoints no devolvían información útil sobre alertas enviadas
+
+### Solución Implementada
+
+#### 1. Helper para Construir Mensajes (`buildTimeStopAlertMessage`)
+```typescript
+private buildTimeStopAlertMessage(
+  pair: string,
+  ageHours: number,
+  timeStopHours: number,
+  timeStopMode: "soft" | "hard",
+  priceChange: number,
+  minCloseNetPct: number
+): string
+```
+- Centraliza la construcción de mensajes de alerta
+- Elimina duplicación de código
+- Facilita mantenimiento futuro
+
+#### 2. Helper para Enviar Alertas (`sendTimeStopAlert`)
+```typescript
+private async sendTimeStopAlert(
+  position: OpenPosition,
+  exitConfig: { takerFeePct; profitBufferPct; timeStopHours; timeStopMode }
+): Promise<{ success: boolean; error?: string }>
+```
+- Manejo de errores robusto con try/catch
+- Valida Telegram inicializado
+- Captura errores de getTicker() y sendAlertToMultipleChats()
+- Retorna resultado con error detallado si falla
+
+#### 3. Configuración Dinámica desde BD
+```typescript
+// ANTES (hardcodeado):
+const exitConfig = { timeStopHours: 36, timeStopMode: "soft" };
+
+// DESPUÉS (dinámico):
+const exitConfig = await this.getAdaptiveExitConfig();
+```
+- Usa `getAdaptiveExitConfig()` que lee de `bot_config` en BD
+- Respeta cambios de configuración sin necesidad de redeploy
+
+#### 4. Estadísticas de Ejecución
+```typescript
+// checkExpiredTimeStopPositions() retorna:
+{ checked: number; alerted: number; errors: number }
+
+// forceTimeStopAlerts() retorna:
+{ checked: number; alerted: number; errors: number; skipped: number }
+```
+- Endpoint `/api/debug/time-stop-alerts-force` devuelve estadísticas
+- Logging detallado de cada posición procesada
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts`:
+  - Líneas 1208-1252: `buildTimeStopAlertMessage()` helper
+  - Líneas 1254-1306: `sendTimeStopAlert()` helper con error handling
+  - Líneas 1308-1360: `checkExpiredTimeStopPositions()` refactorizado
+  - Líneas 1362-1409: `forceTimeStopAlerts()` refactorizado
+- `server/routes.ts`:
+  - Línea 4734: Endpoint devuelve estadísticas
+
+### Comportamiento Mejorado
+- ✅ Lee configuración real de BD (timeStopHours, timeStopMode)
+- ✅ Manejo de errores en cada paso (ticker, telegram, save)
+- ✅ Logging detallado para debugging
+- ✅ Estadísticas de alertas enviadas/fallidas/omitidas
+- ✅ Código centralizado y mantenible
+
+### Impacto
+- No hay cambios de comportamiento visible para el usuario
+- Mayor robustez ante errores de red o servicios externos
+- Facilita debugging con logs detallados
+- Prepara el sistema para futuras mejoras
+
+---
+
 ## 2026-01-25 16:48 — FIX CRÍTICO: Alertas Time-Stop no llegaban para posiciones ya expiradas
 
 ### Problema Reportado
