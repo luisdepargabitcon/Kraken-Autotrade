@@ -690,7 +690,7 @@ type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartb
 
 type AlertSubtype = 
   | "trade_buy" | "trade_sell" | "trade_breakeven" | "trade_trailing" 
-  | "trade_stoploss" | "trade_takeprofit" | "trade_daily_pnl"
+  | "trade_stoploss" | "trade_takeprofit" | "trade_timestop" | "trade_daily_pnl"
   | "strategy_regime_change" | "strategy_router_transition"
   | "system_bot_started" | "system_bot_paused"
   | "error_api" | "error_nonce"

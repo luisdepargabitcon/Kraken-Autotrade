@@ -21,6 +21,7 @@ interface AlertPreferences {
   trade_trailing?: boolean;
   trade_stoploss?: boolean;
   trade_takeprofit?: boolean;
+  trade_timestop?: boolean;
   trade_daily_pnl?: boolean;
   strategy_regime_change?: boolean;
   strategy_router_transition?: boolean;
@@ -67,7 +68,7 @@ export default function Notifications() {
   const [manualChatName, setManualChatName] = useState("");
   const [newAlertPreferences, setNewAlertPreferences] = useState<AlertPreferences>({
     trade_buy: true, trade_sell: true, trade_stoploss: true, trade_takeprofit: true,
-    trade_breakeven: true, trade_trailing: true, trade_daily_pnl: true,
+    trade_breakeven: true, trade_trailing: true, trade_timestop: true, trade_daily_pnl: true,
     strategy_regime_change: true, strategy_router_transition: true,
     system_bot_started: true, system_bot_paused: true,
     error_api: true, error_nonce: true,
@@ -90,6 +91,7 @@ export default function Notifications() {
         { key: "trade_takeprofit", label: "Take-Profit" },
         { key: "trade_breakeven", label: "Break-Even" },
         { key: "trade_trailing", label: "Trailing Stop" },
+        { key: "trade_timestop", label: "Time-Stop" },
         { key: "trade_daily_pnl", label: "Resumen diario P&L" },
       ],
     },
@@ -869,7 +871,7 @@ export default function Notifications() {
                 <div className="flex items-start gap-3">
                   <Check className="h-5 w-5 text-green-500 mt-0.5" />
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>Trades:</strong> Compras, ventas, SL, TP, BE, trailing, y resumen diario P&L</p>
+                    <p><strong>Trades:</strong> Compras, ventas, SL, TP, BE, trailing, Time-Stop y resumen diario P&L</p>
                     <p><strong>Errores:</strong> Fallos de API y errores de nonce</p>
                     <p><strong>Sistema:</strong> Bot iniciado/pausado</p>
                     <p><strong>Estrategia:</strong> Cambios de régimen y transiciones del router</p>

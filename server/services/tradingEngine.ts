@@ -633,10 +633,12 @@ export class TradingEngine {
     timeStopMode: "soft" | "hard";
   }> {
     const config = await storage.getBotConfig();
+    // Use fees from active trading exchange (Kraken 0.40%, Revolut 0.09%)
+    const exchangeFees = this.getTradingFees();
     return {
       enabled: config?.adaptiveExitEnabled ?? false,
-      takerFeePct: parseFloat(config?.takerFeePct?.toString() ?? "0.40"),
-      makerFeePct: parseFloat(config?.makerFeePct?.toString() ?? "0.25"),
+      takerFeePct: exchangeFees.takerFeePct,
+      makerFeePct: exchangeFees.makerFeePct,
       profitBufferPct: parseFloat(config?.profitBufferPct?.toString() ?? "1.00"),
       timeStopHours: config?.timeStopHours ?? 36,
       timeStopMode: (config?.timeStopMode as "soft" | "hard") ?? "soft",
@@ -741,9 +743,9 @@ export class TradingEngine {
     if (exitConfig.timeStopMode === "hard") {
       log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard FORCE_CLOSE`, "trading");
       
-      // Enviar alerta Telegram para modo HARD
+      // Enviar alerta Telegram para modo HARD (respeta preferencias trade_timestop)
       if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
 
@@ -756,7 +758,7 @@ export class TradingEngine {
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
 ⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
-━━━━━━━━━━━━━━━━━━━`, "trades");
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
       }
       
       return {
@@ -780,19 +782,8 @@ export class TradingEngine {
       };
     }
     
-    // SOFT MODE: Force close after 50% additional time (e.g., 48h soft -> 72h max)
-    // This prevents positions from staying open indefinitely when in loss
-    const maxAbsoluteHours = timeStopHours * 1.5;
-    if (ageHours >= maxAbsoluteHours) {
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft MAX_TIME_REACHED grossPnl=${priceChange.toFixed(2)} FORCE_CLOSE`, "trading");
-      return {
-        triggered: true,
-        expired: true,
-        shouldClose: true,
-        reason: `Time-stop máximo absoluto (${ageHours.toFixed(0)}h >= ${maxAbsoluteHours.toFixed(0)}h) - forzando cierre`,
-        ageHours,
-      };
-    }
+    // SOFT MODE: No force close - user closes manually when desired
+    // Only notifies and waits for profit or manual intervention
     
     const lastNotify = this.timeStopNotified.get(lotId) || 0;
     const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
@@ -802,26 +793,25 @@ export class TradingEngine {
       position.timeStopExpiredAt = now;
       this.openPositions.set(lotId, position);
       await this.savePositionToDB(pair, position);
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT (max: ${maxAbsoluteHours.toFixed(0)}h)`, "trading");
+      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT_OR_MANUAL`, "trading");
       
       if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Posición en espera</b>
+⏰ <b>Time-Stop Alcanzado</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
    • Límite configurado: <code>${timeStopHours} horas</code>
-   • Cierre forzado: <code>${maxAbsoluteHours.toFixed(0)} horas</code>
 
 📊 <b>Estado:</b>
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-   • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
+   • Mínimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
-💡 La posición se cerrará cuando supere ${minCloseNetPct.toFixed(2)}% o al llegar a ${maxAbsoluteHours.toFixed(0)}h.
+💡 Se cerrará automáticamente cuando supere +${minCloseNetPct.toFixed(2)}%
 ⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
-━━━━━━━━━━━━━━━━━━━`, "trades");
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
       }
     }
     
@@ -829,7 +819,7 @@ export class TradingEngine {
       triggered: true,
       expired: true,
       shouldClose: false,
-      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft BLOCKED_FEES (force at ${maxAbsoluteHours.toFixed(0)}h)`,
+      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft WAITING_PROFIT_OR_MANUAL`,
       ageHours,
     };
   }
@@ -1230,22 +1220,20 @@ export class TradingEngine {
 ⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
 ━━━━━━━━━━━━━━━━━━━`;
     } else {
-      const maxAbsoluteHours = timeStopHours * 1.5;
       return `🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Posición en espera</b>
+⏰ <b>Time-Stop Alcanzado</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
    • Límite configurado: <code>${timeStopHours} horas</code>
-   • Cierre forzado: <code>${maxAbsoluteHours.toFixed(0)} horas</code>
 
 📊 <b>Estado:</b>
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-   • Mínimo para cerrar: <code>+${minCloseNetPct.toFixed(2)}%</code>
+   • Mínimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
-💡 La posición se cerrará cuando supere ${minCloseNetPct.toFixed(2)}% o al llegar a ${maxAbsoluteHours.toFixed(0)}h.
+💡 Se cerrará automáticamente cuando supere +${minCloseNetPct.toFixed(2)}%
 ⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
 ━━━━━━━━━━━━━━━━━━━`;
     }
@@ -1293,7 +1281,7 @@ export class TradingEngine {
       );
 
       try {
-        await this.telegramService.sendAlertToMultipleChats(message, "trades");
+        await this.telegramService.sendAlertWithSubtype(message, "trades", "trade_timestop");
         return { success: true };
       } catch (telegramError: any) {
         log(`[TIME_STOP_ALERT] ${position.pair}: Error sending Telegram - ${telegramError.message}`, "trading");

@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-01-25 19:30 — CORRECCIÓN MÚLTIPLE: Time-Stop Robusto y Configurable
+
+### 4 Puntos Corregidos
+
+#### 1. SOFT Mode: Sin Cierre Forzado
+**Problema**: El modo SOFT cerraba posiciones automáticamente a las 150% del tiempo (ej: 54h si timeStop=36h).
+**Corrección**: Eliminado cierre forzado. Ahora SOFT solo cierra si hay profit suficiente o el usuario cierra manualmente.
+
+```typescript
+// ANTES: Cerraba automáticamente a 150% del tiempo
+const maxAbsoluteHours = timeStopHours * 1.5;
+if (ageHours >= maxAbsoluteHours) { shouldClose: true }
+
+// DESPUÉS: Solo espera profit o cierre manual
+// shouldClose: false hasta que priceChange >= minCloseNetPct
+```
+
+#### 2. TimeStopHours: Verificación
+**Hallazgo**: `timeStopHours` es global (no por activo), configurable en Settings.tsx y `bot_config`.
+- Default: 36h
+- Rango: 6-120h
+- Los 48h que viste eran probablemente un valor configurado anteriormente.
+
+#### 3. TakerFeePct: Usa Fee del Exchange Activo
+**Problema**: `getAdaptiveExitConfig()` usaba fee hardcodeado de BD (default 0.40%).
+**Corrección**: Ahora usa `getTradingFees()` que devuelve fee del exchange activo:
+- Kraken: 0.40%
+- Revolut: 0.09%
+
+```typescript
+// ANTES
+takerFeePct: parseFloat(config?.takerFeePct?.toString() ?? "0.40")
+
+// DESPUÉS
+const exchangeFees = this.getTradingFees();
+takerFeePct: exchangeFees.takerFeePct
+```
+
+#### 4. UI: Toggle de Alertas Time-Stop en Notificaciones
+**Nuevo**: Agregado toggle `trade_timestop` en la UI de Notificaciones.
+- Usuarios pueden activar/desactivar alertas Time-Stop por chat
+- Respeta preferencias usando `sendAlertWithSubtype(..., "trade_timestop")`
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts`:
+  - Eliminado bloque de cierre forzado a 150%
+  - `getAdaptiveExitConfig()` usa fees del exchange activo
+  - Alertas usan `sendAlertWithSubtype` con subtype `trade_timestop`
+- `server/services/telegram.ts`:
+  - Agregado `trade_timestop` al tipo `AlertSubtype`
+- `client/src/pages/Notifications.tsx`:
+  - Agregado toggle "Time-Stop" en categoría Trades
+
+### Comportamiento Final SOFT Mode
+1. Al llegar a `timeStopHours` → Alerta "Time-Stop Alcanzado"
+2. Espera profit suficiente (>= minCloseNetPct) → Cierra automáticamente
+3. Sin profit → **NO cierra** → Usuario puede cerrar manualmente
+4. **Sin cierre forzado a 150%**
+
+### Comportamiento Final HARD Mode
+1. Al llegar a `timeStopHours` → Alerta "Cierre Inmediato" + Cierra automáticamente
+
+---
+
 ## 2026-01-25 14:20 — FIX CRÍTICO: Exposición no contaba posiciones PENDING_FILL
 
 ### Problema Reportado
