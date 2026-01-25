@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-01-25 21:30 — FIX CRÍTICO: Time-Stop ahora funciona en SMART_GUARD
+
+### Problema Detectado
+El Time-Stop **NO SE EVALUABA** en posiciones SMART_GUARD porque `checkSmartGuardExit()` hacía `return` sin verificar el tiempo de vida de la posición.
+
+### Corrección
+Integrado Time-Stop al inicio de `checkSmartGuardExit()`:
+
+```typescript
+// Línea 2964-3051: Time-Stop check en SMART_GUARD
+if (!position.timeStopDisabled) {
+  if (ageHours >= timeStopHours) {
+    if (timeStopMode === "hard") {
+      // Cierre forzado (anula SmartGuard)
+      await executeTrade(...)
+      return;
+    } else {
+      // SOFT: Solo alerta, SmartGuard sigue gestionando
+      await sendAlertWithSubtype(..., "trade_timestop")
+      // Continúa con lógica de SmartGuard
+    }
+  }
+}
+```
+
+### Comportamiento Actual
+
+| Modo | Posición Normal | Posición SMART_GUARD |
+|------|-----------------|----------------------|
+| **SOFT** | Alerta + espera profit 1.8% | Alerta + **SmartGuard sigue gestionando** |
+| **HARD** | Alerta + cierre forzado | Alerta + **cierre forzado (anula SG)** |
+
+### Botón Desactivar Time-Stop
+- ✅ Endpoint `/api/positions/:lotId/time-stop` funciona
+- ✅ Frontend muestra icono Timer/TimerOff según estado
+- ✅ Campo `timeStopDisabled` en BD se respeta en ambos modos
+
+---
+
 ## 2026-01-25 19:30 — CORRECCIÓN MÚLTIPLE: Time-Stop Robusto y Configurable
 
 ### 4 Puntos Corregidos

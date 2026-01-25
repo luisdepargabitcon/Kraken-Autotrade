@@ -2959,6 +2959,97 @@ El bot ha pausado las operaciones de COMPRA.
   ) {
     const snapshot = position.configSnapshot!;
     const paramsSource = `SMART_GUARD snapshot`;
+    const lotId = position.lotId;
+    
+    // === TIME-STOP CHECK (también aplica a SMART_GUARD) ===
+    // El Time-Stop es una función de "tiempo máximo de vida" independiente de SmartGuard
+    if (!position.timeStopDisabled) {
+      const exitConfig = await this.getAdaptiveExitConfig();
+      const now = Date.now();
+      const ageMs = now - position.openedAt;
+      const ageHours = ageMs / (1000 * 60 * 60);
+      const timeStopHours = exitConfig.timeStopHours;
+      
+      if (ageHours >= timeStopHours) {
+        // TIME-STOP HARD: Cierre forzado (anula SmartGuard)
+        if (exitConfig.timeStopMode === "hard") {
+          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard SMART_GUARD FORCE_CLOSE`, "trading");
+          
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Time-Stop HARD - Cierre Forzado</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Modo: <code>SMART_GUARD</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite: <code>${timeStopHours} horas</code>
+
+📊 <b>Estado:</b>
+   • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+
+⚡ <b>ACCIÓN:</b> Cierre forzado por Time-Stop HARD
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+          }
+          
+          // Ejecutar cierre forzado
+          const minVolume = this.getOrderMin(pair);
+          if (position.amount >= minVolume) {
+            const freshBalances = await this.getTradingExchange().getBalance();
+            const realAssetBalance = this.getAssetBalance(pair, freshBalances);
+            const sellAmount = Math.min(position.amount, realAssetBalance);
+            
+            if (sellAmount >= minVolume) {
+              const sellContext = { 
+                entryPrice: position.entryPrice, 
+                entryFee: position.entryFee,
+                sellAmount: sellAmount,
+                positionAmount: position.amount,
+                aiSampleId: position.aiSampleId, 
+                openedAt: position.openedAt 
+              };
+              await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, 
+                `Time-Stop HARD (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [SMART_GUARD]`, 
+                undefined, undefined, undefined, sellContext);
+            }
+          }
+          return; // Sale después de cierre forzado
+        }
+        
+        // TIME-STOP SOFT: Solo alerta (SmartGuard sigue gestionando la posición)
+        const lastNotify = this.timeStopNotified.get(lotId) || 0;
+        const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
+        
+        if (shouldNotify && !position.timeStopExpiredAt) {
+          this.timeStopNotified.set(lotId, now);
+          position.timeStopExpiredAt = now;
+          this.openPositions.set(lotId, position);
+          await this.savePositionToDB(pair, position);
+          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft SMART_GUARD ALERT_ONLY`, "trading");
+          
+          if (this.telegramService.isInitialized()) {
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏰ <b>Time-Stop Alcanzado (SMART_GUARD)</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Modo: <code>SMART_GUARD</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   • Límite: <code>${timeStopHours} horas</code>
+
+📊 <b>Estado:</b>
+   • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+
+💡 <b>SmartGuard sigue gestionando la posición</b>
+⚠️ Puedes cerrarla manualmente si lo prefieres
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+          }
+        }
+        // En SOFT mode, continúa con la lógica de SmartGuard
+      }
+    }
     
     // Get snapshot params with defaults
     const beAtPct = snapshot.sgBeAtPct ?? 1.5;
@@ -3152,8 +3243,6 @@ El bot ha pausado las operaciones de COMPRA.
         }
       }
     }
-    
-    const lotId = position.lotId;
     
     // Save position changes
     if (positionModified && !shouldSellFull && !shouldScaleOut) {
