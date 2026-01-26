@@ -571,6 +571,23 @@ export class RevolutXService implements IExchangeService {
         console.log(`[revolutx] Executed price derived from value/size: ${executedPrice}`);
       }
 
+      // If state=filled but no price, fetch order details to get execution price
+      if ((!Number.isFinite(executedPrice) || executedPrice <= 0) && exchangeOrderId && orderData.state === 'filled') {
+        console.log(`[revolutx] Order state=filled but no price in response. Fetching order details...`);
+        try {
+          const orderDetails = await this.getOrder(exchangeOrderId);
+          if (orderDetails && orderDetails.averagePrice && orderDetails.averagePrice > 0) {
+            executedPrice = orderDetails.averagePrice;
+            console.log(`[revolutx] Got executed price from getOrder: ${executedPrice}`);
+          } else if (orderDetails && orderDetails.executedValue && orderDetails.filledSize && orderDetails.filledSize > 0) {
+            executedPrice = orderDetails.executedValue / orderDetails.filledSize;
+            console.log(`[revolutx] Derived executed price from getOrder: ${executedPrice}`);
+          }
+        } catch (fetchErr: any) {
+          console.warn(`[revolutx] Failed to fetch order details for price: ${fetchErr.message}`);
+        }
+      }
+
       // If order was ACCEPTED by exchange but price couldn't be determined,
       // return success with pendingFill flag so the engine can reconcile using fills.
       if (!Number.isFinite(executedPrice) || executedPrice <= 0) {
