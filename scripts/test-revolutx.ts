@@ -7,30 +7,38 @@ if (!process.env.DATABASE_URL) {
 async function testRevolutX() {
   console.log('=== TEST REVOLUT X API ===\n');
 
+  // Load RevolutX credentials from database like the main bot does
+  const { storage } = await import('../server/storage');
   const { revolutXService } = await import('../server/services/exchanges/RevolutXService');
   
-  const apiKey = process.env.REVOLUTX_API_KEY;
-  const privateKey = process.env.REVOLUTX_PRIVATE_KEY;
-  
-  if (!apiKey || !privateKey) {
-    console.error('ERROR: Faltan credenciales REVOLUTX_API_KEY o REVOLUTX_PRIVATE_KEY');
-    process.exit(1);
-  }
-  
-  console.log('API Key:', apiKey.substring(0, 10) + '...');
-  console.log('Private Key present:', privateKey.length > 0 ? 'YES' : 'NO');
-  console.log('Private Key starts with:', privateKey.substring(0, 30));
-  console.log('');
-  
   try {
-    revolutXService.initialize({
-      apiKey,
-      apiSecret: '',
-      privateKey
-    });
-    console.log('[OK] RevolutXService inicializado\n');
+    const apiConfig = await storage.getApiConfig();
+    if (!apiConfig?.revolutxApiKey || !apiConfig?.revolutxPrivateKey) {
+      console.error('ERROR: RevolutX credentials not found in database');
+      process.exit(1);
+    }
+    
+    const apiKey = apiConfig.revolutxApiKey;
+    const privateKey = apiConfig.revolutxPrivateKey;
+    
+    console.log('API Key:', apiKey.substring(0, 10) + '...');
+    console.log('Private Key present:', privateKey.length > 0 ? 'YES' : 'NO');
+    console.log('Private Key starts with:', privateKey.substring(0, 30));
+    console.log('');
+    
+    try {
+      revolutXService.initialize({
+        apiKey,
+        apiSecret: '',
+        privateKey
+      });
+      console.log('[OK] RevolutXService inicializado\n');
+    } catch (err: any) {
+      console.error('[ERROR] Al inicializar:', err.message);
+      process.exit(1);
+    }
   } catch (err: any) {
-    console.error('[ERROR] Al inicializar:', err.message);
+    console.error('[ERROR] loading credentials from database:', err.message);
     process.exit(1);
   }
   
