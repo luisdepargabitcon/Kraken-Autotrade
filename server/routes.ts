@@ -1832,6 +1832,19 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           error: order.error || "Trade failed" 
         });
       }
+
+      // If RevolutX accepted the order but price is not yet available, do NOT fail.
+      // Return pendingFill so caller can reconcile via FillWatcher/sync.
+      if ((order as any)?.pendingFill === true) {
+        return res.status(202).json({
+          success: true,
+          pendingFill: true,
+          orderId: (order as any)?.orderId,
+          clientOrderId: (order as any)?.clientOrderId,
+          message: 'Order accepted by RevolutX but execution price not yet available. Reconcile via fills/getOrder.',
+          order,
+        });
+      }
       
       // Guardar en base de datos usando el ID de RevolutX
       const tradeId = order.orderId || `RX-${Date.now()}`;

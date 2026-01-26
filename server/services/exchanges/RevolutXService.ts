@@ -753,20 +753,23 @@ export class RevolutXService implements IExchangeService {
       const data = await response.json() as any;
       console.log(`[revolutx] getOrder response:`, JSON.stringify(data, null, 2));
 
-      const filledSize = parseFloat(data.filled_size || data.executed_size || '0');
-      const executedValue = parseFloat(data.executed_value || data.filled_value || '0');
+      // RevolutX may wrap response in { data: { ... } }
+      const orderData = data?.data || data;
+
+      const filledSize = parseFloat(orderData.filled_size || orderData.executed_size || '0');
+      const executedValue = parseFloat(orderData.executed_value || orderData.filled_value || '0');
       const averagePrice = filledSize > 0 && executedValue > 0 ? executedValue / filledSize : 0;
 
       return {
-        id: data.id || data.order_id || orderId,
-        clientOrderId: data.client_order_id,
-        symbol: data.symbol || '',
-        side: data.side || '',
-        status: data.status || 'UNKNOWN',
+        id: orderData.venue_order_id || orderData.id || orderData.order_id || orderId,
+        clientOrderId: orderData.client_order_id,
+        symbol: orderData.symbol || '',
+        side: orderData.side || '',
+        status: orderData.status || orderData.state || 'UNKNOWN',
         filledSize,
         executedValue,
         averagePrice,
-        createdAt: data.created_at ? new Date(data.created_at) : undefined,
+        createdAt: orderData.created_at ? new Date(orderData.created_at) : undefined,
       };
     } catch (error: any) {
       console.error(`[revolutx] getOrder exception:`, error.message);
