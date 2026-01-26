@@ -97,6 +97,56 @@ Agregado tipo de evento `ORDER_FILLED_LATE` para rastrear fills detectados despu
 
 ---
 
+## 2026-01-26 21:15 — FIX DEFINITIVO: PENDING_FILL se quedaba colgado aunque RevolutX ya estaba FILLED (tras restart)
+
+### Problema Detectado
+**Síntoma:** En UI quedaba una posición `PENDING_FILL` con `Cantidad=0` y `Precio Entrada=$0`, pero en RevolutX la compra estaba **Ejecutada** (FILLED) al instante.
+
+**Caso real (TON/USD):**
+- RevolutX `GET /api/1.0/orders/{id}` devolvía:
+  - `filled_quantity > 0`
+  - `average_fill_price > 0`
+  - `status = filled`
+
+### Causas Raíz
+1. **Parsing incompleto en `getOrder()`**: RevolutX devuelve `average_fill_price`, pero el parser solo contemplaba `average_price/avg_price`, resultando en `averagePrice=0` aunque la orden estuviera llena.
+2. **Watcher perdido tras reinicio**: `FillWatcher` corre en memoria. Si el contenedor se reinicia, una posición `PENDING_FILL` existente en BD puede quedarse “huérfana” si no se relanza el watcher.
+
+### Correcciones Implementadas
+
+#### 1) `RevolutXService.getOrder()` ahora parsea `average_fill_price`
+- Se agregaron aliases `average_fill_price` / `avg_fill_price` para poblar `averagePrice`.
+- Se añadió parsing de `created_date` (epoch ms) para `createdAt`.
+
+**Commit:** `455f1ac` (RevolutX getOrder parse average_fill_price)
+
+#### 2) Recovery automático en startup: relanzar FillWatcher para PENDING_FILL
+- Al iniciar el engine:
+  - `storage.getPendingFillPositions(exchange)`
+  - `startFillWatcher()` por cada posición, usando `venueOrderId`.
+  - Rehidrata `pendingFillExposure` (para SmartGuard) y la limpia al abrir/timeout.
+
+**Commit:** `2b4693a` (Recover PENDING_FILL positions on startup)
+
+#### 3) (Complementario) Error claro en compras manuales cuando no hay USD
+- `manualBuyForTest()` valida balance del quote (USD) antes de enviar orden y devuelve error claro (disponible vs requerido con buffer).
+
+**Commit:** `9e01b4d`
+
+### Verificación (Evidencia)
+- Logs:
+  - `[PENDING_FILL_RECOVERY] Restarting FillWatcher for TON/USD ...`
+  - `[FillWatcher] Found fill via getOrder: 0.98749 @ 1.5258`
+  - `[storage] Updated position TON/USD with fill ... avgPrice=1.52580000`
+- BD (`open_positions.id=28`): `status=OPEN`, `total_amount_base=0.98749000`, `average_entry_price=1.52580000`.
+
+### Impacto
+- ✅ PENDING_FILL ya no queda colgado tras reinicios
+- ✅ Si RevolutX devuelve `average_fill_price`, se abre la posición con precio real
+- ✅ Reduce falsos FAILED por timeouts y elimina “0 @ $0”
+
+---
+
 ## 2026-01-25 21:30 — FIX CRÍTICO: Time-Stop ahora funciona en SMART_GUARD
 
 ### Problema Detectado
