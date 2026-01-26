@@ -1848,16 +1848,27 @@ export class DatabaseStorage implements IStorage {
 
   /**
    * Mark position as FAILED (e.g., order rejected, timeout with no fills)
+   * IDEMPOTENT: Only updates if status is still PENDING_FILL (avoids race with late fills)
    */
   async markPositionFailed(clientOrderId: string, reason?: string): Promise<void> {
-    await db.update(openPositionsTable)
+    // CRITICAL: Only mark as FAILED if still PENDING_FILL - avoids overwriting OPEN positions
+    const result = await db.update(openPositionsTable)
       .set({
         status: 'FAILED',
         signalReason: reason ? `FAILED: ${reason}` : 'FAILED',
         updatedAt: new Date(),
       })
-      .where(eq(openPositionsTable.clientOrderId, clientOrderId));
-    console.log(`[storage] Marked position FAILED: ${clientOrderId} - ${reason}`);
+      .where(and(
+        eq(openPositionsTable.clientOrderId, clientOrderId),
+        eq(openPositionsTable.status, 'PENDING_FILL') // IDEMPOTENT: Only if still pending
+      ))
+      .returning();
+    
+    if (result.length > 0) {
+      console.log(`[storage] Marked position FAILED: ${clientOrderId} - ${reason}`);
+    } else {
+      console.log(`[storage] markPositionFailed skipped (not PENDING_FILL or not found): ${clientOrderId}`);
+    }
   }
 
   /**

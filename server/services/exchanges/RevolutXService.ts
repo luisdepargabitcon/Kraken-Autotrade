@@ -25,6 +25,61 @@ export class RevolutXService implements IExchangeService {
 
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
 
+  private async signedGetJson<T>(path: string, params?: Record<string, string | number | undefined>, orderedKeys?: string[]): Promise<T> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    const queryString = params && orderedKeys ? this.buildQueryString(params, orderedKeys) : '';
+    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
+    const headers = this.getHeaders('GET', path, queryString, '');
+
+    try {
+      const response = await fetch(fullUrl, { headers });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+      }
+      return (await response.json()) as T;
+    } catch (error: any) {
+      console.error('[revolutx] signedGetJson error:', { path, error: error.message });
+      throw error;
+    }
+  }
+
+  private parseNumeric(val: any): number {
+    if (val === null || val === undefined) return NaN;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') return parseFloat(val);
+    return NaN;
+  }
+
+  private parseOrderBookTopLevels(data: any): { bestBid?: number; bestAsk?: number } {
+    const bids = data?.bids || data?.bid || data?.buy || data?.buys || [];
+    const asks = data?.asks || data?.ask || data?.sell || data?.sells || [];
+
+    const extractPrice = (lvl: any): number => {
+      if (Array.isArray(lvl)) return this.parseNumeric(lvl[0]);
+      return this.parseNumeric(lvl?.price ?? lvl?.p ?? lvl?.px ?? lvl?.rate ?? lvl?.value);
+    };
+
+    const bestBid = Array.isArray(bids) && bids.length > 0 ? extractPrice(bids[0]) : NaN;
+    const bestAsk = Array.isArray(asks) && asks.length > 0 ? extractPrice(asks[0]) : NaN;
+
+    return {
+      bestBid: Number.isFinite(bestBid) && bestBid > 0 ? bestBid : undefined,
+      bestAsk: Number.isFinite(bestAsk) && bestAsk > 0 ? bestAsk : undefined,
+    };
+  }
+
+  private parseLastTradePrice(data: any): number | undefined {
+    const records = Array.isArray(data) ? data : (data?.data || data?.trades || data?.items || []);
+    if (!Array.isArray(records) || records.length === 0) return undefined;
+
+    const first = records[0];
+    const price = this.parseNumeric(first?.price ?? first?.p ?? first?.px ?? first?.rate);
+    if (Number.isFinite(price) && price > 0) return price;
+    return undefined;
+  }
+
   private constructor() {}
 
   private generateClientOrderId(): string {
@@ -284,10 +339,63 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getTicker(pair: string): Promise<Ticker> {
-    // RevolutX NO tiene endpoint público de ticker ni orderbook
-    // El endpoint /api/1.0/orderbook NO EXISTE (404)
-    // Usar último trade del historial como fallback
-    throw new Error(`RevolutX ticker not available - use Kraken for price data. Pair: ${pair}`);
+    const symbol = this.formatPair(pair);
+
+    // Prefer order book to derive bid/ask + mid.
+    // NOTE: Even though docs label some endpoints as "public", Revolut X REST authentication is generally required.
+    const orderBookPaths = [
+      `/api/1.0/order-book/${symbol}`,
+      `/api/1.0/order_book/${symbol}`,
+      `/api/1.0/orderbook/${symbol}`,
+    ];
+
+    let bestBid: number | undefined;
+    let bestAsk: number | undefined;
+
+    let lastError: any;
+    for (const path of orderBookPaths) {
+      try {
+        const ob = await this.signedGetJson<any>(path);
+        const top = this.parseOrderBookTopLevels(ob);
+        if (top.bestBid || top.bestAsk) {
+          bestBid = top.bestBid;
+          bestAsk = top.bestAsk;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+
+    // Last trades as a fallback for `last`
+    const tradePaths = [
+      `/api/1.0/trades/${symbol}`,
+      `/api/1.0/trades/public/${symbol}`,
+      `/api/1.0/trades/public/${symbol}/last`,
+    ];
+
+    let last: number | undefined;
+    for (const path of tradePaths) {
+      try {
+        const trades = await this.signedGetJson<any>(path);
+        last = this.parseLastTradePrice(trades);
+        if (last) break;
+      } catch {
+        // ignore
+      }
+    }
+
+    const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : undefined;
+    const inferred = mid ?? last;
+    if (!inferred) {
+      throw new Error(`RevolutX ticker unavailable for ${pair}${lastError ? `: ${lastError.message}` : ''}`);
+    }
+
+    return {
+      bid: bestBid ?? inferred,
+      ask: bestAsk ?? inferred,
+      last: last ?? inferred,
+    };
   }
 
   private async getTickerFromOrderbook(pair: string): Promise<Ticker> {
@@ -297,7 +405,63 @@ export class RevolutXService implements IExchangeService {
   }
 
   async getOHLC(pair: string, interval: number = 5): Promise<OHLC[]> {
-    console.log(`[revolutx] getOHLC called for ${pair} - Revolut X REST API does not provide OHLC data`);
+    const symbol = this.formatPair(pair);
+
+    const candidates = [
+      `/api/1.0/candles/${symbol}`,
+      `/api/1.0/candles/${symbol}/history`,
+      `/api/1.0/market-data/candles/${symbol}`,
+    ];
+
+    let lastErr: any;
+    for (const path of candidates) {
+      try {
+        const data = await this.signedGetJson<any>(path, { interval }, ['interval']);
+
+        const rows = Array.isArray(data)
+          ? data
+          : (data?.data || data?.candles || data?.items || []);
+
+        if (!Array.isArray(rows)) return [];
+
+        const parsed: OHLC[] = [];
+        for (const r of rows) {
+          // Common shapes:
+          // - [time, open, high, low, close, volume]
+          // - { t, o, h, l, c, v }
+          // - { time/start, open, high, low, close, volume }
+          if (Array.isArray(r) && r.length >= 6) {
+            const t = this.parseNumeric(r[0]);
+            const o = this.parseNumeric(r[1]);
+            const h = this.parseNumeric(r[2]);
+            const l = this.parseNumeric(r[3]);
+            const c = this.parseNumeric(r[4]);
+            const v = this.parseNumeric(r[5]);
+            if ([t, o, h, l, c].every((x) => Number.isFinite(x))) {
+              parsed.push({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+            }
+            continue;
+          }
+
+          const t = this.parseNumeric(r?.time ?? r?.t ?? r?.start ?? r?.start_time ?? r?.ts);
+          const o = this.parseNumeric(r?.open ?? r?.o);
+          const h = this.parseNumeric(r?.high ?? r?.h);
+          const l = this.parseNumeric(r?.low ?? r?.l);
+          const c = this.parseNumeric(r?.close ?? r?.c);
+          const v = this.parseNumeric(r?.volume ?? r?.v);
+
+          if ([t, o, h, l, c].every((x) => Number.isFinite(x))) {
+            parsed.push({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+          }
+        }
+
+        return parsed;
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
+    console.warn(`[revolutx] getOHLC failed for ${pair}: ${lastErr?.message || 'unknown error'}`);
     return [];
   }
 
@@ -374,9 +538,20 @@ export class RevolutXService implements IExchangeService {
         };
       }
       
-      const resolvedOrderId = data.id || data.order_id || clientOrderId;
+      // CRITICAL: Extract the REAL exchange order ID - NEVER fall back to clientOrderId
+      // RevolutX returns the order ID in 'id' or 'order_id' field
+      const exchangeOrderId = data.id || data.order_id;
+      const resolvedOrderId = exchangeOrderId || clientOrderId; // Only for logging, NOT for venue_order_id
+      
+      // MANDATORY LOGGING: Track exactly what RevolutX returns
+      console.log(`[revolutx] placeOrder RESPONSE: { id: ${data.id}, order_id: ${data.order_id}, status: ${data.status}, clientOrderId: ${clientOrderId} }`);
       console.log('[revolutx] Order placed successfully:', resolvedOrderId);
       console.log('[revolutx] Order response data:', JSON.stringify(data, null, 2));
+      
+      // CRITICAL: If we don't have a real exchange order ID, this is a problem
+      if (!exchangeOrderId) {
+        console.error(`[revolutx] WARNING: No exchange order ID returned! data.id=${data.id}, data.order_id=${data.order_id}. FillWatcher will not be able to query order status.`);
+      }
       
       // For market orders, Revolut X may not return executed_price immediately
       // We need to fetch the current ticker price as a fallback
@@ -391,35 +566,19 @@ export class RevolutXService implements IExchangeService {
         executedPrice = executedValue / executedVolume;
         console.log(`[revolutx] Executed price derived from value/size: ${executedPrice}`);
       }
-      
-      if (executedPrice === 0 && params.ordertype === 'market') {
-        try {
-          const ticker = await this.getTicker(params.pair);
-          // For buy, use ask price; for sell, use bid price
-          executedPrice = params.type === 'buy' ? ticker.ask : ticker.bid;
-          console.log(`[revolutx] Market order price estimated from ticker: ${executedPrice}`);
-        } catch (tickerError) {
-          console.warn('[revolutx] Could not fetch ticker for price estimation, trying orderbook fallback');
-          try {
-            const ticker = await this.getTickerFromOrderbook(params.pair);
-            executedPrice = params.type === 'buy' ? ticker.ask : ticker.bid;
-            console.log(`[revolutx] Market order price estimated from orderbook: ${executedPrice}`);
-          } catch {
-            console.warn('[revolutx] Could not fetch orderbook for price estimation');
-          }
-        }
-      }
-      
-      // FIX: If order was ACCEPTED by exchange (we have order_id) but price couldn't be determined,
-      // this is NOT a failure. The order was submitted and likely filled.
-      // Return success with pendingFill flag so the engine can reconcile.
+
+      // If order was ACCEPTED by exchange but price couldn't be determined,
+      // return success with pendingFill flag so the engine can reconcile using fills.
       if (!Number.isFinite(executedPrice) || executedPrice <= 0) {
-        console.warn(`[revolutx] Order ${resolvedOrderId} SUBMITTED but executed price not available. Marking as pendingFill for reconciliation.`);
+        // CRITICAL: Use exchangeOrderId (real ID from RevolutX), NOT resolvedOrderId which may be clientOrderId
+        const venueOrderIdForFillWatcher = exchangeOrderId || resolvedOrderId;
+        console.warn(`[revolutx] Order SUBMITTED but executed price not available. Marking as pendingFill.`);
+        console.log(`[revolutx] PENDING_FILL IDs: exchangeOrderId=${exchangeOrderId}, venueOrderIdForFillWatcher=${venueOrderIdForFillWatcher}, clientOrderId=${clientOrderId}`);
         return {
           success: true,
           pendingFill: true,
-          orderId: resolvedOrderId,
-          txid: resolvedOrderId,
+          orderId: venueOrderIdForFillWatcher, // MUST be the real exchange order ID for FillWatcher
+          txid: venueOrderIdForFillWatcher,
           clientOrderId: clientOrderId,
           // price is undefined - must be resolved via reconcile
           volume: executedVolume,

@@ -6718,7 +6718,15 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // FIX: Handle pendingFill case (order submitted but price not immediately available)
       // This is NOT a failure - the order was accepted by the exchange
       if ((order as any)?.pendingFill === true) {
-        const pendingOrderId = (order as any)?.orderId || (order as any)?.txid || clientOrderId;
+        // CRITICAL: Extract the REAL exchange order ID - this is what FillWatcher needs to query getOrder()
+        const exchangeOrderId = (order as any)?.orderId || (order as any)?.txid;
+        const pendingOrderId = exchangeOrderId || clientOrderId; // Fallback only for logging
+        
+        // MANDATORY LOGGING: Track IDs for debugging PENDING_FILL → FAILED issues
+        log(`[ORDER_IDS] ${correlationId} | exchangeOrderId=${exchangeOrderId}, pendingOrderId=${pendingOrderId}, clientOrderId=${clientOrderId}`, "trading");
+        if (!exchangeOrderId) {
+          log(`[ORDER_ID_WARNING] ${correlationId} | No real exchange order ID returned! FillWatcher may fail to find fills.`, "trading");
+        }
         
         // Update order intent status to accepted (pending fill)
         try {
@@ -6760,12 +6768,14 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             const lotId = `engine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             
             // Create position in PENDING_FILL state
+            // CRITICAL: venueOrderId MUST be the real exchange order ID (not clientOrderId UUID)
+            const venueOrderIdToStore = exchangeOrderId || pendingOrderId;
             const pendingPosition = await storage.createPendingPosition({
               lotId,
               exchange,
               pair,
               clientOrderId,
-              venueOrderId: pendingOrderId, // CRITICAL: Persist exchange order ID for FillWatcher queries
+              venueOrderId: venueOrderIdToStore, // CRITICAL: Persist exchange order ID for FillWatcher queries
               expectedAmount: volume.toString(),
               entryMode: 'SMART_GUARD',
               configSnapshotJson: configSnapshot,
@@ -6773,7 +6783,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               signalReason: reason,
             });
             
-            log(`[POSITION_PENDING_FILL] ${correlationId} | Created PENDING_FILL position for ${pair} (lotId=${lotId})`, "trading");
+            // MANDATORY LOGGING: Track position creation with all IDs
+            log(`[POSITION_PENDING_FILL] ${correlationId} | Created PENDING_FILL position for ${pair} (lotId=${lotId}, clientOrderId=${clientOrderId}, venueOrderId=${venueOrderIdToStore})`, "trading");
             await botLogger.info("POSITION_PENDING_FILL", `Created PENDING_FILL position for ${pair}`, {
               correlationId,
               lotId,

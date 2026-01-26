@@ -4,6 +4,18 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { logStreamService } from "./services/logStreamService";
 import { log } from "./utils/logger";
+import fs from "fs";
+import path from "path";
+
+// BUILD STAMP: Log commit hash at startup for debugging
+const versionFile = path.join(process.cwd(), 'VERSION');
+let buildCommit = 'unknown';
+try {
+  if (fs.existsSync(versionFile)) {
+    buildCommit = fs.readFileSync(versionFile, 'utf-8').trim();
+  }
+} catch (e) { /* ignore */ }
+console.log(`[startup] BUILD_COMMIT: ${buildCommit}`);
 
 logStreamService.initialize();
 

@@ -102,6 +102,7 @@ export type EventType =
   | "LEGACY_POSITION_PURGED"
   // Instant Position events (FillWatcher)
   | "ORDER_FILLED"
+  | "ORDER_FILLED_LATE"
   | "FILL_WATCHER_STARTED"
   | "FILL_WATCHER_TIMEOUT"
   | "POSITION_PENDING_FILL"

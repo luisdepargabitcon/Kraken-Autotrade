@@ -4,6 +4,99 @@
 
 ---
 
+## 2026-01-26 15:30 — FIX CRÍTICO: Órdenes RevolutX Marcadas Como FAILED Incorrectamente
+
+### Problema Detectado
+**Síntoma:** Orden ejecutada exitosamente en RevolutX pero marcada como FAILED en el sistema. La alerta de Telegram muestra "La orden fue aceptada por revolutx" pero la posición termina en estado FAILED.
+
+**Causa Raíz:** 
+1. RevolutX acepta la orden pero no retorna precio inmediatamente (`pendingFill: true`)
+2. FillWatcher inicia polling cada 3s buscando fills
+3. `fetchFillsForOrder()` solo retorna fills si `averagePrice > 0`, ignorando órdenes con `filledSize > 0` pero precio pendiente
+4. Después de 2 minutos sin detectar fills, FillWatcher marca la posición como FAILED
+5. **El problema:** FillWatcher NO verificaba el estado real de la orden en el exchange antes de marcar como FAILED
+
+### Correcciones Implementadas
+
+#### 1. Verificación de Estado Real en Timeout (`FillWatcher.ts` líneas 93-188)
+
+**Antes:**
+```typescript
+if (elapsed > timeoutMs && totalFilledAmount === 0) {
+  await storage.markPositionFailed(clientOrderId, 'Timeout: No fills received');
+  return;
+}
+```
+
+**Después:**
+```typescript
+if (elapsed > timeoutMs && totalFilledAmount === 0 && exchangeOrderId) {
+  // CRITICAL FIX: Verificar estado real de la orden en el exchange
+  const order = await exchangeService.getOrder(exchangeOrderId);
+  if (order.status === 'FILLED' && order.filledSize > 0) {
+    // Orden fue FILLED - procesar fill tardío
+    let price = order.averagePrice || order.executedValue / order.filledSize;
+    // Crear fill sintético y actualizar posición
+    await storage.updatePositionWithFill(clientOrderId, {...});
+    await botLogger.info('ORDER_FILLED_LATE', ...);
+    return; // Éxito - NO marcar como FAILED
+  }
+  // Solo marcar FAILED si verificación confirma que no hay fills
+  await storage.markPositionFailed(clientOrderId, 'Timeout after verification');
+}
+```
+
+#### 2. Derivación de Precio en `fetchFillsForOrder()` (`FillWatcher.ts` líneas 325-352)
+
+**Antes:**
+```typescript
+if (order && order.filledSize > 0 && order.averagePrice > 0) {
+  return [fill]; // Solo si averagePrice está disponible
+}
+```
+
+**Después:**
+```typescript
+if (order && order.filledSize > 0) {
+  let price = order.averagePrice || 0;
+  if (price <= 0 && order.executedValue && order.filledSize > 0) {
+    price = order.executedValue / order.filledSize; // Derivar precio
+  }
+  if (price > 0) {
+    return [fill]; // Retornar fill con precio derivado
+  }
+}
+```
+
+#### 3. Nuevo Evento de Log (`botLogger.ts`)
+
+Agregado tipo de evento `ORDER_FILLED_LATE` para rastrear fills detectados después del timeout.
+
+### Flujo Corregido
+
+```
+1. RevolutX acepta orden → pendingFill: true
+2. Posición PENDING_FILL creada
+3. FillWatcher inicia polling
+4. Si timeout SIN fills detectados:
+   ├─ Verificar estado real en exchange
+   ├─ Si FILLED → Procesar fill tardío ✅
+   └─ Si NO FILLED → Marcar FAILED ❌
+5. Posición actualizada correctamente
+```
+
+### Archivos Modificados
+- `server/services/FillWatcher.ts` - Verificación en timeout + derivación de precio
+- `server/services/botLogger.ts` - Nuevo evento ORDER_FILLED_LATE
+
+### Impacto
+- ✅ Elimina falsos positivos de órdenes FAILED
+- ✅ Reconciliación automática de fills tardíos
+- ✅ Mejor trazabilidad con evento ORDER_FILLED_LATE
+- ✅ Previene pérdida de posiciones exitosas
+
+---
+
 ## 2026-01-25 21:30 — FIX CRÍTICO: Time-Stop ahora funciona en SMART_GUARD
 
 ### Problema Detectado

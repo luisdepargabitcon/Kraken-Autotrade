@@ -65,7 +65,8 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
     onError,
   } = config;
 
-  console.log(`[FillWatcher] Starting watcher for ${pair} (clientOrderId: ${clientOrderId})`);
+  // MANDATORY LOGGING: Track all IDs for debugging
+  console.log(`[FillWatcher] Starting watcher for ${pair} (clientOrderId: ${clientOrderId}, exchangeOrderId: ${exchangeOrderId || 'NOT_PROVIDED'})`);
 
   // Check if watcher already exists
   if (activeWatchers.has(clientOrderId)) {
@@ -95,10 +96,90 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
       console.log(`[FillWatcher] Timeout reached for ${pair} (${clientOrderId})`);
       stopFillWatcher(clientOrderId);
       
-      // Check if any fills were received
-      if (totalFilledAmount === 0) {
-        // No fills at all - mark as FAILED
-        await storage.markPositionFailed(clientOrderId, 'Timeout: No fills received');
+      // CRITICAL FIX: Before marking as FAILED, verify actual order status from exchange
+      // The order may have been filled but fills not yet visible in API
+      if (totalFilledAmount === 0 && exchangeOrderId) {
+        console.log(`[FillWatcher] Timeout with no fills detected - verifying order status from exchange`);
+        try {
+          // Try to get order status directly from exchange
+          if (typeof exchangeService.getOrder === 'function') {
+            const order = await exchangeService.getOrder(exchangeOrderId);
+            if (order && order.status) {
+              console.log(`[FillWatcher] Order ${exchangeOrderId} status: ${order.status}, filledSize: ${order.filledSize || 0}`);
+              
+              // If order was FILLED, process it now (late fill detection)
+              if ((order.status === 'FILLED' || order.status === 'CLOSED' || order.status === 'COMPLETED') && 
+                  order.filledSize && order.filledSize > 0) {
+                console.log(`[FillWatcher] LATE FILL DETECTED: Order was filled but fills not captured. Processing now.`);
+                
+                // Derive price if not available
+                let price = order.averagePrice || 0;
+                if (price <= 0 && order.executedValue && order.filledSize > 0) {
+                  price = order.executedValue / order.filledSize;
+                  console.log(`[FillWatcher] Derived price from executedValue: ${price}`);
+                }
+                
+                if (price > 0) {
+                  // Create synthetic fill from order data
+                  const syntheticFill: Fill = {
+                    fillId: `${exchangeOrderId}-late-fill`,
+                    orderId: exchangeOrderId,
+                    pair: exchangeService.normalizePairFromExchange?.(order.symbol) || order.symbol || pair,
+                    side: order.side?.toLowerCase() || 'buy',
+                    price,
+                    amount: order.filledSize,
+                    cost: price * order.filledSize,
+                    fee: 0,
+                    executedAt: order.createdAt || new Date(),
+                  };
+                  
+                  // Process the fill
+                  const updatedPosition = await storage.updatePositionWithFill(clientOrderId, {
+                    fillId: syntheticFill.fillId,
+                    price: syntheticFill.price,
+                    amount: syntheticFill.amount,
+                    executedAt: syntheticFill.executedAt,
+                  });
+                  
+                  if (updatedPosition) {
+                    // Insert trade record
+                    await storage.createTrade({
+                      tradeId: syntheticFill.fillId,
+                      exchange,
+                      pair,
+                      type: 'buy',
+                      price: syntheticFill.price.toString(),
+                      amount: syntheticFill.amount.toString(),
+                      executedAt: syntheticFill.executedAt,
+                      origin: 'engine',
+                      executedByBot: true,
+                    }).catch(() => {}); // Ignore duplicate errors
+                    
+                    await botLogger.info('ORDER_FILLED_LATE', 
+                      `Late fill detected and processed: ${pair} +${syntheticFill.amount} @ $${syntheticFill.price.toFixed(2)}`, 
+                      { fillId: syntheticFill.fillId, source: 'timeout_verification' });
+                    
+                    // Emit WebSocket events
+                    positionsWs.emitFillReceived(clientOrderId, syntheticFill, parseFloat(updatedPosition.averageEntryPrice || '0'));
+                    positionsWs.emitPositionUpdated(updatedPosition);
+                    
+                    onFillReceived?.(syntheticFill, updatedPosition);
+                    onPositionOpen?.(updatedPosition);
+                    
+                    console.log(`[FillWatcher] Successfully processed late fill for ${pair}`);
+                    return; // Success - don't mark as failed
+                  }
+                }
+              }
+            }
+          }
+        } catch (verifyErr: any) {
+          console.error(`[FillWatcher] Error verifying order status on timeout: ${verifyErr.message}`);
+        }
+        
+        // Only mark as FAILED if verification confirms no fills
+        console.log(`[FillWatcher] No fills received and verification did not find filled order - marking as FAILED`);
+        await storage.markPositionFailed(clientOrderId, 'Timeout: No fills received after verification');
         await botLogger.warn('FILL_WATCHER_TIMEOUT', 
           `FillWatcher timeout: No fills for ${pair}`, { clientOrderId });
       }
@@ -245,19 +326,30 @@ async function fetchFillsForOrder(
       // STRATEGY 1: If we have exchangeOrderId, check order status directly
       if (exchangeOrderId && typeof exchangeService.getOrder === 'function') {
         const order = await exchangeService.getOrder(exchangeOrderId);
-        if (order && order.filledSize && order.filledSize > 0 && order.averagePrice && order.averagePrice > 0) {
-          console.log(`[FillWatcher] Found fill via getOrder: ${order.filledSize} @ ${order.averagePrice}`);
-          return [{
-            fillId: `${exchangeOrderId}-fill-${Date.now()}`,
-            orderId: exchangeOrderId,
-            pair: exchangeService.normalizePairFromExchange?.(order.symbol) || order.symbol || pair || '',
-            side: order.side?.toLowerCase() || 'buy',
-            price: order.averagePrice,
-            amount: order.filledSize,
-            cost: order.averagePrice * order.filledSize,
-            fee: 0,
-            executedAt: order.createdAt || new Date(),
-          }];
+        if (order && order.filledSize && order.filledSize > 0) {
+          // CRITICAL FIX: Derive price if averagePrice not available but executedValue is
+          let price = order.averagePrice || 0;
+          if (price <= 0 && order.executedValue && order.filledSize > 0) {
+            price = order.executedValue / order.filledSize;
+            console.log(`[FillWatcher] Derived price from executedValue: ${price}`);
+          }
+          
+          if (price > 0) {
+            console.log(`[FillWatcher] Found fill via getOrder: ${order.filledSize} @ ${price}`);
+            return [{
+              fillId: `${exchangeOrderId}-fill-${Date.now()}`,
+              orderId: exchangeOrderId,
+              pair: exchangeService.normalizePairFromExchange?.(order.symbol) || order.symbol || pair || '',
+              side: order.side?.toLowerCase() || 'buy',
+              price,
+              amount: order.filledSize,
+              cost: price * order.filledSize,
+              fee: 0,
+              executedAt: order.createdAt || new Date(),
+            }];
+          } else {
+            console.warn(`[FillWatcher] Order ${exchangeOrderId} has filledSize=${order.filledSize} but price could not be determined`);
+          }
         }
       }
 
