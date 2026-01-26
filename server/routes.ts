@@ -1010,10 +1010,10 @@ export async function registerRoutes(
       let position;
       if (lotId) {
         // Specific lot requested
-        position = positions.find(p => p.lotId === lotId);
+        position = positions.find(p => p.lotId === lotId && p.status === 'OPEN');
       } else {
         // Close first position for the pair
-        position = positions.find(p => p.pair === pair);
+        position = positions.find(p => p.pair === pair && p.status === 'OPEN');
       }
       
       if (!position) {
@@ -1027,7 +1027,7 @@ export async function registerRoutes(
         return res.status(404).json({
           success: false,
           error: "POSITION_NOT_FOUND",
-          message: `No se encontró posición abierta para ${pair}`,
+          message: `No se encontró posición OPEN para ${pair}`,
         });
       }
       

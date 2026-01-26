@@ -7659,11 +7659,56 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const positions = this.getPositionsByPair(pair);
         position = positions[0];
       }
-      
+
+      if (!position || position.amount <= 0) {
+        try {
+          const dbPosition = specificLotId
+            ? await storage.getOpenPositionByLotId(specificLotId)
+            : (await storage.getOpenPositionsByPair(pair)).find((p: any) => (p as any).status === 'OPEN');
+
+          if (dbPosition && (dbPosition as any).status === 'OPEN') {
+            const lotId = (dbPosition as any).lotId || specificLotId || generateLotId(pair);
+            const amountDb = parseFloat(String((dbPosition as any).amount ?? '0'));
+            const entryPriceDb = parseFloat(String((dbPosition as any).entryPrice ?? '0'));
+            const highestPriceDb = parseFloat(String((dbPosition as any).highestPrice ?? entryPriceDb ?? '0'));
+            const entryFeeDb = parseFloat(String((dbPosition as any).entryFee ?? '0'));
+            const openedAtDb = (dbPosition as any).openedAt ? new Date((dbPosition as any).openedAt).getTime() : Date.now();
+
+            if (Number.isFinite(amountDb) && amountDb > 0 && Number.isFinite(entryPriceDb) && entryPriceDb > 0) {
+              position = {
+                lotId,
+                pair: (dbPosition as any).pair || pair,
+                amount: amountDb,
+                entryPrice: entryPriceDb,
+                entryFee: Number.isFinite(entryFeeDb) ? entryFeeDb : 0,
+                highestPrice: Number.isFinite(highestPriceDb) ? highestPriceDb : entryPriceDb,
+                openedAt: openedAtDb,
+                entryStrategyId: (dbPosition as any).entryStrategyId || 'momentum_cycle',
+                entrySignalTf: (dbPosition as any).entrySignalTf || 'cycle',
+                signalConfidence: (dbPosition as any).signalConfidence ? toConfidenceUnit((dbPosition as any).signalConfidence) : undefined,
+                signalReason: (dbPosition as any).signalReason || undefined,
+                entryMode: (dbPosition as any).entryMode || undefined,
+                configSnapshot: (dbPosition as any).configSnapshotJson || undefined,
+                sgBreakEvenActivated: (dbPosition as any).sgBreakEvenActivated ?? false,
+                sgCurrentStopPrice: (dbPosition as any).sgCurrentStopPrice ? parseFloat((dbPosition as any).sgCurrentStopPrice) : undefined,
+                sgTrailingActivated: (dbPosition as any).sgTrailingActivated ?? false,
+                sgScaleOutDone: (dbPosition as any).sgScaleOutDone ?? false,
+                timeStopDisabled: (dbPosition as any).timeStopDisabled ?? undefined,
+                timeStopExpiredAt: (dbPosition as any).timeStopExpiredAt ? new Date((dbPosition as any).timeStopExpiredAt).getTime() : undefined,
+                beProgressiveLevel: (dbPosition as any).beProgressiveLevel ?? undefined,
+              };
+              this.openPositions.set(lotId, position);
+            }
+          }
+        } catch (e: any) {
+          log(`[MANUAL_CLOSE] Warning: fallback DB load failed for ${pair}: ${e.message}`, 'trading');
+        }
+      }
+
       if (!position || position.amount <= 0) {
         return {
           success: false,
-          error: "No se encontró posición abierta en memoria para este par",
+          error: "No se encontró posición abierta en memoria/BD para este par",
         };
       }
 
