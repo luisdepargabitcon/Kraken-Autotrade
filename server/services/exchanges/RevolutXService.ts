@@ -784,7 +784,9 @@ export class RevolutXService implements IExchangeService {
       );
 
       let averagePrice = parseNum(
-        orderData.average_price ??
+        orderData.average_fill_price ??
+          orderData.avg_fill_price ??
+          orderData.average_price ??
           orderData.avg_price ??
           orderData.executed_price ??
           orderData.averagePrice ??
@@ -831,6 +833,13 @@ export class RevolutXService implements IExchangeService {
       const statusRaw = orderData.status || orderData.state || orderData.order_status || orderData.order_state;
       const normalizedStatus = typeof statusRaw === 'string' ? statusRaw.toUpperCase() : 'UNKNOWN';
 
+      const createdAt = (() => {
+        if (orderData.created_at) return new Date(orderData.created_at);
+        const createdDateMs = parseNum(orderData.created_date);
+        if (Number.isFinite(createdDateMs) && createdDateMs > 0) return new Date(createdDateMs);
+        return undefined;
+      })();
+
       return {
         id: orderData.venue_order_id || orderData.id || orderData.order_id || orderId,
         clientOrderId: orderData.client_order_id,
@@ -840,7 +849,7 @@ export class RevolutXService implements IExchangeService {
         filledSize,
         executedValue,
         averagePrice,
-        createdAt: orderData.created_at ? new Date(orderData.created_at) : undefined,
+        createdAt,
       };
     } catch (error: any) {
       console.error(`[revolutx] getOrder exception:`, error.message);
