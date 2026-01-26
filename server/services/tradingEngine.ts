@@ -1092,6 +1092,25 @@ export class TradingEngine {
         return { success: false, error: `Volumen no válido para ${pair}: ${normalizedVolume}` };
       }
 
+      const quote = pair.split('/')[1] || 'USD';
+      try {
+        const balances = await this.getTradingExchange().getBalance();
+        const availableQuote = Number((balances as any)?.[quote] ?? 0);
+        const bufferPct = getTakerFeePct() + SLIPPAGE_BUFFER_PCT;
+        const requiredQuote = usdAmount * (1 + bufferPct / 100);
+        if (!Number.isFinite(availableQuote) || availableQuote < requiredQuote) {
+          const availTxt = Number.isFinite(availableQuote) ? availableQuote.toFixed(2) : '0.00';
+          const reqTxt = requiredQuote.toFixed(2);
+          log(`[MANUAL_BUY] BLOQUEADO: balance insuficiente ${quote}. available=${availTxt} required≈${reqTxt} (usdAmount=${usdAmount}, bufferPct=${bufferPct}%)`, "trading");
+          return {
+            success: false,
+            error: `Saldo insuficiente de ${quote}: disponible ${availTxt}, requerido ≈ ${reqTxt} (incluye buffer ${bufferPct}%)`,
+          };
+        }
+      } catch (balErr: any) {
+        log(`[MANUAL_BUY] WARNING: No se pudo verificar balance previo: ${balErr.message}`, "trading");
+      }
+
       log(`[MANUAL_BUY] Ejecutando BUY: ${normalizedVolume.toFixed(8)} ${pair} @ $${currentPrice.toFixed(2)}`, "trading");
 
       const ok = await this.executeTrade(
