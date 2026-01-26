@@ -938,6 +938,75 @@ export class TradingEngine {
     }
   }
 
+  private async recoverPendingFillPositionsFromDB() {
+    try {
+      const exchange = this.getTradingExchangeType();
+      const pendingPositions = await storage.getPendingFillPositions(exchange);
+      if (!pendingPositions || pendingPositions.length === 0) return;
+
+      log(`[PENDING_FILL_RECOVERY] Found ${pendingPositions.length} pending fill positions to recover`, "trading");
+
+      const { startFillWatcher } = await import('./FillWatcher');
+
+      for (const pos of pendingPositions) {
+        const clientOrderId = pos.clientOrderId;
+        const venueOrderId = pos.venueOrderId;
+        const pair = pos.pair;
+        const lotId = pos.lotId || `PENDING-${pos.id}`;
+        const expectedAmount = parseFloat(pos.expectedAmount ?? '0');
+
+        if (!clientOrderId || !pair) {
+          log(`[PENDING_FILL_RECOVERY] Skipped invalid pending position (missing clientOrderId/pair): id=${pos.id}`, "trading");
+          continue;
+        }
+        if (!venueOrderId) {
+          log(`[PENDING_FILL_RECOVERY] Skipped pending position without venueOrderId (cannot query exchange): ${pair} clientOrderId=${clientOrderId}`, "trading");
+          continue;
+        }
+        if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) {
+          log(`[PENDING_FILL_RECOVERY] Skipped pending position with invalid expectedAmount=${pos.expectedAmount} for ${pair} (clientOrderId=${clientOrderId})`, "trading");
+          continue;
+        }
+
+        // Rehydrate pending exposure so SmartGuard doesn't over-allocate after restart
+        try {
+          const krakenPair = this.formatKrakenPair(pair);
+          const ticker = await this.getDataExchange().getTicker(krakenPair);
+          const currentPrice = Number((ticker as any)?.last ?? 0);
+          if (Number.isFinite(currentPrice) && currentPrice > 0) {
+            const expectedUsd = expectedAmount * currentPrice;
+            this.addPendingExposure(lotId, pair, expectedUsd);
+          }
+        } catch (e: any) {
+          log(`[PENDING_FILL_RECOVERY] Warning: could not rehydrate pending exposure for ${pair}: ${e.message}`, "trading");
+        }
+
+        log(`[PENDING_FILL_RECOVERY] Restarting FillWatcher for ${pair} (lotId=${lotId}, clientOrderId=${clientOrderId}, venueOrderId=${venueOrderId}, expectedAmount=${expectedAmount})`, "trading");
+
+        // Restart FillWatcher: it will use getOrder (now parses average_fill_price) to open the position
+        startFillWatcher({
+          clientOrderId,
+          exchangeOrderId: venueOrderId,
+          exchange,
+          pair,
+          expectedAmount,
+          pollIntervalMs: 3000,
+          timeoutMs: 120000,
+          onPositionOpen: () => {
+            this.removePendingExposure(lotId);
+          },
+          onTimeout: () => {
+            this.removePendingExposure(lotId);
+          },
+        }).catch((err: any) => {
+          log(`[PENDING_FILL_RECOVERY] Failed to start FillWatcher for ${pair} (${clientOrderId}): ${err.message}`, "trading");
+        });
+      }
+    } catch (error: any) {
+      log(`[PENDING_FILL_RECOVERY] Error recovering pending fill positions: ${error.message}`, "trading");
+    }
+  }
+
   private async sendSgEventAlert(
     eventType: "SG_BREAK_EVEN_ACTIVATED" | "SG_TRAILING_ACTIVATED" | "SG_TRAILING_STOP_UPDATED" | "SG_SCALE_OUT_EXECUTED",
     position: OpenPosition,
@@ -2099,6 +2168,9 @@ export class TradingEngine {
     this.clearAllPendingExposure();
     
     await this.loadOpenPositionsFromDB();
+
+    // Recovery: restart FillWatcher for any PENDING_FILL positions so they don't get stuck after a restart
+    await this.recoverPendingFillPositionsFromDB();
     
     // Check for expired Time-Stop positions that weren't notified
     await this.checkExpiredTimeStopPositions();
