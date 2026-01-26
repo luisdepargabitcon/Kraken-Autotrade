@@ -201,6 +201,12 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
           continue;
         }
 
+        // Guard: ignore invalid fills (prevents +0 @ $0 and corrupting aggregates)
+        if (!Number.isFinite(fill.price) || fill.price <= 0 || !Number.isFinite(fill.amount) || fill.amount <= 0) {
+          console.warn(`[FillWatcher] Ignoring invalid fill for ${pair}: amount=${fill.amount}, price=${fill.price}, fillId=${fill.fillId}`);
+          continue;
+        }
+
         console.log(`[FillWatcher] New fill for ${pair}: ${fill.amount} @ ${fill.price}`);
         processedFills.add(fillKey);
 
@@ -375,9 +381,9 @@ async function fetchFillsForOrder(
               orderId: f.order_id || exchangeOrderId || '',
               pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
               side: f.side?.toLowerCase() || 'buy',
-              price: f.price,
-              amount: f.quantity,
-              cost: f.price * f.quantity,
+              price: parseFloat(f.price || '0'),
+              amount: parseFloat(f.quantity || '0'),
+              cost: parseFloat(f.price || '0') * parseFloat(f.quantity || '0'),
               fee: f.fee || 0,
               executedAt: new Date(f.created_at),
             }));
@@ -404,9 +410,9 @@ async function fetchFillsForOrder(
           orderId: f.order_id || exchangeOrderId || '',
           pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
           side: f.side?.toLowerCase() || 'buy',
-          price: f.price,
-          amount: f.quantity,
-          cost: f.price * f.quantity,
+          price: parseFloat(f.price || '0'),
+          amount: parseFloat(f.quantity || '0'),
+          cost: parseFloat(f.price || '0') * parseFloat(f.quantity || '0'),
           fee: f.fee || 0,
           executedAt: new Date(f.created_at),
         }));

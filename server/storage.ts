@@ -1842,6 +1842,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(openPositionsTable.clientOrderId, clientOrderId))
       .returning();
 
+    // Best-effort: when position is opened via fill, mark the order intent as filled.
+    try {
+      await this.updateOrderIntentStatus(clientOrderId, 'filled');
+    } catch (e) {
+      // best-effort
+    }
+
     console.log(`[storage] Updated position ${position.pair} with fill: +${fill.amount} @ ${fill.price}, avgPrice=${newAvgPrice.toFixed(8)}, total=${newTotalAmount}`);
     return updated;
   }
