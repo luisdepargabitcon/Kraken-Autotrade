@@ -756,16 +756,87 @@ export class RevolutXService implements IExchangeService {
       // RevolutX may wrap response in { data: { ... } }
       const orderData = data?.data || data;
 
-      const filledSize = parseFloat(orderData.filled_size || orderData.executed_size || '0');
-      const executedValue = parseFloat(orderData.executed_value || orderData.filled_value || '0');
-      const averagePrice = filledSize > 0 && executedValue > 0 ? executedValue / filledSize : 0;
+      const parseNum = (v: any): number => {
+        if (v === null || v === undefined) return NaN;
+        if (typeof v === 'number') return v;
+        if (typeof v === 'string') return parseFloat(v);
+        return NaN;
+      };
+
+      let filledSize = parseNum(
+        orderData.filled_size ??
+          orderData.executed_size ??
+          orderData.filled_quantity ??
+          orderData.filled_qty ??
+          orderData.quantity_filled ??
+          orderData.filledSize ??
+          orderData.executedSize
+      );
+
+      let executedValue = parseNum(
+        orderData.executed_value ??
+          orderData.filled_value ??
+          orderData.executed_notional ??
+          orderData.executed_quote_size ??
+          orderData.filled_quote_size ??
+          orderData.executedValue ??
+          orderData.filledValue
+      );
+
+      let averagePrice = parseNum(
+        orderData.average_price ??
+          orderData.avg_price ??
+          orderData.executed_price ??
+          orderData.averagePrice ??
+          orderData.avgPrice
+      );
+
+      // Some endpoints may return fills array; derive aggregates if present
+      const fillsArr = orderData.fills || orderData.executions || orderData.trades;
+      if (Array.isArray(fillsArr) && fillsArr.length > 0) {
+        let sumQty = 0;
+        let sumQuote = 0;
+        for (const f of fillsArr) {
+          const qty = parseNum(f.quantity ?? f.qty ?? f.size ?? f.executed_size ?? f.filled_size);
+          const px = parseNum(f.price ?? f.px ?? f.rate);
+          const quote = parseNum(f.executed_value ?? f.value ?? f.notional ?? f.quote);
+
+          if (Number.isFinite(qty) && qty > 0) {
+            sumQty += qty;
+            if (Number.isFinite(quote) && quote > 0) {
+              sumQuote += quote;
+            } else if (Number.isFinite(px) && px > 0) {
+              sumQuote += px * qty;
+            }
+          }
+        }
+
+        if ((!Number.isFinite(filledSize) || filledSize <= 0) && sumQty > 0) {
+          filledSize = sumQty;
+        }
+        if ((!Number.isFinite(executedValue) || executedValue <= 0) && sumQuote > 0) {
+          executedValue = sumQuote;
+        }
+      }
+
+      if (!Number.isFinite(filledSize) || filledSize < 0) filledSize = 0;
+      if (!Number.isFinite(executedValue) || executedValue < 0) executedValue = 0;
+
+      if ((!Number.isFinite(averagePrice) || averagePrice <= 0) && filledSize > 0 && executedValue > 0) {
+        averagePrice = executedValue / filledSize;
+      }
+
+      if (!Number.isFinite(averagePrice) || averagePrice < 0) averagePrice = 0;
+
+      const statusRaw = orderData.status || orderData.state || orderData.order_status || orderData.order_state;
+      const normalizedStatus = typeof statusRaw === 'string' ? statusRaw.toUpperCase() : 'UNKNOWN';
 
       return {
         id: orderData.venue_order_id || orderData.id || orderData.order_id || orderId,
         clientOrderId: orderData.client_order_id,
         symbol: orderData.symbol || '',
         side: orderData.side || '',
-        status: orderData.status || orderData.state || 'UNKNOWN',
+        status: normalizedStatus,
         filledSize,
         executedValue,
         averagePrice,

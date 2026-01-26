@@ -105,10 +105,11 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
           if (typeof exchangeService.getOrder === 'function') {
             const order = await exchangeService.getOrder(exchangeOrderId);
             if (order && order.status) {
-              console.log(`[FillWatcher] Order ${exchangeOrderId} status: ${order.status}, filledSize: ${order.filledSize || 0}`);
+              const normalizedStatus = typeof order.status === 'string' ? order.status.toUpperCase() : String(order.status || 'UNKNOWN');
+              console.log(`[FillWatcher] Order ${exchangeOrderId} status: ${normalizedStatus}, filledSize: ${order.filledSize || 0}`);
               
               // If order was FILLED, process it now (late fill detection)
-              if ((order.status === 'FILLED' || order.status === 'CLOSED' || order.status === 'COMPLETED') && 
+              if ((normalizedStatus === 'FILLED' || normalizedStatus === 'CLOSED' || normalizedStatus === 'COMPLETED') && 
                   order.filledSize && order.filledSize > 0) {
                 console.log(`[FillWatcher] LATE FILL DETECTED: Order was filled but fills not captured. Processing now.`);
                 
