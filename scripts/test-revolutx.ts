@@ -1,7 +1,13 @@
-import { revolutXService } from '../server/services/exchanges/RevolutXService';
+// This script is intended to be read-only.
+// Some server modules require DATABASE_URL at import-time; set a harmless default to avoid boot failure.
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = 'postgres://readonly:readonly@127.0.0.1:5432/readonly';
+}
 
 async function testRevolutX() {
   console.log('=== TEST REVOLUT X API ===\n');
+
+  const { revolutXService } = await import('../server/services/exchanges/RevolutXService');
   
   const apiKey = process.env.REVOLUTX_API_KEY;
   const privateKey = process.env.REVOLUTX_PRIVATE_KEY;
