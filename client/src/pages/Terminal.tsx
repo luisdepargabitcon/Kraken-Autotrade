@@ -165,6 +165,8 @@ export default function Terminal() {
     const maxLots = botConfig?.sgMaxOpenLotsPerPair || 1;
     const counts = new Map<string, { count: number; max: number }>();
     for (const pos of openPositions) {
+      const status = String(pos.status || 'OPEN');
+      if (status !== 'OPEN' && status !== 'PENDING_FILL') continue;
       const current = counts.get(pos.pair);
       counts.set(pos.pair, { count: (current?.count || 0) + 1, max: maxLots });
     }

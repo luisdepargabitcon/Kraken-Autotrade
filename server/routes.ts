@@ -756,7 +756,14 @@ export async function registerRoutes(
 
   app.get("/api/open-positions", async (req, res) => {
     try {
-      const positions = await storage.getOpenPositions();
+      const rawPositions = await storage.getOpenPositions();
+      const positions = rawPositions.filter((pos: any) => {
+        const status = String(pos.status || 'OPEN');
+        if (status === 'FAILED' || status === 'CANCELLED') return false;
+        const amount = parseFloat(String(pos.amount ?? '0'));
+        if (status === 'OPEN' && (!Number.isFinite(amount) || amount <= 0)) return false;
+        return true;
+      });
       
       const botConfig = await storage.getBotConfig();
       const krakenFeePct = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
@@ -829,6 +836,58 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[api/open-positions] Error:", error);
       res.status(500).json({ error: "Failed to get open positions" });
+    }
+  });
+
+  app.post("/api/admin/purge-failed-positions", async (req, res) => {
+    try {
+      const expectedToken = process.env.TERMINAL_TOKEN;
+      if (!expectedToken) {
+        return res.status(500).json({ error: "TERMINAL_TOKEN_NOT_CONFIGURED" });
+      }
+
+      const authHeader = req.headers.authorization;
+      const headerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      const queryToken = (req.query?.token as string | undefined) || undefined;
+      const token = headerToken || queryToken;
+      if (!token || token !== expectedToken) {
+        return res.status(403).json({ error: "FORBIDDEN" });
+      }
+
+      const schema = z.object({
+        exchange: z.enum(["all", "kraken", "revolutx"]).optional().default("all"),
+      });
+
+      const parsed = schema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: parsed.error.issues });
+      }
+
+      const { exchange } = parsed.data;
+
+      const result = exchange === 'all'
+        ? await db.execute(sql`
+            DELETE FROM open_positions
+            WHERE status = 'FAILED'
+              AND (
+                amount = '0' OR amount IS NULL OR
+                total_amount_base = '0' OR total_amount_base IS NULL
+              )
+          `)
+        : await db.execute(sql`
+            DELETE FROM open_positions
+            WHERE status = 'FAILED'
+              AND exchange = ${exchange}
+              AND (
+                amount = '0' OR amount IS NULL OR
+                total_amount_base = '0' OR total_amount_base IS NULL
+              )
+          `);
+
+      res.json({ success: true, deleted: Number((result as any).rowCount || 0) });
+    } catch (error: any) {
+      console.error("[api/admin/purge-failed-positions] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to purge failed positions" });
     }
   });
 
