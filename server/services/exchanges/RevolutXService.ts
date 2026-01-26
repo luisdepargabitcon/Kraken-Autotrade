@@ -538,27 +538,31 @@ export class RevolutXService implements IExchangeService {
         };
       }
       
+      // RevolutX wraps response in { data: { venue_order_id, client_order_id, state, ... } }
+      // Unwrap if needed
+      const orderData = data.data || data;
+      
       // CRITICAL: Extract the REAL exchange order ID - NEVER fall back to clientOrderId
-      // RevolutX returns the order ID in 'id' or 'order_id' field
-      const exchangeOrderId = data.id || data.order_id;
+      // RevolutX returns the order ID in 'venue_order_id' field (NOT 'id' or 'order_id')
+      const exchangeOrderId = orderData.venue_order_id || orderData.id || orderData.order_id;
       const resolvedOrderId = exchangeOrderId || clientOrderId; // Only for logging, NOT for venue_order_id
       
       // MANDATORY LOGGING: Track exactly what RevolutX returns
-      console.log(`[revolutx] placeOrder RESPONSE: { id: ${data.id}, order_id: ${data.order_id}, status: ${data.status}, clientOrderId: ${clientOrderId} }`);
+      console.log(`[revolutx] placeOrder RESPONSE: { venue_order_id: ${orderData.venue_order_id}, state: ${orderData.state}, client_order_id: ${orderData.client_order_id}, clientOrderId: ${clientOrderId} }`);
       console.log('[revolutx] Order placed successfully:', resolvedOrderId);
       console.log('[revolutx] Order response data:', JSON.stringify(data, null, 2));
       
       // CRITICAL: If we don't have a real exchange order ID, this is a problem
       if (!exchangeOrderId) {
-        console.error(`[revolutx] WARNING: No exchange order ID returned! data.id=${data.id}, data.order_id=${data.order_id}. FillWatcher will not be able to query order status.`);
+        console.error(`[revolutx] WARNING: No exchange order ID returned! venue_order_id=${orderData.venue_order_id}, id=${orderData.id}. FillWatcher will not be able to query order status.`);
       }
       
       // For market orders, Revolut X may not return executed_price immediately
-      // We need to fetch the current ticker price as a fallback
-      let executedPrice = parseFloat(data.executed_price || data.average_price || data.price || '0');
+      // Check both wrapped and unwrapped fields
+      let executedPrice = parseFloat(orderData.executed_price || orderData.average_price || orderData.price || '0');
 
-      const executedVolume = parseFloat(data.executed_size || data.filled_size || params.volume);
-      const rawExecutedValue = data.executed_value || data.executed_notional || data.executed_quote_size || data.filled_value;
+      const executedVolume = parseFloat(orderData.executed_size || orderData.filled_size || orderData.quantity || params.volume);
+      const rawExecutedValue = orderData.executed_value || orderData.executed_notional || orderData.executed_quote_size || orderData.filled_value;
       const executedValue = parseFloat(rawExecutedValue || '0');
 
       // If API gives us value + size but no price, derive it.
