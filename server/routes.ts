@@ -13,6 +13,7 @@ import { aiService } from "./services/aiService";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
 import { environment } from "./services/environment";
+import { getActivePairsAllowlist, isPairAllowed, normalizePair } from "./services/pairAllowlist";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
@@ -1627,6 +1628,9 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     try {
       const prices: Record<string, { price: number; source: string }> = {};
       const stablecoins = ["USD", "ZUSD", "USDC", "USDT", "EUR"];
+
+      const botConfig = await storage.getBotConfig();
+      const activePairsAllowlist = getActivePairsAllowlist((botConfig as any)?.activePairs);
       
       // Normalize Kraken symbols to standard tickers
       const krakenToStandard: Record<string, string> = {
@@ -1753,11 +1757,15 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         // Try Revolut X for altcoins
         if (revolutXService.isInitialized()) {
           try {
-            const pair = `${asset}-USD`;
-            const ticker = await revolutXService.getTicker(pair);
-            if (ticker && ticker.last > 0) {
-              prices[asset] = { price: ticker.last, source: "revolutx" };
-              continue;
+            const normalizedAsset = krakenToStandard[asset] || asset;
+            const pair = `${normalizedAsset}-USD`;
+
+            if (isPairAllowed(pair, activePairsAllowlist)) {
+              const ticker = await revolutXService.getTicker(pair);
+              if (ticker && ticker.last > 0) {
+                prices[asset] = { price: ticker.last, source: "revolutx" };
+                continue;
+              }
             }
           } catch (e: any) {
             // Log only if not a 404/not found error
@@ -1868,6 +1876,18 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         });
       }
       
+      const botConfig = await storage.getBotConfig();
+      const activePairsAllowlist = getActivePairsAllowlist((botConfig as any)?.activePairs);
+      const normalizedPair = normalizePair(String(pair));
+      if (!isPairAllowed(normalizedPair, activePairsAllowlist)) {
+        return res.status(400).json({
+          error: "PAIR_NOT_ALLOWED",
+          message: `Par no permitido: ${normalizedPair}. Solo se permiten pares activos.`,
+        });
+      }
+
+      const pairForUse = normalizedPair;
+      
       // Usar RevolutXService ya inicializado globalmente
       if (!revolutXService.isInitialized()) {
         return res.status(400).json({ 
@@ -1879,7 +1899,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       
       // Ejecutar la orden
       const order = await revolutXService.placeOrder({
-        pair,
+        pair: pairForUse,
         type: type as "buy" | "sell",
         ordertype: ordertype || "market",
         volume: volume.toString()
@@ -1918,7 +1938,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
       if (!Number.isFinite(resolvedPrice) || resolvedPrice <= 0) {
         try {
-          const ticker = await revolutXService.getTicker(pair);
+          const ticker = await revolutXService.getTicker(pairForUse);
           resolvedPrice = type === 'buy' ? ticker.ask : ticker.bid;
         } catch {
           // Ignore
@@ -1933,7 +1953,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         tradeId,
         exchange: 'revolutx',
         origin: 'manual',  // Manual API call
-        pair,
+        pair: pairForUse,
         type,
         price: resolvedPrice.toString(),
         amount: (Number.isFinite(resolvedVol) && resolvedVol > 0 ? resolvedVol : parseFloat(volume.toString())).toString(),
@@ -1943,7 +1963,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       // Enviar notificación a Telegram
       await telegramService.sendTradeNotification({
         type,
-        pair,
+        pair: pairForUse,
         price: resolvedPrice.toString(),
         amount: (Number.isFinite(resolvedVol) && resolvedVol > 0 ? resolvedVol : parseFloat(volume.toString())).toString(),
         status: "filled",
@@ -1955,7 +1975,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         success: true, 
         trade: {
           tradeId,
-          pair,
+          pair: pairForUse,
           type,
           amount: order.volume?.toString() || volume.toString(),
           price: order.price,

@@ -11,6 +11,26 @@
 
 ## 🚨 FIXES CRÍTICOS
 
+### 2026-01-27 13:25 — MEJORA: Allowlist centralizada de pares activos (evita 404 RevolutX por pares no operados)
+
+**Problema:**
+El endpoint de portfolio intentaba consultar precios en RevolutX para activos presentes en balances pero no operados por el bot (ej. `LMWR`), generando spam de errores 404 (pares como `LMWR-USD`).
+
+**Solución:**
+- Helper central `pairAllowlist` basado en `botConfig.activePairs` (fuente de verdad).
+- Normalización de pares (`BTC-USD` -> `BTC/USD`).
+- Filtrado preventivo antes de llamar a `revolutXService.getTicker()`.
+- Validación de allowlist en trading manual RevolutX (`/api/trade/revolutx`).
+
+**Archivos Modificados:**
+- `server/services/pairAllowlist.ts` (nuevo)
+- `server/routes.ts`
+
+**Impacto:**
+- ✅ Elimina 404 por pares fuera de allowlist (ej. `LMWR-USD`)
+- ✅ Reduce llamadas innecesarias a RevolutX
+- ✅ Mantiene consistencia de formato de pares en endpoints manuales
+
 ### 2026-01-25 12:50 — FIX: Modal Comisiones usaba fee incorrecto (Frontend)
 
 **Problema:**
