@@ -23,6 +23,7 @@ import cron from "node-cron";
 import http from "http";
 import { buildTradeId } from "./utils/tradeId";
 import backfillRoutes from "./routes/backfill";
+import { normalizeRevolutXTrade } from "./utils/revolutxTradeNormalization";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -183,7 +184,7 @@ export async function registerRoutes(
             if (!revolutXService.isInitialized()) return;
             const port = parseInt(process.env.PORT || '5000', 10);
             const url = `http://127.0.0.1:${port}/api/trades/sync-revolutx`;
-            await postJson(url, { allowAssumedSide: true });
+            await postJson(url, {});
           } catch (e: any) {
             console.error('[revolutx-daily-sync] Error:', e?.message || e);
           }
@@ -2077,50 +2078,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const byPair: Record<string, { fetched: number; inserted: number; skipped: number; assumedSideCount: number; errors: number }> = {};
       let maxExecutedAtSeenMs = sinceMs;
 
-      const inferSide = (t: any, qtyRaw: any): { side: "buy" | "sell" | null; assumed: boolean } => {
-        const sideRaw = (t?.side ?? t?.type ?? t?.direction ?? t?.taker_side ?? t?.maker_side ?? t?.aggressor_side ?? '').toString().toLowerCase();
-        if (sideRaw === 'buy' || sideRaw === 'sell') return { side: sideRaw, assumed: false };
-        if (sideRaw === 'b' || sideRaw === 'bid') return { side: 'buy', assumed: false };
-        if (sideRaw === 's' || sideRaw === 'ask') return { side: 'sell', assumed: false };
-
-        const isBuyer = t?.is_buyer ?? t?.isBuyer ?? t?.buyer;
-        if (typeof isBuyer === 'boolean') return { side: isBuyer ? 'buy' : 'sell', assumed: false };
-
-        const qtyNum = typeof qtyRaw === 'string' ? Number(qtyRaw) : qtyRaw;
-        if (Number.isFinite(qtyNum)) {
-          if (qtyNum < 0) return { side: 'sell', assumed: false };
-          if (qtyNum > 0) {
-            return allowAssumedSide ? { side: 'buy', assumed: true } : { side: null, assumed: false };
-          }
-        }
-        if (typeof qtyRaw === 'string' && qtyRaw.trim().startsWith('-')) return { side: 'sell', assumed: false };
-
-        return { side: null, assumed: false };
-      };
-
-      const normalizeTrade = (t: any) => {
-        const tradeId = t?.tid || t?.id || t?.trade_id || t?.transaction_id || t?.txid;
-
-        const tsRaw = t?.tdt ?? t?.timestamp ?? t?.time ?? t?.date ?? t?.created_at ?? t?.published_at;
-        const tsNum = typeof tsRaw === 'string' ? Number(tsRaw) : tsRaw;
-        const executedAt = Number.isFinite(tsNum) ? new Date(tsNum) : new Date(tsRaw);
-
-        const priceRaw = t?.p ?? t?.price;
-        const qtyRaw = t?.q ?? t?.quantity ?? t?.qty;
-        const { side: type, assumed } = inferSide(t, qtyRaw);
-
-        const qtyNum = typeof qtyRaw === 'string' ? Number(qtyRaw) : qtyRaw;
-        const amountAbs = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : qtyRaw;
-
-        return {
-          tradeId,
-          executedAt,
-          price: priceRaw,
-          amount: amountAbs,
-          type,
-          assumed,
-        };
-      };
+      const normalizeTrade = (t: any) => normalizeRevolutXTrade(t, allowAssumedSide);
 
       const syncPair = async (pairToSync: string) => {
         const symbol = pairToSync.replace('/', '-');
@@ -2159,6 +2117,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                     tradeId: String(n.tradeId),
                     keys: Object.keys(t || {}),
                     sample: t,
+                    normalized: n,
                   });
                 }
                 errors.push(`${pair}:${n.tradeId}: missing side/type`);
@@ -2167,6 +2126,15 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 byPair[pair].skipped++;
                 continue;
               }
+
+              if (debug && debugSamples.length < 2) {
+                debugSamples.push({
+                  tradeId: String(n.tradeId),
+                  sample: t,
+                  normalized: n,
+                });
+              }
+
               if (n.assumed) {
                 assumedSideCount++;
                 byPair[pair].assumedSideCount++;

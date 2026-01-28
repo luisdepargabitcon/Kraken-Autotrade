@@ -233,26 +233,26 @@ export default function Terminal() {
       const res = await fetch("/api/trades/sync-revolutx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...(pairFilter !== "all" ? { pair: pairFilter } : {}), limit: 100, allowAssumedSide: true }),
+        body: JSON.stringify({ ...(pairFilter !== "all" ? { pair: pairFilter } : {}), limit: 100 }),
       });
       const data = await res.json();
 
       if (res.ok) {
         toast({
-          title: "Sincronizado",
-          description: `RevolutX ${data.scope || (pairFilter !== "all" ? pairFilter : "ALL")}: +${data.synced} (fetched ${data.fetched}, skipped ${data.skipped})`,
+          title: "✅ Sync RevolutX completado",
+          description: `Synced: ${data.synced}, skipped: ${data.skipped}`,
         });
-        refetchClosed();
+        queryClient.invalidateQueries({ queryKey: ["closedTrades"] });
       } else {
         toast({
-          title: "Error",
-          description: data.message || data.error || "Error al sincronizar RevolutX",
+          title: "❌ Error en Sync RevolutX",
+          description: data.error || "Error desconocido",
           variant: "destructive",
         });
       }
     } catch (error: any) {
       toast({
-        title: "Error",
+        title: "❌ Error en Sync RevolutX",
         description: error.message || "Error de conexión",
         variant: "destructive",
       });

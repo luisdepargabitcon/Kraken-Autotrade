@@ -6937,13 +6937,16 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         if (this.telegramService.isInitialized()) {
           try {
             const assetName = pair.replace("/USD", "");
+            const pendingFooter = type === "sell"
+              ? `<i>La orden fue aceptada por ${exchange}. La venta se reflejará en historial y P&L en segundos.</i>`
+              : `<i>La orden fue aceptada por ${exchange}. La posición aparecerá en UI en segundos.</i>`;
             await this.telegramService.sendAlertWithSubtype(
               `⏳ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
               `Par: <code>${assetName}</code>\n` +
               `Cantidad: <code>${volume}</code>\n` +
               `Estado: Pendiente de confirmación\n` +
               `ID: <code>${pendingOrderId}</code>\n\n` +
-              `<i>La orden fue aceptada por ${exchange}. La posición aparecerá en UI en segundos.</i>`,
+              pendingFooter,
               "trades",
               type === "buy" ? "trade_buy" : "trade_sell"
             );
