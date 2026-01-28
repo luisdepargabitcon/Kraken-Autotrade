@@ -2088,22 +2088,37 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         }
 
         const fetchWindow = async (windowStart: number, windowEnd: number) => {
-          let cursor: string | undefined = undefined;
-          let page = 0;
-          while (true) {
-            page++;
-            const { trades, nextCursor } = await revolutXService.listPrivateTrades({
-              symbol,
-              startMs: windowStart,
+          let ws = windowStart;
+          let loop = 0;
+          while (ws < windowEnd) {
+            loop++;
+            const fills = await revolutXService.getFills({
+              symbol: pair,
+              startMs: ws,
               endMs: windowEnd,
-              cursor,
               limit,
-              debug,
             });
+
+            if (!Array.isArray(fills) || fills.length === 0) break;
+
+            const trades = fills
+              .map((f: any) => ({
+                tid: f.fill_id,
+                order_id: f.order_id,
+                client_order_id: f.client_order_id,
+                symbol: f.symbol || symbol,
+                side: f.side,
+                p: f.price,
+                q: f.quantity,
+                tdt: new Date(f.created_at).getTime(),
+                raw: f,
+              }))
+              .sort((a: any, b: any) => Number(a.tdt) - Number(b.tdt));
 
             totalFetched += trades.length;
             byPair[pair].fetched += trades.length;
 
+            let maxSeenMs = ws;
             for (const t of trades) {
               const n = normalizeTrade(t);
               if (!n.tradeId) {
@@ -2152,20 +2167,14 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                 maxExecutedAtSeenMs = executedAtMs;
               }
 
+              if (Number.isFinite(executedAtMs) && executedAtMs > maxSeenMs) {
+                maxSeenMs = executedAtMs;
+              }
+
               const priceStr = n.price != null ? String(n.price) : "0";
               const amountStr = n.amount != null ? String(n.amount) : "0";
 
-              const canonicalTrade = {
-                exchange: "revolutx",
-                pair,
-                executedAt: n.executedAt,
-                type: n.type,
-                price: priceStr,
-                amount: amountStr,
-                externalId: n.tradeId ? String(n.tradeId) : undefined,
-              } as const;
-
-              const tradeIdFinal = buildTradeId(canonicalTrade);
+              const tradeIdFinal = String(n.tradeId);
 
               try {
                 const { inserted, trade: insertedTrade } = await storage.insertTradeIgnoreDuplicate({
@@ -2255,11 +2264,11 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               }
             }
 
-            if (!nextCursor || nextCursor === cursor) break;
-            cursor = nextCursor;
+            if (!Number.isFinite(maxSeenMs) || maxSeenMs <= ws) break;
+            ws = maxSeenMs + 1;
 
-            if (page > 2000) {
-              errors.push(`Pagination safety break after ${page} pages for ${symbol}`);
+            if (loop > 2000) {
+              errors.push(`Pagination safety break after ${loop} loops for ${symbol}`);
               break;
             }
           }

@@ -880,10 +880,86 @@ export class RevolutXService implements IExchangeService {
   }>> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
+    const fetchFromFillsEndpoint = async (p?: {
+      limit?: number;
+      startMs?: number;
+      endMs?: number;
+      orderId?: string;
+    }): Promise<null | Array<{
+      fill_id: string;
+      order_id: string;
+      client_order_id?: string;
+      symbol: string;
+      side: string;
+      price: number;
+      quantity: number;
+      fee?: number;
+      created_at: string;
+    }>> => {
+      const path = '/api/1.0/fills';
+      const queryParams: Record<string, string | number | undefined> = {
+        limit: p?.limit || 50,
+      };
+      if (p?.orderId) queryParams.order_id = p.orderId;
+      if (p?.startMs) queryParams.start_date = p.startMs;
+      if (p?.endMs) queryParams.end_date = p.endMs;
+
+      const queryString = this.buildQueryString(queryParams, ['order_id', 'start_date', 'end_date', 'limit']);
+      const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
+      const headers = this.getHeaders('GET', path, queryString, '');
+
+      try {
+        const response = await fetch(fullUrl, { headers });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            return null;
+          }
+          const errorText = await response.text();
+          console.error(`[revolutx] getFills(/fills) error: ${response.status} ${errorText}`);
+          return [];
+        }
+
+        const data = await response.json() as any;
+        const fills = Array.isArray(data) ? data : (data.data || data.fills || data.items || []);
+
+        return fills.map((f: any) => ({
+          fill_id: f.id || f.fill_id || f.trade_id || `${f.created_at}-${f.price}`,
+          order_id: f.order_id || '',
+          client_order_id: f.client_order_id,
+          symbol: f.symbol || '',
+          side: f.side || '',
+          price: parseFloat(f.price || '0'),
+          quantity: parseFloat(f.quantity || f.amount || f.size || '0'),
+          fee: parseFloat(f.fee || f.commission || '0'),
+          created_at: f.created_at || f.timestamp || new Date().toISOString(),
+        }));
+      } catch (error: any) {
+        console.error(`[revolutx] getFills(/fills) exception:`, error.message);
+        return [];
+      }
+    };
+
     // If we have a symbol, use listPrivateTrades for that symbol
     if (params?.symbol) {
       try {
         const symbol = this.formatPair(params.symbol);
+        const fillsFromEndpoint = await fetchFromFillsEndpoint({
+          limit: params.limit || 50,
+          startMs: params.startMs,
+          endMs: params.endMs,
+          orderId: params.orderId,
+        });
+
+        if (fillsFromEndpoint && fillsFromEndpoint.length > 0) {
+          const want = symbol.toUpperCase();
+          const alt = params.symbol.replace('/', '-').toUpperCase();
+          return fillsFromEndpoint.filter(f => {
+            const s = (f.symbol || '').toUpperCase();
+            return s === want || s === alt;
+          });
+        }
+
         const result = await this.listPrivateTrades({
           symbol,
           startMs: params.startMs,
@@ -901,7 +977,7 @@ export class RevolutXService implements IExchangeService {
             order_id: t?.order_id || t?.orderId || '',
             client_order_id: t?.client_order_id || t?.clientOrderId,
             symbol: t?.symbol || symbol,
-            side: t?.side || t?.type || 'BUY',
+            side: t?.side || t?.type || '',
             price: parseFloat(t?.p ?? t?.price ?? '0'),
             quantity: parseFloat(t?.q ?? t?.quantity ?? t?.amount ?? t?.vol ?? '0'),
             fee: parseFloat(t?.fee ?? t?.commission ?? '0'),
@@ -933,51 +1009,19 @@ export class RevolutXService implements IExchangeService {
       }
     }
 
-    // Fallback: try to get fills from /api/1.0/fills endpoint
-    const path = '/api/1.0/fills';
-    const queryParams: Record<string, string | number | undefined> = {
+    const fillsFromEndpoint = await fetchFromFillsEndpoint({
       limit: params?.limit || 50,
-    };
-    if (params?.orderId) queryParams.order_id = params.orderId;
-    if (params?.startMs) queryParams.start_date = params.startMs;
-    if (params?.endMs) queryParams.end_date = params.endMs;
+      startMs: params?.startMs,
+      endMs: params?.endMs,
+      orderId: params?.orderId,
+    });
 
-    const queryString = this.buildQueryString(queryParams, ['order_id', 'start_date', 'end_date', 'limit']);
-    const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
-    const headers = this.getHeaders('GET', path, queryString, '');
-
-    try {
-      const response = await fetch(fullUrl, { headers });
-
-      if (!response.ok) {
-        // If /fills endpoint doesn't exist, that's OK - we'll use getOrder fallback
-        if (response.status === 404) {
-          console.log(`[revolutx] /fills endpoint not available, using getOrder fallback`);
-          return [];
-        }
-        const errorText = await response.text();
-        console.error(`[revolutx] getFills error: ${response.status} ${errorText}`);
-        return [];
-      }
-
-      const data = await response.json() as any;
-      const fills = Array.isArray(data) ? data : (data.data || data.fills || data.items || []);
-
-      return fills.map((f: any) => ({
-        fill_id: f.id || f.fill_id || f.trade_id || `${f.created_at}-${f.price}`,
-        order_id: f.order_id || '',
-        client_order_id: f.client_order_id,
-        symbol: f.symbol || '',
-        side: f.side || 'BUY',
-        price: parseFloat(f.price || '0'),
-        quantity: parseFloat(f.quantity || f.amount || f.size || '0'),
-        fee: parseFloat(f.fee || f.commission || '0'),
-        created_at: f.created_at || f.timestamp || new Date().toISOString(),
-      }));
-    } catch (error: any) {
-      console.error(`[revolutx] getFills exception:`, error.message);
+    if (fillsFromEndpoint === null) {
+      console.log(`[revolutx] /fills endpoint not available, using getOrder fallback`);
       return [];
     }
+
+    return fillsFromEndpoint;
   }
 }
 

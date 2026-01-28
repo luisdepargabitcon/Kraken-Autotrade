@@ -43,7 +43,7 @@ function inferSideFromSideField(t: any): "buy" | "sell" | null {
 }
 
 export function normalizeRevolutXTrade(t: any, allowAssumedSide: boolean): NormalizedRevolutXTrade {
-  const tradeId = t?.tid || t?.id || t?.trade_id || t?.transaction_id || t?.txid;
+  const tradeId = t?.tid || t?.fill_id || t?.id || t?.trade_id || t?.transaction_id || t?.txid;
 
   const tsRaw = t?.tdt ?? t?.timestamp ?? t?.time ?? t?.date ?? t?.created_at ?? t?.published_at;
   const tsNum = typeof tsRaw === "string" ? Number(tsRaw) : tsRaw;
