@@ -51,20 +51,8 @@ export function normalizeRevolutXTrade(t: any, allowAssumedSide: boolean): Norma
 
   const priceRaw = t?.p ?? t?.price;
 
-  const amountBaseRaw =
-    t?.amount_base ??
-    t?.base_amount ??
-    t?.baseAmount ??
-    t?.amountBase ??
-    t?.amount;
-
-  const amountQuoteRaw =
-    t?.amount_quote ??
-    t?.quote_amount ??
-    t?.quoteAmount ??
-    t?.amountQuote ??
-    t?.quote;
-
+  const amountBaseRaw = t?.amount_base ?? t?.base_amount ?? t?.baseAmount ?? t?.amountBase ?? t?.amount;
+  const amountQuoteRaw = t?.amount_quote ?? t?.quote_amount ?? t?.quoteAmount ?? t?.amountQuote ?? t?.quote;
   const qtyRaw = t?.q ?? t?.quantity ?? t?.qty ?? t?.vol ?? t?.size;
 
   const sideFromField = inferSideFromSideField(t);
@@ -108,6 +96,20 @@ export function normalizeRevolutXTrade(t: any, allowAssumedSide: boolean): Norma
       assumed: false,
       amountSource: "amount_base",
       sideSource: "amount_base_sign",
+    };
+  }
+
+  if (typeof amountQuoteRaw === "string" && amountQuoteRaw.trim().startsWith("-")) {
+    const n = parseNumberish(amountQuoteRaw);
+    return {
+      tradeId,
+      executedAt,
+      price: priceRaw,
+      amount: amountBaseRaw ?? qtyRaw,
+      type: "buy",
+      assumed: false,
+      amountSource: amountBaseRaw ? "amount_base" : (qtyRaw ? "quantity" : undefined),
+      sideSource: "amount_quote_sign",
     };
   }
 
@@ -195,5 +197,7 @@ export function normalizeRevolutXTrade(t: any, allowAssumedSide: boolean): Norma
     amount: qtyRaw,
     type: null,
     assumed: false,
+    amountSource: "quantity",
+    sideSource: undefined,
   };
 }
