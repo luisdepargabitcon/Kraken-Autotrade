@@ -891,17 +891,23 @@ export class RevolutXService implements IExchangeService {
           limit: params.limit || 50,
         });
 
-        return result.trades.map((t: any) => ({
-          fill_id: t.id || t.trade_id || t.txid || `${t.created_at}-${t.price}`,
-          order_id: t.order_id || '',
-          client_order_id: t.client_order_id,
-          symbol: t.symbol || symbol,
-          side: t.side || 'BUY',
-          price: parseFloat(t.price || '0'),
-          quantity: parseFloat(t.quantity || t.amount || t.vol || '0'),
-          fee: parseFloat(t.fee || t.commission || '0'),
-          created_at: t.created_at || t.timestamp || new Date().toISOString(),
-        }));
+        return result.trades.map((t: any) => {
+          const tsRaw = t?.tdt ?? t?.timestamp ?? t?.time ?? t?.created_at;
+          const tsNum = typeof tsRaw === 'string' ? Number(tsRaw) : tsRaw;
+          const createdAtIso = Number.isFinite(tsNum) ? new Date(tsNum).toISOString() : (tsRaw ? new Date(tsRaw).toISOString() : new Date().toISOString());
+
+          return {
+            fill_id: t?.tid || t?.id || t?.trade_id || t?.txid || `${createdAtIso}-${t?.p ?? t?.price ?? ''}`,
+            order_id: t?.order_id || t?.orderId || '',
+            client_order_id: t?.client_order_id || t?.clientOrderId,
+            symbol: t?.symbol || symbol,
+            side: t?.side || t?.type || 'BUY',
+            price: parseFloat(t?.p ?? t?.price ?? '0'),
+            quantity: parseFloat(t?.q ?? t?.quantity ?? t?.amount ?? t?.vol ?? '0'),
+            fee: parseFloat(t?.fee ?? t?.commission ?? '0'),
+            created_at: createdAtIso,
+          };
+        });
       } catch (error: any) {
         console.error(`[revolutx] getFills error for ${params.symbol}:`, error.message);
         return [];

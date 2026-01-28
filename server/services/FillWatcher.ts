@@ -148,7 +148,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                       tradeId: syntheticFill.fillId,
                       exchange,
                       pair,
-                      type: 'buy',
+                      type: syntheticFill.side === 'sell' ? 'sell' : 'buy',
                       price: syntheticFill.price.toString(),
                       amount: syntheticFill.amount.toString(),
                       executedAt: syntheticFill.executedAt,
@@ -228,7 +228,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
               tradeId: fill.fillId,
               exchange,
               pair,
-              type: 'buy',
+              type: fill.side === 'sell' ? 'sell' : 'buy',
               price: fill.price.toString(),
               amount: fill.amount.toString(),
               executedAt: fill.executedAt,
@@ -374,14 +374,14 @@ async function fetchFillsForOrder(
           return fills
             .filter((f: any) => {
               const fillTime = new Date(f.created_at).getTime();
-              return fillTime > recentCutoff && 
-                     (f.side?.toLowerCase() === 'buy');
+              const side = (f.side ?? '').toString().toLowerCase();
+              return fillTime > recentCutoff && (side === 'buy' || side === 'sell');
             })
             .map((f: any) => ({
               fillId: f.fill_id || `${exchange}-${f.created_at}-${f.price}`,
               orderId: f.order_id || exchangeOrderId || '',
               pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
-              side: f.side?.toLowerCase() || 'buy',
+              side: f.side?.toLowerCase() === 'sell' ? 'sell' : 'buy',
               price: parseFloat(f.price || '0'),
               amount: parseFloat(f.quantity || '0'),
               cost: parseFloat(f.price || '0') * parseFloat(f.quantity || '0'),
@@ -404,13 +404,14 @@ async function fetchFillsForOrder(
           const fillTime = new Date(f.created_at).getTime();
           const fillSymbol = f.symbol?.toUpperCase();
           const matchesPair = !pair || fillSymbol === normalizedPair || fillSymbol === altPair;
-          return fillTime > recentCutoff && matchesPair && f.side?.toLowerCase() === 'buy';
+          const side = (f.side ?? '').toString().toLowerCase();
+          return fillTime > recentCutoff && matchesPair && (side === 'buy' || side === 'sell');
         })
         .map((f: any) => ({
           fillId: f.fill_id || `${exchange}-${f.created_at}-${f.price}`,
           orderId: f.order_id || exchangeOrderId || '',
           pair: exchangeService.normalizePairFromExchange?.(f.symbol) || f.symbol || pair || '',
-          side: f.side?.toLowerCase() || 'buy',
+          side: f.side?.toLowerCase() === 'sell' ? 'sell' : 'buy',
           price: parseFloat(f.price || '0'),
           amount: parseFloat(f.quantity || '0'),
           cost: parseFloat(f.price || '0') * parseFloat(f.quantity || '0'),
