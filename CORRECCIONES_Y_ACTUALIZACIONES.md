@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-01-29 20:32 — FIX: HTML inválido en alertas críticas de Telegram
+
+### Problema Detectado
+Las alertas críticas fallaban con error 400 de Telegram: "Tag 'span' must have class 'tg-spoiler'". El HTML usaba etiquetas `<span>` con estilos CSS que Telegram no permite.
+
+### Solución Implementada
+Reemplazar etiquetas `<span style="color: ...">` con emojis para indicar severidad:
+
+```typescript
+// Antes (causaba error 400):
+MEDIUM: '<span style="color: #FFA500">', // Naranja
+HIGH: '<span style="color: #FF4444">', // Rojo fuerte
+CRITICAL: '<span style="color: #FF0000; font-weight: bold">' // Rojo brillante
+
+// Después (compatible con Telegram):
+MEDIUM: '🟡', // Amarillo/naranja
+HIGH: '🔴', // Rojo
+CRITICAL: '🚨' // Rojo crítico
+```
+
+### Archivos Modificados
+- `server/services/ErrorAlertService.ts` - Reemplazado HTML span con emojis para severidad
+
+### Impacto
+- ✅ Alertas críticas ahora se envían correctamente a Telegram
+- ✅ Elimina error 400 "can't parse entities"
+- ✅ Más visual y compatible con formato de Telegram
+
+---
+
 ## 2026-01-29 19:59 — MEJORA: Endpoint de test para alertas críticas
 
 ### Problema Detectado

@@ -169,12 +169,12 @@ export class ErrorAlertService {
     // Colores según severidad para Telegram
     const severityColors = {
       LOW: '', // Sin color (gris por defecto)
-      MEDIUM: '<span style="color: #FFA500">', // Naranja
-      HIGH: '<span style="color: #FF4444">', // Rojo fuerte
-      CRITICAL: '<span style="color: #FF0000; font-weight: bold">' // Rojo brillante + negrita
+      MEDIUM: '🟡', // Amarillo/naranja
+      HIGH: '🔴', // Rojo
+      CRITICAL: '🚨' // Rojo crítico
     };
 
-    const colorEnd = '</span>';
+    const colorEnd = '';
     const currentColor = severityColors[alert.severity];
 
     let message = `${severityEmoji[alert.severity]} ${currentColor}<b>ERROR ${alert.severity}</b>${colorEnd} ${typeEmoji[alert.type]}
