@@ -1835,7 +1835,8 @@ export class TradingEngine {
     pair: string,
     timeframe: string,
     candle: OHLCCandle,
-    adjustedMinSignals?: number
+    adjustedMinSignals?: number,
+    regime?: MarketRegime | string | null
   ): Promise<TradeSignal> {
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
     const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
@@ -1851,11 +1852,79 @@ export class TradingEngine {
     
     let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close, adjustedMinSignals);
     
-    // Aplicar filtro MTF si hay señal activa
+    // === FILTRO ANTI-CRESTA (Fase 2.4) ===
+    // Bloquea compras cuando: volumen > 1.5x promedio Y precio > 1% sobre EMA20
+    // Esto evita compras tardías en momentum agotado
+    if (signal.action === "buy" && closedCandles.length >= 20) {
+      const closes = closedCandles.map(c => c.close);
+      const ema20 = this.calculateEMA(closes.slice(-20), 20);
+      const currentPrice = candle.close;
+      const priceVsEma20Pct = ema20 > 0 ? ((currentPrice - ema20) / ema20) : 0;
+      
+      // Calcular ratio de volumen
+      const volumes = closedCandles.slice(-20).map(c => c.volume);
+      const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+      const currentVolume = closedCandles[closedCandles.length - 1]?.volume || 0;
+      const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
+      
+      // Anti-cresta: volumen alto + sobrecompra respecto a EMA20
+      if (volumeRatio > 1.5 && priceVsEma20Pct > 0.01) {
+        const rejectionReason = `Anti-Cresta: Volumen ${volumeRatio.toFixed(1)}x + Precio ${(priceVsEma20Pct * 100).toFixed(2)}% sobre EMA20`;
+        
+        // Enviar alerta de rechazo
+        this.telegramService.sendSignalRejectionAlert(
+          pair,
+          rejectionReason,
+          "ANTI_CRESTA",
+          {
+            regime: regime?.toString(),
+            mtfAlignment: mtfAnalysis?.alignment,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+            volumeRatio,
+            priceVsEma20Pct,
+            selectedStrategy: `momentum_candles_${timeframe}`,
+            rawSignal: signal.action.toUpperCase(),
+            currentPrice,
+            ema20,
+          }
+        ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert ANTI_CRESTA: ${err.message}`, "trading"));
+        
+        log(`[ANTI_CRESTA] ${pair}: Señal BUY bloqueada - ${rejectionReason}`, "trading");
+        
+        return { 
+          action: "hold", 
+          pair, 
+          confidence: 0.3, 
+          reason: `Señal filtrada: ${rejectionReason}`,
+          signalsCount: signal.signalsCount,
+          minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+        };
+      }
+    }
+    
+    // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
     if (mtfAnalysis && signal.action !== "hold") {
-      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis);
+      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime);
       if (mtfBoost.filtered) {
         // Preserve signalsCount from original signal for diagnostic trace
+        // Si es filtro MTF_STRICT, enviar alerta de rechazo
+        if (mtfBoost.filterType === "MTF_STRICT" && signal.action === "buy") {
+          this.telegramService.sendSignalRejectionAlert(
+            pair,
+            mtfBoost.reason,
+            "MTF_STRICT",
+            {
+              regime: regime?.toString(),
+              mtfAlignment: mtfAnalysis.alignment,
+              signalsCount: signal.signalsCount,
+              minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+              selectedStrategy: `momentum_candles_${timeframe}`,
+              rawSignal: signal.action.toUpperCase(),
+            }
+          ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert: ${err.message}`, "trading"));
+        }
+        
         return { 
           action: "hold", 
           pair, 
@@ -4399,13 +4468,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           routerApplied = true;
           log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
         } else {
           // TREND or other: Use standard momentum
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           if (earlyRegime === "TREND") {
             routerApplied = true;
             log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
@@ -4413,7 +4482,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
       } else {
         // Router disabled: use standard momentum strategy
-        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy);
+        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
       }
       
       // Registrar resultado del escaneo para candles
@@ -5139,13 +5208,39 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     return signal;
   }
 
-  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis): { filtered: boolean; confidenceBoost: number; reason: string } {
+  private applyMTFFilter(
+    signal: TradeSignal, 
+    mtf: TrendAnalysis, 
+    regime?: MarketRegime | string | null
+  ): { filtered: boolean; confidenceBoost: number; reason: string; filterType?: "MTF_STRICT" | "MTF_STANDARD" } {
     if (signal.action === "buy") {
+      // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4) ===
+      // En TRANSITION: exigir MTF >= 0.3 para compras
+      // En RANGE: exigir MTF >= 0.2 para compras
+      // Esto evita compras contra tendencia mayor en regímenes inestables
+      if (regime === "TRANSITION" && mtf.alignment < 0.3) {
+        return { 
+          filtered: true, 
+          confidenceBoost: 0, 
+          reason: `MTF insuficiente en TRANSITION (${mtf.alignment.toFixed(2)} < 0.30)`,
+          filterType: "MTF_STRICT"
+        };
+      }
+      if (regime === "RANGE" && mtf.alignment < 0.2) {
+        return { 
+          filtered: true, 
+          confidenceBoost: 0, 
+          reason: `MTF insuficiente en RANGE (${mtf.alignment.toFixed(2)} < 0.20)`,
+          filterType: "MTF_STRICT"
+        };
+      }
+      
+      // Filtros estándar existentes
       if (mtf.longTerm === "bearish" && mtf.mediumTerm === "bearish") {
-        return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h bajista" };
+        return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h bajista", filterType: "MTF_STANDARD" };
       }
       if (mtf.alignment < -0.5) {
-        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF negativa (${mtf.alignment.toFixed(2)})` };
+        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF negativa (${mtf.alignment.toFixed(2)})`, filterType: "MTF_STANDARD" };
       }
       if (mtf.alignment > 0.5) {
         return { filtered: false, confidenceBoost: 0.15, reason: "Confirmado por MTF alcista" };

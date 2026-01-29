@@ -4,6 +4,62 @@
 
 ---
 
+## 2026-01-29 14:45 — MEJORA: Filtros Avanzados Anti-Cresta y MTF Estricto + Alertas de Rechazo
+
+### Problema Detectado
+Análisis de las posiciones abiertas del **28/01/2026** que quedaron en negativo:
+- **SOL/USD 20:00** - Entró con 5/0 señales pero SIN confirmación MTF → -2.44%
+- **SOL/USD 21:30** - Entró con 4/1 señales pero SIN confirmación MTF → -2.37%
+- **ETH/USD 21:15** - Entró con volumen 2.1x en sobrecompra → -2.28%
+- **ETH/USD 20:00** - Entró con confirmación MTF → -0.70% (menor pérdida)
+
+**Patrón identificado:** Compras en regímenes TRANSITION sin suficiente confirmación MTF, y compras tardías con volumen alto (cresta).
+
+### Solución Implementada
+
+#### 1) Filtro MTF Estricto por Régimen
+Nuevos umbrales en `applyMTFFilter()`:
+- **TRANSITION**: Exige MTF alignment >= 0.30 para compras
+- **RANGE**: Exige MTF alignment >= 0.20 para compras
+
+```typescript
+if (regime === "TRANSITION" && mtf.alignment < 0.3) {
+  return { filtered: true, reason: "MTF insuficiente en TRANSITION", filterType: "MTF_STRICT" };
+}
+```
+
+#### 2) Filtro Anti-Cresta (evita compras tardías)
+Bloquea compras cuando se detecta:
+- Volumen > 1.5x del promedio de 20 períodos
+- Y precio > 1% sobre EMA20
+
+```typescript
+if (volumeRatio > 1.5 && priceVsEma20Pct > 0.01) {
+  return { action: "hold", reason: "Anti-Cresta: Volumen alto en sobrecompra" };
+}
+```
+
+#### 3) Alertas de Telegram para Rechazos Específicos
+Nueva función `sendSignalRejectionAlert()` que envía alerta detallada cuando:
+- Filtro **MTF_STRICT** bloquea una señal BUY
+- Filtro **ANTI_CRESTA** bloquea una señal BUY
+
+Incluye snapshot JSON copiable para debugging.
+
+### Archivos Modificados
+- `server/services/telegram.ts` - Nueva función `sendSignalRejectionAlert()`
+- `server/services/tradingEngine.ts`:
+  - `applyMTFFilter()` - Añadido parámetro `regime` y umbrales estrictos
+  - `analyzeWithCandleStrategy()` - Añadido filtro anti-cresta y alertas de rechazo
+
+### Impacto Esperado
+- ✅ Evitaría 2/4 compras problemáticas del 28/01 (SOL sin MTF)
+- ✅ Evitaría compras tardías en momentum agotado
+- ✅ Alertas informativas para análisis posterior
+- ✅ Reduce compras contra tendencia mayor en regímenes inestables
+
+---
+
 ## 2026-01-27 13:25 — MEJORA: Allowlist centralizada de pares activos (evita 404 por pares no soportados)
 
 ### Problema Detectado

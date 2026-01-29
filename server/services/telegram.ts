@@ -2549,6 +2549,77 @@ _KrakenBot.AI - Trading Autónomo_
     this.markEventSent("errors");
   }
 
+  /**
+   * Send signal rejection alert when advanced filters block a BUY signal
+   * Only for specific rejections: MTF_STRICT, ANTI_CRESTA
+   */
+  async sendSignalRejectionAlert(
+    pair: string,
+    rejectionReason: string,
+    filterType: "MTF_STRICT" | "ANTI_CRESTA",
+    context: {
+      regime?: string;
+      mtfAlignment?: number;
+      signalsCount?: number;
+      minSignalsRequired?: number;
+      volumeRatio?: number;
+      priceVsEma20Pct?: number;
+      selectedStrategy?: string;
+      rawSignal?: string;
+      currentPrice?: number;
+      ema20?: number;
+    }
+  ): Promise<void> {
+    const env = environment.envTag || "UNKNOWN";
+    const timestamp = new Date().toLocaleTimeString('es-ES', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      timeZone: 'Europe/Madrid'
+    });
+    
+    const filterEmoji = filterType === "MTF_STRICT" ? "📉" : "🔺";
+    const filterLabel = filterType === "MTF_STRICT" 
+      ? "MTF Estricto" 
+      : "Anti-Cresta";
+    
+    // Build snapshot JSON for debugging
+    const snapshot = {
+      pair,
+      regime: context.regime || "N/A",
+      mtfAlignment: context.mtfAlignment?.toFixed(2) || "N/A",
+      signalsCount: context.signalsCount ?? "N/A",
+      minSignalsRequired: context.minSignalsRequired ?? "N/A",
+      volumeRatio: context.volumeRatio?.toFixed(2) || "N/A",
+      priceVsEma20Pct: context.priceVsEma20Pct?.toFixed(3) || "N/A",
+      selectedStrategy: context.selectedStrategy || "N/A",
+      rawSignal: context.rawSignal || "N/A",
+      currentPrice: context.currentPrice?.toFixed(2) || "N/A",
+      ema20: context.ema20?.toFixed(2) || "N/A",
+    };
+    
+    const message = `🚫 <b>SEÑAL RECHAZADA - FILTRO ${filterLabel.toUpperCase()}</b>
+━━━━━━━━━━━━━━━━━━━
+<code>[${env}]</code> ${filterEmoji}
+
+📊 <b>Par:</b> <code>${escapeHtml(pair)}</code>
+⏰ <b>Hora:</b> ${timestamp} (Madrid)
+🎯 <b>Estrategia:</b> <code>${escapeHtml(context.selectedStrategy || "momentum_cycle")}</code>
+📈 <b>Régimen:</b> <code>${escapeHtml(context.regime || "N/A")}</code>
+🔢 <b>Señales:</b> ${context.signalsCount ?? "?"}/${context.minSignalsRequired ?? "?"}
+
+❌ <b>MOTIVO DE RECHAZO:</b>
+<code>${escapeHtml(rejectionReason)}</code>
+
+📋 <b>SNAPSHOT PARA DEBUG:</b>
+<pre>${escapeHtml(JSON.stringify(snapshot, null, 2))}</pre>
+
+💡 <i>Señal filtrada para evitar compras en tendencia contraria o entrada tardía</i>
+━━━━━━━━━━━━━━━━━━━
+<i>CHESTER BOT - Filtro Avanzado</i>`;
+
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
   async sendSystemStatus(isActive: boolean, strategy: string) {
     const emoji = isActive ? "✅" : "⏸️";
     const status = isActive ? "EN LÍNEA" : "PAUSADO";
