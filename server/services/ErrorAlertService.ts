@@ -52,19 +52,22 @@ export class ErrorAlertService {
 
   // Obtener TelegramService inyectado
   private async getTelegramService(): Promise<any> {
-    if (!this.telegramService) {
-      // Import dinámico solo cuando se necesita (ESM compatible)
-      const telegramModule = await import("./telegram");
-      this.telegramService = new telegramModule.TelegramService();
-      
-      // Inicializar con token de apiConfig
-      const apiConfig = await storage.getApiConfig();
-      if (apiConfig?.telegramToken && apiConfig?.telegramChatId) {
-        this.telegramService.initialize({
-          token: apiConfig.telegramToken,
-          chatId: apiConfig.telegramChatId,
-        });
-      }
+    // Si ya hay una instancia inyectada, usarla (evita conflicto 409)
+    if (this.telegramService) {
+      return this.telegramService;
+    }
+    
+    // Import dinámico solo cuando se necesita (ESM compatible)
+    const telegramModule = await import("./telegram");
+    this.telegramService = new telegramModule.TelegramService();
+    
+    // Inicializar con token de apiConfig
+    const apiConfig = await storage.getApiConfig();
+    if (apiConfig?.telegramToken && apiConfig?.telegramChatId) {
+      this.telegramService.initialize({
+        token: apiConfig.telegramToken,
+        chatId: apiConfig.telegramChatId,
+      });
     }
     return this.telegramService;
   }
