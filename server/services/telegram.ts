@@ -8,6 +8,7 @@ import { botLogger } from "./botLogger";
 import { ExchangeFactoryClass } from "./exchanges/ExchangeFactory";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { log } from "../utils/logger";
 
 // New modular telegram imports
 import {
@@ -2552,6 +2553,7 @@ _KrakenBot.AI - Trading Autónomo_
   /**
    * Send signal rejection alert when advanced filters block a BUY signal
    * Only for specific rejections: MTF_STRICT, ANTI_CRESTA
+   * Configurable via botConfig.signalRejectionAlertsEnabled
    */
   async sendSignalRejectionAlert(
     pair: string,
@@ -2570,6 +2572,12 @@ _KrakenBot.AI - Trading Autónomo_
       ema20?: number;
     }
   ): Promise<void> {
+    // Verificar si las alertas de rechazo están habilitadas en configuración
+    const botConfig = await storage.getBotConfig();
+    if (!botConfig?.signalRejectionAlertsEnabled) {
+      log(`[ALERT_SKIP] Signal rejection alert disabled in config for ${pair} (${filterType})`, "trading");
+      return;
+    }
     const env = environment.envTag || "UNKNOWN";
     const timestamp = new Date().toLocaleTimeString('es-ES', { 
       hour: '2-digit', 

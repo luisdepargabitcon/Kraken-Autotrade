@@ -138,6 +138,8 @@ export const botConfig = pgTable("bot_config", {
   notifCooldownTrades: integer("notif_cooldown_trades").notNull().default(0),
   notifCooldownErrors: integer("notif_cooldown_errors").notNull().default(60),
   errorAlertChatId: text("error_alert_chat_id"),
+  // Advanced Filters: Signal Rejection Alerts
+  signalRejectionAlertsEnabled: boolean("signal_rejection_alerts_enabled").notNull().default(true),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

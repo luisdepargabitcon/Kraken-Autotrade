@@ -53,6 +53,7 @@ interface BotConfig {
   notifCooldownTrades: number;
   notifCooldownErrors: number;
   nonceErrorAlertsEnabled: boolean;
+  signalRejectionAlertsEnabled: boolean;
   errorAlertChatId?: string;
 }
 
@@ -586,6 +587,20 @@ export default function Notifications() {
                     checked={config?.nonceErrorAlertsEnabled ?? true}
                     onCheckedChange={(checked) => updateConfigMutation.mutate({ nonceErrorAlertsEnabled: checked })}
                     data-testid="switch-nonce-alerts"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label>Alertas de Rechazo de Señales</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Envía alerta por Telegram cuando filtros avanzados (MTF estricto o Anti-Cresta) bloqueen una señal de compra
+                    </p>
+                  </div>
+                  <Switch 
+                    checked={config?.signalRejectionAlertsEnabled ?? true}
+                    onCheckedChange={(checked) => updateConfigMutation.mutate({ signalRejectionAlertsEnabled: checked })}
+                    data-testid="switch-signal-rejection-alerts"
                   />
                 </div>
               </CardContent>

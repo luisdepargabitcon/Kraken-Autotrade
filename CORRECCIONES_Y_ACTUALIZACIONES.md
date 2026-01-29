@@ -47,10 +47,12 @@ Nueva función `sendSignalRejectionAlert()` que envía alerta detallada cuando:
 Incluye snapshot JSON copiable para debugging.
 
 ### Archivos Modificados
-- `server/services/telegram.ts` - Nueva función `sendSignalRejectionAlert()`
+- `server/services/telegram.ts` - Nueva función `sendSignalRejectionAlert()` con configuración
 - `server/services/tradingEngine.ts`:
   - `applyMTFFilter()` - Añadido parámetro `regime` y umbrales estrictos
   - `analyzeWithCandleStrategy()` - Añadido filtro anti-cresta y alertas de rechazo
+- `shared/schema.ts` - Campo `signalRejectionAlertsEnabled` en tabla `botConfig`
+- `client/src/pages/Notifications.tsx` - Toggle para configurar alertas de rechazo
 
 ### Impacto Esperado
 - ✅ Evitaría 2/4 compras problemáticas del 28/01 (SOL sin MTF)
