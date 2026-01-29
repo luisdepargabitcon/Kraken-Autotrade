@@ -1,6 +1,7 @@
-# 📝 CORRECCIONES Y ACTUALIZACIONES
+# 📝 BITÁCORA TÉCNICA - KRAKEN AUTOTRADE
 
-> Registro detallado de cambios en código y configuración.
+> Registro detallado de cambios, fixes y mejoras en el sistema de trading autónomo.  
+> Documentación completa de problemas resueltos y decisiones técnicas.
 
 ---
 
