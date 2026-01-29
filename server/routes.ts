@@ -4814,5 +4814,46 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // ============================================================
+  // TEST ENDPOINT: Enviar alerta crítica para testing
+  // Solo para verificar que el sistema de alertas funciona
+  // ============================================================
+  app.post("/api/test/critical-alert", async (req, res) => {
+    try {
+      const { type = "TEST_ERROR", message = "Alerta crítica de prueba", pair = "BTC/USD" } = req.body;
+      
+      const alert = ErrorAlertService.createFromError(
+        new Error(message),
+        type as any,
+        'CRITICAL',
+        'test-endpoint',
+        'server/routes.ts',
+        pair,
+        { 
+          endpoint: '/api/test/critical-alert',
+          testMode: true,
+          userAgent: req.headers['user-agent'],
+          timestamp: new Date().toISOString()
+        }
+      );
+      
+      await errorAlertService.sendCriticalError(alert);
+      
+      res.json({ 
+        success: true, 
+        message: "Alerta crítica enviada",
+        type,
+        pair
+      });
+      
+    } catch (error: any) {
+      console.error("[api/test/critical-alert] Error:", error.message);
+      res.status(500).json({ 
+        error: "TEST_CRITICAL_ALERT_ERROR", 
+        message: error.message 
+      });
+    }
+  });
+
   return httpServer;
 }

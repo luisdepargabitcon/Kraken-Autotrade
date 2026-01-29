@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-01-29 19:59 — MEJORA: Endpoint de test para alertas críticas
+
+### Problema Detectado
+No había forma de probar que las alertas críticas se enviaban correctamente al chat configurado sin generar un error real.
+
+### Solución Implementada
+Nuevo endpoint `/api/test/critical-alert` para enviar alertas críticas de prueba.
+
+```bash
+curl -X POST http://localhost:3020/api/test/critical-alert \
+  -H "Content-Type: application/json" \
+  -d '{"type":"PRICE_INVALID","message":"Test de alerta","pair":"BTC/USD"}'
+```
+
+### Archivos Modificados
+- `server/routes.ts` - Añadido endpoint `/api/test/critical-alert` dentro de `registerRoutes()`
+
+### Impacto
+- ✅ Permite verificar configuración de alertas críticas por chat
+- ✅ Útil para testing de integración con Telegram
+
+---
+
 ## 2026-01-29 14:45 — MEJORA: Filtros Avanzados Anti-Cresta y MTF Estricto + Alertas de Rechazo
 
 ### Problema Detectado
