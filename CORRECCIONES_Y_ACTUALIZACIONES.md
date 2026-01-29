@@ -46,13 +46,18 @@ Nueva función `sendSignalRejectionAlert()` que envía alerta detallada cuando:
 
 Incluye snapshot JSON copiable para debugging.
 
+#### 4) Chat de destino configurable (por tipo de alerta)
+- Las alertas de rechazo pueden enviarse a **un chat específico** (o a todos) vía UI.
+- Las alertas de errores críticos ahora respetan el chat seleccionado en UI también cuando se envían desde `TelegramService`.
+
 ### Archivos Modificados
 - `server/services/telegram.ts` - Nueva función `sendSignalRejectionAlert()` con configuración
 - `server/services/tradingEngine.ts`:
   - `applyMTFFilter()` - Añadido parámetro `regime` y umbrales estrictos
   - `analyzeWithCandleStrategy()` - Añadido filtro anti-cresta y alertas de rechazo
-- `shared/schema.ts` - Campo `signalRejectionAlertsEnabled` en tabla `botConfig`
-- `client/src/pages/Notifications.tsx` - Toggle para configurar alertas de rechazo
+- `shared/schema.ts` - Campos `signalRejectionAlertsEnabled` y `signalRejectionAlertChatId` en tabla `botConfig`
+- `server/storage.ts` - Health-check + auto-migración de schema para nuevos campos
+- `client/src/pages/Notifications.tsx` - Toggle y selector de chat para alertas de rechazo, y corrección de selector de chat de errores críticos
 
 ### Impacto Esperado
 - ✅ Evitaría 2/4 compras problemáticas del 28/01 (SOL sin MTF)

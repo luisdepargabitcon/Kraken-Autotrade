@@ -2522,7 +2522,13 @@ _KrakenBot.AI - Trading Autónomo_
     // Use new visual error template
     const message = buildErrorAlertHTMLSimple(title, description, meta);
 
-    await this.sendAlertToMultipleChats(message, "errors");
+    const botConfig = await storage.getBotConfig();
+    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
+    if (errorAlertChatId) {
+      await this.sendToChat(errorAlertChatId, message);
+    } else {
+      await this.sendAlertToMultipleChats(message, "errors");
+    }
     this.markEventSent("errors");
   }
 
@@ -2537,7 +2543,13 @@ _KrakenBot.AI - Trading Autónomo_
     }
     
     const message = buildErrorAlertHTML(ctx);
-    await this.sendAlertToMultipleChats(message, "errors");
+    const botConfig = await storage.getBotConfig();
+    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
+    if (errorAlertChatId) {
+      await this.sendToChat(errorAlertChatId, message);
+    } else {
+      await this.sendAlertToMultipleChats(message, "errors");
+    }
     this.markEventSent("errors");
   }
 
@@ -2546,7 +2558,14 @@ _KrakenBot.AI - Trading Autónomo_
    */
   async sendCriticalError(ctx: Omit<ErrorAlertContext, 'severity'>) {
     const message = buildErrorAlertHTML({ ...ctx, severity: "CRITICAL" });
-    await this.sendAlertToMultipleChats(message, "errors");
+
+    const botConfig = await storage.getBotConfig();
+    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
+    if (errorAlertChatId) {
+      await this.sendToChat(errorAlertChatId, message);
+    } else {
+      await this.sendAlertToMultipleChats(message, "errors");
+    }
     this.markEventSent("errors");
   }
 
@@ -2578,6 +2597,8 @@ _KrakenBot.AI - Trading Autónomo_
       log(`[ALERT_SKIP] Signal rejection alert disabled in config for ${pair} (${filterType})`, "trading");
       return;
     }
+
+    const signalRejectionAlertChatId = (botConfig as any)?.signalRejectionAlertChatId as string | null | undefined;
     const env = environment.envTag || "UNKNOWN";
     const timestamp = new Date().toLocaleTimeString('es-ES', { 
       hour: '2-digit', 
@@ -2625,7 +2646,11 @@ _KrakenBot.AI - Trading Autónomo_
 ━━━━━━━━━━━━━━━━━━━
 <i>CHESTER BOT - Filtro Avanzado</i>`;
 
-    await this.sendAlertToMultipleChats(message, "trades");
+    if (signalRejectionAlertChatId) {
+      await this.sendToChat(signalRejectionAlertChatId, message);
+    } else {
+      await this.sendAlertToMultipleChats(message, "trades");
+    }
   }
 
   async sendSystemStatus(isActive: boolean, strategy: string) {

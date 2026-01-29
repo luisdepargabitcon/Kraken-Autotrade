@@ -1444,6 +1444,9 @@ export class DatabaseStorage implements IStorage {
       { column: 'sg_scale_out_threshold', table: 'bot_config' },
       { column: 'sg_fee_cushion_pct', table: 'bot_config' },
       { column: 'sg_fee_cushion_auto', table: 'bot_config' },
+      { column: 'error_alert_chat_id', table: 'bot_config' },
+      { column: 'signal_rejection_alerts_enabled', table: 'bot_config' },
+      { column: 'signal_rejection_alert_chat_id', table: 'bot_config' },
     ];
     
     const requiredOpenPositionsColumns = [
@@ -1504,6 +1507,9 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'sg_fee_cushion_pct', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_pct DECIMAL(5,2) DEFAULT 0.45' },
         { table: 'bot_config', column: 'sg_fee_cushion_auto', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS sg_fee_cushion_auto BOOLEAN DEFAULT true' },
         { table: 'bot_config', column: 'regime_detection_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS regime_detection_enabled BOOLEAN DEFAULT false' },
+        { table: 'bot_config', column: 'error_alert_chat_id', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS error_alert_chat_id TEXT' },
+        { table: 'bot_config', column: 'signal_rejection_alerts_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS signal_rejection_alerts_enabled BOOLEAN DEFAULT true' },
+        { table: 'bot_config', column: 'signal_rejection_alert_chat_id', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS signal_rejection_alert_chat_id TEXT' },
         
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },

@@ -54,7 +54,8 @@ interface BotConfig {
   notifCooldownErrors: number;
   nonceErrorAlertsEnabled: boolean;
   signalRejectionAlertsEnabled: boolean;
-  errorAlertChatId?: string;
+  errorAlertChatId?: string | null;
+  signalRejectionAlertChatId?: string | null;
 }
 
 export default function Notifications() {
@@ -603,6 +604,42 @@ export default function Notifications() {
                     data-testid="switch-signal-rejection-alerts"
                   />
                 </div>
+
+                <div className="space-y-2">
+                  <Label>Chat de destino para alertas de rechazo</Label>
+                  <Select
+                    value={config?.signalRejectionAlertChatId ?? "all"}
+                    onValueChange={(value) => {
+                      const chatId = value === "all" ? null : value;
+                      updateConfigMutation.mutate({ signalRejectionAlertChatId: chatId });
+                    }}
+                    data-testid="select-signal-rejection-alert-chat"
+                  >
+                    <SelectTrigger className="bg-background/50">
+                      <SelectValue placeholder="Seleccionar chat para alertas de rechazo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4" />
+                          Todos los chats activos
+                        </div>
+                      </SelectItem>
+                      {telegramChats.filter(chat => chat.isActive).map(chat => (
+                        <SelectItem key={chat.id} value={chat.chatId}>
+                          <div className="flex items-center gap-2">
+                            <MessageSquare className="h-4 w-4" />
+                            <span>{chat.name}</span>
+                            <span className="text-xs text-muted-foreground font-mono">({chat.chatId})</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Si seleccionas un chat, las alertas de rechazo (MTF estricto / Anti-Cresta) se enviarán solo a ese chat.
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -626,9 +663,9 @@ export default function Notifications() {
                 <div className="space-y-2">
                   <Label>Chat de destino para alertas de errores</Label>
                   <Select 
-                    value={config?.errorAlertChatId || "all"} 
+                    value={config?.errorAlertChatId ?? "all"}
                     onValueChange={(value) => {
-                      const chatId = value === "all" ? undefined : value;
+                      const chatId = value === "all" ? null : value;
                       updateConfigMutation.mutate({ errorAlertChatId: chatId });
                     }}
                     data-testid="select-error-alert-chat"

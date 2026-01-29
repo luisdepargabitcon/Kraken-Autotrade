@@ -140,6 +140,7 @@ export const botConfig = pgTable("bot_config", {
   errorAlertChatId: text("error_alert_chat_id"),
   // Advanced Filters: Signal Rejection Alerts
   signalRejectionAlertsEnabled: boolean("signal_rejection_alerts_enabled").notNull().default(true),
+  signalRejectionAlertChatId: text("signal_rejection_alert_chat_id"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
