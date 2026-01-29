@@ -924,17 +924,20 @@ export class TradingEngine {
     });
 
     if (this.telegramService.isInitialized()) {
-      const emoji = "🚨";
-      const message = `${emoji} <b>ALERTA CRÍTICA</b> ${emoji}\n\n` +
-        `<b>${alertType}</b>\n\n` +
-        `Par: ${context.pair}\n` +
-        `Exchange: ${context.exchange}\n` +
-        `Tipo: ${context.type}\n` +
-        `Trade ID: <code>${context.tradeId}</code>\n` +
-        (context.error ? `Error: ${context.error}\n` : "") +
-        `\n⚠️ Requiere revisión manual inmediata`;
-      
-      await this.telegramService.sendAlertToMultipleChats(message, "errors");
+      // Use new visual error alert
+      await this.telegramService.sendCriticalError({
+        errorType: alertType,
+        pair: context.pair,
+        exchange: context.exchange,
+        message: `Error en ${context.type}: ${context.error || 'Error desconocido'}`,
+        context: {
+          tradeId: context.tradeId,
+          type: context.type,
+          error: context.error,
+          alertType,
+        },
+        timestamp: new Date(),
+      });
     }
   }
 
@@ -6963,8 +6966,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         ? (order as any)?.txid?.[0]
         : (order as any)?.txid;
       const rawOrderId = (order as any)?.orderId;
-      const txid = typeof rawTxid === 'string' ? rawTxid : undefined;
       const externalOrderId = typeof rawOrderId === 'string' ? rawOrderId : undefined;
+      const txid = typeof rawTxid === 'string' ? rawTxid : externalOrderId;
       const externalId = txid ?? externalOrderId;
 
       if (exchange === 'kraken' && (!externalId || typeof externalId !== 'string')) {
@@ -7349,34 +7352,54 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                  strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transición")
               : "";
             
-            const assetName = pair.replace("/USD", "");
             const confNum = parseInt(confidenceValue);
             const confidenceLevel = !isNaN(confNum) 
               ? (confNum >= 80 ? "alta" : confNum >= 60 ? "buena" : "moderada")
               : "";
             
-            let naturalMessage = `🟢 <b>Nueva compra de ${assetName}</b>\n\n`;
-            naturalMessage += `He comprado <b>${volume}</b> ${assetName} (<b>$${totalUSDFormatted}</b>) a <b>$${price.toFixed(2)}</b>.\n\n`;
-            
-            if (regimeText && confidenceLevel) {
-              naturalMessage += `📊 Mercado en ${regimeText}, confianza ${confidenceLevel} (${confidenceValue}%).\n`;
-            } else if (confidenceLevel) {
-              naturalMessage += `📊 Confianza ${confidenceLevel} (${confidenceValue}%).\n`;
+            // Build signals summary
+            let signalsSummary = confidenceLevel 
+              ? `Confianza ${confidenceLevel} (${confidenceValue}%)` 
+              : `Confianza ${confidenceValue}%`;
+            if (regimeText) {
+              signalsSummary += ` | Mercado en ${regimeText}`;
             }
             
-            naturalMessage += `🧠 Estrategia: ${strategyLabel}\n`;
-            naturalMessage += `🔗 ID: <code>${txid}</code>\n\n`;
-            naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
-            
-            await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_buy");
+            // Use new visual buy alert
+            await this.telegramService.sendBuyAlert({
+              pair: pair,
+              exchange: exchange,
+              price: price.toFixed(2),
+              amount: volume,
+              total: totalUSDFormatted,
+              orderId: txid || externalId || `UNKNOWN-${Date.now()}`,
+              lotId: tradeId,
+              mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
+              status: "COMPLETED",
+              signalsSummary: signalsSummary,
+              regime: strategyMeta?.regime || undefined,
+              regimeReason: regimeText || undefined,
+              routerStrategy: strategyLabel || undefined,
+            });
           } else {
+            // For sell alerts, we need P&L calculation
             const assetName = pair.replace("/USD", "");
-            let naturalMessage = `🔴 <b>Venta de ${assetName}</b>\n\n`;
-            naturalMessage += `He vendido <b>${volume}</b> ${assetName} a <b>$${price.toFixed(2)}</b> ($${totalUSDFormatted}).\n\n`;
-            naturalMessage += `📝 ${reason}\n`;
-            naturalMessage += `🔗 ID: <code>${txid}</code>`;
             
-            await this.telegramService.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
+            // Use new visual sell alert
+            await this.telegramService.sendSellAlert({
+              pair: pair,
+              exchange: exchange,
+              price: price.toFixed(2),
+              amount: volume,
+              total: totalUSDFormatted,
+              orderId: txid || externalId || `UNKNOWN-${Date.now()}`,
+              lotId: tradeId,
+              mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
+              exitType: reason.includes("STOP") ? "STOP_LOSS" : reason.includes("PROFIT") ? "TAKE_PROFIT" : "MANUAL",
+              status: "COMPLETED",
+              trigger: reason,
+              // P&L will be calculated by the calling function with position data
+            });
           }
           notificationSent = true;
         } catch (telegramErr: any) {
@@ -7887,22 +7910,24 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
 
       // Notificar por Telegram
       if (this.telegramService.isInitialized()) {
-        const pnlEmoji = actualPnlUsd >= 0 ? "📈" : "📉";
-        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🔴 <b>Cierre Manual Ejecutado</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Cantidad: <code>${sellAmountFinal.toFixed(8)}</code>
-   • Precio entrada: <code>$${entryPrice.toFixed(2)}</code>
-   • Precio salida: <code>$${currentPrice.toFixed(2)}</code>
-
-${pnlEmoji} <b>PnL Neto:</b> <code>${actualPnlUsd >= 0 ? "+" : ""}$${actualPnlUsd.toFixed(2)} (${actualPnlPct >= 0 ? "+" : ""}${actualPnlPct.toFixed(2)}%)</code>
-💸 <b>Comisiones:</b> <code>-$${(entryFeeUsd + exitFeeUsd).toFixed(2)}</code>
-
-🔗 <b>ID:</b> <code>${txid}</code>
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_sell");
+        await this.telegramService.sendSellAlert({
+          pair: pair,
+          exchange: exchange,
+          price: currentPrice.toFixed(2),
+          amount: sellAmountFinal.toFixed(8),
+          total: (currentPrice * sellAmountFinal).toFixed(2),
+          orderId: txid,
+          lotId: positionLotId,
+          mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
+          exitType: "MANUAL",
+          status: "COMPLETED",
+          trigger: "Cierre Manual",
+          pnlUsd: actualPnlUsd,
+          pnlPct: actualPnlPct,
+          feeUsd: entryFeeUsd + exitFeeUsd,
+          netPnlUsd: actualPnlUsd,
+          openedAt: position.openedAt ? new Date(position.openedAt) : undefined,
+        });
       }
 
       log(`[MANUAL_CLOSE] Cierre exitoso ${pair} (${positionLotId}) - Order: ${txid}, PnL: $${actualPnlUsd.toFixed(2)}`, "trading");
