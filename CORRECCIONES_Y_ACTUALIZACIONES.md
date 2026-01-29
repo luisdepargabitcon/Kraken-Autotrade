@@ -4,6 +4,65 @@
 
 ---
 
+## 29-ENE-2026: Fix conflicto de doble instancia en ErrorAlertService
+
+**Problema identificado:**
+- ErrorAlertService creaba una NUEVA instancia de TelegramService al enviar alertas
+- El bot principal ya estaba corriendo con su propia instancia haciendo polling
+- Dos instancias intentando polling → Error 409 Conflict de Telegram
+- ErrorAlertService detectaba "bot not initialized" y no enviaba alertas
+
+**Análisis del problema:**
+- **Instancia 1**: Bot principal (inicializado al startup) haciendo polling con lock
+- **Instancia 2**: ErrorAlertService creaba nueva instancia para enviar alertas
+- **Conflicto**: `ETELEGRAM: 409 Conflict: terminated by other getUpdates request`
+- **Resultado**: ErrorAlertService no podía enviar alertas críticas ni de rechazo
+
+**Solución aplicada (2 commits):**
+
+**Commit 1 (a5dba88): Inyectar instancia global**
+```typescript
+// server/routes.ts (líneas 138-140)
+// Inyectar telegramService global en ErrorAlertService para evitar conflictos 409
+errorAlertService.setTelegramService(telegramService);
+console.log("[startup] TelegramService injected into ErrorAlertService");
+```
+
+**Commit 2 (e95f923): Modificar getTelegramService() para usar instancia inyectada**
+```typescript
+// server/services/ErrorAlertService.ts (líneas 54-73)
+private async getTelegramService(): Promise<any> {
+  // Si ya hay una instancia inyectada, usarla (evita conflicto 409)
+  if (this.telegramService) {
+    return this.telegramService;
+  }
+  
+  // Import dinámico solo cuando se necesita (ESM compatible)
+  const telegramModule = await import("./telegram");
+  this.telegramService = new telegramModule.TelegramService();
+  // ... inicialización solo si no hay instancia inyectada
+}
+```
+
+**Verificación del fix:**
+- ✅ `[startup] TelegramService injected into ErrorAlertService` en logs
+- ✅ Alertas críticas llegan al chat `-1003504297101`
+- ✅ Sin errores 409 en logs de Telegram
+- ✅ Endpoint `/api/test/critical-alert` funciona correctamente
+
+**Nota sobre alertas de rechazo:**
+- Las alertas de rechazo (`sendSignalRejectionAlert`) solo se activan para `MTF_STRICT` y `ANTI_CRESTA`
+- Rechazos por `MIN_ORDER_ABSOLUTE` no usan este sistema (por diseño)
+- Para probar alertas de rechazo se necesita una señal real que sea filtrada por MTF/Anti-Cresta
+
+**Impacto:**
+- ✅ ErrorAlertService reutiliza instancia global del bot
+- ✅ Eliminado conflicto de doble polling
+- ✅ Sistema de alertas completamente funcional
+- ✅ Alertas críticas y de rechazo operativas (cuando corresponde)
+
+---
+
 ## 2026-01-29 20:32 — FIX: HTML inválido en alertas críticas de Telegram
 
 ### Problema Detectado
