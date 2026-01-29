@@ -135,6 +135,10 @@ export async function registerRoutes(
     // Start daily report scheduler (14:00 Europe/Madrid)
     telegramService.startDailyReport();
 
+    // Inyectar telegramService global en ErrorAlertService para evitar conflictos 409
+    errorAlertService.setTelegramService(telegramService);
+    console.log("[startup] TelegramService injected into ErrorAlertService");
+
     // RevolutX daily sync scheduler (default: 02:00 UTC)
     try {
       const revolutxCron = process.env.REVOLUTX_DAILY_SYNC_CRON || '0 2 * * *';
