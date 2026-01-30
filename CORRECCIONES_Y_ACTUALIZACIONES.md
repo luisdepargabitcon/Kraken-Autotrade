@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-01-31 — FIX CRÍTICO: SELL RevolutX (pendingFill) se ejecuta pero no aparece en Operaciones
+
+### Síntoma
+- Telegram notifica: `⏳ Orden SELL enviada` (pendiente de confirmación)
+- RevolutX confirma la ejecución (orden completada)
+- En el panel del bot NO aparece la operación (tabla `trades` sin registro)
+
+### Caso real (STAGING)
+- `order_intents.id=23`
+- `client_order_id=ac3bf6b8-7316-4537-8c5b-c03e884509aa`
+- `exchange_order_id=b77ddd5b-f299-4a9d-a83d-413bf803d604`
+- BotEvents:
+  - `SG_EMERGENCY_STOPLOSS` (caída ~-12%)
+  - `ORDER_ATTEMPT`
+  - `ORDER_PENDING_FILL`
+
+### Causa Raíz
+En RevolutX, algunas órdenes retornan `pendingFill=true` (aceptadas sin fill inmediato). Para SELL:
+- Se enviaba el mensaje de Telegram.
+- Se persistía `order_intent` como `accepted`.
+- Pero NO se garantizaba la reconciliación del fill → no se insertaba el trade en `trades`.
+
+### Solución Implementada
+1) `server/services/tradingEngine.ts`:
+- Iniciar `FillWatcher` también para órdenes SELL en `pendingFill`.
+
+2) `server/services/FillWatcher.ts`:
+- Persistir el trade aunque no exista `open_position` (caso SELL).
+- En verificación por timeout (late fill), persistir trade y tratar como éxito incluso sin posición.
+- `fillId` derivado de `getOrder` ahora es estable (`${exchangeOrderId}-fill`) para evitar duplicados.
+
+### Impacto
+- ✅ Los SELL `pendingFill` quedan persistidos en `trades`.
+- ✅ El historial de Operaciones refleja la venta.
+- ✅ Se evita que un SELL ejecutado quede “invisible” en UI.
+
 ## 29-ENE-2026: Fix conflicto de doble instancia en ErrorAlertService
 
 **Problema identificado:**

@@ -86,6 +86,11 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
     return;
   }
 
+  const orderIntent = await storage.getOrderIntentByClientOrderId(clientOrderId).catch(() => undefined);
+  const orderIntentSide = typeof orderIntent?.side === 'string' ? orderIntent.side.toLowerCase() : undefined;
+  const initialPosition = await storage.getPositionByClientOrderId(clientOrderId).catch(() => undefined);
+  const hasPosition = Boolean(initialPosition);
+
   // Polling function
   const pollForFills = async () => {
     pollCount++;
@@ -134,17 +139,10 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                     executedAt: order.createdAt || new Date(),
                   };
                   
-                  // Process the fill
-                  const updatedPosition = await storage.updatePositionWithFill(clientOrderId, {
-                    fillId: syntheticFill.fillId,
-                    price: syntheticFill.price,
-                    amount: syntheticFill.amount,
-                    executedAt: syntheticFill.executedAt,
-                  });
-                  
-                  if (updatedPosition) {
-                    // Insert trade record
-                    await storage.createTrade({
+                  // Always persist trade for late fill (even if there is no pending position, e.g. SELL pendingFill)
+                  let persistedTradeId: number | undefined;
+                  try {
+                    const { trade } = await storage.insertTradeIgnoreDuplicate({
                       tradeId: syntheticFill.fillId,
                       exchange,
                       pair,
@@ -154,22 +152,57 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                       executedAt: syntheticFill.executedAt,
                       origin: 'engine',
                       executedByBot: true,
-                    }).catch(() => {}); // Ignore duplicate errors
-                    
-                    await botLogger.info('ORDER_FILLED_LATE', 
-                      `Late fill detected and processed: ${pair} +${syntheticFill.amount} @ $${syntheticFill.price.toFixed(2)}`, 
+                      status: 'filled',
+                      orderIntentId: orderIntent?.id,
+                    } as any);
+                    persistedTradeId = trade?.id;
+                  } catch {
+                    // best-effort
+                  }
+
+                  if (orderIntent && persistedTradeId) {
+                    try {
+                      await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, persistedTradeId);
+                      await storage.markTradeAsExecutedByBot(persistedTradeId, orderIntent.id);
+                    } catch {
+                      // best-effort
+                    }
+                  }
+
+                  // Process the fill (only if a pending position exists)
+                  const updatedPosition = hasPosition
+                    ? await storage.updatePositionWithFill(clientOrderId, {
+                        fillId: syntheticFill.fillId,
+                        price: syntheticFill.price,
+                        amount: syntheticFill.amount,
+                        executedAt: syntheticFill.executedAt,
+                      })
+                    : undefined;
+                  
+                  if (updatedPosition) {
+                    await botLogger.info('ORDER_FILLED_LATE',
+                      `Late fill detected and processed: ${pair} +${syntheticFill.amount} @ $${syntheticFill.price.toFixed(2)}`,
                       { fillId: syntheticFill.fillId, source: 'timeout_verification' });
-                    
+
                     // Emit WebSocket events
                     positionsWs.emitFillReceived(clientOrderId, syntheticFill, parseFloat(updatedPosition.averageEntryPrice || '0'));
                     positionsWs.emitPositionUpdated(updatedPosition);
-                    
+
                     onFillReceived?.(syntheticFill, updatedPosition);
                     onPositionOpen?.(updatedPosition);
-                    
+
                     console.log(`[FillWatcher] Successfully processed late fill for ${pair}`);
                     return; // Success - don't mark as failed
                   }
+
+                  await botLogger.info('ORDER_FILLED',
+                    `Fill received (no position): ${pair} ${syntheticFill.side} ${syntheticFill.amount} @ $${syntheticFill.price.toFixed(2)}`,
+                    { fillId: syntheticFill.fillId, clientOrderId });
+                  onFillReceived?.(syntheticFill, null);
+
+                  // Late fill was real and trade persisted; treat as success even without a pending position.
+                  console.log(`[FillWatcher] Successfully processed late fill for ${pair} (no position)`);
+                  return; // Success - don't mark as failed
                 }
               }
             }
@@ -180,8 +213,12 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
         
         // Only mark as FAILED if verification confirms no fills
         console.log(`[FillWatcher] No fills received and verification did not find filled order - marking as FAILED`);
-        await storage.markPositionFailed(clientOrderId, 'Timeout: No fills received after verification');
-        await botLogger.warn('FILL_WATCHER_TIMEOUT', 
+        if (orderIntentSide === 'sell') {
+          await storage.updateOrderIntentStatus(clientOrderId, 'failed', exchangeOrderId);
+        } else {
+          await storage.markPositionFailed(clientOrderId, 'Timeout: No fills received after verification');
+        }
+        await botLogger.warn('FILL_WATCHER_TIMEOUT',
           `FillWatcher timeout: No fills for ${pair}`, { clientOrderId });
       }
       
@@ -211,40 +248,54 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
         console.log(`[FillWatcher] New fill for ${pair}: ${fill.amount} @ ${fill.price}`);
         processedFills.add(fillKey);
 
-        // Update position with fill
-        const updatedPosition = await storage.updatePositionWithFill(clientOrderId, {
-          fillId: fill.fillId,
-          price: fill.price,
-          amount: fill.amount,
-          executedAt: fill.executedAt,
-        });
+        // Update position with fill (only if a pending position exists)
+        const updatedPosition = hasPosition
+          ? await storage.updatePositionWithFill(clientOrderId, {
+              fillId: fill.fillId,
+              price: fill.price,
+              amount: fill.amount,
+              executedAt: fill.executedAt,
+            })
+          : undefined;
+
+        // Insert trade record (idempotent via unique constraint)
+        let persistedTradeId: number | undefined;
+        try {
+          const { trade } = await storage.insertTradeIgnoreDuplicate({
+            tradeId: fill.fillId,
+            exchange,
+            pair,
+            type: fill.side === 'sell' ? 'sell' : 'buy',
+            price: fill.price.toString(),
+            amount: fill.amount.toString(),
+            executedAt: fill.executedAt,
+            origin: 'engine',
+            executedByBot: true,
+            status: 'filled',
+            orderIntentId: orderIntent?.id,
+          } as any);
+          persistedTradeId = trade?.id;
+        } catch (err: any) {
+          if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
+            console.error(`[FillWatcher] Error inserting trade:`, err);
+          }
+        }
+
+        if (orderIntent && persistedTradeId) {
+          try {
+            await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, persistedTradeId);
+            await storage.markTradeAsExecutedByBot(persistedTradeId, orderIntent.id);
+          } catch {
+            // best-effort
+          }
+        }
+
+        totalFilledAmount += fill.amount;
 
         if (updatedPosition) {
-          totalFilledAmount += fill.amount;
-
-          // Insert trade record (idempotent via unique constraint)
-          try {
-            await storage.createTrade({
-              tradeId: fill.fillId,
-              exchange,
-              pair,
-              type: fill.side === 'sell' ? 'sell' : 'buy',
-              price: fill.price.toString(),
-              amount: fill.amount.toString(),
-              executedAt: fill.executedAt,
-              origin: 'engine',
-              executedByBot: true,
-            });
-          } catch (err: any) {
-            // Ignore duplicate key errors (idempotent)
-            if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
-              console.error(`[FillWatcher] Error inserting trade:`, err);
-            }
-          }
-
           // Log event
-          await botLogger.info('ORDER_FILLED', 
-            `Fill received: ${pair} +${fill.amount} @ $${fill.price.toFixed(2)}`, 
+          await botLogger.info('ORDER_FILLED',
+            `Fill received: ${pair} +${fill.amount} @ $${fill.price.toFixed(2)}`,
             { fillId: fill.fillId, avgPrice: updatedPosition.averageEntryPrice });
 
           // Emit WebSocket events for real-time UI update
@@ -258,11 +309,23 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
           // Callback
           onFillReceived?.(fill, updatedPosition);
 
-          // Check if order is fully filled
-          if (totalFilledAmount >= expectedAmount * 0.99) { // 99% tolerance
-            console.log(`[FillWatcher] Order fully filled for ${pair}`);
+          // Check if position is fully filled
+          if (totalFilledAmount >= expectedAmount * 0.99) {
+            console.log(`[FillWatcher] Position fully filled for ${pair}`);
             stopFillWatcher(clientOrderId);
             onPositionOpen?.(updatedPosition);
+            return;
+          }
+        } else {
+          await botLogger.info('ORDER_FILLED',
+            `Fill received (no position): ${pair} ${fill.side} ${fill.amount} @ $${fill.price.toFixed(2)}`,
+            { fillId: fill.fillId, clientOrderId });
+          onFillReceived?.(fill, null);
+
+          // For SELL pendingFill we may have no position; still stop watcher once filled.
+          if (totalFilledAmount >= expectedAmount * 0.99) {
+            console.log(`[FillWatcher] Order fully filled for ${pair} (no position)`);
+            stopFillWatcher(clientOrderId);
             return;
           }
         }
@@ -344,7 +407,7 @@ async function fetchFillsForOrder(
           if (price > 0) {
             console.log(`[FillWatcher] Found fill via getOrder: ${order.filledSize} @ ${price}`);
             return [{
-              fillId: `${exchangeOrderId}-fill-${Date.now()}`,
+              fillId: `${exchangeOrderId}-fill`,
               orderId: exchangeOrderId,
               pair: exchangeService.normalizePairFromExchange?.(order.symbol) || order.symbol || pair || '',
               side: order.side?.toLowerCase() || 'buy',

@@ -7030,6 +7030,32 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           }
         }
         // === END INSTANT POSITION ===
+
+        // For SELL pendingFill: we do NOT create a pending position, but we MUST still start FillWatcher
+        // to ensure the executed SELL is persisted to trades and matched to the order_intent.
+        if (type === 'sell') {
+          try {
+            const { startFillWatcher } = await import('./FillWatcher');
+            startFillWatcher({
+              clientOrderId,
+              exchangeOrderId: pendingOrderId,
+              exchange,
+              pair,
+              expectedAmount: parseFloat(volume),
+              pollIntervalMs: 3000,
+              timeoutMs: 120000,
+              onFillReceived: (fill) => {
+                log(`[FILL_RECEIVED] ${pair}: ${fill.side} ${fill.amount} @ $${fill.price}`, 'trading');
+              },
+              onTimeout: (coid) => {
+                log(`[FILL_WATCHER_TIMEOUT] ${pair}: No fills after 2 minutes (clientOrderId=${coid})`, 'trading');
+              },
+            });
+            log(`[FILL_WATCHER_STARTED] ${correlationId} | Started FillWatcher for SELL ${pair}`, 'trading');
+          } catch (fwErr: any) {
+            log(`[FILL_WATCHER_ERROR] ${correlationId} | Failed to start FillWatcher for SELL: ${fwErr.message}`, 'trading');
+          }
+        }
         
         // Send Telegram notification about pending order
         if (this.telegramService.isInitialized()) {
