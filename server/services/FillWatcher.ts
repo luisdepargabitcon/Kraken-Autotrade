@@ -15,6 +15,96 @@ import { storage } from '../storage';
 import { botLogger } from './botLogger';
 import { positionsWs } from './positionsWebSocket';
 
+async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange: string; sinceMs?: number }): Promise<void> {
+  const { pair, exchange, sinceMs = 30 * 24 * 60 * 60 * 1000 } = params;
+
+  if (exchange !== 'kraken' && exchange !== 'revolutx') return;
+
+  const feePctByExchange = (ex: string) => {
+    if (ex === 'revolutx') return 0.09;
+    return 0.40;
+  };
+
+  const since = new Date(Date.now() - sinceMs);
+  const allTrades = await storage.getTrades(1000);
+  const recentTrades = allTrades
+    .filter((t: any) => {
+      const ex = ((t?.exchange ?? 'kraken') as string).toLowerCase();
+      if (ex !== exchange) return false;
+      if (String(t?.pair ?? '') !== pair) return false;
+      if (String(t?.status ?? 'filled').toLowerCase() !== 'filled') return false;
+      const ts = new Date(t.executedAt ?? t.createdAt);
+      return ts.getTime() >= since.getTime();
+    })
+    .sort((a: any, b: any) => {
+      const ta = new Date(a.executedAt ?? a.createdAt).getTime();
+      const tb = new Date(b.executedAt ?? b.createdAt).getTime();
+      return ta - tb;
+    });
+
+  const byTimeAsc = recentTrades;
+
+  const buys = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'buy');
+  const sells = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'sell');
+
+  let buyIndex = 0;
+  let buyRemaining = buys[0] ? parseFloat(String(buys[0].amount)) : 0;
+
+  for (const sell of sells) {
+    const needsPnl = sell.realizedPnlUsd == null || String(sell.realizedPnlUsd).length === 0;
+    if (!needsPnl) {
+      // Still consume FIFO quantities so later sells are priced correctly.
+      let toConsume = parseFloat(String(sell.amount));
+      while (toConsume > 0.00000001 && buyIndex < buys.length) {
+        const matchAmount = Math.min(buyRemaining, toConsume);
+        toConsume -= matchAmount;
+        buyRemaining -= matchAmount;
+        if (buyRemaining <= 0.00000001) {
+          buyIndex++;
+          buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
+        }
+      }
+      continue;
+    }
+
+    let sellRemaining = parseFloat(String(sell.amount));
+    let totalCost = 0;
+    let totalAmount = 0;
+
+    while (sellRemaining > 0.00000001 && buyIndex < buys.length) {
+      const buy = buys[buyIndex];
+      const matchAmount = Math.min(buyRemaining, sellRemaining);
+      totalCost += matchAmount * parseFloat(String(buy.price));
+      totalAmount += matchAmount;
+      sellRemaining -= matchAmount;
+      buyRemaining -= matchAmount;
+      if (buyRemaining <= 0.00000001) {
+        buyIndex++;
+        buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
+      }
+    }
+
+    if (totalAmount > 0.00000001) {
+      const avgEntryPrice = totalCost / totalAmount;
+      const sellPrice = parseFloat(String(sell.price));
+      const revenue = totalAmount * sellPrice;
+      const pnlGross = revenue - totalCost;
+      const feePct = feePctByExchange(exchange);
+      const entryFee = totalCost * (feePct / 100);
+      const exitFee = revenue * (feePct / 100);
+      const pnlNet = pnlGross - entryFee - exitFee;
+      const pnlPct = totalCost > 0 ? (pnlNet / totalCost) * 100 : 0;
+
+      await storage.updateTradePnl(
+        sell.id,
+        avgEntryPrice.toFixed(8),
+        pnlNet.toFixed(8),
+        pnlPct.toFixed(4)
+      );
+    }
+  }
+}
+
 interface WatcherConfig {
   clientOrderId: string;
   exchangeOrderId?: string;
@@ -77,6 +167,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
   const startTime = Date.now();
   let totalFilledAmount = 0;
   let pollCount = 0;
+  let pnlReconciled = false;
 
   // Get exchange service
   const exchangeService = await getExchangeService(exchange);
@@ -202,6 +293,15 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
 
                   // Late fill was real and trade persisted; treat as success even without a pending position.
                   console.log(`[FillWatcher] Successfully processed late fill for ${pair} (no position)`);
+
+                  if (!pnlReconciled && syntheticFill.side === 'sell') {
+                    pnlReconciled = true;
+                    try {
+                      await tryRecalculatePnlForPairExchange({ pair, exchange });
+                    } catch (e: any) {
+                      console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
+                    }
+                  }
                   return; // Success - don't mark as failed
                 }
               }
@@ -312,6 +412,15 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
           // Check if position is fully filled
           if (totalFilledAmount >= expectedAmount * 0.99) {
             console.log(`[FillWatcher] Position fully filled for ${pair}`);
+
+            if (!pnlReconciled && fill.side === 'sell') {
+              pnlReconciled = true;
+              try {
+                await tryRecalculatePnlForPairExchange({ pair, exchange });
+              } catch (e: any) {
+                console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
+              }
+            }
             stopFillWatcher(clientOrderId);
             onPositionOpen?.(updatedPosition);
             return;
@@ -325,6 +434,15 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
           // For SELL pendingFill we may have no position; still stop watcher once filled.
           if (totalFilledAmount >= expectedAmount * 0.99) {
             console.log(`[FillWatcher] Order fully filled for ${pair} (no position)`);
+
+            if (!pnlReconciled && fill.side === 'sell') {
+              pnlReconciled = true;
+              try {
+                await tryRecalculatePnlForPairExchange({ pair, exchange });
+              } catch (e: any) {
+                console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
+              }
+            }
             stopFillWatcher(clientOrderId);
             return;
           }
