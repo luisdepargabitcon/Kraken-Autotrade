@@ -44,6 +44,9 @@ En RevolutX, algunas órdenes retornan `pendingFill=true` (aceptadas sin fill in
 ### Nota (migraciones)
 - Se ajustó `db/migrations/005_trades_origin_and_dedupe.sql` para ignorar `duplicate_table` (42P07) al recrear la constraint `trades_exchange_pair_trade_id_key`, evitando logs de error no-bloqueantes en startup.
 
+### Mejora UI (trazabilidad)
+- `client/src/pages/Terminal.tsx`: En **Posiciones Abiertas**, se muestra el `lotId` completo y un botón para copiar el lote (evita tener que buscar el ID en DB cuando hay incidencias/duplicados).
+
 ## 29-ENE-2026: Fix conflicto de doble instancia en ErrorAlertService
 
 **Problema identificado:**

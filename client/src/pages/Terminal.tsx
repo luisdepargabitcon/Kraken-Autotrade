@@ -27,6 +27,7 @@ import {
   Layers,
   Square,
   X,
+  Copy,
   Loader2,
   Trash2,
   AlertTriangle,
@@ -128,6 +129,22 @@ export default function Terminal() {
   const queryClient = useQueryClient();
 
   const getPositionKey = (pair: string, lotId?: string | null) => lotId || pair;
+
+  const handleCopyLotId = async (lotId: string) => {
+    try {
+      await navigator.clipboard.writeText(lotId);
+      toast({
+        title: "Lote copiado",
+        description: lotId,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "No se pudo copiar el lote",
+        variant: "destructive",
+      });
+    }
+  };
 
   const { data: botConfig } = useQuery<{ 
     positionMode?: string; 
@@ -925,7 +942,23 @@ export default function Terminal() {
                                 <div className="text-xs text-muted-foreground font-mono flex items-center gap-1.5">
                                   <Clock className="h-3 w-3" />
                                   {formatDate(pos.openedAt)}
-                                  <span className="text-[10px] opacity-60">| Lote: {pos.lotId?.substring(0, 8) || 'N/A'}</span>
+                                  <span className="text-[10px] opacity-60 flex items-center gap-1" title={pos.lotId || undefined}>
+                                    | Lote:
+                                    <span className="break-all">{pos.lotId || 'N/A'}</span>
+                                    {pos.lotId && (
+                                      <button
+                                        type="button"
+                                        className="ml-1 inline-flex items-center justify-center rounded border border-border/40 px-1 py-0.5 hover:bg-white/[0.03]"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleCopyLotId(pos.lotId!);
+                                        }}
+                                        title="Copiar lote"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </span>
                                   {botConfig?.positionMode === 'SMART_GUARD' && (
                                     <Badge variant="secondary" className="text-[9px] px-1 py-0 ml-1" title="Slots usados / máximo">
                                       {getLotsCountByPair(pos.pair).count}/{getLotsCountByPair(pos.pair).max}
