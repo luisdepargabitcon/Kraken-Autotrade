@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { hostname } from "os";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 
 type EnvTag = "REPLIT/DEV" | "VPS/STG" | "NAS/PROD";
 
@@ -28,9 +28,12 @@ function getGitCommit(): string {
     // VERSION file doesn't exist, try git directly
   }
   
-  // Fallback to git command (works in dev/Replit)
   try {
-    return execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+    const result = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf-8" });
+    if (result.status === 0 && result.stdout) {
+      return result.stdout.trim();
+    }
+    return "unknown";
   } catch {
     return "unknown";
   }

@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -406,10 +406,25 @@ export class BackupService {
       let gitBranch = 'unknown';
       let gitCommit = 'unknown';
       try {
-        const { stdout: branch } = await execAsync('git rev-parse --abbrev-ref HEAD');
-        const { stdout: commit } = await execAsync('git rev-parse --short HEAD');
-        gitBranch = branch.trim();
-        gitCommit = commit.trim();
+        const versionPath = path.join(process.cwd(), 'VERSION');
+        if (existsSync(versionPath)) {
+          const version = (await fs.readFile(versionPath, 'utf-8')).trim();
+          if (version && version !== 'unknown') {
+            gitCommit = version;
+          }
+        }
+
+        const branchResult = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' });
+        if (branchResult.status === 0 && branchResult.stdout) {
+          gitBranch = branchResult.stdout.trim();
+        }
+
+        if (gitCommit === 'unknown') {
+          const commitResult = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf-8' });
+          if (commitResult.status === 0 && commitResult.stdout) {
+            gitCommit = commitResult.stdout.trim();
+          }
+        }
       } catch {}
 
       return {
