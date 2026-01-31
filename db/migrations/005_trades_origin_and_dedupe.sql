@@ -13,6 +13,7 @@ BEGIN
   ALTER TABLE trades ADD CONSTRAINT trades_exchange_pair_trade_id_key UNIQUE (exchange, pair, trade_id);
 EXCEPTION
   WHEN duplicate_object THEN NULL;
+  WHEN duplicate_table THEN NULL;
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_trades_exchange_origin_executed_at ON trades(exchange, origin, executed_at);

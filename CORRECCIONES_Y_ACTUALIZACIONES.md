@@ -41,6 +41,9 @@ En RevolutX, algunas órdenes retornan `pendingFill=true` (aceptadas sin fill in
 - ✅ El historial de Operaciones refleja la venta.
 - ✅ Se evita que un SELL ejecutado quede “invisible” en UI.
 
+### Nota (migraciones)
+- Se ajustó `db/migrations/005_trades_origin_and_dedupe.sql` para ignorar `duplicate_table` (42P07) al recrear la constraint `trades_exchange_pair_trade_id_key`, evitando logs de error no-bloqueantes en startup.
+
 ## 29-ENE-2026: Fix conflicto de doble instancia en ErrorAlertService
 
 **Problema identificado:**
