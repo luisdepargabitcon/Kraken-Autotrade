@@ -14,7 +14,7 @@ RUN npm install
 COPY . .
 
 # Write VERSION file from build arg
-RUN if [ "${GIT_COMMIT}" = "unknown" ] && [ -d .git ]; then GIT_COMMIT="$(git rev-parse --short HEAD)"; fi && echo "${GIT_COMMIT}" > VERSION
+RUN if [ "${GIT_COMMIT}" = "unknown" ] && [ -e .git ]; then GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"; fi && echo "${GIT_COMMIT}" > VERSION
 
 RUN npm run build
 

@@ -51,7 +51,7 @@ En RevolutX, algunas órdenes retornan `pendingFill=true` (aceptadas sin fill in
 - Problema: en contenedor aparecía `/bin/sh: git: not found` y `[startup] BUILD_COMMIT: unknown`.
 - `server/services/environment.ts`: `getGitCommit()` deja de ejecutar `git` vía shell y usa `spawnSync` (silencioso) solo como fallback, priorizando `VERSION`.
 - `server/services/BackupService.ts`: métricas de backup leen `VERSION` para `botVersion` y evitan dependencia de `git` dentro del contenedor.
-- `Dockerfile`: instala `git` y, si no se pasa `GIT_COMMIT`, calcula automáticamente el commit (`git rev-parse --short HEAD`) para escribirlo en `VERSION` durante build.
+- `Dockerfile`: instala `git` y, si no se pasa `GIT_COMMIT`, calcula automáticamente el commit (`git rev-parse --short HEAD`) para escribirlo en `VERSION` durante build (compatible con worktrees donde `.git` puede ser archivo).
 
 ## 29-ENE-2026: Fix conflicto de doble instancia en ErrorAlertService
 
