@@ -50,6 +50,13 @@ export class ConfigService extends EventEmitter {
   private configCache = new Map<string, TradingConfig>();
   private cacheTimeout = 5 * 60 * 1000; // 5 minutes
 
+  private normalizeConfig(config: any): TradingConfig {
+    const parsed = tradingConfigSchema.safeParse(config);
+    if (parsed.success) return parsed.data;
+    console.warn('[ConfigService] Invalid trading config in DB/cache, returning raw config:', parsed.error?.issues);
+    return config as TradingConfig;
+  }
+
   private constructor() {
     super();
   }
@@ -74,7 +81,7 @@ export class ConfigService extends EventEmitter {
       if (!activeConfig) return null;
 
       this.activeConfigId = activeConfig.id.toString();
-      const config = activeConfig.config as TradingConfig;
+      const config = this.normalizeConfig(activeConfig.config);
       this.configCache.set(this.activeConfigId, config);
       return config;
     } catch (error) {
@@ -91,7 +98,7 @@ export class ConfigService extends EventEmitter {
       const [configRow] = await db.select().from(tradingConfig).where(eq(tradingConfig.id, parseInt(configId)));
       if (!configRow) return null;
 
-      const config = configRow.config as TradingConfig;
+      const config = this.normalizeConfig(configRow.config);
       this.configCache.set(configId, config);
       return config;
     } catch (error) {
@@ -127,7 +134,8 @@ export class ConfigService extends EventEmitter {
 
   async createConfig(name: string, config: TradingConfig, options: ConfigUpdateOptions = {}): Promise<ConfigApplyResult> {
     try {
-      const validationResult = this.validateConfig(config);
+      const normalizedConfig = this.normalizeConfig(config);
+      const validationResult = this.validateConfig(normalizedConfig);
       if (!validationResult.isValid && !options.skipValidation) {
         return { success: false, configId: '', errors: validationResult.errors, warnings: validationResult.warnings };
       }
@@ -135,7 +143,7 @@ export class ConfigService extends EventEmitter {
       const configRow: Omit<TradingConfigRow, 'id' | 'createdAt' | 'updatedAt'> = {
         name,
         description: options.description || `Configuration created at ${new Date().toISOString()}`,
-        config: config as any,
+        config: normalizedConfig as any,
         isActive: false,
       };
 
@@ -148,14 +156,14 @@ export class ConfigService extends EventEmitter {
         changeType: 'CREATE',
         description: options.description || 'Configuration created',
         previousConfig: null,
-        newConfig: config as any,
-        changedFields: Object.keys(config),
+        newConfig: normalizedConfig as any,
+        changedFields: Object.keys(normalizedConfig),
         metadata: options.metadata || null,
         isActive: false,
       };
 
       const [createdChange] = await db.insert(configChange).values(changeRow).returning();
-      this.configCache.set(configId, config);
+      this.configCache.set(configId, normalizedConfig);
 
       await botLogger.info('CONFIG_CREATED', `Configuration ${name} created`, {
         configId,
@@ -184,7 +192,7 @@ export class ConfigService extends EventEmitter {
         return { success: false, configId, errors: ['Configuration not found'], warnings: [] };
       }
 
-      const updatedConfig = { ...currentConfig, ...updates };
+      const updatedConfig = this.normalizeConfig({ ...currentConfig, ...updates });
       const validationResult = this.validateConfig(updatedConfig);
       
       if (!validationResult.isValid && !options.skipValidation) {
@@ -308,6 +316,16 @@ export class ConfigService extends EventEmitter {
     const warnings: string[] = [];
     const fieldErrors: Record<string, string> = {};
 
+    const schemaResult = tradingConfigSchema.safeParse(config);
+    if (!schemaResult.success) {
+      for (const issue of schemaResult.error.issues) {
+        const path = issue.path.length > 0 ? issue.path.join('.') : 'config';
+        const message = `${path}: ${issue.message}`;
+        fieldErrors[path] = message;
+        errors.push(message);
+      }
+    }
+
     // Validate global configuration
     if (config.global) {
       this.validateSection(config.global, validationRules.global, 'global', errors, warnings, fieldErrors);
@@ -417,7 +435,7 @@ export class ConfigService extends EventEmitter {
         description: preset.description,
         isDefault: preset.isDefault,
         createdAt: preset.createdAt,
-        config: (preset.config as TradingConfig) ?? null,
+        config: preset.config ? this.normalizeConfig(preset.config) : null,
       }));
     } catch (error) {
       console.error('[ConfigService] Error listing presets:', error);

@@ -34,6 +34,7 @@ interface TradeSignal {
   // Signal count diagnostics (for PAIR_DECISION_TRACE)
   signalsCount?: number;      // Number of signals in favor of action
   minSignalsRequired?: number; // Minimum signals required for action
+  hybridGuard?: { watchId: number; reason: "ANTI_CRESTA" | "MTF_STRICT" };
 }
 
 interface RiskConfig {
@@ -73,7 +74,6 @@ function getTakerFeePct(): number {
     return KRAKEN_FEE_PCT; // Fallback to Kraken fees
   }
 }
-
 function getRoundTripFeePct(): number {
   return getTakerFeePct() * 2;
 }
@@ -576,6 +576,134 @@ export class TradingEngine {
 
   // Dynamic configuration from ConfigService
   private dynamicConfig: TradingConfig | null = null;
+  private lastHybridWatchExpireRunMs: number = 0;
+
+  private getHybridGuardConfig(): any {
+    return (this.dynamicConfig as any)?.global?.hybridGuard;
+  }
+
+  private normalizeHybridReason(reason: string): "ANTI_CRESTA" | "MTF_STRICT" | null {
+    const r = String(reason || '').toUpperCase();
+    if (r === 'ANTI_CREST') return 'ANTI_CRESTA';
+    if (r === 'ANTI_CRESTA') return 'ANTI_CRESTA';
+    if (r === 'MTF_STRICT') return 'MTF_STRICT';
+    return null;
+  }
+
+  private async expireHybridWatchesIfNeeded(): Promise<void> {
+    const cfg = this.getHybridGuardConfig();
+    if (!cfg?.enabled) return;
+    const now = Date.now();
+    if (now - this.lastHybridWatchExpireRunMs < 60_000) return;
+    this.lastHybridWatchExpireRunMs = now;
+    try {
+      await storage.expireHybridReentryWatches({ now: new Date() });
+    } catch (e: any) {
+      log(`[HYBRID_GUARD] expireHybridReentryWatches error: ${e?.message ?? String(e)}`, 'trading');
+    }
+  }
+
+  private async maybeCreateHybridReentryWatch(params: {
+    pair: string;
+    timeframe: string;
+    strategyId: string;
+    reason: string;
+    regime?: string | null;
+    rawSignal?: string;
+    rejectPrice?: number;
+    ema20?: number;
+    priceVsEma20Pct?: number;
+    volumeRatio?: number;
+    mtfAlignment?: number;
+    signalsCount?: number;
+    minSignalsRequired?: number;
+    rejectionReasonText?: string;
+  }): Promise<void> {
+    const cfg = this.getHybridGuardConfig();
+    if (!cfg?.enabled) return;
+
+    const normalizedReason = this.normalizeHybridReason(params.reason);
+    if (!normalizedReason) return;
+
+    if (normalizedReason === 'ANTI_CRESTA' && cfg?.antiCresta?.enabled === false) return;
+    if (normalizedReason === 'MTF_STRICT' && cfg?.mtfStrict?.enabled === false) return;
+
+    await this.expireHybridWatchesIfNeeded();
+
+    const exchange = this.getTradingExchangeType();
+    const ttlMinutes = Number(cfg?.ttlMinutes ?? 120);
+    const cooldownMinutes = Number(cfg?.cooldownMinutes ?? 0);
+    const maxActiveWatchesPerPair = Number(cfg?.maxActiveWatchesPerPair ?? 1);
+
+    try {
+      if (Number.isFinite(maxActiveWatchesPerPair) && maxActiveWatchesPerPair > 0) {
+        const activeWatches = await storage.countActiveHybridReentryWatchesForPair({
+          exchange,
+          pair: params.pair,
+        });
+        if (activeWatches >= maxActiveWatchesPerPair) return;
+      }
+
+      const existingActive = await storage.getActiveHybridReentryWatch({
+        exchange,
+        pair: params.pair,
+        strategy: params.strategyId,
+        reason: normalizedReason,
+      });
+      if (existingActive) return;
+
+      if (cooldownMinutes > 0) {
+        const recent = await storage.recentlyCreatedHybridReentryWatch({
+          exchange,
+          pair: params.pair,
+          withinMinutes: cooldownMinutes,
+          strategy: params.strategyId,
+          reason: normalizedReason,
+        });
+        if (recent) return;
+      }
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000);
+      const created = await storage.insertHybridReentryWatch({
+        exchange,
+        pair: params.pair,
+        strategy: params.strategyId,
+        reason: normalizedReason,
+        status: 'active',
+        createdAt: now,
+        expiresAt,
+        regime: params.regime ?? null,
+        rawSignal: params.rawSignal ?? null,
+        rejectPrice: params.rejectPrice != null ? params.rejectPrice.toString() : null,
+        ema20: params.ema20 != null ? params.ema20.toString() : null,
+        priceVsEma20Pct: params.priceVsEma20Pct != null ? params.priceVsEma20Pct.toString() : null,
+        volumeRatio: params.volumeRatio != null ? params.volumeRatio.toString() : null,
+        mtfAlignment: params.mtfAlignment != null ? params.mtfAlignment.toString() : null,
+        signalsCount: params.signalsCount ?? null,
+        minSignalsRequired: params.minSignalsRequired ?? null,
+        meta: {
+          timeframe: params.timeframe,
+          rejectionReasonText: params.rejectionReasonText,
+        },
+      } as any);
+
+      if (this.telegramService.isInitialized()) {
+        const alerts = cfg?.alerts;
+        if (alerts?.enabled !== false && alerts?.watchCreated !== false) {
+          this.telegramService.sendHybridGuardWatchCreated({
+            pair: params.pair,
+            exchange,
+            reason: normalizedReason,
+            ttlMinutes,
+            watchId: created.id,
+          }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardWatchCreated: ${e?.message ?? String(e)}`, 'trading'));
+        }
+      }
+    } catch (e: any) {
+      log(`[HYBRID_GUARD] create watch error: ${e?.message ?? String(e)}`, 'trading');
+    }
+  }
 
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
@@ -1851,6 +1979,21 @@ export class TradingEngine {
     const mtfAnalysis = mtfData ? this.analyzeMultiTimeframe(mtfData) : null;
     
     let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close, adjustedMinSignals);
+
+    const hybridCfg = this.getHybridGuardConfig();
+    let activeHybridWatch: any | null = null;
+    if (hybridCfg?.enabled) {
+      try {
+        await this.expireHybridWatchesIfNeeded();
+        activeHybridWatch = await storage.getActiveHybridReentryWatch({
+          exchange: this.getTradingExchangeType(),
+          pair,
+          strategy: `momentum_candles_${timeframe}`,
+        });
+      } catch (e: any) {
+        activeHybridWatch = null;
+      }
+    }
     
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
     // Bloquea compras cuando: volumen > 1.5x promedio Y precio > 1% sobre EMA20
@@ -1866,10 +2009,42 @@ export class TradingEngine {
       const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
       const currentVolume = closedCandles[closedCandles.length - 1]?.volume || 0;
       const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
+
+      const watchReason = activeHybridWatch ? this.normalizeHybridReason(activeHybridWatch.reason) : null;
+      if (
+        activeHybridWatch &&
+        signal.action === 'buy' &&
+        watchReason === 'ANTI_CRESTA' &&
+        hybridCfg?.antiCresta?.enabled !== false
+      ) {
+        const maxAbs = Number(hybridCfg?.antiCresta?.reentryMaxAbsPriceVsEma20Pct ?? 0.003);
+        const absPct = Math.abs(priceVsEma20Pct);
+        if (Number.isFinite(absPct) && absPct <= maxAbs) {
+          signal.hybridGuard = { watchId: activeHybridWatch.id, reason: 'ANTI_CRESTA' };
+          signal.reason = `${signal.reason} | HYBRID_REENTRY(ANTI_CRESTA)`;
+        }
+      }
       
       // Anti-cresta: volumen alto + sobrecompra respecto a EMA20
       if (volumeRatio > 1.5 && priceVsEma20Pct > 0.01) {
         const rejectionReason = `Anti-Cresta: Volumen ${volumeRatio.toFixed(1)}x + Precio ${(priceVsEma20Pct * 100).toFixed(2)}% sobre EMA20`;
+
+        await this.maybeCreateHybridReentryWatch({
+          pair,
+          timeframe,
+          strategyId: `momentum_candles_${timeframe}`,
+          reason: 'ANTI_CRESTA',
+          regime: regime?.toString(),
+          rawSignal: signal.action.toUpperCase(),
+          rejectPrice: currentPrice,
+          ema20,
+          priceVsEma20Pct,
+          volumeRatio,
+          mtfAlignment: mtfAnalysis?.alignment,
+          signalsCount: signal.signalsCount,
+          minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+          rejectionReasonText: rejectionReason,
+        });
         
         // Enviar alerta de rechazo
         this.telegramService.sendSignalRejectionAlert(
@@ -1910,6 +2085,19 @@ export class TradingEngine {
         // Preserve signalsCount from original signal for diagnostic trace
         // Si es filtro MTF_STRICT, enviar alerta de rechazo
         if (mtfBoost.filterType === "MTF_STRICT" && signal.action === "buy") {
+          await this.maybeCreateHybridReentryWatch({
+            pair,
+            timeframe,
+            strategyId: `momentum_candles_${timeframe}`,
+            reason: 'MTF_STRICT',
+            regime: regime?.toString(),
+            rawSignal: signal.action.toUpperCase(),
+            mtfAlignment: mtfAnalysis.alignment,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+            rejectionReasonText: mtfBoost.reason,
+          });
+
           this.telegramService.sendSignalRejectionAlert(
             pair,
             mtfBoost.reason,
@@ -1937,6 +2125,21 @@ export class TradingEngine {
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
       if (mtfBoost.confidenceBoost > 0) {
         signal.reason += ` | ${mtfBoost.reason}`;
+      }
+
+      const watchReason = activeHybridWatch ? this.normalizeHybridReason(activeHybridWatch.reason) : null;
+      if (
+        activeHybridWatch &&
+        signal.action === 'buy' &&
+        watchReason === 'MTF_STRICT' &&
+        hybridCfg?.mtfStrict?.enabled !== false
+      ) {
+        const minAlign = Number(hybridCfg?.mtfStrict?.reentryMinAlignment ?? 0.2);
+        const currentAlign = Number(mtfAnalysis?.alignment);
+        if (Number.isFinite(currentAlign) && currentAlign >= minAlign) {
+          signal.hybridGuard = { watchId: activeHybridWatch.id, reason: 'MTF_STRICT' };
+          signal.reason = `${signal.reason} | HYBRID_REENTRY(MTF_STRICT)`;
+        }
       }
     }
     
@@ -4205,6 +4408,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           originalAmountUsd: originalAmount,
           adjustedAmountUsd: tradeAmountUSD
         } : undefined;
+
+        const hgCfg = this.getHybridGuardConfig();
+        const hgInfo = (signal as any)?.hybridGuard as { watchId: number; reason: "ANTI_CRESTA" | "MTF_STRICT" } | undefined;
         
         // Meta completa para trazabilidad v2
         const executionMeta = {
@@ -4219,6 +4425,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           sgAllowUnderMin_DEPRECATED: sgAllowUnderMin,
           dryRun: this.dryRunMode,
           env: envPrefix,
+          hybridGuard: hgInfo ? { watchId: hgInfo.watchId, reason: hgInfo.reason } : undefined,
         };
 
         // Build strategyMeta with regime info for Telegram notifications
@@ -4235,7 +4442,49 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           confidence: signal.confidence,
         };
 
+        if (hgCfg?.enabled && hgInfo && this.telegramService.isInitialized()) {
+          const alerts = hgCfg?.alerts;
+          if (alerts?.enabled !== false && alerts?.reentrySignal !== false) {
+            this.telegramService.sendHybridGuardReentrySignal({
+              pair,
+              exchange: this.getTradingExchangeType(),
+              reason: hgInfo.reason,
+              watchId: hgInfo.watchId,
+              currentPrice,
+            }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardReentrySignal: ${e?.message ?? String(e)}`, 'trading'));
+          }
+        }
+
         const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
+        if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
+          try {
+            await storage.markHybridReentryWatchTriggered({
+              id: hgInfo.watchId,
+              metaPatch: {
+                triggerPrice: currentPrice,
+                triggerVolume: tradeVolume.toFixed(8),
+                triggeredAt: new Date().toISOString(),
+                triggeredReason: hgInfo.reason,
+              },
+            });
+          } catch (e: any) {
+            log(`[HYBRID_GUARD] markTriggered error: ${e?.message ?? String(e)}`, 'trading');
+          }
+
+          if (this.telegramService.isInitialized()) {
+            const alerts = hgCfg?.alerts;
+            if (alerts?.enabled !== false && alerts?.orderExecuted !== false) {
+              this.telegramService.sendHybridGuardOrderExecuted({
+                pair,
+                exchange: this.getTradingExchangeType(),
+                reason: hgInfo.reason,
+                watchId: hgInfo.watchId,
+                price: currentPrice,
+                volume: tradeVolume.toFixed(8),
+              }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardOrderExecuted: ${e?.message ?? String(e)}`, 'trading'));
+            }
+          }
+        }
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
           this.updatePairTrace(pair, {
@@ -5015,6 +5264,33 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           routerStrategy: routerEnabledForSizing ? selectedStrategyId : undefined,
         };
 
+        const hgCfg = this.getHybridGuardConfig();
+        const hgInfo = (signal as any)?.hybridGuard as { watchId: number; reason: "ANTI_CRESTA" | "MTF_STRICT" } | undefined;
+        if (hgCfg?.enabled && hgInfo && this.telegramService.isInitialized()) {
+          const alerts = hgCfg?.alerts;
+          if (alerts?.enabled !== false && alerts?.reentrySignal !== false) {
+            this.telegramService.sendHybridGuardReentrySignal({
+              pair,
+              exchange: this.getTradingExchangeType(),
+              reason: hgInfo.reason,
+              watchId: hgInfo.watchId,
+              currentPrice,
+            }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardReentrySignal: ${e?.message ?? String(e)}`, 'trading'));
+          }
+        }
+
+        const executionMetaCandles: any = {
+          mode: positionMode,
+          usdDisponible: freshUsdBalance,
+          orderUsdProposed: originalAmount || tradeAmountUSD,
+          orderUsdFinal: tradeAmountUSD,
+          sgMinEntryUsd,
+          sgAllowUnderMin_DEPRECATED: sgAllowUnderMin,
+          dryRun: this.dryRunMode,
+          env: environment.envTag,
+          hybridGuard: hgInfo ? { watchId: hgInfo.watchId, reason: hgInfo.reason } : undefined,
+        };
+
         const success = await this.executeTrade(
           pair, 
           "buy", 
@@ -5022,8 +5298,39 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           currentPrice, 
           `${signal.reason} [${selectedStrategyId}]`, 
           adjustmentInfo,
-          strategyMetaCandles
+          strategyMetaCandles,
+          executionMetaCandles
         );
+
+        if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
+          try {
+            await storage.markHybridReentryWatchTriggered({
+              id: hgInfo.watchId,
+              metaPatch: {
+                triggerPrice: currentPrice,
+                triggerVolume: tradeVolume.toFixed(8),
+                triggeredAt: new Date().toISOString(),
+                triggeredReason: hgInfo.reason,
+              },
+            });
+          } catch (e: any) {
+            log(`[HYBRID_GUARD] markTriggered error: ${e?.message ?? String(e)}`, 'trading');
+          }
+
+          if (this.telegramService.isInitialized()) {
+            const alerts = hgCfg?.alerts;
+            if (alerts?.enabled !== false && alerts?.orderExecuted !== false) {
+              this.telegramService.sendHybridGuardOrderExecuted({
+                pair,
+                exchange: this.getTradingExchangeType(),
+                reason: hgInfo.reason,
+                watchId: hgInfo.watchId,
+                price: currentPrice,
+                volume: tradeVolume.toFixed(8),
+              }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardOrderExecuted: ${e?.message ?? String(e)}`, 'trading'));
+            }
+          }
+        }
         
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
@@ -6839,12 +7146,15 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       
       // PERSIST ORDER INTENT: Store intent BEFORE sending to exchange for attribution
       try {
+        const hg = (executionMeta as any)?.hybridGuard as { watchId: number; reason: string } | undefined;
         await storage.createOrderIntent({
           clientOrderId,
           exchange,
           pair,
           side: type,
           volume: volume.toString(),
+          hybridGuardWatchId: hg?.watchId,
+          hybridGuardReason: hg?.reason,
           status: 'pending',
         });
         log(`[ORDER_INTENT_CREATED] ${correlationId} | clientOrderId=${clientOrderId}`, "trading");

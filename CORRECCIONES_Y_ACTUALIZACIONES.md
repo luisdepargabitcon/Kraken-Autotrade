@@ -5,6 +5,81 @@
 
 ---
 
+## 2026-02-01 — FEAT: Hybrid Guard (Re-entry) para señales BUY filtradas (ANTI_CRESTA / MTF_STRICT)
+
+### Objetivo
+Cuando una señal BUY es filtrada por:
+- `ANTI_CRESTA` (anti-fomo / compra tardía sobre EMA20 con volumen alto)
+- `MTF_STRICT` (filtro multi-timeframe estricto)
+
+…se crea un “watch” temporal. Si en ciclos posteriores el mercado mejora (pullback a EMA20 o mejora MTF), el bot puede re-intentar la entrada sin perder el contexto.
+
+### Cambios implementados
+
+#### Base de datos (migraciones)
+- `db/migrations/006_hybrid_reentry_watches.sql`
+  - Crea tabla `hybrid_reentry_watches` + índices para lookup de watches activos y cleanup.
+- `db/migrations/012_order_intents_hybrid_guard.sql`
+  - Añade columnas a `order_intents`:
+    - `hybrid_guard_watch_id` (INT)
+    - `hybrid_guard_reason` (TEXT)
+
+#### Startup / Migración automática
+- `script/migrate.ts`
+  - Asegura que se aplican:
+    - `007_order_intents.sql`
+    - `012_order_intents_hybrid_guard.sql`
+  - Mantiene `006_hybrid_reentry_watches.sql` en el flujo de migración.
+
+#### Schema compartido (Drizzle)
+- `shared/schema.ts`
+  - Añade tabla `hybrid_reentry_watches` (Drizzle) y tipos:
+    - `HybridReentryWatch`
+    - `InsertHybridReentryWatch`
+  - Extiende `order_intents` con:
+    - `hybridGuardWatchId`
+    - `hybridGuardReason`
+
+#### Storage (DB layer)
+- `server/storage.ts`
+  - Implementa métodos Hybrid Guard:
+    - `getActiveHybridReentryWatch`
+    - `recentlyCreatedHybridReentryWatch`
+    - `insertHybridReentryWatch`
+    - `markHybridReentryWatchTriggered`
+    - `expireHybridReentryWatches`
+    - `countActiveHybridReentryWatchesForPair` (para respetar `maxActiveWatchesPerPair`)
+
+#### Trading Engine (core)
+- `server/services/tradingEngine.ts`
+  - Crea watch al bloquear BUY por `ANTI_CRESTA` o `MTF_STRICT`.
+  - Re-entry:
+    - `ANTI_CRESTA`: permite re-entry si `|priceVsEma20Pct| <= reentryMaxAbsPriceVsEma20Pct`.
+    - `MTF_STRICT`: permite re-entry si `mtfAlignment >= reentryMinAlignment`.
+  - Respeta límites:
+    - `maxActiveWatchesPerPair`.
+    - TTL (`ttlMinutes`) y cooldown (`cooldownMinutes`).
+  - Persistencia de trazabilidad:
+    - Propaga `hybridGuard` hacia `executionMeta` y lo guarda en `order_intents`.
+  - Seguridad:
+    - En `DRY_RUN` no marca watches como `triggered`.
+
+#### Telegram
+- `server/services/telegram.ts`
+  - Nuevas alertas Hybrid Guard:
+    - `sendHybridGuardWatchCreated`
+    - `sendHybridGuardReentrySignal`
+    - `sendHybridGuardOrderExecuted`
+
+#### Config / UI
+- `shared/config-schema.ts`
+  - Añade `global.hybridGuard` con defaults y validación Zod.
+- `server/services/ConfigService.ts`
+  - Normaliza configs con Zod para aplicar defaults (incluye `global.hybridGuard`).
+- `client/src/components/dashboard/TradingConfigDashboard.tsx`
+  - Sección de configuración Hybrid Guard en el dashboard.
+
+
 ## 2026-01-31 — FIX CRÍTICO: SELL RevolutX (pendingFill) se ejecuta pero no aparece en Operaciones
 
 ### Síntoma

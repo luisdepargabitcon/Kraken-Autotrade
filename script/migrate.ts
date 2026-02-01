@@ -79,6 +79,21 @@ async function runMigration() {
     const appliedTradesSqlPath = path.resolve(process.cwd(), "db", "migrations", "006_applied_trades.sql");
     await tryExecuteFile(db, appliedTradesSqlPath, "applied_trades");
 
+    // order_intents table (bot order attribution)
+    console.log("[migrate] Ensuring order_intents table exists...");
+    const orderIntentsSqlPath = path.resolve(process.cwd(), "db", "migrations", "007_order_intents.sql");
+    await tryExecuteFile(db, orderIntentsSqlPath, "order_intents");
+
+    // order_intents hybrid guard metadata columns
+    console.log("[migrate] Ensuring order_intents hybrid guard columns exist...");
+    const orderIntentsHybridSqlPath = path.resolve(process.cwd(), "db", "migrations", "012_order_intents_hybrid_guard.sql");
+    await tryExecuteFile(db, orderIntentsHybridSqlPath, "order_intents_hybrid_guard");
+
+    // hybrid_reentry_watches table (hybrid guard re-entry)
+    console.log("[migrate] Ensuring hybrid_reentry_watches table exists...");
+    const hybridWatchesSqlPath = path.resolve(process.cwd(), "db", "migrations", "006_hybrid_reentry_watches.sql");
+    await tryExecuteFile(db, hybridWatchesSqlPath, "hybrid_reentry_watches");
+
     // api_config table (credentials)
     console.log("[migrate] Ensuring api_config table exists...");
     await tryExecute(

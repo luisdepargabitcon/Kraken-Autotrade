@@ -32,6 +32,7 @@ interface TradingConfig {
     dryRunMode: boolean;
     regimeDetectionEnabled: boolean;
     regimeRouterEnabled: boolean;
+    hybridGuard: HybridGuardConfig;
   };
   signals: {
     TREND: SignalConfig;
@@ -41,6 +42,27 @@ interface TradingConfig {
   exchanges: {
     kraken: ExchangeConfig;
     revolutx: ExchangeConfig;
+  };
+}
+
+interface HybridGuardConfig {
+  enabled: boolean;
+  ttlMinutes: number;
+  cooldownMinutes: number;
+  maxActiveWatchesPerPair: number;
+  antiCresta: {
+    enabled: boolean;
+    reentryMaxAbsPriceVsEma20Pct: number;
+  };
+  mtfStrict: {
+    enabled: boolean;
+    reentryMinAlignment: number;
+  };
+  alerts: {
+    enabled: boolean;
+    watchCreated: boolean;
+    reentrySignal: boolean;
+    orderExecuted: boolean;
   };
 }
 
@@ -86,6 +108,27 @@ export function TradingConfigDashboard() {
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [config, setConfig] = useState<TradingConfig | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+
+  const defaultHybridGuard: HybridGuardConfig = {
+    enabled: false,
+    ttlMinutes: 120,
+    cooldownMinutes: 30,
+    maxActiveWatchesPerPair: 1,
+    antiCresta: {
+      enabled: true,
+      reentryMaxAbsPriceVsEma20Pct: 0.003,
+    },
+    mtfStrict: {
+      enabled: true,
+      reentryMinAlignment: 0.2,
+    },
+    alerts: {
+      enabled: true,
+      watchCreated: true,
+      reentrySignal: true,
+      orderExecuted: true,
+    },
+  };
 
   // Fetch active configuration
   const { data: activeConfig, isLoading: loadingConfig } = useQuery<{ success: boolean; data: TradingConfig }>({
@@ -233,6 +276,18 @@ export function TradingConfigDashboard() {
       },
     };
     setConfig(newConfig);
+  };
+
+  const handleHybridGuardUpdate = (updates: Partial<HybridGuardConfig>) => {
+    if (!config) return;
+
+    const currentHybridGuard = (config.global as any)?.hybridGuard ?? defaultHybridGuard;
+    handleConfigUpdate("global", {
+      hybridGuard: {
+        ...currentHybridGuard,
+        ...updates,
+      },
+    });
   };
 
   const handleSignalUpdate = (regime: "TREND" | "RANGE" | "TRANSITION", field: keyof SignalConfig, value: number) => {
@@ -626,6 +681,187 @@ export function TradingConfigDashboard() {
                           handleConfigUpdate("global", { regimeRouterEnabled: checked })
                         }
                       />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Hybrid Guard (Re-entry)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Label>Enabled</Label>
+                      <Switch
+                        checked={(config.global as any)?.hybridGuard?.enabled ?? defaultHybridGuard.enabled}
+                        onCheckedChange={(checked) => handleHybridGuardUpdate({ enabled: checked })}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs">TTL (minutes)</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={(config.global as any)?.hybridGuard?.ttlMinutes ?? defaultHybridGuard.ttlMinutes}
+                          onChange={(e) => handleHybridGuardUpdate({ ttlMinutes: parseInt(e.target.value || '0') })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Cooldown (minutes)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={1440}
+                          value={(config.global as any)?.hybridGuard?.cooldownMinutes ?? defaultHybridGuard.cooldownMinutes}
+                          onChange={(e) => handleHybridGuardUpdate({ cooldownMinutes: parseInt(e.target.value || '0') })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Max watches / pair</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={(config.global as any)?.hybridGuard?.maxActiveWatchesPerPair ?? defaultHybridGuard.maxActiveWatchesPerPair}
+                          onChange={(e) => handleHybridGuardUpdate({ maxActiveWatchesPerPair: parseInt(e.target.value || '0') })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label>Anti-Cresta re-entry</Label>
+                          <Switch
+                            checked={(config.global as any)?.hybridGuard?.antiCresta?.enabled ?? defaultHybridGuard.antiCresta.enabled}
+                            onCheckedChange={(checked) =>
+                              handleHybridGuardUpdate({
+                                antiCresta: {
+                                  ...((config.global as any)?.hybridGuard?.antiCresta ?? defaultHybridGuard.antiCresta),
+                                  enabled: checked,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Max |price vs EMA20| (pct as decimal)</Label>
+                          <Input
+                            type="number"
+                            step={0.0001}
+                            min={0}
+                            max={0.05}
+                            value={(config.global as any)?.hybridGuard?.antiCresta?.reentryMaxAbsPriceVsEma20Pct ?? defaultHybridGuard.antiCresta.reentryMaxAbsPriceVsEma20Pct}
+                            onChange={(e) =>
+                              handleHybridGuardUpdate({
+                                antiCresta: {
+                                  ...((config.global as any)?.hybridGuard?.antiCresta ?? defaultHybridGuard.antiCresta),
+                                  reentryMaxAbsPriceVsEma20Pct: parseFloat(e.target.value || '0'),
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label>MTF-Strict re-entry</Label>
+                          <Switch
+                            checked={(config.global as any)?.hybridGuard?.mtfStrict?.enabled ?? defaultHybridGuard.mtfStrict.enabled}
+                            onCheckedChange={(checked) =>
+                              handleHybridGuardUpdate({
+                                mtfStrict: {
+                                  ...((config.global as any)?.hybridGuard?.mtfStrict ?? defaultHybridGuard.mtfStrict),
+                                  enabled: checked,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Min MTF alignment</Label>
+                          <Input
+                            type="number"
+                            step={0.01}
+                            min={-1}
+                            max={1}
+                            value={(config.global as any)?.hybridGuard?.mtfStrict?.reentryMinAlignment ?? defaultHybridGuard.mtfStrict.reentryMinAlignment}
+                            onChange={(e) =>
+                              handleHybridGuardUpdate({
+                                mtfStrict: {
+                                  ...((config.global as any)?.hybridGuard?.mtfStrict ?? defaultHybridGuard.mtfStrict),
+                                  reentryMinAlignment: parseFloat(e.target.value || '0'),
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label>Alerts enabled</Label>
+                        <Switch
+                          checked={(config.global as any)?.hybridGuard?.alerts?.enabled ?? defaultHybridGuard.alerts.enabled}
+                          onCheckedChange={(checked) =>
+                            handleHybridGuardUpdate({
+                              alerts: {
+                                ...((config.global as any)?.hybridGuard?.alerts ?? defaultHybridGuard.alerts),
+                                enabled: checked,
+                              },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs">Watch created</Label>
+                          <Switch
+                            checked={(config.global as any)?.hybridGuard?.alerts?.watchCreated ?? defaultHybridGuard.alerts.watchCreated}
+                            onCheckedChange={(checked) =>
+                              handleHybridGuardUpdate({
+                                alerts: {
+                                  ...((config.global as any)?.hybridGuard?.alerts ?? defaultHybridGuard.alerts),
+                                  watchCreated: checked,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs">Re-entry signal</Label>
+                          <Switch
+                            checked={(config.global as any)?.hybridGuard?.alerts?.reentrySignal ?? defaultHybridGuard.alerts.reentrySignal}
+                            onCheckedChange={(checked) =>
+                              handleHybridGuardUpdate({
+                                alerts: {
+                                  ...((config.global as any)?.hybridGuard?.alerts ?? defaultHybridGuard.alerts),
+                                  reentrySignal: checked,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs">Order executed</Label>
+                          <Switch
+                            checked={(config.global as any)?.hybridGuard?.alerts?.orderExecuted ?? defaultHybridGuard.alerts.orderExecuted}
+                            onCheckedChange={(checked) =>
+                              handleHybridGuardUpdate({
+                                alerts: {
+                                  ...((config.global as any)?.hybridGuard?.alerts ?? defaultHybridGuard.alerts),
+                                  orderExecuted: checked,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

@@ -1,6 +1,48 @@
 import { z } from "zod";
 
 // Trading Configuration Schema
+export const defaultHybridGuardConfig = {
+  enabled: false,
+  ttlMinutes: 120,
+  cooldownMinutes: 30,
+  maxActiveWatchesPerPair: 1,
+  antiCresta: {
+    enabled: true,
+    reentryMaxAbsPriceVsEma20Pct: 0.003,
+  },
+  mtfStrict: {
+    enabled: true,
+    reentryMinAlignment: 0.2,
+  },
+  alerts: {
+    enabled: true,
+    watchCreated: true,
+    reentrySignal: true,
+    orderExecuted: true,
+  },
+} as const;
+
+export const hybridGuardConfigSchema = z.object({
+  enabled: z.boolean(),
+  ttlMinutes: z.number().min(1).max(24 * 60),
+  cooldownMinutes: z.number().min(0).max(24 * 60),
+  maxActiveWatchesPerPair: z.number().min(1).max(10),
+  antiCresta: z.object({
+    enabled: z.boolean(),
+    reentryMaxAbsPriceVsEma20Pct: z.number().min(0).max(0.05),
+  }),
+  mtfStrict: z.object({
+    enabled: z.boolean(),
+    reentryMinAlignment: z.number().min(-1).max(1),
+  }),
+  alerts: z.object({
+    enabled: z.boolean(),
+    watchCreated: z.boolean(),
+    reentrySignal: z.boolean(),
+    orderExecuted: z.boolean(),
+  }),
+});
+
 export const signalConfigSchema = z.object({
   regime: z.enum(['TREND', 'RANGE', 'TRANSITION']),
   minSignals: z.number().min(1).max(10),
@@ -28,6 +70,7 @@ export const globalConfigSchema = z.object({
   dryRunMode: z.boolean(),
   regimeDetectionEnabled: z.boolean(),
   regimeRouterEnabled: z.boolean(),
+  hybridGuard: hybridGuardConfigSchema.optional().default(defaultHybridGuardConfig),
 });
 
 export const tradingConfigSchema = z.object({
@@ -48,6 +91,7 @@ export type SignalConfig = z.infer<typeof signalConfigSchema>;
 export type ExchangeConfig = z.infer<typeof exchangeConfigSchema>;
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 export type TradingConfig = z.infer<typeof tradingConfigSchema>;
+export type HybridGuardConfig = z.infer<typeof hybridGuardConfigSchema>;
 
 // Configuration Change History
 export const configChangeSchema = z.object({

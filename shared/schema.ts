@@ -181,9 +181,38 @@ export const orderIntents = pgTable("order_intents", {
   volume: decimal("volume", { precision: 18, scale: 8 }).notNull(),
   status: text("status").notNull().default("pending"), // pending, accepted, filled, failed, expired
   exchangeOrderId: text("exchange_order_id"), // ID devuelto por el exchange
+  hybridGuardWatchId: integer("hybrid_guard_watch_id"),
+  hybridGuardReason: text("hybrid_guard_reason"),
   matchedTradeId: integer("matched_trade_id"), // FK a trades.id cuando se hace match
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const hybridReentryWatches = pgTable("hybrid_reentry_watches", {
+  id: serial("id").primaryKey(),
+  exchange: varchar("exchange", { length: 32 }).notNull(),
+  pair: varchar("pair", { length: 24 }).notNull(),
+  strategy: varchar("strategy", { length: 64 }).notNull(),
+
+  reason: varchar("reason", { length: 32 }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("active"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+
+  scanId: varchar("scan_id", { length: 64 }),
+  regime: varchar("regime", { length: 24 }),
+  rawSignal: varchar("raw_signal", { length: 16 }),
+
+  rejectPrice: decimal("reject_price", { precision: 18, scale: 8 }),
+  ema20: decimal("ema20", { precision: 18, scale: 8 }),
+  priceVsEma20Pct: decimal("price_vs_ema20_pct", { precision: 18, scale: 8 }),
+  volumeRatio: decimal("volume_ratio", { precision: 18, scale: 8 }),
+  mtfAlignment: decimal("mtf_alignment", { precision: 18, scale: 8 }),
+  signalsCount: integer("signals_count"),
+  minSignalsRequired: integer("min_signals_required"),
+
+  meta: jsonb("meta").notNull().default({}),
 });
 
 export const trades = pgTable("trades", {
@@ -477,7 +506,15 @@ export const insertTradeSchema = createInsertSchema(trades).omit({ id: true, cre
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertMarketDataSchema = createInsertSchema(marketData).omit({ id: true, timestamp: true });
 export const insertApiConfigSchema = createInsertSchema(apiConfig).omit({ id: true, updatedAt: true });
-export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true, createdAt: true });
+export const telegramChatInsertSchema = createInsertSchema(telegramChats).omit({
+  id: true,
+}).extend({
+  alertPreferences: alertPreferencesSchema.optional(),
+});
+
+export type HybridReentryWatch = typeof hybridReentryWatches.$inferSelect;
+export type InsertHybridReentryWatch = typeof hybridReentryWatches.$inferInsert;
+
 export const insertBotEventSchema = createInsertSchema(botEvents).omit({ id: true, timestamp: true });
 export const insertOpenPositionSchema = createInsertSchema(openPositions).omit({ id: true, openedAt: true, updatedAt: true });
 export const insertAiTradeSampleSchema = createInsertSchema(aiTradeSamples).omit({ id: true, createdAt: true });
@@ -509,7 +546,7 @@ export type InsertTrade = z.infer<typeof insertTradeSchema>;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type InsertMarketData = z.infer<typeof insertMarketDataSchema>;
 export type InsertApiConfig = z.infer<typeof insertApiConfigSchema>;
-export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
+export type InsertTelegramChat = z.infer<typeof telegramChatInsertSchema>;
 export type InsertBotEvent = z.infer<typeof insertBotEventSchema>;
 export type InsertOpenPosition = z.infer<typeof insertOpenPositionSchema>;
 export type InsertTradeFill = z.infer<typeof insertTradeFillSchema>;

@@ -2653,6 +2653,106 @@ _KrakenBot.AI - Trading Autónomo_
     }
   }
 
+  async sendHybridGuardWatchCreated(ctx: {
+    pair: string;
+    exchange: string;
+    reason: "ANTI_CRESTA" | "MTF_STRICT";
+    ttlMinutes: number;
+    watchId: number;
+  }): Promise<void> {
+    const env = environment.envTag || "UNKNOWN";
+    const timestamp = new Date().toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Madrid'
+    });
+
+    const reasonLabel = ctx.reason === 'MTF_STRICT' ? 'MTF Estricto' : 'Anti-Cresta';
+    const message = `🛡️ <b>HYBRID GUARD - WATCH CREADO</b>
+━━━━━━━━━━━━━━━━━━━
+<code>[${env}]</code>
+
+📊 <b>Par:</b> <code>${escapeHtml(ctx.pair)}</code>
+🏦 <b>Exchange:</b> <code>${escapeHtml(ctx.exchange)}</code>
+⏰ <b>Hora:</b> ${timestamp} (Madrid)
+
+🔎 <b>Motivo:</b> <code>${escapeHtml(reasonLabel)}</code>
+🧭 <b>TTL:</b> <code>${ctx.ttlMinutes}m</code>
+🆔 <b>Watch ID:</b> <code>${ctx.watchId}</code>
+
+<i>Se re-evaluará la entrada si las condiciones mejoran.</i>
+━━━━━━━━━━━━━━━━━━━`;
+
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
+  async sendHybridGuardReentrySignal(ctx: {
+    pair: string;
+    exchange: string;
+    reason: "ANTI_CRESTA" | "MTF_STRICT";
+    watchId: number;
+    currentPrice: number;
+  }): Promise<void> {
+    const env = environment.envTag || "UNKNOWN";
+    const timestamp = new Date().toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Madrid'
+    });
+
+    const reasonLabel = ctx.reason === 'MTF_STRICT' ? 'MTF Estricto' : 'Anti-Cresta';
+    const message = `🟦 <b>HYBRID GUARD - RE-ENTRY SEÑAL</b>
+━━━━━━━━━━━━━━━━━━━
+<code>[${env}]</code>
+
+📊 <b>Par:</b> <code>${escapeHtml(ctx.pair)}</code>
+🏦 <b>Exchange:</b> <code>${escapeHtml(ctx.exchange)}</code>
+⏰ <b>Hora:</b> ${timestamp} (Madrid)
+
+🔎 <b>Watch:</b> <code>${ctx.watchId}</code>
+✅ <b>Condición:</b> <code>${escapeHtml(reasonLabel)}</code>
+💵 <b>Precio:</b> <code>$${Number(ctx.currentPrice).toFixed(2)}</code>
+
+<i>Re-entry candidato: el motor intentará BUY si pasa Smart-Guard.</i>
+━━━━━━━━━━━━━━━━━━━`;
+
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
+  async sendHybridGuardOrderExecuted(ctx: {
+    pair: string;
+    exchange: string;
+    reason: "ANTI_CRESTA" | "MTF_STRICT";
+    watchId: number;
+    price: number;
+    volume: string;
+  }): Promise<void> {
+    const env = environment.envTag || "UNKNOWN";
+    const timestamp = new Date().toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Madrid'
+    });
+
+    const reasonLabel = ctx.reason === 'MTF_STRICT' ? 'MTF Estricto' : 'Anti-Cresta';
+    const message = `🟩 <b>HYBRID GUARD - BUY EJECUTADO</b>
+━━━━━━━━━━━━━━━━━━━
+<code>[${env}]</code>
+
+📊 <b>Par:</b> <code>${escapeHtml(ctx.pair)}</code>
+🏦 <b>Exchange:</b> <code>${escapeHtml(ctx.exchange)}</code>
+⏰ <b>Hora:</b> ${timestamp} (Madrid)
+
+🔎 <b>Watch:</b> <code>${ctx.watchId}</code>
+✅ <b>Re-entry:</b> <code>${escapeHtml(reasonLabel)}</code>
+💵 <b>Precio:</b> <code>$${Number(ctx.price).toFixed(2)}</code>
+📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.volume)}</code>
+
+━━━━━━━━━━━━━━━━━━━`;
+
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
   async sendSystemStatus(isActive: boolean, strategy: string) {
     const emoji = isActive ? "✅" : "⏸️";
     const status = isActive ? "EN LÍNEA" : "PAUSADO";

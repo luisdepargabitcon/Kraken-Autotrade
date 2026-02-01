@@ -10,6 +10,7 @@ import {
   type AiShadowDecision,
   type AiConfig,
   type TrainingTrade,
+  type HybridReentryWatch,
   type InsertBotConfig,
   type InsertTrade,
   type InsertNotification,
@@ -21,6 +22,7 @@ import {
   type InsertAiShadowDecision,
   type InsertAiConfig,
   type InsertTrainingTrade,
+  type InsertHybridReentryWatch,
   type TradeFill,
   type LotMatch,
   type InsertTradeFill,
@@ -42,7 +44,8 @@ import {
   aiShadowDecisions as aiShadowDecisionsTable,
   aiConfig as aiConfigTable,
   trainingTrades as trainingTradesTable,
-  orderIntents as orderIntentsTable
+  orderIntents as orderIntentsTable,
+  hybridReentryWatches as hybridReentryWatchesTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -192,6 +195,25 @@ export interface IStorage {
   matchOrderIntentToTrade(clientOrderId: string, tradeId: number): Promise<void>;
   getPendingOrderIntents(exchange: string): Promise<OrderIntent[]>;
   markTradeAsExecutedByBot(tradeId: number, orderIntentId: number): Promise<void>;
+
+  // Hybrid Guard (re-entry) watches
+  getActiveHybridReentryWatch(params: {
+    exchange: string;
+    pair: string;
+    strategy?: string;
+    reason?: string;
+  }): Promise<HybridReentryWatch | undefined>;
+  countActiveHybridReentryWatchesForPair(params: { exchange: string; pair: string }): Promise<number>;
+  recentlyCreatedHybridReentryWatch(params: {
+    exchange: string;
+    pair: string;
+    withinMinutes: number;
+    strategy?: string;
+    reason?: string;
+  }): Promise<HybridReentryWatch | undefined>;
+  insertHybridReentryWatch(watch: InsertHybridReentryWatch): Promise<HybridReentryWatch>;
+  markHybridReentryWatchTriggered(params: { id: number; metaPatch?: Record<string, any> }): Promise<void>;
+  expireHybridReentryWatches(params?: { now?: Date }): Promise<number>;
   
   // SMART_GUARD gate functions
   countOccupiedSlotsForPair(exchange: string, pair: string): Promise<{
@@ -1698,6 +1720,20 @@ export class DatabaseStorage implements IStorage {
     return results[0];
   }
 
+  async countActiveHybridReentryWatchesForPair(params: { exchange: string; pair: string }): Promise<number> {
+    const now = new Date();
+    const rows = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(hybridReentryWatchesTable)
+      .where(and(
+        eq(hybridReentryWatchesTable.exchange, params.exchange),
+        eq(hybridReentryWatchesTable.pair, params.pair),
+        eq(hybridReentryWatchesTable.status, 'active'),
+        gt(hybridReentryWatchesTable.expiresAt, now)
+      ));
+    return Number(rows?.[0]?.count ?? 0);
+  }
+
   async updateOrderIntentStatus(clientOrderId: string, status: string, exchangeOrderId?: string): Promise<void> {
     const updates: any = { status, updatedAt: new Date() };
     if (exchangeOrderId) {
@@ -1731,6 +1767,89 @@ export class DatabaseStorage implements IStorage {
     await db.update(tradesTable)
       .set({ executedByBot: true, orderIntentId })
       .where(eq(tradesTable.id, tradeId));
+  }
+
+  // === HYBRID GUARD (re-entry) watches ===
+
+  async getActiveHybridReentryWatch(params: {
+    exchange: string;
+    pair: string;
+    strategy?: string;
+    reason?: string;
+  }): Promise<HybridReentryWatch | undefined> {
+    const now = new Date();
+
+    const whereParts: any[] = [
+      eq(hybridReentryWatchesTable.exchange, params.exchange),
+      eq(hybridReentryWatchesTable.pair, params.pair),
+      eq(hybridReentryWatchesTable.status, 'active'),
+      gt(hybridReentryWatchesTable.expiresAt, now),
+    ];
+    if (params.strategy) whereParts.push(eq(hybridReentryWatchesTable.strategy, params.strategy));
+    if (params.reason) whereParts.push(eq(hybridReentryWatchesTable.reason, params.reason));
+
+    const results = await db.select().from(hybridReentryWatchesTable)
+      .where(and(...whereParts))
+      .orderBy(desc(hybridReentryWatchesTable.createdAt))
+      .limit(1);
+    return results[0];
+  }
+
+  async recentlyCreatedHybridReentryWatch(params: {
+    exchange: string;
+    pair: string;
+    withinMinutes: number;
+    strategy?: string;
+    reason?: string;
+  }): Promise<HybridReentryWatch | undefined> {
+    const cutoff = new Date(Date.now() - params.withinMinutes * 60 * 1000);
+
+    const whereParts: any[] = [
+      eq(hybridReentryWatchesTable.exchange, params.exchange),
+      eq(hybridReentryWatchesTable.pair, params.pair),
+      eq(hybridReentryWatchesTable.status, 'active'),
+      gt(hybridReentryWatchesTable.createdAt, cutoff),
+    ];
+    if (params.strategy) whereParts.push(eq(hybridReentryWatchesTable.strategy, params.strategy));
+    if (params.reason) whereParts.push(eq(hybridReentryWatchesTable.reason, params.reason));
+
+    const results = await db.select().from(hybridReentryWatchesTable)
+      .where(and(...whereParts))
+      .orderBy(desc(hybridReentryWatchesTable.createdAt))
+      .limit(1);
+    return results[0];
+  }
+
+  async insertHybridReentryWatch(watch: InsertHybridReentryWatch): Promise<HybridReentryWatch> {
+    const [created] = await db.insert(hybridReentryWatchesTable).values(watch).returning();
+    return created;
+  }
+
+  async markHybridReentryWatchTriggered(params: { id: number; metaPatch?: Record<string, any> }): Promise<void> {
+    const updates: any = {
+      status: 'triggered',
+    };
+
+    if (params.metaPatch && Object.keys(params.metaPatch).length > 0) {
+      updates.meta = sql`${hybridReentryWatchesTable.meta} || ${JSON.stringify(params.metaPatch)}::jsonb`;
+    }
+
+    await db.update(hybridReentryWatchesTable)
+      .set(updates)
+      .where(eq(hybridReentryWatchesTable.id, params.id));
+  }
+
+  async expireHybridReentryWatches(params?: { now?: Date }): Promise<number> {
+    const now = params?.now ?? new Date();
+    const expired = await db.update(hybridReentryWatchesTable)
+      .set({ status: 'expired' })
+      .where(and(
+        eq(hybridReentryWatchesTable.status, 'active'),
+        lt(hybridReentryWatchesTable.expiresAt, now)
+      ))
+      .returning({ id: hybridReentryWatchesTable.id });
+
+    return expired.length;
   }
 
   // === INSTANT POSITION CREATION & AVERAGE ENTRY PRICE ===
