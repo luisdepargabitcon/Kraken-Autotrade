@@ -2,6 +2,7 @@
 /**
  * Non-interactive database migration script for Docker/NAS deployment.
  * This script runs before the app starts to ensure schema is up-to-date.
+ * Includes Hybrid Guard (re-entry) tables and metadata.
  * 
  * Usage: npx tsx script/migrate.ts
  * 
