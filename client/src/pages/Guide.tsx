@@ -122,20 +122,28 @@ export default function Guide() {
                   </div>
                 </div>
 
-                <div className="p-4 border border-primary/30 rounded-lg bg-primary/5">
+                <div className="p-4 border border-cyan-500/30 rounded-lg bg-cyan-500/5">
                   <h4 className="font-semibold mb-2 flex items-center gap-2">
-                    <BarChart3 className="h-4 w-4 text-primary" />
-                    Indicadores técnicos utilizados
+                    <Shield className="h-4 w-4 text-cyan-400" />
+                    Características avanzadas
                   </h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                    <span className="text-muted-foreground">• MACD</span>
-                    <span className="text-muted-foreground">• RSI</span>
-                    <span className="text-muted-foreground">• Bollinger Bands</span>
-                    <span className="text-muted-foreground">• EMAs (9, 21, 50)</span>
-                    <span className="text-muted-foreground">• Volumen</span>
-                    <span className="text-muted-foreground">• ATR</span>
-                    <span className="text-muted-foreground">• Multi-timeframe</span>
-                    <span className="text-muted-foreground">• Análisis de tendencia</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span><strong>Hybrid Guard:</strong> Re-entrada inteligente</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span><strong>Detección de Régimen:</strong> Adapta al mercado</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span><strong>Motor de Salidas ATR:</strong> Stops dinámicos</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span><strong>Presets:</strong> Configuraciones predefinidas</span>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -159,9 +167,8 @@ export default function Guide() {
                   {[
                     { step: 1, title: "Configurar API de Kraken", desc: "Ve a Integraciones y añade tu API Key y Secret de Kraken. Asegúrate de que la API tenga permisos de trading.", icon: Key },
                     { step: 2, title: "Configurar Telegram (opcional)", desc: "Añade el token de tu bot de Telegram y tu Chat ID para recibir notificaciones de operaciones.", icon: Plug },
-                    { step: 3, title: "Elegir estrategia", desc: "En la página Estrategias, selecciona el algoritmo que mejor se adapte a tu estilo (momentum, scalping, etc.).", icon: Activity },
-                    { step: 4, title: "Ajustar parámetros de riesgo", desc: "Configura el nivel de riesgo, Stop Loss y Take Profit según tu tolerancia.", icon: Shield },
-                    { step: 5, title: "Activar el bot", desc: "Activa el switch 'Bot Activo' y el bot comenzará a analizar el mercado y operar automáticamente.", icon: Zap },
+                    { step: 3, title: "Configurar Trading", desc: "En Ajustes → Trading Configuration, elige un preset (Conservative/Balanced/Aggressive) o ajusta parámetros personalizados.", icon: Settings },
+                    { step: 4, title: "Activar el bot", desc: "Activa el switch 'Bot Activo' y el bot comenzará a analizar el mercado y operar automáticamente.", icon: Zap },
                   ].map((item) => (
                     <div key={item.step} className="flex gap-4 p-4 border border-border rounded-lg bg-card/30">
                       <div className="flex-shrink-0 h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary">
@@ -678,6 +685,158 @@ export default function Guide() {
                       </div>
                       <p className="text-muted-foreground">
                         <strong>Beneficio:</strong> Estos filtros reducen operaciones en condiciones desfavorables, mejorando la tasa de acierto.
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="hybrid-guard">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-cyan-500" />
+                        Hybrid Guard (Re-entrada)
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Un sistema inteligente que da una segunda oportunidad a las señales de compra rechazadas por filtros estrictos.</p>
+                      
+                      <div className="p-3 bg-cyan-500/10 rounded border border-cyan-500/30">
+                        <p className="font-medium text-cyan-400 mb-2">¿Cuándo se activa?</p>
+                        <p className="text-muted-foreground text-xs">
+                          Cuando una señal de <strong>COMPRA</strong> es rechazada por:<br/>
+                          • <strong>Anti-Cresta:</strong> Precio demasiado lejos de su EMA20<br/>
+                          • <strong>MTF-Strict:</strong> Múltiples timeframes no alineados<br/>
+                          El bot crea un "watch" (vigilancia) para ese par.
+                        </p>
+                      </div>
+
+                      <div className="p-3 bg-emerald-500/10 rounded border border-emerald-500/30">
+                        <p className="font-medium text-emerald-400 mb-2">¿Cómo funciona la re-entrada?</p>
+                        <p className="text-muted-foreground text-xs">
+                          Si durante el tiempo de vigilancia (TTL) las condiciones mejoran:<br/>
+                          • <strong>Anti-Cresta:</strong> El precio vuelve cerca de su EMA20<br/>
+                          • <strong>MTF-Strict:</strong> Los timeframes se alinean<br/>
+                          El bot ejecuta automáticamente la compra y te notifica.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div className="p-2 bg-card/50 rounded border border-border">
+                          <p className="font-medium text-xs mb-1">Parámetros clave</p>
+                          <ul className="text-muted-foreground text-xs space-y-1">
+                            <li>• <strong>TTL:</strong> Tiempo de vida del watch (minutos)</li>
+                            <li>• <strong>Cooldown:</strong> Tiempo entre watches (minutos)</li>
+                            <li>• <strong>Max watches/pair:</strong> Límite de vigilancias por par</li>
+                          </ul>
+                        </div>
+                        <div className="p-2 bg-card/50 rounded border border-border">
+                          <p className="font-medium text-xs mb-1">Alertas disponibles</p>
+                          <ul className="text-muted-foreground text-xs space-y-1">
+                            <li>• 🟡 Watch creado (señal rechazada)</li>
+                            <li>• 🟢 Señal de re-entrada detectada</li>
+                            <li>• ✅ Orden ejecutada con éxito</li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-yellow-500/10 rounded border border-yellow-500/30">
+                        <p className="font-medium text-yellow-400 mb-1">Ventajas</p>
+                        <ul className="text-muted-foreground text-xs space-y-1">
+                          <li>• No pierdes oportunidades por filtros muy estrictos</li>
+                          <li>• Re-entrada solo si las condiciones mejoran realmente</li>
+                          <li>• Controlado por límites de tiempo y frecuencia</li>
+                          <li>• Funciona tanto con presets como con configuración custom</li>
+                        </ul>
+                      </div>
+
+                      <p className="text-muted-foreground text-xs">
+                        <strong>Nota:</strong> Hybrid Guard se configura en Ajustes → Trading Configuration, y aplica incluso si usas presets predefinidos.
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="trading-config">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Settings className="h-4 w-4 text-primary" />
+                        Trading Configuration (Presets y Custom)
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Un panel avanzado para configurar todos los parámetros del bot de forma dinámica, sin necesidad de reiniciar.</p>
+                      
+                      <div className="space-y-2">
+                        <div className="p-3 bg-blue-500/10 rounded border border-blue-500/30">
+                          <p className="font-medium text-blue-400 mb-2">Modo Presets</p>
+                          <p className="text-muted-foreground text-xs">
+                            Configuraciones predefinidas optimizadas para diferentes perfiles:<br/>
+                            • <strong>Conservative:</strong> Bajo riesgo, operaciones seguras<br/>
+                            • <strong>Balanced:</strong> Equilibrio riesgo/rendimiento<br/>
+                            • <strong>Aggressive:</strong> Alto riesgo, mayor potencial<br/>
+                            Solo selecciona y activa, el bot ajusta el resto automáticamente.
+                          </p>
+                        </div>
+                        <div className="p-3 bg-purple-500/10 rounded border border-purple-500/30">
+                          <p className="font-medium text-purple-400 mb-2">Modo Custom</p>
+                          <p className="text-muted-foreground text-xs">
+                            Control total sobre cada parámetro:<br/>
+                            • Umbrales de señal por régimen (TREND/RANGE/TRANSITION)<br/>
+                            • Parámetros de riesgo globales (exposure, dry run)<br/>
+                            • Detección de régimen y router automáticos
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-emerald-500/10 rounded border border-emerald-500/30">
+                        <p className="font-medium text-emerald-400 mb-1">Ventajas del sistema</p>
+                        <ul className="text-muted-foreground text-xs space-y-1">
+                          <li>• Cambios en tiempo real sin reiniciar el bot</li>
+                          <li>• Validación automática de configuraciones</li>
+                          <li>• Posibilidad de resetear a valores por defecto</li>
+                          <li>• Hybrid Guard disponible en ambos modos</li>
+                        </ul>
+                      </div>
+
+                      <p className="text-muted-foreground text-xs">
+                        <strong>Ubicación:</strong> Ajustes → Trading Configuration
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="regime-router">
+                    <AccordionTrigger className="text-left">
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-emerald-500" />
+                        Regime Router
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 text-sm">
+                      <p><strong>¿Qué es?</strong> Un sistema que selecciona automáticamente la mejor configuración de trading según el régimen de mercado detectado.</p>
+                      
+                      <div className="space-y-2">
+                        <div className="p-3 bg-emerald-500/10 rounded border border-emerald-500/30">
+                          <p className="font-medium text-emerald-400 mb-2">¿Cómo funciona?</p>
+                          <p className="text-muted-foreground text-xs">
+                            El bot detecta automáticamente el mercado:<br/>
+                            • <strong>TREND:</strong> Usa configuración de tendencia<br/>
+                            • <strong>RANGE:</strong> Usa configuración de rango lateral<br/>
+                            • <strong>TRANSITION:</strong> Usa configuración intermedia<br/>
+                            Los umbrales de señal cambian dinámicamente.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-yellow-500/10 rounded border border-yellow-500/30">
+                        <p className="font-medium text-yellow-400 mb-1">Beneficios</p>
+                        <ul className="text-muted-foreground text-xs space-y-1">
+                          <li>• Adaptación automática a condiciones del mercado</li>
+                          <li>• Mejor rendimiento en diferentes escenarios</li>
+                          <li>• Reduce la necesidad de ajustes manuales</li>
+                          <li>• Evita operar contra la tendencia principal</li>
+                        </ul>
+                      </div>
+
+                      <p className="text-muted-foreground text-xs">
+                        <strong>Configuración:</strong> Activa "Regime Detection" y "Regime Router" en Trading Configuration → Global.
                       </p>
                     </AccordionContent>
                   </AccordionItem>
