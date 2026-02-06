@@ -53,10 +53,33 @@ El P&L (Profit & Loss) aparecía como **0** o **null** en:
 - Invalida queries de `closedTrades` y `performance` tras éxito
 - Indicador de loading (spinner) durante la operación
 
-### Archivos Modificados
+### Archivos Modificados (v1)
 - `server/storage.ts` — 2 nuevos métodos + interface + fix filtro getClosedTrades
 - `server/routes.ts` — rewrite /api/performance + nuevo endpoint rebuild-pnl + auto-rebuild startup
 - `client/src/pages/Terminal.tsx` — botón Recalcular P&L + mutation
+
+### Fix v2 — Correcciones adicionales P&L
+
+#### Problema residual: BUY trades mostraban "$0.0%" en P&L
+- Algunos BUY tenían `realizedPnlUsd = "0.00000000"` en la DB (string truthy)
+- El API y frontend los interpretaban como P&L = 0 y mostraban "+$0.00 (+0.0%)"
+- **Fix**: Solo devolver/mostrar `realizedPnlUsd` cuando `trade.type === 'sell'`
+
+#### Auto-rebuild P&L después de cada sync
+- **Kraken sync** (`POST /api/trades/sync`): Ya calculaba P&L inline, ahora también ejecuta `rebuildPnlForAllSells()` para cubrir sells sin match
+- **RevolutX sync** (`POST /api/trades/sync-revolutx`): NO calculaba P&L → ahora ejecuta `rebuildPnlForAllSells()` automáticamente
+- Respuesta de ambos endpoints incluye `pnlRebuilt` con el número de trades actualizados
+
+#### Flujo automático de P&L (sin intervención manual)
+1. **Al cerrar posición** → `tradingEngine.forceClosePosition()` guarda P&L directamente
+2. **FillWatcher** → Detecta fill de sell → `tryRecalculatePnlForPairExchange()`
+3. **Sync Kraken/RevolutX** → Después de importar trades → `rebuildPnlForAllSells()`
+4. **Startup del servidor** → 10s después de arrancar → `rebuildPnlForAllSells()`
+5. **Manual** → Botón "Recalcular P&L" en Terminal (último recurso)
+
+#### Archivos Modificados (v2)
+- `server/routes.ts` — `/api/trades/closed`: solo P&L para SELL; sync-kraken y sync-revolutx: auto-rebuild
+- `client/src/pages/Terminal.tsx` — Solo mostrar P&L para SELL trades
 
 ---
 

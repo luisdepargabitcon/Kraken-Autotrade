@@ -1447,8 +1447,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             exchange: normalizeExchange(t),
             totalUsd: totalUsd.toFixed(2),
             entryValueUsd: entryValueUsd?.toFixed(2) || null,
-            realizedPnlUsd: t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,
-            realizedPnlPct: t.realizedPnlPct ? parseFloat(t.realizedPnlPct).toFixed(2) : null,
+            realizedPnlUsd: t.type === 'sell' && t.realizedPnlUsd ? parseFloat(t.realizedPnlUsd).toFixed(2) : null,
+            realizedPnlPct: t.type === 'sell' && t.realizedPnlPct ? parseFloat(t.realizedPnlPct).toFixed(2) : null,
           };
         }),
         total,
@@ -2369,6 +2369,18 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           lastError: null,
         });
 
+        // Auto-rebuild P&L for any sells that still lack it
+        let pnlRebuilt = 0;
+        try {
+          const rebuildResult = await storage.rebuildPnlForAllSells();
+          pnlRebuilt = rebuildResult.updated;
+          if (pnlRebuilt > 0) {
+            console.log(`[sync-revolutx] P&L rebuild: ${pnlRebuilt} updated, ${rebuildResult.skipped} skipped`);
+          }
+        } catch (e: any) {
+          console.warn(`[sync-revolutx] P&L rebuild failed: ${e.message}`);
+        }
+
         res.json({
           scope,
           pairsToSync,
@@ -2377,6 +2389,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
           cursorAfter: cursorValueToSave.toISOString(),
           synced,
           skipped,
+          pnlRebuilt,
           assumedSideCount: assumedSideCount > 0 ? assumedSideCount : undefined,
           fetched: totalFetched,
           byPair,
@@ -2997,11 +3010,23 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       // acumulado (parciales) y se manejará via endpoints separados o manualmente.
       // El sync solo registra trades y calcula P&L.
 
+      // Auto-rebuild P&L for any sells that still lack it (background, after response)
+      let rebuildResult: { updated: number; skipped: number; errors: number } | null = null;
+      try {
+        rebuildResult = await storage.rebuildPnlForAllSells();
+        if (rebuildResult.updated > 0) {
+          console.log(`[sync-kraken] P&L rebuild: ${rebuildResult.updated} updated, ${rebuildResult.skipped} skipped`);
+        }
+      } catch (e: any) {
+        console.warn(`[sync-kraken] P&L rebuild failed: ${e.message}`);
+      }
+
       res.json({ 
         success: true, 
         synced, 
         skipped,
         pnlCalculated,
+        pnlRebuilt: rebuildResult?.updated ?? 0,
         total: Object.keys(krakenTrades).length,
         errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
       });
