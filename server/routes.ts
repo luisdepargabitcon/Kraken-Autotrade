@@ -1463,17 +1463,19 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   app.get("/api/performance", async (req, res) => {
     try {
-      const trades = await storage.getTrades(500);
+      // Use only FILLED trades with valid price & amount to avoid pending/invalid contamination
+      const allTrades = await storage.getFilledTradesForPerformance(2000);
       
       const STARTING_EQUITY = 1000;
       
-      const sortedTrades = [...trades].sort((a, b) => {
+      const sortedTrades = [...allTrades].sort((a, b) => {
         const dateA = a.executedAt ? new Date(a.executedAt).getTime() : new Date(a.createdAt).getTime();
         const dateB = b.executedAt ? new Date(b.executedAt).getTime() : new Date(b.createdAt).getTime();
         return dateA - dateB;
       });
 
-      const pairPrices: Record<string, { lastBuyPrice: number; lastBuyAmount: number }> = {};
+      // FIFO buy queues per pair+exchange (handles multiple partial buys correctly)
+      const buyQueues: Record<string, { price: number; remaining: number }[]> = {};
       let currentEquity = STARTING_EQUITY;
       let totalPnl = 0;
       let wins = 0;
@@ -1495,12 +1497,58 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         const amount = parseFloat(trade.amount);
         const time = trade.executedAt ? new Date(trade.executedAt).toISOString() : new Date(trade.createdAt).toISOString();
 
+        if (price <= 0 || amount <= 0) continue; // extra guard
+
         if (trade.type === "buy") {
-          pairPrices[pair] = { lastBuyPrice: price, lastBuyAmount: amount };
+          if (!buyQueues[pair]) buyQueues[pair] = [];
+          buyQueues[pair].push({ price, remaining: amount });
         } else if (trade.type === "sell") {
-          const lastBuy = pairPrices[pair];
-          if (lastBuy && lastBuy.lastBuyPrice > 0) {
-            const pnl = (price - lastBuy.lastBuyPrice) * Math.min(amount, lastBuy.lastBuyAmount);
+          let pnl: number | null = null;
+
+          // Strategy A: Use realizedPnlUsd from DB if already calculated (most accurate, includes fees)
+          if (trade.realizedPnlUsd != null && String(trade.realizedPnlUsd).length > 0) {
+            const storedPnl = parseFloat(String(trade.realizedPnlUsd));
+            if (Number.isFinite(storedPnl) && storedPnl !== 0) {
+              pnl = storedPnl;
+            }
+          }
+
+          // Strategy B: FIFO matching from buy queue (fallback)
+          if (pnl === null) {
+            const queue = buyQueues[pair];
+            if (queue && queue.length > 0) {
+              let sellRemaining = amount;
+              let totalCost = 0;
+              let totalMatched = 0;
+              while (sellRemaining > 0.00000001 && queue.length > 0) {
+                const buy = queue[0];
+                const matchAmt = Math.min(buy.remaining, sellRemaining);
+                totalCost += matchAmt * buy.price;
+                totalMatched += matchAmt;
+                sellRemaining -= matchAmt;
+                buy.remaining -= matchAmt;
+                if (buy.remaining <= 0.00000001) queue.shift();
+              }
+              if (totalMatched > 0.00000001) {
+                pnl = (price * totalMatched) - totalCost;
+              }
+            }
+          } else {
+            // Still consume FIFO quantities so future sells match correctly
+            const queue = buyQueues[pair];
+            if (queue) {
+              let toConsume = amount;
+              while (toConsume > 0.00000001 && queue.length > 0) {
+                const buy = queue[0];
+                const matchAmt = Math.min(buy.remaining, toConsume);
+                toConsume -= matchAmt;
+                buy.remaining -= matchAmt;
+                if (buy.remaining <= 0.00000001) queue.shift();
+              }
+            }
+          }
+
+          if (pnl !== null && Number.isFinite(pnl)) {
             totalPnl += pnl;
             currentEquity += pnl;
 
@@ -1512,8 +1560,6 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             if (currentEquity > maxEquity) maxEquity = currentEquity;
             const drawdown = ((maxEquity - currentEquity) / maxEquity) * 100;
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-
-            delete pairPrices[pair];
           }
         }
       }
@@ -1539,6 +1585,23 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     } catch (error) {
       console.error("Error calculating performance:", error);
       res.status(500).json({ error: "Failed to calculate performance" });
+    }
+  });
+
+  // === REBUILD P&L FOR ALL SELLS ===
+  app.post("/api/trades/rebuild-pnl", async (req, res) => {
+    try {
+      console.log("[rebuild-pnl] Starting P&L rebuild for all sells without P&L...");
+      const result = await storage.rebuildPnlForAllSells();
+      console.log(`[rebuild-pnl] Done: updated=${result.updated}, skipped=${result.skipped}, errors=${result.errors}`);
+      res.json({
+        success: true,
+        ...result,
+        message: `P&L recalculado: ${result.updated} actualizados, ${result.skipped} ya tenían P&L, ${result.errors} errores`,
+      });
+    } catch (error: any) {
+      console.error("[rebuild-pnl] Error:", error);
+      res.status(500).json({ error: "Failed to rebuild P&L", message: error.message });
     }
   });
 
@@ -4858,6 +4921,17 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       });
     }
   });
+
+  // === AUTO-REBUILD P&L ON STARTUP (background, non-blocking) ===
+  setTimeout(async () => {
+    try {
+      console.log("[startup] Auto-rebuilding P&L for sells without P&L...");
+      const result = await storage.rebuildPnlForAllSells();
+      console.log(`[startup] P&L rebuild done: updated=${result.updated}, skipped=${result.skipped}, errors=${result.errors}`);
+    } catch (e: any) {
+      console.warn(`[startup] P&L rebuild failed (non-critical): ${e.message}`);
+    }
+  }, 10000); // 10s delay to let other services initialize first
 
   return httpServer;
 }

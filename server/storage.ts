@@ -94,6 +94,8 @@ export interface IStorage {
   deleteInvalidFilledTrades(): Promise<number>;
   updateTradePnl(id: number, entryPrice: string, realizedPnlUsd: string, realizedPnlPct: string): Promise<void>;
   getUnmatchedBuys(pair: string): Promise<Trade[]>;
+  getFilledTradesForPerformance(limit?: number): Promise<Trade[]>;
+  rebuildPnlForAllSells(): Promise<{ updated: number; skipped: number; errors: number }>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
   getUnsentNotifications(): Promise<Notification[]>;
@@ -479,6 +481,118 @@ export class DatabaseStorage implements IStorage {
       .orderBy(tradesTable.executedAt);
   }
 
+  async getFilledTradesForPerformance(limit: number = 2000): Promise<Trade[]> {
+    return await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.status, 'filled'),
+        gt(tradesTable.price, '0'),
+        gt(tradesTable.amount, '0')
+      ))
+      .orderBy(tradesTable.executedAt)
+      .limit(limit);
+  }
+
+  async rebuildPnlForAllSells(): Promise<{ updated: number; skipped: number; errors: number }> {
+    let updated = 0, skipped = 0, errors = 0;
+
+    // Get all filled trades sorted by executedAt for FIFO matching
+    const allTrades = await db.select().from(tradesTable)
+      .where(and(
+        eq(tradesTable.status, 'filled'),
+        gt(tradesTable.price, '0'),
+        gt(tradesTable.amount, '0')
+      ))
+      .orderBy(tradesTable.executedAt);
+
+    // Group trades by pair+exchange for FIFO matching
+    const groups: Record<string, typeof allTrades> = {};
+    for (const t of allTrades) {
+      const key = `${t.pair}||${(t.exchange ?? 'kraken').toLowerCase()}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+
+    const feePctForExchange = (ex: string) => {
+      if (ex === 'revolutx') return 0.09;
+      return 0.40;
+    };
+
+    for (const [groupKey, trades] of Object.entries(groups)) {
+      const exchange = groupKey.split('||')[1] || 'kraken';
+      const buys = trades.filter(t => t.type === 'buy');
+      const sells = trades.filter(t => t.type === 'sell');
+
+      let buyIndex = 0;
+      let buyRemaining = buys[0] ? parseFloat(String(buys[0].amount)) : 0;
+
+      for (const sell of sells) {
+        const needsPnl = sell.realizedPnlUsd == null || String(sell.realizedPnlUsd).trim().length === 0;
+        
+        if (!needsPnl) {
+          // Consume FIFO quantities so later sells are priced correctly
+          let toConsume = parseFloat(String(sell.amount));
+          while (toConsume > 0.00000001 && buyIndex < buys.length) {
+            const matchAmount = Math.min(buyRemaining, toConsume);
+            toConsume -= matchAmount;
+            buyRemaining -= matchAmount;
+            if (buyRemaining <= 0.00000001) {
+              buyIndex++;
+              buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
+            }
+          }
+          skipped++;
+          continue;
+        }
+
+        let sellRemaining = parseFloat(String(sell.amount));
+        let totalCost = 0;
+        let totalAmount = 0;
+
+        while (sellRemaining > 0.00000001 && buyIndex < buys.length) {
+          const buy = buys[buyIndex];
+          const matchAmount = Math.min(buyRemaining, sellRemaining);
+          totalCost += matchAmount * parseFloat(String(buy.price));
+          totalAmount += matchAmount;
+          sellRemaining -= matchAmount;
+          buyRemaining -= matchAmount;
+          if (buyRemaining <= 0.00000001) {
+            buyIndex++;
+            buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
+          }
+        }
+
+        if (totalAmount > 0.00000001) {
+          try {
+            const avgEntryPrice = totalCost / totalAmount;
+            const sellPrice = parseFloat(String(sell.price));
+            const revenue = totalAmount * sellPrice;
+            const pnlGross = revenue - totalCost;
+            const feePct = feePctForExchange(exchange);
+            const entryFee = totalCost * (feePct / 100);
+            const exitFee = revenue * (feePct / 100);
+            const pnlNet = pnlGross - entryFee - exitFee;
+            const pnlPct = totalCost > 0 ? (pnlNet / totalCost) * 100 : 0;
+
+            await this.updateTradePnl(
+              sell.id,
+              avgEntryPrice.toFixed(8),
+              pnlNet.toFixed(8),
+              pnlPct.toFixed(4)
+            );
+            updated++;
+          } catch (e: any) {
+            console.error(`[rebuildPnl] Error updating trade ${sell.id}: ${e.message}`);
+            errors++;
+          }
+        } else {
+          skipped++;
+        }
+      }
+    }
+
+    return { updated, skipped, errors };
+  }
+
   async getTrades(limit: number = 50): Promise<Trade[]> {
     // Hide invalid historical artifacts (e.g. filled trades with price=0) from API/UI.
     // Keep pending trades visible.
@@ -552,14 +666,11 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lt(tradesTable.realizedPnlUsd, '0'));
     }
     
-    // Always exclude invalid filled trades from listings.
-    const baseValidity = or(
-      ne(tradesTable.status, 'filled'),
-      and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
-    );
-    const whereClause = conditions.length > 0
-      ? and(baseValidity, ...(conditions.length === 1 ? [conditions[0]] : conditions))
-      : baseValidity;
+    // For closed trades, only show FILLED trades with valid price & amount
+    conditions.push(eq(tradesTable.status, 'filled'));
+    conditions.push(gt(tradesTable.price, '0'));
+    conditions.push(gt(tradesTable.amount, '0'));
+    const whereClause = and(...conditions);
     
     const tradesQuery = db.select().from(tradesTable)
       .orderBy(desc(tradesTable.executedAt))

@@ -416,6 +416,33 @@ export default function Terminal() {
     },
   });
 
+  // Mutation for rebuilding P&L for all sells
+  const rebuildPnlMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/trades/rebuild-pnl", { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Error al recalcular P&L");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "P&L Recalculado",
+        description: data.message || `${data.updated} trades actualizados`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["closedTrades"] });
+      queryClient.invalidateQueries({ queryKey: ["performance"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleClosePosition = (pair: string, lotId?: string | null, amount?: string) => {
     const displayId = lotId ? lotId.substring(0, 8) : pair;
     if (confirm(`¿Cerrar ${lotId ? `lote ${displayId}` : `posición`} de ${pair}? Esta acción no se puede deshacer.`)) {
@@ -1093,9 +1120,26 @@ export default function Terminal() {
                       <Activity className="h-4 w-4 text-cyan-400" />
                       HISTORIAL DE OPERACIONES
                     </CardTitle>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {closedData?.total || 0} operaciones
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {closedData?.total || 0} operaciones
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => rebuildPnlMutation.mutate()}
+                        disabled={rebuildPnlMutation.isPending}
+                        className="h-7 text-[10px] font-mono text-cyan-400 border-cyan-400/30 hover:bg-cyan-400/10"
+                        title="Recalcular P&L para todas las ventas sin P&L (FIFO)"
+                      >
+                        {rebuildPnlMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                        )}
+                        Recalcular P&L
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">

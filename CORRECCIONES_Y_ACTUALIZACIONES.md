@@ -5,6 +5,61 @@
 
 ---
 
+## 2026-02-06 — FIX: P&L a 0 en gráfica de rendimiento y historial de operaciones
+
+### Problema
+El P&L (Profit & Loss) aparecía como **0** o **null** en:
+1. **Gráfica "Rendimiento del Portafolio"** (Dashboard → ChartWidget)
+2. **Historial de Operaciones** (Terminal → tabla de trades cerrados)
+
+### Causas Raíz Identificadas
+
+#### Causa 1: `/api/performance` incluía trades no-filled con price=0
+- `storage.getTrades()` devolvía trades `pending` con `price=0`
+- Un BUY pending con `price=0` sobreescribía el precio real del último BUY
+- Al llegar un SELL, `lastBuyPrice > 0` era `false` → **P&L no se calculaba**
+- Además, solo guardaba UN buy por par (sin FIFO), perdiendo trades parciales
+
+#### Causa 2: `/api/trades/closed` incluía trades no-filled
+- El filtro `baseValidity` permitía trades `pending`/`cancelled` en el resultado
+- Trades sin `realizedPnlUsd` mostraban `-` en la UI
+
+#### Causa 3: Muchos SELL no tenían P&L calculado en la DB
+- FillWatcher inserta trades sin P&L y luego intenta reconciliar con `tryRecalculatePnlForPairExchange`
+- Si el reconcile fallaba (exchange/pair mismatch, trades no-filled mezclados), el P&L quedaba `null`
+- No existía mecanismo de backfill/reparación masiva
+
+### Cambios Implementados
+
+#### `server/storage.ts`
+- **`getFilledTradesForPerformance(limit)`**: Nuevo método que devuelve solo trades `filled` con `price > 0` y `amount > 0`, ordenados por `executedAt`
+- **`rebuildPnlForAllSells()`**: Nuevo método de backfill masivo FIFO por par+exchange. Recalcula P&L neto (incluyendo fees) para todos los SELL que tengan `realizedPnlUsd = NULL`. Respeta el orden FIFO y consume cantidades de BUYs previos
+- **`getClosedTrades()`**: Filtro cambiado de `baseValidity` (que incluía non-filled) a `status='filled' AND price>0 AND amount>0` explícito
+- Ambos métodos añadidos al interface `IStorage` y a `DatabaseStorage`
+
+#### `server/routes.ts`
+- **`GET /api/performance`**: Reescrito completamente:
+  - Usa `getFilledTradesForPerformance()` en vez de `getTrades()` (solo trades válidos)
+  - FIFO con cola de BUYs por par (soporta múltiples buys parciales)
+  - **Prioriza `realizedPnlUsd` del DB** cuando existe (más preciso, incluye fees reales)
+  - Fallback a cálculo FIFO solo para sells sin P&L en DB
+  - Consume FIFO incluso cuando usa P&L del DB para mantener sincronía
+- **`POST /api/trades/rebuild-pnl`**: Nuevo endpoint para recalcular P&L masivamente
+- **Auto-rebuild al startup**: 10s después de arrancar, ejecuta `rebuildPnlForAllSells()` en background
+
+#### `client/src/pages/Terminal.tsx`
+- **Botón "Recalcular P&L"** en el header del Historial de Operaciones
+- Mutation `rebuildPnlMutation` que llama a `POST /api/trades/rebuild-pnl`
+- Invalida queries de `closedTrades` y `performance` tras éxito
+- Indicador de loading (spinner) durante la operación
+
+### Archivos Modificados
+- `server/storage.ts` — 2 nuevos métodos + interface + fix filtro getClosedTrades
+- `server/routes.ts` — rewrite /api/performance + nuevo endpoint rebuild-pnl + auto-rebuild startup
+- `client/src/pages/Terminal.tsx` — botón Recalcular P&L + mutation
+
+---
+
 ## 2026-02-01 — FEAT: Hybrid Guard (Re-entry) para señales BUY filtradas (ANTI_CRESTA / MTF_STRICT)
 
 ### Objetivo
