@@ -110,6 +110,18 @@ interface BotConfig {
   minBeFloorPct: string;
   timeStopHours: number;
   timeStopMode: string;
+  // Spread Filter fields
+  spreadFilterEnabled: boolean;
+  spreadDynamicEnabled: boolean;
+  spreadMaxPct: string;
+  spreadThresholdTrend: string;
+  spreadThresholdRange: string;
+  spreadThresholdTransition: string;
+  spreadCapPct: string;
+  spreadFloorPct: string;
+  spreadRevolutxMarkupPct: string;
+  spreadTelegramAlertEnabled: boolean;
+  spreadTelegramCooldownMs: number;
 }
 
 export default function Settings() {
@@ -554,6 +566,205 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">
                   Horario actual: {config?.tradingHoursStart ?? "8"}:00 - {config?.tradingHoursEnd ?? "22"}:00 UTC
                 </p>
+              </CardContent>
+            </Card>
+
+            {/* Spread Filter Settings */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-orange-500/20 rounded-lg">
+                    <AlertTriangle className="h-6 w-6 text-orange-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Filtro de Spread (coste de entrada)</CardTitle>
+                    <CardDescription>Evita compras cuando el coste implícito de ejecución es alto.</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-3 rounded-lg text-xs bg-orange-500/10 border border-orange-500/20 text-muted-foreground">
+                  Compara el spread estimado (Kraken como referencia; en RevolutX añade un markup configurable) contra un umbral por régimen de mercado. Si supera el umbral, la BUY se bloquea y se registra/avisa por Telegram.
+                </div>
+
+                {/* Main toggle */}
+                <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card/30">
+                  <div className="space-y-0.5">
+                    <Label>Activar Filtro de Spread</Label>
+                    <p className="text-sm text-muted-foreground">Solo aplica a BUY. No afecta SELL, SL ni TP.</p>
+                  </div>
+                  <Switch
+                    checked={config?.spreadFilterEnabled ?? true}
+                    onCheckedChange={(checked) => updateMutation.mutate({ spreadFilterEnabled: checked })}
+                    data-testid="switch-spread-filter"
+                  />
+                </div>
+
+                {config?.spreadFilterEnabled && (
+                  <div className="space-y-4 p-4 border border-orange-500/30 rounded-lg bg-orange-500/5">
+                    {/* Dynamic toggle */}
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label className="text-sm">Spread Dinámico por Régimen</Label>
+                        <p className="text-xs text-muted-foreground">Si desactivado, usa un umbral fijo (Spread Máx. Fijo).</p>
+                      </div>
+                      <Switch
+                        checked={config?.spreadDynamicEnabled ?? true}
+                        onCheckedChange={(checked) => updateMutation.mutate({ spreadDynamicEnabled: checked })}
+                        data-testid="switch-spread-dynamic"
+                      />
+                    </div>
+
+                    {/* Fixed max spread (when dynamic is off) */}
+                    {!config?.spreadDynamicEnabled && (
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Spread Máx. Fijo (%)</Label>
+                        <Input
+                          type="number" step="0.1" min={0.1} max={5}
+                          defaultValue={config?.spreadMaxPct || "2.00"}
+                          key={`smax-${config?.spreadMaxPct}`}
+                          onBlur={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v) && v >= 0.1 && v <= 5) updateMutation.mutate({ spreadMaxPct: v.toFixed(2) } as any);
+                          }}
+                          className="w-20 h-7 text-xs font-mono bg-background/50"
+                          data-testid="input-spread-max-pct"
+                        />
+                      </div>
+                    )}
+
+                    {/* Regime thresholds (when dynamic is on) */}
+                    {config?.spreadDynamicEnabled && (
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-orange-400">Umbrales por Régimen (%)</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs">TREND</Label>
+                            <Input
+                              type="number" step="0.1" min={0.1} max={5}
+                              defaultValue={config?.spreadThresholdTrend || "1.50"}
+                              key={`sttrend-${config?.spreadThresholdTrend}`}
+                              onBlur={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0.1 && v <= 5) updateMutation.mutate({ spreadThresholdTrend: v.toFixed(2) } as any);
+                              }}
+                              className="h-7 text-xs font-mono bg-background/50"
+                              data-testid="input-spread-trend"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs">RANGE</Label>
+                            <Input
+                              type="number" step="0.1" min={0.1} max={5}
+                              defaultValue={config?.spreadThresholdRange || "2.00"}
+                              key={`strange-${config?.spreadThresholdRange}`}
+                              onBlur={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0.1 && v <= 5) updateMutation.mutate({ spreadThresholdRange: v.toFixed(2) } as any);
+                              }}
+                              className="h-7 text-xs font-mono bg-background/50"
+                              data-testid="input-spread-range"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs">TRANSITION</Label>
+                            <Input
+                              type="number" step="0.1" min={0.1} max={5}
+                              defaultValue={config?.spreadThresholdTransition || "2.50"}
+                              key={`sttrans-${config?.spreadThresholdTransition}`}
+                              onBlur={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0.1 && v <= 5) updateMutation.mutate({ spreadThresholdTransition: v.toFixed(2) } as any);
+                              }}
+                              className="h-7 text-xs font-mono bg-background/50"
+                              data-testid="input-spread-transition"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cap, Floor, RevolutX Markup */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-orange-400">Límites y Markup</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs">Floor (%)</Label>
+                          <Input
+                            type="number" step="0.05" min={0} max={2}
+                            defaultValue={config?.spreadFloorPct || "0.30"}
+                            key={`sfloor-${config?.spreadFloorPct}`}
+                            onBlur={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v >= 0 && v <= 2) updateMutation.mutate({ spreadFloorPct: v.toFixed(2) } as any);
+                            }}
+                            className="h-7 text-xs font-mono bg-background/50"
+                            data-testid="input-spread-floor"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs">Cap (%)</Label>
+                          <Input
+                            type="number" step="0.5" min={1} max={10}
+                            defaultValue={config?.spreadCapPct || "3.50"}
+                            key={`scap-${config?.spreadCapPct}`}
+                            onBlur={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v >= 1 && v <= 10) updateMutation.mutate({ spreadCapPct: v.toFixed(2) } as any);
+                            }}
+                            className="h-7 text-xs font-mono bg-background/50"
+                            data-testid="input-spread-cap"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs">Markup RevX (%)</Label>
+                          <Input
+                            type="number" step="0.1" min={0} max={5}
+                            defaultValue={config?.spreadRevolutxMarkupPct || "0.80"}
+                            key={`smarkup-${config?.spreadRevolutxMarkupPct}`}
+                            onBlur={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v >= 0 && v <= 5) updateMutation.mutate({ spreadRevolutxMarkupPct: v.toFixed(2) } as any);
+                            }}
+                            className="h-7 text-xs font-mono bg-background/50"
+                            data-testid="input-spread-markup"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Floor: spread por debajo siempre OK. Cap: hard limit absoluto. Markup RevX: estimación adicional para RevolutX.
+                      </p>
+                    </div>
+
+                    {/* Telegram alerts */}
+                    <div className="space-y-2 pt-2 border-t border-orange-500/20">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Alerta Telegram al bloquear</Label>
+                        <Switch
+                          checked={config?.spreadTelegramAlertEnabled ?? true}
+                          onCheckedChange={(checked) => updateMutation.mutate({ spreadTelegramAlertEnabled: checked })}
+                          data-testid="switch-spread-tg-alert"
+                        />
+                      </div>
+                      {config?.spreadTelegramAlertEnabled && (
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Cooldown alerta (min)</Label>
+                          <Input
+                            type="number" min={1} max={120}
+                            defaultValue={Math.round((config?.spreadTelegramCooldownMs ?? 600000) / 60000)}
+                            key={`stgcd-${config?.spreadTelegramCooldownMs}`}
+                            onBlur={(e) => {
+                              const v = parseInt(e.target.value);
+                              if (!isNaN(v) && v >= 1 && v <= 120) updateMutation.mutate({ spreadTelegramCooldownMs: v * 60000 } as any);
+                            }}
+                            className="w-20 h-7 text-xs font-mono bg-background/50"
+                            data-testid="input-spread-tg-cooldown"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

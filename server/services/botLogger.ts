@@ -106,7 +106,10 @@ export type EventType =
   | "FILL_WATCHER_STARTED"
   | "FILL_WATCHER_TIMEOUT"
   | "POSITION_PENDING_FILL"
-  | "POSITION_UPDATED";
+  | "POSITION_UPDATED"
+  // Spread filter events
+  | "SPREAD_REJECTED"
+  | "SPREAD_DATA_MISSING";
 
 interface LogMeta {
   [key: string]: any;

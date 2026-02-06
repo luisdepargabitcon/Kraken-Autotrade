@@ -141,6 +141,18 @@ export const botConfig = pgTable("bot_config", {
   // Advanced Filters: Signal Rejection Alerts
   signalRejectionAlertsEnabled: boolean("signal_rejection_alerts_enabled").notNull().default(true),
   signalRejectionAlertChatId: text("signal_rejection_alert_chat_id"),
+  // Spread Filter configuration
+  spreadFilterEnabled: boolean("spread_filter_enabled").notNull().default(true),
+  spreadDynamicEnabled: boolean("spread_dynamic_enabled").notNull().default(true),
+  spreadMaxPct: decimal("spread_max_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  spreadThresholdTrend: decimal("spread_threshold_trend", { precision: 5, scale: 2 }).notNull().default("1.50"),
+  spreadThresholdRange: decimal("spread_threshold_range", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  spreadThresholdTransition: decimal("spread_threshold_transition", { precision: 5, scale: 2 }).notNull().default("2.50"),
+  spreadCapPct: decimal("spread_cap_pct", { precision: 5, scale: 2 }).notNull().default("3.50"),
+  spreadFloorPct: decimal("spread_floor_pct", { precision: 5, scale: 2 }).notNull().default("0.30"),
+  spreadRevolutxMarkupPct: decimal("spread_revolutx_markup_pct", { precision: 5, scale: 2 }).notNull().default("0.80"),
+  spreadTelegramAlertEnabled: boolean("spread_telegram_alert_enabled").notNull().default(true),
+  spreadTelegramCooldownMs: integer("spread_telegram_cooldown_ms").notNull().default(600000),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

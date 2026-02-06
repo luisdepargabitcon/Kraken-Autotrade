@@ -5,6 +5,126 @@
 
 ---
 
+## 2026-02-06 — FEATURE: Filtro de Spread funcional (v2) — Kraken proxy + RevolutX markup
+
+### Problema
+El filtro de spread existía en código pero **NUNCA funcionó** (dead code):
+- `isSpreadAcceptable()` leía `tickerData.b[0]` / `tickerData.a[0]` (formato Kraken raw)
+- Pero se llamaba con `getTicker()` que devuelve `{ bid: number, ask: number }` (tipo `Ticker`)
+- Resultado: `bid = 0, ask = 0` → `spreadPct = 0` → **siempre acceptable**
+- El umbral era hardcoded: `const MAX_SPREAD_PCT = 0.5`
+- `maxSpreadPct` del schema de config nunca se leía
+- RevolutX no tiene orderbook fiable → `bid=ask=last` → spread siempre 0
+
+### Solución implementada: Opción B (Kraken proxy + markup RevolutX)
+
+#### Arquitectura
+- **Fuente de datos**: siempre `getDataExchange().getTicker()` (Kraken) — única fuente fiable de bid/ask
+- **Para Kraken**: `spreadEffective = spreadKraken`
+- **Para RevolutX**: `spreadEffective = spreadKraken + revolutxMarkupPct` (configurable, default 0.8%)
+- **Un solo punto de decisión**: `checkSpreadForBuy()` llamado desde ambos flujos (cycle + candles)
+- **Solo BUY**: nunca bloquea SELL, SL, TP ni forceClose
+
+#### Cálculo
+```
+mid = (bid + ask) / 2
+spreadKrakenPct = ((ask - bid) / mid) * 100
+spreadEffectivePct = spreadKrakenPct + (tradingExchange === "revolutx" ? revolutxMarkupPct : 0)
+```
+
+#### Umbrales dinámicos por régimen (configurable desde UI)
+| Régimen | Default | Descripción |
+|---------|---------|-------------|
+| TREND | 1.50% | Alto volumen → exigir mejor fill |
+| RANGE | 2.00% | Menos volumen → algo más permisivo |
+| TRANSITION | 2.50% | Intermedio |
+| Cap | 3.50% | Hard limit absoluto (nunca permitir más) |
+| Floor | 0.30% | Si spread < floor, siempre OK (micro-ruido) |
+
+Si `dynamicSpread.enabled = false`, usa un umbral fijo `spreadMaxPct`.
+
+#### Fail-safe
+Si `bid <= 0` o `ask <= 0`: log `SPREAD_DATA_MISSING` + **no operar** (skip BUY).
+
+#### Alerta Telegram
+- Cuando se bloquea una BUY por spread, envía mensaje con:
+  - Par, exchange, régimen
+  - Spread Kraken, markup RevolutX (si aplica), spread efectivo, umbral
+  - Bid/ask
+- **Anti-spam**: cooldown configurable por (par + exchange), default 10 min
+- **Best-effort**: si Telegram falla, no rompe el motor de trading
+
+#### Log estructurado (SPREAD_REJECTED)
+```json
+{
+  "event": "SPREAD_REJECTED",
+  "pair": "BTC/USD",
+  "regime": "TREND",
+  "tradingExchange": "revolutx",
+  "dataExchange": "kraken",
+  "bid": 50000.00,
+  "ask": 50100.00,
+  "mid": 50050.00,
+  "spreadKrakenPct": 0.1998,
+  "revolutxMarkupPct": 0.80,
+  "spreadEffectivePct": 0.9998,
+  "thresholdPct": 1.50,
+  "decision": "REJECT"
+}
+```
+
+#### Ejemplo de mensaje Telegram
+```
+🤖 KRAKEN BOT 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🚫 BUY bloqueada por spread
+
+📊 Detalle:
+   Par: BTC/USD
+   Exchange: revolutx
+   Régimen: TREND
+   Spread Kraken: 0.200%
+   Markup RevolutX: +0.80%
+   Spread Efectivo: 1.000%
+   Umbral máximo: 1.50%
+   Bid: $50000.00 | Ask: $50100.00
+⏰ 2026-02-06 21:30:00 UTC
+━━━━━━━━━━━━━━━━━━━
+```
+
+### Parámetros configurables (UI: Settings → Filtro de Spread)
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `spreadFilterEnabled` | true | Activar/desactivar filtro |
+| `spreadDynamicEnabled` | true | Umbrales por régimen vs fijo |
+| `spreadMaxPct` | 2.00 | Umbral fijo (cuando dynamic=false) |
+| `spreadThresholdTrend` | 1.50 | Umbral para régimen TREND |
+| `spreadThresholdRange` | 2.00 | Umbral para régimen RANGE |
+| `spreadThresholdTransition` | 2.50 | Umbral para régimen TRANSITION |
+| `spreadCapPct` | 3.50 | Hard cap absoluto |
+| `spreadFloorPct` | 0.30 | Spread < floor → siempre OK |
+| `spreadRevolutxMarkupPct` | 0.80 | Estimación adicional para RevolutX |
+| `spreadTelegramAlertEnabled` | true | Enviar alerta Telegram al bloquear |
+| `spreadTelegramCooldownMs` | 600000 | Cooldown anti-spam (10 min default) |
+
+### Archivos modificados
+- `shared/schema.ts` — 11 nuevas columnas en `bot_config` para spread filter
+- `shared/config-schema.ts` — `maxSpreadPct` ya existía en `exchangeConfigSchema`
+- `server/services/tradingEngine.ts` — Eliminado `MAX_SPREAD_PCT` hardcode, eliminado `isSpreadAcceptable()` roto, nuevo `checkSpreadForBuy()` + `getSpreadThresholdForRegime()` + `sendSpreadTelegramAlert()`
+- `server/services/botLogger.ts` — Nuevos eventos: `SPREAD_REJECTED`, `SPREAD_DATA_MISSING`
+- `server/services/telegram.ts` — Nuevo subtipo: `trade_spread_rejected`
+- `client/src/pages/Settings.tsx` — Card completa "Filtro de Spread" con todos los campos editables
+- `db/migrations/013_spread_filter_config.sql` — Migración para nuevas columnas
+- `server/services/__tests__/spreadFilter.test.ts` — 30 tests unitarios (cálculo, régimen, floor/cap, markup, missing data)
+
+### Tests
+```
+npx tsx server/services/__tests__/spreadFilter.test.ts
+→ 30 passed, 0 failed ✅
+```
+
+---
+
 ## 2026-02-06 — FIX: P&L a 0 en gráfica de rendimiento y historial de operaciones
 
 ### Problema

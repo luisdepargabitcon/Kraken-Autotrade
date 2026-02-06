@@ -83,7 +83,7 @@ function getRoundTripWithBufferPct(): number {
 }
 
 // Defensive improvements
-const MAX_SPREAD_PCT = 0.5; // No comprar si spread > 0.5%
+// MAX_SPREAD_PCT removed — spread threshold now comes from bot config (dynamicSpread)
 const TRADING_HOURS_START = 8; // UTC - inicio de horario de trading
 const TRADING_HOURS_END = 22; // UTC - fin de horario de trading
 const POST_STOPLOSS_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown tras stop-loss
@@ -483,7 +483,7 @@ export class TradingEngine {
   // Track PENDING_FILL exposure to prevent over-allocation
   // Key: lotId, Value: { pair, expectedUsd }
   private pendingFillExposure: Map<string, { pair: string; expectedUsd: number }> = new Map();
-  private spreadFilterEnabled: boolean = true;
+  private spreadAlertCooldowns: Map<string, number> = new Map();
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
   
@@ -1745,26 +1745,176 @@ export class TradingEngine {
     return true;
   }
 
-  // === MEJORA 1: Filtro de Spread ===
+  // === SPREAD FILTER (v2): Single decision point for BUY spread gating ===
+  // Uses Kraken as data source (proxy). For RevolutX trading, adds configurable markup.
   private calculateSpreadPct(bid: number, ask: number): number {
-    if (bid <= 0 || ask <= 0) return 0;
+    if (bid <= 0 || ask <= 0) return -1; // -1 signals invalid data
     const midPrice = (bid + ask) / 2;
     return ((ask - bid) / midPrice) * 100;
   }
 
-  private isSpreadAcceptable(tickerData: any): { acceptable: boolean; spreadPct: number } {
-    if (!this.spreadFilterEnabled) {
-      return { acceptable: true, spreadPct: 0 };
+  private getSpreadThresholdForRegime(regime: string | null, config: any): number {
+    if (!(config?.spreadDynamicEnabled ?? true)) {
+      return parseFloat(config?.spreadMaxPct?.toString() || "2.00");
     }
-    
-    const bid = parseFloat(tickerData.b?.[0] || "0");
-    const ask = parseFloat(tickerData.a?.[0] || "0");
-    const spreadPct = this.calculateSpreadPct(bid, ask);
-    
-    return {
-      acceptable: spreadPct <= MAX_SPREAD_PCT,
-      spreadPct,
+    const thresholds: Record<string, string> = {
+      TREND: config?.spreadThresholdTrend?.toString() || "1.50",
+      RANGE: config?.spreadThresholdRange?.toString() || "2.00",
+      TRANSITION: config?.spreadThresholdTransition?.toString() || "2.50",
     };
+    const capPct = parseFloat(config?.spreadCapPct?.toString() || "3.50");
+    const raw = parseFloat(thresholds[regime || ""] || config?.spreadMaxPct?.toString() || "2.00");
+    return Math.min(raw, capPct);
+  }
+
+  private async checkSpreadForBuy(
+    pair: string,
+    ticker: { bid: number; ask: number; last: number },
+    regime: string | null,
+    config: any,
+  ): Promise<{ ok: boolean; details: {
+    bid: number; ask: number; mid: number;
+    spreadKrakenPct: number; spreadEffectivePct: number;
+    thresholdPct: number; floorPct: number; capPct: number;
+    revolutxMarkupPct: number;
+    tradingExchange: string; dataExchange: string;
+    decision: "ALLOW" | "REJECT" | "SKIP_MISSING_DATA";
+    reason: string;
+  }}> {
+    const tradingExchange = this.getTradingExchangeType();
+    const dataExchange = ExchangeFactory.getDataExchangeType();
+    const filterEnabled = config?.spreadFilterEnabled ?? true;
+
+    if (!filterEnabled) {
+      return { ok: true, details: {
+        bid: ticker.bid, ask: ticker.ask, mid: (ticker.bid + ticker.ask) / 2,
+        spreadKrakenPct: 0, spreadEffectivePct: 0,
+        thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
+        tradingExchange, dataExchange,
+        decision: "ALLOW", reason: "Spread filter disabled in config",
+      }};
+    }
+
+    const bid = ticker.bid;
+    const ask = ticker.ask;
+    const spreadKrakenPct = this.calculateSpreadPct(bid, ask);
+
+    // Fail-safe: if bid/ask data is invalid, do NOT trade
+    if (spreadKrakenPct < 0 || bid <= 0 || ask <= 0) {
+      log(`[SPREAD_DATA_MISSING] ${pair}: bid=${bid} ask=${ask} - fail-safe: skip BUY`, "trading");
+      await botLogger.warn("SPREAD_DATA_MISSING", `Datos de spread no disponibles para ${pair}`, {
+        pair, bid, ask, tradingExchange, dataExchange,
+      });
+      return { ok: false, details: {
+        bid, ask, mid: 0,
+        spreadKrakenPct: 0, spreadEffectivePct: 0,
+        thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
+        tradingExchange, dataExchange,
+        decision: "SKIP_MISSING_DATA", reason: "bid/ask data invalid or missing",
+      }};
+    }
+
+    const mid = (bid + ask) / 2;
+    const revolutxMarkupPct = tradingExchange === "revolutx"
+      ? parseFloat(config?.spreadRevolutxMarkupPct?.toString() || "0.80")
+      : 0;
+    const spreadEffectivePct = spreadKrakenPct + revolutxMarkupPct;
+    const floorPct = parseFloat(config?.spreadFloorPct?.toString() || "0.30");
+    const capPct = parseFloat(config?.spreadCapPct?.toString() || "3.50");
+    const thresholdPct = this.getSpreadThresholdForRegime(regime, config);
+
+    // FLOOR: if effective spread < floor, always allow (micro-noise)
+    if (spreadEffectivePct < floorPct) {
+      return { ok: true, details: {
+        bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
+        thresholdPct, floorPct, capPct, revolutxMarkupPct,
+        tradingExchange, dataExchange,
+        decision: "ALLOW", reason: `Spread ${spreadEffectivePct.toFixed(3)}% < floor ${floorPct}%`,
+      }};
+    }
+
+    // Decision: block if effective spread > threshold
+    const blocked = spreadEffectivePct > thresholdPct;
+    const decision = blocked ? "REJECT" as const : "ALLOW" as const;
+    const reason = blocked
+      ? `Spread ${spreadEffectivePct.toFixed(3)}% > threshold ${thresholdPct.toFixed(2)}% (regime=${regime || "NONE"})`
+      : `Spread ${spreadEffectivePct.toFixed(3)}% <= threshold ${thresholdPct.toFixed(2)}%`;
+
+    // If blocked, emit structured log + optional Telegram alert
+    if (blocked) {
+      const logPayload = {
+        event: "SPREAD_REJECTED",
+        pair, regime: regime || "NONE",
+        tradingExchange, dataExchange,
+        bid, ask, mid,
+        spreadKrakenPct: parseFloat(spreadKrakenPct.toFixed(4)),
+        revolutxMarkupPct,
+        spreadEffectivePct: parseFloat(spreadEffectivePct.toFixed(4)),
+        thresholdPct, capPct, floorPct,
+        decision: "REJECT",
+        reason: "SPREAD_TOO_HIGH",
+      };
+      await botLogger.info("SPREAD_REJECTED", `BUY bloqueada por spread: ${pair}`, logPayload);
+
+      // Telegram alert (best-effort + anti-spam)
+      await this.sendSpreadTelegramAlert(pair, regime, tradingExchange, config, {
+        spreadEffectivePct, thresholdPct, spreadKrakenPct, revolutxMarkupPct, bid, ask, mid,
+      });
+    }
+
+    return { ok: !blocked, details: {
+      bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
+      thresholdPct, floorPct, capPct, revolutxMarkupPct,
+      tradingExchange, dataExchange, decision, reason,
+    }};
+  }
+
+  private async sendSpreadTelegramAlert(
+    pair: string,
+    regime: string | null,
+    tradingExchange: string,
+    config: any,
+    data: { spreadEffectivePct: number; thresholdPct: number; spreadKrakenPct: number; revolutxMarkupPct: number; bid: number; ask: number; mid: number },
+  ): Promise<void> {
+    try {
+      const alertEnabled = config?.spreadTelegramAlertEnabled ?? true;
+      if (!alertEnabled || !this.telegramService.isInitialized()) return;
+
+      // Anti-spam cooldown per (pair + tradingExchange)
+      const cooldownMs = config?.spreadTelegramCooldownMs ?? 600000;
+      const cooldownKey = `spread_${pair}_${tradingExchange}`;
+      const lastAlert = this.spreadAlertCooldowns.get(cooldownKey) || 0;
+      if (Date.now() - lastAlert < cooldownMs) return;
+
+      this.spreadAlertCooldowns.set(cooldownKey, Date.now());
+
+      const isRevolutx = tradingExchange === "revolutx";
+      const markupLine = isRevolutx
+        ? `   Markup RevolutX: <code>+${data.revolutxMarkupPct.toFixed(2)}%</code>\n`
+        : "";
+
+      const message = `🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🚫 <b>BUY bloqueada por spread</b>
+
+📊 <b>Detalle:</b>
+   Par: <code>${pair}</code>
+   Exchange: <code>${tradingExchange}</code>
+   Régimen: <code>${regime || "N/A"}</code>
+
+   Spread Kraken: <code>${data.spreadKrakenPct.toFixed(3)}%</code>
+${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</code>
+   Umbral máximo: <code>${data.thresholdPct.toFixed(2)}%</code>
+
+   Bid: <code>$${data.bid.toFixed(2)}</code> | Ask: <code>$${data.ask.toFixed(2)}</code>
+
+⏰ ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC
+━━━━━━━━━━━━━━━━━━━`;
+
+      await this.telegramService.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
+    } catch (err: any) {
+      log(`[SPREAD_ALERT_ERR] Telegram send failed (best-effort): ${err.message}`, "trading");
+    }
   }
 
   // === MEJORA 2: Horarios de Trading ===
@@ -4043,26 +4193,25 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // MEJORA 1: Verificar spread antes de comprar
-        // Obtener ticker raw para spread check
-        const tickerRaw = await this.getDataExchange().getTicker(krakenPair);
-        const spreadCheck = this.isSpreadAcceptable(tickerRaw);
-        if (!spreadCheck.acceptable) {
-          log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
-            pair,
-            signal: "BUY",
-            reason: "SPREAD_TOO_HIGH",
-            spreadPct: spreadCheck.spreadPct,
-            maxSpreadPct: MAX_SPREAD_PCT,
-            signalReason: signal.reason,
-          });
+        // SPREAD FILTER v2: Single decision point (Kraken proxy + RevolutX markup)
+        const spreadTicker = await this.getDataExchange().getTicker(krakenPair);
+        const spreadResult = await this.checkSpreadForBuy(pair, spreadTicker, earlyRegime, botConfigCheck);
+        if (!spreadResult.ok) {
+          const sd = spreadResult.details;
+          log(`${pair}: Spread bloqueado (${sd.spreadEffectivePct.toFixed(3)}% > ${sd.thresholdPct.toFixed(2)}%) [${sd.decision}]`, "trading");
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "SPREAD_TOO_HIGH",
-            blockDetails: { spreadPct: spreadCheck.spreadPct, maxSpreadPct: MAX_SPREAD_PCT },
+            blockDetails: {
+              spreadEffectivePct: sd.spreadEffectivePct,
+              thresholdPct: sd.thresholdPct,
+              spreadKrakenPct: sd.spreadKrakenPct,
+              revolutxMarkupPct: sd.revolutxMarkupPct,
+              regime: earlyRegime,
+              tradingExchange: sd.tradingExchange,
+            },
             finalSignal: "NONE",
-            finalReason: `Spread alto: ${spreadCheck.spreadPct.toFixed(2)}% > ${MAX_SPREAD_PCT}%`,
+            finalReason: sd.reason,
           });
           return;
         }
@@ -5050,25 +5199,25 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // Obtener ticker raw para spread check
-        const tickerRaw2 = await this.getDataExchange().getTicker(krakenPair);
-        const spreadCheck = this.isSpreadAcceptable(tickerRaw2);
-        if (!spreadCheck.acceptable) {
-          log(`${pair}: Spread demasiado alto (${spreadCheck.spreadPct.toFixed(3)}% > ${MAX_SPREAD_PCT}%)`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - spread alto`, {
-            pair,
-            signal: "BUY",
-            reason: "SPREAD_TOO_HIGH",
-            spreadPct: spreadCheck.spreadPct,
-            maxSpreadPct: MAX_SPREAD_PCT,
-            signalReason: signal.reason,
-          });
+        // SPREAD FILTER v2: Single decision point (Kraken proxy + RevolutX markup)
+        const spreadTicker2 = await this.getDataExchange().getTicker(krakenPair);
+        const spreadResult2 = await this.checkSpreadForBuy(pair, spreadTicker2, earlyRegime, botConfigCheck);
+        if (!spreadResult2.ok) {
+          const sd2 = spreadResult2.details;
+          log(`${pair}: Spread bloqueado (${sd2.spreadEffectivePct.toFixed(3)}% > ${sd2.thresholdPct.toFixed(2)}%) [${sd2.decision}]`, "trading");
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "SPREAD_TOO_HIGH",
-            blockDetails: { spreadPct: spreadCheck.spreadPct, maxSpreadPct: MAX_SPREAD_PCT },
+            blockDetails: {
+              spreadEffectivePct: sd2.spreadEffectivePct,
+              thresholdPct: sd2.thresholdPct,
+              spreadKrakenPct: sd2.spreadKrakenPct,
+              revolutxMarkupPct: sd2.revolutxMarkupPct,
+              regime: earlyRegime,
+              tradingExchange: sd2.tradingExchange,
+            },
             finalSignal: "NONE",
-            finalReason: `Spread alto: ${spreadCheck.spreadPct.toFixed(2)}% > ${MAX_SPREAD_PCT}%`,
+            finalReason: sd2.reason,
           });
           return;
         }
