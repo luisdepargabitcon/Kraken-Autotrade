@@ -1181,7 +1181,9 @@ export class TradingEngine {
     });
 
     // Send Telegram notification with natural language + essential data
-    if (this.telegramService.isInitialized()) {
+    const tgInitialized = this.telegramService.isInitialized();
+    log(`[SG_ALERT] ${eventType} ${pair} lotId=${shortLotId} tgInit=${tgInitialized} profit=${extra.profitPct.toFixed(2)}%`, "trading");
+    if (tgInitialized) {
       const formatPrice = (price: number) => {
         if (price >= 100) return price.toFixed(2);
         if (price >= 1) return price.toFixed(4);
@@ -1242,7 +1244,14 @@ export class TradingEngine {
           break;
       }
       
-      await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
+      try {
+        await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
+        log(`[SG_ALERT] Telegram alert sent for ${eventType} ${pair}`, "trading");
+      } catch (tgErr: any) {
+        log(`[SG_ALERT_ERR] Failed to send Telegram alert for ${eventType} ${pair}: ${tgErr.message}`, "trading");
+      }
+    } else {
+      log(`[SG_ALERT] Telegram NOT initialized - ${eventType} ${pair} alert LOST`, "trading");
     }
   }
 

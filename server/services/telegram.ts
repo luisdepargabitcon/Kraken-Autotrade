@@ -2174,7 +2174,10 @@ Incluye:
   }
 
   async sendAlertToMultipleChats(message: string, alertType: AlertType): Promise<void> {
-    if (!this.bot) return;
+    if (!this.bot) {
+      console.warn(`[telegram] sendAlertToMultipleChats: bot not initialized (alertType=${alertType})`);
+      return;
+    }
 
     const sentChatIds = new Set<string>();
 
@@ -2191,9 +2194,18 @@ Incluye:
             sentChatIds.add(chat.chatId);
           }
         }
+        // FALLBACK: If active chats exist but none matched alertType, use default chatId
+        if (sentChatIds.size === 0 && this.chatId) {
+          console.warn(`[telegram] sendAlertToMultipleChats: ${chats.length} active chats but none accept alertType=${alertType}, falling back to default chatId`);
+          await this.sendMessage(message);
+          sentChatIds.add(this.chatId);
+        }
       } else if (this.chatId) {
+        console.log(`[telegram] sendAlertToMultipleChats: no active chats, using default chatId`);
         await this.sendMessage(message);
         sentChatIds.add(this.chatId);
+      } else {
+        console.warn(`[telegram] sendAlertToMultipleChats: no chats and no default chatId - alert LOST (alertType=${alertType})`);
       }
     } catch (error) {
       console.error("Error sending to multiple chats:", error);
@@ -2287,7 +2299,10 @@ Incluye:
   }
 
   async sendAlertWithSubtype(message: string, alertType: AlertType, subtype: AlertSubtype): Promise<void> {
-    if (!this.bot) return;
+    if (!this.bot) {
+      console.warn(`[telegram] sendAlertWithSubtype: bot not initialized (alertType=${alertType}, subtype=${subtype})`);
+      return;
+    }
 
     const sentChatIds = new Set<string>();
     const chats = await storage.getTelegramChats();
@@ -2304,6 +2319,16 @@ Incluye:
         } catch (error: any) {
           console.error(`[telegram] Failed to send to ${chat.name}:`, error.message);
         }
+      }
+    }
+
+    // FALLBACK: If no chats matched, use default chatId
+    if (sentChatIds.size === 0 && this.chatId) {
+      console.warn(`[telegram] sendAlertWithSubtype: no chats matched (alertType=${alertType}, subtype=${subtype}), falling back to default chatId`);
+      try {
+        await this.bot.sendMessage(this.chatId, message, { parse_mode: "HTML" });
+      } catch (error: any) {
+        console.error(`[telegram] Fallback send failed:`, error.message);
       }
     }
   }
