@@ -177,6 +177,26 @@ export default function Terminal() {
     refetchInterval: 30000,
   });
 
+  const { data: portfolioSummary } = useQuery<{
+    realizedPnlUsd: number;
+    unrealizedPnlUsd: number;
+    totalPnlUsd: number;
+    todayRealizedPnl: number;
+    winRatePct: number;
+    wins: number;
+    losses: number;
+    totalSells: number;
+    openPositions: number;
+  }>({
+    queryKey: ["portfolio-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/portfolio-summary");
+      if (!res.ok) throw new Error("Failed to fetch portfolio summary");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   const lotsCountByPair = useMemo(() => {
     if (!openPositions) return new Map<string, { count: number; max: number }>();
     const maxLots = botConfig?.sgMaxOpenLotsPerPair || 1;
@@ -652,14 +672,8 @@ export default function Terminal() {
     ? botConfig.activePairs
     : ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
 
-  const totalUnrealizedPnl = openPositions?.reduce((sum, pos) => sum + parseFloat(pos.unrealizedPnlUsd), 0) || 0;
-  const totalRealizedPnl = closedData?.trades?.reduce((sum, t) => {
-    if (t.type === 'sell' && t.realizedPnlUsd) {
-      const v = parseFloat(t.realizedPnlUsd);
-      return sum + (Number.isFinite(v) ? v : 0);
-    }
-    return sum;
-  }, 0) || 0;
+  const totalUnrealizedPnl = portfolioSummary?.unrealizedPnlUsd ?? (openPositions?.reduce((sum, pos) => sum + parseFloat(pos.unrealizedPnlUsd), 0) || 0);
+  const totalRealizedPnl = portfolioSummary?.realizedPnlUsd ?? 0;
   const positionsCount = openPositions?.length || 0;
   const headerPnl = activeTab === 'positions' ? totalUnrealizedPnl : totalRealizedPnl;
   const headerPnlLabel = activeTab === 'positions' ? 'P&L Abierto' : 'P&L Realizado';

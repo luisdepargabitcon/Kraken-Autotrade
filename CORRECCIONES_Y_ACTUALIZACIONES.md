@@ -5,6 +5,47 @@
 
 ---
 
+## 2026-02-09 — FEATURE: Portfolio Summary unificado + P&L profesional (3 métricas)
+
+### Problema
+1. **Dashboard "Rendimiento del Portafolio"** mostraba un P&L total calculado con FIFO interno que no coincidía con la suma de `realizedPnlUsd` de los trades individuales.
+2. **Terminal header badge** mostraba el mismo valor (unrealized P&L de posiciones abiertas) en ambas pestañas (Posiciones e Historial).
+3. El P&L Realizado del Historial era solo de la página visible (paginado), no el total global.
+4. FIFO del performance mezclaba buys de Kraken y RevolutX en la misma cola.
+
+### Solución implementada: Opción A + E (3 métricas + endpoint unificado)
+
+#### Nuevo endpoint: `/api/portfolio-summary`
+- **Single source of truth** para métricas de P&L del portafolio.
+- Devuelve:
+  - `realizedPnlUsd` — suma de `realizedPnlUsd` de TODOS los SELLs filled
+  - `unrealizedPnlUsd` — suma de (precio actual - entry price) × amount para posiciones abiertas
+  - `totalPnlUsd` — realizado + no realizado
+  - `todayRealizedPnl` — P&L realizado de hoy
+  - `winRatePct`, `wins`, `losses`, `totalSells`, `openPositions`
+- Auto-refresh cada 30 segundos en frontend.
+
+#### Dashboard: 3 métricas separadas
+- **P&L Realizado** (verde/rojo) — ganancias/pérdidas de trades cerrados
+- **P&L No Realizado** (cyan/naranja) — ganancias/pérdidas latentes de posiciones abiertas
+- **P&L Total** (verde/rojo con borde primario) — suma de ambos
+- Métricas secundarias: Win Rate, Trades (W/L), Max Drawdown, P&L Hoy
+
+#### Terminal: header badge context-aware
+- **Tab Posiciones** → "P&L Abierto: +$X.XX" (unrealized global de portfolio-summary)
+- **Tab Historial** → "P&L Realizado: -$X.XX" (realized global de portfolio-summary, NO paginado)
+
+#### Fix `/api/performance`
+- Acepta `realizedPnlUsd = 0` (antes saltaba al FIFO para trades con P&L exactamente 0)
+- FIFO por `pair::exchange` (antes mezclaba Kraken y RevolutX)
+
+### Archivos modificados
+- `server/routes.ts` — nuevo endpoint `/api/portfolio-summary`, fix `/api/performance`
+- `client/src/components/dashboard/ChartWidget.tsx` — 3 métricas + portfolio-summary query
+- `client/src/pages/Terminal.tsx` — portfolio-summary query + header badge context-aware
+
+---
+
 ## 2026-02-06 — FEATURE: Filtro de Spread funcional (v2) — Kraken proxy + RevolutX markup
 
 ### Problema

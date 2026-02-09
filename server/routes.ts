@@ -1590,6 +1590,89 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
     }
   });
 
+  // === PORTFOLIO SUMMARY (single source of truth) ===
+  app.get("/api/portfolio-summary", async (req, res) => {
+    try {
+      // 1. Realized P&L: sum of all filled SELL trades' realizedPnlUsd
+      const allTrades = await storage.getFilledTradesForPerformance(5000);
+      const sells = allTrades.filter(t => t.type === 'sell');
+
+      let realizedPnlUsd = 0;
+      let wins = 0;
+      let losses = 0;
+      let todayRealizedPnl = 0;
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      for (const sell of sells) {
+        if (sell.realizedPnlUsd != null && String(sell.realizedPnlUsd).length > 0) {
+          const pnl = parseFloat(String(sell.realizedPnlUsd));
+          if (Number.isFinite(pnl)) {
+            realizedPnlUsd += pnl;
+            if (pnl > 0) wins++;
+            else if (pnl < 0) losses++;
+
+            const tradeDate = sell.executedAt ? new Date(sell.executedAt) : new Date(sell.createdAt);
+            if (tradeDate >= todayStart) {
+              todayRealizedPnl += pnl;
+            }
+          }
+        }
+      }
+
+      // 2. Unrealized P&L: from open positions (current price vs entry)
+      const rawPositions = await storage.getOpenPositions();
+      const positions = rawPositions.filter((pos: any) => {
+        const status = String(pos.status || 'OPEN');
+        if (status === 'FAILED' || status === 'CANCELLED') return false;
+        const amount = parseFloat(String(pos.amount ?? '0'));
+        if (status === 'OPEN' && (!Number.isFinite(amount) || amount <= 0)) return false;
+        return true;
+      });
+
+      let unrealizedPnlUsd = 0;
+      for (const pos of positions) {
+        try {
+          let currentPrice = 0;
+          if (krakenService.isInitialized()) {
+            const krakenPair = krakenService.formatPair(pos.pair);
+            const ticker = await krakenService.getTickerRaw(krakenPair);
+            const tickerData: any = Object.values(ticker)[0];
+            if (tickerData?.c?.[0]) {
+              currentPrice = parseFloat(tickerData.c[0]);
+            }
+          }
+          if (currentPrice > 0) {
+            const entryPrice = parseFloat(pos.entryPrice);
+            const amount = parseFloat(pos.amount);
+            unrealizedPnlUsd += (currentPrice - entryPrice) * amount;
+          }
+        } catch (e: any) {
+          console.error(`[portfolio-summary] Error precio ${pos.pair}:`, e.message);
+        }
+      }
+
+      const totalPnlUsd = realizedPnlUsd + unrealizedPnlUsd;
+      const totalSells = wins + losses;
+      const winRatePct = totalSells > 0 ? (wins / totalSells) * 100 : 0;
+
+      res.json({
+        realizedPnlUsd: parseFloat(realizedPnlUsd.toFixed(2)),
+        unrealizedPnlUsd: parseFloat(unrealizedPnlUsd.toFixed(2)),
+        totalPnlUsd: parseFloat(totalPnlUsd.toFixed(2)),
+        todayRealizedPnl: parseFloat(todayRealizedPnl.toFixed(2)),
+        winRatePct: parseFloat(winRatePct.toFixed(2)),
+        wins,
+        losses,
+        totalSells,
+        openPositions: positions.length,
+      });
+    } catch (error) {
+      console.error("[portfolio-summary] Error:", error);
+      res.status(500).json({ error: "Failed to calculate portfolio summary" });
+    }
+  });
+
   // === REBUILD P&L FOR ALL SELLS ===
   app.post("/api/trades/rebuild-pnl", async (req, res) => {
     try {

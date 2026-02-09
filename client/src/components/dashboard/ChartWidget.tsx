@@ -2,7 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, TrendingUp, TrendingDown, Target, Activity } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Target, Activity, DollarSign, Eye, Wallet } from "lucide-react";
+
+interface PortfolioSummary {
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  totalPnlUsd: number;
+  todayRealizedPnl: number;
+  winRatePct: number;
+  wins: number;
+  losses: number;
+  totalSells: number;
+  openPositions: number;
+}
 
 interface PerformanceData {
   curve: { time: string; equity: number; pnl?: number }[];
@@ -30,6 +42,16 @@ export function ChartWidget() {
     refetchInterval: false,
   });
 
+  const { data: portfolio, refetch: refetchPortfolio } = useQuery<PortfolioSummary>({
+    queryKey: ["portfolio-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/portfolio-summary");
+      if (!res.ok) throw new Error("Failed to fetch portfolio summary");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   const chartData = data?.curve.map((point) => ({
     time: new Date(point.time).toLocaleDateString("es-ES", { 
       month: "short", 
@@ -41,8 +63,10 @@ export function ChartWidget() {
   })) || [];
 
   const summary = data?.summary;
-  const isPositive = (summary?.totalPnlUsd || 0) >= 0;
+  const isPositive = (portfolio?.totalPnlUsd ?? summary?.totalPnlUsd ?? 0) >= 0;
   const hasTrades = (summary?.totalTrades || 0) > 0;
+  const isRealizedPositive = (portfolio?.realizedPnlUsd ?? 0) >= 0;
+  const isUnrealizedPositive = (portfolio?.unrealizedPnlUsd ?? 0) >= 0;
 
   return (
     <Card className="col-span-2 glass-panel border-border/50 h-full flex flex-col">
@@ -53,7 +77,7 @@ export function ChartWidget() {
         <Button 
           variant="ghost" 
           size="sm" 
-          onClick={() => refetch()}
+          onClick={() => { refetch(); refetchPortfolio(); }}
           disabled={isFetching}
           className="h-8 px-2"
           data-testid="btn-refresh-chart"
@@ -62,45 +86,72 @@ export function ChartWidget() {
         </Button>
       </CardHeader>
       
-      {summary && (
-        <div className="px-6 pb-2 grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
-            {isPositive ? (
-              <TrendingUp className="h-4 w-4 text-emerald-400" />
-            ) : (
-              <TrendingDown className="h-4 w-4 text-red-400" />
-            )}
-            <div>
-              <div className="text-xs text-muted-foreground">P&L Total</div>
-              <div className={`font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                {isPositive ? '+' : ''}{summary.totalPnlUsd.toFixed(2)} USD
+      {(portfolio || summary) && (
+        <div className="px-6 pb-2">
+          <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30 border border-border/30">
+              <DollarSign className={`h-4 w-4 ${isRealizedPositive ? 'text-emerald-400' : 'text-red-400'}`} />
+              <div>
+                <div className="text-[10px] text-muted-foreground font-mono uppercase">P&L Realizado</div>
+                <div className={`font-mono font-bold text-sm ${isRealizedPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {isRealizedPositive ? '+' : ''}{(portfolio?.realizedPnlUsd ?? summary?.totalPnlUsd ?? 0).toFixed(2)} USD
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30 border border-border/30">
+              <Eye className={`h-4 w-4 ${isUnrealizedPositive ? 'text-cyan-400' : 'text-orange-400'}`} />
+              <div>
+                <div className="text-[10px] text-muted-foreground font-mono uppercase">P&L No Realizado</div>
+                <div className={`font-mono font-bold text-sm ${isUnrealizedPositive ? 'text-cyan-400' : 'text-orange-400'}`}>
+                  {isUnrealizedPositive ? '+' : ''}{(portfolio?.unrealizedPnlUsd ?? 0).toFixed(2)} USD
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30 border border-primary/30">
+              <Wallet className={`h-4 w-4 ${isPositive ? 'text-emerald-400' : 'text-red-400'}`} />
+              <div>
+                <div className="text-[10px] text-muted-foreground font-mono uppercase">P&L Total</div>
+                <div className={`font-mono font-bold text-sm ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {isPositive ? '+' : ''}{(portfolio?.totalPnlUsd ?? summary?.totalPnlUsd ?? 0).toFixed(2)} USD
+                </div>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
-            <Target className="h-4 w-4 text-cyan-400" />
-            <div>
-              <div className="text-xs text-muted-foreground">Win Rate</div>
-              <div className="font-mono font-semibold text-cyan-400">
-                {summary.winRatePct.toFixed(1)}%
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20">
+              <Target className="h-3.5 w-3.5 text-cyan-400" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Win Rate</div>
+                <div className="font-mono font-semibold text-sm text-cyan-400">
+                  {(portfolio?.winRatePct ?? summary?.winRatePct ?? 0).toFixed(1)}%
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
-            <Activity className="h-4 w-4 text-purple-400" />
-            <div>
-              <div className="text-xs text-muted-foreground">Trades</div>
-              <div className="font-mono font-semibold text-purple-400">
-                {summary.totalTrades} ({summary.wins}W/{summary.losses}L)
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20">
+              <Activity className="h-3.5 w-3.5 text-purple-400" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Trades</div>
+                <div className="font-mono font-semibold text-sm text-purple-400">
+                  {portfolio?.totalSells ?? summary?.totalTrades ?? 0} ({portfolio?.wins ?? summary?.wins ?? 0}W/{portfolio?.losses ?? summary?.losses ?? 0}L)
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
-            <TrendingDown className="h-4 w-4 text-orange-400" />
-            <div>
-              <div className="text-xs text-muted-foreground">Max Drawdown</div>
-              <div className="font-mono font-semibold text-orange-400">
-                -{summary.maxDrawdownPct.toFixed(2)}%
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20">
+              <TrendingDown className="h-3.5 w-3.5 text-orange-400" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Max Drawdown</div>
+                <div className="font-mono font-semibold text-sm text-orange-400">
+                  -{(summary?.maxDrawdownPct ?? 0).toFixed(2)}%
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20">
+              <TrendingUp className="h-3.5 w-3.5 text-yellow-400" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Hoy</div>
+                <div className={`font-mono font-semibold text-sm ${(portfolio?.todayRealizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {(portfolio?.todayRealizedPnl ?? 0) >= 0 ? '+' : ''}{(portfolio?.todayRealizedPnl ?? 0).toFixed(2)} USD
+                </div>
               </div>
             </div>
           </div>
