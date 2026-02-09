@@ -1493,6 +1493,8 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
       for (const trade of sortedTrades) {
         const pair = trade.pair;
+        const exchange = (trade as any).exchange || 'kraken';
+        const queueKey = `${pair}::${exchange}`;
         const price = parseFloat(trade.price);
         const amount = parseFloat(trade.amount);
         const time = trade.executedAt ? new Date(trade.executedAt).toISOString() : new Date(trade.createdAt).toISOString();
@@ -1500,22 +1502,22 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         if (price <= 0 || amount <= 0) continue; // extra guard
 
         if (trade.type === "buy") {
-          if (!buyQueues[pair]) buyQueues[pair] = [];
-          buyQueues[pair].push({ price, remaining: amount });
+          if (!buyQueues[queueKey]) buyQueues[queueKey] = [];
+          buyQueues[queueKey].push({ price, remaining: amount });
         } else if (trade.type === "sell") {
           let pnl: number | null = null;
 
           // Strategy A: Use realizedPnlUsd from DB if already calculated (most accurate, includes fees)
           if (trade.realizedPnlUsd != null && String(trade.realizedPnlUsd).length > 0) {
             const storedPnl = parseFloat(String(trade.realizedPnlUsd));
-            if (Number.isFinite(storedPnl) && storedPnl !== 0) {
+            if (Number.isFinite(storedPnl)) {
               pnl = storedPnl;
             }
           }
 
           // Strategy B: FIFO matching from buy queue (fallback)
           if (pnl === null) {
-            const queue = buyQueues[pair];
+            const queue = buyQueues[queueKey];
             if (queue && queue.length > 0) {
               let sellRemaining = amount;
               let totalCost = 0;
@@ -1535,7 +1537,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
             }
           } else {
             // Still consume FIFO quantities so future sells match correctly
-            const queue = buyQueues[pair];
+            const queue = buyQueues[queueKey];
             if (queue) {
               let toConsume = amount;
               while (toConsume > 0.00000001 && queue.length > 0) {

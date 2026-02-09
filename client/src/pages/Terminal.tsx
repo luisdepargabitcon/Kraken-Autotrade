@@ -653,7 +653,16 @@ export default function Terminal() {
     : ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "TON/USD"];
 
   const totalUnrealizedPnl = openPositions?.reduce((sum, pos) => sum + parseFloat(pos.unrealizedPnlUsd), 0) || 0;
+  const totalRealizedPnl = closedData?.trades?.reduce((sum, t) => {
+    if (t.type === 'sell' && t.realizedPnlUsd) {
+      const v = parseFloat(t.realizedPnlUsd);
+      return sum + (Number.isFinite(v) ? v : 0);
+    }
+    return sum;
+  }, 0) || 0;
   const positionsCount = openPositions?.length || 0;
+  const headerPnl = activeTab === 'positions' ? totalUnrealizedPnl : totalRealizedPnl;
+  const headerPnlLabel = activeTab === 'positions' ? 'P&L Abierto' : 'P&L Realizado';
 
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
@@ -707,11 +716,11 @@ export default function Terminal() {
                 <span className="font-mono text-xs text-muted-foreground">ACTIVAS:</span>
                 <span className="font-mono text-sm font-bold">{positionsCount}</span>
               </div>
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${totalUnrealizedPnl >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                {totalUnrealizedPnl >= 0 ? <TrendingUp className="h-3 w-3 text-green-400" /> : <TrendingDown className="h-3 w-3 text-red-400" />}
-                <span className="font-mono text-xs text-muted-foreground">P&L:</span>
-                <span className={`font-mono text-sm font-bold ${totalUnrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {totalUnrealizedPnl >= 0 ? '+' : ''}${totalUnrealizedPnl.toFixed(2)}
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${headerPnl >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                {headerPnl >= 0 ? <TrendingUp className="h-3 w-3 text-green-400" /> : <TrendingDown className="h-3 w-3 text-red-400" />}
+                <span className="font-mono text-xs text-muted-foreground">{headerPnlLabel}:</span>
+                <span className={`font-mono text-sm font-bold ${headerPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {headerPnl >= 0 ? '+' : ''}${headerPnl.toFixed(2)}
                 </span>
               </div>
             </div>
