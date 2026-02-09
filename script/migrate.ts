@@ -90,6 +90,9 @@ async function runMigration() {
     const orderIntentsHybridSqlPath = path.resolve(process.cwd(), "db", "migrations", "012_order_intents_hybrid_guard.sql");
     await tryExecuteFile(db, orderIntentsHybridSqlPath, "order_intents_hybrid_guard");
 
+    const tradeFillsExchangeSqlPath = path.resolve(process.cwd(), "db", "migrations", "014_trade_fills_exchange.sql");
+    await tryExecuteFile(db, tradeFillsExchangeSqlPath, "trade_fills.exchange");
+
     // hybrid_reentry_watches table (hybrid guard re-entry)
     console.log("[migrate] Ensuring hybrid_reentry_watches table exists...");
     const hybridWatchesSqlPath = path.resolve(process.cwd(), "db", "migrations", "006_hybrid_reentry_watches.sql");
