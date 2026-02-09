@@ -395,6 +395,7 @@ export const tradeFills = pgTable("trade_fills", {
   id: serial("id").primaryKey(),
   txid: text("txid").notNull().unique(), // Kraken fill txid (UNIQUE para evitar duplicados)
   orderId: text("order_id").notNull(), // Kraken ordertxid (puede tener múltiples fills)
+  exchange: text("exchange").notNull().default("kraken"),
   pair: text("pair").notNull(),
   type: text("type").notNull(), // buy/sell
   price: decimal("price", { precision: 18, scale: 8 }).notNull(),

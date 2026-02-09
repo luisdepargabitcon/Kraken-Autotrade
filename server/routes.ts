@@ -2244,9 +2244,10 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
               const tradeIdFinal = String(n.tradeId);
 
               try {
+                const patchExtId = (t as any)?.order_id ? String((t as any).order_id) : undefined;
                 const { inserted, trade: insertedTrade } = await storage.insertTradeIgnoreDuplicate({
                   tradeId: tradeIdFinal,
-                  krakenOrderId: undefined,
+                  krakenOrderId: patchExtId,
                   pair,
                   type: n.type,
                   price: priceStr,
@@ -2256,6 +2257,15 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
                   exchange: 'revolutx',
                   origin: 'sync',
                 });
+
+                if (!inserted && patchExtId) {
+                  const existing = insertedTrade ?? await storage.getTradeByComposite('revolutx', pair, tradeIdFinal);
+                  if (existing && (!(existing as any).krakenOrderId || String((existing as any).krakenOrderId).trim().length === 0)) {
+                    await storage.updateTradeByCompositeKey('revolutx', pair, tradeIdFinal, {
+                      krakenOrderId: patchExtId,
+                    } as any);
+                  }
+                }
 
                 if (inserted && insertedTrade) {
                   synced++;
@@ -3087,6 +3097,63 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
         let buyRemaining = buys[0]?.amount || 0;
         
         for (const sell of sells) {
+          // Strategy 0: If we have lot_matches for this sell (lot-based), use them.
+          try {
+            const extId = (allTrades.find((t: any) => t.id === sell.id) as any)?.krakenOrderId;
+            if (extId) {
+              const matches = await storage.getLotMatchesBySellFillTxid(String(extId));
+              if (matches.length > 0) {
+                const agg = matches.reduce(
+                  (acc, m) => {
+                    const qty = parseFloat(String(m.matchedQty));
+                    const buyPrice = parseFloat(String(m.buyPrice));
+                    const pnlNet = parseFloat(String(m.pnlNet));
+                    if (Number.isFinite(qty) && Number.isFinite(buyPrice)) {
+                      acc.cost += qty * buyPrice;
+                      acc.qty += qty;
+                    }
+                    if (Number.isFinite(pnlNet)) acc.pnl += pnlNet;
+                    return acc;
+                  },
+                  { cost: 0, qty: 0, pnl: 0 }
+                );
+                if (agg.qty > 0 && agg.cost > 0) {
+                  const avgEntryPrice = agg.cost / agg.qty;
+                  const pnlPct = (agg.pnl / agg.cost) * 100;
+                  await storage.updateTradePnl(sell.id, avgEntryPrice.toFixed(8), agg.pnl.toFixed(8), pnlPct.toFixed(4));
+                  pnlCalculated++;
+                  totalPnlUsd += agg.pnl;
+                  results.push({ pair, exchange, sellId: sell.id, pnlUsd: agg.pnl });
+                  continue;
+                }
+              }
+            }
+          } catch {
+            // best-effort
+          }
+
+          // Strategy 1: engine bot sells with entryPrice should never use FIFO global
+          try {
+            const originalSell = allTrades.find((t: any) => t.id === sell.id) as any;
+            const origin = String(originalSell?.origin ?? '').toLowerCase();
+            const executedByBot = Boolean(originalSell?.executedByBot);
+            const entryPriceNum = originalSell?.entryPrice != null ? parseFloat(String(originalSell.entryPrice)) : NaN;
+            if (origin === 'engine' && executedByBot && Number.isFinite(entryPriceNum) && entryPriceNum > 0) {
+              const entryValue = entryPriceNum * sell.amount;
+              const exitValue = sell.price * sell.amount;
+              const feePct = feePctByExchange(exchange);
+              const pnlNet = (exitValue - entryValue) - (entryValue * feePct / 100) - (exitValue * feePct / 100);
+              const pnlPct = entryValue > 0 ? (pnlNet / entryValue) * 100 : 0;
+              await storage.updateTradePnl(sell.id, entryPriceNum.toFixed(8), pnlNet.toFixed(8), pnlPct.toFixed(4));
+              pnlCalculated++;
+              totalPnlUsd += pnlNet;
+              results.push({ pair, exchange, sellId: sell.id, pnlUsd: pnlNet });
+              continue;
+            }
+          } catch {
+            // best-effort
+          }
+
           let sellRemaining = sell.amount;
           let totalCost = 0;
           let totalAmount = 0;
@@ -3217,7 +3284,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   app.post("/api/fifo/ingest-fill", async (req, res) => {
     try {
-      const { txid, orderId, pair, type, price, amount, cost, fee, executedAt } = req.body;
+      const { txid, orderId, pair, type, price, amount, cost, fee, executedAt, exchange } = req.body;
       
       if (!txid || !pair || !type || !price || !amount) {
         return res.status(400).json({ error: "Missing required fields: txid, pair, type, price, amount" });
@@ -3226,6 +3293,7 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
       const fillResult = await storage.upsertTradeFill({
         txid,
         orderId: orderId || txid,
+        exchange: (exchange || 'kraken').toString().toLowerCase(),
         pair,
         type: type.toLowerCase(),
         price: price.toString(),
@@ -4960,3 +5028,4 @@ _Eliminada manualmente desde dashboard (sin orden a Kraken)_
 
   return httpServer;
 }
+

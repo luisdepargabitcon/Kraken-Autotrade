@@ -8037,6 +8037,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           await storage.upsertTradeFill({
             txid: externalId,
             orderId: externalId,
+            exchange,
             pair,
             type: "sell",
             price: price.toString(),

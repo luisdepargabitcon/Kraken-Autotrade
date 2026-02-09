@@ -45,7 +45,13 @@ export class FifoMatcher {
     await db.transaction(async (tx) => {
       // SELECT FOR UPDATE to lock lots for this pair
       const openLots = await tx.select().from(openPositionsTable)
-        .where(sql`${openPositionsTable.pair} = ${sellFill.pair} 
+        .where(sql`${openPositionsTable.pair} = ${sellFill.pair}
+          AND ${openPositionsTable.exchange} = ${sellFill.exchange}
+          AND ${openPositionsTable.entryMode} = 'SMART_GUARD'
+          AND ${openPositionsTable.configSnapshotJson} IS NOT NULL
+          AND ${openPositionsTable.lotId} NOT LIKE 'reconcile-%'
+          AND ${openPositionsTable.lotId} NOT LIKE 'sync-%'
+          AND ${openPositionsTable.lotId} NOT LIKE 'adopt-%'
           AND (${openPositionsTable.qtyRemaining} > 0 OR ${openPositionsTable.qtyRemaining} IS NULL)`)
         .orderBy(openPositionsTable.openedAt)
         .for("update");
@@ -164,6 +170,41 @@ export class FifoMatcher {
     }
     
     console.log(`[FifoMatcher] Processed ${sellFill.txid}: matched=${result.totalMatched.toFixed(8)}, lots_closed=${result.lotsClosed}, pnl=${result.pnlNet.toFixed(2)}, fullyMatched=${result.fullyMatched}`);
+
+    // Best-effort: Update trade P&L from lot_matches aggregation (lot-based) when possible.
+    // This avoids global FIFO contamination for bot-managed lots.
+    if (result.totalMatched > 0.00000001) {
+      try {
+        const matches = await storage.getLotMatchesBySellFillTxid(sellFill.txid);
+        if (matches.length > 0) {
+          const agg = matches.reduce(
+            (acc, m) => {
+              const qty = parseFloat(String(m.matchedQty));
+              const buyPrice = parseFloat(String(m.buyPrice));
+              const pnlNet = parseFloat(String(m.pnlNet));
+              if (Number.isFinite(qty) && Number.isFinite(buyPrice)) {
+                acc.cost += qty * buyPrice;
+                acc.qty += qty;
+              }
+              if (Number.isFinite(pnlNet)) acc.pnl += pnlNet;
+              return acc;
+            },
+            { cost: 0, qty: 0, pnl: 0 }
+          );
+          if (agg.qty > 0 && agg.cost > 0) {
+            const avgEntry = agg.cost / agg.qty;
+            const pnlPct = (agg.pnl / agg.cost) * 100;
+            await storage.updateTradePnlByKrakenOrderId(sellFill.txid, {
+              entryPrice: avgEntry.toFixed(8),
+              realizedPnlUsd: agg.pnl.toFixed(8),
+              realizedPnlPct: pnlPct.toFixed(4),
+            });
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[FifoMatcher] P&L update best-effort failed for sellFill ${sellFill.txid}: ${e?.message ?? String(e)}`);
+      }
+    }
     
     return result;
   }

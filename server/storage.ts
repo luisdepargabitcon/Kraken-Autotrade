@@ -85,6 +85,7 @@ export interface IStorage {
   updateTradeStatus(tradeId: string, status: string, krakenOrderId?: string): Promise<void>;
   getTradeByKrakenOrderId(krakenOrderId: string): Promise<Trade | undefined>;
   getTradeByComposite(exchange: string, pair: string, tradeId: string): Promise<Trade | undefined>;
+  updateTradeByCompositeKey(exchange: string, pair: string, tradeId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined>;
   updateTradeByKrakenOrderId(krakenOrderId: string, patch: Partial<InsertTrade>): Promise<Trade | undefined>;
   getTradeByLotId(lotId: string): Promise<Trade | undefined>;
   getSellMatchingBuy(pair: string, buyLotId: string): Promise<Trade | undefined>;
@@ -143,6 +144,9 @@ export interface IStorage {
   createLotMatch(match: InsertLotMatch): Promise<LotMatch>;
   getLotMatchesByLotId(lotId: string): Promise<LotMatch[]>;
   getLotMatchBySellFillAndLot(sellFillTxid: string, lotId: string): Promise<LotMatch | undefined>;
+  getLotMatchesBySellFillTxid(sellFillTxid: string): Promise<LotMatch[]>;
+
+  updateTradePnlByKrakenOrderId(krakenOrderId: string, pnl: { entryPrice: string; realizedPnlUsd: string; realizedPnlPct: string }): Promise<void>;
   
   saveAiSample(sample: InsertAiTradeSample): Promise<AiTradeSample>;
   updateAiSample(sampleId: number, updates: Partial<InsertAiTradeSample>): Promise<AiTradeSample | undefined>;
@@ -470,6 +474,20 @@ export class DatabaseStorage implements IStorage {
       .where(eq(tradesTable.id, id));
   }
 
+  async updateTradePnlByKrakenOrderId(
+    krakenOrderId: string,
+    pnl: { entryPrice: string; realizedPnlUsd: string; realizedPnlPct: string }
+  ): Promise<void> {
+    if (!krakenOrderId) return;
+    await db.update(tradesTable)
+      .set({
+        entryPrice: pnl.entryPrice,
+        realizedPnlUsd: pnl.realizedPnlUsd,
+        realizedPnlPct: pnl.realizedPnlPct,
+      })
+      .where(eq(tradesTable.krakenOrderId, krakenOrderId));
+  }
+
   // Obtener trades BUY sin emparejar para un par (para calcular P&L)
   async getUnmatchedBuys(pair: string): Promise<Trade[]> {
     return await db.select().from(tradesTable)
@@ -542,6 +560,44 @@ export class DatabaseStorage implements IStorage {
           }
           skipped++;
           continue;
+        }
+
+        // Strategy 0 (preferred): If we have lot_matches for this sell fill (lot-based accounting), use them.
+        // This prevents global FIFO contamination when the bot manages lots.
+        try {
+          const extId = (sell as any).krakenOrderId ? String((sell as any).krakenOrderId) : null;
+          if (extId) {
+            const matches = await this.getLotMatchesBySellFillTxid(extId);
+            if (matches.length > 0) {
+              const agg = matches.reduce(
+                (acc, m) => {
+                  const qty = parseFloat(String(m.matchedQty));
+                  const buyPrice = parseFloat(String(m.buyPrice));
+                  const pnlNet = parseFloat(String(m.pnlNet));
+                  if (Number.isFinite(qty) && Number.isFinite(buyPrice)) {
+                    acc.cost += qty * buyPrice;
+                    acc.qty += qty;
+                  }
+                  if (Number.isFinite(pnlNet)) acc.pnl += pnlNet;
+                  return acc;
+                },
+                { cost: 0, qty: 0, pnl: 0 }
+              );
+              if (agg.qty > 0 && agg.cost > 0) {
+                const avgEntryPrice = agg.cost / agg.qty;
+                const pnlPct = (agg.pnl / agg.cost) * 100;
+                await this.updateTradePnlByKrakenOrderId(extId, {
+                  entryPrice: avgEntryPrice.toFixed(8),
+                  realizedPnlUsd: agg.pnl.toFixed(8),
+                  realizedPnlPct: pnlPct.toFixed(4),
+                });
+                updated++;
+                continue;
+              }
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[rebuildPnl] lot_matches strategy failed for sell ${sell.id}: ${e?.message ?? String(e)}`);
         }
 
         let sellRemaining = parseFloat(String(sell.amount));
@@ -707,6 +763,23 @@ export class DatabaseStorage implements IStorage {
       ))
       .limit(1);
     return trades[0];
+  }
+
+  async updateTradeByCompositeKey(
+    exchange: string,
+    pair: string,
+    tradeId: string,
+    patch: Partial<InsertTrade>
+  ): Promise<Trade | undefined> {
+    const [updated] = await db.update(tradesTable)
+      .set(patch)
+      .where(and(
+        eq(tradesTable.exchange, exchange),
+        eq(tradesTable.pair, pair),
+        eq(tradesTable.tradeId, tradeId)
+      ))
+      .returning();
+    return updated;
   }
 
   // B1: Update trade by krakenOrderId with partial patch
@@ -1050,6 +1123,12 @@ export class DatabaseStorage implements IStorage {
     await db.update(tradeFillsTable)
       .set({ matched: true })
       .where(eq(tradeFillsTable.txid, txid));
+  }
+
+  async getLotMatchesBySellFillTxid(sellFillTxid: string): Promise<LotMatch[]> {
+    return await db.select().from(lotMatchesTable)
+      .where(eq(lotMatchesTable.sellFillTxid, sellFillTxid))
+      .orderBy(lotMatchesTable.createdAt);
   }
 
   async getRecentTradeFills(limit: number = 20, exchange?: string): Promise<TradeFill[]> {

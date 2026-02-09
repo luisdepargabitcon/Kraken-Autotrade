@@ -14,6 +14,7 @@
 import { storage } from '../storage';
 import { botLogger } from './botLogger';
 import { positionsWs } from './positionsWebSocket';
+import { fifoMatcher } from './fifoMatcher';
 
 async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange: string; sinceMs?: number }): Promise<void> {
   const { pair, exchange, sinceMs = 30 * 24 * 60 * 60 * 1000 } = params;
@@ -65,6 +66,60 @@ async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange
         }
       }
       continue;
+    }
+
+    // Strategy 0: lot_matches-based P&L (if present)
+    try {
+      const extId = (sell as any)?.krakenOrderId ? String((sell as any).krakenOrderId) : null;
+      if (extId) {
+        const matches = await storage.getLotMatchesBySellFillTxid(extId);
+        if (matches.length > 0) {
+          const agg = matches.reduce(
+            (acc, m) => {
+              const qty = parseFloat(String(m.matchedQty));
+              const buyPrice = parseFloat(String(m.buyPrice));
+              const pnlNet = parseFloat(String(m.pnlNet));
+              if (Number.isFinite(qty) && Number.isFinite(buyPrice)) {
+                acc.cost += qty * buyPrice;
+                acc.qty += qty;
+              }
+              if (Number.isFinite(pnlNet)) acc.pnl += pnlNet;
+              return acc;
+            },
+            { cost: 0, qty: 0, pnl: 0 }
+          );
+          if (agg.qty > 0 && agg.cost > 0) {
+            const avgEntryPrice = agg.cost / agg.qty;
+            const pnlPct = (agg.pnl / agg.cost) * 100;
+            await storage.updateTradePnl(sell.id, avgEntryPrice.toFixed(8), agg.pnl.toFixed(8), pnlPct.toFixed(4));
+            continue;
+          }
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    // Strategy 1: engine sells with entryPrice should never use global FIFO (prevents contamination)
+    try {
+      const origin = String((sell as any).origin ?? '').toLowerCase();
+      const executedByBot = Boolean((sell as any).executedByBot);
+      const entryPriceRaw = (sell as any).entryPrice;
+      const entryPriceNum = entryPriceRaw != null ? parseFloat(String(entryPriceRaw)) : NaN;
+      if (origin === 'engine' && executedByBot && Number.isFinite(entryPriceNum) && entryPriceNum > 0) {
+        const sellPrice = parseFloat(String(sell.price));
+        const qty = parseFloat(String(sell.amount));
+        const entryValue = entryPriceNum * qty;
+        const exitValue = sellPrice * qty;
+        const pnlGross = exitValue - entryValue;
+        const feePct = feePctByExchange(exchange);
+        const pnlNet = pnlGross - (entryValue * feePct / 100) - (exitValue * feePct / 100);
+        const pnlPct = entryValue > 0 ? (pnlNet / entryValue) * 100 : 0;
+        await storage.updateTradePnl(sell.id, entryPriceNum.toFixed(8), pnlNet.toFixed(8), pnlPct.toFixed(4));
+        continue;
+      }
+    } catch {
+      // best-effort
     }
 
     let sellRemaining = parseFloat(String(sell.amount));
@@ -154,6 +209,10 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
     onTimeout,
     onError,
   } = config;
+
+  // Use a stable, non-optional order-level id for SELL aggregation and lot-matching.
+  // Prefer real exchange order id; fallback to clientOrderId if missing.
+  const orderLevelId = exchangeOrderId || clientOrderId;
 
   // MANDATORY LOGGING: Track all IDs for debugging
   console.log(`[FillWatcher] Starting watcher for ${pair} (clientOrderId: ${clientOrderId}, exchangeOrderId: ${exchangeOrderId || 'NOT_PROVIDED'})`);
@@ -358,35 +417,39 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
             })
           : undefined;
 
-        // Insert trade record (idempotent via unique constraint)
-        let persistedTradeId: number | undefined;
-        try {
-          const { trade } = await storage.insertTradeIgnoreDuplicate({
-            tradeId: fill.fillId,
-            exchange,
-            pair,
-            type: fill.side === 'sell' ? 'sell' : 'buy',
-            price: fill.price.toString(),
-            amount: fill.amount.toString(),
-            executedAt: fill.executedAt,
-            origin: 'engine',
-            executedByBot: true,
-            status: 'filled',
-            orderIntentId: orderIntent?.id,
-          } as any);
-          persistedTradeId = trade?.id;
-        } catch (err: any) {
-          if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
-            console.error(`[FillWatcher] Error inserting trade:`, err);
-          }
-        }
-
-        if (orderIntent && persistedTradeId) {
+        // Insert trade record:
+        // - BUY: keep per-fill trades (used for monitoring)
+        // - SELL: DO NOT persist per-fill trade rows (avoids FIFO contamination); we persist a single order-level SELL when fully filled.
+        if (fill.side !== 'sell') {
+          let persistedTradeId: number | undefined;
           try {
-            await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, persistedTradeId);
-            await storage.markTradeAsExecutedByBot(persistedTradeId, orderIntent.id);
-          } catch {
-            // best-effort
+            const { trade } = await storage.insertTradeIgnoreDuplicate({
+              tradeId: fill.fillId,
+              exchange,
+              pair,
+              type: 'buy',
+              price: fill.price.toString(),
+              amount: fill.amount.toString(),
+              executedAt: fill.executedAt,
+              origin: 'engine',
+              executedByBot: true,
+              status: 'filled',
+              orderIntentId: orderIntent?.id,
+            } as any);
+            persistedTradeId = trade?.id;
+          } catch (err: any) {
+            if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
+              console.error(`[FillWatcher] Error inserting trade:`, err);
+            }
+          }
+
+          if (orderIntent && persistedTradeId) {
+            try {
+              await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, persistedTradeId);
+              await storage.markTradeAsExecutedByBot(persistedTradeId, orderIntent.id);
+            } catch {
+              // best-effort
+            }
           }
         }
 
@@ -415,6 +478,61 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
 
             if (!pnlReconciled && fill.side === 'sell') {
               pnlReconciled = true;
+              // Prefer lot-based accounting: create an aggregated sell fill keyed by exchangeOrderId and run fifoMatcher.
+              try {
+                const avgPrice = totalFilledAmount > 0 ? ((fills.reduce((acc, f) => acc + (f.price * f.amount), 0)) / totalFilledAmount) : fill.price;
+                const feeTotal = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
+
+                // Persist ORDER-LEVEL SELL trade (single row) so P&L can be updated via lot_matches.
+                try {
+                  const { trade } = await storage.insertTradeIgnoreDuplicate({
+                    tradeId: orderLevelId,
+                    exchange,
+                    pair,
+                    type: 'sell',
+                    price: avgPrice.toString(),
+                    amount: totalFilledAmount.toFixed(8),
+                    executedAt: fill.executedAt,
+                    origin: 'engine',
+                    executedByBot: true,
+                    status: 'filled',
+                    orderIntentId: orderIntent?.id,
+                    krakenOrderId: orderLevelId,
+                  } as any);
+                  if (orderIntent && trade?.id) {
+                    try {
+                      await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, trade.id);
+                      await storage.markTradeAsExecutedByBot(trade.id, orderIntent.id);
+                    } catch {
+                      // best-effort
+                    }
+                  }
+                } catch {
+                  // best-effort
+                }
+
+                await storage.upsertTradeFill({
+                  txid: orderLevelId,
+                  orderId: orderLevelId,
+                  exchange,
+                  pair,
+                  type: 'sell',
+                  price: avgPrice.toString(),
+                  amount: totalFilledAmount.toFixed(8),
+                  cost: (avgPrice * totalFilledAmount).toFixed(8),
+                  fee: feeTotal.toFixed(8),
+                  executedAt: fill.executedAt,
+                  matched: false,
+                } as any);
+                const sellFill = await storage.getTradeFillByTxid(orderLevelId);
+                if (sellFill) {
+                  await fifoMatcher.processSellFill(sellFill);
+                }
+              } catch (e: any) {
+                console.warn(`[FillWatcher] FIFO lot-match failed for sell ${pair}: ${e?.message ?? String(e)}`);
+              }
+
+              // Fallback reconcile (should be rare after lot-matching)
               try {
                 await tryRecalculatePnlForPairExchange({ pair, exchange });
               } catch (e: any) {
@@ -437,6 +555,58 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
 
             if (!pnlReconciled && fill.side === 'sell') {
               pnlReconciled = true;
+              try {
+                const avgPrice = totalFilledAmount > 0 ? ((fills.reduce((acc, f) => acc + (f.price * f.amount), 0)) / totalFilledAmount) : fill.price;
+                const feeTotal = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
+
+                // Persist ORDER-LEVEL SELL trade (single row)
+                try {
+                  const { trade } = await storage.insertTradeIgnoreDuplicate({
+                    tradeId: orderLevelId,
+                    exchange,
+                    pair,
+                    type: 'sell',
+                    price: avgPrice.toString(),
+                    amount: totalFilledAmount.toFixed(8),
+                    executedAt: fill.executedAt,
+                    origin: 'engine',
+                    executedByBot: true,
+                    status: 'filled',
+                    orderIntentId: orderIntent?.id,
+                    krakenOrderId: orderLevelId,
+                  } as any);
+                  if (orderIntent && trade?.id) {
+                    try {
+                      await storage.matchOrderIntentToTrade(orderIntent.clientOrderId, trade.id);
+                      await storage.markTradeAsExecutedByBot(trade.id, orderIntent.id);
+                    } catch {
+                      // best-effort
+                    }
+                  }
+                } catch {
+                  // best-effort
+                }
+
+                await storage.upsertTradeFill({
+                  txid: orderLevelId,
+                  orderId: orderLevelId,
+                  exchange,
+                  pair,
+                  type: 'sell',
+                  price: avgPrice.toString(),
+                  amount: totalFilledAmount.toFixed(8),
+                  cost: (avgPrice * totalFilledAmount).toFixed(8),
+                  fee: feeTotal.toFixed(8),
+                  executedAt: fill.executedAt,
+                  matched: false,
+                } as any);
+                const sellFill = await storage.getTradeFillByTxid(orderLevelId);
+                if (sellFill) {
+                  await fifoMatcher.processSellFill(sellFill);
+                }
+              } catch (e: any) {
+                console.warn(`[FillWatcher] FIFO lot-match failed for sell ${pair} (no position): ${e?.message ?? String(e)}`);
+              }
               try {
                 await tryRecalculatePnlForPairExchange({ pair, exchange });
               } catch (e: any) {
