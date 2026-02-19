@@ -5,6 +5,54 @@
 
 ---
 
+## 2026-02-19 — REFACTOR: Modularización de tradingEngine.ts (Fase 2)
+
+### Cambios realizados
+
+#### 1. Tests de executeTrade (commit `35c6c50`)
+- Creado `server/services/__tests__/executeTrade.test.ts`
+- **39 test cases, 73 assertions** — 100% pass
+- Cobertura: pair validation, sellContext gating, order ID resolution, order execution resolution, P&L calculation (con fees reales/estimadas, breakeven, micro-cap), DCA average price, minimum validation, position sell P&L (full/parcial), edge cases
+- Patrón: funciones puras extraídas de `executeTrade`, test runner custom (`npx tsx`)
+
+#### 2. Persistencia de sgAlertThrottle en DB (commit `cee829a`)
+- Nueva tabla `alert_throttle` en `shared/schema.ts` (key UNIQUE, last_alert_at)
+- Métodos en `server/storage.ts`: `getAlertThrottle`, `upsertAlertThrottle`, `deleteAlertThrottleByPrefix`, `loadAlertThrottles`
+- `ExitManager` carga throttle desde DB al arrancar, persiste escrituras (fire-and-forget)
+- Prefijos: `sg:` para SmartGuard alerts, `ts:` para TimeStop notifications
+- Auto-migración: `CREATE TABLE IF NOT EXISTS` en `runSchemaMigration()`
+- **Impacto**: Throttle sobrevive reinicios del bot (no más alertas SG duplicadas)
+
+#### 3. Extracción de indicadores técnicos (commit `7133f56`)
+- Creado `server/services/indicators.ts` — funciones puras exportadas
+- Funciones: `calculateEMA`, `calculateRSI`, `calculateVolatility`, `calculateMACD`, `calculateBollingerBands`, `calculateATR`, `calculateATRPercent`, `detectAbnormalVolume`, `wilderSmooth`, `calculateADX`
+- Tipos: `PriceData`, `OHLCCandle`
+- `tradingEngine.ts` delega via thin wrappers — **-259 líneas**
+
+#### 4. Extracción de detección de régimen (commit `0a85a5e`)
+- Creado `server/services/regimeDetection.ts` — funciones puras exportadas
+- Funciones: `detectMarketRegime`, `getRegimeAdjustedParams`, `calculateAtrBasedExits`, `shouldPauseEntriesDueToRegime`
+- Tipos: `MarketRegime`, `RegimeAnalysis`, `RegimePreset`, `AtrExitResult`
+- Constantes: `REGIME_PRESETS`, `REGIME_CONFIG`
+- `tradingEngine.ts` delega via thin wrappers — **-223 líneas**
+
+### Reducción total de tradingEngine.ts
+- **Antes**: 7661 líneas (post ExitManager)
+- **Después**: ~7207 líneas
+- **Reducción en esta sesión**: ~454 líneas
+- **Reducción total desde inicio**: ~1659 líneas (8865 → 7207)
+
+### Archivos creados/modificados
+- `server/services/__tests__/executeTrade.test.ts` (nuevo)
+- `server/services/indicators.ts` (nuevo)
+- `server/services/regimeDetection.ts` (nuevo)
+- `server/services/exitManager.ts` (modificado — persistencia throttle)
+- `server/services/tradingEngine.ts` (modificado — delegaciones)
+- `server/storage.ts` (modificado — métodos alert_throttle)
+- `shared/schema.ts` (modificado — tabla alert_throttle)
+
+---
+
 ## 2026-02-XX — REFACTOR: Extracción de ExitManager desde tradingEngine.ts
 
 ### Motivación
