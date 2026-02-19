@@ -5,6 +5,50 @@
 
 ---
 
+## 2026-02-XX — REFACTOR: Modularización completa de routes.ts
+
+### Motivación
+- `routes.ts` era un archivo monolítico de **5117 líneas** con todos los endpoints API mezclados
+- Difícil de mantener, navegar y debuggear
+- Alto riesgo de conflictos en merges
+
+### Cambios realizados
+- **routes.ts reducido de 5117 → 821 líneas** (solo orquestador + config/startup)
+- Creada interfaz `RouterDeps` en `server/routes/types.ts` para inyección de dependencias
+- Extraídos **10 módulos de rutas** por dominio:
+
+| Módulo | Endpoints | Líneas aprox. |
+|--------|-----------|---------------|
+| `backups.routes.ts` | backup CRUD, restore, download | ~140 |
+| `events.routes.ts` | events, server-logs | ~170 |
+| `ai.routes.ts` | AI analysis, environment, DB diagnostic | ~300 |
+| `test.routes.ts` | test/debug, critical-alert test | ~650 |
+| `telegram.routes.ts` | Telegram chat CRUD, send message | ~120 |
+| `admin.routes.ts` | purge-*, rebuild-*, legacy-*, backfill, indexes | ~350 |
+| `trades.routes.ts` | trades listing, closed, performance, P&L, sync kraken, FIFO, cleanup | ~600 |
+| `positions.routes.ts` | open-positions, buy, close, orphan, time-stop | ~480 |
+| `market.routes.ts` | market, balance, prices, trade kraken/revolutx, sync-revolutx, reconcile | ~1100 |
+
+### Verificación
+- `npm run check` (tsc) pasa con **0 errores** después de cada extracción
+- Todos los endpoints mantienen exactamente la misma funcionalidad
+- Imports limpiados: solo quedan los necesarios en el orquestador
+
+### Archivos modificados
+- `server/routes.ts` (reducido ~84%)
+- `server/routes/types.ts` (nuevo)
+- `server/routes/backups.routes.ts` (nuevo)
+- `server/routes/events.routes.ts` (nuevo)
+- `server/routes/ai.routes.ts` (nuevo)
+- `server/routes/test.routes.ts` (nuevo)
+- `server/routes/telegram.routes.ts` (nuevo)
+- `server/routes/admin.routes.ts` (nuevo)
+- `server/routes/trades.routes.ts` (nuevo)
+- `server/routes/positions.routes.ts` (nuevo)
+- `server/routes/market.routes.ts` (nuevo)
+
+---
+
 ## 2026-02-19 — AUDITORÍA + FIX: Pipeline de Salidas (BE/Trailing/Exits) + Alertas Telegram
 
 ### Problema reportado
