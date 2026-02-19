@@ -3284,6 +3284,23 @@ El bot ha pausado las operaciones de COMPRA.
 
       if (sellAmount < minVolume) {
         log(`Cantidad a vender (${sellAmount}) menor al mínimo de Kraken (${minVolume}) para ${pair} (${lotId})`, "trading");
+        await botLogger.warn("EXIT_MIN_VOLUME_BLOCKED", `Salida bloqueada por volumen mínimo en ${pair}`, {
+          posId: lotId, pair, sellAmount, minVolume, currentPrice,
+          sellAmountUsd: sellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
+        });
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendAlertWithSubtype(
+            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+            `⚠️ <b>Salida bloqueada: volumen mínimo</b>\n\n` +
+            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+            `🔢 Cantidad: <code>${sellAmount.toFixed(8)}</code> (mín: <code>${minVolume}</code>)\n` +
+            `💵 Valor: <code>$${(sellAmount * currentPrice).toFixed(2)}</code>\n` +
+            `⚡ Trigger: <code>${reason}</code>\n` +
+            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━`,
+            "errors", "error_api"
+          );
+        }
         return;
       }
 
@@ -3410,8 +3427,39 @@ El bot ha pausado las operaciones de COMPRA.
         aiSampleId: position.aiSampleId, 
         openedAt: position.openedAt 
       };
+      await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
+        posId: lotId, pair, trigger: reason.includes("Stop-Loss") ? "STOP_HIT" : reason.includes("Take-Profit") ? "TP_HIT" : "TRAIL_HIT",
+        currentPrice, sellAmount: actualSellAmount, reason, priceChangePct: priceChange,
+      });
+      await botLogger.info("EXIT_ORDER_PLACED", `Intentando orden SELL en ${pair}`, {
+        posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
+        price: currentPrice, exchange: this.getTradingExchangeType(),
+        computedOrderUsd: actualSellAmount * currentPrice, trigger: reason,
+      });
       const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
       
+      if (!success) {
+        await botLogger.error("EXIT_ORDER_FAILED", `FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+          posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
+          price: currentPrice, exchange: this.getTradingExchangeType(),
+          computedOrderUsd: actualSellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
+        });
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendAlertWithSubtype(
+            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
+            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${actualSellAmount.toFixed(8)}</code>\n` +
+            `⚡ Trigger: <code>${reason}</code>\n` +
+            `❌ La orden NO se ejecutó en el exchange\n` +
+            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━`,
+            "errors", "error_api"
+          );
+        }
+        return;
+      }
+
       if (success && this.telegramService.isInitialized()) {
         const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
         const durationMins = Math.floor(durationMs / 60000);
@@ -3472,6 +3520,10 @@ El bot ha pausado las operaciones de COMPRA.
         this.openPositions.delete(lotId);
         await this.deletePositionFromDBByLotId(lotId);
         this.lastTradeTime.set(pair, Date.now());
+        await botLogger.info("POSITION_CLOSED_SG", `Posición cerrada en ${pair}`, {
+          posId: lotId, pair, closeReason: reason, avgPrice: currentPrice,
+          pnlNet: pnl, priceChangePct: priceChange, exchange: this.getTradingExchangeType(),
+        });
       }
     }
   }
@@ -3600,6 +3652,24 @@ El bot ha pausado las operaciones de COMPRA.
     
     // Calculate break-even price (entry + fee cushion)
     const breakEvenPrice = position.entryPrice * (1 + feeCushionPct / 100);
+
+    // === EXIT_EVAL: Instrumentación de evaluación ===
+    await botLogger.info("EXIT_EVAL", `SMART_GUARD evaluando posición ${pair}`, {
+      posId: lotId,
+      exchange: this.getTradingExchangeType(),
+      pair,
+      entryPrice: position.entryPrice,
+      currentPrice,
+      priceChangePct: priceChange,
+      qty: position.amount,
+      beArmed: position.sgBreakEvenActivated ?? false,
+      trailingArmed: position.sgTrailingActivated ?? false,
+      stopPrice: position.sgCurrentStopPrice ?? null,
+      beAtPct,
+      trailStartPct,
+      trailDistancePct,
+      ultimateSL,
+    });
     
     // 1. ULTIMATE STOP-LOSS - Emergency exit (always active)
     if (priceChange <= -ultimateSL) {
@@ -3628,6 +3698,10 @@ El bot ha pausado las operaciones de COMPRA.
       position.sgCurrentStopPrice = breakEvenPrice;
       positionModified = true;
       log(`SMART_GUARD ${pair}: Break-even activado (+${priceChange.toFixed(2)}%), stop movido a $${breakEvenPrice.toFixed(4)}`, "trading");
+      await botLogger.info("BREAKEVEN_ARMED", `SMART_GUARD Break-even armado en ${pair}`, {
+        posId: lotId, pair, entryPrice: position.entryPrice, newStop: breakEvenPrice,
+        cushionPct: feeCushionPct, currentPrice, priceChangePct: priceChange, rule: `beAtPct=${beAtPct}%`,
+      });
       
       // Send alert (only once per lot, no throttle needed as flag prevents re-entry)
       if (this.shouldSendSgAlert(position.lotId, "SG_BREAK_EVEN_ACTIVATED")) {
@@ -3695,6 +3769,10 @@ El bot ha pausado las operaciones de COMPRA.
         position.sgCurrentStopPrice = newTrailStop;
         positionModified = true;
         log(`SMART_GUARD ${pair}: Trailing step $${oldStop.toFixed(4)} → $${newTrailStop.toFixed(4)} (+${trailStepPct}%)`, "trading");
+        await botLogger.info("TRAILING_UPDATED", `SMART_GUARD Trailing actualizado en ${pair}`, {
+          posId: lotId, pair, prevStop: oldStop, newStop: newTrailStop,
+          currentPrice, trailingPct: trailDistancePct, stepPct: trailStepPct, rule: `step=${trailStepPct}%`,
+        });
         
         // Send alert with throttle (max 1 per 5 min)
         if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_STOP_UPDATED", this.SG_TRAIL_UPDATE_THROTTLE_MS)) {
@@ -3769,8 +3847,8 @@ El bot ha pausado las operaciones de COMPRA.
       }
     }
     
-    // Save position changes
-    if (positionModified && !shouldSellFull && !shouldScaleOut) {
+    // Save position changes (always persist modified state, even before a sell attempt)
+    if (positionModified) {
       this.openPositions.set(lotId, position);
       await this.savePositionToDB(pair, position);
     }
@@ -3784,6 +3862,24 @@ El bot ha pausado las operaciones de COMPRA.
       
       if (sellAmount < minVolume) {
         log(`SMART_GUARD: Cantidad a vender (${sellAmount}) menor al mínimo (${minVolume}) para ${pair} (${lotId})`, "trading");
+        await botLogger.warn("EXIT_MIN_VOLUME_BLOCKED", `SMART_GUARD: Salida bloqueada por volumen mínimo en ${pair}`, {
+          posId: lotId, pair, sellAmount, minVolume, currentPrice,
+          sellAmountUsd: sellAmount * currentPrice, trigger: sellReason,
+          action: "POSITION_LEFT_OPEN",
+        });
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendAlertWithSubtype(
+            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+            `⚠️ <b>Salida bloqueada: volumen mínimo</b>\n\n` +
+            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+            `🔢 Cantidad: <code>${sellAmount.toFixed(8)}</code> (mín: <code>${minVolume}</code>)\n` +
+            `💵 Valor: <code>$${(sellAmount * currentPrice).toFixed(2)}</code>\n` +
+            `⚡ Trigger: <code>${sellReason}</code>\n` +
+            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━`,
+            "errors", "error_api"
+          );
+        }
         return;
       }
       
@@ -3804,6 +3900,11 @@ El bot ha pausado las operaciones de COMPRA.
       }
       
       log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
+      await botLogger.info("EXIT_TRIGGERED", `SMART_GUARD salida disparada en ${pair}`, {
+        posId: lotId, pair, trigger: shouldScaleOut ? "SCALE_OUT" : (position.sgTrailingActivated ? "TRAIL_HIT" : (position.sgBreakEvenActivated ? "BE_HIT" : "SL_HIT")),
+        currentPrice, stopPrice: position.sgCurrentStopPrice ?? null, sellAmount,
+        reason: sellReason, priceChangePct: priceChange,
+      });
       
       // Calculate P&L before Telegram alert (fix crash: pnl was undefined)
       const sellValueGross = sellAmount * currentPrice;
@@ -3820,8 +3921,37 @@ El bot ha pausado las operaciones de COMPRA.
         aiSampleId: position.aiSampleId, 
         openedAt: position.openedAt 
       };
+      await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
+        posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
+        price: currentPrice, exchange: this.getTradingExchangeType(),
+        computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
+      });
       const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
       
+      if (!success) {
+        // EXIT_ORDER_FAILED: crítico — siempre loguear y notificar
+        await botLogger.error("EXIT_ORDER_FAILED", `SMART_GUARD FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+          posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
+          price: currentPrice, exchange: this.getTradingExchangeType(),
+          computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
+          action: "POSITION_LEFT_OPEN",
+        });
+        if (this.telegramService.isInitialized()) {
+          await this.telegramService.sendAlertWithSubtype(
+            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
+            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${sellAmount.toFixed(8)}</code>\n` +
+            `⚡ Trigger: <code>${sellReason}</code>\n` +
+            `❌ La orden NO se ejecutó en el exchange\n` +
+            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━`,
+            "errors", "error_api"
+          );
+        }
+        return;
+      }
+
       if (success && this.telegramService.isInitialized()) {
         const pnlEmoji = pnl >= 0 ? "📈" : "📉";
         const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
@@ -3859,6 +3989,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           this.openPositions.delete(lotId);
           await this.deletePositionFromDBByLotId(lotId);
           log(`SMART_GUARD ${pair} (${lotId}): Posición cerrada completamente`, "trading");
+          await botLogger.info("POSITION_CLOSED_SG", `SMART_GUARD posición cerrada en ${pair}`, {
+            posId: lotId, pair, closeReason: sellReason, avgPrice: currentPrice,
+            pnlNet: pnl, priceChangePct: priceChange, exchange: this.getTradingExchangeType(),
+          });
         } else {
           // Partial sell (scale-out) - save reduced position
           this.openPositions.set(lotId, position);

@@ -5,6 +5,96 @@
 
 ---
 
+## 2026-02-19 — AUDITORÍA + FIX: Pipeline de Salidas (BE/Trailing/Exits) + Alertas Telegram
+
+### Problema reportado
+- Una venta se tuvo que hacer **manualmente** porque el bot NO ejecutó BE ni trailing.
+- No llegaban alertas Telegram de seguimiento (BE armado, trailing actualizado, salida ejecutada).
+- Cuando `executeTrade` fallaba (orden rechazada por el exchange), la posición quedaba abierta **sin ningún log ni alerta**.
+
+### Diagnóstico (hipótesis confirmadas)
+
+#### H3 — CONFIRMADA: EXIT_ORDER_FAILED silencioso
+En `checkSmartGuardExit` y `checkSinglePositionSLTP`, cuando `executeTrade()` devuelve `false`:
+```ts
+const success = await this.executeTrade(...);
+if (success && ...) { /* Telegram */ }
+if (success) { /* cerrar posición */ }
+// ← NO había else: fallo silencioso, posición quedaba abierta sin log ni alerta
+```
+
+#### Bug adicional: estado BE/trailing no persistido antes de venta
+El `savePositionToDB` solo ocurría si `!shouldSellFull && !shouldScaleOut`. Si en el mismo tick se activaba BE y el stop ya estaba cruzado, el estado `sgBreakEvenActivated=true` y `sgCurrentStopPrice` **no se guardaban en DB** antes de intentar la venta. Si la venta fallaba, el estado se perdía en el siguiente restart.
+
+#### Bug adicional: EXIT_MIN_VOLUME_BLOCKED silencioso
+Cuando `sellAmount < minVolume`, el bot retornaba silenciosamente sin log ni alerta. La posición quedaba abierta indefinidamente.
+
+### Solución implementada
+
+#### 1. `server/services/botLogger.ts` — Nuevos EventTypes
+Añadidos: `EXIT_EVAL`, `EXIT_TRIGGERED`, `EXIT_ORDER_PLACED`, `EXIT_ORDER_FAILED`, `EXIT_MIN_VOLUME_BLOCKED`, `BREAKEVEN_ARMED`, `TRAILING_UPDATED`, `POSITION_CLOSED_SG`, `TRADE_PERSIST_FAIL`
+
+#### 2. `server/services/tradingEngine.ts` — `checkSmartGuardExit`
+- **EXIT_EVAL**: log al inicio de cada evaluación (posId, pair, price, beArmed, trailingArmed, stopPrice, thresholds)
+- **BREAKEVEN_ARMED**: botLogger.info cuando BE se activa (además del log existente)
+- **TRAILING_UPDATED**: botLogger.info cuando trailing step sube
+- **Fix crítico**: `savePositionToDB` ahora se llama cuando `positionModified=true` **siempre** (antes solo si `!shouldSellFull && !shouldScaleOut`) → estado BE/trailing persiste aunque la venta falle
+- **EXIT_TRIGGERED**: log antes de intentar la orden
+- **EXIT_ORDER_PLACED**: log de intento de orden
+- **EXIT_ORDER_FAILED**: botLogger.error + alerta Telegram 🚨 cuando `executeTrade` devuelve `false`
+- **EXIT_MIN_VOLUME_BLOCKED**: botLogger.warn + alerta Telegram ⚠️ cuando `sellAmount < minVolume`
+- **POSITION_CLOSED_SG**: botLogger.info cuando posición se cierra exitosamente
+
+#### 3. `server/services/tradingEngine.ts` — `checkSinglePositionSLTP` (modo legacy)
+Mismo patrón: `EXIT_TRIGGERED`, `EXIT_ORDER_PLACED`, `EXIT_ORDER_FAILED` (con Telegram), `EXIT_MIN_VOLUME_BLOCKED` (con Telegram), `POSITION_CLOSED_SG`
+
+#### 4. `server/services/__tests__/exitPipeline.test.ts` — Tests mínimos
+11 tests, 31 asserts — todos PASS:
+- T1-T3: Break-even (activación, no-activación, stop hit)
+- T4-T6: Trailing (activación, update ratchet, stop hit)
+- T7: Ultimate SL emergencia
+- T8-T9: Idempotencia (BE y trailing no se re-activan)
+- T10: Sin precio válido (guard en caller)
+- T11: Fixed TP
+
+### Nota técnica: por qué no se ejecutaba BE/trailing
+El motor SÍ ejecuta `checkSmartGuardExit` en cada tick (cada `intervalMs` según estrategia). La lógica de BE/trailing era correcta. El problema era:
+1. Si `executeTrade` fallaba (ej: balance insuficiente, error de API, minOrderUsd), el fallo era silencioso → nadie sabía que la posición debía cerrarse.
+2. El estado BE/trailing no se persistía si la venta se intentaba en el mismo tick que se activó → tras restart, el bot no sabía que BE estaba armado.
+
+### Cómo validar en STG
+```bash
+# 1. Deploy normal
+cd /opt/krakenbot-staging && git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+
+# 2. Verificar logs de EXIT_EVAL periódicos (cada tick, por posición abierta)
+curl "http://5.250.184.18:3020/api/logs?type=EXIT_EVAL&limit=10"
+
+# 3. Cuando precio sube >= beAtPct: verificar BREAKEVEN_ARMED
+curl "http://5.250.184.18:3020/api/logs?type=BREAKEVEN_ARMED&limit=5"
+
+# 4. Cuando precio sube >= trailStartPct: verificar SG_TRAILING_ACTIVATED
+curl "http://5.250.184.18:3020/api/logs?type=SG_TRAILING_ACTIVATED&limit=5"
+
+# 5. Cuando trailing sube: verificar TRAILING_UPDATED
+curl "http://5.250.184.18:3020/api/logs?type=TRAILING_UPDATED&limit=10"
+
+# 6. Cuando stop se cruza: verificar EXIT_TRIGGERED → EXIT_ORDER_PLACED → POSITION_CLOSED_SG
+curl "http://5.250.184.18:3020/api/logs?type=EXIT_TRIGGERED&limit=5"
+curl "http://5.250.184.18:3020/api/logs?type=POSITION_CLOSED_SG&limit=5"
+
+# 7. Si algo falla: EXIT_ORDER_FAILED aparece en logs Y llega alerta Telegram 🚨
+curl "http://5.250.184.18:3020/api/logs?type=EXIT_ORDER_FAILED&limit=5"
+```
+
+### Archivos modificados
+- `server/services/botLogger.ts` — 9 nuevos EventTypes
+- `server/services/tradingEngine.ts` — checkSmartGuardExit + checkSinglePositionSLTP
+- `server/services/__tests__/exitPipeline.test.ts` — 11 tests nuevos
+
+---
+
 ## 2026-02-09 — FEATURE: Portfolio Summary unificado + P&L profesional (3 métricas)
 
 ### Problema

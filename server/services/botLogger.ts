@@ -109,7 +109,17 @@ export type EventType =
   | "POSITION_UPDATED"
   // Spread filter events
   | "SPREAD_REJECTED"
-  | "SPREAD_DATA_MISSING";
+  | "SPREAD_DATA_MISSING"
+  // Exit pipeline instrumentation (D-plan)
+  | "EXIT_EVAL"
+  | "EXIT_TRIGGERED"
+  | "EXIT_ORDER_PLACED"
+  | "EXIT_ORDER_FAILED"
+  | "EXIT_MIN_VOLUME_BLOCKED"
+  | "BREAKEVEN_ARMED"
+  | "TRAILING_UPDATED"
+  | "POSITION_CLOSED_SG"
+  | "TRADE_PERSIST_FAIL";
 
 interface LogMeta {
   [key: string]: any;
