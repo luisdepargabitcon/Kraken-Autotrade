@@ -165,8 +165,35 @@ export class ExitManager {
   private timeStopNotified: Map<string, number> = new Map();
   private readonly TIME_STOP_NOTIFY_THROTTLE_MS = 60 * 60 * 1000;
 
+  private throttleLoaded = false;
+
   constructor(host: IExitManagerHost) {
     this.host = host;
+    // Load persisted throttle state asynchronously (non-blocking)
+    this.loadThrottleState().catch(e => log(`[EXIT_MGR] Failed to load throttle state: ${e?.message}`, "trading"));
+  }
+
+  private async loadThrottleState(): Promise<void> {
+    try {
+      const sgMap = await storage.loadAlertThrottles("sg:");
+      for (const [key, ts] of sgMap) {
+        this.sgAlertThrottle.set(key.replace("sg:", ""), ts);
+      }
+      const tsMap = await storage.loadAlertThrottles("ts:");
+      for (const [key, ts] of tsMap) {
+        this.timeStopNotified.set(key.replace("ts:", ""), ts);
+      }
+      this.throttleLoaded = true;
+      log(`[EXIT_MGR] Throttle state loaded: sg=${sgMap.size} ts=${tsMap.size}`, "trading");
+    } catch (e: any) {
+      log(`[EXIT_MGR] Throttle load error (using empty): ${e?.message}`, "trading");
+      this.throttleLoaded = true;
+    }
+  }
+
+  private persistThrottle(prefix: string, key: string, timestamp: number): void {
+    storage.upsertAlertThrottle(`${prefix}${key}`, timestamp)
+      .catch(e => log(`[EXIT_MGR] Throttle persist error: ${e?.message}`, "trading"));
   }
 
   // === PUBLIC ENTRY POINT (called by TradingEngine.tradingCycle) ===
@@ -384,6 +411,7 @@ export class ExitManager {
 
     if (shouldNotify && !position.timeStopExpiredAt) {
       this.timeStopNotified.set(lotId, now);
+      this.persistThrottle("ts:", lotId, now);
       position.timeStopExpiredAt = now;
       this.host.setPosition(lotId, position);
       await this.host.savePositionToDB(pair, position);
@@ -468,6 +496,7 @@ export class ExitManager {
       return false; // One-shot: already sent
     }
     this.sgAlertThrottle.set(key, now);
+    this.persistThrottle("sg:", key, now);
     return true;
   }
 
@@ -1007,6 +1036,7 @@ export class ExitManager {
 
         if (shouldNotify && !position.timeStopExpiredAt) {
           this.timeStopNotified.set(lotId, now);
+          this.persistThrottle("ts:", lotId, now);
           position.timeStopExpiredAt = now;
           this.host.setPosition(lotId, position);
           await this.host.savePositionToDB(pair, position);

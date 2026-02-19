@@ -45,7 +45,8 @@ import {
   aiConfig as aiConfigTable,
   trainingTrades as trainingTradesTable,
   orderIntents as orderIntentsTable,
-  hybridReentryWatches as hybridReentryWatchesTable
+  hybridReentryWatches as hybridReentryWatchesTable,
+  alertThrottle as alertThrottleTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -250,6 +251,12 @@ export interface IStorage {
     backfilledPositions: number;
     importedPositions: number;
   }>;
+
+  // Alert throttle persistence
+  getAlertThrottle(key: string): Promise<number | null>;
+  upsertAlertThrottle(key: string, timestamp: number): Promise<void>;
+  deleteAlertThrottleByPrefix(prefix: string): Promise<number>;
+  loadAlertThrottles(prefix?: string): Promise<Map<string, number>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1741,6 +1748,21 @@ export class DatabaseStorage implements IStorage {
         }
       }
       
+      // Create alert_throttle table if not exists
+      try {
+        await db.execute(sql`
+          CREATE TABLE IF NOT EXISTS alert_throttle (
+            id SERIAL PRIMARY KEY,
+            key TEXT NOT NULL UNIQUE,
+            last_alert_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+          )
+        `);
+        columnsAdded.push('alert_throttle (table)');
+      } catch (e) {
+        // Table may already exist
+      }
+
       // Backfill lot_id for existing positions without it
       try {
         await db.execute(sql`
@@ -2470,6 +2492,40 @@ export class DatabaseStorage implements IStorage {
       backfilledPositions: Number(backfilledResult.count),
       importedPositions: Number(importedResult.count),
     };
+  }
+
+  // === ALERT THROTTLE PERSISTENCE ===
+
+  async getAlertThrottle(key: string): Promise<number | null> {
+    const [row] = await db.select().from(alertThrottleTable).where(eq(alertThrottleTable.key, key)).limit(1);
+    return row ? row.lastAlertAt.getTime() : null;
+  }
+
+  async upsertAlertThrottle(key: string, timestamp: number): Promise<void> {
+    await db.insert(alertThrottleTable)
+      .values({ key, lastAlertAt: new Date(timestamp) })
+      .onConflictDoUpdate({
+        target: alertThrottleTable.key,
+        set: { lastAlertAt: new Date(timestamp) },
+      });
+  }
+
+  async deleteAlertThrottleByPrefix(prefix: string): Promise<number> {
+    const result = await db.delete(alertThrottleTable)
+      .where(sql`${alertThrottleTable.key} LIKE ${prefix + '%'}`);
+    return result.rowCount ?? 0;
+  }
+
+  async loadAlertThrottles(prefix?: string): Promise<Map<string, number>> {
+    const query = prefix
+      ? db.select().from(alertThrottleTable).where(sql`${alertThrottleTable.key} LIKE ${prefix + '%'}`)
+      : db.select().from(alertThrottleTable);
+    const rows = await query;
+    const map = new Map<string, number>();
+    for (const row of rows) {
+      map.set(row.key, row.lastAlertAt.getTime());
+    }
+    return map;
   }
 }
 

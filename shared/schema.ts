@@ -601,3 +601,13 @@ export const insertMasterBackupSchema = createInsertSchema(masterBackups).omit({
 
 export type MasterBackup = typeof masterBackups.$inferSelect;
 export type InsertMasterBackup = z.infer<typeof insertMasterBackupSchema>;
+
+// Alert throttle: persists SG alert and time-stop notification timestamps across restarts
+export const alertThrottle = pgTable("alert_throttle", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(), // "lotId:eventType" or "ts:lotId"
+  lastAlertAt: timestamp("last_alert_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type AlertThrottleRow = typeof alertThrottle.$inferSelect;
