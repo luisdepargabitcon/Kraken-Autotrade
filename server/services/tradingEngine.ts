@@ -1,4 +1,4 @@
-import { KrakenService } from "./kraken";
+﻿import { KrakenService } from "./kraken";
 import { TelegramService } from "./telegram";
 import { botLogger } from "./botLogger";
 import { storage } from "../storage";
@@ -17,6 +17,7 @@ import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
 import type { TradingConfig } from "@shared/config-schema";
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
+import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
 
 interface PriceData {
   price: number;
@@ -83,7 +84,7 @@ function getRoundTripWithBufferPct(): number {
 }
 
 // Defensive improvements
-// MAX_SPREAD_PCT removed — spread threshold now comes from bot config (dynamicSpread)
+// MAX_SPREAD_PCT removed â€” spread threshold now comes from bot config (dynamicSpread)
 const TRADING_HOURS_START = 8; // UTC - inicio de horario de trading
 const TRADING_HOURS_END = 22; // UTC - fin de horario de trading
 const POST_STOPLOSS_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown tras stop-loss
@@ -93,13 +94,13 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
   low: { min: 0.6, factor: 0.5 },     // 50% del monto
 };
 
-// SMART_GUARD: umbral absoluto mínimo para evitar comisiones absurdas
+// SMART_GUARD: umbral absoluto mÃ­nimo para evitar comisiones absurdas
 const SG_ABSOLUTE_MIN_USD = 20;
 
 // MTF Diagnostic: Habilitar para verificar que los timeframes son correctos
 const MTF_DIAG_ENABLED = true;
 
-// === VALIDACIÓN CENTRALIZADA DE MÍNIMOS (fuente única de verdad) ===
+// === VALIDACIÃ“N CENTRALIZADA DE MÃNIMOS (fuente Ãºnica de verdad) ===
 // Reason codes para SMART_GUARD sizing
 type SmartGuardReasonCode = 
   | "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN"   // saldo < floorUsd (hard block)
@@ -107,29 +108,29 @@ type SmartGuardReasonCode =
   | "SMART_GUARD_ENTRY_USING_CONFIG_MIN"       // saldo >= sgMinEntryUsd, usando sgMinEntryUsd
   | "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE"; // saldo < sgMinEntryUsd, usando saldo disponible
 
-// === PAIR_DECISION_TRACE: Enum y contexto para diagnóstico ===
+// === PAIR_DECISION_TRACE: Enum y contexto para diagnÃ³stico ===
 type BlockReasonCode = 
-  | "NO_SIGNAL"               // No hay señal de la estrategia
+  | "NO_SIGNAL"               // No hay seÃ±al de la estrategia
   | "COOLDOWN"                // Par en cooldown
   | "STOPLOSS_COOLDOWN"       // Cooldown post stop-loss
-  | "MAX_LOTS_PER_PAIR"       // Máximo lotes por par alcanzado
-  | "REGIME_PAUSE"            // Régimen TRANSITION - pausa entradas
+  | "MAX_LOTS_PER_PAIR"       // MÃ¡ximo lotes por par alcanzado
+  | "REGIME_PAUSE"            // RÃ©gimen TRANSITION - pausa entradas
   | "MIN_ORDER_USD"           // Order < minOrderUsd configurado
-  | "MIN_ORDER_ABSOLUTE"      // Order < mínimo absoluto ($20)
-  | "EXPOSURE_LIMIT"          // Límite de exposición alcanzado
-  | "SPREAD_TOO_HIGH"         // Spread > máximo permitido
+  | "MIN_ORDER_ABSOLUTE"      // Order < mÃ­nimo absoluto ($20)
+  | "EXPOSURE_LIMIT"          // LÃ­mite de exposiciÃ³n alcanzado
+  | "SPREAD_TOO_HIGH"         // Spread > mÃ¡ximo permitido
   | "TRADING_HOURS"           // Fuera de horario de trading
   | "SIGNALS_THRESHOLD"       // No alcanza minSignals requerido
-  | "CONFIDENCE_LOW"          // Confianza < umbral mínimo
-  | "REGIME_ERROR"            // Error detectando régimen
-  | "DAILY_LIMIT"             // Límite de pérdida diaria alcanzado
+  | "CONFIDENCE_LOW"          // Confianza < umbral mÃ­nimo
+  | "REGIME_ERROR"            // Error detectando rÃ©gimen
+  | "DAILY_LIMIT"             // LÃ­mite de pÃ©rdida diaria alcanzado
   | "TRADING_DISABLED"         // Kill-switch por env
   | "POSITIONS_INCONSISTENT"   // Fail-closed: trades bot recientes pero sin open positions
   | "SELL_BLOCKED"            // SELL bloqueado por SMART_GUARD
   | "RSI_OVERBOUGHT"          // BUY bloqueado por RSI >= 70
   | "RSI_OVERSOLD"            // SELL bloqueado por RSI <= 30
-  | "NO_POSITION"             // Sin posición para vender
-  | "ALLOWED";                // Señal permitida (no bloqueada)
+  | "NO_POSITION"             // Sin posiciÃ³n para vender
+  | "ALLOWED";                // SeÃ±al permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
 
@@ -155,7 +156,7 @@ interface DecisionTraceContext {
   blockDetails: Record<string, any> | null;
   finalSignal: "BUY" | "SELL" | "NONE";
   finalReason: string;
-  // Campos de diagnóstico para ciclos intermedios
+  // Campos de diagnÃ³stico para ciclos intermedios
   isIntermediateCycle?: boolean;
   lastCandleClosedAt?: string | null;
   lastFullEvaluationAt?: string | null;
@@ -165,7 +166,7 @@ interface DecisionTraceContext {
   feeCushionEffectivePct?: number | null;
 }
 
-// Cache para datos del último análisis completo por par (sin llamadas API extra)
+// Cache para datos del Ãºltimo anÃ¡lisis completo por par (sin llamadas API extra)
 interface LastFullAnalysisCache {
   regime: string;
   regimeReason: string;
@@ -242,7 +243,7 @@ function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidat
       valid: false,
       skipReason: "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN",
       reasonCode: "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN",
-      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < floorUsd $${effectiveFloor.toFixed(2)} (mín exchange + absoluto)`,
+      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < floorUsd $${effectiveFloor.toFixed(2)} (mÃ­n exchange + absoluto)`,
       meta,
     };
   }
@@ -263,7 +264,7 @@ function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidat
     return {
       valid: false,
       skipReason: "MIN_ORDER_ABSOLUTE",
-      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < mínimo absoluto $${SG_ABSOLUTE_MIN_USD}`,
+      message: `Trade bloqueado: orderUsdFinal $${orderUsdFinal.toFixed(2)} < mÃ­nimo absoluto $${SG_ABSOLUTE_MIN_USD}`,
       meta,
     };
   }
@@ -403,22 +404,22 @@ interface RegimePreset {
 
 const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
   TREND: {
-    sgBeAtPct: 2.5,        // Break-even más tarde (dejar correr)
-    sgTrailDistancePct: 2.0, // Trailing más amplio
-    sgTrailStepPct: 0.5,   // Steps más grandes
-    sgTpFixedPct: 8.0,     // TP más ambicioso
-    minSignals: 5,         // Mantener 5 señales (no bajar)
+    sgBeAtPct: 2.5,        // Break-even mÃ¡s tarde (dejar correr)
+    sgTrailDistancePct: 2.0, // Trailing mÃ¡s amplio
+    sgTrailStepPct: 0.5,   // Steps mÃ¡s grandes
+    sgTpFixedPct: 8.0,     // TP mÃ¡s ambicioso
+    minSignals: 5,         // Mantener 5 seÃ±ales (no bajar)
     pauseEntries: false,
-    slAtrMultiplier: 2.0,    // SL más amplio en tendencia
-    tpAtrMultiplier: 3.0,    // TP más ambicioso en tendencia
-    trailAtrMultiplier: 1.5, // Trail más amplio en tendencia
+    slAtrMultiplier: 2.0,    // SL mÃ¡s amplio en tendencia
+    tpAtrMultiplier: 3.0,    // TP mÃ¡s ambicioso en tendencia
+    trailAtrMultiplier: 1.5, // Trail mÃ¡s amplio en tendencia
   },
   RANGE: {
-    sgBeAtPct: 1.0,        // Break-even rápido (asegurar)
+    sgBeAtPct: 1.0,        // Break-even rÃ¡pido (asegurar)
     sgTrailDistancePct: 1.0, // Trailing ajustado
-    sgTrailStepPct: 0.2,   // Steps pequeños
+    sgTrailStepPct: 0.2,   // Steps pequeÃ±os
     sgTpFixedPct: 3.0,     // TP conservador
-    minSignals: 6,         // Más exigente en lateral
+    minSignals: 6,         // MÃ¡s exigente en lateral
     pauseEntries: false,
     slAtrMultiplier: 1.0,    // SL ajustado en rango
     tpAtrMultiplier: 1.5,    // TP conservador en rango
@@ -429,15 +430,15 @@ const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
     sgTrailDistancePct: 1.5,
     sgTrailStepPct: 0.25,
     sgTpFixedPct: 5.0,
-    minSignals: 4,         // Revertido a 4 (valor original pre-ene-2026) para desbloquear entradas válidas
+    minSignals: 4,         // Revertido a 4 (valor original pre-ene-2026) para desbloquear entradas vÃ¡lidas
     pauseEntries: true,    // Pausar nuevas entradas
-    slAtrMultiplier: 1.5,    // SL moderado en transición
-    tpAtrMultiplier: 2.0,    // TP moderado en transición
-    trailAtrMultiplier: 1.0, // Trail estándar en transición
+    slAtrMultiplier: 1.5,    // SL moderado en transiciÃ³n
+    tpAtrMultiplier: 2.0,    // TP moderado en transiciÃ³n
+    trailAtrMultiplier: 1.0, // Trail estÃ¡ndar en transiciÃ³n
   },
 };
 
-// === REGIME ANTI-SPAM CONFIGURATION (Phase 2 - Opción B Híbrida) ===
+// === REGIME ANTI-SPAM CONFIGURATION (Phase 2 - OpciÃ³n B HÃ­brida) ===
 const REGIME_CONFIG = {
   // Hysteresis: ADX thresholds for TREND entry/exit
   ADX_TREND_ENTRY: 27,      // Entrar TREND: ADX >= 27
@@ -487,7 +488,7 @@ export class TradingEngine {
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
   
-  // Tracking para Momentum (Velas) - última vela evaluada por par+timeframe
+  // Tracking para Momentum (Velas) - Ãºltima vela evaluada por par+timeframe
   private lastEvaluatedCandle: Map<string, number> = new Map();
   
   // Fallback minimums (only used if Kraken API fails)
@@ -537,12 +538,12 @@ export class TradingEngine {
   private lastScanTime: number = 0;
   private readonly TICK_INTERVAL_MS = 60 * 1000; // 60 seconds
   private lastScanResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
-  // Snapshot de resultados del último scan completado (para MARKET_SCAN_SUMMARY)
+  // Snapshot de resultados del Ãºltimo scan completado (para MARKET_SCAN_SUMMARY)
   private lastEmittedResults: Map<string, { signal: string; reason: string; cooldownSec?: number; exposureAvailable?: number }> = new Map();
   private lastEmittedScanId: string = "";
   private lastEmittedScanTime: number = 0;
   
-  // PAIR_DECISION_TRACE: Contexto de decisión por par para diagnóstico
+  // PAIR_DECISION_TRACE: Contexto de decisiÃ³n por par para diagnÃ³stico
   private pairDecisionTrace: Map<string, DecisionTraceContext> = new Map();
   
   // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
@@ -550,10 +551,6 @@ export class TradingEngine {
   private currentScanId: string = "";
   private lastScanStartTime: number = 0;
   private lastExpectedPairs: string[] = [];
-  
-  // SMART_GUARD alert throttle: key = "lotId:eventType", value = timestamp
-  private sgAlertThrottle: Map<string, number> = new Map();
-  private readonly SG_TRAIL_UPDATE_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between trailing stop updates
   
   // Regime change alert throttle: key = "pair:fromRegime:toRegime", value = timestamp
   private regimeAlertThrottle: Map<string, number> = new Map();
@@ -571,7 +568,7 @@ export class TradingEngine {
   private readonly REGIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   private lastRegime: Map<string, MarketRegime> = new Map(); // Track last regime for change alerts
   
-  // Cache para último análisis completo por par (evita null en ciclos intermedios)
+  // Cache para Ãºltimo anÃ¡lisis completo por par (evita null en ciclos intermedios)
   private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
 
   // Dynamic configuration from ConfigService
@@ -705,14 +702,20 @@ export class TradingEngine {
     }
   }
 
+  // Exit management delegated to ExitManager
+  private exitManager: ExitManager;
+
   constructor(krakenService: KrakenService, telegramService: TelegramService) {
     this.krakenService = krakenService;
     this.telegramService = telegramService;
     
+    // Initialize ExitManager with host adapter
+    this.exitManager = new ExitManager(this.createExitHost());
+    
     // Auto-enable dry run on Replit to prevent accidental real trades
     if (this.isReplitEnvironment) {
       this.dryRunMode = true;
-      log("[SAFETY] Entorno Replit detectado - DRY_RUN activado automáticamente", "trading");
+      log("[SAFETY] Entorno Replit detectado - DRY_RUN activado automÃ¡ticamente", "trading");
     }
     
     // Setup configuration change listener for hot-reload
@@ -723,6 +726,34 @@ export class TradingEngine {
     
     // Log exchange configuration
     log(`[EXCHANGE] Trading: ${ExchangeFactory.getTradingExchangeType()}, Data: ${ExchangeFactory.getDataExchangeType()}`, "trading");
+  }
+
+  private createExitHost(): IExitManagerHost {
+    return {
+      getOpenPositions: () => this.openPositions as Map<string, ExitOpenPosition>,
+      setPosition: (lotId, position) => { this.openPositions.set(lotId, position as any); },
+      deletePosition: (lotId) => { this.openPositions.delete(lotId); },
+      savePositionToDB: (pair, position) => this.savePositionToDB(pair, position as any),
+      deletePositionFromDBByLotId: (lotId) => this.deletePositionFromDBByLotId(lotId),
+      updatePositionHighestPriceByLotId: (lotId, price) => this.updatePositionHighestPriceByLotId(lotId, price),
+      getTradingExchange: () => this.getTradingExchange(),
+      getDataExchange: () => this.getDataExchange(),
+      getTradingExchangeType: () => this.getTradingExchangeType(),
+      getTradingFees: () => this.getTradingFees(),
+      getOrderMin: (pair) => this.getOrderMin(pair),
+      getAssetBalance: (pair, balances) => this.getAssetBalance(pair, balances),
+      formatKrakenPair: (pair) => this.formatKrakenPair(pair),
+      getPositionsByPair: (pair) => this.getPositionsByPair(pair) as ExitOpenPosition[],
+      executeTrade: (pair, type, volume, price, reason, adj?, strat?, exec?, sell?) =>
+        this.executeTrade(pair, type, volume, price, reason, adj, strat, exec, sell),
+      setStopLossCooldown: (pair) => this.setStopLossCooldown(pair),
+      setPairCooldown: (pair) => this.setPairCooldown(pair),
+      setLastTradeTime: (pair, time) => { this.lastTradeTime.set(pair, time); },
+      clearStopLossCooldown: (pair) => { this.stopLossCooldowns.delete(pair); },
+      clearExposureAlert: (pair) => { this.lastExposureAlert.delete(pair); },
+      setCurrentUsdBalance: (balance) => { this.currentUsdBalance = balance; },
+      getTelegramService: () => this.telegramService,
+    };
   }
 
   private getTradingExchange(): IExchangeService {
@@ -742,256 +773,42 @@ export class TradingEngine {
   }
 
   // === ADAPTIVE EXIT ENGINE: FEE-GATING ===
-  // NOTA: El bot usa exclusivamente órdenes MARKET (100% taker fees).
+  // NOTA: El bot usa exclusivamente Ã³rdenes MARKET (100% taker fees).
   // Por tanto, entryFeePct = exitFeePct = takerFeePct.
-  // El campo makerFeePct está reservado para futura implementación de órdenes límite.
+  // El campo makerFeePct estÃ¡ reservado para futura implementaciÃ³n de Ã³rdenes lÃ­mite.
   // minCloseNetPct = (takerFeePct * 2) + profitBufferPct
   
+  // === EXIT HELPERS (delegated to ExitManager) ===
   private isRiskExit(reason: ExitReason): boolean {
-    const riskExits: ExitReason[] = ["STOP_LOSS", "EMERGENCY_SL", "DAILY_LOSS_LIMIT", "TIME_STOP_HARD"];
-    return riskExits.includes(reason);
+    return this.exitManager.isRiskExit(reason);
   }
 
-  private async getAdaptiveExitConfig(): Promise<{
-    enabled: boolean;
-    takerFeePct: number;
-    makerFeePct: number;
-    profitBufferPct: number;
-    timeStopHours: number;
-    timeStopMode: "soft" | "hard";
-  }> {
-    const config = await storage.getBotConfig();
-    // Use fees from active trading exchange (Kraken 0.40%, Revolut 0.09%)
-    const exchangeFees = this.getTradingFees();
-    return {
-      enabled: config?.adaptiveExitEnabled ?? false,
-      takerFeePct: exchangeFees.takerFeePct,
-      makerFeePct: exchangeFees.makerFeePct,
-      profitBufferPct: parseFloat(config?.profitBufferPct?.toString() ?? "1.00"),
-      timeStopHours: config?.timeStopHours ?? 36,
-      timeStopMode: (config?.timeStopMode as "soft" | "hard") ?? "soft",
-    };
+  private async getAdaptiveExitConfig() {
+    return this.exitManager.getAdaptiveExitConfig();
   }
 
   private calculateMinCloseNetPct(entryFeePct: number, exitFeePct: number, profitBufferPct: number): number {
-    const roundTripFeePct = entryFeePct + exitFeePct;
-    return roundTripFeePct + profitBufferPct;
+    return this.exitManager.calculateMinCloseNetPct(entryFeePct, exitFeePct, profitBufferPct);
   }
 
-  private checkFeeGating(
-    grossPnlPct: number,
-    exitReason: ExitReason,
-    entryFeePct: number,
-    exitFeePct: number,
-    profitBufferPct: number
-  ): FeeGatingResult {
-    const minCloseNetPct = this.calculateMinCloseNetPct(entryFeePct, exitFeePct, profitBufferPct);
-    const estimatedNetPct = grossPnlPct - minCloseNetPct;
-    
-    if (this.isRiskExit(exitReason)) {
-      return {
-        allowed: true,
-        grossPnlPct,
-        minCloseNetPct,
-        estimatedNetPct,
-        reason: `[RISK_OVERRIDE] reason=${exitReason} (siempre permitido)`,
-      };
-    }
-    
-    if (grossPnlPct >= minCloseNetPct) {
-      return {
-        allowed: true,
-        grossPnlPct,
-        minCloseNetPct,
-        estimatedNetPct,
-        reason: `[EXIT] reason=${exitReason} grossPnlPct=${grossPnlPct.toFixed(2)} minCloseNetPct=${minCloseNetPct.toFixed(2)} decision=ALLOW`,
-      };
-    }
-    
-    return {
-      allowed: false,
-      grossPnlPct,
-      minCloseNetPct,
-      estimatedNetPct,
-      reason: `[EXIT_BLOCKED_FEES] reason=${exitReason} grossPnlPct=${grossPnlPct.toFixed(2)} minCloseNetPct=${minCloseNetPct.toFixed(2)} decision=BLOCK`,
-    };
+  private checkFeeGating(grossPnlPct: number, exitReason: ExitReason, entryFeePct: number, exitFeePct: number, profitBufferPct: number): FeeGatingResult {
+    return this.exitManager.checkFeeGating(grossPnlPct, exitReason, entryFeePct, exitFeePct, profitBufferPct);
   }
 
-  // === ADAPTIVE EXIT ENGINE: TIME-STOP ===
-  
-  private timeStopNotified: Map<string, number> = new Map(); // Track last notification time per lotId
-  private readonly TIME_STOP_NOTIFY_THROTTLE_MS = 60 * 60 * 1000; // 1 hour between time-stop notifications
+  // === TIME-STOP + PROGRESSIVE BE (delegated to ExitManager) ===
 
   private async checkTimeStop(
     position: OpenPosition,
     currentPrice: number,
-    exitConfig: {
-      enabled: boolean;
-      takerFeePct: number;
-      profitBufferPct: number;
-      timeStopHours: number;
-      timeStopMode: "soft" | "hard";
-    }
-  ): Promise<{
-    triggered: boolean;
-    expired: boolean;
-    shouldClose: boolean;
-    reason: string;
-    ageHours: number;
-  }> {
-    const { lotId, openedAt, pair, entryPrice, timeStopDisabled } = position;
-    const now = Date.now();
-    const ageMs = now - openedAt;
-    const ageHours = ageMs / (1000 * 60 * 60);
-    const timeStopHours = exitConfig.timeStopHours;
-    
-    if (timeStopDisabled) {
-      return {
-        triggered: false,
-        expired: false,
-        shouldClose: false,
-        reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} disabled=true`,
-        ageHours,
-      };
-    }
-    
-    if (ageHours < timeStopHours) {
-      return {
-        triggered: false,
-        expired: false,
-        shouldClose: false,
-        reason: "",
-        ageHours,
-      };
-    }
-    
-    const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
-    const minCloseNetPct = this.calculateMinCloseNetPct(exitConfig.takerFeePct, exitConfig.takerFeePct, exitConfig.profitBufferPct);
-    
-    if (exitConfig.timeStopMode === "hard") {
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard FORCE_CLOSE`, "trading");
-      
-      // Enviar alerta Telegram para modo HARD (respeta preferencias trade_timestop)
-      if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
-
-📊 <b>Estado:</b>
-   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-
-⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
-      }
-      
-      return {
-        triggered: true,
-        expired: true,
-        shouldClose: true,
-        reason: `Time-stop expirado (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [modo HARD]`,
-        ageHours,
-      };
-    }
-    
-    // SOFT MODE: Check if profit is sufficient to close
-    if (priceChange >= minCloseNetPct) {
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} PROFIT_EXIT_OK`, "trading");
-      return {
-        triggered: true,
-        expired: true,
-        shouldClose: true,
-        reason: `Time-stop expirado + profit suficiente (+${priceChange.toFixed(2)}% >= ${minCloseNetPct.toFixed(2)}%)`,
-        ageHours,
-      };
-    }
-    
-    // SOFT MODE: No force close - user closes manually when desired
-    // Only notifies and waits for profit or manual intervention
-    
-    const lastNotify = this.timeStopNotified.get(lotId) || 0;
-    const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
-    
-    if (shouldNotify && !position.timeStopExpiredAt) {
-      this.timeStopNotified.set(lotId, now);
-      position.timeStopExpiredAt = now;
-      this.openPositions.set(lotId, position);
-      await this.savePositionToDB(pair, position);
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT_OR_MANUAL`, "trading");
-      
-      if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop Alcanzado</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
-
-📊 <b>Estado:</b>
-   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-   • Mínimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
-
-💡 Se cerrará automáticamente cuando supere +${minCloseNetPct.toFixed(2)}%
-⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
-      }
-    }
-    
-    return {
-      triggered: true,
-      expired: true,
-      shouldClose: false,
-      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft WAITING_PROFIT_OR_MANUAL`,
-      ageHours,
-    };
+    exitConfig: { enabled: boolean; takerFeePct: number; profitBufferPct: number; timeStopHours: number; timeStopMode: "soft" | "hard" }
+  ) {
+    return this.exitManager.checkTimeStop(position as any, currentPrice, exitConfig);
   }
 
-  // === ADAPTIVE EXIT ENGINE: BREAK-EVEN PROGRESIVO ===
-  
   private calculateProgressiveBEStop(
-    position: OpenPosition,
-    currentPrice: number,
-    grossPnlPct: number,
-    roundTripFeePct: number,
-    profitBufferPct: number
-  ): { newStopPrice: number | null; newLevel: number; reason: string } {
-    const { entryPrice, beProgressiveLevel = 0 } = position;
-    let newLevel = beProgressiveLevel;
-    let newStopPrice: number | null = null;
-    let reason = "";
-    
-    // Nivel 1: +1.5% -> stop = entryPrice * (1 + roundTripFeePct)
-    // Nivel 2: +3.0% -> stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*0.50)
-    // Nivel 3: +5.0% -> stop = entryPrice * (1 + roundTripFeePct + profitBufferPct*1.00)
-    
-    if (grossPnlPct >= 5.0 && beProgressiveLevel < 3) {
-      newLevel = 3;
-      const stopPct = roundTripFeePct + profitBufferPct;
-      newStopPrice = entryPrice * (1 + stopPct / 100);
-      reason = `BE Nivel 3: +5.0% alcanzado, stop en +${stopPct.toFixed(2)}%`;
-    } else if (grossPnlPct >= 3.0 && beProgressiveLevel < 2) {
-      newLevel = 2;
-      const stopPct = roundTripFeePct + (profitBufferPct * 0.5);
-      newStopPrice = entryPrice * (1 + stopPct / 100);
-      reason = `BE Nivel 2: +3.0% alcanzado, stop en +${stopPct.toFixed(2)}%`;
-    } else if (grossPnlPct >= 1.5 && beProgressiveLevel < 1) {
-      newLevel = 1;
-      const stopPct = roundTripFeePct;
-      newStopPrice = entryPrice * (1 + stopPct / 100);
-      reason = `BE Nivel 1: +1.5% alcanzado, stop en +${stopPct.toFixed(2)}%`;
-    }
-    
-    if (newStopPrice && newStopPrice >= currentPrice) {
-      return { newStopPrice: null, newLevel: beProgressiveLevel, reason: "Stop BE calculado >= precio actual, no aplicado" };
-    }
-    
-    return { newStopPrice, newLevel, reason };
+    position: OpenPosition, currentPrice: number, grossPnlPct: number, roundTripFeePct: number, profitBufferPct: number
+  ) {
+    return this.exitManager.calculateProgressiveBEStop(position as any, currentPrice, grossPnlPct, roundTripFeePct, profitBufferPct);
   }
 
   // === MULTI-LOT HELPERS ===
@@ -1022,20 +839,6 @@ export class TradingEngine {
       }
     });
     return count;
-  }
-
-  // === SMART_GUARD ALERT HELPERS ===
-  private shouldSendSgAlert(lotId: string, eventType: string, throttleMs?: number): boolean {
-    const key = `${lotId}:${eventType}`;
-    const lastAlert = this.sgAlertThrottle.get(key);
-    const now = Date.now();
-    const cooldown = throttleMs ?? 0;
-    
-    if (lastAlert && now - lastAlert < cooldown) {
-      return false;
-    }
-    this.sgAlertThrottle.set(key, now);
-    return true;
   }
 
   private async emitOrderTrackingAlert(
@@ -1138,123 +941,6 @@ export class TradingEngine {
     }
   }
 
-  private async sendSgEventAlert(
-    eventType: "SG_BREAK_EVEN_ACTIVATED" | "SG_TRAILING_ACTIVATED" | "SG_TRAILING_STOP_UPDATED" | "SG_SCALE_OUT_EXECUTED",
-    position: OpenPosition,
-    currentPrice: number,
-    extra: { 
-      stopPrice?: number; 
-      profitPct: number; 
-      reason: string;
-      takeProfitPrice?: number;
-      trailingStatus?: { active: boolean; startPct: number; distancePct: number; stepPct: number };
-    }
-  ) {
-    const { lotId, pair, entryPrice, openedAt } = position;
-    const shortLotId = lotId.substring(0, 12);
-    const envInfo = environment.getInfo();
-
-    // Calculate duration
-    const durationMs = openedAt ? Date.now() - openedAt : 0;
-    const durationMins = Math.floor(durationMs / 60000);
-    const durationHours = Math.floor(durationMins / 60);
-    const durationDays = Math.floor(durationHours / 24);
-    const durationTxt = durationDays > 0 
-      ? `${durationDays}d ${durationHours % 24}h` 
-      : durationHours > 0 
-        ? `${durationHours}h ${durationMins % 60}m` 
-        : `${durationMins}m`;
-
-    // Emit event for /api/events
-    await botLogger.info(eventType, `${eventType} en ${pair}`, {
-      pair,
-      lotId,
-      entryPrice,
-      currentPrice,
-      stopPrice: extra.stopPrice,
-      takeProfitPrice: extra.takeProfitPrice,
-      profitPct: extra.profitPct,
-      trailingStatus: extra.trailingStatus,
-      env: envInfo.env,
-      instanceId: envInfo.instanceId,
-      reason: extra.reason,
-    });
-
-    // Send Telegram notification with natural language + essential data
-    const tgInitialized = this.telegramService.isInitialized();
-    log(`[SG_ALERT] ${eventType} ${pair} lotId=${shortLotId} tgInit=${tgInitialized} profit=${extra.profitPct.toFixed(2)}%`, "trading");
-    if (tgInitialized) {
-      const formatPrice = (price: number) => {
-        if (price >= 100) return price.toFixed(2);
-        if (price >= 1) return price.toFixed(4);
-        return price.toFixed(6);
-      };
-      
-      const assetName = pair.replace("/USD", "");
-      const profitText = extra.profitPct >= 0 ? `+${extra.profitPct.toFixed(2)}%` : `${extra.profitPct.toFixed(2)}%`;
-      
-      let naturalMessage = "";
-      
-      switch (eventType) {
-        case "SG_BREAK_EVEN_ACTIVATED":
-          naturalMessage = `⚖️ <b>Protección activada en ${assetName}</b>\n\n`;
-          naturalMessage += `Tu posición ya está en ganancias (${profitText}). He movido el stop a break-even.\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Stop BE: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          if (extra.takeProfitPrice) {
-            naturalMessage += `🎯 Objetivo: $${formatPrice(extra.takeProfitPrice)}\n`;
-          }
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
-          
-        case "SG_TRAILING_ACTIVATED":
-          naturalMessage = `📈 <b>Trailing activo en ${assetName}</b>\n\n`;
-          naturalMessage += `¡Las ganancias siguen subiendo! (${profitText}). El trailing ahora sigue el precio.\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Stop trailing: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          if (extra.trailingStatus) {
-            naturalMessage += `🔄 Distancia: ${extra.trailingStatus.distancePct}%\n`;
-          }
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
-          
-        case "SG_TRAILING_STOP_UPDATED":
-          naturalMessage = `🔼 <b>Stop actualizado en ${assetName}</b>\n\n`;
-          naturalMessage += `El precio sigue subiendo (${profitText}). Stop elevado para proteger más ganancias.\n\n`;
-          naturalMessage += `📊 Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Nuevo stop: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
-          
-        case "SG_SCALE_OUT_EXECUTED":
-          naturalMessage = `📊 <b>Venta parcial en ${assetName}</b>\n\n`;
-          naturalMessage += `He vendido parte de la posición para asegurar ganancias (${profitText}).\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
-          naturalMessage += `<i>El resto sigue abierto para capturar más subidas.</i>`;
-          break;
-      }
-      
-      try {
-        await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
-        log(`[SG_ALERT] Telegram alert sent for ${eventType} ${pair}`, "trading");
-      } catch (tgErr: any) {
-        log(`[SG_ALERT_ERR] Failed to send Telegram alert for ${eventType} ${pair}: ${tgErr.message}`, "trading");
-      }
-    } else {
-      log(`[SG_ALERT] Telegram NOT initialized - ${eventType} ${pair} alert LOST`, "trading");
-    }
-  }
-
   async manualBuyForTest(
     pair: string,
     usdAmount: number,
@@ -1282,23 +968,23 @@ export class TradingEngine {
       const preAmount = prePositions.reduce((sum, p) => sum + (p.amount || 0), 0);
       const preLotId = prePositions[0]?.lotId;
 
-      // Usar data exchange (Kraken) para precio, igual que el bot automático
+      // Usar data exchange (Kraken) para precio, igual que el bot automÃ¡tico
       // RevolutX no tiene endpoint de ticker funcional
       const krakenPair = this.formatKrakenPair(pair);
       log(`[MANUAL_BUY] Obteniendo precio de Kraken para ${krakenPair}`, "trading");
       const ticker = await this.getDataExchange().getTicker(krakenPair);
       const currentPrice = Number((ticker as any)?.last ?? 0);
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-        log(`[MANUAL_BUY] ERROR: Precio no válido para ${pair}: ${currentPrice}`, "trading");
-        return { success: false, error: `Precio no válido para ${pair}: ${currentPrice}` };
+        log(`[MANUAL_BUY] ERROR: Precio no vÃ¡lido para ${pair}: ${currentPrice}`, "trading");
+        return { success: false, error: `Precio no vÃ¡lido para ${pair}: ${currentPrice}` };
       }
       log(`[MANUAL_BUY] Precio obtenido: $${currentPrice.toFixed(4)}`, "trading");
 
       const requestedVolume = usdAmount / currentPrice;
       const normalizedVolume = this.normalizeVolume(pair, requestedVolume);
       if (!Number.isFinite(normalizedVolume) || normalizedVolume <= 0) {
-        log(`[MANUAL_BUY] ERROR: Volumen no válido para ${pair}: ${normalizedVolume}`, "trading");
-        return { success: false, error: `Volumen no válido para ${pair}: ${normalizedVolume}` };
+        log(`[MANUAL_BUY] ERROR: Volumen no vÃ¡lido para ${pair}: ${normalizedVolume}`, "trading");
+        return { success: false, error: `Volumen no vÃ¡lido para ${pair}: ${normalizedVolume}` };
       }
 
       const quote = pair.split('/')[1] || 'USD';
@@ -1310,10 +996,10 @@ export class TradingEngine {
         if (!Number.isFinite(availableQuote) || availableQuote < requiredQuote) {
           const availTxt = Number.isFinite(availableQuote) ? availableQuote.toFixed(2) : '0.00';
           const reqTxt = requiredQuote.toFixed(2);
-          log(`[MANUAL_BUY] BLOQUEADO: balance insuficiente ${quote}. available=${availTxt} required≈${reqTxt} (usdAmount=${usdAmount}, bufferPct=${bufferPct}%)`, "trading");
+          log(`[MANUAL_BUY] BLOQUEADO: balance insuficiente ${quote}. available=${availTxt} requiredâ‰ˆ${reqTxt} (usdAmount=${usdAmount}, bufferPct=${bufferPct}%)`, "trading");
           return {
             success: false,
-            error: `Saldo insuficiente de ${quote}: disponible ${availTxt}, requerido ≈ ${reqTxt} (incluye buffer ${bufferPct}%)`,
+            error: `Saldo insuficiente de ${quote}: disponible ${availTxt}, requerido â‰ˆ ${reqTxt} (incluye buffer ${bufferPct}%)`,
           };
         }
       } catch (balErr: any) {
@@ -1334,8 +1020,8 @@ export class TradingEngine {
       );
 
       if (!ok) {
-        log(`[MANUAL_BUY] ERROR: executeTrade devolvió false`, "trading");
-        return { success: false, error: "executeTrade falló (ver logs para detalles)" };
+        log(`[MANUAL_BUY] ERROR: executeTrade devolviÃ³ false`, "trading");
+        return { success: false, error: "executeTrade fallÃ³ (ver logs para detalles)" };
       }
 
       const postPositions = this.getPositionsByPair(pair);
@@ -1433,37 +1119,37 @@ export class TradingEngine {
     minCloseNetPct: number
   ): string {
     if (timeStopMode === "hard") {
-      return `🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
+      return `ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+â° <b>Time-Stop HARD - Cierre Inmediato</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   â€¢ LÃ­mite configurado: <code>${timeStopHours} horas</code>
 
-📊 <b>Estado:</b>
-   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+ðŸ“Š <b>Estado:</b>
+   â€¢ Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
-⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
-━━━━━━━━━━━━━━━━━━━`;
+âš¡ <b>ACCIÃ“N:</b> La posiciÃ³n se cerrarÃ¡ INMEDIATAMENTE [modo HARD]
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
     } else {
-      return `🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop Alcanzado</b>
+      return `ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+â° <b>Time-Stop Alcanzado</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
+   â€¢ LÃ­mite configurado: <code>${timeStopHours} horas</code>
 
-📊 <b>Estado:</b>
-   • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-   • Mínimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
+ðŸ“Š <b>Estado:</b>
+   â€¢ Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+   â€¢ MÃ­nimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
-💡 Se cerrará automáticamente cuando supere +${minCloseNetPct.toFixed(2)}%
-⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
-━━━━━━━━━━━━━━━━━━━`;
+ðŸ’¡ Se cerrarÃ¡ automÃ¡ticamente cuando supere +${minCloseNetPct.toFixed(2)}%
+âš ï¸ <b>Puedes cerrarla manualmente si lo prefieres</b>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
     }
   }
 
@@ -1653,7 +1339,7 @@ export class TradingEngine {
     const maxTotalAvailable = Math.max(0, maxTotalExposureUsd - currentTotalExposure);
     const maxAllowed = Math.min(maxPairAvailable, maxTotalAvailable);
     
-    // Instrumentación: log detallado cuando maxAllowed = 0
+    // InstrumentaciÃ³n: log detallado cuando maxAllowed = 0
     if (maxAllowed === 0) {
       log(`[EXPOSURE] ${pair}: EXPOSURE_LIMIT_REACHED | exposureBase=${exposureBase} baseValueUsd=$${baseValueUsd.toFixed(2)} usdBalance=$${usdBalance.toFixed(2)} | pairExp=$${currentPairExposure.toFixed(2)} totalExp=$${currentTotalExposure.toFixed(2)} | maxPairPct=${maxPairExposurePct}% maxTotalPct=${maxTotalExposurePct}% | maxPairUsd=$${maxPairExposureUsd.toFixed(2)} maxTotalUsd=$${maxTotalExposureUsd.toFixed(2)} | maxPairAvail=$${maxPairAvailable.toFixed(2)} maxTotalAvail=$${maxTotalAvailable.toFixed(2)} maxAllowed=$${maxAllowed.toFixed(2)}`, "trading");
     }
@@ -1667,7 +1353,7 @@ export class TradingEngine {
     };
   }
 
-  // === SMART_GUARD: Obtener parámetros con overrides por par ===
+  // === SMART_GUARD: Obtener parÃ¡metros con overrides por par ===
   private getSmartGuardParams(pair: string, config: any): {
     sgMinEntryUsd: number;
     sgAllowUnderMin: boolean;
@@ -1902,23 +1588,23 @@ export class TradingEngine {
         ? `   Markup RevolutX: <code>+${data.revolutxMarkupPct.toFixed(2)}%</code>\n`
         : "";
 
-      const message = `🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🚫 <b>BUY bloqueada por spread</b>
+      const message = `ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸš« <b>BUY bloqueada por spread</b>
 
-📊 <b>Detalle:</b>
+ðŸ“Š <b>Detalle:</b>
    Par: <code>${pair}</code>
    Exchange: <code>${tradingExchange}</code>
-   Régimen: <code>${regime || "N/A"}</code>
+   RÃ©gimen: <code>${regime || "N/A"}</code>
 
    Spread Kraken: <code>${data.spreadKrakenPct.toFixed(3)}%</code>
 ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</code>
-   Umbral máximo: <code>${data.thresholdPct.toFixed(2)}%</code>
+   Umbral mÃ¡ximo: <code>${data.thresholdPct.toFixed(2)}%</code>
 
    Bid: <code>$${data.bid.toFixed(2)}</code> | Ask: <code>$${data.ask.toFixed(2)}</code>
 
-⏰ ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC
-━━━━━━━━━━━━━━━━━━━`;
+â° ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
 
       await this.telegramService.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
     } catch (err: any) {
@@ -1942,7 +1628,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     return { withinHours: hourUTC >= start && hourUTC < end, hourUTC, start, end };
   }
 
-  // === MEJORA 3: Position Sizing Dinámico ===
+  // === MEJORA 3: Position Sizing DinÃ¡mico ===
   private getConfidenceSizingFactor(confidence: number): number {
     if (confidence >= CONFIDENCE_SIZING_THRESHOLDS.high.min) {
       return CONFIDENCE_SIZING_THRESHOLDS.high.factor;
@@ -1980,11 +1666,11 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
 
       this.lastTickTime = now;
 
-      // Emitir MARKET_SCAN_SUMMARY usando lastEmittedResults (snapshot del último scan completo)
+      // Emitir MARKET_SCAN_SUMMARY usando lastEmittedResults (snapshot del Ãºltimo scan completo)
       if (this.lastEmittedResults.size > 0) {
         const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
         
-        // Usar el snapshot de resultados del último scan completado
+        // Usar el snapshot de resultados del Ãºltimo scan completado
         const scanResultsSnapshot = new Map(this.lastEmittedResults);
         const sourcePairs = Array.from(scanResultsSnapshot.keys());
         const scanId = this.lastEmittedScanId;
@@ -2005,7 +1691,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
                 pairData.regimeReason = regimeAnalysis.reason;
               } catch (regimeErr) {
                 pairData.regime = "ERROR";
-                pairData.regimeReason = "Error obteniendo régimen";
+                pairData.regimeReason = "Error obteniendo rÃ©gimen";
               }
             }
             
@@ -2128,7 +1814,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
     const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
     if (!candles || candles.length < 20) {
-      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas", signalsCount: 0, minSignalsRequired: 4 };
+      return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para anÃ¡lisis de velas", signalsCount: 0, minSignalsRequired: 4 };
     }
     
     const closedCandles = candles.slice(0, -1);
@@ -2156,7 +1842,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
     // Bloquea compras cuando: volumen > 1.5x promedio Y precio > 1% sobre EMA20
-    // Esto evita compras tardías en momentum agotado
+    // Esto evita compras tardÃ­as en momentum agotado
     if (signal.action === "buy" && closedCandles.length >= 20) {
       const closes = closedCandles.map(c => c.close);
       const ema20 = this.calculateEMA(closes.slice(-20), 20);
@@ -2224,20 +1910,20 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
           }
         ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert ANTI_CRESTA: ${err.message}`, "trading"));
         
-        log(`[ANTI_CRESTA] ${pair}: Señal BUY bloqueada - ${rejectionReason}`, "trading");
+        log(`[ANTI_CRESTA] ${pair}: SeÃ±al BUY bloqueada - ${rejectionReason}`, "trading");
         
         return { 
           action: "hold", 
           pair, 
           confidence: 0.3, 
-          reason: `Señal filtrada: ${rejectionReason}`,
+          reason: `SeÃ±al filtrada: ${rejectionReason}`,
           signalsCount: signal.signalsCount,
           minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
         };
       }
     }
     
-    // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
+    // Aplicar filtro MTF si hay seÃ±al activa (ahora con rÃ©gimen para umbrales estrictos)
     if (mtfAnalysis && signal.action !== "hold") {
       const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime);
       if (mtfBoost.filtered) {
@@ -2276,7 +1962,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
           action: "hold", 
           pair, 
           confidence: 0.3, 
-          reason: `Señal filtrada por MTF: ${mtfBoost.reason}`,
+          reason: `SeÃ±al filtrada por MTF: ${mtfBoost.reason}`,
           signalsCount: signal.signalsCount,
           minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
         };
@@ -2378,17 +2064,17 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
 
     const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.07));
     
-    // B2: Filtro anti-FOMO - bloquear BUY en condiciones de entrada tardía
+    // B2: Filtro anti-FOMO - bloquear BUY en condiciones de entrada tardÃ­a
     const isAntifomoTriggered = rsi > 65 && bollinger.percentB > 85 && bodyRatio > 0.7;
     
     if (buySignals >= minSignalsRequired && buySignals > sellSignals && rsi < 70) {
-      // B2: Verificar anti-FOMO antes de emitir señal BUY
+      // B2: Verificar anti-FOMO antes de emitir seÃ±al BUY
       if (isAntifomoTriggered) {
         return {
           action: "hold",
           pair,
           confidence: 0.4,
-          reason: `Anti-FOMO: RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)} bodyRatio=${bodyRatio.toFixed(2)} | Señales: ${buySignals}/${sellSignals}`,
+          reason: `Anti-FOMO: RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)} bodyRatio=${bodyRatio.toFixed(2)} | SeÃ±ales: ${buySignals}/${sellSignals}`,
           signalsCount: buySignals,
           minSignalsRequired,
         };
@@ -2397,7 +2083,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
         action: "buy",
         pair,
         confidence,
-        reason: `Momentum Velas COMPRA: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        reason: `Momentum Velas COMPRA: ${buyReasons.join(", ")} | SeÃ±ales: ${buySignals}/${sellSignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
       };
@@ -2408,7 +2094,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
         action: "sell",
         pair,
         confidence,
-        reason: `Momentum Velas VENTA: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        reason: `Momentum Velas VENTA: ${sellReasons.join(", ")} | SeÃ±ales: ${sellSignals}/${buySignals}`,
         signalsCount: sellSignals,
         minSignalsRequired,
       };
@@ -2421,7 +2107,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     // Determine the actual blocking reason
     let blockReason = "";
     if (dominantCount < minSignalsRequired) {
-      blockReason = `señales insuficientes (${dominantCount}/${minSignalsRequired})`;
+      blockReason = `seÃ±ales insuficientes (${dominantCount}/${minSignalsRequired})`;
     } else if (dominantSide === "buy" && rsi >= 70) {
       blockReason = `RSI muy alto (${rsi.toFixed(0)}>=70) bloquea compra`;
     } else if (dominantSide === "sell" && rsi <= 30) {
@@ -2436,7 +2122,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
       action: "hold", 
       pair, 
       confidence: 0.3, 
-      reason: `Sin señal clara velas: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
+      reason: `Sin seÃ±al clara velas: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
@@ -2482,7 +2168,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     } else if (isBearishCandle && bodyRatio > 0.7) {
       // Strong bearish candle = reduce buy confidence
       buySignals = Math.max(0, buySignals - 1);
-      reasons.push("Vela bajista fuerte (penalización)");
+      reasons.push("Vela bajista fuerte (penalizaciÃ³n)");
     }
     
     // SELL: price at/above upper BB + RSI overbought
@@ -2502,7 +2188,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
         action: "buy",
         pair,
         confidence,
-        reason: `Mean Reversion COMPRA: ${reasons.join(", ")} | Señales: ${buySignals}`,
+        reason: `Mean Reversion COMPRA: ${reasons.join(", ")} | SeÃ±ales: ${buySignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
       };
@@ -2516,7 +2202,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     //     action: "sell",
     //     pair,
     //     confidence,
-    //     reason: `Mean Reversion VENTA: ${reasons.join(", ")} | Señales: ${sellSignals}`,
+    //     reason: `Mean Reversion VENTA: ${reasons.join(", ")} | SeÃ±ales: ${sellSignals}`,
     //     signalsCount: sellSignals,
     //     minSignalsRequired,
     //   };
@@ -2528,7 +2214,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
       action: "hold",
       pair,
       confidence: 0.3,
-      reason: `Mean Reversion sin señal: ${dominantSide}=${dominantCount} < min=${minSignalsRequired} | RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)}`,
+      reason: `Mean Reversion sin seÃ±al: ${dominantSide}=${dominantCount} < min=${minSignalsRequired} | RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
@@ -2539,13 +2225,13 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     
     const config = await storage.getBotConfig();
     if (!config?.isActive) {
-      log("Bot no está activo, no se inicia el motor de trading", "trading");
+      log("Bot no estÃ¡ activo, no se inicia el motor de trading", "trading");
       return;
     }
 
     const tradingExchange = this.getTradingExchange();
     if (!tradingExchange.isInitialized()) {
-      log(`${ExchangeFactory.getTradingExchangeType()} no está configurado, no se puede iniciar el trading`, "trading");
+      log(`${ExchangeFactory.getTradingExchangeType()} no estÃ¡ configurado, no se puede iniciar el trading`, "trading");
       return;
     }
 
@@ -2568,7 +2254,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     }
 
     if (!this.telegramService.isInitialized()) {
-      log("Telegram no está configurado, continuando sin notificaciones", "trading");
+      log("Telegram no estÃ¡ configurado, continuando sin notificaciones", "trading");
     }
     
     // Load dynamic configuration from ConfigService
@@ -2578,11 +2264,11 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     const dbDryRun = (config as any).dryRunMode ?? false;
     if (this.isReplitEnvironment) {
       this.dryRunMode = true;
-      log("[SAFETY] Modo DRY_RUN forzado en Replit - no se enviarán órdenes reales", "trading");
+      log("[SAFETY] Modo DRY_RUN forzado en Replit - no se enviarÃ¡n Ã³rdenes reales", "trading");
     } else {
       this.dryRunMode = dbDryRun;
       if (this.dryRunMode) {
-        log("[INFO] Modo DRY_RUN activado desde configuración", "trading");
+        log("[INFO] Modo DRY_RUN activado desde configuraciÃ³n", "trading");
       }
     }
 
@@ -2609,7 +2295,7 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     // Check for expired Time-Stop positions that weren't notified
     await this.checkExpiredTimeStopPositions();
     
-    const modeLabel = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE (órdenes reales)";
+    const modeLabel = this.dryRunMode ? "DRY_RUN (simulaciÃ³n)" : "LIVE (Ã³rdenes reales)";
     
     await botLogger.info("BOT_STARTED", "Motor de trading iniciado", {
       strategy: config.strategy,
@@ -2622,24 +2308,24 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     });
     
     if (this.telegramService.isInitialized()) {
-      const modeText = this.dryRunMode ? "DRY_RUN (simulación)" : "LIVE";
+      const modeText = this.dryRunMode ? "DRY_RUN (simulaciÃ³n)" : "LIVE";
       const routerStatus = config.regimeRouterEnabled ? "ACTIVO" : "INACTIVO";
-      await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-✅ <b>Bot Iniciado</b>
+      await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+âœ… <b>Bot Iniciado</b>
 
-📊 <b>Configuración:</b>
-   • Estrategia: <code>${config.strategy}</code>
-   • Riesgo: <code>${config.riskLevel}</code>
-   • Pares: <code>${config.activePairs.join(", ")}</code>
-   • Router: <code>${routerStatus}</code>
+ðŸ“Š <b>ConfiguraciÃ³n:</b>
+   â€¢ Estrategia: <code>${config.strategy}</code>
+   â€¢ Riesgo: <code>${config.riskLevel}</code>
+   â€¢ Pares: <code>${config.activePairs.join(", ")}</code>
+   â€¢ Router: <code>${routerStatus}</code>
 
-💰 <b>Estado:</b>
-   • Balance: <code>$${this.currentUsdBalance.toFixed(2)}</code>
-   • Posiciones: <code>${this.openPositions.size}</code>
+ðŸ’° <b>Estado:</b>
+   â€¢ Balance: <code>$${this.currentUsdBalance.toFixed(2)}</code>
+   â€¢ Posiciones: <code>${this.openPositions.size}</code>
 
-⚙️ <b>Modo:</b> <code>${modeText}</code>
-━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_started");
+âš™ï¸ <b>Modo:</b> <code>${modeText}</code>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "system", "system_bot_started");
     }
     
     const intervalMs = this.getIntervalForStrategy(config.strategy);
@@ -2669,12 +2355,12 @@ ${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</c
     await botLogger.info("BOT_STOPPED", "Motor de trading detenido");
     
     if (this.telegramService.isInitialized()) {
-      await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🛑 <b>Bot Detenido</b>
+      await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ›‘ <b>Bot Detenido</b>
 
 El motor de trading ha sido desactivado.
-━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_paused");
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "system", "system_bot_paused");
     }
   }
 
@@ -2789,7 +2475,7 @@ El motor de trading ha sido desactivado.
         }
         
         const snapshotInfo = hasSnapshot ? `[snapshot: ${pos.entryMode}]` : needsBackfill ? `[BACKFILLED: ${entryMode}]` : "[legacy: uses current config]";
-        log(`Posición recuperada: ${pos.pair} (${lotId}) - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
+        log(`PosiciÃ³n recuperada: ${pos.pair} (${lotId}) - ${pos.amount} @ $${pos.entryPrice} (${pos.entryStrategyId}/${pos.entrySignalTf}) ${snapshotInfo}`, "trading");
       }
       
       if (positions.length > 0) {
@@ -2797,15 +2483,15 @@ El motor de trading ha sido desactivado.
         if (this.telegramService.isInitialized()) {
           const positionsList = positions.map(p => {
             const hasSnap = p.configSnapshotJson && p.entryMode;
-            const snapEmoji = hasSnap ? "📸" : "⚙️";
+            const snapEmoji = hasSnap ? "ðŸ“¸" : "âš™ï¸";
             return `   ${snapEmoji} ${p.pair}: <code>${p.amount} @ $${parseFloat(p.entryPrice).toFixed(2)}</code>`;
           }).join("\n");
-          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-📂 <b>Posiciones Abiertas</b>
+          await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ“‚ <b>Posiciones Abiertas</b>
 
 ${positionsList}
-━━━━━━━━━━━━━━━━━━━`, "balance", "balance_exposure");
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "balance", "balance_exposure");
         }
       }
     } catch (error: any) {
@@ -2836,7 +2522,7 @@ ${positionsList}
         sgScaleOutDone: position.sgScaleOutDone,
       });
     } catch (error: any) {
-      log(`Error guardando posición ${pair} (${position.lotId}): ${error.message}`, "trading");
+      log(`Error guardando posiciÃ³n ${pair} (${position.lotId}): ${error.message}`, "trading");
     }
   }
 
@@ -2844,7 +2530,7 @@ ${positionsList}
     try {
       await storage.deleteOpenPositionByLotId(lotId);
     } catch (error: any) {
-      log(`Error eliminando posición ${lotId}: ${error.message}`, "trading");
+      log(`Error eliminando posiciÃ³n ${lotId}: ${error.message}`, "trading");
     }
   }
 
@@ -2890,16 +2576,16 @@ ${positionsList}
         this.dailyStartBalance = this.currentUsdBalance;
         this.lastDayReset = today;
         this.isDailyLimitReached = false;
-        log(`Nuevo día de trading: ${today}. Balance inicial: $${this.dailyStartBalance.toFixed(2)}`, "trading");
+        log(`Nuevo dÃ­a de trading: ${today}. Balance inicial: $${this.dailyStartBalance.toFixed(2)}`, "trading");
         
-        await botLogger.info("DAILY_LIMIT_RESET", `Nuevo día de trading: ${today}`, {
+        await botLogger.info("DAILY_LIMIT_RESET", `Nuevo dÃ­a de trading: ${today}`, {
           date: today,
           previousDayPnL,
           startBalance: this.dailyStartBalance,
         });
       }
 
-      // Verificar límite de pérdida diaria
+      // Verificar lÃ­mite de pÃ©rdida diaria
       const dailyLossLimitEnabled = config.dailyLossLimitEnabled ?? true;
       const dailyLossLimitPercent = parseFloat(config.dailyLossLimitPercent?.toString() || "10");
       
@@ -2908,9 +2594,9 @@ ${positionsList}
         
         if (currentLossPercent <= -dailyLossLimitPercent && !this.isDailyLimitReached) {
           this.isDailyLimitReached = true;
-          log(`🛑 LÍMITE DE PÉRDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (límite: -${dailyLossLimitPercent}%)`, "trading");
+          log(`ðŸ›‘ LÃMITE DE PÃ‰RDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (lÃ­mite: -${dailyLossLimitPercent}%)`, "trading");
           
-          await botLogger.warn("DAILY_LIMIT_HIT", "Límite de pérdida diaria alcanzado. Bot pausado para nuevas compras.", {
+          await botLogger.warn("DAILY_LIMIT_HIT", "LÃ­mite de pÃ©rdida diaria alcanzado. Bot pausado para nuevas compras.", {
             dailyPnL: this.dailyPnL,
             dailyPnLPercent: currentLossPercent,
             limitPercent: dailyLossLimitPercent,
@@ -2918,20 +2604,20 @@ ${positionsList}
           });
           
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🛑 <b>Límite de Pérdida Diaria Alcanzado</b>
+            await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ›‘ <b>LÃ­mite de PÃ©rdida Diaria Alcanzado</b>
 
 El bot ha pausado las operaciones de COMPRA.
 
-📊 <b>Resumen:</b>
-   • P&L del día: <code>${currentLossPercent.toFixed(2)}%</code>
-   • Pérdida: <code>$${Math.abs(this.dailyPnL).toFixed(2)}</code>
-   • Límite configurado: <code>-${dailyLossLimitPercent}%</code>
+ðŸ“Š <b>Resumen:</b>
+   â€¢ P&L del dÃ­a: <code>${currentLossPercent.toFixed(2)}%</code>
+   â€¢ PÃ©rdida: <code>$${Math.abs(this.dailyPnL).toFixed(2)}</code>
+   â€¢ LÃ­mite configurado: <code>-${dailyLossLimitPercent}%</code>
 
-ℹ️ Las operaciones de cierre (SL/TP) siguen activas.
-⏰ El trading normal se reanudará mañana.
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_daily_pnl");
+â„¹ï¸ Las operaciones de cierre (SL/TP) siguen activas.
+â° El trading normal se reanudarÃ¡ maÃ±ana.
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "trades", "trade_daily_pnl");
           }
         }
       }
@@ -2943,9 +2629,9 @@ El bot ha pausado las operaciones de COMPRA.
       const trailingStopEnabled = config.trailingStopEnabled ?? false;
       const trailingStopPercent = parseFloat(config.trailingStopPercent?.toString() || "2");
 
-      // Stop-Loss y Take-Profit siempre se verifican (incluso con límite alcanzado)
+      // Stop-Loss y Take-Profit siempre se verifican (incluso con lÃ­mite alcanzado)
       for (const pair of config.activePairs) {
-        await this.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
+        await this.exitManager.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
       }
 
       // Safety: if trading disabled, do not open new positions
@@ -2966,7 +2652,7 @@ El bot ha pausado las operaciones de COMPRA.
         return;
       }
 
-      // No abrir nuevas posiciones si se alcanzó el límite diario
+      // No abrir nuevas posiciones si se alcanzÃ³ el lÃ­mite diario
       if (this.isDailyLimitReached) {
         // Emitir trace para todos los pares activos indicando DAILY_LIMIT
         const activePairsForTrace = config.activePairs || [];
@@ -2978,7 +2664,7 @@ El bot ha pausado las operaciones de COMPRA.
             blockReasonCode: "DAILY_LIMIT",
             blockDetails: { dailyPnL: this.dailyPnL, dailyStartBalance: this.dailyStartBalance },
             finalSignal: "NONE",
-            finalReason: `Límite diario alcanzado: P&L $${this.dailyPnL.toFixed(2)}`,
+            finalReason: `LÃ­mite diario alcanzado: P&L $${this.dailyPnL.toFixed(2)}`,
           });
           this.emitPairDecisionTrace(pair);
         }
@@ -3032,12 +2718,12 @@ El bot ha pausado las operaciones de COMPRA.
           try {
             log(`[SCAN_PAIR_START] pair=${pair}`, "trading");
             
-            // Inicializar entrada por defecto para diagnóstico (se sobrescribe si hay señal)
+            // Inicializar entrada por defecto para diagnÃ³stico (se sobrescribe si hay seÃ±al)
             const expDefault = this.getAvailableExposure(pair, config, this.currentUsdBalance);
             if (!this.lastScanResults.has(pair)) {
               this.lastScanResults.set(pair, {
                 signal: "NONE",
-                reason: "Sin señal en este ciclo",
+                reason: "Sin seÃ±al en este ciclo",
                 exposureAvailable: expDefault.maxAllowed,
               });
             }
@@ -3056,7 +2742,7 @@ El bot ha pausado las operaciones de COMPRA.
               }
               
               if (this.isNewCandleClosed(pair, signalTimeframe, candle.time)) {
-                // Vela nueva cerrada = análisis completo
+                // Vela nueva cerrada = anÃ¡lisis completo
                 isIntermediateCycle = false;
                 this.initPairTrace(pair, expDefault.maxAllowed, false);
                 log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
@@ -3066,13 +2752,13 @@ El bot ha pausado las operaciones de COMPRA.
                 this.initPairTrace(pair, expDefault.maxAllowed, true);
               }
             } else {
-              // Modo ciclo = siempre análisis completo
+              // Modo ciclo = siempre anÃ¡lisis completo
               isIntermediateCycle = false;
               this.initPairTrace(pair, expDefault.maxAllowed, false);
               await this.analyzePairAndTrade(pair, config.strategy, riskConfig, balances);
             }
             
-            // Emitir decision trace para diagnóstico
+            // Emitir decision trace para diagnÃ³stico
             this.emitPairDecisionTrace(pair);
             
             log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
@@ -3096,7 +2782,7 @@ El bot ha pausado las operaciones de COMPRA.
         const durationMs = Date.now() - this.lastScanStartTime;
         this.scanInProgress = false;
         
-        // Si el scan fue completo (done === expected), crear snapshot para emisión
+        // Si el scan fue completo (done === expected), crear snapshot para emisiÃ³n
         if (scannedPairs.length === activePairs.length) {
           this.lastEmittedResults = new Map(this.lastScanResults);
           this.lastEmittedScanId = this.currentScanId;
@@ -3111,898 +2797,8 @@ El bot ha pausado las operaciones de COMPRA.
     }
   }
 
-  private async checkStopLossTakeProfit(
-    pair: string,
-    stopLossPercent: number,
-    takeProfitPercent: number,
-    trailingStopEnabled: boolean,
-    trailingStopPercent: number,
-    balances: any
-  ) {
-    // Get all positions for this pair (multi-lot support)
-    const positions = this.getPositionsByPair(pair);
-    if (positions.length === 0) return;
-
-    try {
-      const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.getDataExchange().getTicker(krakenPair);
-      const currentPrice = Number((ticker as any)?.last ?? 0);
-      
-      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-        log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando SL/TP`, "trading");
-        
-        // Enviar alerta crítica de precio inválido
-        const alert = ErrorAlertService.createCustomAlert(
-          'PRICE_INVALID',
-          `Precio inválido detectado: ${currentPrice} para ${pair} en SL/TP`,
-          'HIGH',
-          'checkPositionsSLTP',
-          'server/services/tradingEngine.ts',
-          2133,
-          pair,
-          { currentPrice, positions: positions.length }
-        );
-        await errorAlertService.sendCriticalError(alert);
-        
-        return;
-      }
-
-      // Process each position for this pair independently
-      for (const position of positions) {
-        if (position.amount <= 0) continue;
-        
-        await this.checkSinglePositionSLTP(
-          pair, position, currentPrice, stopLossPercent, takeProfitPercent,
-          trailingStopEnabled, trailingStopPercent, balances
-        );
-      }
-    } catch (error: any) {
-      log(`Error verificando SL/TP para ${pair}: ${error.message}`, "trading");
-    }
-  }
-
-  private async checkSinglePositionSLTP(
-    pair: string,
-    position: OpenPosition,
-    currentPrice: number,
-    stopLossPercent: number,
-    takeProfitPercent: number,
-    trailingStopEnabled: boolean,
-    trailingStopPercent: number,
-    balances: any
-  ) {
-    const lotId = position.lotId;
-
-    const isTestPosition = lotId?.startsWith("TEST-") || position.entryMode === "TEST";
-    if (isTestPosition) {
-      return;
-    }
-
-    // REGLA ÚNICA: Smart-Guard solo gestiona posiciones del bot (engine-managed)
-    // Las posiciones del bot tienen configSnapshot y no tienen prefijos especiales
-    const isBotPosition = position.configSnapshot != null &&
-                          position.entryMode === 'SMART_GUARD' &&
-                          !lotId?.startsWith('reconcile-') &&
-                          !lotId?.startsWith('sync-') &&
-                          !lotId?.startsWith('adopt-');
-    
-    if (!isBotPosition) {
-      // Position is not a bot position - Smart-Guard ignores it
-      return;
-    }
-    const priceChange = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-
-    if (currentPrice > position.highestPrice) {
-      position.highestPrice = currentPrice;
-      this.openPositions.set(lotId, position);
-      await this.updatePositionHighestPriceByLotId(lotId, currentPrice);
-    }
-
-    // Check if this is a SMART_GUARD position - use dedicated logic
-    if (position.entryMode === "SMART_GUARD" && position.configSnapshot) {
-      await this.checkSmartGuardExit(pair, position, currentPrice, priceChange);
-      return;
-    }
-
-    // Use snapshot params if available (new positions), else use current config (legacy)
-    let effectiveSL: number;
-    let effectiveTP: number;
-    let effectiveTrailingEnabled: boolean;
-    let effectiveTrailingPct: number;
-    let paramsSource: string;
-
-    if (position.configSnapshot) {
-      effectiveSL = position.configSnapshot.stopLossPercent;
-      effectiveTP = position.configSnapshot.takeProfitPercent;
-      effectiveTrailingEnabled = position.configSnapshot.trailingStopEnabled;
-      effectiveTrailingPct = position.configSnapshot.trailingStopPercent;
-      paramsSource = `snapshot (${position.entryMode})`;
-    } else {
-      effectiveSL = stopLossPercent;
-      effectiveTP = takeProfitPercent;
-      effectiveTrailingEnabled = trailingStopEnabled;
-      effectiveTrailingPct = trailingStopPercent;
-      paramsSource = "current config (legacy)";
-    }
-
-    let shouldSell = false;
-    let reason = "";
-    let emoji = "";
-
-    if (priceChange <= -effectiveSL) {
-      shouldSell = true;
-      reason = `Stop-Loss activado (${priceChange.toFixed(2)}% < -${effectiveSL}%) [${paramsSource}]`;
-      emoji = "🛑";
-      this.setStopLossCooldown(pair);
-      await botLogger.warn("STOP_LOSS_HIT", `Stop-Loss activado en ${pair}`, {
-        pair,
-        lotId,
-        entryPrice: position.entryPrice,
-        currentPrice,
-        priceChange,
-        stopLossPercent: effectiveSL,
-        paramsSource,
-        cooldownMinutes: POST_STOPLOSS_COOLDOWN_MS / 60000,
-      });
-    }
-    else if (priceChange >= effectiveTP) {
-      shouldSell = true;
-      reason = `Take-Profit activado (${priceChange.toFixed(2)}% > ${effectiveTP}%) [${paramsSource}]`;
-      emoji = "🎯";
-      await botLogger.info("TAKE_PROFIT_HIT", `Take-Profit alcanzado en ${pair}`, {
-        pair,
-        lotId,
-        entryPrice: position.entryPrice,
-        currentPrice,
-        priceChange,
-        takeProfitPercent: effectiveTP,
-        paramsSource,
-      });
-    }
-    else if (effectiveTrailingEnabled && position.highestPrice > position.entryPrice) {
-      const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
-      if (dropFromHigh >= effectiveTrailingPct && priceChange > 0) {
-        shouldSell = true;
-        reason = `Trailing Stop activado (cayó ${dropFromHigh.toFixed(2)}% desde máximo $${position.highestPrice.toFixed(2)}) [${paramsSource}]`;
-        emoji = "📉";
-        await botLogger.info("TRAILING_STOP_HIT", `Trailing Stop activado en ${pair}`, {
-          pair,
-          lotId,
-          entryPrice: position.entryPrice,
-          highestPrice: position.highestPrice,
-          currentPrice,
-          dropFromHigh,
-          trailingStopPercent: effectiveTrailingPct,
-          paramsSource,
-        });
-      }
-    }
-
-    if (shouldSell) {
-      const minVolume = this.getOrderMin(pair);
-      const sellAmount = position.amount;
-
-      if (sellAmount < minVolume) {
-        log(`Cantidad a vender (${sellAmount}) menor al mínimo de Kraken (${minVolume}) para ${pair} (${lotId})`, "trading");
-        await botLogger.warn("EXIT_MIN_VOLUME_BLOCKED", `Salida bloqueada por volumen mínimo en ${pair}`, {
-          posId: lotId, pair, sellAmount, minVolume, currentPrice,
-          sellAmountUsd: sellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
-        });
-        if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `⚠️ <b>Salida bloqueada: volumen mínimo</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `🔢 Cantidad: <code>${sellAmount.toFixed(8)}</code> (mín: <code>${minVolume}</code>)\n` +
-            `💵 Valor: <code>$${(sellAmount * currentPrice).toFixed(2)}</code>\n` +
-            `⚡ Trigger: <code>${reason}</code>\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
-        }
-        return;
-      }
-
-      // VERIFICACIÓN DE BALANCE REAL: Evitar "EOrder:Insufficient funds"
-      const freshBalances = await this.getTradingExchange().getBalance();
-      const realAssetBalance = this.getAssetBalance(pair, freshBalances);
-
-      // Reconciliación hacia ARRIBA: si el wallet tiene más de lo que trackea la posición,
-      // ajustar position.amount para poder cerrar todo y no dejar restos sin posición.
-      if (realAssetBalance > sellAmount * 1.005) {
-        const extraAmount = realAssetBalance - sellAmount;
-        const extraValueUsd = extraAmount * currentPrice;
-        if (extraValueUsd <= DUST_THRESHOLD_USD) {
-          log(`🔄 Discrepancia de balance (UP) en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
-          position.amount = realAssetBalance;
-          this.openPositions.set(lotId, position);
-          await this.savePositionToDB(pair, position);
-          await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) en ${pair}`, {
-            pair,
-            lotId,
-            direction: "UP",
-            registeredAmount: sellAmount,
-            realBalance: realAssetBalance,
-            extraValueUsd,
-          });
-        } else {
-          log(`⚠️ Balance real mayor al registrado en ${pair} (${lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
-        }
-      }
-      
-      // Si el balance real es menor al 99.5% del esperado (tolerancia para fees ~0.26%)
-      if (realAssetBalance < sellAmount * 0.995) {
-        log(`⚠️ Discrepancia de balance en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
-        
-        // Si balance real es prácticamente cero (< mínimo de Kraken), eliminar posición
-        if (realAssetBalance < minVolume) {
-          log(`Posición huérfana eliminada en ${pair} (${lotId}): balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
-          
-          // NO modificar dailyPnL: si fue vendida manualmente, el usuario ya tiene el USD
-          // Pero SÍ debemos reconciliar exposure y cooldowns
-          
-          // Refrescar balance USD para tener métricas consistentes
-          this.currentUsdBalance = parseFloat(String(freshBalances?.ZUSD || freshBalances?.USD || "0"));
-          
-          this.openPositions.delete(lotId);
-          await this.deletePositionFromDBByLotId(lotId);
-          
-          // Limpiar cooldowns obsoletos y establecer uno nuevo (15 min)
-          this.stopLossCooldowns.delete(pair);
-          this.lastExposureAlert.delete(pair);
-          this.setPairCooldown(pair);
-          this.lastTradeTime.set(pair, Date.now());
-          
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🔄 <b>Posición Huérfana Eliminada</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Lot: <code>${lotId}</code>
-   • Registrada: <code>${sellAmount.toFixed(8)}</code>
-   • Real en Kraken: <code>${realAssetBalance.toFixed(8)}</code>
-
-⚠️ La posición no existe en Kraken y fue eliminada.
-━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
-          }
-          
-          await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
-            pair,
-            lotId,
-            registeredAmount: sellAmount,
-            realBalance: realAssetBalance,
-            newUsdBalance: this.currentUsdBalance,
-          });
-          return;
-        }
-        
-        // Si hay algo de balance pero menos del registrado, ajustar posición al real
-        log(`Ajustando posición ${pair} (${lotId}) de ${sellAmount} a ${realAssetBalance}`, "trading");
-        position.amount = realAssetBalance;
-        this.openPositions.set(lotId, position);
-        await this.savePositionToDB(pair, position);
-        
-        // Notificar ajuste
-        if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🔧 <b>Posición Ajustada</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Lot: <code>${lotId}</code>
-   • Cantidad anterior: <code>${sellAmount.toFixed(8)}</code>
-   • Cantidad real: <code>${realAssetBalance.toFixed(8)}</code>
-
-ℹ️ Se usará la cantidad real para la venta.
-━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
-        }
-        
-        // Continuar con la venta usando el balance real
-      }
-
-      log(`${emoji} ${reason} para ${pair} (${lotId})`, "trading");
-
-      // Usar position.amount (puede haber sido ajustado al balance real)
-      const actualSellAmount = position.amount;
-      
-      // Calcular P&L NETO (después de comisiones)
-      const grossPnl = (currentPrice - position.entryPrice) * actualSellAmount;
-      const entryValueUsd = position.entryPrice * actualSellAmount;
-      const exitValueUsd = currentPrice * actualSellAmount;
-      const currentFeePct = getTakerFeePct();
-      const entryFeeUsd = position.entryFee ?? (entryValueUsd * currentFeePct / 100);
-      const exitFeeUsd = exitValueUsd * currentFeePct / 100;
-      const pnl = grossPnl - entryFeeUsd - exitFeeUsd;
-      const pnlPercent = (pnl / entryValueUsd) * 100;
-
-      const sellContext = { 
-        entryPrice: position.entryPrice, 
-        entryFee: position.entryFee,
-        sellAmount: actualSellAmount,
-        positionAmount: position.amount,
-        aiSampleId: position.aiSampleId, 
-        openedAt: position.openedAt 
-      };
-      await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
-        posId: lotId, pair, trigger: reason.includes("Stop-Loss") ? "STOP_HIT" : reason.includes("Take-Profit") ? "TP_HIT" : "TRAIL_HIT",
-        currentPrice, sellAmount: actualSellAmount, reason, priceChangePct: priceChange,
-      });
-      await botLogger.info("EXIT_ORDER_PLACED", `Intentando orden SELL en ${pair}`, {
-        posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
-        price: currentPrice, exchange: this.getTradingExchangeType(),
-        computedOrderUsd: actualSellAmount * currentPrice, trigger: reason,
-      });
-      const success = await this.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
-      
-      if (!success) {
-        await botLogger.error("EXIT_ORDER_FAILED", `FALLO de orden SELL en ${pair} — posición sigue abierta`, {
-          posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
-          price: currentPrice, exchange: this.getTradingExchangeType(),
-          computedOrderUsd: actualSellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
-        });
-        if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${actualSellAmount.toFixed(8)}</code>\n` +
-            `⚡ Trigger: <code>${reason}</code>\n` +
-            `❌ La orden NO se ejecutó en el exchange\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
-        }
-        return;
-      }
-
-      if (success && this.telegramService.isInitialized()) {
-        const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
-        const durationMins = Math.floor(durationMs / 60000);
-        const durationHours = Math.floor(durationMins / 60);
-        const durationDays = Math.floor(durationHours / 24);
-        const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
-        
-        const assetName = pair.replace("/USD", "");
-        const shortLotId = lotId.substring(0, 12);
-        
-        // Determine exit type for natural language header
-        const isStopLoss = reason.toLowerCase().includes("stop-loss") || reason.toLowerCase().includes("stoploss");
-        const isTakeProfit = reason.toLowerCase().includes("take-profit") || reason.toLowerCase().includes("tp fijo");
-        const isTrailing = reason.toLowerCase().includes("trailing");
-        
-        let headerEmoji = "";
-        let headerText = "";
-        let resultText = "";
-        
-        if (pnl >= 0) {
-          if (isTakeProfit) {
-            headerEmoji = "🎯";
-            headerText = `Take-Profit en ${assetName}`;
-            resultText = `¡Objetivo cumplido! Ganancia de <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
-          } else if (isTrailing) {
-            headerEmoji = "📈";
-            headerText = `Trailing Stop en ${assetName}`;
-            resultText = `El trailing protegió las ganancias: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
-          } else {
-            headerEmoji = "🟢";
-            headerText = `Venta con ganancia en ${assetName}`;
-            resultText = `Resultado: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
-          }
-        } else {
-          if (isStopLoss) {
-            headerEmoji = "🛑";
-            headerText = `Stop-Loss en ${assetName}`;
-            resultText = `Pérdida limitada a <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
-          } else {
-            headerEmoji = "🔴";
-            headerText = `Venta en ${assetName}`;
-            resultText = `Resultado: <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
-          }
-        }
-        
-        let naturalMessage = `${headerEmoji} <b>${headerText}</b>\n\n`;
-        naturalMessage += `${resultText}\n\n`;
-        naturalMessage += `📊 Entrada: $${position.entryPrice.toFixed(2)} → Salida: $${currentPrice.toFixed(2)}\n`;
-        naturalMessage += `📦 Cantidad: ${actualSellAmount.toFixed(8)}\n`;
-        naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
-        naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
-        
-        await this.telegramService.sendAlertToMultipleChats(naturalMessage, "trades");
-      }
-
-      if (success) {
-        this.openPositions.delete(lotId);
-        await this.deletePositionFromDBByLotId(lotId);
-        this.lastTradeTime.set(pair, Date.now());
-        await botLogger.info("POSITION_CLOSED_SG", `Posición cerrada en ${pair}`, {
-          posId: lotId, pair, closeReason: reason, avgPrice: currentPrice,
-          pnlNet: pnl, priceChangePct: priceChange, exchange: this.getTradingExchangeType(),
-        });
-      }
-    }
-  }
-
-  private async checkSmartGuardExit(
-    pair: string,
-    position: OpenPosition,
-    currentPrice: number,
-    priceChange: number
-  ) {
-    const snapshot = position.configSnapshot!;
-    const paramsSource = `SMART_GUARD snapshot`;
-    const lotId = position.lotId;
-    
-    // === TIME-STOP CHECK (también aplica a SMART_GUARD) ===
-    // El Time-Stop es una función de "tiempo máximo de vida" independiente de SmartGuard
-    if (!position.timeStopDisabled) {
-      const exitConfig = await this.getAdaptiveExitConfig();
-      const now = Date.now();
-      const ageMs = now - position.openedAt;
-      const ageHours = ageMs / (1000 * 60 * 60);
-      const timeStopHours = exitConfig.timeStopHours;
-      
-      if (ageHours >= timeStopHours) {
-        // TIME-STOP HARD: Cierre forzado (anula SmartGuard)
-        if (exitConfig.timeStopMode === "hard") {
-          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard SMART_GUARD FORCE_CLOSE`, "trading");
-          
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop HARD - Cierre Forzado</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Modo: <code>SMART_GUARD</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite: <code>${timeStopHours} horas</code>
-
-📊 <b>Estado:</b>
-   • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-
-⚡ <b>ACCIÓN:</b> Cierre forzado por Time-Stop HARD
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
-          }
-          
-          // Ejecutar cierre forzado
-          const minVolume = this.getOrderMin(pair);
-          if (position.amount >= minVolume) {
-            const freshBalances = await this.getTradingExchange().getBalance();
-            const realAssetBalance = this.getAssetBalance(pair, freshBalances);
-            const sellAmount = Math.min(position.amount, realAssetBalance);
-            
-            if (sellAmount >= minVolume) {
-              const sellContext = { 
-                entryPrice: position.entryPrice, 
-                entryFee: position.entryFee,
-                sellAmount: sellAmount,
-                positionAmount: position.amount,
-                aiSampleId: position.aiSampleId, 
-                openedAt: position.openedAt 
-              };
-              await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, 
-                `Time-Stop HARD (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [SMART_GUARD]`, 
-                undefined, undefined, undefined, sellContext);
-            }
-          }
-          return; // Sale después de cierre forzado
-        }
-        
-        // TIME-STOP SOFT: Solo alerta (SmartGuard sigue gestionando la posición)
-        const lastNotify = this.timeStopNotified.get(lotId) || 0;
-        const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
-        
-        if (shouldNotify && !position.timeStopExpiredAt) {
-          this.timeStopNotified.set(lotId, now);
-          position.timeStopExpiredAt = now;
-          this.openPositions.set(lotId, position);
-          await this.savePositionToDB(pair, position);
-          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft SMART_GUARD ALERT_ONLY`, "trading");
-          
-          if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop Alcanzado (SMART_GUARD)</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Modo: <code>SMART_GUARD</code>
-   • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite: <code>${timeStopHours} horas</code>
-
-📊 <b>Estado:</b>
-   • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-
-💡 <b>SmartGuard sigue gestionando la posición</b>
-⚠️ Puedes cerrarla manualmente si lo prefieres
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
-          }
-        }
-        // En SOFT mode, continúa con la lógica de SmartGuard
-      }
-    }
-    
-    // Get snapshot params with defaults
-    const beAtPct = snapshot.sgBeAtPct ?? 1.5;
-    const feeCushionPct = snapshot.sgFeeCushionPct ?? 0.45;
-    const trailStartPct = snapshot.sgTrailStartPct ?? 2.0;
-    const trailDistancePct = snapshot.sgTrailDistancePct ?? 1.5;
-    const trailStepPct = snapshot.sgTrailStepPct ?? 0.25;
-    const tpFixedEnabled = snapshot.sgTpFixedEnabled ?? false;
-    const tpFixedPct = snapshot.sgTpFixedPct ?? 10;
-    const scaleOutEnabled = snapshot.sgScaleOutEnabled ?? false;
-    const scaleOutPct = snapshot.sgScaleOutPct ?? 35;
-    const minPartUsd = snapshot.sgMinPartUsd ?? 50;
-    const scaleOutThreshold = snapshot.sgScaleOutThreshold ?? 80;
-    
-    // Also use the standard SL from snapshot as ultimate protection
-    const ultimateSL = snapshot.stopLossPercent;
-    
-    let shouldSellFull = false;
-    let shouldScaleOut = false;
-    let sellReason = "";
-    let emoji = "";
-    let positionModified = false;
-    
-    // Calculate break-even price (entry + fee cushion)
-    const breakEvenPrice = position.entryPrice * (1 + feeCushionPct / 100);
-
-    // === EXIT_EVAL: Instrumentación de evaluación ===
-    await botLogger.info("EXIT_EVAL", `SMART_GUARD evaluando posición ${pair}`, {
-      posId: lotId,
-      exchange: this.getTradingExchangeType(),
-      pair,
-      entryPrice: position.entryPrice,
-      currentPrice,
-      priceChangePct: priceChange,
-      qty: position.amount,
-      beArmed: position.sgBreakEvenActivated ?? false,
-      trailingArmed: position.sgTrailingActivated ?? false,
-      stopPrice: position.sgCurrentStopPrice ?? null,
-      beAtPct,
-      trailStartPct,
-      trailDistancePct,
-      ultimateSL,
-    });
-    
-    // 1. ULTIMATE STOP-LOSS - Emergency exit (always active)
-    if (priceChange <= -ultimateSL) {
-      shouldSellFull = true;
-      sellReason = `Stop-Loss emergencia SMART_GUARD (${priceChange.toFixed(2)}% < -${ultimateSL}%) [${paramsSource}]`;
-      emoji = "🛑";
-      this.setStopLossCooldown(pair);
-      await botLogger.warn("SG_EMERGENCY_STOPLOSS", `SMART_GUARD Stop-Loss emergencia en ${pair}`, {
-        pair, entryPrice: position.entryPrice, currentPrice, priceChange, ultimateSL, paramsSource,
-      });
-    }
-    
-    // 2. FIXED TAKE-PROFIT (if enabled)
-    else if (tpFixedEnabled && priceChange >= tpFixedPct) {
-      shouldSellFull = true;
-      sellReason = `Take-Profit fijo SMART_GUARD (${priceChange.toFixed(2)}% >= ${tpFixedPct}%) [${paramsSource}]`;
-      emoji = "🎯";
-      await botLogger.info("SG_TP_FIXED", `SMART_GUARD TP fijo alcanzado en ${pair}`, {
-        pair, entryPrice: position.entryPrice, currentPrice, priceChange, tpFixedPct, paramsSource,
-      });
-    }
-    
-    // 3. BREAK-EVEN ACTIVATION - Move stop to breakeven when profit >= beAtPct
-    else if (!position.sgBreakEvenActivated && priceChange >= beAtPct) {
-      position.sgBreakEvenActivated = true;
-      position.sgCurrentStopPrice = breakEvenPrice;
-      positionModified = true;
-      log(`SMART_GUARD ${pair}: Break-even activado (+${priceChange.toFixed(2)}%), stop movido a $${breakEvenPrice.toFixed(4)}`, "trading");
-      await botLogger.info("BREAKEVEN_ARMED", `SMART_GUARD Break-even armado en ${pair}`, {
-        posId: lotId, pair, entryPrice: position.entryPrice, newStop: breakEvenPrice,
-        cushionPct: feeCushionPct, currentPrice, priceChangePct: priceChange, rule: `beAtPct=${beAtPct}%`,
-      });
-      
-      // Send alert (only once per lot, no throttle needed as flag prevents re-entry)
-      if (this.shouldSendSgAlert(position.lotId, "SG_BREAK_EVEN_ACTIVATED")) {
-        // Calculate take-profit price if enabled
-        const takeProfitPrice = tpFixedEnabled 
-          ? position.entryPrice * (1 + tpFixedPct / 100) 
-          : undefined;
-        
-        await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
-          stopPrice: breakEvenPrice,
-          profitPct: priceChange,
-          reason: `Profit +${beAtPct}% alcanzado, stop movido a break-even + comisiones`,
-          takeProfitPrice,
-          trailingStatus: {
-            active: false,
-            startPct: trailStartPct,
-            distancePct: trailDistancePct,
-            stepPct: trailStepPct,
-          },
-        });
-      }
-    }
-    
-    // 4. TRAILING STOP ACTIVATION - Start trailing when profit >= trailStartPct
-    if (!position.sgTrailingActivated && priceChange >= trailStartPct) {
-      position.sgTrailingActivated = true;
-      const trailStopPrice = currentPrice * (1 - trailDistancePct / 100);
-      // Only update stop if higher than current
-      if (!position.sgCurrentStopPrice || trailStopPrice > position.sgCurrentStopPrice) {
-        position.sgCurrentStopPrice = trailStopPrice;
-      }
-      positionModified = true;
-      log(`SMART_GUARD ${pair}: Trailing activado (+${priceChange.toFixed(2)}%), stop dinámico @ $${position.sgCurrentStopPrice!.toFixed(4)}`, "trading");
-      
-      // Send alert (only once per lot)
-      if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_ACTIVATED")) {
-        // Calculate take-profit price if enabled
-        const takeProfitPrice = tpFixedEnabled 
-          ? position.entryPrice * (1 + tpFixedPct / 100) 
-          : undefined;
-        
-        await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
-          stopPrice: position.sgCurrentStopPrice,
-          profitPct: priceChange,
-          reason: `Profit +${trailStartPct}% alcanzado, trailing stop iniciado a ${trailDistancePct}% del máximo`,
-          takeProfitPrice,
-          trailingStatus: {
-            active: true,
-            startPct: trailStartPct,
-            distancePct: trailDistancePct,
-            stepPct: trailStepPct,
-          },
-        });
-      }
-    }
-    
-    // 5. TRAILING STOP UPDATE - Ratchet up stop with step increments
-    if (position.sgTrailingActivated && position.sgCurrentStopPrice) {
-      const newTrailStop = currentPrice * (1 - trailDistancePct / 100);
-      const minStepPrice = position.sgCurrentStopPrice * (1 + trailStepPct / 100);
-      
-      // Only update if new stop is higher by at least one step
-      if (newTrailStop > minStepPrice) {
-        const oldStop = position.sgCurrentStopPrice;
-        position.sgCurrentStopPrice = newTrailStop;
-        positionModified = true;
-        log(`SMART_GUARD ${pair}: Trailing step $${oldStop.toFixed(4)} → $${newTrailStop.toFixed(4)} (+${trailStepPct}%)`, "trading");
-        await botLogger.info("TRAILING_UPDATED", `SMART_GUARD Trailing actualizado en ${pair}`, {
-          posId: lotId, pair, prevStop: oldStop, newStop: newTrailStop,
-          currentPrice, trailingPct: trailDistancePct, stepPct: trailStepPct, rule: `step=${trailStepPct}%`,
-        });
-        
-        // Send alert with throttle (max 1 per 5 min)
-        if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_STOP_UPDATED", this.SG_TRAIL_UPDATE_THROTTLE_MS)) {
-          // Calculate take-profit price if enabled
-          const takeProfitPrice = tpFixedEnabled 
-            ? position.entryPrice * (1 + tpFixedPct / 100) 
-            : undefined;
-          
-          await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
-            stopPrice: newTrailStop,
-            profitPct: priceChange,
-            reason: `Stop actualizado: $${oldStop.toFixed(2)} → $${newTrailStop.toFixed(2)}`,
-            takeProfitPrice,
-            trailingStatus: {
-              active: true,
-              startPct: trailStartPct,
-              distancePct: trailDistancePct,
-              stepPct: trailStepPct,
-            },
-          });
-        }
-      }
-    }
-    
-    // 6. CHECK IF STOP PRICE HIT
-    if (position.sgCurrentStopPrice && currentPrice <= position.sgCurrentStopPrice) {
-      const stopType = position.sgTrailingActivated ? "Trailing Stop" : "Break-even Stop";
-      shouldSellFull = true;
-      sellReason = `${stopType} SMART_GUARD ($${currentPrice.toFixed(2)} <= $${position.sgCurrentStopPrice.toFixed(2)}) [${paramsSource}]`;
-      emoji = position.sgTrailingActivated ? "📉" : "⚖️";
-      await botLogger.info("SG_STOP_HIT", `SMART_GUARD ${stopType} activado en ${pair}`, {
-        pair, entryPrice: position.entryPrice, currentPrice, stopPrice: position.sgCurrentStopPrice,
-        stopType, paramsSource,
-      });
-    }
-    
-    // 7. SCALE-OUT (optional, only if exceptional signal)
-    if (!shouldSellFull && scaleOutEnabled && !position.sgScaleOutDone) {
-      // Only scale out if signal confidence >= threshold and part is worth selling
-      const partValue = position.amount * currentPrice * (scaleOutPct / 100);
-      const confPct = toConfidencePct(position.signalConfidence, 0);
-      const thresholdPct = toConfidencePct(scaleOutThreshold, 80);
-      if (confPct >= thresholdPct && partValue >= minPartUsd) {
-        if (priceChange >= trailStartPct) { // Only scale out in profit
-          shouldScaleOut = true;
-          sellReason = `Scale-out SMART_GUARD (${scaleOutPct}% @ +${priceChange.toFixed(2)}%, conf=${confPct.toFixed(0)}%) [${paramsSource}]`;
-          emoji = "📊";
-          position.sgScaleOutDone = true;
-          positionModified = true;
-          
-          // Send alert (only once as sgScaleOutDone flag prevents re-entry)
-          if (this.shouldSendSgAlert(position.lotId, "SG_SCALE_OUT_EXECUTED")) {
-            // Calculate take-profit price if enabled
-            const takeProfitPrice = tpFixedEnabled 
-              ? position.entryPrice * (1 + tpFixedPct / 100) 
-              : undefined;
-            
-            await this.sendSgEventAlert("SG_SCALE_OUT_EXECUTED", position, currentPrice, {
-              stopPrice: position.sgCurrentStopPrice,
-              profitPct: priceChange,
-              reason: `Vendido ${scaleOutPct}% de posición ($${partValue.toFixed(2)}) a +${priceChange.toFixed(2)}%`,
-              takeProfitPrice,
-              trailingStatus: position.sgTrailingActivated ? {
-                active: true,
-                startPct: trailStartPct,
-                distancePct: trailDistancePct,
-                stepPct: trailStepPct,
-              } : undefined,
-            });
-          }
-        }
-      }
-    }
-    
-    // Save position changes (always persist modified state, even before a sell attempt)
-    if (positionModified) {
-      this.openPositions.set(lotId, position);
-      await this.savePositionToDB(pair, position);
-    }
-    
-    // Execute sell if needed
-    if (shouldSellFull || shouldScaleOut) {
-      const minVolume = this.getOrderMin(pair);
-      let sellAmount = shouldScaleOut 
-        ? position.amount * (scaleOutPct / 100)
-        : position.amount;
-      
-      if (sellAmount < minVolume) {
-        log(`SMART_GUARD: Cantidad a vender (${sellAmount}) menor al mínimo (${minVolume}) para ${pair} (${lotId})`, "trading");
-        await botLogger.warn("EXIT_MIN_VOLUME_BLOCKED", `SMART_GUARD: Salida bloqueada por volumen mínimo en ${pair}`, {
-          posId: lotId, pair, sellAmount, minVolume, currentPrice,
-          sellAmountUsd: sellAmount * currentPrice, trigger: sellReason,
-          action: "POSITION_LEFT_OPEN",
-        });
-        if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `⚠️ <b>Salida bloqueada: volumen mínimo</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `🔢 Cantidad: <code>${sellAmount.toFixed(8)}</code> (mín: <code>${minVolume}</code>)\n` +
-            `💵 Valor: <code>$${(sellAmount * currentPrice).toFixed(2)}</code>\n` +
-            `⚡ Trigger: <code>${sellReason}</code>\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
-        }
-        return;
-      }
-      
-      // Balance verification
-      const freshBalances = await this.getTradingExchange().getBalance();
-      const realAssetBalance = this.getAssetBalance(pair, freshBalances);
-      
-      if (realAssetBalance < sellAmount * 0.995) {
-        if (realAssetBalance < minVolume) {
-          log(`SMART_GUARD: Posición huérfana en ${pair} (${lotId}), eliminando`, "trading");
-          this.openPositions.delete(lotId);
-          await this.deletePositionFromDBByLotId(lotId);
-          this.setPairCooldown(pair);
-          return;
-        }
-        sellAmount = realAssetBalance;
-        position.amount = realAssetBalance;
-      }
-      
-      log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
-      await botLogger.info("EXIT_TRIGGERED", `SMART_GUARD salida disparada en ${pair}`, {
-        posId: lotId, pair, trigger: shouldScaleOut ? "SCALE_OUT" : (position.sgTrailingActivated ? "TRAIL_HIT" : (position.sgBreakEvenActivated ? "BE_HIT" : "SL_HIT")),
-        currentPrice, stopPrice: position.sgCurrentStopPrice ?? null, sellAmount,
-        reason: sellReason, priceChangePct: priceChange,
-      });
-      
-      // Calculate P&L before Telegram alert (fix crash: pnl was undefined)
-      const sellValueGross = sellAmount * currentPrice;
-      const sellFeeEstimated = sellValueGross * (getTakerFeePct() / 100);
-      const entryValueGross = sellAmount * position.entryPrice;
-      const entryFeeProrated = (position.entryFee || 0) * (sellAmount / position.amount);
-      const pnl = sellValueGross - sellFeeEstimated - entryValueGross - entryFeeProrated;
-      
-      const sellContext = { 
-        entryPrice: position.entryPrice, 
-        entryFee: position.entryFee,
-        sellAmount: sellAmount,
-        positionAmount: position.amount,
-        aiSampleId: position.aiSampleId, 
-        openedAt: position.openedAt 
-      };
-      await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
-        posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
-        price: currentPrice, exchange: this.getTradingExchangeType(),
-        computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
-      });
-      const success = await this.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
-      
-      if (!success) {
-        // EXIT_ORDER_FAILED: crítico — siempre loguear y notificar
-        await botLogger.error("EXIT_ORDER_FAILED", `SMART_GUARD FALLO de orden SELL en ${pair} — posición sigue abierta`, {
-          posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
-          price: currentPrice, exchange: this.getTradingExchangeType(),
-          computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
-          action: "POSITION_LEFT_OPEN",
-        });
-        if (this.telegramService.isInitialized()) {
-          await this.telegramService.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${sellAmount.toFixed(8)}</code>\n` +
-            `⚡ Trigger: <code>${sellReason}</code>\n` +
-            `❌ La orden NO se ejecutó en el exchange\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
-        }
-        return;
-      }
-
-      if (success && this.telegramService.isInitialized()) {
-        const pnlEmoji = pnl >= 0 ? "📈" : "📉";
-        const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
-        const durationMins = Math.floor(durationMs / 60000);
-        const durationHours = Math.floor(durationMins / 60);
-        const durationDays = Math.floor(durationHours / 24);
-        const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
-        await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-${emoji} <b>${sellReason}</b>
-
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Lot: <code>${lotId}</code>
-   • Precio entrada: <code>$${position.entryPrice.toFixed(2)}</code>
-   • Precio actual: <code>$${currentPrice.toFixed(2)}</code>
-   • Cantidad vendida: <code>${sellAmount.toFixed(8)}</code>
-   • Duración: <code>${durationTxt}</code>
-
-${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)</code>
-
-🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`, "trades");
-      }
-      
-      if (success) {
-        // Reduce position amount by what was sold
-        position.amount -= sellAmount;
-        
-        // Use epsilon comparison for floating-point safety (treat < 0.00000001 as zero)
-        const EPSILON = 1e-8;
-        const positionIsEmpty = shouldSellFull || position.amount < EPSILON;
-        
-        if (positionIsEmpty) {
-          this.openPositions.delete(lotId);
-          await this.deletePositionFromDBByLotId(lotId);
-          log(`SMART_GUARD ${pair} (${lotId}): Posición cerrada completamente`, "trading");
-          await botLogger.info("POSITION_CLOSED_SG", `SMART_GUARD posición cerrada en ${pair}`, {
-            posId: lotId, pair, closeReason: sellReason, avgPrice: currentPrice,
-            pnlNet: pnl, priceChangePct: priceChange, exchange: this.getTradingExchangeType(),
-          });
-        } else {
-          // Partial sell (scale-out) - save reduced position
-          this.openPositions.set(lotId, position);
-          await this.savePositionToDB(pair, position);
-          log(`SMART_GUARD ${pair} (${lotId}): Venta parcial, restante: ${position.amount.toFixed(8)}`, "trading");
-        }
-        this.lastTradeTime.set(pair, Date.now());
-      }
-    }
-  }
+  // checkStopLossTakeProfit + checkSinglePositionSLTP + checkSmartGuardExit → delegated to ExitManager
+  // See server/services/exitManager.ts for the full implementation (~1200 lines)
 
   private async analyzePairAndTrade(
     pair: string,
@@ -4048,7 +2844,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       const exposure = this.getAvailableExposure(pair, botConfigForScan, this.currentUsdBalance);
       this.lastScanResults.set(pair, {
         signal: signalStr,
-        reason: signal.reason || "Sin señal",
+        reason: signal.reason || "Sin seÃ±al",
         cooldownSec: this.getCooldownRemainingSec(pair),
         exposureAvailable: exposure.maxAllowed,
       });
@@ -4071,13 +2867,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         earlyRegimeReason = "Regime detection disabled in config";
       }
       
-      // Ajustar minSignalsRequired según régimen (modo scans)
+      // Ajustar minSignalsRequired segÃºn rÃ©gimen (modo scans)
       const baseMinSignalsScan = signal.minSignalsRequired ?? 5;
       const adjustedMinSignalsScan = earlyRegime === "TRANSITION" 
         ? Math.min(baseMinSignalsScan, 4) 
         : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsScan) : baseMinSignalsScan);
       
-      // Actualizar trace con señal raw + régime + signalsCount
+      // Actualizar trace con seÃ±al raw + rÃ©gime + signalsCount
       this.updatePairTrace(pair, {
         selectedStrategy: strategy,
         rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
@@ -4088,7 +2884,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         minSignalsRequired: adjustedMinSignalsScan,
         exposureAvailableUsd: exposure.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
-        finalReason: signal.reason || "Sin señal",
+        finalReason: signal.reason || "Sin seÃ±al",
       });
       
       if (signal.action === "hold" || signal.confidence < 0.6) {
@@ -4111,7 +2907,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
           const cooldownSec = this.getCooldownRemainingSec(pair);
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - par en cooldown`, {
             pair,
             signal: "BUY",
             reason: "PAIR_COOLDOWN",
@@ -4128,7 +2924,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
+        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posiciÃ³n abierta
         // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
@@ -4149,8 +2945,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
             const remainingSec = Math.ceil(sgMinSecondsBetweenEntries - secondsSinceLastOrder);
-            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
+            log(`${pair}: Compra bloqueada - Cooldown anti-rÃ¡faga: ${remainingSec}s`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - cooldown anti-rÃ¡faga`, {
               pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
               secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntries, remainingSeconds: remainingSec,
             });
@@ -4158,7 +2954,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
               smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
               blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
-              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
+              finalSignal: "NONE", finalReason: `Cooldown anti-rÃ¡faga: ${remainingSec}s`,
             });
             return;
           }
@@ -4170,7 +2966,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             : "SINGLE_MODE_POSITION_EXISTS";
           
           log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - mÃ¡ximo de slots ocupados`, {
             pair,
             signal: "BUY",
             reason: reasonCode,
@@ -4197,8 +2993,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
-        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
+        // B3: SMART_GUARD requiere â‰¥5 seÃ±ales para BUY (umbral mÃ¡s estricto)
+        // + Market Regime: 6 seÃ±ales en RANGE, pausa en TRANSITION (unless Router enabled)
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
         let currentRegimeReasonForTelegram: string | null = null;
@@ -4217,7 +3013,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               
               // TRANSITION: If Router enabled, allow with overrides; otherwise block
               if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
-                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
+                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - rÃ©gimen TRANSITION (pausa entradas)`, {
                   pair,
                   signal: "BUY",
                   reason: "REGIME_TRANSITION_PAUSE",
@@ -4237,7 +3033,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   blockReasonCode: "REGIME_PAUSE",
                   blockDetails: { regime: regimeAnalysis.regime, adx: regimeAnalysis.adx },
                   finalSignal: "NONE",
-                  finalReason: `Régimen TRANSITION: pausa entradas`,
+                  finalReason: `RÃ©gimen TRANSITION: pausa entradas`,
                 });
                 return;
               }
@@ -4251,10 +3047,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
               const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
               requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
-              regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
+              regimeInfo = ` [RÃ©gimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
-              log(`${pair}: Error en detección de régimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
+              log(`${pair}: Error en detecciÃ³n de rÃ©gimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
               // Update scan results to reflect the error state
               this.lastScanResults.set(pair, {
                 signal: "BUY",
@@ -4269,17 +3065,17 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             }
           }
           
-          // Regex flexible: acepta "Señales: X/Y" (Momentum) o "Señales: X" (Mean Reversion)
-          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)(?:\/(\d+))?/);
+          // Regex flexible: acepta "SeÃ±ales: X/Y" (Momentum) o "SeÃ±ales: X" (Mean Reversion)
+          const signalCountMatch = signal.reason.match(/SeÃ±ales:\s*(\d+)(?:\/(\d+))?/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
-            // Extraer nombre de régimen limpio para analytics
-            const regimeMatch = regimeInfo.match(/Régimen:\s*(\w+)/);
+            // Extraer nombre de rÃ©gimen limpio para analytics
+            const regimeMatch = regimeInfo.match(/RÃ©gimen:\s*(\w+)/);
             const regimeName = regimeMatch ? regimeMatch[1] : (regimeEnabled ? "BASE" : "DISABLED");
             
-            log(`[B3] ${pair}: Parsed señales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
+            log(`[B3] ${pair}: Parsed seÃ±ales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
             if (buySignalCount < requiredSignals) {
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - seÃ±ales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
@@ -4296,13 +3092,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 blockReasonCode: "SIGNALS_THRESHOLD",
                 blockDetails: { signalsCount: buySignalCount, minSignalsRequired: requiredSignals, regime: regimeName },
                 finalSignal: "NONE",
-                finalReason: `Señales insuficientes: ${buySignalCount}/${requiredSignals}`,
+                finalReason: `SeÃ±ales insuficientes: ${buySignalCount}/${requiredSignals}`,
               });
               return;
             }
           } else {
-            // B3 Fallback: regex no matcheó - fail-closed en SMART_GUARD
-            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear señales (fail-closed)`, {
+            // B3 Fallback: regex no matcheÃ³ - fail-closed en SMART_GUARD
+            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear seÃ±ales (fail-closed)`, {
               pair,
               signal: "BUY",
               reason: "B3_REGEX_NO_MATCH",
@@ -4310,7 +3106,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               strategyId: "momentum",
               entryMode: "SMART_GUARD",
             });
-            log(`[B3] ${pair}: BLOQUEADO - regex no matcheó reason: "${signal.reason}"`, "trading");
+            log(`[B3] ${pair}: BLOQUEADO - regex no matcheÃ³ reason: "${signal.reason}"`, "trading");
             return;
           }
         }
@@ -4319,7 +3115,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         if (this.isPairInStopLossCooldown(pair)) {
           const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
           log(`${pair}: En cooldown post stop-loss`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - cooldown post stop-loss`, {
             pair,
             signal: "BUY",
             reason: "STOPLOSS_COOLDOWN",
@@ -4360,8 +3156,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
-          log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
+          log(`PosiciÃ³n existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - posiciÃ³n existente demasiado grande`, {
             pair,
             signal: "BUY",
             reason: "POSITION_TOO_LARGE",
@@ -4377,7 +3173,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         if (freshUsdBalance < minRequiredUSD) {
           log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - fondos insuficientes`, {
             pair,
             signal: "BUY",
             reason: "INSUFFICIENT_FUNDS",
@@ -4392,17 +3188,17 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) ===
+        // === CÃLCULO DE TAMAÃ‘O DE ORDEN (tradeAmountUSD) ===
         // SMART_GUARD v2: sgMinEntryUsd es un "objetivo preferido", no un bloqueo
-        // - Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd exactamente (no más)
-        // - Si saldo < sgMinEntryUsd → fallback automático a saldo disponible
-        // - floorUsd = max(exchangeMin, absoluteMin) → hard block si saldo < floorUsd
+        // - Si saldo >= sgMinEntryUsd â†’ usar sgMinEntryUsd exactamente (no mÃ¡s)
+        // - Si saldo < sgMinEntryUsd â†’ fallback automÃ¡tico a saldo disponible
+        // - floorUsd = max(exchangeMin, absoluteMin) â†’ hard block si saldo < floorUsd
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
         let sgReasonCode: SmartGuardReasonCode | undefined;
         
-        // Para SMART_GUARD: calcular orderUsdProposed por lógica normal, luego validar mínimos
+        // Para SMART_GUARD: calcular orderUsdProposed por lÃ³gica normal, luego validar mÃ­nimos
         const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, botConfig) : null;
         const sgMinEntryUsd = sgParams?.sgMinEntryUsd || 100;
         const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true; // DEPRECATED - se ignora
@@ -4415,7 +3211,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // usdDisponible = saldo real disponible (sin buffer en SMART_GUARD v2 para sizing exacto)
         const usdDisponible = freshUsdBalance;
         
-        // === NUEVA LÓGICA SMART_GUARD v2 ===
+        // === NUEVA LÃ“GICA SMART_GUARD v2 ===
         // floorUsd = max(minOrderExchangeUsd, MIN_ORDER_ABSOLUTE_USD) - HARD BLOCK
         const floorUsd = Math.max(SG_ABSOLUTE_MIN_USD, minRequiredUSD);
         
@@ -4426,37 +3222,37 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         if (positionMode === "SMART_GUARD") {
           // === SMART_GUARD v2 SIZING ===
           // Regla 1: sgMinEntryUsd es "objetivo preferido"
-          // Regla 2: Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd EXACTO
-          // Regla 3: Si saldo < sgMinEntryUsd → fallback a saldo disponible (si >= floorUsd)
-          // Regla 4: Si saldo < floorUsd → BLOQUEAR
+          // Regla 2: Si saldo >= sgMinEntryUsd â†’ usar sgMinEntryUsd EXACTO
+          // Regla 3: Si saldo < sgMinEntryUsd â†’ fallback a saldo disponible (si >= floorUsd)
+          // Regla 4: Si saldo < floorUsd â†’ BLOQUEAR
           
           originalAmount = sgMinEntryUsd; // El objetivo propuesto siempre es sgMinEntryUsd
           
           if (availableAfterCushion >= sgMinEntryUsd) {
-            // Caso A: Saldo suficiente → usar sgMinEntryUsd EXACTO (no más)
+            // Caso A: Saldo suficiente â†’ usar sgMinEntryUsd EXACTO (no mÃ¡s)
             tradeAmountUSD = sgMinEntryUsd;
             sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
             
           } else if (availableAfterCushion >= floorUsd) {
-            // Caso B: Saldo insuficiente para config, pero >= floorUsd → fallback automático
+            // Caso B: Saldo insuficiente para config, pero >= floorUsd â†’ fallback automÃ¡tico
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
             
           } else if (usdDisponible >= floorUsd && availableAfterCushion < floorUsd) {
-            // Caso C: Fee cushion lo baja de floorUsd → se bloqueará en validación
+            // Caso C: Fee cushion lo baja de floorUsd â†’ se bloquearÃ¡ en validaciÃ³n
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION";
             
           } else {
-            // Caso D: Saldo < floorUsd → se bloqueará en validación
+            // Caso D: Saldo < floorUsd â†’ se bloquearÃ¡ en validaciÃ³n
             tradeAmountUSD = usdDisponible;
             sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
           }
           
           log(`SMART_GUARD ${pair}: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
-          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
-          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
-          log(`  → sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
+          log(`  â†’ availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
+          log(`  â†’ cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  â†’ sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automÃ¡tico)`, "trading");
           
           // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
           this.updatePairTrace(pair, {
@@ -4470,19 +3266,19 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
             const originalBeforeTransition = tradeAmountUSD;
             tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
-            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} â†’ $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
           }
           
-          // La validación final de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
+          // La validaciÃ³n final de mÃ­nimos se hace DESPUÃ‰S con validateMinimumsOrSkip()
         } else {
-          // Modos SINGLE/DCA: lógica original con exposure limits
+          // Modos SINGLE/DCA: lÃ³gica original con exposure limits
           
-          // Verificar que el take-profit sea rentable después de comisiones
+          // Verificar que el take-profit sea rentable despuÃ©s de comisiones
           const profitCheck = this.isProfitableAfterFees(takeProfitPct);
           if (!profitCheck.isProfitable) {
-            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
+            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mÃ­nimo rentable (${profitCheck.minProfitRequired.toFixed(2)}%). Fees round-trip: ${profitCheck.roundTripFees.toFixed(2)}%`, "trading");
             
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
+            await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - take-profit menor que fees`, {
               pair,
               signal: "BUY",
               reason: "LOW_PROFITABILITY",
@@ -4498,7 +3294,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           tradeAmountUSD = freshUsdBalance * (riskPerTradePct / 100);
           tradeAmountUSD = Math.min(tradeAmountUSD, riskConfig.maxTradeUSD);
 
-          // MEJORA 3: Position sizing dinámico basado en confianza
+          // MEJORA 3: Position sizing dinÃ¡mico basado en confianza
           const confidenceFactor = this.getConfidenceSizingFactor(signal.confidence);
           const originalBeforeConfidence = tradeAmountUSD;
           tradeAmountUSD = tradeAmountUSD * confidenceFactor;
@@ -4519,15 +3315,15 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         const exposure = this.getAvailableExposure(pair, botConfig, freshUsdBalance);
         const maxByBalance = Math.max(0, freshUsdBalance * 0.95);
-        // POLÍTICA UNIFICADA: SMART_GUARD SÍ respeta maxTotalExposurePct para evitar sobreapalancamiento
-        // Pero NO aplica maxPairExposurePct (permite concentración en un par si hay señal fuerte)
+        // POLÃTICA UNIFICADA: SMART_GUARD SÃ respeta maxTotalExposurePct para evitar sobreapalancamiento
+        // Pero NO aplica maxPairExposurePct (permite concentraciÃ³n en un par si hay seÃ±al fuerte)
         const effectiveMaxAllowed = positionMode === "SMART_GUARD" 
-          ? Math.min(exposure.maxTotalAvailable, maxByBalance)  // Solo limita por exposición TOTAL
+          ? Math.min(exposure.maxTotalAvailable, maxByBalance)  // Solo limita por exposiciÃ³n TOTAL
           : Math.min(exposure.maxAllowed, maxByBalance);  // SINGLE/DCA limita por par Y total
         
         if (effectiveMaxAllowed < minRequiredUSD) {
-          log(`${pair}: Sin exposición disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, Mínimo: $${minRequiredUSD.toFixed(2)}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - sin exposición disponible`, {
+          log(`${pair}: Sin exposiciÃ³n disponible. Disponible: $${effectiveMaxAllowed.toFixed(2)}, MÃ­nimo: $${minRequiredUSD.toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - sin exposiciÃ³n disponible`, {
             pair,
             signal: "BUY",
             reason: "EXPOSURE_ZERO",
@@ -4539,12 +3335,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             blockReasonCode: "EXPOSURE_LIMIT",
             blockDetails: { exposureAvailable: effectiveMaxAllowed, minRequiredUsd: minRequiredUSD },
             finalSignal: "NONE",
-            finalReason: `Exposición insuficiente: $${effectiveMaxAllowed.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`,
+            finalReason: `ExposiciÃ³n insuficiente: $${effectiveMaxAllowed.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`,
           });
           this.setPairCooldown(pair);
           
           if (this.shouldSendExposureAlert(pair)) {
-            await botLogger.info("PAIR_COOLDOWN", `${pair} en cooldown - sin exposición disponible`, {
+            await botLogger.info("PAIR_COOLDOWN", `${pair} en cooldown - sin exposiciÃ³n disponible`, {
               pair,
               maxAllowed: effectiveMaxAllowed,
               minRequired: minRequiredUSD,
@@ -4552,31 +3348,31 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             });
 
             if (this.telegramService.isInitialized()) {
-              await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⏸️ <b>Par en Espera</b>
+              await this.telegramService.sendAlertToMultipleChats(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+â¸ï¸ <b>Par en Espera</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Disponible: <code>$${exposure.maxAllowed.toFixed(2)}</code>
-   • Mínimo requerido: <code>$${minRequiredUSD.toFixed(2)}</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Disponible: <code>$${exposure.maxAllowed.toFixed(2)}</code>
+   â€¢ MÃ­nimo requerido: <code>$${minRequiredUSD.toFixed(2)}</code>
 
-ℹ️ Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min
-━━━━━━━━━━━━━━━━━━━`, "system");
+â„¹ï¸ Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "system");
             }
           }
           return;
         }
 
-        // Ajustar por límite de exposición (solo para SINGLE/DCA, SMART_GUARD ya validó arriba)
+        // Ajustar por lÃ­mite de exposiciÃ³n (solo para SINGLE/DCA, SMART_GUARD ya validÃ³ arriba)
         if (positionMode !== "SMART_GUARD" && tradeAmountUSD > effectiveMaxAllowed) {
           originalAmount = tradeAmountUSD;
           tradeAmountUSD = effectiveMaxAllowed;
           wasAdjusted = true;
           
-          log(`${pair}: Trade ajustado de $${originalAmount.toFixed(2)} a $${tradeAmountUSD.toFixed(2)} (límite exposición)`, "trading");
+          log(`${pair}: Trade ajustado de $${originalAmount.toFixed(2)} a $${tradeAmountUSD.toFixed(2)} (lÃ­mite exposiciÃ³n)`, "trading");
           
-          await botLogger.info("TRADE_ADJUSTED", `Trade ajustado por límite de exposición`, {
+          await botLogger.info("TRADE_ADJUSTED", `Trade ajustado por lÃ­mite de exposiciÃ³n`, {
             pair,
             originalAmountUsd: originalAmount,
             adjustedAmountUsd: tradeAmountUSD,
@@ -4601,8 +3397,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         if (tradeVolume < minVolume) {
-          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
+          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mÃ­nimo ${minVolume}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - volumen < mÃ­nimo`, {
             pair,
             signal: "BUY",
             reason: "VOLUME_BELOW_MINIMUM",
@@ -4613,7 +3409,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // === VALIDACIÓN FINAL ÚNICA Y CENTRALIZADA (fuente de verdad) ===
+        // === VALIDACIÃ“N FINAL ÃšNICA Y CENTRALIZADA (fuente de verdad) ===
         // Se ejecuta ANTES de executeTrade() para REAL y DRY_RUN
         const orderUsdFinal = tradeAmountUSD;
         const envPrefix = environment.envTag;
@@ -4629,7 +3425,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           exposureAvailable: effectiveMaxAllowed,
           pair,
           sgMinEntryUsd,
-          sgAllowUnderMin, // DEPRECATED - se ignora en validación
+          sgAllowUnderMin, // DEPRECATED - se ignora en validaciÃ³n
           dryRun: this.dryRunMode,
           env: envPrefix,
           floorUsd: positionMode === "SMART_GUARD" ? floorUsd : undefined,
@@ -4637,7 +3433,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         });
         
         if (!validationResult.valid) {
-          // === [BUY_EVAL] LOGS v2: Valores detallados para auditoría ===
+          // === [BUY_EVAL] LOGS v2: Valores detallados para auditorÃ­a ===
           log(`[BUY_EVAL] ${pair}: mode=${positionMode}, sgReasonCode=${sgReasonCode}`, "trading");
           log(`[BUY_EVAL] ${pair}: availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
           log(`[BUY_EVAL] ${pair}: orderUsd=$${orderUsdFinal.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
@@ -4672,7 +3468,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             finalReason: `Blocked: ${validationResult.message}`,
           });
           
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - ${validationResult.skipReason}`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY bloqueada - ${validationResult.skipReason}`, {
             pair,
             signal: "BUY",
             reason: validationResult.skipReason,
@@ -4684,7 +3480,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
         
-        // Log de decisión final antes de ejecutar (con nuevo reason code)
+        // Log de decisiÃ³n final antes de ejecutar (con nuevo reason code)
         if (positionMode === "SMART_GUARD" && sgReasonCode) {
           log(`[FINAL CHECK] ${pair}: ALLOWED - ${sgReasonCode} orderUsd=$${orderUsdFinal.toFixed(2)}`, "trading");
         }
@@ -4789,9 +3585,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
       } else if (signal.action === "sell") {
-        // PRIMERO: Verificar si hay posición para vender (antes de cualquier lógica SMART_GUARD)
+        // PRIMERO: Verificar si hay posiciÃ³n para vender (antes de cualquier lÃ³gica SMART_GUARD)
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al SELL ignorada - sin posiciÃ³n para vender`, {
             pair,
             signal: "SELL",
             reason: "NO_POSITION",
@@ -4803,20 +3599,20 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             blockReasonCode: "NO_POSITION",
             blockDetails: { assetBalance },
             finalSignal: "NONE",
-            finalReason: "Sin posición para vender",
+            finalReason: "Sin posiciÃ³n para vender",
           });
           this.emitPairDecisionTrace(pair);
           return;
         }
         
-        // A1: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
-        // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
+        // A1: SMART_GUARD bloquea SELL por seÃ±al - solo risk exits permiten vender
+        // EXCEPCIÃ“N: Permitir liquidaciÃ³n de huÃ©rfanos (balance > 0 sin posiciÃ³n trackeada)
         const botConfigSell = await storage.getBotConfig();
         const positionModeSell = botConfigSell?.positionMode || "SINGLE";
         const isOrphanCleanup = assetBalance > 0 && (!existingPosition || existingPosition.amount <= 0);
         
         if (positionModeSell === "SMART_GUARD" && !isOrphanCleanup) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
             pair,
             signal: "SELL",
             reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
@@ -4833,18 +3629,18 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           
           // Notificar a Telegram
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🛡️ <b>Señal SELL Bloqueada</b>
+            await this.telegramService.sendAlertToMultipleChats(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ›¡ï¸ <b>SeÃ±al SELL Bloqueada</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Modo: <code>SMART_GUARD</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Modo: <code>SMART_GUARD</code>
 
-⚠️ Solo risk exits (SL/TP/Trailing) permiten vender.
+âš ï¸ Solo risk exits (SL/TP/Trailing) permiten vender.
 
-ℹ️ <i>${signal.reason}</i>
-━━━━━━━━━━━━━━━━━━━`, "system");
+â„¹ï¸ <i>${signal.reason}</i>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "system");
           }
           
           return;
@@ -4855,25 +3651,25 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // Si no hay lot trackeado, usar balance real del wallet
         let lotAmount = existingPosition?.amount ?? assetBalance;
         
-        // Reconciliación hacia ARRIBA (SINGLE/DCA): si hay posición trackeada pero el wallet tiene más,
-        // ajustamos el amount del lote para evitar restos sin posición.
+        // ReconciliaciÃ³n hacia ARRIBA (SINGLE/DCA): si hay posiciÃ³n trackeada pero el wallet tiene mÃ¡s,
+        // ajustamos el amount del lote para evitar restos sin posiciÃ³n.
         let realAssetBalance = assetBalance;
         if (existingPosition?.lotId) {
           try {
             const freshBalances = await this.getTradingExchange().getBalance();
             realAssetBalance = this.getAssetBalance(pair, freshBalances);
           } catch (balErr: any) {
-            log(`${pair}: Error obteniendo balance fresco para reconciliación SELL: ${balErr.message}`, "trading");
+            log(`${pair}: Error obteniendo balance fresco para reconciliaciÃ³n SELL: ${balErr.message}`, "trading");
           }
           if (realAssetBalance > lotAmount * 1.005) {
             const extraAmount = realAssetBalance - lotAmount;
             const extraValueUsd = extraAmount * currentPrice;
             if (extraValueUsd <= DUST_THRESHOLD_USD) {
-              log(`🔄 Reconciliación (UP) pre-SELL señal en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
+              log(`ðŸ”„ ReconciliaciÃ³n (UP) pre-SELL seÃ±al en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
               existingPosition.amount = realAssetBalance;
               this.openPositions.set(existingPosition.lotId, existingPosition);
               await this.savePositionToDB(pair, existingPosition);
-              await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) antes de SELL por señal en ${pair}`, {
+              await botLogger.info("POSITION_RECONCILED", `PosiciÃ³n reconciliada (UP) antes de SELL por seÃ±al en ${pair}`, {
                 pair,
                 lotId: existingPosition.lotId,
                 direction: "UP",
@@ -4884,14 +3680,14 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               });
               lotAmount = existingPosition.amount;
             } else {
-              log(`⚠️ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
+              log(`âš ï¸ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliaciÃ³n UP.`, "trading");
             }
           }
         }
 
         const rawSellVolume = Math.min(lotAmount, realAssetBalance);
         
-        // Normalizar al stepSize de Kraken para evitar errores de precisión
+        // Normalizar al stepSize de Kraken para evitar errores de precisiÃ³n
         const sellVolume = this.normalizeVolume(pair, rawSellVolume);
         
         const minVolumeSell = this.getOrderMin(pair);
@@ -4899,7 +3695,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         // === DUST DETECTION: No intentar vender si es dust ===
         if (sellVolume < minVolumeSell) {
-          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mínimo)`, {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mÃ­nimo)`, {
             pair,
             signal: "SELL",
             reason: "DUST_POSITION",
@@ -4983,7 +3779,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         earlyRegimeReason = "Regime detection disabled in config";
       }
       
-      // Pre-calcular adjustedMinSignals para régimen (usado en analyzeWithCandleStrategy)
+      // Pre-calcular adjustedMinSignals para rÃ©gimen (usado en analyzeWithCandleStrategy)
       const baseMinSignalsForStrategy = 5; // Base para momentum
       const adjustedMinSignalsForStrategy = earlyRegime === "TRANSITION" 
         ? Math.min(baseMinSignalsForStrategy, 4) 
@@ -5005,20 +3801,20 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           selectedStrategyId = "mean_reversion_simple";
           signal = this.meanReversionSimpleStrategy(pair, closedCandles, currentPrice);
           routerApplied = true;
-          log(`[ROUTER] ${pair}: RANGE regime → mean_reversion_simple`, "trading");
+          log(`[ROUTER] ${pair}: RANGE regime â†’ mean_reversion_simple`, "trading");
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
           signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           routerApplied = true;
-          log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
+          log(`[ROUTER] ${pair}: TRANSITION regime â†’ momentum_candles + overrides`, "trading");
         } else {
           // TREND or other: Use standard momentum
           selectedStrategyId = `momentum_candles_${timeframe}`;
           signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           if (earlyRegime === "TREND") {
             routerApplied = true;
-            log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
+            log(`[ROUTER] ${pair}: TREND regime â†’ momentum_candles`, "trading");
           }
         }
       } else {
@@ -5030,18 +3826,18 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
       this.lastScanResults.set(pair, {
         signal: signalStr,
-        reason: signal.reason || "Sin señal",
+        reason: signal.reason || "Sin seÃ±al",
         cooldownSec: this.getCooldownRemainingSec(pair),
         exposureAvailable: exposureScan.maxAllowed,
       });
       
-      // Ajustar minSignalsRequired según régimen (antes de guardar en trace/cache)
+      // Ajustar minSignalsRequired segÃºn rÃ©gimen (antes de guardar en trace/cache)
       const baseMinSignals = signal.minSignalsRequired ?? 5;
       const adjustedMinSignals = earlyRegime === "TRANSITION" 
         ? Math.min(baseMinSignals, 4) 
         : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) : baseMinSignals);
       
-      // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
+      // Actualizar trace con seÃ±al raw + rÃ©gimen + signalsCount (candles mode)
       this.updatePairTrace(pair, {
         selectedStrategy: selectedStrategyId,
         rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
@@ -5052,8 +3848,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         minSignalsRequired: adjustedMinSignals,
         exposureAvailableUsd: exposureScan.maxAllowed,
         finalSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
-        finalReason: signal.reason || "Sin señal",
-        isIntermediateCycle: false, // Análisis completo
+        finalReason: signal.reason || "Sin seÃ±al",
+        isIntermediateCycle: false, // AnÃ¡lisis completo
         lastCandleClosedAt: new Date(candle.time * 1000).toISOString(),
         lastFullEvaluationAt: new Date().toISOString(),
         lastRegimeUpdateAt: earlyRegime ? new Date().toISOString() : null,
@@ -5061,14 +3857,14 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         regimeRouterEnabled: routerEnabled,
       });
       
-      // Cache para ciclos intermedios (evita null en próximos scans sin vela cerrada)
+      // Cache para ciclos intermedios (evita null en prÃ³ximos scans sin vela cerrada)
       this.cacheFullAnalysis(pair, {
         regime: earlyRegime || "UNKNOWN",
         regimeReason: earlyRegimeReason || "No regime data",
         selectedStrategy: selectedStrategyId,
         signalsCount: signal.signalsCount ?? 0,
         minSignalsRequired: adjustedMinSignals,
-        rawReason: signal.reason || "Sin señal",
+        rawReason: signal.reason || "Sin seÃ±al",
         candleClosedAt: new Date(candle.time * 1000).toISOString(),
         regimeRouterEnabled: routerEnabled,
         feeCushionEffectivePct: getRoundTripWithBufferPct(),
@@ -5092,13 +3888,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       const currentPrice = Number((ticker as any)?.last ?? 0);
       
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-        log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluación`, "trading");
-        await botLogger.warn("PRICE_INVALID", `Precio no válido para ${pair}`, { pair, currentPrice });
+        log(`[PRICE_INVALID] ${pair}: precio=${currentPrice}, saltando evaluaciÃ³n`, "trading");
+        await botLogger.warn("PRICE_INVALID", `Precio no vÃ¡lido para ${pair}`, { pair, currentPrice });
         
-        // Enviar alerta crítica de precio inválido
+        // Enviar alerta crÃ­tica de precio invÃ¡lido
         const alert = ErrorAlertService.createCustomAlert(
           'PRICE_INVALID',
-          `Precio inválido detectado: ${currentPrice} para ${pair} en evaluación de señal`,
+          `Precio invÃ¡lido detectado: ${currentPrice} para ${pair} en evaluaciÃ³n de seÃ±al`,
           'CRITICAL',
           'analyzePairAndTrade',
           'server/services/tradingEngine.ts',
@@ -5118,7 +3914,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
           const cooldownSec = this.getCooldownRemainingSec(pair);
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - par en cooldown`, {
             pair,
             signal: "BUY",
             reason: "PAIR_COOLDOWN",
@@ -5135,7 +3931,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
+        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posiciÃ³n abierta
         // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
         const botConfigCheck = await storage.getBotConfig();
         const positionMode = botConfigCheck?.positionMode || "SINGLE";
@@ -5156,8 +3952,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
             const remainingSec = Math.ceil(sgMinSecondsBetweenEntriesCandles - secondsSinceLastOrder);
-            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
+            log(`${pair}: Compra bloqueada - Cooldown anti-rÃ¡faga: ${remainingSec}s`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - cooldown anti-rÃ¡faga`, {
               pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
               secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntriesCandles, remainingSeconds: remainingSec,
             });
@@ -5165,7 +3961,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
               smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
               blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
-              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
+              finalSignal: "NONE", finalReason: `Cooldown anti-rÃ¡faga: ${remainingSec}s`,
             });
             return;
           }
@@ -5177,7 +3973,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             : "SINGLE_MODE_POSITION_EXISTS";
           
           log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - mÃ¡ximo de slots ocupados`, {
             pair,
             signal: "BUY",
             reason: reasonCode,
@@ -5204,8 +4000,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
-        // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
+        // B3: SMART_GUARD requiere â‰¥5 seÃ±ales para BUY (umbral mÃ¡s estricto)
+        // + Market Regime: 6 seÃ±ales en RANGE, pausa en TRANSITION (unless Router enabled)
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
         let currentRegimeReasonForTelegram: string | null = null;
@@ -5224,7 +4020,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               
               // TRANSITION: If Router enabled, allow with overrides; otherwise block
               if (this.shouldPauseEntriesDueToRegime(regimeAnalysis.regime, regimeEnabled) && !routerEnabledForSizing) {
-                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - régimen TRANSITION (pausa entradas)`, {
+                await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - rÃ©gimen TRANSITION (pausa entradas)`, {
                   pair,
                   signal: "BUY",
                   reason: "REGIME_TRANSITION_PAUSE",
@@ -5244,7 +4040,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                   blockReasonCode: "REGIME_PAUSE",
                   blockDetails: { regime: regimeAnalysis.regime, adx: regimeAnalysis.adx },
                   finalSignal: "NONE",
-                  finalReason: `Régimen TRANSITION: pausa entradas`,
+                  finalReason: `RÃ©gimen TRANSITION: pausa entradas`,
                 });
                 return;
               }
@@ -5258,10 +4054,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
               const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
               requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
-              regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
+              regimeInfo = ` [RÃ©gimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
-              log(`${pair}: Error en detección de régimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
+              log(`${pair}: Error en detecciÃ³n de rÃ©gimen, usando base SMART_GUARD: ${regimeError.message}`, "trading");
               // Update scan results to reflect the error state
               this.lastScanResults.set(pair, {
                 signal: "BUY",
@@ -5276,17 +4072,17 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             }
           }
           
-          // Regex flexible: acepta "Señales: X/Y" (Momentum) o "Señales: X" (Mean Reversion)
-          const signalCountMatch = signal.reason.match(/Señales:\s*(\d+)(?:\/(\d+))?/);
+          // Regex flexible: acepta "SeÃ±ales: X/Y" (Momentum) o "SeÃ±ales: X" (Mean Reversion)
+          const signalCountMatch = signal.reason.match(/SeÃ±ales:\s*(\d+)(?:\/(\d+))?/);
           if (signalCountMatch) {
             const buySignalCount = parseInt(signalCountMatch[1], 10);
-            // Extraer nombre de régimen limpio para analytics
-            const regimeMatch = regimeInfo.match(/Régimen:\s*(\w+)/);
+            // Extraer nombre de rÃ©gimen limpio para analytics
+            const regimeMatch = regimeInfo.match(/RÃ©gimen:\s*(\w+)/);
             const regimeName = regimeMatch ? regimeMatch[1] : (regimeEnabled ? "BASE" : "DISABLED");
             
-            log(`[B3] ${pair}: Parsed señales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
+            log(`[B3] ${pair}: Parsed seÃ±ales=${buySignalCount}, required=${requiredSignals}, regime=${regimeName}`, "trading");
             if (buySignalCount < requiredSignals) {
-              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - señales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
+              await botLogger.info("TRADE_SKIPPED", `SMART_GUARD BUY bloqueado - seÃ±ales insuficientes (${buySignalCount} < ${requiredSignals})${regimeInfo}`, {
                 pair,
                 signal: "BUY",
                 reason: "SMART_GUARD_INSUFFICIENT_SIGNALS",
@@ -5303,13 +4099,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
                 blockReasonCode: "SIGNALS_THRESHOLD",
                 blockDetails: { signalsCount: buySignalCount, minSignalsRequired: requiredSignals, regime: regimeName },
                 finalSignal: "NONE",
-                finalReason: `Señales insuficientes: ${buySignalCount}/${requiredSignals}`,
+                finalReason: `SeÃ±ales insuficientes: ${buySignalCount}/${requiredSignals}`,
               });
               return;
             }
           } else {
-            // B3 Fallback: regex no matcheó - fail-closed en SMART_GUARD
-            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear señales (fail-closed)`, {
+            // B3 Fallback: regex no matcheÃ³ - fail-closed en SMART_GUARD
+            await botLogger.warn("B3_REGEX_NO_MATCH", `SMART_GUARD BUY bloqueado - no se pudo parsear seÃ±ales (fail-closed)`, {
               pair,
               signal: "BUY",
               reason: "B3_REGEX_NO_MATCH",
@@ -5317,7 +4113,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               strategyId: selectedStrategyId,
               entryMode: "SMART_GUARD",
             });
-            log(`[B3] ${pair}: BLOQUEADO - regex no matcheó reason: "${signal.reason}"`, "trading");
+            log(`[B3] ${pair}: BLOQUEADO - regex no matcheÃ³ reason: "${signal.reason}"`, "trading");
             return;
           }
         }
@@ -5325,7 +4121,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         if (this.isPairInStopLossCooldown(pair)) {
           const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
           log(`${pair}: En cooldown post stop-loss`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - cooldown post stop-loss`, {
             pair,
             signal: "BUY",
             reason: "STOPLOSS_COOLDOWN",
@@ -5366,8 +4162,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
-          log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
+          log(`PosiciÃ³n existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - posiciÃ³n existente demasiado grande`, {
             pair,
             signal: "BUY",
             reason: "POSITION_TOO_LARGE",
@@ -5383,7 +4179,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         if (freshUsdBalance < minRequiredUSD) {
           log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - fondos insuficientes`, {
             pair,
             signal: "BUY",
             reason: "INSUFFICIENT_FUNDS",
@@ -5398,13 +4194,13 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) - UNIFICADO CON analyzePairAndTrade ===
+        // === CÃLCULO DE TAMAÃ‘O DE ORDEN (tradeAmountUSD) - UNIFICADO CON analyzePairAndTrade ===
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
         let sgReasonCode: SmartGuardReasonCode | undefined;
         
-        // SMART_GUARD: obtener parámetros
+        // SMART_GUARD: obtener parÃ¡metros
         const sgParams = positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, botConfig) : null;
         const sgMinEntryUsd = sgParams?.sgMinEntryUsd || 100;
         const sgAllowUnderMin = sgParams?.sgAllowUnderMin ?? true;
@@ -5437,8 +4233,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           }
           
           log(`SMART_GUARD ${pair} [${selectedStrategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
-          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
-          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  â†’ availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
+          log(`  â†’ cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
           
           // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
           this.updatePairTrace(pair, {
@@ -5452,14 +4248,14 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
             const originalBeforeTransition = tradeAmountUSD;
             tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
-            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} â†’ $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
           }
         } else {
-          // Modos SINGLE/DCA: lógica original
+          // Modos SINGLE/DCA: lÃ³gica original
           const profitCheck = this.isProfitableAfterFees(takeProfitPct);
           if (!profitCheck.isProfitable) {
-            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
+            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mÃ­nimo rentable`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - take-profit menor que fees`, {
               pair,
               signal: "BUY",
               reason: "LOW_PROFITABILITY",
@@ -5492,8 +4288,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           : Math.min(exposure.maxAllowed, maxByBalance);
         
         if (effectiveMaxAllowed < minRequiredUSD) {
-          log(`${pair}: Sin exposición disponible`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - sin exposición disponible`, {
+          log(`${pair}: Sin exposiciÃ³n disponible`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - sin exposiciÃ³n disponible`, {
             pair,
             signal: "BUY",
             reason: "EXPOSURE_ZERO",
@@ -5504,7 +4300,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           return;
         }
 
-        // Ajustar por límite de exposición (solo para SINGLE/DCA)
+        // Ajustar por lÃ­mite de exposiciÃ³n (solo para SINGLE/DCA)
         if (positionMode !== "SMART_GUARD" && tradeAmountUSD > effectiveMaxAllowed) {
           originalAmount = tradeAmountUSD;
           tradeAmountUSD = effectiveMaxAllowed;
@@ -5527,8 +4323,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
         if (tradeVolume < minVolume) {
-          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
+          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mÃ­nimo ${minVolume}`, "trading");
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al BUY ignorada - volumen < mÃ­nimo`, {
             pair,
             signal: "BUY",
             reason: "VOLUME_BELOW_MINIMUM",
@@ -5629,9 +4425,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         }
 
       } else if (signal.action === "sell") {
-        // PRIMERO: Verificar si hay posición para vender (antes de cualquier lógica SMART_GUARD)
+        // PRIMERO: Verificar si hay posiciÃ³n para vender (antes de cualquier lÃ³gica SMART_GUARD)
         if (assetBalance <= 0 && (!existingPosition || existingPosition.amount <= 0)) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL ignorada - sin posición para vender`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al SELL ignorada - sin posiciÃ³n para vender`, {
             pair,
             signal: "SELL",
             reason: "NO_POSITION",
@@ -5644,20 +4440,20 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             blockReasonCode: "NO_POSITION",
             blockDetails: { assetBalance, strategyId: selectedStrategyId },
             finalSignal: "NONE",
-            finalReason: "Sin posición para vender",
+            finalReason: "Sin posiciÃ³n para vender",
           });
           this.emitPairDecisionTrace(pair);
           return;
         }
         
-        // A2: SMART_GUARD bloquea SELL por señal - solo risk exits permiten vender
-        // EXCEPCIÓN: Permitir liquidación de huérfanos (balance > 0 sin posición trackeada)
+        // A2: SMART_GUARD bloquea SELL por seÃ±al - solo risk exits permiten vender
+        // EXCEPCIÃ“N: Permitir liquidaciÃ³n de huÃ©rfanos (balance > 0 sin posiciÃ³n trackeada)
         const botConfigSellCandles = await storage.getBotConfig();
         const positionModeSellCandles = botConfigSellCandles?.positionMode || "SINGLE";
         const isOrphanCleanupCandles = assetBalance > 0 && (!existingPosition || existingPosition.amount <= 0);
         
         if (positionModeSellCandles === "SMART_GUARD" && !isOrphanCleanupCandles) {
-          await botLogger.info("TRADE_SKIPPED", `Señal SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
+          await botLogger.info("TRADE_SKIPPED", `SeÃ±al SELL bloqueada en SMART_GUARD - solo risk exits permiten vender`, {
             pair,
             signal: "SELL",
             reason: "SMART_GUARD_SIGNAL_SELL_BLOCKED",
@@ -5679,24 +4475,24 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // Si no hay lot trackeado, usar balance real del wallet
         let lotAmount = existingPosition?.amount ?? assetBalance;
         
-        // Reconciliación hacia ARRIBA (SINGLE/DCA) antes de SELL por señal en candles
+        // ReconciliaciÃ³n hacia ARRIBA (SINGLE/DCA) antes de SELL por seÃ±al en candles
         let realAssetBalance = assetBalance;
         if (existingPosition?.lotId) {
           try {
             const freshBalances = await this.getTradingExchange().getBalance();
             realAssetBalance = this.getAssetBalance(pair, freshBalances);
           } catch (balErr: any) {
-            log(`${pair}: Error obteniendo balance fresco para reconciliación SELL (candles): ${balErr.message}`, "trading");
+            log(`${pair}: Error obteniendo balance fresco para reconciliaciÃ³n SELL (candles): ${balErr.message}`, "trading");
           }
           if (realAssetBalance > lotAmount * 1.005) {
             const extraAmount = realAssetBalance - lotAmount;
             const extraValueUsd = extraAmount * currentPrice;
             if (extraValueUsd <= DUST_THRESHOLD_USD) {
-              log(`🔄 Reconciliación (UP) pre-SELL señal (candles) en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
+              log(`ðŸ”„ ReconciliaciÃ³n (UP) pre-SELL seÃ±al (candles) en ${pair} (${existingPosition.lotId}): lot=${lotAmount} real=${realAssetBalance}`, "trading");
               existingPosition.amount = realAssetBalance;
               this.openPositions.set(existingPosition.lotId, existingPosition);
               await this.savePositionToDB(pair, existingPosition);
-              await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) antes de SELL por señal (candles) en ${pair}`, {
+              await botLogger.info("POSITION_RECONCILED", `PosiciÃ³n reconciliada (UP) antes de SELL por seÃ±al (candles) en ${pair}`, {
                 pair,
                 lotId: existingPosition.lotId,
                 direction: "UP",
@@ -5707,7 +4503,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
               });
               lotAmount = existingPosition.amount;
             } else {
-              log(`⚠️ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
+              log(`âš ï¸ Balance real mayor al lote en ${pair} (${existingPosition.lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliaciÃ³n UP.`, "trading");
             }
           }
         }
@@ -5720,7 +4516,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
 
         // === DUST DETECTION ===
         if (sellVolume < minVolumeSell) {
-          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mínimo)`, {
+          await botLogger.info("TRADE_SKIPPED", `SELL skipped - dust position (volumen < mÃ­nimo)`, {
             pair,
             signal: "SELL",
             reason: "DUST_POSITION",
@@ -5798,7 +4594,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     if (mtfAnalysis && signal.action !== "hold") {
       const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis);
       if (mtfBoost.filtered) {
-        return { action: "hold", pair, confidence: 0.3, reason: `Señal filtrada por MTF: ${mtfBoost.reason}` };
+        return { action: "hold", pair, confidence: 0.3, reason: `SeÃ±al filtrada por MTF: ${mtfBoost.reason}` };
       }
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
       signal.reason += ` | MTF: ${mtfAnalysis.summary}`;
@@ -5813,10 +4609,10 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     regime?: MarketRegime | string | null
   ): { filtered: boolean; confidenceBoost: number; reason: string; filterType?: "MTF_STRICT" | "MTF_STANDARD" } {
     if (signal.action === "buy") {
-      // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4) ===
+      // === MTF ESTRICTO POR RÃ‰GIMEN (Fase 2.4) ===
       // En TRANSITION: exigir MTF >= 0.3 para compras
       // En RANGE: exigir MTF >= 0.2 para compras
-      // Esto evita compras contra tendencia mayor en regímenes inestables
+      // Esto evita compras contra tendencia mayor en regÃ­menes inestables
       if (regime === "TRANSITION" && mtf.alignment < 0.3) {
         return { 
           filtered: true, 
@@ -5834,12 +4630,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         };
       }
       
-      // Filtros estándar existentes
+      // Filtros estÃ¡ndar existentes
       if (mtf.longTerm === "bearish" && mtf.mediumTerm === "bearish") {
         return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h bajista", filterType: "MTF_STANDARD" };
       }
       if (mtf.alignment < -0.5) {
-        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF negativa (${mtf.alignment.toFixed(2)})`, filterType: "MTF_STANDARD" };
+        return { filtered: true, confidenceBoost: 0, reason: `AlineaciÃ³n MTF negativa (${mtf.alignment.toFixed(2)})`, filterType: "MTF_STANDARD" };
       }
       if (mtf.alignment > 0.5) {
         return { filtered: false, confidenceBoost: 0.15, reason: "Confirmado por MTF alcista" };
@@ -5854,7 +4650,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         return { filtered: true, confidenceBoost: 0, reason: "Tendencia 1h y 4h alcista" };
       }
       if (mtf.alignment > 0.5) {
-        return { filtered: true, confidenceBoost: 0, reason: `Alineación MTF positiva (${mtf.alignment.toFixed(2)})` };
+        return { filtered: true, confidenceBoost: 0, reason: `AlineaciÃ³n MTF positiva (${mtf.alignment.toFixed(2)})` };
       }
       if (mtf.alignment < -0.5) {
         return { filtered: false, confidenceBoost: 0.15, reason: "Confirmado por MTF bajista" };
@@ -5913,7 +4709,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "buy",
         pair,
         confidence,
-        reason: `Momentum alcista: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+        reason: `Momentum alcista: ${buyReasons.join(", ")} | SeÃ±ales: ${buySignals}/${sellSignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
       };
@@ -5924,7 +4720,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         action: "sell",
         pair,
         confidence,
-        reason: `Momentum bajista: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+        reason: `Momentum bajista: ${sellReasons.join(", ")} | SeÃ±ales: ${sellSignals}/${buySignals}`,
         signalsCount: sellSignals,
         minSignalsRequired,
       };
@@ -5937,7 +4733,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     // Determine the actual blocking reason
     let blockReason = "";
     if (dominantCount < minSignalsRequired) {
-      blockReason = `señales insuficientes (${dominantCount}/${minSignalsRequired})`;
+      blockReason = `seÃ±ales insuficientes (${dominantCount}/${minSignalsRequired})`;
     } else if (dominantSide === "buy" && rsi >= 70) {
       blockReason = `RSI muy alto (${rsi.toFixed(0)}>=70) bloquea compra`;
     } else if (dominantSide === "sell" && rsi <= 30) {
@@ -5952,7 +4748,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       action: "hold", 
       pair, 
       confidence: 0.3, 
-      reason: `Sin señal clara momentum: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
+      reason: `Sin seÃ±al clara momentum: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
       signalsCount: dominantCount,
       minSignalsRequired,
     };
@@ -5982,7 +4778,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       if (rsi < 25) { confidence += 0.1; reasons.push(`RSI muy bajo (${rsi.toFixed(0)})`); }
       if (volumeAnalysis.isAbnormal && volumeAnalysis.direction === "bearish") {
         confidence += 0.05;
-        reasons.push("Volumen de capitulación");
+        reasons.push("Volumen de capitulaciÃ³n");
       }
       
       return {
@@ -6076,7 +4872,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const reasons: string[] = [];
     let confidence = 0.65;
 
-    // Filtro de volatilidad mínima usando ATR
+    // Filtro de volatilidad mÃ­nima usando ATR
     if (atrPercent < 0.1) {
       return { action: "hold", pair, confidence: 0.2, reason: `Volatilidad ATR muy baja (${atrPercent.toFixed(2)}%)`, signalsCount: 0, minSignalsRequired };
     }
@@ -6085,7 +4881,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const entryThreshold = Math.max(0.2, atrPercent * 0.3);
 
     if (priceChange < -entryThreshold && volatility > 0.15) {
-      reasons.push(`Caída rápida ${priceChange.toFixed(2)}%`);
+      reasons.push(`CaÃ­da rÃ¡pida ${priceChange.toFixed(2)}%`);
       reasons.push(`ATR: ${atrPercent.toFixed(2)}%`);
       
       if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
@@ -6100,7 +4896,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         confidence += 0.05;
         reasons.push("MACD cerca de cruce");
       }
-      // Bonus de confianza si ATR es alto (más oportunidad de profit)
+      // Bonus de confianza si ATR es alto (mÃ¡s oportunidad de profit)
       if (atrPercent > 0.5) {
         confidence += 0.05;
       }
@@ -6116,7 +4912,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     }
     
     if (priceChange > entryThreshold && volatility > 0.15) {
-      reasons.push(`Subida rápida +${priceChange.toFixed(2)}%`);
+      reasons.push(`Subida rÃ¡pida +${priceChange.toFixed(2)}%`);
       reasons.push(`ATR: ${atrPercent.toFixed(2)}%`);
       
       if (volumeAnalysis.isAbnormal && volumeAnalysis.ratio > 1.5) {
@@ -6163,7 +4959,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const high = Math.max(...prices);
     const low = Math.min(...prices);
     
-    // Usar ATR para determinar el espaciado del grid dinámicamente
+    // Usar ATR para determinar el espaciado del grid dinÃ¡micamente
     const atr = this.calculateATR(history, 14);
     const atrPercent = this.calculateATRPercent(history, 14);
     
@@ -6176,7 +4972,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const gridSize = Math.max(atrBasedGridSize, rangeBasedGridSize);
     
     if (gridSize <= 0) {
-      return { action: "hold", pair, confidence: 0, reason: "Grid size inválido", signalsCount: 0, minSignalsRequired };
+      return { action: "hold", pair, confidence: 0, reason: "Grid size invÃ¡lido", signalsCount: 0, minSignalsRequired };
     }
     
     // Calcular niveles basados en precio medio
@@ -6499,7 +5295,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       emaAlignment: 0,
       bollingerWidth: 2,
       confidence: 0.3,
-      reason: "Datos insuficientes para detección de régimen",
+      reason: "Datos insuficientes para detecciÃ³n de rÃ©gimen",
     };
     
     if (!candles || candles.length < 50) {
@@ -6575,12 +5371,12 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
         // Exit TREND zone but not yet RANGE - TRANSITION
         regime = "TRANSITION";
         confidence = 0.5;
-        reason = `Transición (ADX=${adx.toFixed(0)}, ${emaMisaligned ? "EMAs desalineadas" : "esperando confirmación"})`;
+        reason = `TransiciÃ³n (ADX=${adx.toFixed(0)}, ${emaMisaligned ? "EMAs desalineadas" : "esperando confirmaciÃ³n"})`;
       } else {
         // ADX between 24-28: maintain current or default to TRANSITION
         regime = "TRANSITION";
         confidence = 0.5;
-        reason = `Zona intermedia (ADX=${adx.toFixed(0)}, histéresis activa)`;
+        reason = `Zona intermedia (ADX=${adx.toFixed(0)}, histÃ©resis activa)`;
       }
       
       if (!isFinite(confidence)) confidence = 0.5;
@@ -6642,7 +5438,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const preset = REGIME_PRESETS[regime];
     
     // Fee-aware minimum TP floor: must cover round-trip fees + profit buffer
-    // Bot uses 100% MARKET orders → takerFee both legs
+    // Bot uses 100% MARKET orders â†’ takerFee both legs
     // Default: 0.40% * 2 = 0.80% + 1.00% buffer = 1.80% minimum TP
     const TAKER_FEE_PCT = 0.40;
     const PROFIT_BUFFER_PCT = 1.00;
@@ -6670,7 +5466,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     // If insufficient data or ATR is NaN/invalid, fall back to static defaults
     const ATR_MIN_PERIODS = 14;
     if (historyLength < ATR_MIN_PERIODS || !isFinite(atrPercent) || isNaN(atrPercent) || atrPercent <= 0) {
-      log(`[ATR_EXIT] ${pair}: Insufficient ATR data (history=${historyLength}, ATR=${atrPercent}) → using static fallback`, "trading");
+      log(`[ATR_EXIT] ${pair}: Insufficient ATR data (history=${historyLength}, ATR=${atrPercent}) â†’ using static fallback`, "trading");
       return {
         slPct: 5.0,
         tpPct: Math.max(MIN_TP_FLOOR, preset.sgTpFixedPct),
@@ -6703,7 +5499,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     const finalTrail = Math.max(MIN_TRAIL_FLOOR, Math.min(4.0, dynamicTrailPct));
     const finalBe = Math.max(minBeFloorPct, Math.min(3.0, dynamicBePct));
     
-    log(`[ATR_EXIT] ${pair}: ATR=${clampedAtr.toFixed(2)}% regime=${regime} → SL=${finalSl.toFixed(2)}% TP=${finalTp.toFixed(2)}% Trail=${finalTrail.toFixed(2)}% BE=${finalBe.toFixed(2)}% (minTP=${MIN_TP_FLOOR.toFixed(2)}%)`, "trading");
+    log(`[ATR_EXIT] ${pair}: ATR=${clampedAtr.toFixed(2)}% regime=${regime} â†’ SL=${finalSl.toFixed(2)}% TP=${finalTp.toFixed(2)}% Trail=${finalTrail.toFixed(2)}% BE=${finalBe.toFixed(2)}% (minTP=${MIN_TP_FLOOR.toFixed(2)}%)`, "trading");
     
     return {
       slPct: finalSl,
@@ -6794,8 +5590,8 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
       
       return confirmedAnalysis;
     } catch (error: any) {
-      log(`Error obteniendo régimen para ${pair}: ${error.message}`, "trading");
-      return { ...defaultResult, reason: "Error en detección" };
+      log(`Error obteniendo rÃ©gimen para ${pair}: ${error.message}`, "trading");
+      return { ...defaultResult, reason: "Error en detecciÃ³n" };
     }
   }
   
@@ -6866,7 +5662,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
             lastAdx: rawAnalysis.adx.toString(),
           });
           log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-          const syncedReason = `Manteniendo ${currentConfirmed} (confirmación ${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
+          const syncedReason = `Manteniendo ${currentConfirmed} (confirmaciÃ³n ${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
           return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
         }
       } else {
@@ -6878,7 +5674,7 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           lastAdx: rawAnalysis.adx.toString(),
         });
         log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-        const syncedReason = `Manteniendo ${currentConfirmed} (confirmación 1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
+        const syncedReason = `Manteniendo ${currentConfirmed} (confirmaciÃ³n 1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
         return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
       }
     }
@@ -6924,38 +5720,38 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
     });
     
     const regimeEmoji: Record<MarketRegime, string> = {
-      TREND: "📈",
-      RANGE: "↔️",
-      TRANSITION: "⏳",
+      TREND: "ðŸ“ˆ",
+      RANGE: "â†”ï¸",
+      TRANSITION: "â³",
     };
     
     const preset = REGIME_PRESETS[analysis.regime];
     const presetInfo = analysis.regime === "TRANSITION" 
-      ? "Entradas pausadas hasta confirmación"
+      ? "Entradas pausadas hasta confirmaciÃ³n"
       : `BE: ${preset.sgBeAtPct}%, Trail: ${preset.sgTrailDistancePct}%, TP: ${preset.sgTpFixedPct}%, MinSig: ${preset.minSignals}`;
     
     const message = `
-━━━━━━━━━━━━━━━━━━━
-${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+${regimeEmoji[analysis.regime]} <b>Cambio de RÃ©gimen</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Antes: <code>${fromRegime}</code> → Ahora: <code>${analysis.regime}</code>
-   • ADX: <code>${analysis.adx.toFixed(0)}</code>
-   • Razón: <code>${analysis.reason}</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Antes: <code>${fromRegime}</code> â†’ Ahora: <code>${analysis.regime}</code>
+   â€¢ ADX: <code>${analysis.adx.toFixed(0)}</code>
+   â€¢ RazÃ³n: <code>${analysis.reason}</code>
 
-⚙️ <b>Parámetros ajustados:</b>
+âš™ï¸ <b>ParÃ¡metros ajustados:</b>
    ${presetInfo}
 
-🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`;
+ðŸ”— <a href="${environment.panelUrl}">Ver Panel</a>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
 
     await this.telegramService.sendAlertWithSubtype(message, "strategy", "strategy_regime_change");
     
     log(`[TELEGRAM] RegimeChanged pair=${pair} from=${fromRegime} to=${analysis.regime}`, "trading");
     log(`[REGIME_NOTIFY] sent=true pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
     
-    await botLogger.info("SYSTEM_ALERT", `Régimen cambiado en ${pair}: ${fromRegime} → ${analysis.regime}`, {
+    await botLogger.info("SYSTEM_ALERT", `RÃ©gimen cambiado en ${pair}: ${fromRegime} â†’ ${analysis.regime}`, {
       pair,
       fromRegime,
       toRegime: analysis.regime,
@@ -7048,7 +5844,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
 
   // === PAIR_DECISION_TRACE: Helpers ===
   private initPairTrace(pair: string, exposureAvailable: number, isIntermediateCycle: boolean = true): void {
-    // En ciclos intermedios, usar datos cacheados del último análisis completo
+    // En ciclos intermedios, usar datos cacheados del Ãºltimo anÃ¡lisis completo
     const cached = this.lastFullAnalysisCache.get(pair);
     
     const trace: DecisionTraceContext = {
@@ -7061,7 +5857,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       selectedStrategy: isIntermediateCycle && cached ? cached.selectedStrategy : null,
       rawSignal: "NONE",
       rawReason: isIntermediateCycle 
-        ? (cached ? `Ciclo intermedio - sin vela 15m cerrada (último: ${cached.rawReason})` : "Ciclo intermedio - sin datos previos")
+        ? (cached ? `Ciclo intermedio - sin vela 15m cerrada (Ãºltimo: ${cached.rawReason})` : "Ciclo intermedio - sin datos previos")
         : null,
       signalsCount: isIntermediateCycle && cached ? cached.signalsCount : null,
       minSignalsRequired: isIntermediateCycle && cached ? cached.minSignalsRequired : null,
@@ -7075,8 +5871,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       blockReasonCode: "NO_SIGNAL",
       blockDetails: null,
       finalSignal: "NONE",
-      finalReason: isIntermediateCycle ? "Ciclo intermedio - sin vela 15m cerrada" : "Sin señal en este ciclo",
-      // Campos de diagnóstico para ciclos intermedios
+      finalReason: isIntermediateCycle ? "Ciclo intermedio - sin vela 15m cerrada" : "Sin seÃ±al en este ciclo",
+      // Campos de diagnÃ³stico para ciclos intermedios
       isIntermediateCycle,
       lastCandleClosedAt: cached?.candleClosedAt || null,
       lastFullEvaluationAt: cached?.evaluatedAt || null,
@@ -7088,7 +5884,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     this.pairDecisionTrace.set(pair, trace);
   }
   
-  // Guardar datos del análisis completo para reutilizar en ciclos intermedios
+  // Guardar datos del anÃ¡lisis completo para reutilizar en ciclos intermedios
   private cacheFullAnalysis(pair: string, data: {
     regime: string;
     regimeReason: string;
@@ -7118,11 +5914,11 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     const trace = this.pairDecisionTrace.get(pair);
     if (!trace) return;
     
-    // Detectar blockReasonCode específico basado en finalReason
+    // Detectar blockReasonCode especÃ­fico basado en finalReason
     let derivedBlockCode = trace.blockReasonCode || "NO_SIGNAL";
     const reason = trace.finalReason || trace.rawReason || "";
     
-    // Si es NO_SIGNAL pero la razón indica RSI block, usar código específico
+    // Si es NO_SIGNAL pero la razÃ³n indica RSI block, usar cÃ³digo especÃ­fico
     if (derivedBlockCode === "NO_SIGNAL") {
       if (reason.includes("RSI muy alto") || reason.includes("bloquea compra") || reason.includes(">=70")) {
         derivedBlockCode = "RSI_OVERBOUGHT";
@@ -7131,11 +5927,11 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       }
     }
     
-    // Asegurar que finalSignal y finalReason estén definidos
+    // Asegurar que finalSignal y finalReason estÃ©n definidos
     const safeTrace: DecisionTraceContext = {
       ...trace,
       finalSignal: trace.finalSignal || "NONE",
-      finalReason: trace.finalReason || "Sin señal en este ciclo",
+      finalReason: trace.finalReason || "Sin seÃ±al en este ciclo",
       blockReasonCode: derivedBlockCode,
       smartGuardDecision: trace.smartGuardDecision || "NOOP",
     };
@@ -7238,7 +6034,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       return {
         canSell: false,
         sellAmountFinal: 0,
-        reason: `Balance real (${realAssetBalance.toFixed(8)}) menor al mínimo de Kraken (${orderMin}). Posición marcada como DUST.`,
+        reason: `Balance real (${realAssetBalance.toFixed(8)}) menor al mÃ­nimo de Kraken (${orderMin}). PosiciÃ³n marcada como DUST.`,
         isDust: true,
         realAssetBalance,
         orderMin,
@@ -7247,7 +6043,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       };
     }
     
-    // 5) Verificar si sellAmountFinal queda por debajo del mínimo tras normalizar
+    // 5) Verificar si sellAmountFinal queda por debajo del mÃ­nimo tras normalizar
     if (sellAmountFinal < orderMin) {
       const logMsg = `[MANUAL_CLOSE_EVAL] ${pair} ${lotId} | lotAmount=${requestedAmount.toFixed(8)} realBalance=${realAssetBalance.toFixed(8)} orderMin=${orderMin} stepSize=${stepSize} sellFinal=${sellAmountFinal.toFixed(8)} decision=BELOW_MIN_AFTER_NORMALIZE`;
       log(logMsg, "trading");
@@ -7255,7 +6051,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       return {
         canSell: false,
         sellAmountFinal: 0,
-        reason: `Cantidad normalizada (${sellAmountFinal.toFixed(8)}) menor al mínimo de Kraken (${orderMin}).`,
+        reason: `Cantidad normalizada (${sellAmountFinal.toFixed(8)}) menor al mÃ­nimo de Kraken (${orderMin}).`,
         isDust: true,
         realAssetBalance,
         orderMin,
@@ -7296,7 +6092,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
     sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and optional fee/amounts for accurate P&L tracking
   ): Promise<boolean> {
     try {
-      // === VALIDACIÓN: Bloquear pares no-USD ===
+      // === VALIDACIÃ“N: Bloquear pares no-USD ===
       const allowedQuotes = ["USD"];
       const pairQuote = pair.split("/")[1];
       if (!allowedQuotes.includes(pairQuote)) {
@@ -7313,13 +6109,13 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
       let volumeNum = parseFloat(volume);
       let totalUSD = volumeNum * price;
       
-      // === PUNTO 2: Autocompletar strategyMeta desde posición si falta ===
+      // === PUNTO 2: Autocompletar strategyMeta desde posiciÃ³n si falta ===
       if (!strategyMeta?.strategyId || !strategyMeta?.timeframe) {
-        // Buscar posiciones por par para heredar meta de la posición original
+        // Buscar posiciones por par para heredar meta de la posiciÃ³n original
         const positions = this.getPositionsByPair(pair);
         let pos: OpenPosition | null = null;
         
-        // Si hay múltiples posiciones, usar la más antigua (FIFO)
+        // Si hay mÃºltiples posiciones, usar la mÃ¡s antigua (FIFO)
         if (positions.length > 0) {
           pos = positions[0];
         }
@@ -7330,7 +6126,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
             timeframe: pos.entrySignalTf ?? strategyMeta?.timeframe ?? "cycle",
             confidence: pos.signalConfidence ?? strategyMeta?.confidence ?? 0,
           };
-          log(`[META] Autocompletado strategyMeta desde posición ${pos.lotId}: ${strategyMeta.strategyId}/${strategyMeta.timeframe}`, "trading");
+          log(`[META] Autocompletado strategyMeta desde posiciÃ³n ${pos.lotId}: ${strategyMeta.strategyId}/${strategyMeta.timeframe}`, "trading");
         }
       }
       
@@ -7339,8 +6135,8 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
         const envPrefix = `[${environment.envTag}][DRY\\_RUN]`;
         const envPrefixLog = `[${environment.envTag}][DRY_RUN]`;
         
-        // === DOBLE CINTURÓN: Validación redundante para DRY_RUN ===
-        // Si falla mínimos, ni simula ni envía mensaje de trade
+        // === DOBLE CINTURÃ“N: ValidaciÃ³n redundante para DRY_RUN ===
+        // Si falla mÃ­nimos, ni simula ni envÃ­a mensaje de trade
         if (type === "buy" && executionMeta) {
           const positionMode = executionMeta.mode || "SINGLE";
           const orderUsdFinal = totalUSD;
@@ -7368,13 +6164,13 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
               reason: doubleBeltValidation.skipReason,
               ...doubleBeltValidation.meta,
             });
-            // NO enviar Telegram de simulación - solo log
+            // NO enviar Telegram de simulaciÃ³n - solo log
             return false;
           }
         }
         
         const simTxid = `DRY-${Date.now()}`;
-        log(`${envPrefixLog} SIMULACIÓN ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} (Total: $${totalUSD.toFixed(2)})`, "trading");
+        log(`${envPrefixLog} SIMULACIÃ“N ${type.toUpperCase()} ${volume} ${pair} @ $${price.toFixed(2)} (Total: $${totalUSD.toFixed(2)})`, "trading");
         
         await botLogger.info("DRY_RUN_TRADE", `${envPrefixLog} Trade simulado - NO enviado al exchange`, {
           pair,
@@ -7387,27 +6183,27 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de Régimen</b>
           ...(executionMeta || {}),
         });
         
-        // Enviar Telegram de simulación con prefijo correcto
+        // Enviar Telegram de simulaciÃ³n con prefijo correcto
         if (this.telegramService.isInitialized()) {
-          const emoji = type === "buy" ? "🟢" : "🔴";
+          const emoji = type === "buy" ? "ðŸŸ¢" : "ðŸ”´";
           const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
           
           const subtype = type === "buy" ? "trade_buy" : "trade_sell";
-          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🧪 <b>Trade Simulado</b> [DRY_RUN]
+          await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ§ª <b>Trade Simulado</b> [DRY_RUN]
 
-${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
+${emoji} <b>SEÃ‘AL: ${tipoLabel} ${pair}</b> ${emoji}
 
-💵 <b>Precio:</b> <code>$${price.toFixed(2)}</code>
-📦 <b>Cantidad:</b> <code>${volume}</code>
-💰 <b>Total:</b> <code>$${totalUSD.toFixed(2)}</code>
+ðŸ’µ <b>Precio:</b> <code>$${price.toFixed(2)}</code>
+ðŸ“¦ <b>Cantidad:</b> <code>${volume}</code>
+ðŸ’° <b>Total:</b> <code>$${totalUSD.toFixed(2)}</code>
 
-⚠️ Modo simulación - NO se envió orden real
-━━━━━━━━━━━━━━━━━━━`, "trades", subtype as any);
+âš ï¸ Modo simulaciÃ³n - NO se enviÃ³ orden real
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "trades", subtype as any);
         }
         
-        return true; // Simular éxito para flujo normal
+        return true; // Simular Ã©xito para flujo normal
       }
       
       // C1: Validar sellContext ANTES de ejecutar orden real (excepto emergency exits)
@@ -7416,7 +6212,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                                  reason.toLowerCase().includes("emergencia") ||
                                  reason.toLowerCase().includes("emergency");
         if (!isEmergencyExit) {
-          log(`[ERROR] SELL BLOQUEADO sin sellContext para ${pair} - violación de trazabilidad. Razón: ${reason}`, "trading");
+          log(`[ERROR] SELL BLOQUEADO sin sellContext para ${pair} - violaciÃ³n de trazabilidad. RazÃ³n: ${reason}`, "trading");
           await botLogger.warn("SELL_BLOCKED_NO_CONTEXT", `SELL bloqueado - sin sellContext`, {
             pair,
             type,
@@ -7426,7 +6222,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           });
           return false;
         }
-        log(`[WARN] Emergency SELL sin sellContext para ${pair} - permitido. Razón: ${reason}`, "trading");
+        log(`[WARN] Emergency SELL sin sellContext para ${pair} - permitido. RazÃ³n: ${reason}`, "trading");
       }
       
       // CRITICAL: Generate correlation_id for full traceability
@@ -7513,7 +6309,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const exchangeOrderId = (order as any)?.orderId || (order as any)?.txid;
         const pendingOrderId = exchangeOrderId || clientOrderId; // Fallback only for logging
         
-        // MANDATORY LOGGING: Track IDs for debugging PENDING_FILL → FAILED issues
+        // MANDATORY LOGGING: Track IDs for debugging PENDING_FILL â†’ FAILED issues
         log(`[ORDER_IDS] ${correlationId} | exchangeOrderId=${exchangeOrderId}, pendingOrderId=${pendingOrderId}, clientOrderId=${clientOrderId}`, "trading");
         if (!exchangeOrderId) {
           log(`[ORDER_ID_WARNING] ${correlationId} | No real exchange order ID returned! FillWatcher may fail to find fills.`, "trading");
@@ -7664,13 +6460,13 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           try {
             const assetName = pair.replace("/USD", "");
             const pendingFooter = type === "sell"
-              ? `<i>La orden fue aceptada por ${exchange}. La venta se reflejará en historial y P&L en segundos.</i>`
-              : `<i>La orden fue aceptada por ${exchange}. La posición aparecerá en UI en segundos.</i>`;
+              ? `<i>La orden fue aceptada por ${exchange}. La venta se reflejarÃ¡ en historial y P&L en segundos.</i>`
+              : `<i>La orden fue aceptada por ${exchange}. La posiciÃ³n aparecerÃ¡ en UI en segundos.</i>`;
             await this.telegramService.sendAlertWithSubtype(
-              `⏳ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
+              `â³ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
               `Par: <code>${assetName}</code>\n` +
               `Cantidad: <code>${volume}</code>\n` +
-              `Estado: Pendiente de confirmación\n` +
+              `Estado: Pendiente de confirmaciÃ³n\n` +
               `ID: <code>${pendingOrderId}</code>\n\n` +
               pendingFooter,
               "trades",
@@ -7727,7 +6523,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         externalId,
       });
 
-      // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
+      // === A) P&L INMEDIATO EN SELL AUTOMÃTICO ===
       let tradeEntryPrice: string | null = null;
       let tradeRealizedPnlUsd: string | null = null;
       let tradeRealizedPnlPct: string | null = null;
@@ -7743,7 +6539,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           const entryValueUsd = entryPrice * volumeNum;
           const exitValueUsd = price * volumeNum;
           
-          // Calcular fees: usar entryFee real si existe, sino estimar con fee dinámico
+          // Calcular fees: usar entryFee real si existe, sino estimar con fee dinÃ¡mico
           const currentFeePct = getTakerFeePct();
           const entryFeeUsd = sellContext?.entryFee ?? (entryValueUsd * currentFeePct / 100);
           const exitFeeUsd = exitValueUsd * currentFeePct / 100;
@@ -7753,7 +6549,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           tradeEntryPrice = entryPrice.toString();
           tradeRealizedPnlUsd = netPnlUsd.toFixed(8);
           tradeRealizedPnlPct = netPnlPct.toFixed(4);
-          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} → Bruto=$${grossPnlUsd.toFixed(2)}, Fees=$${(entryFeeUsd + exitFeeUsd).toFixed(2)}, NETO=$${netPnlUsd.toFixed(2)} (${netPnlPct.toFixed(2)}%)`, "trading");
+          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} â†’ Bruto=$${grossPnlUsd.toFixed(2)}, Fees=$${(entryFeeUsd + exitFeeUsd).toFixed(2)}, NETO=$${netPnlUsd.toFixed(2)} (${netPnlPct.toFixed(2)}%)`, "trading");
         } else {
           // A3: Orphan/emergency sin entryPrice - permitir pero marcar
           reasonWithContext = `${reason} | SELL_NO_ENTRYPRICE`;
@@ -7911,7 +6707,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                       configSnapshot.sgTpFixedPct = atrExits.tpPct;
 
                       const fallbackNote = atrExits.usedFallback ? " [FALLBACK]" : "";
-                      log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied → SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
+                      log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied â†’ SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
                     } else if (regimeEnabled) {
                       const regimeAdjusted = this.getRegimeAdjustedParams(
                         {
@@ -8009,7 +6805,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               this.dailyPnL += pnlNet;
 
               log(`[FEES_DIAG] SELL ${pair}: pnlGross=$${pnlGross.toFixed(4)}, entryFee=$${proratedEntryFee.toFixed(4)} (${(sellRatio*100).toFixed(0)}% of pos), exitFee=$${exitFee.toFixed(4)}, pnlNet=$${pnlNet.toFixed(4)}, feePct=${getTakerFeePct()}%, slippage=${SLIPPAGE_BUFFER_PCT}%`, "trading");
-              log(`P&L de operación: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
+              log(`P&L de operaciÃ³n: $${pnlNet.toFixed(2)} (bruto: $${pnlGross.toFixed(2)}, fees: $${(proratedEntryFee + exitFee).toFixed(2)}) | P&L diario acumulado: $${this.dailyPnL.toFixed(2)}`, "trading");
 
               if (sellContext.aiSampleId) {
                 try {
@@ -8052,10 +6848,10 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         throw applyErr;
       }
 
-      const emoji = type === "buy" ? "🟢" : "🔴";
+      const emoji = type === "buy" ? "ðŸŸ¢" : "ðŸ”´";
       const totalUSDFormatted = totalUSD.toFixed(2);
       
-      // CRITICAL: Variables para tracking de notificación
+      // CRITICAL: Variables para tracking de notificaciÃ³n
       let notificationSent = false;
       let notificationError: string | null = null;
       
@@ -8072,7 +6868,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           if (type === "buy") {
             const regimeText = strategyMeta?.regime 
               ? (strategyMeta.regime === "TREND" ? "tendencia alcista" : 
-                 strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transición")
+                 strategyMeta.regime === "RANGE" ? "mercado lateral" : "mercado en transiciÃ³n")
               : "";
             
             const confNum = parseInt(confidenceValue);
@@ -8127,11 +6923,11 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           notificationSent = true;
         } catch (telegramErr: any) {
           notificationError = telegramErr.message;
-          log(`[TELEGRAM_FAIL] ${correlationId} | Error enviando notificación: ${telegramErr.message}`, "trading");
+          log(`[TELEGRAM_FAIL] ${correlationId} | Error enviando notificaciÃ³n: ${telegramErr.message}`, "trading");
         }
       } else {
         notificationError = "Telegram not initialized";
-        log(`[TELEGRAM_NOT_INIT] ${correlationId} | Telegram no inicializado - orden ejecutada SIN notificación`, "trading");
+        log(`[TELEGRAM_NOT_INIT] ${correlationId} | Telegram no inicializado - orden ejecutada SIN notificaciÃ³n`, "trading");
       }
       
       // CRITICAL: Log notification status for forensic traceability
@@ -8146,7 +6942,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         totalUsd: totalUSD,
       });
 
-      log(`[ORDER_COMPLETED] ${correlationId} | Orden ejecutada: ${txid} | Notificación: ${notificationSent ? 'OK' : 'FAILED'}`, "trading");
+      log(`[ORDER_COMPLETED] ${correlationId} | Orden ejecutada: ${txid} | NotificaciÃ³n: ${notificationSent ? 'OK' : 'FAILED'}`, "trading");
       
       await botLogger.info("TRADE_EXECUTED", `Trade ${type.toUpperCase()} ejecutado en ${pair}`, {
         pair,
@@ -8188,7 +6984,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
             log(`[FIFO] Auto-matched sell ${txid}: matched=${matchResult.totalMatched.toFixed(8)}, lots_closed=${matchResult.lotsClosed}, pnl=$${matchResult.pnlNet.toFixed(2)}`, "trading");
             
             if (matchResult.lotsClosed > 0) {
-              await botLogger.info("FIFO_LOTS_CLOSED", `FIFO cerró ${matchResult.lotsClosed} lotes automáticamente`, {
+              await botLogger.info("FIFO_LOTS_CLOSED", `FIFO cerrÃ³ ${matchResult.lotsClosed} lotes automÃ¡ticamente`, {
                 pair,
                 sellTxid: txid,
                 matchedQty: matchResult.totalMatched,
@@ -8215,16 +7011,16 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       });
       
       if (this.telegramService.isInitialized()) {
-        await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⚠️ <b>Error en Operación</b>
+        await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+âš ï¸ <b>Error en OperaciÃ³n</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Tipo: <code>${type}</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Tipo: <code>${type}</code>
 
-❌ <b>Error:</b> <code>${error.message}</code>
-━━━━━━━━━━━━━━━━━━━`, "errors", "error_api");
+âŒ <b>Error:</b> <code>${error.message}</code>
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "errors", "error_api");
       }
       return false;
     }
@@ -8283,13 +7079,13 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     const last1h = tf1h[tf1h.length - 1]?.time || 0;
     const last4h = tf4h[tf4h.length - 1]?.time || 0;
     
-    // Detectar duplicación real (más restrictivo para evitar falsos positivos)
+    // Detectar duplicaciÃ³n real (mÃ¡s restrictivo para evitar falsos positivos)
     // Solo alertar si hay evidencia clara de datos incorrectos
     const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0);
     const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
     const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(String(span5m)) > 0);
     
-    // Detectar casos sospechosos pero menos críticos
+    // Detectar casos sospechosos pero menos crÃ­ticos
     const suspiciousOverlap = (
       (Math.abs(last5m - last1h) < 3600) || // Menos de 1h de diferencia entre 5m y 1h
       (Math.abs(last1h - last4h) < 7200)    // Menos de 2h de diferencia entre 1h y 4h
@@ -8300,12 +7096,12 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h | ` +
       `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h`, "trading");
     
-    // Solo alertar en casos realmente problemáticos
+    // Solo alertar en casos realmente problemÃ¡ticos
     if (exactFirstMatch || exactLastMatch || identicalSpans) {
-      log(`[MTF_DIAG] 🚨 ERROR ${pair}: Duplicación MTF CRÍTICA detectada! ` +
+      log(`[MTF_DIAG] ðŸš¨ ERROR ${pair}: DuplicaciÃ³n MTF CRÃTICA detectada! ` +
         `exactFirst=${exactFirstMatch}, exactLast=${exactLastMatch}, identicalSpans=${identicalSpans}`, "trading");
     } else if (suspiciousOverlap) {
-      log(`[MTF_DIAG] ⚠️ INFO ${pair}: Solapamiento temporal detectado (puede ser normal en mercados activos)`, "trading");
+      log(`[MTF_DIAG] âš ï¸ INFO ${pair}: Solapamiento temporal detectado (puede ser normal en mercados activos)`, "trading");
     }
   }
 
@@ -8382,7 +7178,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     return this.isRunning;
   }
 
-  // === CIERRE MANUAL DE POSICIÓN ===
+  // === CIERRE MANUAL DE POSICIÃ“N ===
   async forceClosePosition(
     pair: string,
     currentPrice: number,
@@ -8397,7 +7193,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
     orderId?: string;
     lotId?: string;
     error?: string;
-    isDust?: boolean; // Flag para indicar que la posición es DUST y no se puede cerrar
+    isDust?: boolean; // Flag para indicar que la posiciÃ³n es DUST y no se puede cerrar
   }> {
     try {
       // Find the position to close
@@ -8458,7 +7254,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       if (!position || position.amount <= 0) {
         return {
           success: false,
-          error: "No se encontró posición abierta en memoria/BD para este par",
+          error: "No se encontrÃ³ posiciÃ³n abierta en memoria/BD para este par",
         };
       }
 
@@ -8473,7 +7269,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       // En DRY_RUN, simular el cierre
       if (this.dryRunMode) {
         const simTxid = `MANUAL-DRY-${Date.now()}`;
-        log(`[DRY_RUN] SIMULACIÓN cierre manual ${pair} (${positionLotId}) - ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+        log(`[DRY_RUN] SIMULACIÃ“N cierre manual ${pair} (${positionLotId}) - ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
 
         // Actualizar memoria y DB para reflejar el cierre (aunque sea simulado)
         this.openPositions.delete(positionLotId);
@@ -8499,21 +7295,21 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
         // Notificar por Telegram
         if (this.telegramService.isInitialized()) {
-          const pnlEmoji = pnlUsd >= 0 ? "📈" : "📉";
-          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-🧪 <b>Cierre Manual Simulado</b> [DRY_RUN]
+          const pnlEmoji = pnlUsd >= 0 ? "ðŸ“ˆ" : "ðŸ“‰";
+          await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+ðŸ§ª <b>Cierre Manual Simulado</b> [DRY_RUN]
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Cantidad: <code>${amount.toFixed(8)}</code>
-   • Precio entrada: <code>$${entryPrice.toFixed(2)}</code>
-   • Precio salida: <code>$${currentPrice.toFixed(2)}</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Cantidad: <code>${amount.toFixed(8)}</code>
+   â€¢ Precio entrada: <code>$${entryPrice.toFixed(2)}</code>
+   â€¢ Precio salida: <code>$${currentPrice.toFixed(2)}</code>
 
 ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)</code>
 
-⚠️ Modo simulación - NO se envió orden real
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_sell");
+âš ï¸ Modo simulaciÃ³n - NO se enviÃ³ orden real
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "trades", "trade_sell");
         }
 
         return {
@@ -8526,7 +7322,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         };
       }
 
-      // === VALIDACIÓN PRE-SELL: Verificar balance real y detectar DUST ===
+      // === VALIDACIÃ“N PRE-SELL: Verificar balance real y detectar DUST ===
       const validation = await this.validateSellAmount(pair, positionLotId, amount);
       
       if (!validation.canSell) {
@@ -8534,19 +7330,19 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         if (validation.isDust) {
           // Enviar alerta Telegram
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
-━━━━━━━━━━━━━━━━━━━
-⚠️ <b>Posición DUST Detectada</b>
+            await this.telegramService.sendAlertWithSubtype(`ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+âš ï¸ <b>PosiciÃ³n DUST Detectada</b>
 
-📦 <b>Detalles:</b>
-   • Par: <code>${pair}</code>
-   • Lot: <code>${positionLotId}</code>
-   • Cantidad registrada: <code>${amount.toFixed(8)}</code>
-   • Balance real: <code>${validation.realAssetBalance.toFixed(8)}</code>
-   • Mínimo Kraken: <code>${validation.orderMin}</code>
+ðŸ“¦ <b>Detalles:</b>
+   â€¢ Par: <code>${pair}</code>
+   â€¢ Lot: <code>${positionLotId}</code>
+   â€¢ Cantidad registrada: <code>${amount.toFixed(8)}</code>
+   â€¢ Balance real: <code>${validation.realAssetBalance.toFixed(8)}</code>
+   â€¢ MÃ­nimo Kraken: <code>${validation.orderMin}</code>
 
-ℹ️ No se puede cerrar - usar "Eliminar huérfana" en UI
-━━━━━━━━━━━━━━━━━━━`, "balance", "balance_exposure");
+â„¹ï¸ No se puede cerrar - usar "Eliminar huÃ©rfana" en UI
+â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`, "balance", "balance_exposure");
           }
         }
         
@@ -8558,16 +7354,16 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         };
       }
       
-      // Si hubo ajuste de cantidad, actualizar posición interna
+      // Si hubo ajuste de cantidad, actualizar posiciÃ³n interna
       const sellAmountFinal = validation.sellAmountFinal;
       if (validation.needsPositionAdjust) {
-        log(`[MANUAL_CLOSE] Ajustando posición ${pair} (${positionLotId}) de ${amount} a ${sellAmountFinal}`, "trading");
+        log(`[MANUAL_CLOSE] Ajustando posiciÃ³n ${pair} (${positionLotId}) de ${amount} a ${sellAmountFinal}`, "trading");
         position.amount = sellAmountFinal;
         this.openPositions.set(positionLotId, position);
         await this.savePositionToDB(pair, position);
       }
       
-      // Recalcular PnL NETO con cantidad real y fees (usar fee dinámico del exchange activo)
+      // Recalcular PnL NETO con cantidad real y fees (usar fee dinÃ¡mico del exchange activo)
       const grossPnlUsd = (currentPrice - entryPrice) * sellAmountFinal;
       const entryValueUsd = entryPrice * sellAmountFinal;
       const exitValueUsd = currentPrice * sellAmountFinal;
@@ -8577,7 +7373,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       const actualPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd;
       const actualPnlPct = (actualPnlUsd / entryValueUsd) * 100;
 
-      // PRODUCCIÓN: Ejecutar orden real de venta via exchange activo
+      // PRODUCCIÃ“N: Ejecutar orden real de venta via exchange activo
       const order = await this.getTradingExchange().placeOrder({
         pair,
         type: "sell",
@@ -8606,7 +7402,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       if (!txid || typeof txid !== "string") {
         return {
           success: false,
-          error: "Orden enviada pero no se recibió txid de confirmación",
+          error: "Orden enviada pero no se recibiÃ³ txid de confirmaciÃ³n",
         };
       }
 
@@ -8678,7 +7474,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
     return this.openPositions;
   }
 
-  // === DIAGNÓSTICO: Obtener resultados del scan con razones en español ===
+  // === DIAGNÃ“STICO: Obtener resultados del scan con razones en espaÃ±ol ===
   async getScanDiagnostic(): Promise<{
     pairs: Array<{
       pair: string;
@@ -8702,26 +7498,26 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
     const positionMode = config?.positionMode || "SINGLE";
     const regimeDetectionEnabled = config?.regimeDetectionEnabled ?? false;
     
-    // Mapeo de razones a español (según documento SMART_GUARD)
+    // Mapeo de razones a espaÃ±ol (segÃºn documento SMART_GUARD)
     const reasonTranslations: Record<string, string> = {
       "PAIR_COOLDOWN": "En enfriamiento - esperando reintentos",
-      "SINGLE_MODE_POSITION_EXISTS": "Ya hay posición abierta en este par",
-      "SMART_GUARD_POSITION_EXISTS": "Ya hay posición abierta en este par",
-      "SMART_GUARD_MAX_LOTS_REACHED": "Máximo de lotes abiertos alcanzado para este par",
+      "SINGLE_MODE_POSITION_EXISTS": "Ya hay posiciÃ³n abierta en este par",
+      "SMART_GUARD_POSITION_EXISTS": "Ya hay posiciÃ³n abierta en este par",
+      "SMART_GUARD_MAX_LOTS_REACHED": "MÃ¡ximo de lotes abiertos alcanzado para este par",
       "STOPLOSS_COOLDOWN": "Enfriamiento post stop-loss activo",
       "SPREAD_TOO_HIGH": "Spread demasiado alto para operar",
-      "POSITION_TOO_LARGE": "Posición existente demasiado grande",
+      "POSITION_TOO_LARGE": "PosiciÃ³n existente demasiado grande",
       "INSUFFICIENT_FUNDS": "Fondos USD insuficientes",
       "LOW_PROFITABILITY": "Take-profit menor que comisiones",
-      "EXPOSURE_ZERO": "Sin exposición disponible",
-      "VOLUME_BELOW_MINIMUM": "Volumen calculado < mínimo Kraken",
-      "SG_MIN_ENTRY_NOT_MET": "Mínimo por operación no alcanzado (tiene saldo, pero tamaño quedó por debajo)",
-      "SG_REDUCED_ENTRY": "Saldo por debajo del mínimo — entro con lo disponible",
-      "MIN_ORDER_ABSOLUTE": "Por debajo del mínimo absoluto ($20) — mínimo exchange no alcanzado",
-      "MIN_ORDER_USD": "SKIP - Mínimo por orden no alcanzado (allowUnderMin=OFF)",
-      "NO_POSITION": "Sin posición para vender",
-      "AI_FILTER_REJECTED": "Señal rechazada por filtro IA",
-      "Sin señal": "Sin señal de trading activa",
+      "EXPOSURE_ZERO": "Sin exposiciÃ³n disponible",
+      "VOLUME_BELOW_MINIMUM": "Volumen calculado < mÃ­nimo Kraken",
+      "SG_MIN_ENTRY_NOT_MET": "MÃ­nimo por operaciÃ³n no alcanzado (tiene saldo, pero tamaÃ±o quedÃ³ por debajo)",
+      "SG_REDUCED_ENTRY": "Saldo por debajo del mÃ­nimo â€” entro con lo disponible",
+      "MIN_ORDER_ABSOLUTE": "Por debajo del mÃ­nimo absoluto ($20) â€” mÃ­nimo exchange no alcanzado",
+      "MIN_ORDER_USD": "SKIP - MÃ­nimo por orden no alcanzado (allowUnderMin=OFF)",
+      "NO_POSITION": "Sin posiciÃ³n para vender",
+      "AI_FILTER_REJECTED": "SeÃ±al rechazada por filtro IA",
+      "Sin seÃ±al": "Sin seÃ±al de trading activa",
     };
 
     const pairs: Array<{
@@ -8755,7 +7551,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         const hasPosition = pairPositions.length > 0;
         const totalPositionUsd = pairPositions.reduce((sum, p) => sum + (p.amount * p.entryPrice), 0);
         
-        // Traducir la razón
+        // Traducir la razÃ³n
         let razon = result.reason;
         for (const [key, value] of Object.entries(reasonTranslations)) {
           if (razon.includes(key) || razon === key) {
@@ -8767,7 +7563,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         // Obtener cooldown si no viene en el resultado
         const cooldownSec = result.cooldownSec ?? this.getCooldownRemainingSec(pair);
 
-        // Obtener régimen si está habilitado
+        // Obtener rÃ©gimen si estÃ¡ habilitado
         let regime: string | undefined;
         let regimeReason: string | undefined;
         let requiredSignals: number | undefined;
@@ -8781,7 +7577,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
             requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
           } catch (err) {
             regime = "ERROR";
-            regimeReason = "Error obteniendo régimen";
+            regimeReason = "Error obteniendo rÃ©gimen";
           }
         }
 
@@ -8799,7 +7595,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         });
       }
     } else {
-      // Si no hay datos de escaneo, mostrar pares activos con info básica
+      // Si no hay datos de escaneo, mostrar pares activos con info bÃ¡sica
       const activePairs = config?.activePairs || [];
       for (const pair of activePairs) {
         const pairPositions = getPositionsForPair(pair);
@@ -8807,11 +7603,11 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         const totalPositionUsd = pairPositions.reduce((sum, p) => sum + (p.amount * p.entryPrice), 0);
         const exposure = this.getAvailableExposure(pair, config, this.currentUsdBalance);
         
-        // Determinar razón basada en el estado real
-        let razon = "Bot inactivo - actívalo para escanear";
+        // Determinar razÃ³n basada en el estado real
+        let razon = "Bot inactivo - actÃ­valo para escanear";
         if (this.isRunning) {
           if (this.lastScanTime > 0) {
-            razon = "Sin señal activa";
+            razon = "Sin seÃ±al activa";
           } else {
             razon = "Esperando primer escaneo...";
           }
@@ -8819,7 +7615,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         
         const cooldownSec = this.getCooldownRemainingSec(pair);
         
-        // Obtener régimen si está habilitado (mismo que rama principal)
+        // Obtener rÃ©gimen si estÃ¡ habilitado (mismo que rama principal)
         let regime: string | undefined;
         let regimeReason: string | undefined;
         let requiredSignals: number | undefined;
@@ -8833,7 +7629,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
             requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
           } catch (err) {
             regime = "ERROR";
-            regimeReason = "Error obteniendo régimen";
+            regimeReason = "Error obteniendo rÃ©gimen";
           }
         }
         

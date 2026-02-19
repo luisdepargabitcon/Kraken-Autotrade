@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-02-XX — REFACTOR: Extracción de ExitManager desde tradingEngine.ts
+
+### Motivación
+- `tradingEngine.ts` era un archivo monolítico de **8865 líneas** con toda la lógica del bot
+- La lógica de salida (SL/TP, SmartGuard, Time-Stop, Fee-Gating) estaba fuertemente acoplada
+- Difícil de testear, mantener y razonar sobre el flujo de salidas
+
+### Cambios realizados
+- **tradingEngine.ts reducido de 8865 → 7660 líneas** (-1205 líneas, ~14%)
+- Creado `server/services/exitManager.ts` (1374 líneas) con:
+  - Interfaz `IExitManagerHost` para inyección de dependencias (patrón delegación)
+  - Clase `ExitManager` con toda la lógica de salida
+  - Tipos exportados: `OpenPosition`, `ConfigSnapshot`, `ExitReason`, `FeeGatingResult`
+
+| Método extraído | Descripción | Líneas aprox. |
+|----------------|-------------|---------------|
+| `checkStopLossTakeProfit` | Dispatcher principal SL/TP | ~50 |
+| `checkSinglePositionSLTP` | Legacy SL/TP + reconciliación | ~365 |
+| `checkSmartGuardExit` | SmartGuard: BE, Trailing, Scale-out, TP fijo | ~475 |
+| `sendSgEventAlert` | Alertas Telegram para eventos SmartGuard | ~115 |
+| `shouldSendSgAlert` | Throttle de alertas SG | ~12 |
+| `isRiskExit` | Clasificación de exit tipo risk | ~4 |
+| `getAdaptiveExitConfig` | Config dinámica de exit desde DB | ~20 |
+| `calculateMinCloseNetPct` | Cálculo mínimo neto para cierre | ~4 |
+| `checkFeeGating` | Validación fee-gating | ~35 |
+| `checkTimeStop` | Time-Stop soft/hard | ~130 |
+| `calculateProgressiveBEStop` | Break-even progresivo (3 niveles) | ~40 |
+
+### Patrón de arquitectura
+- **Delegación via interfaz**: `TradingEngine` crea un adapter `IExitManagerHost` en `createExitHost()`
+- Los métodos privados de `TradingEngine` se exponen al `ExitManager` sin cambiar su visibilidad
+- Métodos que aún se usan internamente (`getAdaptiveExitConfig`, `calculateMinCloseNetPct`, etc.) tienen delegaciones thin al `ExitManager`
+- Estado movido: `sgAlertThrottle`, `timeStopNotified` ahora pertenecen a `ExitManager`
+
+### Verificación
+- `npm run check` (tsc) pasa con **0 errores** después de la extracción
+- Toda la funcionalidad de salida mantiene exactamente el mismo comportamiento
+- La llamada `this.exitManager.checkStopLossTakeProfit(...)` reemplaza `this.checkStopLossTakeProfit(...)`
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` (reducido ~14%)
+- `server/services/exitManager.ts` (nuevo — 1374 líneas)
+
+---
+
 ## 2026-02-XX — REFACTOR: Modularización completa de routes.ts
 
 ### Motivación
