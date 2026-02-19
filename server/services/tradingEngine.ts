@@ -32,6 +32,17 @@ import {
   type PriceData as IndicatorPriceData,
   type OHLCCandle as IndicatorOHLCCandle,
 } from "./indicators";
+import {
+  detectMarketRegime as _detectMarketRegime,
+  getRegimeAdjustedParams as _getRegimeAdjustedParams,
+  calculateAtrBasedExits as _calculateAtrBasedExits,
+  shouldPauseEntriesDueToRegime as _shouldPauseEntriesDueToRegime,
+  REGIME_PRESETS as _REGIME_PRESETS,
+  REGIME_CONFIG as _REGIME_CONFIG,
+  type MarketRegime as _MarketRegime,
+  type RegimeAnalysis as _RegimeAnalysis,
+  type RegimePreset as _RegimePreset,
+} from "./regimeDetection";
 
 interface PriceData {
   price: number;
@@ -5057,228 +5068,10 @@ El bot ha pausado las operaciones de COMPRA.
   private wilderSmooth(values: number[], period: number): number[] { return _wilderSmooth(values, period); }
   private calculateADX(candles: OHLCCandle[], period: number = 14): number { return _calculateADX(candles, period); }
 
-  private detectMarketRegime(candles: OHLCCandle[]): RegimeAnalysis {
-    const defaultResult: RegimeAnalysis = {
-      regime: "TRANSITION",
-      adx: 25,
-      emaAlignment: 0,
-      bollingerWidth: 2,
-      confidence: 0.3,
-      reason: "Datos insuficientes para detecciÃ³n de rÃ©gimen",
-    };
-    
-    if (!candles || candles.length < 50) {
-      return defaultResult;
-    }
-    
-    try {
-      const closes = candles.map(c => c.close).filter(c => isFinite(c));
-      if (closes.length < 50) {
-        return defaultResult;
-      }
-      
-      const currentPrice = closes[closes.length - 1];
-      if (!isFinite(currentPrice) || currentPrice <= 0) {
-        return defaultResult;
-      }
-      
-      // 1. Calculate ADX (trend strength) - safely coerced
-      let adx = this.calculateADX(candles, 14);
-      if (!isFinite(adx)) adx = 25;
-      
-      // 2. Calculate EMA alignment (20, 50, 200) - safely coerced
-      let ema20 = this.calculateEMA(closes.slice(-20), 20);
-      let ema50 = this.calculateEMA(closes.slice(-50), 50);
-      let ema200 = candles.length >= 200 ? this.calculateEMA(closes, 200) : ema50;
-      
-      if (!isFinite(ema20)) ema20 = currentPrice;
-      if (!isFinite(ema50)) ema50 = currentPrice;
-      if (!isFinite(ema200)) ema200 = ema50;
-      
-      let emaAlignment = 0;
-      if (ema20 > 0) { // Guard against division by zero
-        if (currentPrice > ema20 && ema20 > ema50 && ema50 > ema200) {
-          emaAlignment = 1; // Perfect bullish alignment
-        } else if (currentPrice < ema20 && ema20 < ema50 && ema50 < ema200) {
-          emaAlignment = -1; // Perfect bearish alignment
-        } else if (Math.abs(currentPrice - ema20) / ema20 < 0.01) {
-          emaAlignment = 0; // Price stuck near EMA20
-        } else {
-          emaAlignment = 0.5 * Math.sign(currentPrice - ema50);
-        }
-      }
-      
-      // 3. Calculate Bollinger Band width (volatility indicator) - safely coerced
-      const bollinger = this.calculateBollingerBands(closes);
-      let bollingerWidth = bollinger.middle > 0 
-        ? ((bollinger.upper - bollinger.lower) / bollinger.middle) * 100 
-        : 2;
-      if (!isFinite(bollingerWidth)) bollingerWidth = 2;
-      
-      // 4. Determine regime with hysteresis (Phase 2.3)
-      // TREND entry: ADX >= 28 + EMAs aligned
-      // TREND exit: ADX <= 24 OR EMAs misaligned
-      // Hard exit: ADX < 20 (immediate)
-      let regime: MarketRegime;
-      let confidence: number;
-      let reason: string;
-      
-      const emaMisaligned = Math.abs(emaAlignment) < 0.5;
-      
-      if (adx >= REGIME_CONFIG.ADX_TREND_ENTRY && !emaMisaligned) {
-        // Strong trend: ADX >= 28 + EMAs aligned
-        regime = "TREND";
-        confidence = Math.min(0.95, 0.6 + (adx - REGIME_CONFIG.ADX_TREND_ENTRY) / 50 + Math.abs(emaAlignment) * 0.2);
-        const direction = emaAlignment > 0 ? "alcista" : "bajista";
-        reason = `Tendencia ${direction} (ADX=${adx.toFixed(0)}, EMAs alineadas)`;
-      } else if (adx < REGIME_CONFIG.ADX_HARD_EXIT && bollingerWidth < 4) {
-        // Range: ADX < 20 (hard exit) + narrow bands
-        regime = "RANGE";
-        confidence = Math.min(0.9, 0.5 + (REGIME_CONFIG.ADX_HARD_EXIT - adx) / 40 + (4 - bollingerWidth) / 8);
-        reason = `Mercado lateral (ADX=${adx.toFixed(0)}, BB width=${bollingerWidth.toFixed(1)}%)`;
-      } else if (adx <= REGIME_CONFIG.ADX_TREND_EXIT || emaMisaligned) {
-        // Exit TREND zone but not yet RANGE - TRANSITION
-        regime = "TRANSITION";
-        confidence = 0.5;
-        reason = `TransiciÃ³n (ADX=${adx.toFixed(0)}, ${emaMisaligned ? "EMAs desalineadas" : "esperando confirmaciÃ³n"})`;
-      } else {
-        // ADX between 24-28: maintain current or default to TRANSITION
-        regime = "TRANSITION";
-        confidence = 0.5;
-        reason = `Zona intermedia (ADX=${adx.toFixed(0)}, histÃ©resis activa)`;
-      }
-      
-      if (!isFinite(confidence)) confidence = 0.5;
-      
-      return {
-        regime,
-        adx,
-        emaAlignment,
-        bollingerWidth,
-        confidence,
-        reason,
-      };
-    } catch (error) {
-      return defaultResult;
-    }
-  }
-
-  private getRegimeAdjustedParams(
-    baseParams: { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number },
-    regime: MarketRegime,
-    regimeEnabled: boolean
-  ): { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number } {
-    if (!regimeEnabled) {
-      return baseParams;
-    }
-    
-    const preset = REGIME_PRESETS[regime];
-    
-    // Apply regime adjustments (blend base with preset)
-    return {
-      sgBeAtPct: preset.sgBeAtPct,
-      sgTrailDistancePct: preset.sgTrailDistancePct,
-      sgTrailStepPct: preset.sgTrailStepPct,
-      sgTpFixedPct: preset.sgTpFixedPct,
-    };
-  }
-
-  // === ATR-BASED DYNAMIC EXIT CALCULATION ===
-  // Uses ATR (Average True Range) to calculate SL/TP/Trail distances based on market volatility
-  // Combined with regime detection for optimal risk management
-  // Fee-aware: ensures TP always covers roundTripFeePct + profitBufferPct
-  
-  private calculateAtrBasedExits(
-    pair: string,
-    entryPrice: number,
-    atrPercent: number,
-    regime: MarketRegime,
-    adaptiveEnabled: boolean,
-    historyLength: number = 0,  // Pass history.length to validate ATR data quality
-    minBeFloorPct: number = 2.0  // Configurable minimum BE floor (default 2.0%)
-  ): {
-    slPct: number;       // Stop-loss percentage
-    tpPct: number;       // Take-profit percentage
-    trailPct: number;    // Trailing distance percentage
-    beAtPct: number;     // Break-even activation percentage
-    source: string;      // Description of calculation source
-    usedFallback: boolean; // True if fallback values were used
-  } {
-    const preset = REGIME_PRESETS[regime];
-    
-    // Fee-aware minimum TP floor: must cover round-trip fees + profit buffer
-    // Bot uses 100% MARKET orders â†’ takerFee both legs
-    // Default: 0.40% * 2 = 0.80% + 1.00% buffer = 1.80% minimum TP
-    const TAKER_FEE_PCT = 0.40;
-    const PROFIT_BUFFER_PCT = 1.00;
-    const MIN_TP_FLOOR = (TAKER_FEE_PCT * 2) + PROFIT_BUFFER_PCT;  // 1.80%
-    
-    // Safety floors to match SMART_GUARD historic defaults
-    const MIN_SL_FLOOR = 2.0;   // Never less than 2% SL to avoid hypersensitive exits
-    const MIN_TRAIL_FLOOR = 0.75; // Minimum trail distance
-    // MIN_BE_FLOOR now comes from configurable parameter minBeFloorPct (default 2.0%)
-    // This ensures BE activation is always > stop BE level (fees + buffer)
-    
-    // If adaptive exit not enabled, use static regime presets
-    if (!adaptiveEnabled) {
-      return {
-        slPct: 5.0,  // Default static SL
-        tpPct: Math.max(MIN_TP_FLOOR, preset.sgTpFixedPct),
-        trailPct: preset.sgTrailDistancePct,
-        beAtPct: preset.sgBeAtPct,
-        source: `Static (regime=${regime})`,
-        usedFallback: false,
-      };
-    }
-    
-    // Guard: require minimum history for reliable ATR
-    // If insufficient data or ATR is NaN/invalid, fall back to static defaults
-    const ATR_MIN_PERIODS = 14;
-    if (historyLength < ATR_MIN_PERIODS || !isFinite(atrPercent) || isNaN(atrPercent) || atrPercent <= 0) {
-      log(`[ATR_EXIT] ${pair}: Insufficient ATR data (history=${historyLength}, ATR=${atrPercent}) â†’ using static fallback`, "trading");
-      return {
-        slPct: 5.0,
-        tpPct: Math.max(MIN_TP_FLOOR, preset.sgTpFixedPct),
-        trailPct: preset.sgTrailDistancePct,
-        beAtPct: preset.sgBeAtPct,
-        source: `Fallback (insufficient ATR data, regime=${regime})`,
-        usedFallback: true,
-      };
-    }
-    
-    // Clamp ATR% to reasonable bounds (0.5% to 5%)
-    const clampedAtr = Math.max(0.5, Math.min(5.0, atrPercent));
-    
-    // Calculate dynamic levels using ATR multipliers from regime preset
-    // SL: Wider in trends (let position breathe), tighter in range (quick exit on reversal)
-    const dynamicSlPct = clampedAtr * preset.slAtrMultiplier;
-    
-    // TP: More ambitious in trends, conservative in range
-    const dynamicTpPct = clampedAtr * preset.tpAtrMultiplier;
-    
-    // Trail: Wider in trends, tighter in range
-    const dynamicTrailPct = clampedAtr * preset.trailAtrMultiplier;
-    
-    // BE: Based on half of trail distance (activate BE before trail)
-    const dynamicBePct = dynamicTrailPct * 0.5;
-    
-    // Apply floor/ceiling with fee-aware TP minimum
-    const finalSl = Math.max(MIN_SL_FLOOR, Math.min(8.0, dynamicSlPct));
-    const finalTp = Math.max(MIN_TP_FLOOR, Math.min(15.0, dynamicTpPct));  // Fee-gated floor
-    const finalTrail = Math.max(MIN_TRAIL_FLOOR, Math.min(4.0, dynamicTrailPct));
-    const finalBe = Math.max(minBeFloorPct, Math.min(3.0, dynamicBePct));
-    
-    log(`[ATR_EXIT] ${pair}: ATR=${clampedAtr.toFixed(2)}% regime=${regime} â†’ SL=${finalSl.toFixed(2)}% TP=${finalTp.toFixed(2)}% Trail=${finalTrail.toFixed(2)}% BE=${finalBe.toFixed(2)}% (minTP=${MIN_TP_FLOOR.toFixed(2)}%)`, "trading");
-    
-    return {
-      slPct: finalSl,
-      tpPct: finalTp,
-      trailPct: finalTrail,
-      beAtPct: finalBe,
-      source: `ATR-Dynamic (ATR=${clampedAtr.toFixed(2)}%, regime=${regime})`,
-      usedFallback: false,
-    };
-  }
+  // === REGIME DETECTION (delegated to regimeDetection.ts) ===
+  private detectMarketRegime(candles: OHLCCandle[]): RegimeAnalysis { return _detectMarketRegime(candles); }
+  private getRegimeAdjustedParams(baseParams: { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number }, regime: MarketRegime, regimeEnabled: boolean) { return _getRegimeAdjustedParams(baseParams, regime, regimeEnabled); }
+  private calculateAtrBasedExits(pair: string, entryPrice: number, atrPercent: number, regime: MarketRegime, adaptiveEnabled: boolean, historyLength: number = 0, minBeFloorPct: number = 2.0) { return _calculateAtrBasedExits(pair, entryPrice, atrPercent, regime, adaptiveEnabled, historyLength, minBeFloorPct); }
 
   // === PHASE 2: ANTI-SPAM HELPERS ===
   
@@ -5596,8 +5389,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de RÃ©gimen</b>
   }
 
   shouldPauseEntriesDueToRegime(regime: MarketRegime, regimeEnabled: boolean): boolean {
-    if (!regimeEnabled) return false;
-    return REGIME_PRESETS[regime].pauseEntries;
+    return _shouldPauseEntriesDueToRegime(regime, regimeEnabled);
   }
 
   private updatePriceHistory(pair: string, data: PriceData) {
