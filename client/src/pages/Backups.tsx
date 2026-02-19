@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Trash2, Star, RefreshCw, Database, Code, HardDrive, AlertTriangle, CheckCircle, Clock, RotateCcw } from 'lucide-react';
+import { Nav } from '@/components/dashboard/Nav';
 
 interface BackupFile {
   name: string;
@@ -246,8 +247,11 @@ export default function Backups() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="min-h-screen bg-background flex flex-col">
+        <Nav />
+        <div className="flex items-center justify-center flex-1">
+          <RefreshCw className="w-8 h-8 animate-spin text-primary" />
+        </div>
       </div>
     );
   }
@@ -256,18 +260,20 @@ export default function Backups() {
   const regularBackups = (data.backups || []).filter(b => !b.isMaster);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="min-h-screen bg-background flex flex-col">
+      <Nav />
+      <div className="p-4 md:p-6 space-y-6 flex-1">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Backups</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <h1 className="text-2xl font-bold text-foreground">Backups</h1>
+          <p className="text-sm text-muted-foreground">
             Gestión de copias de seguridad y restauración
           </p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
         >
           Crear Backup
         </button>
@@ -275,27 +281,27 @@ export default function Backups() {
 
       {/* Disk Space Stats */}
       {data?.diskSpace && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+        <div className="bg-card rounded-lg p-4 border border-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <HardDrive className="w-5 h-5 text-gray-500" />
+              <HardDrive className="w-5 h-5 text-muted-foreground" />
               <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Espacio en Disco</p>
-                <p className="text-xs text-gray-500">
+                <p className="text-sm font-medium text-foreground">Espacio en Disco</p>
+                <p className="text-xs text-muted-foreground">
                   {data.diskSpace.used} usado de {data.diskSpace.total}
                 </p>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-lg font-bold text-gray-900 dark:text-white">
+              <p className="text-lg font-bold text-foreground">
                 {data.diskSpace.available}
               </p>
-              <p className="text-xs text-gray-500">disponible</p>
+              <p className="text-xs text-muted-foreground">disponible</p>
             </div>
           </div>
-          <div className="mt-3 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+          <div className="mt-3 w-full bg-muted rounded-full h-2">
             <div
-              className="bg-blue-500 h-2 rounded-full transition-all"
+              className="bg-primary h-2 rounded-full transition-all"
               style={{ width: data.diskSpace.percentage }}
             />
           </div>
@@ -305,62 +311,62 @@ export default function Backups() {
       {/* Master Backups */}
       {masterBackups.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
             Backups Maestros
           </h2>
           {masterBackups.map((master) => (
             <div
               key={master.id}
-              className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 rounded-lg p-4 border-2 border-yellow-400 dark:border-yellow-600"
+              className="bg-yellow-500/10 rounded-lg p-4 border-2 border-yellow-500/40"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
-                    <h3 className="font-bold text-gray-900 dark:text-white">{master.name}</h3>
+                    <h3 className="font-bold text-foreground">{master.name}</h3>
                     <span className={`px-2 py-1 rounded text-xs font-medium ${getTypeColor(master.type)}`}>
                       {master.type}
                     </span>
                   </div>
                   {master.notes && (
-                    <p className="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">
+                    <p className="text-sm text-muted-foreground mb-2 italic">
                       "{master.notes}"
                     </p>
                   )}
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <p className="text-gray-500 dark:text-gray-400">Creado</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
+                      <p className="text-muted-foreground">Creado</p>
+                      <p className="font-medium text-foreground">
                         {formatDate(master.markedAsMasterAt)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-gray-500 dark:text-gray-400">Tamaño</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{master.size}</p>
+                      <p className="text-muted-foreground">Tamaño</p>
+                      <p className="font-medium text-foreground">{master.size}</p>
                     </div>
                   </div>
                   {master.metrics && (
-                    <div className="mt-3 p-3 bg-white/50 dark:bg-gray-800/50 rounded border border-yellow-200 dark:border-yellow-800">
-                      <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    <div className="mt-3 p-3 bg-card/50 rounded border border-yellow-500/20">
+                      <p className="text-xs font-semibold text-foreground mb-2">
                         Métricas al momento del backup:
                       </p>
                       <div className="grid grid-cols-3 gap-2 text-xs">
                         <div>
-                          <p className="text-gray-500">Trades</p>
-                          <p className="font-medium text-gray-900 dark:text-white">
+                          <p className="text-muted-foreground">Trades</p>
+                          <p className="font-medium text-foreground">
                             {master.metrics.totalTrades || 0}
                           </p>
                         </div>
                         <div>
-                          <p className="text-gray-500">Posiciones</p>
-                          <p className="font-medium text-gray-900 dark:text-white">
+                          <p className="text-muted-foreground">Posiciones</p>
+                          <p className="font-medium text-foreground">
                             {master.metrics.openPositions || 0}
                           </p>
                         </div>
                         <div>
-                          <p className="text-gray-500">PnL</p>
-                          <p className={`font-medium ${master.metrics.totalPnlUsd >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          <p className="text-muted-foreground">PnL</p>
+                          <p className={`font-medium ${master.metrics.totalPnlUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             ${master.metrics.totalPnlUsd?.toFixed(2) || '0.00'}
                           </p>
                         </div>
@@ -393,77 +399,37 @@ export default function Backups() {
 
       {/* Regular Backups */}
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h2 className="text-lg font-semibold text-foreground">
           Backups Regulares ({regularBackups.length})
         </h2>
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="bg-card rounded-lg border border-border overflow-hidden">
           <table className="w-full">
-            <thead className="bg-gray-50 dark:bg-gray-900">
+            <thead className="bg-muted/50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Tipo
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Nombre
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Fecha
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Tamaño
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Acciones
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Tipo</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Nombre</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Fecha</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Tamaño</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase">Acciones</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+            <tbody className="divide-y divide-border">
               {regularBackups.map((backup) => (
-                <tr key={backup.name} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <tr key={backup.name} className="hover:bg-muted/30">
                   <td className="px-4 py-3">
                     <div className={`flex items-center gap-2 ${getTypeColor(backup.type)}`}>
                       {getTypeIcon(backup.type)}
                       <span className="text-xs font-medium">{backup.type}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
-                    {backup.name}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {formatDate(backup.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                    {backup.size}
-                  </td>
+                  <td className="px-4 py-3 text-sm font-medium text-foreground">{backup.name}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{formatDate(backup.createdAt)}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{backup.size}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedBackup(backup);
-                          setShowMasterModal(true);
-                        }}
-                        className="p-1.5 text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded"
-                        title="Marcar como maestro"
-                      >
-                        <Star className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedBackup(backup);
-                          setShowRestoreModal(true);
-                        }}
-                        className="p-1.5 text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
-                        title="Restaurar"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => deleteBackup(backup.name)}
-                        className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                        title="Eliminar"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <button onClick={() => { setSelectedBackup(backup); setShowMasterModal(true); }} className="p-1.5 text-yellow-500 hover:bg-yellow-500/10 rounded" title="Marcar como maestro"><Star className="w-4 h-4" /></button>
+                      <button onClick={() => { setSelectedBackup(backup); setShowRestoreModal(true); }} className="p-1.5 text-green-500 hover:bg-green-500/10 rounded" title="Restaurar"><RotateCcw className="w-4 h-4" /></button>
+                      <button onClick={() => deleteBackup(backup.name)} className="p-1.5 text-red-500 hover:bg-red-500/10 rounded" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>
                 </tr>
@@ -475,20 +441,16 @@ export default function Backups() {
 
       {/* Create Backup Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
-              Crear Nuevo Backup
-            </h3>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card rounded-lg p-6 max-w-md w-full mx-4 border border-border">
+            <h3 className="text-lg font-bold text-foreground mb-4">Crear Nuevo Backup</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Tipo de Backup
-                </label>
+                <label className="block text-sm font-medium text-foreground mb-2">Tipo de Backup</label>
                 <select
                   value={createType}
                   onChange={(e) => setCreateType(e.target.value as any)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
                 >
                   <option value="full">Completo (DB + Código)</option>
                   <option value="database">Solo Base de Datos</option>
@@ -496,31 +458,19 @@ export default function Backups() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Nombre (opcional)
-                </label>
+                <label className="block text-sm font-medium text-foreground mb-2">Nombre (opcional)</label>
                 <input
                   type="text"
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
                   placeholder="backup_personalizado"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
                 />
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
-                disabled={creating}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={createBackup}
-                disabled={creating}
-                className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
-              >
+              <button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2 border border-border rounded-lg hover:bg-muted text-foreground" disabled={creating}>Cancelar</button>
+              <button onClick={createBackup} disabled={creating} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50">
                 {creating ? 'Creando...' : 'Crear Backup'}
               </button>
             </div>
@@ -530,52 +480,35 @@ export default function Backups() {
 
       {/* Mark as Master Modal */}
       {showMasterModal && selectedBackup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card rounded-lg p-6 max-w-md w-full mx-4 border border-border">
+            <h3 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
               <Star className="w-5 h-5 text-yellow-500" />
               Marcar como Backup Maestro
             </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Backup: <span className="font-medium">{selectedBackup.name}</span>
+            <p className="text-sm text-muted-foreground mb-4">
+              Backup: <span className="font-medium text-foreground">{selectedBackup.name}</span>
             </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Notas (opcional)
-                </label>
+                <label className="block text-sm font-medium text-foreground mb-2">Notas (opcional)</label>
                 <textarea
                   value={masterNotes}
                   onChange={(e) => setMasterNotes(e.target.value)}
                   placeholder="Ej: Bot estable después de fix phantom buys. PnL positivo, sin errores en 48h"
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
                 />
               </div>
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
-                <p className="text-xs text-yellow-800 dark:text-yellow-200">
-                  ⚠️ Los backups maestros están protegidos y no se eliminan automáticamente.
-                  Máximo 2 maestros permitidos.
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                <p className="text-xs text-yellow-400">
+                  ⚠️ Los backups maestros están protegidos y no se eliminan automáticamente. Máximo 2 maestros permitidos.
                 </p>
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowMasterModal(false);
-                  setMasterNotes('');
-                  setSelectedBackup(null);
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={markAsMaster}
-                className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
-              >
-                Marcar como Maestro
-              </button>
+              <button onClick={() => { setShowMasterModal(false); setMasterNotes(''); setSelectedBackup(null); }} className="flex-1 px-4 py-2 border border-border rounded-lg hover:bg-muted text-foreground">Cancelar</button>
+              <button onClick={markAsMaster} className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600">Marcar como Maestro</button>
             </div>
           </div>
         </div>
@@ -583,64 +516,51 @@ export default function Backups() {
 
       {/* Restore Modal */}
       {showRestoreModal && selectedBackup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card rounded-lg p-6 max-w-md w-full mx-4 border border-border">
             <div className="flex items-center gap-2 mb-4">
               <AlertTriangle className="w-6 h-6 text-red-500" />
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+              <h3 className="text-lg font-bold text-foreground">
                 {selectedBackup.isMaster ? 'Restaurar Backup Maestro' : 'Restaurar Backup'}
               </h3>
             </div>
             <div className="space-y-4">
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                <p className="text-sm text-red-800 dark:text-red-200 font-medium mb-2">
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                <p className="text-sm text-red-400 font-medium mb-2">
                   ⚠️ ADVERTENCIA: Esta acción es irreversible
                 </p>
-                <p className="text-xs text-red-700 dark:text-red-300">
+                <p className="text-xs text-red-400/80">
                   Se perderán todos los cambios realizados después de este backup.
                 </p>
               </div>
               <div>
-                <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                  Backup: <span className="font-medium">{selectedBackup.name}</span>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Backup: <span className="font-medium text-foreground">{selectedBackup.name}</span>
                 </p>
-                <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                  Fecha: <span className="font-medium">{formatDate(selectedBackup.createdAt)}</span>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Fecha: <span className="font-medium text-foreground">{formatDate(selectedBackup.createdAt)}</span>
                 </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Escribe "{selectedBackup.isMaster ? 'RESTAURAR MAESTRO' : 'CONFIRMAR'}" para continuar
                 </label>
                 <input
                   type="text"
                   value={restoreConfirmation}
                   onChange={(e) => setRestoreConfirmation(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground"
                 />
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowRestoreModal(false);
-                  setRestoreConfirmation('');
-                  setSelectedBackup(null);
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={restoreBackup}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-              >
-                Restaurar
-              </button>
+              <button onClick={() => { setShowRestoreModal(false); setRestoreConfirmation(''); setSelectedBackup(null); }} className="flex-1 px-4 py-2 border border-border rounded-lg hover:bg-muted text-foreground">Cancelar</button>
+              <button onClick={restoreBackup} className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">Restaurar</button>
             </div>
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
