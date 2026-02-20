@@ -146,13 +146,13 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           return res.status(503).json({ error: "Kraken not initialized" });
         }
 
-        console.log("[fisco] Starting full Kraken fetch (trades + ledger)...");
+        console.log("[fisco] Starting full Kraken fetch (trades then ledger, sequential to avoid rate limit)...");
         const startTime = Date.now();
 
-        const [tradesResp, ledgerResp] = await Promise.all([
-          krakenService.getTradesHistory({ fetchAll: true }),
-          krakenService.getLedgers({ fetchAll: true }),
-        ]);
+        // SEQUENTIAL — Kraken has strict rate limits (15 calls/min for private endpoints)
+        // Running trades + ledger in parallel doubles the call rate and triggers EAPI:Rate limit exceeded
+        const tradesResp = await krakenService.getTradesHistory({ fetchAll: true });
+        const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
 
         const trades = tradesResp?.trades || {};
         const ledger = ledgerResp?.ledger || {};
@@ -235,10 +235,15 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           return res.status(503).json({ error: "RevolutX not initialized" });
         }
 
-        console.log("[fisco] Starting full RevolutX fetch (historical orders)...");
+        // Support ?start=2025-01-01 query param (ISO date string)
+        const startParam = req.query.start as string | undefined;
+        const startMs = startParam ? new Date(startParam).getTime() : undefined;
+
+        console.log(`[fisco] Starting full RevolutX fetch (historical orders)${startMs ? ` from ${startParam}` : ''}...`);
         const startTime = Date.now();
 
         const orders = await revolutXService.getHistoricalOrders({
+          startMs,
           states: ['filled'],
         });
 

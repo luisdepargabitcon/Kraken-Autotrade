@@ -1053,7 +1053,7 @@ export class RevolutXService implements IExchangeService {
   }>> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const DEFAULT_START = new Date('2020-01-01T00:00:00Z').getTime();
+    const DEFAULT_START = new Date('2025-01-01T00:00:00Z').getTime();
     const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
     const RATE_LIMIT_DELAY = 500;
 
