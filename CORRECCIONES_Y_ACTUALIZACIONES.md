@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-02-21 — REFACTOR: Extracción strategies.ts + alertBuilder.ts de tradingEngine.ts
+
+### Objetivo
+Continuar reducción del monolito `tradingEngine.ts` extrayendo bloques cohesivos y testables.
+
+### Extracciones realizadas
+
+| Módulo | Líneas | Funciones extraídas |
+|---|---|---|
+| `strategies.ts` | 698 | `momentumStrategy`, `meanReversionStrategy`, `scalpingStrategy`, `gridStrategy`, `momentumCandlesStrategy`, `meanReversionSimpleStrategy`, `applyMTFFilter` |
+| `alertBuilder.ts` | 247 | `buildTimeStopAlertMessage`, `sendTimeStopAlert`, `checkExpiredTimeStopPositions`, `forceTimeStopAlerts` |
+
+### Patrón de extracción
+- **strategies.ts**: Funciones puras (sin side-effects). Reciben datos de mercado, devuelven `TradeSignal`. Indicadores importados de `indicators.ts`.
+- **alertBuilder.ts**: Patrón host-interface (`IAlertBuilderHost`). El engine implementa el adaptador para inyectar dependencias (telegram, precios, DB).
+- En `tradingEngine.ts`, los métodos originales quedan como thin delegations de 1 línea.
+
+### Resultado
+- `tradingEngine.ts`: 6550 → **5767 líneas** (−783, −12%)
+- Total módulos extraídos: 8 (exitManager, indicators, regimeDetection, regimeManager, spreadFilter, mtfAnalysis, **strategies**, **alertBuilder**)
+- `npm run check` = 0 errores
+
+### Tests añadidos
+- `server/services/__tests__/strategies.test.ts` — **33 tests** (7 estrategias + MTF filter)
+- `server/services/__tests__/alertBuilder.test.ts` — **30 tests** (message builder, alert dispatch, expired check, force alerts)
+- Total tests del proyecto: 5 test suites, 63+ assertions nuevas
+
+### Arquitectura actualizada
+
+```
+tradingEngine.ts    5767 líneas  (core trading loop, execution, entry logic)
+├── exitManager.ts      1404 líneas  (SL/TP, SmartGuard, TimeStop, alert throttle)
+├── strategies.ts        698 líneas  (momentum, meanReversion, scalping, grid, candles, MTF filter)
+├── indicators.ts        296 líneas  (EMA, RSI, MACD, Bollinger, ATR, ADX)
+├── regimeDetection.ts   273 líneas  (detectMarketRegime, params)
+├── regimeManager.ts     319 líneas  (cache, confirmación, DB)
+├── spreadFilter.ts      208 líneas  (spread gating, alertas)
+├── mtfAnalysis.ts       198 líneas  (MTF fetch/cache, trend)
+└── alertBuilder.ts      247 líneas  (Time-Stop alerts, host interface)
+```
+
+---
+
 ## 2026-02-20 — AUDIT: Verificación integral del proyecto (commit `0c38751`)
 
 ### Hallazgos del audit vs estado real
