@@ -5,6 +5,39 @@
 
 ---
 
+## 2026-02-22 — FEAT: Módulo FISCO — APIs de exchanges para control fiscal
+
+### Objetivo
+Implementar extracción de datos fiscales directamente desde las APIs de los exchanges (NO desde la DB del bot), capturando TODAS las operaciones incluyendo las realizadas manualmente fuera del bot.
+
+### Problema resuelto: RevolutX sin campo `side`
+- El endpoint `/api/1.0/trades/private/{symbol}` devuelve datos MiFID (`tdt`, `aid`, `p`, `q`, `tid`) pero **NO incluye `side` (buy/sell)**.
+- **Solución**: Usar el endpoint `/api/1.0/orders/historical` que SÍ devuelve `side`, `filled_quantity`, `average_fill_price`, `filled_date`, etc.
+- Limitación: máx 1 semana por consulta → se itera semana a semana automáticamente.
+
+### Cambios realizados
+
+| Archivo | Cambio |
+|---|---|
+| `server/services/exchanges/RevolutXService.ts` | Nuevo método `getHistoricalOrders()` — itera por semanas, paginación con cursor, filtra por `state=filled` |
+| `server/services/kraken.ts` | Nuevo método `getLedgers()` — obtiene deposits, withdrawals, staking, trades vía `client.ledgers()` con paginación |
+| `server/routes/fisco.routes.ts` | **NUEVO** — Endpoints `/api/fisco/test-apis` y `/api/fisco/fetch-all?exchange=kraken|revolutx` |
+| `server/routes.ts` | Registra `fisco.routes.ts` en el router principal |
+
+### Endpoints disponibles
+- `GET /api/fisco/test-apis` — Prueba rápida de ambas APIs (primera página de datos + muestra)
+- `GET /api/fisco/fetch-all?exchange=kraken` — Descarga COMPLETA de trades + ledger de Kraken
+- `GET /api/fisco/fetch-all?exchange=revolutx` — Descarga COMPLETA de órdenes ejecutadas de RevolutX
+
+### Principio de diseño
+> **Exchange-First**: Los datos fiscales se obtienen SIEMPRE de las APIs de los exchanges, nunca de la DB del bot. Esto garantiza que operaciones manuales, deposits, withdrawals y staking se capturen correctamente.
+
+### Verificación
+- `npx tsc --noEmit` → 0 errores
+- Pendiente: test en staging con datos reales
+
+---
+
 ## 2026-02-21 — REFACTOR: Extracción strategies.ts + alertBuilder.ts de tradingEngine.ts
 
 ### Objetivo

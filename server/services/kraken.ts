@@ -366,6 +366,109 @@ export class KrakenService implements IExchangeService {
     return { trades: allTrades, count: Object.keys(allTrades).length };
   }
 
+  /**
+   * Get ledger entries from Kraken API.
+   * Returns ALL ledger entries: trades, deposits, withdrawals, staking rewards, etc.
+   * Uses pagination (50 per page) and fetches all entries when fetchAll=true.
+   * @param options.type Filter by type: "all", "deposit", "withdrawal", "trade", "margin", "staking", "transfer"
+   * @param options.start Start timestamp (Unix seconds)
+   * @param options.end End timestamp (Unix seconds)
+   * @param options.fetchAll If true, paginate through all entries
+   */
+  async getLedgers(options?: {
+    type?: string;
+    start?: number;
+    end?: number;
+    fetchAll?: boolean;
+    asset?: string;
+  }): Promise<{
+    ledger: Record<string, {
+      refid: string;
+      time: number;
+      type: string;
+      subtype: string;
+      aclass: string;
+      asset: string;
+      amount: number;
+      fee: number;
+      balance: number;
+    }>;
+    count: number;
+  }> {
+    if (!this.client) throw new Error("Kraken client not initialized");
+
+    const params: any = {};
+    if (options?.type && options.type !== 'all') params.type = options.type;
+    if (options?.start) params.start = options.start;
+    if (options?.end) params.end = options.end;
+    if (options?.asset) params.asset = options.asset;
+
+    if (!options?.fetchAll) {
+      const response: any = await this.executeWithNonceRetry("ledgers", () => this.client.ledgers(params));
+      const ledger = response?.ledger || {};
+      return { ledger, count: response?.count || Object.keys(ledger).length };
+    }
+
+    // Fetch all ledger entries with pagination
+    const allLedger: Record<string, any> = {};
+    let offset = 0;
+    let totalCount = 0;
+    const RATE_LIMIT_DELAY = 2000;
+
+    console.log(`[kraken] Fetching all ledger entries with pagination...`);
+
+    while (true) {
+      const paginatedParams = { ...params, ofs: offset };
+
+      const response: any = await this.executeWithNonceRetry("ledgers", () =>
+        this.client.ledgers(paginatedParams)
+      );
+
+      const ledger = response?.ledger || {};
+      const count = response?.count || 0;
+
+      if (offset === 0) {
+        totalCount = count;
+        console.log(`[kraken] Total ledger entries in Kraken: ${totalCount}`);
+      }
+
+      const entryIds = Object.keys(ledger);
+      if (entryIds.length === 0) {
+        console.log(`[kraken] No more ledger entries at offset ${offset}`);
+        break;
+      }
+
+      for (const [id, entry] of Object.entries(ledger) as [string, any][]) {
+        allLedger[id] = {
+          refid: entry.refid || '',
+          time: entry.time || 0,
+          type: entry.type || '',
+          subtype: entry.subtype || '',
+          aclass: entry.aclass || '',
+          asset: entry.asset || '',
+          amount: parseFloat(entry.amount || '0'),
+          fee: parseFloat(entry.fee || '0'),
+          balance: parseFloat(entry.balance || '0'),
+        };
+      }
+
+      console.log(`[kraken] Fetched ${entryIds.length} ledger entries at offset ${offset}, total collected: ${Object.keys(allLedger).length}`);
+
+      offset += 50;
+
+      if (offset >= totalCount) {
+        console.log(`[kraken] Reached end of ledger history`);
+        break;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+    }
+
+    console.log(`[kraken] Finished fetching ${Object.keys(allLedger).length} total ledger entries`);
+
+    return { ledger: allLedger, count: Object.keys(allLedger).length };
+  }
+
   async getOHLC(pair: string, interval: number = 5): Promise<{
     time: number;
     open: number;

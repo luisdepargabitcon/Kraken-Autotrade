@@ -1023,6 +1023,168 @@ export class RevolutXService implements IExchangeService {
 
     return fillsFromEndpoint;
   }
+
+  /**
+   * Get historical orders with full details including side (buy/sell).
+   * This is the CORRECT endpoint for fiscal data — unlike /trades/private which lacks side.
+   * API constraint: max 1 week per query, so we iterate week-by-week.
+   * @param params.startMs  Start timestamp (epoch ms). If omitted, fetches from 2020-01-01.
+   * @param params.endMs    End timestamp (epoch ms). If omitted, uses now.
+   * @param params.symbols  Comma-separated symbols filter (e.g. "BTC-USD,ETH-USD"). Optional.
+   * @param params.states   Order states to include. Default: ["filled"].
+   */
+  async getHistoricalOrders(params?: {
+    startMs?: number;
+    endMs?: number;
+    symbols?: string;
+    states?: string[];
+  }): Promise<Array<{
+    id: string;
+    client_order_id?: string;
+    symbol: string;
+    side: 'buy' | 'sell';
+    type: string;
+    quantity: number;
+    filled_quantity: number;
+    average_fill_price: number;
+    status: string;
+    created_date: number;
+    filled_date?: number;
+  }>> {
+    if (!this.initialized) throw new Error('Revolut X client not initialized');
+
+    const DEFAULT_START = new Date('2020-01-01T00:00:00Z').getTime();
+    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const RATE_LIMIT_DELAY = 500;
+
+    const startMs = params?.startMs || DEFAULT_START;
+    const endMs = params?.endMs || Date.now();
+    const states = params?.states || ['filled'];
+    const statesParam = states.join(',');
+
+    const allOrders: Array<{
+      id: string;
+      client_order_id?: string;
+      symbol: string;
+      side: 'buy' | 'sell';
+      type: string;
+      quantity: number;
+      filled_quantity: number;
+      average_fill_price: number;
+      status: string;
+      created_date: number;
+      filled_date?: number;
+    }> = [];
+
+    const seenIds = new Set<string>();
+    let windowStart = startMs;
+
+    console.log(`[revolutx] getHistoricalOrders: fetching from ${new Date(startMs).toISOString()} to ${new Date(endMs).toISOString()}`);
+
+    while (windowStart < endMs) {
+      const windowEnd = Math.min(windowStart + ONE_WEEK_MS, endMs);
+      let cursor: string | undefined;
+      let pageCount = 0;
+
+      do {
+        const queryParams: Record<string, string | number | undefined> = {
+          start_date: windowStart,
+          end_date: windowEnd,
+          states: statesParam,
+          limit: 100,
+          cursor,
+        };
+        if (params?.symbols) {
+          queryParams.symbols = params.symbols;
+        }
+
+        const orderedKeys = ['symbols', 'states', 'types', 'start_date', 'end_date', 'cursor', 'limit'];
+        const path = '/api/1.0/orders/historical';
+        const queryString = this.buildQueryString(queryParams, orderedKeys);
+        const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
+        const headers = this.getHeaders('GET', path, queryString, '');
+
+        try {
+          const response = await fetch(fullUrl, { headers });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[revolutx] getHistoricalOrders error: ${response.status} ${errorText}`);
+            // If we get a transient error, skip this window
+            break;
+          }
+
+          const data = await response.json() as any;
+          const orders = Array.isArray(data) ? data : (data.data || data.orders || data.items || []);
+
+          for (const o of orders) {
+            const orderId = o.id || o.order_id || o.venue_order_id;
+            if (!orderId || seenIds.has(orderId)) continue;
+            seenIds.add(orderId);
+
+            const side = (o.side || '').toLowerCase();
+            if (side !== 'buy' && side !== 'sell') continue;
+
+            const filledQty = parseFloat(o.filled_quantity || o.filled_size || o.executed_size || '0');
+            const avgPrice = parseFloat(o.average_fill_price || o.avg_fill_price || o.average_price || '0');
+            const qty = parseFloat(o.quantity || o.size || o.base_size || '0');
+
+            // Parse timestamps
+            const createdDate = typeof o.created_date === 'number' ? o.created_date :
+              (typeof o.created_date === 'string' ? (Number(o.created_date) || new Date(o.created_date).getTime()) : 0);
+            const filledDate = o.filled_date ?
+              (typeof o.filled_date === 'number' ? o.filled_date :
+                (typeof o.filled_date === 'string' ? (Number(o.filled_date) || new Date(o.filled_date).getTime()) : undefined))
+              : undefined;
+
+            allOrders.push({
+              id: orderId,
+              client_order_id: o.client_order_id,
+              symbol: o.symbol || '',
+              side: side as 'buy' | 'sell',
+              type: o.type || 'unknown',
+              quantity: qty,
+              filled_quantity: filledQty,
+              average_fill_price: avgPrice,
+              status: (o.status || o.state || '').toLowerCase(),
+              created_date: createdDate,
+              filled_date: filledDate,
+            });
+          }
+
+          pageCount++;
+
+          // Extract cursor for next page
+          cursor = data?.metadata?.next_cursor ||
+            data?.metadata?.nextCursor ||
+            data?.next_cursor ||
+            data?.nextCursor ||
+            undefined;
+
+        } catch (error: any) {
+          console.error(`[revolutx] getHistoricalOrders exception in window ${new Date(windowStart).toISOString()}: ${error.message}`);
+          break;
+        }
+
+        if (cursor) {
+          await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+        }
+      } while (cursor);
+
+      if (pageCount > 0) {
+        console.log(`[revolutx] Window ${new Date(windowStart).toISOString()} → ${new Date(windowEnd).toISOString()}: ${pageCount} pages, total orders so far: ${allOrders.length}`);
+      }
+
+      windowStart = windowEnd;
+      // Small delay between windows to respect rate limits
+      if (windowStart < endMs) {
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+      }
+    }
+
+    console.log(`[revolutx] getHistoricalOrders: total ${allOrders.length} filled orders fetched`);
+    return allOrders;
+  }
 }
 
 export const revolutXService = RevolutXService.getInstance();

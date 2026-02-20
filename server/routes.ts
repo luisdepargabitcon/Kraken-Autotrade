@@ -785,6 +785,12 @@ export async function registerRoutes(
   registerAiRoutes(app, routerDeps);
 
   // ============================================================
+  // FISCO (Fiscal Control) ENDPOINTS (modularized)
+  // ============================================================
+  const { registerFiscoRoutes } = await import('./routes/fisco.routes');
+  registerFiscoRoutes(app, routerDeps);
+
+  // ============================================================
   // TEST & DEBUG ENDPOINTS (modularized)
   // ============================================================
   const { registerTestRoutes } = await import('./routes/test.routes');
