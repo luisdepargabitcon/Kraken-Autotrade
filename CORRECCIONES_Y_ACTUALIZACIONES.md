@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-02-20 — FIX: Reparación encoding UTF-8 en alertas Telegram (commit `bacb179`)
+
+### Problema
+- `tradingEngine.ts` contenía **217 instancias de mojibake** (double-encoding Win-1252→UTF-8)
+- Emojis se mostraban como `ðŸ¤–` en vez de 🤖, acentos como `Ã³` en vez de ó
+- Afectaba TODAS las alertas Telegram: Time-Stop, Bot Started/Stopped, Trades, Errors, etc.
+
+### Causa raíz
+- El archivo fue guardado en algún momento con encoding Windows-1252 interpretando bytes UTF-8
+- Cada byte UTF-8 fue mapeado a su equivalente Win-1252 y re-codificado como UTF-8
+
+### Solución
+- Script PowerShell (`fix-encoding.ps1`) con 3 fases:
+  1. **Phase 0**: Reparar literales `u{XXXX}` de un intento previo (PS 5.1 no soporta backtick-u)
+  2. **Phase 1**: Reemplazar emojis 4-byte restantes (💡🔄🟢🔴💵)
+  3. **Phase 2+3**: Símbolos 3-byte (━•⏰⚠⚡⚙⏸) y acentos (óéáúíñÓÍÑü)
+- **22+ tipos de patrones** corregidos, **426 líneas** afectadas
+- `npm run check` = 0 errores post-fix
+
+---
+
 ## 2026-02-19 — REFACTOR: Modularización de tradingEngine.ts (Fase 2)
 
 ### Cambios realizados
