@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-02-20 — AUDIT: Verificación integral del proyecto (commit `0c38751`)
+
+### Hallazgos del audit vs estado real
+
+| Hallazgo del audit | Estado real | Veredicto |
+|---|---|---|
+| `routes.ts` tiene 4000+ líneas | **822 líneas** + 10 route modules en `server/routes/` | ✅ YA MODULARIZADO |
+| `tradingEngine.ts` monolito 8000+ líneas | **6550 líneas** (-26%) + 6 módulos extraídos | ✅ PARCIALMENTE RESUELTO |
+| `openPositions` Map se pierde en restart | `loadOpenPositionsFromDB()` + `recoverPendingFillPositionsFromDB()` en `start()` | ✅ YA TIENE RECOVERY |
+| `sgAlertThrottle` volátil | `exitManager.ts` líneas 177-183: carga desde DB + persiste cada update | ✅ YA TIENE PERSISTENCIA DB |
+| Sin capa de servicio | RouterDeps pattern + route modules por dominio | ✅ ADECUADO |
+| Tests insuficientes | 3 test files + telegram templates test | ⚠️ MEJORABLE (no crítico) |
+| Sin recovery automático de estado | Fail-closed safety check en `manualBuyForTest()` + DB persistence | ✅ IMPLEMENTADO |
+
+### Arquitectura actual (post-refactor)
+
+```
+tradingEngine.ts    6550 líneas  (core trading loop, strategies, execution)
+├── exitManager.ts      1404 líneas  (SL/TP, SmartGuard, TimeStop, alert throttle)
+├── indicators.ts        296 líneas  (EMA, RSI, MACD, Bollinger, ATR, ADX)
+├── regimeDetection.ts   273 líneas  (detectMarketRegime, params)
+├── regimeManager.ts     319 líneas  (cache, confirmación, DB)
+├── spreadFilter.ts      208 líneas  (spread gating, alertas)
+└── mtfAnalysis.ts       198 líneas  (MTF fetch/cache, trend)
+
+routes.ts            822 líneas  (startup, health, config endpoints)
+├── trades.routes.ts         (CRUD trades, sync, FIFO, performance)
+├── positions.routes.ts      (open-positions, buy, close, orphan)
+├── admin.routes.ts          (purge, rebuild, backfill, indexes)
+├── market.routes.ts         (balance, prices, trade, reconcile)
+├── events.routes.ts         (events & logs)
+├── ai.routes.ts             (AI, environment, DB diagnostics)
+├── test.routes.ts           (test & debug)
+├── telegram.routes.ts       (Telegram endpoints)
+├── backups.routes.ts        (backup management)
+└── config.ts                (configuration)
+```
+
+### Encoding fix pase 2 (commit `0c38751`)
+- Patrones adicionales corregidos: `≈` `→` `≥` `ℹ` `⏳` `É` `Ú` `Á`
+- Scanner exhaustivo: **0 mojibake residual** confirmado
+- `npm run check` = 0 errores
+
+---
+
 ## 2026-02-20 — FIX: Reparación encoding UTF-8 en alertas Telegram (commit `bacb179`)
 
 ### Problema
