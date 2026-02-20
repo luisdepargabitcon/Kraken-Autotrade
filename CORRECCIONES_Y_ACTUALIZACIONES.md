@@ -45,19 +45,40 @@
 - Imports muertos eliminados: `createHash`, `regimeState`, `RegimeState`, `db`, `eq`, `sql`
 - **-268 líneas** (+ ~120 líneas de tipos/imports limpiados)
 
+#### 6. Extracción de SpreadFilter
+- Creado `server/services/spreadFilter.ts` — clase `SpreadFilter` con interfaz `ISpreadFilterHost`
+- Funciones puras exportadas: `calculateSpreadPct`, `getSpreadThresholdForRegime`
+- Métodos movidos: `checkSpreadForBuy`, `sendSpreadTelegramAlert`
+- Estado migrado: `spreadAlertCooldowns` (anti-spam cooldown por par+exchange)
+- Tipo exportado: `SpreadCheckResult`, `SpreadCheckDetails`
+- **-158 líneas**
+
+#### 7. Extracción de MtfAnalyzer
+- Creado `server/services/mtfAnalysis.ts` — clase `MtfAnalyzer` con interfaz `IMtfAnalysisHost`
+- Funciones puras exportadas: `analyzeTimeframeTrend`, `analyzeMultiTimeframe`, `emitMTFDiagnostic`
+- Tipos exportados: `MultiTimeframeData`, `TrendAnalysis`
+- Estado migrado: `mtfCache` (cache 5min por par)
+- Constantes movidas: `MTF_DIAG_ENABLED`, `MTF_CACHE_TTL`
+- Eliminados de tradingEngine.ts: interfaces locales `MultiTimeframeData`, `TrendAnalysis`
+- **-149 líneas**
+
 ### Reducción total de tradingEngine.ts
 - **Antes**: 8865 líneas (original monolítico)
 - **Post ExitManager**: 7661 líneas (-1204)
 - **Post indicators.ts**: 7430 líneas (-231)
 - **Post regimeDetection.ts**: 7207 líneas (-223)
 - **Post regimeManager.ts + cleanup**: 6856 líneas (-351)
-- **Reducción total**: **-2009 líneas (-22.7%)**
+- **Post spreadFilter.ts**: 6699 líneas (-157)
+- **Post mtfAnalysis.ts**: 6549 líneas (-150)
+- **Reducción total**: **-2316 líneas (-26.1%)**
 
 ### Archivos creados/modificados
 - `server/services/__tests__/executeTrade.test.ts` (nuevo)
 - `server/services/indicators.ts` (nuevo)
 - `server/services/regimeDetection.ts` (nuevo)
 - `server/services/regimeManager.ts` (nuevo)
+- `server/services/spreadFilter.ts` (nuevo)
+- `server/services/mtfAnalysis.ts` (nuevo)
 - `server/services/exitManager.ts` (modificado — persistencia throttle)
 - `server/services/tradingEngine.ts` (modificado — delegaciones + cleanup)
 - `server/storage.ts` (modificado — métodos alert_throttle)

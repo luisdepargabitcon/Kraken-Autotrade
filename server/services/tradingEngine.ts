@@ -41,6 +41,14 @@ import {
   type RegimePreset,
 } from "./regimeDetection";
 import { RegimeManager, type IRegimeManagerHost } from "./regimeManager";
+import { SpreadFilter, type ISpreadFilterHost } from "./spreadFilter";
+import {
+  MtfAnalyzer,
+  analyzeTimeframeTrend as _analyzeTimeframeTrend,
+  analyzeMultiTimeframe as _analyzeMultiTimeframe,
+  type MultiTimeframeData,
+  type TrendAnalysis,
+} from "./mtfAnalysis";
 
 interface TradeSignal {
   action: "buy" | "sell" | "hold";
@@ -111,9 +119,6 @@ const CONFIDENCE_SIZING_THRESHOLDS = {
 
 // SMART_GUARD: umbral absoluto mÃ­nimo para evitar comisiones absurdas
 const SG_ABSOLUTE_MIN_USD = 20;
-
-// MTF Diagnostic: Habilitar para verificar que los timeframes son correctos
-const MTF_DIAG_ENABLED = true;
 
 // === VALIDACIÃ“N CENTRALIZADA DE MÃNIMOS (fuente Ãºnica de verdad) ===
 // Reason codes para SMART_GUARD sizing
@@ -367,21 +372,6 @@ interface CandleTrackingState {
   lastEvaluatedPair: string;
 }
 
-interface MultiTimeframeData {
-  tf5m: OHLCCandle[];
-  tf1h: OHLCCandle[];
-  tf4h: OHLCCandle[];
-  lastUpdate: number;
-}
-
-interface TrendAnalysis {
-  shortTerm: "bullish" | "bearish" | "neutral";
-  mediumTerm: "bullish" | "bearish" | "neutral";
-  longTerm: "bullish" | "bearish" | "neutral";
-  alignment: number;
-  confidence: number;
-  summary: string;
-}
 
 export class TradingEngine {
   private krakenService: KrakenService;
@@ -392,10 +382,9 @@ export class TradingEngine {
   private lastTradeTime: Map<string, number> = new Map();
   private openPositions: Map<string, OpenPosition> = new Map(); // Key is lotId for multi-lot support
   private currentUsdBalance: number = 0;
-  private mtfCache: Map<string, MultiTimeframeData> = new Map();
+  private mtfAnalyzer!: MtfAnalyzer;
   private readonly PRICE_HISTORY_LENGTH = 50;
   private readonly MIN_TRADE_INTERVAL_MS = 60000;
-  private readonly MTF_CACHE_TTL = 300000;
   
   private dailyPnL: number = 0;
   private dailyStartBalance: number = 0;
@@ -409,7 +398,6 @@ export class TradingEngine {
   // Track PENDING_FILL exposure to prevent over-allocation
   // Key: lotId, Value: { pair, expectedUsd }
   private pendingFillExposure: Map<string, { pair: string; expectedUsd: number }> = new Map();
-  private spreadAlertCooldowns: Map<string, number> = new Map();
   private readonly COOLDOWN_DURATION_MS = 15 * 60 * 1000;
   private readonly EXPOSURE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
   
@@ -483,6 +471,8 @@ export class TradingEngine {
 
   // Market Regime Detection (delegated to RegimeManager)
   private regimeManager!: RegimeManager;
+  // Spread Filter (delegated to SpreadFilter)
+  private spreadFilter!: SpreadFilter;
   
   // Cache para Ãºltimo anÃ¡lisis completo por par (evita null en ciclos intermedios)
   private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
@@ -632,6 +622,19 @@ export class TradingEngine {
     this.regimeManager = new RegimeManager({
       getOHLC: (pair, interval) => this.getDataExchange().getOHLC(pair, interval),
       sendAlertWithSubtype: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat, sub),
+    });
+    
+    // Initialize MtfAnalyzer with host adapter
+    this.mtfAnalyzer = new MtfAnalyzer({
+      getOHLC: (pair, interval) => this.getDataExchange().getOHLC(pair, interval),
+    });
+    
+    // Initialize SpreadFilter with host adapter
+    this.spreadFilter = new SpreadFilter({
+      getTradingExchangeType: () => this.getTradingExchangeType(),
+      getDataExchangeType: () => ExchangeFactory.getDataExchangeType(),
+      sendAlertWithSubtype: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat, sub),
+      isTelegramInitialized: () => this.telegramService.isInitialized(),
     });
     
     // Auto-enable dry run on Replit to prevent accidental real trades
@@ -1362,176 +1365,9 @@ export class TradingEngine {
     return true;
   }
 
-  // === SPREAD FILTER (v2): Single decision point for BUY spread gating ===
-  // Uses Kraken as data source (proxy). For RevolutX trading, adds configurable markup.
-  private calculateSpreadPct(bid: number, ask: number): number {
-    if (bid <= 0 || ask <= 0) return -1; // -1 signals invalid data
-    const midPrice = (bid + ask) / 2;
-    return ((ask - bid) / midPrice) * 100;
-  }
-
-  private getSpreadThresholdForRegime(regime: string | null, config: any): number {
-    if (!(config?.spreadDynamicEnabled ?? true)) {
-      return parseFloat(config?.spreadMaxPct?.toString() || "2.00");
-    }
-    const thresholds: Record<string, string> = {
-      TREND: config?.spreadThresholdTrend?.toString() || "1.50",
-      RANGE: config?.spreadThresholdRange?.toString() || "2.00",
-      TRANSITION: config?.spreadThresholdTransition?.toString() || "2.50",
-    };
-    const capPct = parseFloat(config?.spreadCapPct?.toString() || "3.50");
-    const raw = parseFloat(thresholds[regime || ""] || config?.spreadMaxPct?.toString() || "2.00");
-    return Math.min(raw, capPct);
-  }
-
-  private async checkSpreadForBuy(
-    pair: string,
-    ticker: { bid: number; ask: number; last: number },
-    regime: string | null,
-    config: any,
-  ): Promise<{ ok: boolean; details: {
-    bid: number; ask: number; mid: number;
-    spreadKrakenPct: number; spreadEffectivePct: number;
-    thresholdPct: number; floorPct: number; capPct: number;
-    revolutxMarkupPct: number;
-    tradingExchange: string; dataExchange: string;
-    decision: "ALLOW" | "REJECT" | "SKIP_MISSING_DATA";
-    reason: string;
-  }}> {
-    const tradingExchange = this.getTradingExchangeType();
-    const dataExchange = ExchangeFactory.getDataExchangeType();
-    const filterEnabled = config?.spreadFilterEnabled ?? true;
-
-    if (!filterEnabled) {
-      return { ok: true, details: {
-        bid: ticker.bid, ask: ticker.ask, mid: (ticker.bid + ticker.ask) / 2,
-        spreadKrakenPct: 0, spreadEffectivePct: 0,
-        thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
-        tradingExchange, dataExchange,
-        decision: "ALLOW", reason: "Spread filter disabled in config",
-      }};
-    }
-
-    const bid = ticker.bid;
-    const ask = ticker.ask;
-    const spreadKrakenPct = this.calculateSpreadPct(bid, ask);
-
-    // Fail-safe: if bid/ask data is invalid, do NOT trade
-    if (spreadKrakenPct < 0 || bid <= 0 || ask <= 0) {
-      log(`[SPREAD_DATA_MISSING] ${pair}: bid=${bid} ask=${ask} - fail-safe: skip BUY`, "trading");
-      await botLogger.warn("SPREAD_DATA_MISSING", `Datos de spread no disponibles para ${pair}`, {
-        pair, bid, ask, tradingExchange, dataExchange,
-      });
-      return { ok: false, details: {
-        bid, ask, mid: 0,
-        spreadKrakenPct: 0, spreadEffectivePct: 0,
-        thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
-        tradingExchange, dataExchange,
-        decision: "SKIP_MISSING_DATA", reason: "bid/ask data invalid or missing",
-      }};
-    }
-
-    const mid = (bid + ask) / 2;
-    const revolutxMarkupPct = tradingExchange === "revolutx"
-      ? parseFloat(config?.spreadRevolutxMarkupPct?.toString() || "0.80")
-      : 0;
-    const spreadEffectivePct = spreadKrakenPct + revolutxMarkupPct;
-    const floorPct = parseFloat(config?.spreadFloorPct?.toString() || "0.30");
-    const capPct = parseFloat(config?.spreadCapPct?.toString() || "3.50");
-    const thresholdPct = this.getSpreadThresholdForRegime(regime, config);
-
-    // FLOOR: if effective spread < floor, always allow (micro-noise)
-    if (spreadEffectivePct < floorPct) {
-      return { ok: true, details: {
-        bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
-        thresholdPct, floorPct, capPct, revolutxMarkupPct,
-        tradingExchange, dataExchange,
-        decision: "ALLOW", reason: `Spread ${spreadEffectivePct.toFixed(3)}% < floor ${floorPct}%`,
-      }};
-    }
-
-    // Decision: block if effective spread > threshold
-    const blocked = spreadEffectivePct > thresholdPct;
-    const decision = blocked ? "REJECT" as const : "ALLOW" as const;
-    const reason = blocked
-      ? `Spread ${spreadEffectivePct.toFixed(3)}% > threshold ${thresholdPct.toFixed(2)}% (regime=${regime || "NONE"})`
-      : `Spread ${spreadEffectivePct.toFixed(3)}% <= threshold ${thresholdPct.toFixed(2)}%`;
-
-    // If blocked, emit structured log + optional Telegram alert
-    if (blocked) {
-      const logPayload = {
-        event: "SPREAD_REJECTED",
-        pair, regime: regime || "NONE",
-        tradingExchange, dataExchange,
-        bid, ask, mid,
-        spreadKrakenPct: parseFloat(spreadKrakenPct.toFixed(4)),
-        revolutxMarkupPct,
-        spreadEffectivePct: parseFloat(spreadEffectivePct.toFixed(4)),
-        thresholdPct, capPct, floorPct,
-        decision: "REJECT",
-        reason: "SPREAD_TOO_HIGH",
-      };
-      await botLogger.info("SPREAD_REJECTED", `BUY bloqueada por spread: ${pair}`, logPayload);
-
-      // Telegram alert (best-effort + anti-spam)
-      await this.sendSpreadTelegramAlert(pair, regime, tradingExchange, config, {
-        spreadEffectivePct, thresholdPct, spreadKrakenPct, revolutxMarkupPct, bid, ask, mid,
-      });
-    }
-
-    return { ok: !blocked, details: {
-      bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
-      thresholdPct, floorPct, capPct, revolutxMarkupPct,
-      tradingExchange, dataExchange, decision, reason,
-    }};
-  }
-
-  private async sendSpreadTelegramAlert(
-    pair: string,
-    regime: string | null,
-    tradingExchange: string,
-    config: any,
-    data: { spreadEffectivePct: number; thresholdPct: number; spreadKrakenPct: number; revolutxMarkupPct: number; bid: number; ask: number; mid: number },
-  ): Promise<void> {
-    try {
-      const alertEnabled = config?.spreadTelegramAlertEnabled ?? true;
-      if (!alertEnabled || !this.telegramService.isInitialized()) return;
-
-      // Anti-spam cooldown per (pair + tradingExchange)
-      const cooldownMs = config?.spreadTelegramCooldownMs ?? 600000;
-      const cooldownKey = `spread_${pair}_${tradingExchange}`;
-      const lastAlert = this.spreadAlertCooldowns.get(cooldownKey) || 0;
-      if (Date.now() - lastAlert < cooldownMs) return;
-
-      this.spreadAlertCooldowns.set(cooldownKey, Date.now());
-
-      const isRevolutx = tradingExchange === "revolutx";
-      const markupLine = isRevolutx
-        ? `   Markup RevolutX: <code>+${data.revolutxMarkupPct.toFixed(2)}%</code>\n`
-        : "";
-
-      const message = `ðŸ¤– <b>KRAKEN BOT</b> ðŸ‡ªðŸ‡¸
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-ðŸš« <b>BUY bloqueada por spread</b>
-
-ðŸ“Š <b>Detalle:</b>
-   Par: <code>${pair}</code>
-   Exchange: <code>${tradingExchange}</code>
-   RÃ©gimen: <code>${regime || "N/A"}</code>
-
-   Spread Kraken: <code>${data.spreadKrakenPct.toFixed(3)}%</code>
-${markupLine}   Spread Efectivo: <code>${data.spreadEffectivePct.toFixed(3)}%</code>
-   Umbral mÃ¡ximo: <code>${data.thresholdPct.toFixed(2)}%</code>
-
-   Bid: <code>$${data.bid.toFixed(2)}</code> | Ask: <code>$${data.ask.toFixed(2)}</code>
-
-â° ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
-
-      await this.telegramService.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
-    } catch (err: any) {
-      log(`[SPREAD_ALERT_ERR] Telegram send failed (best-effort): ${err.message}`, "trading");
-    }
+  // === SPREAD FILTER (delegated to SpreadFilter) ===
+  private async checkSpreadForBuy(pair: string, ticker: { bid: number; ask: number; last: number }, regime: string | null, config: any) {
+    return this.spreadFilter.checkSpreadForBuy(pair, ticker, regime, config);
   }
 
   // === MEJORA 2: Horarios de Trading ===
@@ -6222,153 +6058,10 @@ ${emoji} <b>SEÃ‘AL: ${tipoLabel} ${pair}</b> ${emoji}
     }
   }
 
-  private async getMultiTimeframeData(pair: string): Promise<MultiTimeframeData | null> {
-    try {
-      const cached = this.mtfCache.get(pair);
-      if (cached && Date.now() - cached.lastUpdate < this.MTF_CACHE_TTL) {
-        return cached;
-      }
-
-      const [tf5m, tf1h, tf4h] = await Promise.all([
-        this.getDataExchange().getOHLC(pair, 5),
-        this.getDataExchange().getOHLC(pair, 60),
-        this.getDataExchange().getOHLC(pair, 240),
-      ]);
-
-      const data: MultiTimeframeData = {
-        tf5m: tf5m.slice(-50),
-        tf1h: tf1h.slice(-50),
-        tf4h: tf4h.slice(-50),
-        lastUpdate: Date.now(),
-      };
-
-      this.mtfCache.set(pair, data);
-      log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}`, "trading");
-      
-      // MTF Diagnostic: Verificar rangos temporales
-      if (MTF_DIAG_ENABLED && tf5m.length > 0 && tf1h.length > 0 && tf4h.length > 0) {
-        this.emitMTFDiagnostic(pair, tf5m, tf1h, tf4h);
-      }
-      
-      return data;
-    } catch (error: any) {
-      log(`Error obteniendo datos MTF para ${pair}: ${error.message}`, "trading");
-      return null;
-    }
-  }
-
-  private emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCandle[], tf4h: OHLCCandle[]): void {
-    const formatTs = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 16);
-    const calcSpanHours = (candles: OHLCCandle[]) => {
-      if (candles.length < 2) return 0;
-      return ((candles[candles.length - 1].time - candles[0].time) / 3600).toFixed(1);
-    };
-    
-    const span5m = calcSpanHours(tf5m);
-    const span1h = calcSpanHours(tf1h);
-    const span4h = calcSpanHours(tf4h);
-    
-    const first5m = tf5m[0]?.time || 0;
-    const first1h = tf1h[0]?.time || 0;
-    const first4h = tf4h[0]?.time || 0;
-    const last5m = tf5m[tf5m.length - 1]?.time || 0;
-    const last1h = tf1h[tf1h.length - 1]?.time || 0;
-    const last4h = tf4h[tf4h.length - 1]?.time || 0;
-    
-    // Detectar duplicaciÃ³n real (mÃ¡s restrictivo para evitar falsos positivos)
-    // Solo alertar si hay evidencia clara de datos incorrectos
-    const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0);
-    const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
-    const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(String(span5m)) > 0);
-    
-    // Detectar casos sospechosos pero menos crÃ­ticos
-    const suspiciousOverlap = (
-      (Math.abs(last5m - last1h) < 3600) || // Menos de 1h de diferencia entre 5m y 1h
-      (Math.abs(last1h - last4h) < 7200)    // Menos de 2h de diferencia entre 1h y 4h
-    ) && tf5m.length > 10 && tf1h.length > 10 && tf4h.length > 10;
-    
-    log(`[MTF_DIAG] ${pair}: ` +
-      `5m: ${tf5m.length} velas [${formatTs(first5m)} -> ${formatTs(last5m)}] span=${span5m}h | ` +
-      `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h | ` +
-      `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h`, "trading");
-    
-    // Solo alertar en casos realmente problemÃ¡ticos
-    if (exactFirstMatch || exactLastMatch || identicalSpans) {
-      log(`[MTF_DIAG] ðŸš¨ ERROR ${pair}: DuplicaciÃ³n MTF CRÃTICA detectada! ` +
-        `exactFirst=${exactFirstMatch}, exactLast=${exactLastMatch}, identicalSpans=${identicalSpans}`, "trading");
-    } else if (suspiciousOverlap) {
-      log(`[MTF_DIAG] âš ï¸ INFO ${pair}: Solapamiento temporal detectado (puede ser normal en mercados activos)`, "trading");
-    }
-  }
-
-  private analyzeTimeframeTrend(candles: OHLCCandle[]): "bullish" | "bearish" | "neutral" {
-    if (candles.length < 10) return "neutral";
-
-    const closes = candles.map(c => c.close);
-    const ema10 = this.calculateEMA(closes.slice(-10), 10);
-    const ema20 = this.calculateEMA(closes.slice(-20), 20);
-    const currentPrice = closes[closes.length - 1];
-
-    const priceVsEma10 = (currentPrice - ema10) / ema10 * 100;
-    const ema10VsEma20 = (ema10 - ema20) / ema20 * 100;
-
-    let score = 0;
-    if (priceVsEma10 > 0.5) score += 2;
-    else if (priceVsEma10 > 0) score += 1;
-    else if (priceVsEma10 < -0.5) score -= 2;
-    else if (priceVsEma10 < 0) score -= 1;
-
-    if (ema10VsEma20 > 0.3) score += 2;
-    else if (ema10VsEma20 > 0) score += 1;
-    else if (ema10VsEma20 < -0.3) score -= 2;
-    else if (ema10VsEma20 < 0) score -= 1;
-
-    const recentCandles = candles.slice(-5);
-    const higherHighs = recentCandles.filter((c, i) => i > 0 && c.high > recentCandles[i-1].high).length;
-    const lowerLows = recentCandles.filter((c, i) => i > 0 && c.low < recentCandles[i-1].low).length;
-    
-    if (higherHighs >= 3) score += 1;
-    if (lowerLows >= 3) score -= 1;
-
-    if (score >= 3) return "bullish";
-    if (score <= -3) return "bearish";
-    return "neutral";
-  }
-
-  private analyzeMultiTimeframe(mtfData: MultiTimeframeData): TrendAnalysis {
-    const shortTerm = this.analyzeTimeframeTrend(mtfData.tf5m);
-    const mediumTerm = this.analyzeTimeframeTrend(mtfData.tf1h);
-    const longTerm = this.analyzeTimeframeTrend(mtfData.tf4h);
-
-    const trendValues = { bullish: 1, neutral: 0, bearish: -1 };
-    const totalScore = trendValues[shortTerm] + trendValues[mediumTerm] * 1.5 + trendValues[longTerm] * 2;
-    
-    const allAligned = (shortTerm === mediumTerm && mediumTerm === longTerm && shortTerm !== "neutral");
-    const twoAligned = (shortTerm === mediumTerm || mediumTerm === longTerm || shortTerm === longTerm);
-    
-    let alignment = 0;
-    let confidence = 0.5;
-    
-    if (allAligned) {
-      alignment = trendValues[shortTerm];
-      confidence = 0.9;
-    } else if (twoAligned && shortTerm !== "neutral") {
-      alignment = totalScore > 0 ? 0.7 : totalScore < 0 ? -0.7 : 0;
-      confidence = 0.7;
-    } else {
-      alignment = totalScore / 4.5;
-      confidence = 0.5;
-    }
-
-    let summary = "";
-    if (allAligned) {
-      summary = `Tendencia ${shortTerm === "bullish" ? "ALCISTA" : "BAJISTA"} confirmada en todos los timeframes (5m/1h/4h)`;
-    } else {
-      summary = `5m: ${shortTerm}, 1h: ${mediumTerm}, 4h: ${longTerm}`;
-    }
-
-    return { shortTerm, mediumTerm, longTerm, alignment, confidence, summary };
-  }
+  // === MTF ANALYSIS (delegated to MtfAnalyzer) ===
+  private async getMultiTimeframeData(pair: string): Promise<MultiTimeframeData | null> { return this.mtfAnalyzer.getMultiTimeframeData(pair); }
+  private analyzeTimeframeTrend(candles: OHLCCandle[]): "bullish" | "bearish" | "neutral" { return _analyzeTimeframeTrend(candles); }
+  private analyzeMultiTimeframe(mtfData: MultiTimeframeData): TrendAnalysis { return _analyzeMultiTimeframe(mtfData); }
 
   isActive(): boolean {
     return this.isRunning;
