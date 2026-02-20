@@ -36,18 +36,30 @@
 - Constantes: `REGIME_PRESETS`, `REGIME_CONFIG`
 - `tradingEngine.ts` delega via thin wrappers — **-223 líneas**
 
+#### 5. Extracción de RegimeManager stateful (commit `e972ac0`)
+- Creado `server/services/regimeManager.ts` — clase `RegimeManager` con interfaz `IRegimeManagerHost`
+- Métodos movidos: `getMarketRegimeWithCache`, `applyRegimeConfirmation`, `sendRegimeChangeAlert`, `getRegimeMinSignals`, `computeHash`, `computeParamsHash`, `computeReasonHash`, `getRegimeState`, `upsertRegimeState`
+- Estado migrado: `regimeCache`, `lastRegime`, `dynamicConfig` (sincronizado via `setDynamicConfig()`)
+- Dead code eliminado: `regimeAlertThrottle`, `emaMisalignCount`, `REGIME_ALERT_THROTTLE_MS`
+- Tipos duplicados eliminados: `PriceData`, `OHLCCandle`, `MarketRegime`, `RegimeAnalysis`, `RegimePreset`, `REGIME_PRESETS`, `REGIME_CONFIG` (ahora importados de `indicators.ts` y `regimeDetection.ts`)
+- Imports muertos eliminados: `createHash`, `regimeState`, `RegimeState`, `db`, `eq`, `sql`
+- **-268 líneas** (+ ~120 líneas de tipos/imports limpiados)
+
 ### Reducción total de tradingEngine.ts
-- **Antes**: 7661 líneas (post ExitManager)
-- **Después**: ~7207 líneas
-- **Reducción en esta sesión**: ~454 líneas
-- **Reducción total desde inicio**: ~1659 líneas (8865 → 7207)
+- **Antes**: 8865 líneas (original monolítico)
+- **Post ExitManager**: 7661 líneas (-1204)
+- **Post indicators.ts**: 7430 líneas (-231)
+- **Post regimeDetection.ts**: 7207 líneas (-223)
+- **Post regimeManager.ts + cleanup**: 6856 líneas (-351)
+- **Reducción total**: **-2009 líneas (-22.7%)**
 
 ### Archivos creados/modificados
 - `server/services/__tests__/executeTrade.test.ts` (nuevo)
 - `server/services/indicators.ts` (nuevo)
 - `server/services/regimeDetection.ts` (nuevo)
+- `server/services/regimeManager.ts` (nuevo)
 - `server/services/exitManager.ts` (modificado — persistencia throttle)
-- `server/services/tradingEngine.ts` (modificado — delegaciones)
+- `server/services/tradingEngine.ts` (modificado — delegaciones + cleanup)
 - `server/storage.ts` (modificado — métodos alert_throttle)
 - `shared/schema.ts` (modificado — tabla alert_throttle)
 
