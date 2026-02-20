@@ -5,36 +5,70 @@
 
 ---
 
-## 2026-02-22 — FEAT: Módulo FISCO — APIs de exchanges para control fiscal
+## 2026-02-20 — FEAT: Módulo FISCO Completo — Control Fiscal FIFO en EUR
 
 ### Objetivo
-Implementar extracción de datos fiscales directamente desde las APIs de los exchanges (NO desde la DB del bot), capturando TODAS las operaciones incluyendo las realizadas manualmente fuera del bot.
+Sistema fiscal completo: extracción de datos de exchanges → normalización → motor FIFO → persistencia DB → UI interactiva. Todo en EUR conforme a legislación española (IRPF).
+
+### Arquitectura
+
+```
+Kraken API (ledger)  ──┐
+                       ├─→ Normalizer ──→ FIFO Engine ──→ DB (PostgreSQL) ──→ UI React
+RevolutX API (orders) ─┘       │                │
+                          EUR Rates (ECB)   Gain/Loss calc
+```
 
 ### Problema resuelto: RevolutX sin campo `side`
-- El endpoint `/api/1.0/trades/private/{symbol}` devuelve datos MiFID (`tdt`, `aid`, `p`, `q`, `tid`) pero **NO incluye `side` (buy/sell)**.
-- **Solución**: Usar el endpoint `/api/1.0/orders/historical` que SÍ devuelve `side`, `filled_quantity`, `average_fill_price`, `filled_date`, etc.
-- Limitación: máx 1 semana por consulta → se itera semana a semana automáticamente.
+- El endpoint `/api/1.0/trades/private/{symbol}` NO incluye `side` (buy/sell).
+- **Solución**: Usar `/api/1.0/orders/historical` que SÍ devuelve `side`, `filled_quantity`, `average_fill_price`.
+- Limitación: máx 1 semana por consulta → iteración automática semana a semana.
 
-### Cambios realizados
+### Fix: Rate limit Kraken + RevolutX fecha inicio
+- Kraken: delay entre llamadas paginadas de 2s → 3.5s
+- Kraken fetch-all: ejecución secuencial (no paralela) para evitar `EAPI:Rate limit exceeded`
+- RevolutX: fecha inicio por defecto de 2020 → 2025 (evita 260+ semanas vacías)
+- RevolutX: soporte `?start=` query param para rango personalizado
+
+### Archivos creados/modificados
 
 | Archivo | Cambio |
 |---|---|
-| `server/services/exchanges/RevolutXService.ts` | Nuevo método `getHistoricalOrders()` — itera por semanas, paginación con cursor, filtra por `state=filled` |
-| `server/services/kraken.ts` | Nuevo método `getLedgers()` — obtiene deposits, withdrawals, staking, trades vía `client.ledgers()` con paginación |
-| `server/routes/fisco.routes.ts` | **NUEVO** — Endpoints `/api/fisco/test-apis` y `/api/fisco/fetch-all?exchange=kraken|revolutx` |
-| `server/routes.ts` | Registra `fisco.routes.ts` en el router principal |
+| `server/services/exchanges/RevolutXService.ts` | `getHistoricalOrders()` — iteración por semanas, cursor, filtro `state=filled` |
+| `server/services/kraken.ts` | `getLedgers()` — deposits, withdrawals, staking, trades con paginación. Rate limit 3.5s |
+| `server/services/fisco/normalizer.ts` | **NUEVO** — Normaliza Kraken ledger + RevolutX orders → formato unificado `NormalizedOperation` |
+| `server/services/fisco/fifo-engine.ts` | **NUEVO** — Motor FIFO: lotes por compra, consume FIFO en ventas, calcula gain/loss EUR |
+| `server/services/fisco/eur-rates.ts` | **NUEVO** — Conversión USD→EUR via ECB API con cache 4h + fallback |
+| `server/routes/fisco.routes.ts` | Endpoints completos: test, fetch-all, run (pipeline), operations, lots, disposals, summary |
+| `server/routes.ts` | Registra `fisco.routes.ts` |
+| `db/migrations/015_fisco_tables.sql` | **NUEVO** — Tablas: `fisco_operations`, `fisco_lots`, `fisco_disposals`, `fisco_summary` + índices |
+| `shared/schema.ts` | Tablas Drizzle: `fiscoOperations`, `fiscoLots`, `fiscoDisposals`, `fiscoSummary` + tipos |
+| `client/src/pages/Fisco.tsx` | **NUEVO** — UI completa con 4 sub-pestañas: Resumen, Operaciones, Lotes FIFO, Ganancias |
+| `client/src/App.tsx` | Ruta `/fisco` registrada |
+| `client/src/components/dashboard/Nav.tsx` | Link FISCO con icono Calculator en navegación |
 
-### Endpoints disponibles
-- `GET /api/fisco/test-apis` — Prueba rápida de ambas APIs (primera página de datos + muestra)
-- `GET /api/fisco/fetch-all?exchange=kraken` — Descarga COMPLETA de trades + ledger de Kraken
-- `GET /api/fisco/fetch-all?exchange=revolutx` — Descarga COMPLETA de órdenes ejecutadas de RevolutX
+### Endpoints API disponibles
+- `GET /api/fisco/test-apis` — Prueba rápida de ambas APIs
+- `GET /api/fisco/fetch-all?exchange=kraken|revolutx` — Descarga completa de un exchange
+- `GET /api/fisco/run` — **Pipeline completo**: fetch → normalize → FIFO → save DB. Acepta `?year=2026` y `?start=2025-01-01`
+- `GET /api/fisco/operations` — Operaciones normalizadas desde DB. Filtros: `?year=`, `?asset=`, `?type=`
+- `GET /api/fisco/lots` — Lotes FIFO desde DB. Filtros: `?asset=`, `?open=true`
+- `GET /api/fisco/disposals` — Disposiciones con gain/loss. Filtro: `?year=`
+- `GET /api/fisco/summary` — Resumen anual por activo
+
+### Motor FIFO
+- Cada compra crea un lote con coste en EUR (precio + fee)
+- Cada venta consume lotes en orden FIFO (más antiguo primero)
+- Si se vende más de lo que hay en lotes, se crea disposición con coste base 0 + warning
+- Conversiones (USD↔USDC), deposits, withdrawals se registran pero no generan eventos fiscales
 
 ### Principio de diseño
-> **Exchange-First**: Los datos fiscales se obtienen SIEMPRE de las APIs de los exchanges, nunca de la DB del bot. Esto garantiza que operaciones manuales, deposits, withdrawals y staking se capturen correctamente.
+> **Exchange-First**: Datos fiscales SIEMPRE de las APIs de los exchanges, nunca de la DB del bot. Garantiza captura de operaciones manuales, deposits, withdrawals y staking.
 
 ### Verificación
 - `npx tsc --noEmit` → 0 errores
-- Pendiente: test en staging con datos reales
+- APIs verificadas en staging: Kraken 253 trades + 535 ledger, RevolutX 80+ orders con side
+- Rate limit fix verificado: sin errores EAPI en fetch-all secuencial
 
 ---
 

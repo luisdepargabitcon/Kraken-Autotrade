@@ -2,6 +2,10 @@ import type { Express } from "express";
 import { krakenService } from "../services/kraken";
 import { revolutXService } from "../services/exchanges/RevolutXService";
 import type { RouterDeps } from "./types";
+import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort, type NormalizedOperation } from "../services/fisco/normalizer";
+import { runFifo } from "../services/fisco/fifo-engine";
+import { getUsdToEurRate, getCachedUsdEurRate } from "../services/fisco/eur-rates";
+import { pool } from "../db";
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -291,4 +295,376 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       });
     }
   });
+
+  // ============================================================
+  // FULL PIPELINE: Fetch → Normalize → FIFO → Summary
+  // Single endpoint that does everything. Can take several minutes.
+  // Optional: ?year=2026 to filter summary by year
+  // ============================================================
+  app.get("/api/fisco/run", async (req, res) => {
+    try {
+      const yearFilter = req.query.year ? parseInt(req.query.year as string) : undefined;
+      const startParam = req.query.start as string | undefined;
+      const startMs = startParam ? new Date(startParam).getTime() : undefined;
+
+      console.log("[fisco/run] Starting full fiscal pipeline...");
+      const t0 = Date.now();
+
+      // 1. Fetch EUR rate
+      const usdEurRate = await getUsdToEurRate();
+      console.log(`[fisco/run] USD/EUR rate: ${usdEurRate.toFixed(6)}`);
+
+      // 2. Fetch raw data from both exchanges (sequential for rate limits)
+      let krakenLedgerEntries: any[] = [];
+      let revolutxOrders: any[] = [];
+
+      if (krakenService.isInitialized()) {
+        console.log("[fisco/run] Fetching Kraken ledger...");
+        const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
+        const ledger = ledgerResp?.ledger || {};
+        krakenLedgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
+          id,
+          refid: e.refid,
+          type: e.type,
+          subtype: e.subtype,
+          asset: e.asset,
+          amount: typeof e.amount === "string" ? parseFloat(e.amount) : e.amount,
+          fee: typeof e.fee === "string" ? parseFloat(e.fee) : e.fee,
+          balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
+          time: e.time,
+        }));
+        console.log(`[fisco/run] Kraken: ${krakenLedgerEntries.length} ledger entries`);
+      }
+
+      if (revolutXService.isInitialized()) {
+        console.log("[fisco/run] Fetching RevolutX orders...");
+        revolutxOrders = await revolutXService.getHistoricalOrders({
+          startMs,
+          states: ["filled"],
+        });
+        console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders`);
+      }
+
+      // 3. Normalize
+      console.log("[fisco/run] Normalizing...");
+      const krakenOps = await normalizeKrakenLedger(krakenLedgerEntries);
+      const revxOps = await normalizeRevolutXOrders(revolutxOrders);
+      const allOps = mergeAndSort(krakenOps, revxOps);
+      console.log(`[fisco/run] Normalized: ${allOps.length} operations (${krakenOps.length} Kraken + ${revxOps.length} RevolutX)`);
+
+      // 4. Run FIFO
+      console.log("[fisco/run] Running FIFO engine...");
+      const fifo = runFifo(allOps);
+      console.log(`[fisco/run] FIFO: ${fifo.lots.length} lots, ${fifo.disposals.length} disposals, ${fifo.warnings.length} warnings`);
+
+      // 5. Save to DB (upsert operations)
+      console.log("[fisco/run] Saving to database...");
+      await saveFiscoToDB(allOps, fifo);
+
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(`[fisco/run] Pipeline complete in ${elapsed}s`);
+
+      // 6. Build response
+      const yearSummary = yearFilter
+        ? fifo.yearSummary.filter(s => s.year === yearFilter)
+        : fifo.yearSummary;
+
+      // Operations summary by type
+      const opTypeCounts: Record<string, number> = {};
+      for (const op of allOps) {
+        opTypeCounts[op.opType] = (opTypeCounts[op.opType] || 0) + 1;
+      }
+
+      // Total P&L
+      const totalGainLoss = fifo.disposals.reduce((sum, d) => sum + d.gainLossEur, 0);
+
+      res.json({
+        status: "ok",
+        elapsed_seconds: parseFloat(elapsed),
+        usd_eur_rate: usdEurRate,
+        raw_counts: {
+          kraken_ledger: krakenLedgerEntries.length,
+          revolutx_orders: revolutxOrders.length,
+        },
+        normalized: {
+          total: allOps.length,
+          by_type: opTypeCounts,
+          by_exchange: {
+            kraken: krakenOps.length,
+            revolutx: revxOps.length,
+          },
+          date_range: allOps.length > 0 ? {
+            from: allOps[0].executedAt.toISOString(),
+            to: allOps[allOps.length - 1].executedAt.toISOString(),
+          } : null,
+        },
+        fifo: {
+          total_lots: fifo.lots.length,
+          open_lots: fifo.lots.filter(l => !l.isClosed).length,
+          closed_lots: fifo.lots.filter(l => l.isClosed).length,
+          total_disposals: fifo.disposals.length,
+          total_gain_loss_eur: Math.round(totalGainLoss * 100) / 100,
+          warnings: fifo.warnings,
+        },
+        asset_summary: fifo.summary.map(s => ({
+          ...s,
+          totalCostEur: Math.round(s.totalCostEur * 100) / 100,
+          totalProceedsEur: Math.round(s.totalProceedsEur * 100) / 100,
+          totalGainLossEur: Math.round(s.totalGainLossEur * 100) / 100,
+          totalFeesEur: Math.round(s.totalFeesEur * 100) / 100,
+        })),
+        year_summary: yearSummary.map(s => ({
+          ...s,
+          costBasisEur: Math.round(s.costBasisEur * 100) / 100,
+          proceedsEur: Math.round(s.proceedsEur * 100) / 100,
+          gainLossEur: Math.round(s.gainLossEur * 100) / 100,
+          feesEur: Math.round(s.feesEur * 100) / 100,
+        })),
+      });
+    } catch (e: any) {
+      console.error("[fisco/run] Pipeline error:", e);
+      res.status(500).json({ error: e.message, stack: e.stack?.split("\n").slice(0, 5) });
+    }
+  });
+
+  // ============================================================
+  // GET saved operations from DB (fast, no API calls)
+  // ============================================================
+  app.get("/api/fisco/operations", async (req, res) => {
+    try {
+      const yearFilter = req.query.year ? parseInt(req.query.year as string) : undefined;
+      const assetFilter = req.query.asset as string | undefined;
+      const typeFilter = req.query.type as string | undefined;
+
+      let query = `SELECT * FROM fisco_operations WHERE 1=1`;
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      if (yearFilter) {
+        query += ` AND EXTRACT(YEAR FROM executed_at) = $${paramIdx++}`;
+        params.push(yearFilter);
+      }
+      if (assetFilter) {
+        query += ` AND asset = $${paramIdx++}`;
+        params.push(assetFilter.toUpperCase());
+      }
+      if (typeFilter) {
+        query += ` AND op_type = $${paramIdx++}`;
+        params.push(typeFilter);
+      }
+      query += ` ORDER BY executed_at ASC`;
+
+      const result = await pool.query(query, params);
+      res.json({
+        count: result.rows.length,
+        operations: result.rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET FIFO lots from DB
+  // ============================================================
+  app.get("/api/fisco/lots", async (req, res) => {
+    try {
+      const assetFilter = req.query.asset as string | undefined;
+      const openOnly = req.query.open === "true";
+
+      let query = `SELECT * FROM fisco_lots WHERE 1=1`;
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      if (assetFilter) {
+        query += ` AND asset = $${paramIdx++}`;
+        params.push(assetFilter.toUpperCase());
+      }
+      if (openOnly) {
+        query += ` AND NOT is_closed`;
+      }
+      query += ` ORDER BY acquired_at ASC`;
+
+      const result = await pool.query(query, params);
+      res.json({
+        count: result.rows.length,
+        lots: result.rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET disposals / gain-loss from DB
+  // ============================================================
+  app.get("/api/fisco/disposals", async (req, res) => {
+    try {
+      const yearFilter = req.query.year ? parseInt(req.query.year as string) : undefined;
+
+      let query = `SELECT d.*, o.asset, o.pair, o.exchange 
+                   FROM fisco_disposals d
+                   JOIN fisco_operations o ON o.id = d.sell_operation_id
+                   WHERE 1=1`;
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      if (yearFilter) {
+        query += ` AND EXTRACT(YEAR FROM d.disposed_at) = $${paramIdx++}`;
+        params.push(yearFilter);
+      }
+      query += ` ORDER BY d.disposed_at ASC`;
+
+      const result = await pool.query(query, params);
+
+      const totalGainLoss = result.rows.reduce(
+        (sum: number, r: any) => sum + parseFloat(r.gain_loss_eur || "0"), 0
+      );
+
+      res.json({
+        count: result.rows.length,
+        total_gain_loss_eur: Math.round(totalGainLoss * 100) / 100,
+        disposals: result.rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET summary per year from DB
+  // ============================================================
+  app.get("/api/fisco/summary", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM fisco_summary ORDER BY fiscal_year DESC, asset ASC`
+      );
+
+      // Group by year
+      const byYear: Record<number, any[]> = {};
+      for (const row of result.rows) {
+        const year = row.fiscal_year;
+        if (!byYear[year]) byYear[year] = [];
+        byYear[year].push(row);
+      }
+
+      const yearTotals = Object.entries(byYear).map(([year, rows]) => ({
+        year: parseInt(year),
+        assets: rows,
+        total_gain_loss_eur: Math.round(
+          rows.reduce((s: number, r: any) => s + parseFloat(r.total_gain_loss_eur || "0"), 0) * 100
+        ) / 100,
+        total_fees_eur: Math.round(
+          rows.reduce((s: number, r: any) => s + parseFloat(r.total_fees_eur || "0"), 0) * 100
+        ) / 100,
+      }));
+
+      res.json({
+        usd_eur_rate: getCachedUsdEurRate(),
+        years: yearTotals,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+}
+
+// ============================================================
+// DB persistence helper
+// ============================================================
+
+async function saveFiscoToDB(
+  operations: NormalizedOperation[],
+  fifo: ReturnType<typeof runFifo>
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Clear existing data (full refresh approach)
+    await client.query("DELETE FROM fisco_disposals");
+    await client.query("DELETE FROM fisco_lots");
+    await client.query("DELETE FROM fisco_operations");
+    await client.query("DELETE FROM fisco_summary");
+
+    // Insert operations and build ID map
+    const opIdMap = new Map<number, number>(); // operationIdx → DB id
+
+    for (let i = 0; i < operations.length; i++) {
+      const op = operations[i];
+      const result = await client.query(
+        `INSERT INTO fisco_operations 
+         (exchange, external_id, op_type, asset, amount, price_eur, total_eur, fee_eur, counter_asset, pair, executed_at, raw_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING id`,
+        [
+          op.exchange, op.externalId, op.opType, op.asset,
+          op.amount, op.priceEur, op.totalEur, op.feeEur,
+          op.counterAsset, op.pair, op.executedAt,
+          JSON.stringify(op.rawData),
+        ]
+      );
+      opIdMap.set(i, result.rows[0].id);
+    }
+
+    // Insert lots and build lot ID map
+    const lotIdMap = new Map<string, number>(); // lot.id → DB id
+
+    for (const lot of fifo.lots) {
+      const opDbId = opIdMap.get(lot.operationIdx);
+      if (!opDbId) continue;
+
+      const result = await client.query(
+        `INSERT INTO fisco_lots
+         (operation_id, asset, quantity, remaining_qty, cost_eur, unit_cost_eur, fee_eur, acquired_at, is_closed)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [
+          opDbId, lot.asset, lot.quantity, lot.remainingQty,
+          lot.costEur, lot.unitCostEur, lot.feeEur,
+          lot.acquiredAt, lot.isClosed,
+        ]
+      );
+      lotIdMap.set(lot.id, result.rows[0].id);
+    }
+
+    // Insert disposals
+    for (const d of fifo.disposals) {
+      const sellOpDbId = opIdMap.get(d.sellOperationIdx);
+      const lotDbId = lotIdMap.get(d.lotId);
+      if (!sellOpDbId) continue;
+
+      await client.query(
+        `INSERT INTO fisco_disposals
+         (sell_operation_id, lot_id, quantity, proceeds_eur, cost_basis_eur, gain_loss_eur, disposed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          sellOpDbId, lotDbId || 0, d.quantity,
+          d.proceedsEur, d.costBasisEur, d.gainLossEur,
+          d.disposedAt,
+        ]
+      );
+    }
+
+    // Insert yearly summaries
+    for (const s of fifo.yearSummary) {
+      await client.query(
+        `INSERT INTO fisco_summary
+         (fiscal_year, asset, total_acquisitions, total_disposals, total_cost_basis_eur, total_proceeds_eur, total_gain_loss_eur, total_fees_eur)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          s.year, s.asset, s.acquisitions, s.disposals,
+          s.costBasisEur, s.proceedsEur, s.gainLossEur, s.feesEur,
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    console.log(`[fisco/db] Saved ${operations.length} ops, ${fifo.lots.length} lots, ${fifo.disposals.length} disposals`);
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }

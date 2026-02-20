@@ -15,6 +15,7 @@ import Notifications from "@/pages/Notifications";
 import Guide from "@/pages/Guide";
 import Monitor from "@/pages/Monitor";
 import Backups from "@/pages/Backups";
+import Fisco from "@/pages/Fisco";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -30,6 +31,7 @@ function Router() {
       <Route path="/guide" component={Guide} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/backups" component={Backups} />
+      <Route path="/fisco" component={Fisco} />
       
       <Route component={NotFound} />
     </Switch>

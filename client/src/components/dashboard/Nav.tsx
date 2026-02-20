@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Activity, Settings, Wallet, Bell, Plug, Menu, X, BookOpen, BarChart3, Monitor, HardDrive } from "lucide-react";
+import { LayoutDashboard, Activity, Settings, Wallet, Bell, Plug, Menu, X, BookOpen, BarChart3, Monitor, HardDrive, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Nav() {
@@ -17,6 +17,7 @@ export function Nav() {
     { href: "/integrations", label: "INTEGRACIONES", icon: Plug },
     { href: "/notifications", label: "NOTIFICACIONES", icon: Bell },
     { href: "/backups", label: "BACKUPS", icon: HardDrive },
+    { href: "/fisco", label: "FISCO", icon: Calculator },
     { href: "/settings", label: "AJUSTES", icon: Settings },
     { href: "/guide", label: "GUÍA", icon: BookOpen },
   ];

@@ -611,3 +611,72 @@ export const alertThrottle = pgTable("alert_throttle", {
 });
 
 export type AlertThrottleRow = typeof alertThrottle.$inferSelect;
+
+// ============================================================
+// FISCO: Fiscal Control Tables (exchange-only data)
+// ============================================================
+
+export const fiscoOperations = pgTable("fisco_operations", {
+  id: serial("id").primaryKey(),
+  exchange: text("exchange").notNull(),
+  externalId: text("external_id").notNull(),
+  opType: text("op_type").notNull(),
+  asset: text("asset").notNull(),
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  priceEur: decimal("price_eur", { precision: 18, scale: 8 }),
+  totalEur: decimal("total_eur", { precision: 18, scale: 8 }),
+  feeEur: decimal("fee_eur", { precision: 18, scale: 8 }).default("0"),
+  counterAsset: text("counter_asset"),
+  pair: text("pair"),
+  executedAt: timestamp("executed_at").notNull(),
+  rawData: jsonb("raw_data"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  exchangeExternalUnique: unique().on(table.exchange, table.externalId),
+}));
+
+export const fiscoLots = pgTable("fisco_lots", {
+  id: serial("id").primaryKey(),
+  operationId: integer("operation_id").notNull(),
+  asset: text("asset").notNull(),
+  quantity: decimal("quantity", { precision: 18, scale: 8 }).notNull(),
+  remainingQty: decimal("remaining_qty", { precision: 18, scale: 8 }).notNull(),
+  costEur: decimal("cost_eur", { precision: 18, scale: 8 }).notNull(),
+  unitCostEur: decimal("unit_cost_eur", { precision: 18, scale: 8 }).notNull(),
+  feeEur: decimal("fee_eur", { precision: 18, scale: 8 }).default("0"),
+  acquiredAt: timestamp("acquired_at").notNull(),
+  isClosed: boolean("is_closed").default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const fiscoDisposals = pgTable("fisco_disposals", {
+  id: serial("id").primaryKey(),
+  sellOperationId: integer("sell_operation_id").notNull(),
+  lotId: integer("lot_id").notNull(),
+  quantity: decimal("quantity", { precision: 18, scale: 8 }).notNull(),
+  proceedsEur: decimal("proceeds_eur", { precision: 18, scale: 8 }).notNull(),
+  costBasisEur: decimal("cost_basis_eur", { precision: 18, scale: 8 }).notNull(),
+  gainLossEur: decimal("gain_loss_eur", { precision: 18, scale: 8 }).notNull(),
+  disposedAt: timestamp("disposed_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const fiscoSummary = pgTable("fisco_summary", {
+  id: serial("id").primaryKey(),
+  fiscalYear: integer("fiscal_year").notNull(),
+  asset: text("asset").notNull(),
+  totalAcquisitions: decimal("total_acquisitions", { precision: 18, scale: 8 }).default("0"),
+  totalDisposals: decimal("total_disposals", { precision: 18, scale: 8 }).default("0"),
+  totalCostBasisEur: decimal("total_cost_basis_eur", { precision: 18, scale: 8 }).default("0"),
+  totalProceedsEur: decimal("total_proceeds_eur", { precision: 18, scale: 8 }).default("0"),
+  totalGainLossEur: decimal("total_gain_loss_eur", { precision: 18, scale: 8 }).default("0"),
+  totalFeesEur: decimal("total_fees_eur", { precision: 18, scale: 8 }).default("0"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  yearAssetUnique: unique().on(table.fiscalYear, table.asset),
+}));
+
+export type FiscoOperation = typeof fiscoOperations.$inferSelect;
+export type FiscoLot = typeof fiscoLots.$inferSelect;
+export type FiscoDisposal = typeof fiscoDisposals.$inferSelect;
+export type FiscoSummary = typeof fiscoSummary.$inferSelect;
