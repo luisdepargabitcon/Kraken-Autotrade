@@ -7,10 +7,7 @@ import { aiService, AiFeatures } from "./aiService";
 import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
-import { createHash } from "crypto";
-import { regimeState, type RegimeState, type InsertTrade, type Trade } from "@shared/schema";
-import { db } from "../db";
-import { eq, sql } from "drizzle-orm";
+import { type InsertTrade, type Trade } from "@shared/schema";
 import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
@@ -29,28 +26,21 @@ import {
   detectAbnormalVolume as _detectAbnormalVolume,
   wilderSmooth as _wilderSmooth,
   calculateADX as _calculateADX,
-  type PriceData as IndicatorPriceData,
-  type OHLCCandle as IndicatorOHLCCandle,
+  type PriceData,
+  type OHLCCandle,
 } from "./indicators";
 import {
   detectMarketRegime as _detectMarketRegime,
   getRegimeAdjustedParams as _getRegimeAdjustedParams,
   calculateAtrBasedExits as _calculateAtrBasedExits,
   shouldPauseEntriesDueToRegime as _shouldPauseEntriesDueToRegime,
-  REGIME_PRESETS as _REGIME_PRESETS,
-  REGIME_CONFIG as _REGIME_CONFIG,
-  type MarketRegime as _MarketRegime,
-  type RegimeAnalysis as _RegimeAnalysis,
-  type RegimePreset as _RegimePreset,
+  REGIME_PRESETS,
+  REGIME_CONFIG,
+  type MarketRegime,
+  type RegimeAnalysis,
+  type RegimePreset,
 } from "./regimeDetection";
-
-interface PriceData {
-  price: number;
-  timestamp: number;
-  high: number;
-  low: number;
-  volume: number;
-}
+import { RegimeManager, type IRegimeManagerHost } from "./regimeManager";
 
 interface TradeSignal {
   action: "buy" | "sell" | "hold";
@@ -377,15 +367,6 @@ interface CandleTrackingState {
   lastEvaluatedPair: string;
 }
 
-interface OHLCCandle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
 interface MultiTimeframeData {
   tf5m: OHLCCandle[];
   tf1h: OHLCCandle[];
@@ -401,87 +382,6 @@ interface TrendAnalysis {
   confidence: number;
   summary: string;
 }
-
-// === MARKET REGIME DETECTION ===
-type MarketRegime = "TREND" | "RANGE" | "TRANSITION";
-
-interface RegimeAnalysis {
-  regime: MarketRegime;
-  adx: number;
-  emaAlignment: number; // -1 to 1 (bearish to bullish alignment)
-  bollingerWidth: number; // Percentage width of bands
-  confidence: number;
-  reason: string;
-}
-
-interface RegimePreset {
-  sgBeAtPct: number;
-  sgTrailDistancePct: number;
-  sgTrailStepPct: number;
-  sgTpFixedPct: number;
-  minSignals: number;
-  pauseEntries: boolean;
-  // ATR multipliers for dynamic SL/TP adjustment
-  slAtrMultiplier: number;   // SL = entryPrice - (ATR * multiplier)
-  tpAtrMultiplier: number;   // TP = entryPrice + (ATR * multiplier)
-  trailAtrMultiplier: number; // Trail distance = ATR * multiplier
-}
-
-const REGIME_PRESETS: Record<MarketRegime, RegimePreset> = {
-  TREND: {
-    sgBeAtPct: 2.5,        // Break-even mÃ¡s tarde (dejar correr)
-    sgTrailDistancePct: 2.0, // Trailing mÃ¡s amplio
-    sgTrailStepPct: 0.5,   // Steps mÃ¡s grandes
-    sgTpFixedPct: 8.0,     // TP mÃ¡s ambicioso
-    minSignals: 5,         // Mantener 5 seÃ±ales (no bajar)
-    pauseEntries: false,
-    slAtrMultiplier: 2.0,    // SL mÃ¡s amplio en tendencia
-    tpAtrMultiplier: 3.0,    // TP mÃ¡s ambicioso en tendencia
-    trailAtrMultiplier: 1.5, // Trail mÃ¡s amplio en tendencia
-  },
-  RANGE: {
-    sgBeAtPct: 1.0,        // Break-even rÃ¡pido (asegurar)
-    sgTrailDistancePct: 1.0, // Trailing ajustado
-    sgTrailStepPct: 0.2,   // Steps pequeÃ±os
-    sgTpFixedPct: 3.0,     // TP conservador
-    minSignals: 6,         // MÃ¡s exigente en lateral
-    pauseEntries: false,
-    slAtrMultiplier: 1.0,    // SL ajustado en rango
-    tpAtrMultiplier: 1.5,    // TP conservador en rango
-    trailAtrMultiplier: 0.75, // Trail ajustado en rango
-  },
-  TRANSITION: {
-    sgBeAtPct: 1.5,        // Valores base (sin cambio)
-    sgTrailDistancePct: 1.5,
-    sgTrailStepPct: 0.25,
-    sgTpFixedPct: 5.0,
-    minSignals: 4,         // Revertido a 4 (valor original pre-ene-2026) para desbloquear entradas vÃ¡lidas
-    pauseEntries: true,    // Pausar nuevas entradas
-    slAtrMultiplier: 1.5,    // SL moderado en transiciÃ³n
-    tpAtrMultiplier: 2.0,    // TP moderado en transiciÃ³n
-    trailAtrMultiplier: 1.0, // Trail estÃ¡ndar en transiciÃ³n
-  },
-};
-
-// === REGIME ANTI-SPAM CONFIGURATION (Phase 2 - OpciÃ³n B HÃ­brida) ===
-const REGIME_CONFIG = {
-  // Hysteresis: ADX thresholds for TREND entry/exit
-  ADX_TREND_ENTRY: 27,      // Entrar TREND: ADX >= 27
-  ADX_TREND_EXIT: 23,       // Salir TREND: ADX <= 23
-  ADX_HARD_EXIT: 19,        // Hard exit (cambio inmediato)
-  
-  // MinHold: Minimum time before regime can flip
-  MIN_HOLD_MINUTES: 20,
-  
-  // Cooldown: Minimum time between notifications
-  NOTIFY_COOLDOWN_MS: 60 * 60 * 1000,  // 60 min cooldown per pair
-  
-  // Confirmation: Consecutive scans required for debounce
-  CONFIRM_SCANS_REQUIRED: 3,
-  
-  // Hash: Use SHA256 truncated for dedup
-  HASH_LENGTH: 16,
-};
 
 export class TradingEngine {
   private krakenService: KrakenService;
@@ -577,21 +477,12 @@ export class TradingEngine {
   private lastScanStartTime: number = 0;
   private lastExpectedPairs: string[] = [];
   
-  // Regime change alert throttle: key = "pair:fromRegime:toRegime", value = timestamp
-  private regimeAlertThrottle: Map<string, number> = new Map();
-  private readonly REGIME_ALERT_THROTTLE_MS = REGIME_CONFIG.NOTIFY_COOLDOWN_MS; // 60 min cooldown per pair
-  
-  // EMA misalignment tracker for hysteresis (2 consecutive candles)
-  private emaMisalignCount: Map<string, number> = new Map();
-  
   // DRY_RUN mode: audit without sending real orders
   private dryRunMode: boolean = false;
   private readonly isReplitEnvironment: boolean = !!process.env.REPLIT_DEPLOYMENT || !!process.env.REPL_ID;
 
-  // Market Regime Detection
-  private regimeCache: Map<string, { regime: RegimeAnalysis; timestamp: number }> = new Map();
-  private readonly REGIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  private lastRegime: Map<string, MarketRegime> = new Map(); // Track last regime for change alerts
+  // Market Regime Detection (delegated to RegimeManager)
+  private regimeManager!: RegimeManager;
   
   // Cache para Ãºltimo anÃ¡lisis completo por par (evita null en ciclos intermedios)
   private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
@@ -736,6 +627,12 @@ export class TradingEngine {
     
     // Initialize ExitManager with host adapter
     this.exitManager = new ExitManager(this.createExitHost());
+    
+    // Initialize RegimeManager with host adapter
+    this.regimeManager = new RegimeManager({
+      getOHLC: (pair, interval) => this.getDataExchange().getOHLC(pair, interval),
+      sendAlertWithSubtype: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat, sub),
+    });
     
     // Auto-enable dry run on Replit to prevent accidental real trades
     if (this.isReplitEnvironment) {
@@ -5073,273 +4970,9 @@ El bot ha pausado las operaciones de COMPRA.
   private getRegimeAdjustedParams(baseParams: { sgBeAtPct: number; sgTrailDistancePct: number; sgTrailStepPct: number; sgTpFixedPct: number }, regime: MarketRegime, regimeEnabled: boolean) { return _getRegimeAdjustedParams(baseParams, regime, regimeEnabled); }
   private calculateAtrBasedExits(pair: string, entryPrice: number, atrPercent: number, regime: MarketRegime, adaptiveEnabled: boolean, historyLength: number = 0, minBeFloorPct: number = 2.0) { return _calculateAtrBasedExits(pair, entryPrice, atrPercent, regime, adaptiveEnabled, historyLength, minBeFloorPct); }
 
-  // === PHASE 2: ANTI-SPAM HELPERS ===
-  
-  private computeHash(input: string): string {
-    return createHash("sha256").update(input).digest("hex").substring(0, REGIME_CONFIG.HASH_LENGTH);
-  }
-  
-  private computeParamsHash(regime: MarketRegime): string {
-    const preset = REGIME_PRESETS[regime];
-    const payload = `${preset.sgBeAtPct}|${preset.sgTrailDistancePct}|${preset.sgTpFixedPct}|${preset.minSignals}`;
-    return this.computeHash(payload);
-  }
-  
-  private computeReasonHash(regime: MarketRegime, reason: string): string {
-    return this.computeHash(`${regime}|${reason}`);
-  }
-  
-  private async getRegimeState(pair: string): Promise<RegimeState | null> {
-    try {
-      const [state] = await db.select().from(regimeState).where(eq(regimeState.pair, pair)).limit(1);
-      return state || null;
-    } catch (error) {
-      log(`[REGIME] Error loading state for ${pair}: ${error}`, "trading");
-      return null;
-    }
-  }
-  
-  private async upsertRegimeState(pair: string, updates: Partial<RegimeState>): Promise<void> {
-    try {
-      const existing = await this.getRegimeState(pair);
-      if (existing) {
-        await db.update(regimeState)
-          .set({ ...updates, updatedAt: new Date() })
-          .where(eq(regimeState.pair, pair));
-      } else {
-        await db.insert(regimeState).values({
-          pair,
-          currentRegime: updates.currentRegime || "TRANSITION",
-          candidateCount: updates.candidateCount || 0,
-          ...updates,
-          updatedAt: new Date(),
-        });
-      }
-    } catch (error) {
-      log(`[REGIME] Error saving state for ${pair}: ${error}`, "trading");
-    }
-  }
-
-  private async getMarketRegimeWithCache(pair: string): Promise<RegimeAnalysis> {
-    const cached = this.regimeCache.get(pair);
-    if (cached && Date.now() - cached.timestamp < this.REGIME_CACHE_TTL_MS) {
-      return cached.regime;
-    }
-    
-    const defaultResult: RegimeAnalysis = {
-      regime: "TRANSITION",
-      adx: 25,
-      emaAlignment: 0,
-      bollingerWidth: 2,
-      confidence: 0.3,
-      reason: "Datos insuficientes",
-    };
-    
-    try {
-      const candles = await this.getDataExchange().getOHLC(pair, 60); // 1h candles
-      if (!candles || candles.length < 50) {
-        return defaultResult;
-      }
-      
-      // Raw detection (without persistence logic)
-      const rawAnalysis = this.detectMarketRegime(candles);
-      
-      // Phase 2.2: Confirmation + Phase 2.3: MinHold + Hysteresis
-      const confirmedAnalysis = await this.applyRegimeConfirmation(pair, rawAnalysis);
-      
-      // Cache confirmed result
-      this.regimeCache.set(pair, { regime: confirmedAnalysis, timestamp: Date.now() });
-      
-      return confirmedAnalysis;
-    } catch (error: any) {
-      log(`Error obteniendo rÃ©gimen para ${pair}: ${error.message}`, "trading");
-      return { ...defaultResult, reason: "Error en detecciÃ³n" };
-    }
-  }
-  
-  private async applyRegimeConfirmation(pair: string, rawAnalysis: RegimeAnalysis): Promise<RegimeAnalysis> {
-    const now = new Date();
-    const state = await this.getRegimeState(pair);
-    const currentConfirmed = (state?.currentRegime as MarketRegime) || "TRANSITION";
-    
-    // Keep lastRegime map in sync with persistent state
-    this.lastRegime.set(pair, currentConfirmed);
-    
-    // Phase 2.3: Check MinHold - prevent flip unless hard exit
-    if (state?.holdUntil && now < state.holdUntil) {
-      const isHardExit = rawAnalysis.adx < REGIME_CONFIG.ADX_HARD_EXIT;
-      const remainingMs = state.holdUntil.getTime() - now.getTime();
-      const remainingMin = Math.ceil(remainingMs / 60000);
-      
-      if (!isHardExit) {
-        log(`[REGIME_HOLD] pair=${pair} skipChange=true remainingMin=${remainingMin} candidate=${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
-        log(`[REGIME_NOTIFY] sent=false skipReason=hysteresis_hold pair=${pair}`, "trading");
-        const syncedReason = `Manteniendo ${currentConfirmed} (minHold ${remainingMin}min restantes)`;
-        return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
-      }
-      log(`[REGIME_HARD_EXIT] pair=${pair} adx=${rawAnalysis.adx.toFixed(1)} changeImmediate=true bypassHold=true`, "trading");
-    }
-    
-    // Phase 2.2: Confirmation via consecutive scans (fallback mode)
-    if (rawAnalysis.regime !== currentConfirmed) {
-      const candidateRegime = state?.candidateRegime;
-      const candidateCount = state?.candidateCount || 0;
-      
-      if (rawAnalysis.regime === candidateRegime) {
-        // Same candidate: increment count
-        const newCount = candidateCount + 1;
-        const confirmed = newCount >= REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
-        
-        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
-        
-        if (confirmed) {
-          // Confirmed! Update state and send alert
-          const holdUntil = new Date(now.getTime() + REGIME_CONFIG.MIN_HOLD_MINUTES * 60 * 1000);
-          const transitionSince = rawAnalysis.regime === "TRANSITION" ? now : null;
-          
-          await this.upsertRegimeState(pair, {
-            currentRegime: rawAnalysis.regime,
-            confirmedAt: now,
-            holdUntil,
-            transitionSince,
-            candidateRegime: null,
-            candidateCount: 0,
-            lastAdx: rawAnalysis.adx.toString(),
-          });
-          
-          log(`[REGIME_CONFIRM] pair=${pair} from=${currentConfirmed} to=${rawAnalysis.regime} adx=${rawAnalysis.adx.toFixed(1)} holdUntil=${holdUntil.toISOString()}`, "trading");
-          
-          // Update lastRegime map with new confirmed regime
-          this.lastRegime.set(pair, rawAnalysis.regime);
-          
-          // Send alert (with cooldown/dedup)
-          await this.sendRegimeChangeAlert(pair, currentConfirmed, rawAnalysis);
-          
-          return rawAnalysis;
-        } else {
-          // Not yet confirmed, keep accumulating
-          await this.upsertRegimeState(pair, {
-            candidateRegime: rawAnalysis.regime,
-            candidateCount: newCount,
-            lastAdx: rawAnalysis.adx.toString(),
-          });
-          log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-          const syncedReason = `Manteniendo ${currentConfirmed} (confirmaciÃ³n ${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
-          return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
-        }
-      } else {
-        // Different candidate: reset counter
-        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} reset=true prevCandidate=${candidateRegime || "none"} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
-        await this.upsertRegimeState(pair, {
-          candidateRegime: rawAnalysis.regime,
-          candidateCount: 1,
-          lastAdx: rawAnalysis.adx.toString(),
-        });
-        log(`[REGIME_NOTIFY] sent=false skipReason=no_confirmed pair=${pair}`, "trading");
-        const syncedReason = `Manteniendo ${currentConfirmed} (confirmaciÃ³n 1/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED})`;
-        return { ...rawAnalysis, regime: currentConfirmed, reason: syncedReason };
-      }
-    }
-    
-    // No change in regime
-    await this.upsertRegimeState(pair, { lastAdx: rawAnalysis.adx.toString() });
-    return rawAnalysis;
-  }
-
-  private async sendRegimeChangeAlert(pair: string, fromRegime: MarketRegime, analysis: RegimeAnalysis) {
-    const now = Date.now();
-    const state = await this.getRegimeState(pair);
-    
-    // Phase 2.1: Cooldown check (60 min per pair)
-    if (state?.lastNotifiedAt) {
-      const msSinceNotified = now - state.lastNotifiedAt.getTime();
-      if (msSinceNotified < REGIME_CONFIG.NOTIFY_COOLDOWN_MS) {
-        log(`[REGIME_NOTIFY] sent=false skipReason=cooldown pair=${pair} msSince=${msSinceNotified}`, "trading");
-        return;
-      }
-    }
-    
-    // Phase 2.1: Hash dedup (same params + reason = no notify)
-    const paramsHash = this.computeParamsHash(analysis.regime);
-    const reasonHash = this.computeReasonHash(analysis.regime, analysis.reason);
-    
-    if (state?.lastParamsHash === paramsHash && state?.lastReasonHash === reasonHash) {
-      log(`[REGIME_NOTIFY] sent=false skipReason=same_hash pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
-      return;
-    }
-    
-    // Phase 2.4: TRANSITION silence (only first entry or material change)
-    if (analysis.regime === "TRANSITION" && fromRegime === "TRANSITION") {
-      log(`[REGIME_NOTIFY] sent=false skipReason=transition_no_change pair=${pair}`, "trading");
-      return;
-    }
-    
-    // Update state with notification info
-    await this.upsertRegimeState(pair, {
-      lastNotifiedAt: new Date(),
-      lastParamsHash: paramsHash,
-      lastReasonHash: reasonHash,
-    });
-    
-    const regimeEmoji: Record<MarketRegime, string> = {
-      TREND: "ðŸ“ˆ",
-      RANGE: "â†”ï¸",
-      TRANSITION: "â³",
-    };
-    
-    const preset = REGIME_PRESETS[analysis.regime];
-    const presetInfo = analysis.regime === "TRANSITION" 
-      ? "Entradas pausadas hasta confirmaciÃ³n"
-      : `BE: ${preset.sgBeAtPct}%, Trail: ${preset.sgTrailDistancePct}%, TP: ${preset.sgTpFixedPct}%, MinSig: ${preset.minSignals}`;
-    
-    const message = `
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-${regimeEmoji[analysis.regime]} <b>Cambio de RÃ©gimen</b>
-
-ðŸ“¦ <b>Detalles:</b>
-   â€¢ Par: <code>${pair}</code>
-   â€¢ Antes: <code>${fromRegime}</code> â†’ Ahora: <code>${analysis.regime}</code>
-   â€¢ ADX: <code>${analysis.adx.toFixed(0)}</code>
-   â€¢ RazÃ³n: <code>${analysis.reason}</code>
-
-âš™ï¸ <b>ParÃ¡metros ajustados:</b>
-   ${presetInfo}
-
-ðŸ”— <a href="${environment.panelUrl}">Ver Panel</a>
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`;
-
-    await this.telegramService.sendAlertWithSubtype(message, "strategy", "strategy_regime_change");
-    
-    log(`[TELEGRAM] RegimeChanged pair=${pair} from=${fromRegime} to=${analysis.regime}`, "trading");
-    log(`[REGIME_NOTIFY] sent=true pair=${pair} paramsHash=${paramsHash} reasonHash=${reasonHash}`, "trading");
-    
-    await botLogger.info("SYSTEM_ALERT", `RÃ©gimen cambiado en ${pair}: ${fromRegime} â†’ ${analysis.regime}`, {
-      pair,
-      fromRegime,
-      toRegime: analysis.regime,
-      adx: analysis.adx,
-      confidence: analysis.confidence,
-      reason: analysis.reason,
-    });
-  }
-
-  getRegimeMinSignals(regime: MarketRegime, baseMinSignals: number): number {
-    // Check if we have dynamic configuration from ConfigService
-    if (this.dynamicConfig?.signals?.[regime]) {
-      const signalConfig = this.dynamicConfig.signals[regime];
-      const currentSignals = signalConfig.currentSignals;
-      // Use dynamic value if it's within reasonable bounds
-      if (currentSignals >= 1 && currentSignals <= 10) {
-        log(`[CONFIG] Using dynamic minSignals=${currentSignals} for regime=${regime}`, "trading");
-        return currentSignals;
-      }
-    }
-    
-    // Fallback to preset values
-    const preset = REGIME_PRESETS[regime];
-    // Never go below the stricter of base config or regime preset
-    return Math.max(baseMinSignals, preset.minSignals);
-  }
+  // === REGIME STATEFUL METHODS (delegated to RegimeManager) ===
+  private async getMarketRegimeWithCache(pair: string): Promise<RegimeAnalysis> { return this.regimeManager.getMarketRegimeWithCache(pair); }
+  getRegimeMinSignals(regime: MarketRegime, baseMinSignals: number): number { return this.regimeManager.getRegimeMinSignals(regime, baseMinSignals); }
 
   private setupConfigListener(): void {
     // Listen for configuration changes from ConfigService
@@ -5359,6 +4992,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de RÃ©gimen</b>
       const config = await configService.getActiveConfig();
       if (config) {
         this.dynamicConfig = config;
+        this.regimeManager.setDynamicConfig(config);
         
         // Apply global configuration
         if (config.global) {
@@ -5385,6 +5019,7 @@ ${regimeEmoji[analysis.regime]} <b>Cambio de RÃ©gimen</b>
       console.error('[tradingEngine] Error loading dynamic config:', error);
       log(`[CONFIG] Failed to load dynamic config, using defaults`, "trading");
       this.dynamicConfig = null;
+      this.regimeManager.setDynamicConfig(null);
     }
   }
 
