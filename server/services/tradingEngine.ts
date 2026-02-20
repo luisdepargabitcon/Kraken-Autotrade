@@ -921,10 +921,10 @@ export class TradingEngine {
         if (!Number.isFinite(availableQuote) || availableQuote < requiredQuote) {
           const availTxt = Number.isFinite(availableQuote) ? availableQuote.toFixed(2) : '0.00';
           const reqTxt = requiredQuote.toFixed(2);
-          log(`[MANUAL_BUY] BLOQUEADO: balance insuficiente ${quote}. available=${availTxt} requiredâ‰ˆ${reqTxt} (usdAmount=${usdAmount}, bufferPct=${bufferPct}%)`, "trading");
+          log(`[MANUAL_BUY] BLOQUEADO: balance insuficiente ${quote}. available=${availTxt} required≈${reqTxt} (usdAmount=${usdAmount}, bufferPct=${bufferPct}%)`, "trading");
           return {
             success: false,
-            error: `Saldo insuficiente de ${quote}: disponible ${availTxt}, requerido â‰ˆ ${reqTxt} (incluye buffer ${bufferPct}%)`,
+            error: `Saldo insuficiente de ${quote}: disponible ${availTxt}, requerido ≈ ${reqTxt} (incluye buffer ${bufferPct}%)`,
           };
         }
       } catch (balErr: any) {
@@ -2352,7 +2352,7 @@ ${positionsList}
         
         if (currentLossPercent <= -dailyLossLimitPercent && !this.isDailyLimitReached) {
           this.isDailyLimitReached = true;
-          log(`🛑 LÍMITE DE PÃ‰RDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (límite: -${dailyLossLimitPercent}%)`, "trading");
+          log(`🛑 LÍMITE DE PÉRDIDA DIARIA ALCANZADO: ${currentLossPercent.toFixed(2)}% (límite: -${dailyLossLimitPercent}%)`, "trading");
           
           await botLogger.warn("DAILY_LIMIT_HIT", "Límite de pérdida diaria alcanzado. Bot pausado para nuevas compras.", {
             dailyPnL: this.dailyPnL,
@@ -2373,7 +2373,7 @@ El bot ha pausado las operaciones de COMPRA.
    • Pérdida: <code>$${Math.abs(this.dailyPnL).toFixed(2)}</code>
    • Límite configurado: <code>-${dailyLossLimitPercent}%</code>
 
-â„¹️ Las operaciones de cierre (SL/TP) siguen activas.
+ℹ️ Las operaciones de cierre (SL/TP) siguen activas.
 ⏰ El trading normal se reanudará mañana.
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_daily_pnl");
           }
@@ -2751,7 +2751,7 @@ El bot ha pausado las operaciones de COMPRA.
           return;
         }
 
-        // B3: SMART_GUARD requiere â‰¥5 señales para BUY (umbral más estricto)
+        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
@@ -2946,11 +2946,11 @@ El bot ha pausado las operaciones de COMPRA.
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // === CÃLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) ===
+        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) ===
         // SMART_GUARD v2: sgMinEntryUsd es un "objetivo preferido", no un bloqueo
-        // - Si saldo >= sgMinEntryUsd â†’ usar sgMinEntryUsd exactamente (no más)
-        // - Si saldo < sgMinEntryUsd â†’ fallback automático a saldo disponible
-        // - floorUsd = max(exchangeMin, absoluteMin) â†’ hard block si saldo < floorUsd
+        // - Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd exactamente (no más)
+        // - Si saldo < sgMinEntryUsd → fallback automático a saldo disponible
+        // - floorUsd = max(exchangeMin, absoluteMin) → hard block si saldo < floorUsd
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
@@ -2980,37 +2980,37 @@ El bot ha pausado las operaciones de COMPRA.
         if (positionMode === "SMART_GUARD") {
           // === SMART_GUARD v2 SIZING ===
           // Regla 1: sgMinEntryUsd es "objetivo preferido"
-          // Regla 2: Si saldo >= sgMinEntryUsd â†’ usar sgMinEntryUsd EXACTO
-          // Regla 3: Si saldo < sgMinEntryUsd â†’ fallback a saldo disponible (si >= floorUsd)
-          // Regla 4: Si saldo < floorUsd â†’ BLOQUEAR
+          // Regla 2: Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd EXACTO
+          // Regla 3: Si saldo < sgMinEntryUsd → fallback a saldo disponible (si >= floorUsd)
+          // Regla 4: Si saldo < floorUsd → BLOQUEAR
           
           originalAmount = sgMinEntryUsd; // El objetivo propuesto siempre es sgMinEntryUsd
           
           if (availableAfterCushion >= sgMinEntryUsd) {
-            // Caso A: Saldo suficiente â†’ usar sgMinEntryUsd EXACTO (no más)
+            // Caso A: Saldo suficiente → usar sgMinEntryUsd EXACTO (no más)
             tradeAmountUSD = sgMinEntryUsd;
             sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
             
           } else if (availableAfterCushion >= floorUsd) {
-            // Caso B: Saldo insuficiente para config, pero >= floorUsd â†’ fallback automático
+            // Caso B: Saldo insuficiente para config, pero >= floorUsd → fallback automático
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
             
           } else if (usdDisponible >= floorUsd && availableAfterCushion < floorUsd) {
-            // Caso C: Fee cushion lo baja de floorUsd â†’ se bloqueará en validación
+            // Caso C: Fee cushion lo baja de floorUsd → se bloqueará en validación
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_BLOCKED_AFTER_FEE_CUSHION";
             
           } else {
-            // Caso D: Saldo < floorUsd â†’ se bloqueará en validación
+            // Caso D: Saldo < floorUsd → se bloqueará en validación
             tradeAmountUSD = usdDisponible;
             sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
           }
           
           log(`SMART_GUARD ${pair}: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
-          log(`  â†’ availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
-          log(`  â†’ cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
-          log(`  â†’ sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
+          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
+          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  → sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
           
           // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
           this.updatePairTrace(pair, {
@@ -3024,10 +3024,10 @@ El bot ha pausado las operaciones de COMPRA.
             const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
             const originalBeforeTransition = tradeAmountUSD;
             tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
-            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} â†’ $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
           }
           
-          // La validación final de mínimos se hace DESPUÃ‰S con validateMinimumsOrSkip()
+          // La validación final de mínimos se hace DESPUÉS con validateMinimumsOrSkip()
         } else {
           // Modos SINGLE/DCA: lógica original con exposure limits
           
@@ -3115,7 +3115,7 @@ El bot ha pausado las operaciones de COMPRA.
    • Disponible: <code>$${exposure.maxAllowed.toFixed(2)}</code>
    • Mínimo requerido: <code>$${minRequiredUSD.toFixed(2)}</code>
 
-â„¹️ Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min
+ℹ️ Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min
 ━━━━━━━━━━━━━━━━━━━`, "system");
             }
           }
@@ -3167,7 +3167,7 @@ El bot ha pausado las operaciones de COMPRA.
           return;
         }
 
-        // === VALIDACIÓN FINAL ÃšNICA Y CENTRALIZADA (fuente de verdad) ===
+        // === VALIDACIÓN FINAL ÚNICA Y CENTRALIZADA (fuente de verdad) ===
         // Se ejecuta ANTES de executeTrade() para REAL y DRY_RUN
         const orderUsdFinal = tradeAmountUSD;
         const envPrefix = environment.envTag;
@@ -3397,7 +3397,7 @@ El bot ha pausado las operaciones de COMPRA.
 
 ⚠️ Solo risk exits (SL/TP/Trailing) permiten vender.
 
-â„¹️ <i>${signal.reason}</i>
+ℹ️ <i>${signal.reason}</i>
 ━━━━━━━━━━━━━━━━━━━`, "system");
           }
           
@@ -3559,20 +3559,20 @@ El bot ha pausado las operaciones de COMPRA.
           selectedStrategyId = "mean_reversion_simple";
           signal = this.meanReversionSimpleStrategy(pair, closedCandles, currentPrice);
           routerApplied = true;
-          log(`[ROUTER] ${pair}: RANGE regime â†’ mean_reversion_simple`, "trading");
+          log(`[ROUTER] ${pair}: RANGE regime → mean_reversion_simple`, "trading");
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
           signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           routerApplied = true;
-          log(`[ROUTER] ${pair}: TRANSITION regime â†’ momentum_candles + overrides`, "trading");
+          log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
         } else {
           // TREND or other: Use standard momentum
           selectedStrategyId = `momentum_candles_${timeframe}`;
           signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
           if (earlyRegime === "TREND") {
             routerApplied = true;
-            log(`[ROUTER] ${pair}: TREND regime â†’ momentum_candles`, "trading");
+            log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
           }
         }
       } else {
@@ -3758,7 +3758,7 @@ El bot ha pausado las operaciones de COMPRA.
           return;
         }
 
-        // B3: SMART_GUARD requiere â‰¥5 señales para BUY (umbral más estricto)
+        // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
@@ -3952,7 +3952,7 @@ El bot ha pausado las operaciones de COMPRA.
         const riskPerTradePct = parseFloat(botConfig?.riskPerTradePct?.toString() || "15");
         const takeProfitPct = parseFloat(botConfig?.takeProfitPercent?.toString() || "7");
         
-        // === CÃLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) - UNIFICADO CON analyzePairAndTrade ===
+        // === CÁLCULO DE TAMAÑO DE ORDEN (tradeAmountUSD) - UNIFICADO CON analyzePairAndTrade ===
         let tradeAmountUSD: number;
         let wasAdjusted = false;
         let originalAmount: number;
@@ -3991,8 +3991,8 @@ El bot ha pausado las operaciones de COMPRA.
           }
           
           log(`SMART_GUARD ${pair} [${selectedStrategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
-          log(`  â†’ availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
-          log(`  â†’ cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
+          log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
           
           // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
           this.updatePairTrace(pair, {
@@ -4006,7 +4006,7 @@ El bot ha pausado las operaciones de COMPRA.
             const transitionSizeFactor = (botConfigCheck as any)?.transitionSizeFactor ?? 0.5;
             const originalBeforeTransition = tradeAmountUSD;
             tradeAmountUSD = tradeAmountUSD * transitionSizeFactor;
-            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} â†’ $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
+            log(`[ROUTER] ${pair}: TRANSITION sizing override: $${originalBeforeTransition.toFixed(2)} → $${tradeAmountUSD.toFixed(2)} (${(transitionSizeFactor * 100).toFixed(0)}%)`, "trading");
           }
         } else {
           // Modos SINGLE/DCA: lógica original
@@ -4367,7 +4367,7 @@ El bot ha pausado las operaciones de COMPRA.
     regime?: MarketRegime | string | null
   ): { filtered: boolean; confidenceBoost: number; reason: string; filterType?: "MTF_STRICT" | "MTF_STANDARD" } {
     if (signal.action === "buy") {
-      // === MTF ESTRICTO POR RÃ‰GIMEN (Fase 2.4) ===
+      // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4) ===
       // En TRANSITION: exigir MTF >= 0.3 para compras
       // En RANGE: exigir MTF >= 0.2 para compras
       // Esto evita compras contra tendencia mayor en regímenes inestables
@@ -5341,7 +5341,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         const exchangeOrderId = (order as any)?.orderId || (order as any)?.txid;
         const pendingOrderId = exchangeOrderId || clientOrderId; // Fallback only for logging
         
-        // MANDATORY LOGGING: Track IDs for debugging PENDING_FILL â†’ FAILED issues
+        // MANDATORY LOGGING: Track IDs for debugging PENDING_FILL → FAILED issues
         log(`[ORDER_IDS] ${correlationId} | exchangeOrderId=${exchangeOrderId}, pendingOrderId=${pendingOrderId}, clientOrderId=${clientOrderId}`, "trading");
         if (!exchangeOrderId) {
           log(`[ORDER_ID_WARNING] ${correlationId} | No real exchange order ID returned! FillWatcher may fail to find fills.`, "trading");
@@ -5495,7 +5495,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               ? `<i>La orden fue aceptada por ${exchange}. La venta se reflejará en historial y P&L en segundos.</i>`
               : `<i>La orden fue aceptada por ${exchange}. La posición aparecerá en UI en segundos.</i>`;
             await this.telegramService.sendAlertWithSubtype(
-              `â³ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
+              `⏳ <b>Orden ${type.toUpperCase()} enviada</b>\n\n` +
               `Par: <code>${assetName}</code>\n` +
               `Cantidad: <code>${volume}</code>\n` +
               `Estado: Pendiente de confirmación\n` +
@@ -5555,7 +5555,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         externalId,
       });
 
-      // === A) P&L INMEDIATO EN SELL AUTOMÃTICO ===
+      // === A) P&L INMEDIATO EN SELL AUTOMÁTICO ===
       let tradeEntryPrice: string | null = null;
       let tradeRealizedPnlUsd: string | null = null;
       let tradeRealizedPnlPct: string | null = null;
@@ -5581,7 +5581,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
           tradeEntryPrice = entryPrice.toString();
           tradeRealizedPnlUsd = netPnlUsd.toFixed(8);
           tradeRealizedPnlPct = netPnlPct.toFixed(4);
-          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} â†’ Bruto=$${grossPnlUsd.toFixed(2)}, Fees=$${(entryFeeUsd + exitFeeUsd).toFixed(2)}, NETO=$${netPnlUsd.toFixed(2)} (${netPnlPct.toFixed(2)}%)`, "trading");
+          log(`[P&L] SELL ${pair}: entry=$${entryPrice.toFixed(2)} exit=$${price.toFixed(2)} → Bruto=$${grossPnlUsd.toFixed(2)}, Fees=$${(entryFeeUsd + exitFeeUsd).toFixed(2)}, NETO=$${netPnlUsd.toFixed(2)} (${netPnlPct.toFixed(2)}%)`, "trading");
         } else {
           // A3: Orphan/emergency sin entryPrice - permitir pero marcar
           reasonWithContext = `${reason} | SELL_NO_ENTRYPRICE`;
@@ -5739,7 +5739,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                       configSnapshot.sgTpFixedPct = atrExits.tpPct;
 
                       const fallbackNote = atrExits.usedFallback ? " [FALLBACK]" : "";
-                      log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied â†’ SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
+                      log(`[ATR_SNAPSHOT] ${pair}: ATR-based exits applied → SL=${atrExits.slPct.toFixed(2)}% BE=${atrExits.beAtPct.toFixed(2)}% Trail=${atrExits.trailPct.toFixed(2)}% TP=${atrExits.tpPct.toFixed(2)}% (${atrExits.source})${fallbackNote}`, "trading");
                     } else if (regimeEnabled) {
                       const regimeAdjusted = this.getRegimeAdjustedParams(
                         {
@@ -6230,7 +6230,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
    • Balance real: <code>${validation.realAssetBalance.toFixed(8)}</code>
    • Mínimo Kraken: <code>${validation.orderMin}</code>
 
-â„¹️ No se puede cerrar - usar "Eliminar huérfana" en UI
+ℹ️ No se puede cerrar - usar "Eliminar huérfana" en UI
 ━━━━━━━━━━━━━━━━━━━`, "balance", "balance_exposure");
           }
         }
