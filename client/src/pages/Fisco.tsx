@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
-  AlertTriangle, Loader2, ArrowUpDown, Euro, Layers, BarChart3
+  AlertTriangle, Loader2, ArrowUpDown, Euro, Layers, BarChart3,
+  Download, Filter, Search, X
 } from "lucide-react";
 
 // ============================================================
@@ -70,8 +71,17 @@ interface FiscoSummaryResponse {
   }>;
 }
 
+interface FiscoMetaResponse {
+  assets: string[];
+  exchanges: string[];
+  years: number[];
+  date_range: { from: string; to: string } | null;
+}
+
 interface FiscoOpsResponse {
   count: number;
+  unique_assets: string[];
+  unique_exchanges: string[];
   operations: any[];
 }
 
@@ -119,6 +129,130 @@ const OP_TYPE_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 // ============================================================
+// PDF Report Generator
+// ============================================================
+
+function generateFiscalPDF(yearData: any, year: number) {
+  const rows = yearData.assets || [];
+  const totalGL = yearData.total_gain_loss_eur || 0;
+  const totalFees = yearData.total_fees_eur || 0;
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Informe Fiscal ${year}</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #1a1a1a; max-width: 900px; margin: 0 auto; }
+  h1 { color: #0f172a; border-bottom: 3px solid #3b82f6; padding-bottom: 8px; }
+  h2 { color: #334155; margin-top: 30px; }
+  .meta { color: #64748b; font-size: 13px; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+  th { background: #f1f5f9; padding: 10px 8px; text-align: right; border: 1px solid #e2e8f0; font-weight: 600; }
+  th:first-child { text-align: left; }
+  td { padding: 8px; border: 1px solid #e2e8f0; text-align: right; font-family: 'Courier New', monospace; }
+  td:first-child { text-align: left; font-weight: 600; }
+  .positive { color: #16a34a; }
+  .negative { color: #dc2626; }
+  .total-row { background: #f8fafc; font-weight: 700; }
+  .footer { margin-top: 40px; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+  @media print { body { padding: 20px; } }
+</style></head>
+<body>
+  <h1>Informe Fiscal — Ejercicio ${year}</h1>
+  <div class="meta">
+    Generado: ${new Date().toLocaleString("es-ES")} | Método: FIFO | Moneda: EUR<br>
+    Fuentes: Kraken API + RevolutX API (datos directos de exchanges)
+  </div>
+  <h2>Resumen por Activo</h2>
+  <table>
+    <tr><th>Activo</th><th>Adquisiciones</th><th>Ventas</th><th>Coste Base</th><th>Ingresos</th><th>Gan/Pérd</th><th>Comisiones</th></tr>
+    ${rows.map((r: any) => {
+      const gl = parseFloat(r.total_gain_loss_eur || 0);
+      return `<tr>
+        <td>${r.asset}</td>
+        <td>${r.total_acquisitions}</td>
+        <td>${r.total_disposals}</td>
+        <td>${parseFloat(r.total_cost_basis_eur || 0).toFixed(2)} &euro;</td>
+        <td>${parseFloat(r.total_proceeds_eur || 0).toFixed(2)} &euro;</td>
+        <td class="${gl >= 0 ? 'positive' : 'negative'}">${gl.toFixed(2)} &euro;</td>
+        <td>${parseFloat(r.total_fees_eur || 0).toFixed(2)} &euro;</td>
+      </tr>`;
+    }).join("")}
+    <tr class="total-row">
+      <td>TOTAL</td>
+      <td>${rows.reduce((s: number, r: any) => s + parseInt(r.total_acquisitions || 0), 0)}</td>
+      <td>${rows.reduce((s: number, r: any) => s + parseInt(r.total_disposals || 0), 0)}</td>
+      <td>${rows.reduce((s: number, r: any) => s + parseFloat(r.total_cost_basis_eur || 0), 0).toFixed(2)} &euro;</td>
+      <td>${rows.reduce((s: number, r: any) => s + parseFloat(r.total_proceeds_eur || 0), 0).toFixed(2)} &euro;</td>
+      <td class="${totalGL >= 0 ? 'positive' : 'negative'}">${totalGL.toFixed(2)} &euro;</td>
+      <td>${totalFees.toFixed(2)} &euro;</td>
+    </tr>
+  </table>
+  <div class="footer">
+    Este informe se genera a partir de datos extraídos directamente de las APIs de Kraken y RevolutX.<br>
+    Método de cálculo: FIFO (First In, First Out) conforme a la normativa fiscal española (IRPF).<br>
+    KRAKENBOT.AI — Control Fiscal Automatizado
+  </div>
+</body></html>`;
+
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `informe_fiscal_${year}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// Filter Bar Component
+// ============================================================
+
+function FilterBar({ children, onClear }: { children: React.ReactNode; onClear: () => void }) {
+  return (
+    <div className="flex flex-wrap items-end gap-3 p-3 bg-card/50 border border-border rounded-lg mb-4">
+      <Filter className="h-4 w-4 text-muted-foreground mt-5 hidden sm:block" />
+      {children}
+      <Button variant="ghost" size="sm" onClick={onClear} className="text-muted-foreground h-9 mt-auto">
+        <X className="h-3 w-3 mr-1" /> Limpiar
+      </Button>
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options }: {
+  label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[120px]"
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function FilterDate({ label, value, onChange }: {
+  label: string; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</label>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 px-2 rounded-md border border-border bg-background text-sm"
+      />
+    </div>
+  );
+}
+
+// ============================================================
 // Component
 // ============================================================
 
@@ -126,38 +260,79 @@ export default function Fisco() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("resumen");
 
-  // Saved summary from DB (fast)
+  // --- Filter state ---
+  const [opsAsset, setOpsAsset] = useState("");
+  const [opsExchange, setOpsExchange] = useState("");
+  const [opsType, setOpsType] = useState("");
+  const [opsFrom, setOpsFrom] = useState("");
+  const [opsTo, setOpsTo] = useState("");
+  const [lotsAsset, setLotsAsset] = useState("");
+  const [lotsExchange, setLotsExchange] = useState("");
+  const [lotsOpen, setLotsOpen] = useState("");
+  const [dispYear, setDispYear] = useState("");
+  const [resumenYear, setResumenYear] = useState("");
+
+  // --- Meta query for filter dropdowns ---
+  const metaQuery = useQuery<FiscoMetaResponse>({
+    queryKey: ["/api/fisco/meta"],
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const meta = metaQuery.data;
+  const assetOpts = [{ value: "", label: "Todos" }, ...(meta?.assets || []).map(a => ({ value: a, label: a }))];
+  const exchOpts = [{ value: "", label: "Todos" }, ...(meta?.exchanges || []).map(e => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) }))];
+  const yearOpts = [{ value: "", label: "Todos" }, ...(meta?.years || []).map(y => ({ value: String(y), label: String(y) }))];
+  const typeOpts = [
+    { value: "", label: "Todos" }, { value: "trade_buy", label: "Compra" }, { value: "trade_sell", label: "Venta" },
+    { value: "deposit", label: "Depósito" }, { value: "withdrawal", label: "Retiro" },
+    { value: "conversion", label: "Conversión" }, { value: "staking", label: "Staking" },
+  ];
+  const lotStatusOpts = [{ value: "", label: "Todos" }, { value: "true", label: "Abiertos" }];
+
+  // --- Build query URLs with filters ---
+  const opsP = new URLSearchParams();
+  if (opsAsset) opsP.set("asset", opsAsset);
+  if (opsExchange) opsP.set("exchange", opsExchange);
+  if (opsType) opsP.set("type", opsType);
+  if (opsFrom) opsP.set("from", opsFrom);
+  if (opsTo) opsP.set("to", opsTo);
+  const opsUrl = `/api/fisco/operations${opsP.toString() ? "?" + opsP.toString() : ""}`;
+
+  const lotsP = new URLSearchParams();
+  if (lotsAsset) lotsP.set("asset", lotsAsset);
+  if (lotsExchange) lotsP.set("exchange", lotsExchange);
+  if (lotsOpen) lotsP.set("open", lotsOpen);
+  const lotsUrl = `/api/fisco/lots${lotsP.toString() ? "?" + lotsP.toString() : ""}`;
+
+  const dispP = new URLSearchParams();
+  if (dispYear) dispP.set("year", dispYear);
+  const dispUrl = `/api/fisco/disposals${dispP.toString() ? "?" + dispP.toString() : ""}`;
+
+  // --- Queries ---
   const summaryQuery = useQuery<FiscoSummaryResponse>({
     queryKey: ["/api/fisco/summary"],
     refetchOnWindowFocus: false,
     retry: false,
   });
-
-  // Operations from DB
   const opsQuery = useQuery<FiscoOpsResponse>({
-    queryKey: ["/api/fisco/operations"],
+    queryKey: [opsUrl],
     refetchOnWindowFocus: false,
     retry: false,
     enabled: activeTab === "operaciones",
   });
-
-  // Lots from DB
   const lotsQuery = useQuery<FiscoLotsResponse>({
-    queryKey: ["/api/fisco/lots"],
+    queryKey: [lotsUrl],
     refetchOnWindowFocus: false,
     retry: false,
     enabled: activeTab === "lotes",
   });
-
-  // Disposals from DB
   const disposalsQuery = useQuery<FiscoDisposalsResponse>({
-    queryKey: ["/api/fisco/disposals"],
+    queryKey: [dispUrl],
     refetchOnWindowFocus: false,
     retry: false,
     enabled: activeTab === "ganancias",
   });
 
-  // Full pipeline run mutation
   const runPipeline = useMutation<FiscoRunResponse>({
     mutationFn: async () => {
       const resp = await fetch("/api/fisco/run");
@@ -165,15 +340,15 @@ export default function Fisco() {
       return resp.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/fisco/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/fisco/operations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/fisco/lots"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/fisco/disposals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco"] });
     },
   });
 
   const lastRun = runPipeline.data;
   const isRunning = runPipeline.isPending;
+  const filteredYears = resumenYear
+    ? (summaryQuery.data?.years || []).filter(y => String(y.year) === resumenYear)
+    : (summaryQuery.data?.years || []);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -270,8 +445,21 @@ export default function Fisco() {
 
           {/* ============ RESUMEN ============ */}
           <TabsContent value="resumen" className="space-y-4">
-            {/* Year summary cards */}
-            {summaryQuery.data?.years?.map((yearData) => (
+            {/* Year filter + PDF */}
+            <FilterBar onClear={() => setResumenYear("")}>
+              <FilterSelect label="Ejercicio Fiscal" value={resumenYear} onChange={setResumenYear} options={yearOpts} />
+              {filteredYears.length > 0 && (
+                <div className="flex gap-2 mt-auto">
+                  {filteredYears.map(yd => (
+                    <Button key={yd.year} variant="outline" size="sm" className="gap-1.5" onClick={() => generateFiscalPDF(yd, yd.year)}>
+                      <Download className="h-3 w-3" /> PDF {yd.year}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </FilterBar>
+
+            {filteredYears.map((yearData) => (
               <Card key={yearData.year}>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center justify-between">
@@ -292,10 +480,10 @@ export default function Fisco() {
                           <th className="text-left py-2 px-2">Activo</th>
                           <th className="text-right py-2 px-2">Adquisiciones</th>
                           <th className="text-right py-2 px-2">Ventas</th>
-                          <th className="text-right py-2 px-2">Coste Base €</th>
-                          <th className="text-right py-2 px-2">Ingresos €</th>
-                          <th className="text-right py-2 px-2">Gan/Pérd €</th>
-                          <th className="text-right py-2 px-2">Comisiones €</th>
+                          <th className="text-right py-2 px-2">Coste Base</th>
+                          <th className="text-right py-2 px-2">Ingresos</th>
+                          <th className="text-right py-2 px-2">Gan/Pérd</th>
+                          <th className="text-right py-2 px-2">Comisiones</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -349,10 +537,10 @@ export default function Fisco() {
                           <th className="text-left py-2 px-2">Activo</th>
                           <th className="text-right py-2 px-2">Comprado</th>
                           <th className="text-right py-2 px-2">Vendido</th>
-                          <th className="text-right py-2 px-2">Coste €</th>
-                          <th className="text-right py-2 px-2">Ingresos €</th>
-                          <th className="text-right py-2 px-2">P&L €</th>
-                          <th className="text-right py-2 px-2">Lotes</th>
+                          <th className="text-right py-2 px-2">Coste</th>
+                          <th className="text-right py-2 px-2">Ingresos</th>
+                          <th className="text-right py-2 px-2">P&L</th>
+                          <th className="text-right py-2 px-2">Lotes (abiertos/cerrados)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -380,7 +568,7 @@ export default function Fisco() {
               </Card>
             )}
 
-            {!summaryQuery.data?.years?.length && !lastRun && (
+            {!filteredYears.length && !lastRun && (
               <Card className="border-dashed">
                 <CardContent className="py-12 text-center text-muted-foreground">
                   <Calculator className="h-12 w-12 mx-auto mb-4 opacity-40" />
@@ -393,6 +581,13 @@ export default function Fisco() {
 
           {/* ============ OPERACIONES ============ */}
           <TabsContent value="operaciones" className="space-y-4">
+            <FilterBar onClear={() => { setOpsAsset(""); setOpsExchange(""); setOpsType(""); setOpsFrom(""); setOpsTo(""); }}>
+              <FilterDate label="Desde" value={opsFrom} onChange={setOpsFrom} />
+              <FilterDate label="Hasta" value={opsTo} onChange={setOpsTo} />
+              <FilterSelect label="Activo" value={opsAsset} onChange={setOpsAsset} options={assetOpts} />
+              <FilterSelect label="Exchange" value={opsExchange} onChange={setOpsExchange} options={exchOpts} />
+              <FilterSelect label="Tipo" value={opsType} onChange={setOpsType} options={typeOpts} />
+            </FilterBar>
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center justify-between">
@@ -405,12 +600,13 @@ export default function Fisco() {
                 {opsQuery.data?.operations && opsQuery.data.operations.length > 0 ? (
                   <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-card">
+                      <thead className="sticky top-0 bg-card z-10">
                         <tr className="text-muted-foreground border-b border-border">
                           <th className="text-left py-2 px-1">Fecha</th>
                           <th className="text-left py-2 px-1">Exchange</th>
                           <th className="text-left py-2 px-1">Tipo</th>
                           <th className="text-left py-2 px-1">Activo</th>
+                          <th className="text-left py-2 px-1">Par</th>
                           <th className="text-right py-2 px-1">Cantidad</th>
                           <th className="text-right py-2 px-1">Precio €</th>
                           <th className="text-right py-2 px-1">Total €</th>
@@ -430,6 +626,7 @@ export default function Fisco() {
                                 <Badge className={`text-[10px] ${typeInfo.color}`}>{typeInfo.label}</Badge>
                               </td>
                               <td className="py-1.5 px-1 font-mono font-bold">{op.asset}</td>
+                              <td className="py-1.5 px-1 font-mono text-muted-foreground">{op.pair || "—"}</td>
                               <td className="py-1.5 px-1 text-right font-mono">{formatQty(op.amount, 6)}</td>
                               <td className="py-1.5 px-1 text-right font-mono">{op.price_eur ? formatEur(parseFloat(op.price_eur)) : "—"}</td>
                               <td className="py-1.5 px-1 text-right font-mono">{op.total_eur ? formatEur(parseFloat(op.total_eur)) : "—"}</td>
@@ -453,6 +650,11 @@ export default function Fisco() {
 
           {/* ============ LOTES FIFO ============ */}
           <TabsContent value="lotes" className="space-y-4">
+            <FilterBar onClear={() => { setLotsAsset(""); setLotsExchange(""); setLotsOpen(""); }}>
+              <FilterSelect label="Activo" value={lotsAsset} onChange={setLotsAsset} options={assetOpts} />
+              <FilterSelect label="Exchange" value={lotsExchange} onChange={setLotsExchange} options={exchOpts} />
+              <FilterSelect label="Estado" value={lotsOpen} onChange={setLotsOpen} options={lotStatusOpts} />
+            </FilterBar>
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center justify-between">
@@ -465,9 +667,10 @@ export default function Fisco() {
                 {lotsQuery.data?.lots && lotsQuery.data.lots.length > 0 ? (
                   <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-card">
+                      <thead className="sticky top-0 bg-card z-10">
                         <tr className="text-muted-foreground border-b border-border">
                           <th className="text-left py-2 px-1">Adquirido</th>
+                          <th className="text-left py-2 px-1">Exchange</th>
                           <th className="text-left py-2 px-1">Activo</th>
                           <th className="text-right py-2 px-1">Cantidad</th>
                           <th className="text-right py-2 px-1">Restante</th>
@@ -481,6 +684,9 @@ export default function Fisco() {
                         {lotsQuery.data.lots.map((lot: any) => (
                           <tr key={lot.id} className="border-b border-border/30 hover:bg-white/5">
                             <td className="py-1.5 px-1 font-mono whitespace-nowrap">{formatDate(lot.acquired_at)}</td>
+                            <td className="py-1.5 px-1">
+                              <Badge variant="outline" className="text-[10px]">{lot.exchange}</Badge>
+                            </td>
                             <td className="py-1.5 px-1 font-mono font-bold">{lot.asset}</td>
                             <td className="py-1.5 px-1 text-right font-mono">{formatQty(lot.quantity, 6)}</td>
                             <td className="py-1.5 px-1 text-right font-mono">{formatQty(lot.remaining_qty, 6)}</td>
@@ -510,8 +716,12 @@ export default function Fisco() {
 
           {/* ============ GANANCIAS / DISPOSALS ============ */}
           <TabsContent value="ganancias" className="space-y-4">
+            <FilterBar onClear={() => setDispYear("")}>
+              <FilterSelect label="Ejercicio Fiscal" value={dispYear} onChange={setDispYear} options={yearOpts} />
+            </FilterBar>
+
             {disposalsQuery.data && (
-              <Card className={`border-${(disposalsQuery.data.total_gain_loss_eur || 0) >= 0 ? "green" : "red"}-500/30`}>
+              <Card className={`${(disposalsQuery.data.total_gain_loss_eur || 0) >= 0 ? "border-green-500/30" : "border-red-500/30"}`}>
                 <CardContent className="py-4 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {(disposalsQuery.data.total_gain_loss_eur || 0) >= 0 ? (
@@ -519,7 +729,9 @@ export default function Fisco() {
                     ) : (
                       <TrendingDown className="h-5 w-5 text-red-400" />
                     )}
-                    <span className="text-sm text-muted-foreground">Ganancia/Pérdida Total Realizada</span>
+                    <span className="text-sm text-muted-foreground">
+                      Ganancia/Pérdida Realizada {dispYear ? `(${dispYear})` : "(Total)"}
+                    </span>
                   </div>
                   <span className={`text-xl font-mono font-bold ${(disposalsQuery.data.total_gain_loss_eur || 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                     {formatEur(disposalsQuery.data.total_gain_loss_eur)}
@@ -528,7 +740,6 @@ export default function Fisco() {
               </Card>
             )}
 
-            {/* Warnings from last run */}
             {lastRun?.fifo.warnings && lastRun.fifo.warnings.length > 0 && (
               <Card className="border-yellow-500/30">
                 <CardHeader className="pb-2">
@@ -558,15 +769,15 @@ export default function Fisco() {
                 {disposalsQuery.data?.disposals && disposalsQuery.data.disposals.length > 0 ? (
                   <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-card">
+                      <thead className="sticky top-0 bg-card z-10">
                         <tr className="text-muted-foreground border-b border-border">
                           <th className="text-left py-2 px-1">Fecha</th>
                           <th className="text-left py-2 px-1">Activo</th>
                           <th className="text-left py-2 px-1">Exchange</th>
                           <th className="text-right py-2 px-1">Cantidad</th>
-                          <th className="text-right py-2 px-1">Coste Base €</th>
-                          <th className="text-right py-2 px-1">Ingresos €</th>
-                          <th className="text-right py-2 px-1">Gan/Pérd €</th>
+                          <th className="text-right py-2 px-1">Coste Base</th>
+                          <th className="text-right py-2 px-1">Ingresos</th>
+                          <th className="text-right py-2 px-1">Gan/Pérd</th>
                         </tr>
                       </thead>
                       <tbody>

@@ -435,6 +435,9 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const yearFilter = req.query.year ? parseInt(req.query.year as string) : undefined;
       const assetFilter = req.query.asset as string | undefined;
       const typeFilter = req.query.type as string | undefined;
+      const exchangeFilter = req.query.exchange as string | undefined;
+      const fromFilter = req.query.from as string | undefined;
+      const toFilter = req.query.to as string | undefined;
 
       let query = `SELECT * FROM fisco_operations WHERE 1=1`;
       const params: any[] = [];
@@ -452,12 +455,55 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         query += ` AND op_type = $${paramIdx++}`;
         params.push(typeFilter);
       }
+      if (exchangeFilter) {
+        query += ` AND exchange = $${paramIdx++}`;
+        params.push(exchangeFilter.toLowerCase());
+      }
+      if (fromFilter) {
+        query += ` AND executed_at >= $${paramIdx++}`;
+        params.push(new Date(fromFilter));
+      }
+      if (toFilter) {
+        query += ` AND executed_at <= $${paramIdx++}`;
+        params.push(new Date(toFilter + 'T23:59:59.999Z'));
+      }
       query += ` ORDER BY executed_at ASC`;
 
       const result = await pool.query(query, params);
+
+      // Extract unique assets & exchanges for filter dropdowns
+      const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
+      const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
+
       res.json({
         count: result.rows.length,
+        unique_assets: uniqueAssets,
+        unique_exchanges: uniqueExchanges,
         operations: result.rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET filter metadata (assets, exchanges, date range) — lightweight
+  // ============================================================
+  app.get("/api/fisco/meta", async (req, res) => {
+    try {
+      const assetsQ = await pool.query(`SELECT DISTINCT asset FROM fisco_operations ORDER BY asset`);
+      const exchangesQ = await pool.query(`SELECT DISTINCT exchange FROM fisco_operations ORDER BY exchange`);
+      const rangeQ = await pool.query(`SELECT MIN(executed_at) as min_date, MAX(executed_at) as max_date FROM fisco_operations`);
+      const yearsQ = await pool.query(`SELECT DISTINCT EXTRACT(YEAR FROM executed_at)::int as year FROM fisco_operations ORDER BY year DESC`);
+
+      res.json({
+        assets: assetsQ.rows.map((r: any) => r.asset),
+        exchanges: exchangesQ.rows.map((r: any) => r.exchange),
+        years: yearsQ.rows.map((r: any) => r.year),
+        date_range: rangeQ.rows[0] ? {
+          from: rangeQ.rows[0].min_date,
+          to: rangeQ.rows[0].max_date,
+        } : null,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -470,20 +516,25 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
   app.get("/api/fisco/lots", async (req, res) => {
     try {
       const assetFilter = req.query.asset as string | undefined;
+      const exchangeFilter = req.query.exchange as string | undefined;
       const openOnly = req.query.open === "true";
 
-      let query = `SELECT * FROM fisco_lots WHERE 1=1`;
+      let query = `SELECT l.*, o.exchange FROM fisco_lots l JOIN fisco_operations o ON o.id = l.operation_id WHERE 1=1`;
       const params: any[] = [];
       let paramIdx = 1;
 
       if (assetFilter) {
-        query += ` AND asset = $${paramIdx++}`;
+        query += ` AND l.asset = $${paramIdx++}`;
         params.push(assetFilter.toUpperCase());
       }
-      if (openOnly) {
-        query += ` AND NOT is_closed`;
+      if (exchangeFilter) {
+        query += ` AND o.exchange = $${paramIdx++}`;
+        params.push(exchangeFilter.toLowerCase());
       }
-      query += ` ORDER BY acquired_at ASC`;
+      if (openOnly) {
+        query += ` AND NOT l.is_closed`;
+      }
+      query += ` ORDER BY l.acquired_at ASC`;
 
       const result = await pool.query(query, params);
       res.json({
