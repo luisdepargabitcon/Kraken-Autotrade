@@ -639,7 +639,7 @@ async function saveFiscoToDB(
          (sell_operation_id, lot_id, quantity, proceeds_eur, cost_basis_eur, gain_loss_eur, disposed_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
-          sellOpDbId, lotDbId || 0, d.quantity,
+          sellOpDbId, lotDbId || null, d.quantity,
           d.proceedsEur, d.costBasisEur, d.gainLossEur,
           d.disposedAt,
         ]

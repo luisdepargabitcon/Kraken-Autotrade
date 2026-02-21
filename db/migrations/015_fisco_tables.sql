@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS fisco_lots (
 CREATE TABLE IF NOT EXISTS fisco_disposals (
   id SERIAL PRIMARY KEY,
   sell_operation_id INTEGER NOT NULL REFERENCES fisco_operations(id),
-  lot_id INTEGER NOT NULL REFERENCES fisco_lots(id),
+  lot_id INTEGER REFERENCES fisco_lots(id),
   quantity DECIMAL(18,8) NOT NULL,
   proceeds_eur DECIMAL(18,8) NOT NULL,
   cost_basis_eur DECIMAL(18,8) NOT NULL,
