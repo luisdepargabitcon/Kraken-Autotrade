@@ -583,6 +583,193 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
   });
 
   // ============================================================
+  // ANNUAL REPORT: Bit2Me-style comprehensive fiscal report
+  // Single endpoint returns all 4 sections for a given year
+  // ============================================================
+  app.get("/api/fisco/annual-report", async (req, res) => {
+    try {
+      const year = req.query.year ? parseInt(req.query.year as string) : new Date().getFullYear();
+      const exchangeFilter = req.query.exchange as string | undefined;
+
+      const exchWhere = exchangeFilter ? ` AND o.exchange = '${exchangeFilter.toLowerCase()}'` : '';
+      const exchWhereOps = exchangeFilter ? ` AND exchange = '${exchangeFilter.toLowerCase()}'` : '';
+
+      // --- Section A: Resumen de ganancias y pérdidas derivadas de transmisiones ---
+      const gainsQ = await pool.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) as ganancias,
+          COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric < 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) as perdidas,
+          COALESCE(SUM(d.gain_loss_eur::numeric), 0) as total
+        FROM fisco_disposals d
+        JOIN fisco_operations o ON o.id = d.sell_operation_id
+        WHERE EXTRACT(YEAR FROM d.disposed_at) = $1 ${exchWhere}
+      `, [year]);
+
+      const sectionA = {
+        year,
+        ganancias_eur: Math.round((gainsQ.rows[0]?.ganancias || 0) * 100) / 100,
+        perdidas_eur: Math.round((gainsQ.rows[0]?.perdidas || 0) * 100) / 100,
+        total_eur: Math.round((gainsQ.rows[0]?.total || 0) * 100) / 100,
+      };
+
+      // --- Section B: Resumen de ganancias y pérdidas por activo ---
+      const perAssetQ = await pool.query(`
+        SELECT
+          o.asset,
+          o.exchange,
+          COUNT(DISTINCT d.id) as num_transmisiones,
+          COALESCE(SUM(d.proceeds_eur::numeric), 0) as valor_transmision_eur,
+          COALESCE(SUM(d.cost_basis_eur::numeric), 0) as valor_adquisicion_eur,
+          COALESCE(SUM(d.gain_loss_eur::numeric), 0) as ganancia_perdida_eur
+        FROM fisco_disposals d
+        JOIN fisco_operations o ON o.id = d.sell_operation_id
+        WHERE EXTRACT(YEAR FROM d.disposed_at) = $1 ${exchWhere}
+        GROUP BY o.asset, o.exchange
+        ORDER BY o.asset, o.exchange
+      `, [year]);
+
+      const sectionB = perAssetQ.rows.map((r: any) => ({
+        asset: r.asset,
+        exchange: r.exchange,
+        tipo: 'Venta',
+        num_transmisiones: parseInt(r.num_transmisiones),
+        valor_transmision_eur: Math.round(parseFloat(r.valor_transmision_eur) * 100) / 100,
+        valor_adquisicion_eur: Math.round(parseFloat(r.valor_adquisicion_eur) * 100) / 100,
+        ganancia_perdida_eur: Math.round(parseFloat(r.ganancia_perdida_eur) * 100) / 100,
+      }));
+
+      // --- Section C: Resumen de rendimiento de capital mobiliario ---
+      const stakingQ = await pool.query(`
+        SELECT
+          op_type,
+          COALESCE(SUM(
+            CASE
+              WHEN total_eur IS NOT NULL THEN total_eur::numeric
+              WHEN price_eur IS NOT NULL THEN (amount::numeric * price_eur::numeric)
+              ELSE 0
+            END
+          ), 0) as total_eur
+        FROM fisco_operations
+        WHERE EXTRACT(YEAR FROM executed_at) = $1
+          AND op_type IN ('staking', 'lending', 'distribution', 'reward')
+          ${exchWhereOps}
+        GROUP BY op_type
+      `, [year]);
+
+      const capitalMob: Record<string, number> = {
+        staking: 0,
+        masternodes: 0,
+        lending: 0,
+        distribuciones: 0,
+      };
+      for (const r of stakingQ.rows) {
+        const val = Math.round(parseFloat(r.total_eur) * 100) / 100;
+        if (r.op_type === 'staking') capitalMob.staking = val;
+        else if (r.op_type === 'lending') capitalMob.lending = val;
+        else if (r.op_type === 'distribution' || r.op_type === 'reward') capitalMob.distribuciones += val;
+      }
+      const sectionC = {
+        ...capitalMob,
+        total_eur: Math.round((capitalMob.staking + capitalMob.masternodes + capitalMob.lending + capitalMob.distribuciones) * 100) / 100,
+      };
+
+      // --- Section D: Visión general de cartera (balance 01/01 vs 31/12) ---
+      // Compute running balances from all operations
+      const balanceQ = await pool.query(`
+        SELECT asset, exchange, op_type, amount::numeric as amount, executed_at
+        FROM fisco_operations
+        WHERE executed_at < $1::date + interval '1 year'
+          ${exchWhereOps}
+        ORDER BY executed_at ASC
+      `, [`${year}-01-01`]);
+
+      // Build per-asset balances
+      const assetBalances = new Map<string, {
+        saldo_inicio: number;
+        entradas: number;
+        salidas: number;
+        saldo_fin: number;
+        exchanges: Set<string>;
+      }>();
+
+      const yearStart = new Date(`${year}-01-01T00:00:00Z`);
+      const yearEnd = new Date(`${year + 1}-01-01T00:00:00Z`);
+
+      for (const r of balanceQ.rows) {
+        const asset = r.asset;
+        if (!assetBalances.has(asset)) {
+          assetBalances.set(asset, { saldo_inicio: 0, entradas: 0, salidas: 0, saldo_fin: 0, exchanges: new Set() });
+        }
+        const b = assetBalances.get(asset)!;
+        b.exchanges.add(r.exchange);
+        const amt = parseFloat(r.amount);
+        const date = new Date(r.executed_at);
+        const isInflow = ['trade_buy', 'deposit', 'staking', 'reward', 'distribution'].includes(r.op_type);
+        const isOutflow = ['trade_sell', 'withdrawal'].includes(r.op_type);
+
+        if (date < yearStart) {
+          // Before year: contributes to saldo_inicio
+          if (isInflow) b.saldo_inicio += amt;
+          else if (isOutflow) b.saldo_inicio -= amt;
+        } else if (date < yearEnd) {
+          // During year
+          if (isInflow) b.entradas += amt;
+          else if (isOutflow) b.salidas += amt;
+        }
+      }
+
+      // Compute saldo_fin
+      const sectionD: any[] = [];
+      for (const [asset, b] of assetBalances) {
+        b.saldo_fin = b.saldo_inicio + b.entradas - b.salidas;
+        // Only include if there's any activity or non-zero balance
+        if (Math.abs(b.saldo_inicio) > 1e-10 || Math.abs(b.entradas) > 1e-10 || Math.abs(b.salidas) > 1e-10) {
+          sectionD.push({
+            asset,
+            exchanges: Array.from(b.exchanges),
+            saldo_inicio: Math.round(b.saldo_inicio * 1e8) / 1e8,
+            entradas: Math.round(b.entradas * 1e8) / 1e8,
+            salidas: Math.round(b.salidas * 1e8) / 1e8,
+            saldo_fin: Math.round(b.saldo_fin * 1e8) / 1e8,
+          });
+        }
+      }
+      sectionD.sort((a, b) => a.asset.localeCompare(b.asset));
+
+      // --- Counters ---
+      const countersQ = await pool.query(`
+        SELECT
+          COUNT(*) as total_ops,
+          COUNT(*) FILTER (WHERE total_eur IS NULL AND op_type LIKE 'trade_%') as pending_valuation
+        FROM fisco_operations
+        WHERE EXTRACT(YEAR FROM executed_at) = $1 ${exchWhereOps}
+      `, [year]);
+
+      const counters = {
+        total_operations: parseInt(countersQ.rows[0]?.total_ops || '0'),
+        pending_valuation: parseInt(countersQ.rows[0]?.pending_valuation || '0'),
+      };
+
+      // --- Last sync ---
+      const lastSyncQ = await pool.query(`SELECT MAX(created_at) as last_sync FROM fisco_operations`);
+
+      res.json({
+        year,
+        exchange_filter: exchangeFilter || 'all',
+        last_sync: lastSyncQ.rows[0]?.last_sync || null,
+        counters,
+        section_a: sectionA,
+        section_b: sectionB,
+        section_c: sectionC,
+        section_d: sectionD,
+      });
+    } catch (e: any) {
+      console.error("[fisco/annual-report] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
   // GET summary per year from DB
   // ============================================================
   app.get("/api/fisco/summary", async (req, res) => {

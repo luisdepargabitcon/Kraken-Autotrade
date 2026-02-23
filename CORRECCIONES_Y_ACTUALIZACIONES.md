@@ -5,6 +5,44 @@
 
 ---
 
+## 2026-02-23 — FEAT: FISCO UI Rediseño Completo estilo Bit2Me
+
+### Objetivo
+Rediseño total de la interfaz FISCO para replicar la jerarquía visual y estructura de informes de Bit2Me. Vista principal = resumen anual (no listado de operaciones).
+
+### Cambios Backend
+- **Nuevo endpoint `/api/fisco/annual-report?year=&exchange=`** — Devuelve las 4 secciones del informe en una sola llamada:
+  - **Sección A**: Resumen de ganancias y pérdidas derivadas de transmisiones (gains/losses/total)
+  - **Sección B**: Desglose por activo (ticker, exchange, tipo, valor transmisión, valor adquisición, gan/pérd)
+  - **Sección C**: Rendimiento de capital mobiliario (staking, masternodes, lending, distribuciones)
+  - **Sección D**: Visión general de cartera (saldo 01/01, entradas, salidas, saldo 31/12 por activo)
+  - Contadores: operaciones importadas + operaciones con valoración EUR pendiente
+  - Última sincronización
+
+### Cambios UI (`client/src/pages/Fisco.tsx`)
+- **Barra superior**: Selector de año grande + filtro exchange + botón Sincronizar + botón Generar PDF
+- **Contadores visibles**: Operaciones importadas + valoración pendiente + última sincronización
+- **Sección A**: Tabla simple ganancias/pérdidas/total (cabecera azul, estilo Bit2Me)
+- **Sección B**: Tabla por activo con valor transmisión, valor adquisición, ganancia/pérdida
+- **Sección C**: Tabla capital mobiliario (staking/masternodes/lending/distribuciones)
+- **Sección D**: Tabla cartera con saldos inicio/fin de año y movimientos
+- **Sección E (Anexo)**: Operaciones completas en sección colapsable con filtros (fecha, activo, exchange, tipo)
+- **PDF multi-página**: Genera HTML descargable con 4 páginas separadas replicando las tablas Bit2Me
+
+### Diseño Visual
+- Cabeceras de tabla azul claro (`bg-blue-500/10`)
+- Números alineados a la derecha con font-mono
+- Formato EUR con 2 decimales y separador de miles (es-ES)
+- Filas totales destacadas en azul
+- Sin gráficos complejos — tablas limpias y claras
+- Operaciones completas solo en Anexo colapsable
+
+### Archivos modificados
+- `server/routes/fisco.routes.ts` — Nuevo endpoint `/api/fisco/annual-report`
+- `client/src/pages/Fisco.tsx` — Reescritura completa estilo Bit2Me
+
+---
+
 ## 2026-02-20 — FEAT: Módulo FISCO Completo — Control Fiscal FIFO en EUR
 
 ### Objetivo
