@@ -325,7 +325,7 @@ export default function Fisco() {
   
   // --- Disposals query for modal ---
   const disposalsP = new URLSearchParams();
-  if (selectedYear) disposalsP.set("year", parseInt(selectedYear));
+  if (selectedYear) disposalsP.set("year", selectedYear);
   if (selectedAssetForLots) disposalsP.set("asset", selectedAssetForLots);
   const disposalsUrl = `/api/fisco/disposals?${disposalsP.toString()}`;
   
@@ -520,170 +520,169 @@ export default function Fisco() {
             <TabsTrigger value="anexo">Anexo: Extracto de Transacciones</TabsTrigger>
           </TabsList>
 
+          {/* ==================== TAB: RESUMEN FISCAL ==================== */}
           <TabsContent value="resumen" className="space-y-5">
-            {/* All existing sections A-D here */}
+
             {/* ========== SECTION A: Resumen transmisiones ========== */}
-        {report && (
-          <SectionCard title={`Resumen de ganancias y p\u00e9rdidas derivadas de las transmisiones de activos el ${selectedYear}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-blue-500/10">
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Origen de Datos</th>
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Cuenta</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Ganancias en EUR</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">P\u00e9rdidas en EUR</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Total en EUR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-border/50">
-                    <td className="py-2.5 px-4">genesis</td>
-                    <td className="py-2.5 px-4">B\u00d3SIM</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
-                    <td className={`py-2.5 px-4 text-right font-mono font-bold ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      {eur(report.section_a.total_eur)}
-                    </td>
-                  </tr>
-                </tbody>
-                <tfoot>
-                  <tr className="bg-blue-500/10 font-bold">
-                    <td colSpan={2} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
-                    <td className={`py-2.5 px-4 text-right font-mono ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      {eur(report.section_a.total_eur)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </SectionCard>
-        )}
+            {report && (
+              <SectionCard title={`Resumen de ganancias y pérdidas derivadas de las transmisiones de activos el ${selectedYear}`}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Origen de Datos</th>
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Cuenta</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Ganancias en EUR</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Pérdidas en EUR</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Total en EUR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-border/50">
+                        <td className="py-2.5 px-4">genesis</td>
+                        <td className="py-2.5 px-4">BÓSIM</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
+                        <td className={`py-2.5 px-4 text-right font-mono font-bold ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {eur(report.section_a.total_eur)}
+                        </td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-blue-500/10 font-bold">
+                        <td colSpan={2} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
+                        <td className={`py-2.5 px-4 text-right font-mono ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {eur(report.section_a.total_eur)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </SectionCard>
+            )}
 
-        {/* ========== SECTION B: Per-asset breakdown ========== */}
-        {report && report.section_b.length > 0 && (
-          <SectionCard title={`Resumen de ganancias y p\u00e9rdidas por activo el ${selectedYear}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-blue-500/10">
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Ticker</th>
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Exchange</th>
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Tipo</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor transmisi\u00f3n EUR</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor adquisici\u00f3n EUR</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Ganancia/P\u00e9rdida EUR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.section_b.map((r, i) => (
-                    <tr key={i} className="border-b border-border/30 hover:bg-white/5 cursor-pointer" onClick={() => openLotModal(r.asset)}>
-                      <td className="py-2 px-4 font-mono font-bold">{r.asset}</td>
-                      <td className="py-2 px-4 capitalize">{r.exchange}</td>
-                      <td className="py-2 px-4">{r.tipo}</td>
-                      <td className="py-2 px-4 text-right font-mono">{eur(r.valor_transmision_eur)}</td>
-                      <td className="py-2 px-4 text-right font-mono">{eur(r.valor_adquisicion_eur)}</td>
-                      <td className={`py-2 px-4 text-right font-mono font-bold ${r.ganancia_perdida_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        {eur(r.ganancia_perdida_eur)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-blue-500/10 font-bold">
-                    <td colSpan={3} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
-                    <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.vt)}</td>
-                    <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.va)}</td>
-                    <td className={`py-2.5 px-4 text-right font-mono ${bTotals.gp >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      {eur(bTotals.gp)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </SectionCard>
-        )}
+            {/* ========== SECTION B: Per-asset breakdown ========== */}
+            {report && report.section_b.length > 0 && (
+              <SectionCard title={`Resumen de ganancias y pérdidas por activo el ${selectedYear}`}>
+                <p className="text-xs text-muted-foreground px-4 pt-2 pb-1">Haz clic en un activo para ver el desglose por lotes FIFO</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Ticker</th>
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Exchange</th>
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Tipo</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor transmisión EUR</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor adquisición EUR</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Ganancia/Pérdida EUR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.section_b.map((r, i) => (
+                        <tr key={i} className="border-b border-border/30 hover:bg-white/5 cursor-pointer" onClick={() => openLotModal(r.asset)}>
+                          <td className="py-2 px-4 font-mono font-bold">{r.asset}</td>
+                          <td className="py-2 px-4 capitalize">{r.exchange}</td>
+                          <td className="py-2 px-4">{r.tipo}</td>
+                          <td className="py-2 px-4 text-right font-mono">{eur(r.valor_transmision_eur)}</td>
+                          <td className="py-2 px-4 text-right font-mono">{eur(r.valor_adquisicion_eur)}</td>
+                          <td className={`py-2 px-4 text-right font-mono font-bold ${r.ganancia_perdida_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {eur(r.ganancia_perdida_eur)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-blue-500/10 font-bold">
+                        <td colSpan={3} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
+                        <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.vt)}</td>
+                        <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.va)}</td>
+                        <td className={`py-2.5 px-4 text-right font-mono ${bTotals.gp >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {eur(bTotals.gp)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </SectionCard>
+            )}
 
-        {/* ========== SECTION C: Capital mobiliario ========== */}
-        {report && (
-          <SectionCard title={`Resumen de rendimiento de capital mobiliario en ${selectedYear}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-blue-500/10">
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs" colSpan={2}>Entradas en EUR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 px-4">Staking (Almacenamiento)</td>
-                    <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.staking)}</td>
-                  </tr>
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 px-4">Masternodos</td>
-                    <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.masternodes)}</td>
-                  </tr>
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 px-4">Lending (Pr\u00e9stamos)</td>
-                    <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.lending)}</td>
-                  </tr>
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 px-4">Distribuciones de Tokens de Seguridad</td>
-                    <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.distribuciones)}</td>
-                  </tr>
-                </tbody>
-                <tfoot>
-                  <tr className="bg-blue-500/10 font-bold">
-                    <td className="py-2.5 px-4 text-blue-400">Total de rendimiento</td>
-                    <td className="py-2.5 px-4 text-right font-mono">{eur(report.section_c.total_eur)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </SectionCard>
-        )}
+            {/* ========== SECTION C: Capital mobiliario ========== */}
+            {report && (
+              <SectionCard title={`Resumen de rendimiento de capital mobiliario en ${selectedYear}`}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs" colSpan={2}>Entradas en EUR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-border/30">
+                        <td className="py-2 px-4">Staking (Almacenamiento)</td>
+                        <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.staking)}</td>
+                      </tr>
+                      <tr className="border-b border-border/30">
+                        <td className="py-2 px-4">Masternodos</td>
+                        <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.masternodes)}</td>
+                      </tr>
+                      <tr className="border-b border-border/30">
+                        <td className="py-2 px-4">Lending (Préstamos)</td>
+                        <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.lending)}</td>
+                      </tr>
+                      <tr className="border-b border-border/30">
+                        <td className="py-2 px-4">Distribuciones de Tokens de Seguridad</td>
+                        <td className="py-2 px-4 text-right font-mono">{eur(report.section_c.distribuciones)}</td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-blue-500/10 font-bold">
+                        <td className="py-2.5 px-4 text-blue-400">Total de rendimiento</td>
+                        <td className="py-2.5 px-4 text-right font-mono">{eur(report.section_c.total_eur)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </SectionCard>
+            )}
 
-        {/* ========== SECTION D: Portfolio vision ========== */}
-        {report && report.section_d.length > 0 && (
-          <SectionCard title={`Visi\u00f3n general de valores en cartera y cambios en valores de cartera en ${selectedYear}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-blue-500/10">
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Activo</th>
-                    <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Exchange</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Saldo 01/01/{selectedYear}</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Entradas ({selectedYear})</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Salidas ({selectedYear})</th>
-                    <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Saldo 31/12/{selectedYear}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.section_d.map((r, i) => (
-                    <tr key={i} className="border-b border-border/30 hover:bg-white/5">
-                      <td className="py-2 px-4 font-mono font-bold">{r.asset}</td>
-                      <td className="py-2 px-4 capitalize text-muted-foreground">{r.exchanges.join(", ")}</td>
-                      <td className="py-2 px-4 text-right font-mono">{qty(r.saldo_inicio)}</td>
-                      <td className="py-2 px-4 text-right font-mono text-green-400">{qty(r.entradas)}</td>
-                      <td className="py-2 px-4 text-right font-mono text-red-400">{qty(r.salidas)}</td>
-                      <td className="py-2 px-4 text-right font-mono font-bold">{qty(r.saldo_fin)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-        )}
-
-          </SectionCard>
-        )}
+            {/* ========== SECTION D: Portfolio vision ========== */}
+            {report && report.section_d.length > 0 && (
+              <SectionCard title={`Visión general de valores en cartera y cambios en valores de cartera en ${selectedYear}`}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Activo</th>
+                        <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Exchange</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Saldo 01/01/{selectedYear}</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Entradas ({selectedYear})</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Salidas ({selectedYear})</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Saldo 31/12/{selectedYear}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.section_d.map((r, i) => (
+                        <tr key={i} className="border-b border-border/30 hover:bg-white/5">
+                          <td className="py-2 px-4 font-mono font-bold">{r.asset}</td>
+                          <td className="py-2 px-4 capitalize text-muted-foreground">{r.exchanges.join(", ")}</td>
+                          <td className="py-2 px-4 text-right font-mono">{qty(r.saldo_inicio)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-green-400">{qty(r.entradas)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-red-400">{qty(r.salidas)}</td>
+                          <td className="py-2 px-4 text-right font-mono font-bold">{qty(r.saldo_fin)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </SectionCard>
+            )}
 
           </TabsContent>
 
+          {/* ==================== TAB: ANEXO EXTRACTO ==================== */}
           <TabsContent value="anexo" className="space-y-5">
-            {/* Anexo content */}
             <Card className="border border-border">
               <CardHeader className="py-3 px-5">
                 <CardTitle className="flex items-center justify-between text-sm">
@@ -701,54 +700,63 @@ export default function Fisco() {
                 {/* Filters */}
                 <div className="flex flex-wrap items-end gap-3 p-3 bg-card/50 border border-border rounded-lg mb-4">
                   <Filter className="h-4 w-4 text-muted-foreground mt-5 hidden sm:block" />
-                  
-                  {/* Date Range Picker */}
+
+                  {/* Date Range Picker - Desde */}
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Desde</label>
                     <Popover>
                       <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="h-9 px-2 text-sm justify-start text-left font-normal"
-                        >
+                        <Button variant="outline" className="h-9 px-2 text-sm justify-start text-left font-normal">
                           <CalendarIcon className="mr-2 h-4 w-4" />
                           {anexoFromDate ? format(anexoFromDate, "dd/MM/yyyy", { locale: es }) : "Seleccionar"}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={anexoFromDate}
-                          onSelect={setAnexoFromDate}
-                          initialFocus
-                        />
+                        <Calendar mode="single" selected={anexoFromDate} onSelect={setAnexoFromDate} initialFocus />
                       </PopoverContent>
                     </Popover>
                   </div>
-                  
+
+                  {/* Date Range Picker - Hasta */}
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Hasta</label>
                     <Popover>
                       <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="h-9 px-2 text-sm justify-start text-left font-normal"
-                        >
+                        <Button variant="outline" className="h-9 px-2 text-sm justify-start text-left font-normal">
                           <CalendarIcon className="mr-2 h-4 w-4" />
                           {anexoToDate ? format(anexoToDate, "dd/MM/yyyy", { locale: es }) : "Seleccionar"}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={anexoToDate}
-                          onSelect={setAnexoToDate}
-                          initialFocus
-                        />
+                        <Calendar mode="single" selected={anexoToDate} onSelect={setAnexoToDate} initialFocus />
                       </PopoverContent>
                     </Popover>
                   </div>
-                  
+
+                  {/* Quick Date Ranges */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Rango rápido</label>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" className="h-9 text-xs px-2" onClick={() => {
+                        const to = new Date();
+                        const from = new Date(); from.setDate(from.getDate() - 7);
+                        setAnexoFromDate(from); setAnexoToDate(to);
+                      }}>7d</Button>
+                      <Button variant="outline" size="sm" className="h-9 text-xs px-2" onClick={() => {
+                        const to = new Date();
+                        const from = new Date(); from.setDate(from.getDate() - 30);
+                        setAnexoFromDate(from); setAnexoToDate(to);
+                      }}>30d</Button>
+                      <Button variant="outline" size="sm" className="h-9 text-xs px-2" onClick={() => {
+                        const yr = parseInt(selectedYear);
+                        setAnexoFromDate(new Date(yr, 0, 1)); setAnexoToDate(new Date(yr, 11, 31));
+                      }}>YTD</Button>
+                      <Button variant="outline" size="sm" className="h-9 text-xs px-2" onClick={() => {
+                        setAnexoFromDate(undefined); setAnexoToDate(undefined);
+                      }}>Todo</Button>
+                    </div>
+                  </div>
+
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Activo</label>
                     <select value={anexoAsset} onChange={(e) => setAnexoAsset(e.target.value)}
@@ -776,165 +784,166 @@ export default function Fisco() {
                   </Button>
                 </div>
 
-              {/* Operations table */}
-              {anexoQ.isLoading && (
-                <div className="text-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
-                </div>
-              )}
+                {/* Operations table */}
+                {anexoQ.isLoading && (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
+                  </div>
+                )}
 
-              {anexoQ.data && anexoQ.data.operations.length > 0 ? (
-                <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-card z-10">
-                      <tr className="bg-blue-500/10">
-                        <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Fecha</th>
-                        <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Exchange</th>
-                        <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Tipo</th>
-                        <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Activo</th>
-                        <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Par</th>
-                        <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Cantidad</th>
-                        <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Precio EUR</th>
-                        <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Total EUR</th>
-                        <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Fee EUR</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {anexoQ.data.operations.map((op: any) => {
-                        const typeInfo = OP_TYPE_LABELS[op.op_type] || { label: op.op_type, color: "bg-gray-500/20 text-gray-400" };
-                        return (
-                          <tr key={op.id} className="border-b border-border/30 hover:bg-white/5">
-                            <td className="py-1.5 px-2 font-mono whitespace-nowrap">{fmtDate(op.executed_at)}</td>
-                            <td className="py-1.5 px-2 capitalize">{op.exchange}</td>
-                            <td className="py-1.5 px-2">
-                              <Badge className={`text-[10px] ${typeInfo.color}`}>{typeInfo.label}</Badge>
-                            </td>
-                            <td className="py-1.5 px-2 font-mono font-bold">{op.asset}</td>
-                            <td className="py-1.5 px-2 font-mono text-muted-foreground">{op.pair || "\u2014"}</td>
-                            <td className="py-1.5 px-2 text-right font-mono">{qty(op.amount, 6)}</td>
-                            <td className="py-1.5 px-2 text-right font-mono">{op.price_eur ? eur(parseFloat(op.price_eur)) : "\u2014"}</td>
-                            <td className="py-1.5 px-2 text-right font-mono">{op.total_eur ? eur(parseFloat(op.total_eur)) : "\u2014"}</td>
-                            <td className="py-1.5 px-2 text-right font-mono text-muted-foreground">{eur(parseFloat(op.fee_eur || "0"))}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                !anexoQ.isLoading && (
-                  <p className="text-muted-foreground text-sm text-center py-8">
-                    Sin operaciones para los filtros seleccionados.
-                  </p>
-                )
-              )}
-            </CardContent>
-          )}
-        </Card>
+                {anexoQ.data && anexoQ.data.operations.length > 0 ? (
+                  <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card z-10">
+                        <tr className="bg-blue-500/10">
+                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Fecha</th>
+                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Exchange</th>
+                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Tipo</th>
+                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Activo</th>
+                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Par</th>
+                          <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Cantidad</th>
+                          <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Precio EUR</th>
+                          <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Total EUR</th>
+                          <th className="text-right py-2 px-2 text-blue-400 font-semibold text-[10px]">Fee EUR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {anexoQ.data.operations.map((op: any) => {
+                          const typeInfo = OP_TYPE_LABELS[op.op_type] || { label: op.op_type, color: "bg-gray-500/20 text-gray-400" };
+                          return (
+                            <tr key={op.id} className="border-b border-border/30 hover:bg-white/5">
+                              <td className="py-1.5 px-2 font-mono whitespace-nowrap">{fmtDate(op.executed_at)}</td>
+                              <td className="py-1.5 px-2 capitalize">{op.exchange}</td>
+                              <td className="py-1.5 px-2">
+                                <Badge className={`text-[10px] ${typeInfo.color}`}>{typeInfo.label}</Badge>
+                              </td>
+                              <td className="py-1.5 px-2 font-mono font-bold">{op.asset}</td>
+                              <td className="py-1.5 px-2 font-mono text-muted-foreground">{op.pair || "\u2014"}</td>
+                              <td className="py-1.5 px-2 text-right font-mono">{qty(op.amount, 6)}</td>
+                              <td className="py-1.5 px-2 text-right font-mono">{op.price_eur ? eur(parseFloat(op.price_eur)) : "\u2014"}</td>
+                              <td className="py-1.5 px-2 text-right font-mono">{op.total_eur ? eur(parseFloat(op.total_eur)) : "\u2014"}</td>
+                              <td className="py-1.5 px-2 text-right font-mono text-muted-foreground">{eur(parseFloat(op.fee_eur || "0"))}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  !anexoQ.isLoading && (
+                    <p className="text-muted-foreground text-sm text-center py-8">
+                      Sin operaciones para los filtros seleccionados.
+                    </p>
+                  )
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+
+        {/* ========== MODAL: LOT DETAILS ========== */}
+        {showLotModal && selectedAssetForLots && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closeLotModal}>
+            <div className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-border">
+                <h3 className="text-lg font-semibold">Detalle de Lotes FIFO — {selectedAssetForLots}</h3>
+                <Button variant="ghost" size="sm" onClick={closeLotModal}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="p-4 overflow-y-auto max-h-[60vh]">
+                {lotsQ.isLoading || disposalsQ.isLoading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Lots Table */}
+                    <div>
+                      <h4 className="text-md font-medium mb-3">Lotes de Compra (FIFO)</h4>
+                      {lotsQ.data?.lots && lotsQ.data.lots.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-blue-500/10">
+                                <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo EUR</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Precio Unit.</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Restante</th>
+                                <th className="text-center py-2 px-3 text-blue-400 font-semibold text-xs">Estado</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {lotsQ.data.lots.map((lot: LotDetail) => (
+                                <tr key={lot.id} className="border-b border-border/30">
+                                  <td className="py-2 px-3 font-mono text-xs">{fmtDate(lot.acquired_at)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{qty(lot.quantity, 6)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{eur(lot.cost_eur)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{eur(lot.unit_cost_eur)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{qty(lot.remaining_qty, 6)}</td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Badge className={lot.is_closed ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}>
+                                      {lot.is_closed ? "Cerrado" : "Abierto"}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">No se encontraron lotes para este activo.</p>
+                      )}
+                    </div>
+
+                    {/* Disposals Table */}
+                    <div>
+                      <h4 className="text-md font-medium mb-3">Ventas y Ganancias/Pérdidas</h4>
+                      {disposalsQ.data?.disposals && disposalsQ.data.disposals.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-blue-500/10">
+                                <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha Venta</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ingresos EUR</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo Base EUR</th>
+                                <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ganancia/Pérdida EUR</th>
+                                <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Método</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {disposalsQ.data.disposals.map((disposal: DisposalDetail) => (
+                                <tr key={disposal.id} className="border-b border-border/30">
+                                  <td className="py-2 px-3 font-mono text-xs">{fmtDate(disposal.disposed_at)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{qty(disposal.quantity, 6)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{eur(disposal.proceeds_eur)}</td>
+                                  <td className="py-2 px-3 text-right font-mono">{eur(disposal.cost_basis_eur)}</td>
+                                  <td className={`py-2 px-3 text-right font-mono font-bold ${disposal.gain_loss_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                    {eur(disposal.gain_loss_eur)}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <Badge variant="outline" className="text-xs">FIFO</Badge>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">No se encontraron ventas para este activo en el período seleccionado.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       </main>
     </div>
   );
 }
-
-{/* ========== MODAL: LOT DETAILS ========== */}
-{showLotModal && selectedAssetForLots && (
-  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden">
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <h3 className="text-lg font-semibold">Detalle de Lotes - {selectedAssetForLots}</h3>
-        <Button variant="ghost" size="sm" onClick={closeLotModal}>
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
-      
-      <div className="p-4 overflow-y-auto max-h-[60vh]">
-        {lotsQ.isLoading || disposalsQ.isLoading ? (
-          <div className="text-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Lots Table */}
-            <div>
-              <h4 className="text-md font-medium mb-3">Lotes de Compra (FIFO)</h4>
-              {lotsQ.data?.lots && lotsQ.data.lots.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-blue-500/10">
-                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo EUR</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Precio Unit.</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Restante</th>
-                        <th className="text-center py-2 px-3 text-blue-400 font-semibold text-xs">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lotsQ.data.lots.map((lot: LotDetail) => (
-                        <tr key={lot.id} className="border-b border-border/30">
-                          <td className="py-2 px-3 font-mono text-xs">{fmtDate(lot.acquired_at)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{qty(lot.quantity, 6)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{eur(lot.cost_eur)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{eur(lot.unit_cost_eur)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{qty(lot.remaining_qty, 6)}</td>
-                          <td className="py-2 px-3 text-center">
-                            <Badge className={lot.is_closed ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}>
-                              {lot.is_closed ? "Cerrado" : "Abierto"}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">No se encontraron lotes para este activo.</p>
-              )}
-            </div>
-            
-            {/* Disposals Table */}
-            <div>
-              <h4 className="text-md font-medium mb-3">Ventas y Ganancias/Pérdidas</h4>
-              {disposalsQ.data?.disposals && disposalsQ.data.disposals.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-blue-500/10">
-                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha Venta</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ingresos EUR</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo Base EUR</th>
-                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ganancia/Pérdida EUR</th>
-                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Método</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {disposalsQ.data.disposals.map((disposal: DisposalDetail) => (
-                        <tr key={disposal.id} className="border-b border-border/30">
-                          <td className="py-2 px-3 font-mono text-xs">{fmtDate(disposal.disposed_at)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{qty(disposal.quantity, 6)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{eur(disposal.proceeds_eur)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{eur(disposal.cost_basis_eur)}</td>
-                          <td className={`py-2 px-3 text-right font-mono font-bold ${disposal.gain_loss_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                            {eur(disposal.gain_loss_eur)}
-                          </td>
-                          <td className="py-2 px-3">
-                            <Badge variant="outline" className="text-xs">FIFO</Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">No se encontraron ventas para este activo en el período seleccionado.</p>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  </div>
-)}

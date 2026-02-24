@@ -565,6 +565,11 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         query += ` AND EXTRACT(YEAR FROM d.disposed_at) = $${paramIdx++}`;
         params.push(yearFilter);
       }
+      const assetFilter = req.query.asset as string | undefined;
+      if (assetFilter) {
+        query += ` AND o.asset = $${paramIdx++}`;
+        params.push(assetFilter.toUpperCase());
+      }
       query += ` ORDER BY d.disposed_at ASC`;
 
       const result = await pool.query(query, params);

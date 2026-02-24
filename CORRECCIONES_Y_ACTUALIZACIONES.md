@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-02-24 — FIX: Verificación y corrección de errores Sistema FISCO
+
+### Problemas Detectados y Corregidos
+
+1. **Estructura JSX rota** — `</SectionCard>` y `)}` duplicados/huérfanos en líneas 679-681 que rompían la compilación
+2. **Modal fuera del componente** — El modal de lotes FIFO estaba renderizado fuera del `return()` del componente React
+3. **CardContent condicional huérfano** — Restos del antiguo sistema collapsible `)}` que impedían el render
+4. **TypeError en URLSearchParams** — `parseInt()` pasado como argumento a `.set()` que requiere `string`
+5. **Endpoint disposals sin filtro asset** — El modal no podía filtrar ventas por activo específico
+6. **Rangos rápidos faltantes** — Añadidos botones 7d, 30d, YTD, Todo en el date picker del Anexo
+7. **Hint en Section B** — Añadido texto "Haz clic en un activo para ver el desglose por lotes FIFO"
+8. **Click-away en modal** — Cierre del modal al hacer clic fuera con `stopPropagation`
+
+### Archivos Modificados
+- `client/src/pages/Fisco.tsx` — Reescritura completa sección tabs (líneas 516-950)
+- `server/routes/fisco.routes.ts` — Filtro asset en endpoint `/api/fisco/disposals`
+
+---
+
 ## 2026-02-24 — FEAT: Mejoras integrales Sistema FISCO
 
 ### Resumen Ejecutivo
