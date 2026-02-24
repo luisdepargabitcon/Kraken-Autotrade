@@ -14,6 +14,7 @@ import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
 import type { TradingConfig } from "@shared/config-schema";
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
+import { markupTracker } from "./MarkupTracker";
 import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
 import {
   calculateEMA as _calculateEMA,
@@ -159,6 +160,8 @@ type BlockReasonCode =
   | "RSI_OVERBOUGHT"          // BUY bloqueado por RSI >= 70
   | "RSI_OVERSOLD"            // SELL bloqueado por RSI <= 30
   | "NO_POSITION"             // Sin posición para vender
+  | "STALE_CANDLE_BLOCK"      // Vela obsoleta (timing gate)
+  | "CHASE_BLOCK"             // Precio se alejó del cierre de vela (chase gate)
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
@@ -2923,6 +2926,11 @@ El bot ha pausado las operaciones de COMPRA.
           }
         }
 
+        // === OBSERVABILITY: Entry quality trace for cycle mode BUY ===
+        const sdForTrace = spreadResult.details;
+        const markupDiagCycle = markupTracker.getDynamicMarkupPct(pair, parseFloat((botConfigCheck as any)?.spreadRevolutxMarkupPct?.toString() || "0.80"));
+        log(`[ENTRY_QUALITY] ${pair}: ALLOWED (cycle) | regime=${earlyRegime} | spreadKraken=${sdForTrace.spreadKrakenPct.toFixed(3)}% | markupUsed=${sdForTrace.revolutxMarkupPct.toFixed(3)}% (${sdForTrace.markupSource}, ${sdForTrace.markupSamples} samples) | spreadEff=${sdForTrace.spreadEffectivePct.toFixed(3)}% | threshold=${sdForTrace.thresholdPct.toFixed(2)}% | signals=${signal.signalsCount}/${adjustedMinSignalsScan}`, "trading");
+
         const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
         if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
           try {
@@ -3541,6 +3549,65 @@ El bot ha pausado las operaciones de COMPRA.
           return;
         }
 
+        // === MINI-B: STALENESS GATE ===
+        // Block if too much time has passed since the candle that generated the signal closed
+        const cfgAny = botConfigCheck as any;
+        const stalenessGateEnabled = cfgAny?.stalenessGateEnabled ?? true;
+        if (stalenessGateEnabled) {
+          const candleCloseTimeSec = candle.time; // Unix seconds of the evaluated candle close
+          const nowSec = Date.now() / 1000;
+          const stalenessAgeSec = nowSec - candleCloseTimeSec;
+          // Default max stale: 60s for 5min candles, scale with timeframe
+          const tfMinutes = this.getTimeframeIntervalMinutes(timeframe);
+          const defaultMaxStaleSec = Math.max(60, tfMinutes * 12); // 12s per minute of TF, min 60s
+          const maxStaleSec = parseFloat(cfgAny?.stalenessMaxSec?.toString() || defaultMaxStaleSec.toString());
+
+          if (stalenessAgeSec > maxStaleSec) {
+            log(`[STALE_CANDLE_BLOCK] ${pair}: candle age ${stalenessAgeSec.toFixed(0)}s > max ${maxStaleSec}s`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - vela obsoleta`, {
+              pair, signal: "BUY", reason: "STALE_CANDLE_BLOCK",
+              candleClosedAt: new Date(candleCloseTimeSec * 1000).toISOString(),
+              nowUtc: new Date().toISOString(),
+              stalenessAgeSec: Math.round(stalenessAgeSec),
+              maxStaleSec, timeframe,
+            });
+            this.updatePairTrace(pair, {
+              smartGuardDecision: "BLOCK",
+              blockReasonCode: "STALE_CANDLE_BLOCK",
+              blockDetails: { stalenessAgeSec: Math.round(stalenessAgeSec), maxStaleSec, candleCloseTimeSec },
+              finalSignal: "NONE",
+              finalReason: `Vela obsoleta: ${Math.round(stalenessAgeSec)}s > ${maxStaleSec}s`,
+            });
+            return;
+          }
+        }
+
+        // === MINI-B: CHASE GATE ===
+        // Block if price has moved up too much since the candle close that generated the signal
+        const chaseGateEnabled = cfgAny?.chaseGateEnabled ?? true;
+        if (chaseGateEnabled) {
+          const candleClosePrice = candle.close;
+          const chaseDeltaPct = candleClosePrice > 0 ? ((currentPrice - candleClosePrice) / candleClosePrice) * 100 : 0;
+          const defaultMaxChasePct = 0.50; // 0.5% default — conservative
+          const maxChasePct = parseFloat(cfgAny?.chaseMaxPct?.toString() || defaultMaxChasePct.toString());
+
+          if (chaseDeltaPct > maxChasePct) {
+            log(`[CHASE_BLOCK] ${pair}: price delta +${chaseDeltaPct.toFixed(3)}% > max ${maxChasePct}% (candleClose=$${candleClosePrice.toFixed(2)}, current=$${currentPrice.toFixed(2)})`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - chase/FOMO`, {
+              pair, signal: "BUY", reason: "CHASE_BLOCK",
+              candleClosePrice, currentPrice, chaseDeltaPct, maxChasePct, timeframe,
+            });
+            this.updatePairTrace(pair, {
+              smartGuardDecision: "BLOCK",
+              blockReasonCode: "CHASE_BLOCK",
+              blockDetails: { chaseDeltaPct, maxChasePct, candleClosePrice, currentPrice },
+              finalSignal: "NONE",
+              finalReason: `Chase: +${chaseDeltaPct.toFixed(3)}% > ${maxChasePct}%`,
+            });
+            return;
+          }
+        }
+
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
           log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
@@ -3758,6 +3825,31 @@ El bot ha pausado las operaciones de COMPRA.
           env: environment.envTag,
           hybridGuard: hgInfo ? { watchId: hgInfo.watchId, reason: hgInfo.reason } : undefined,
         };
+
+        // === OBSERVABILITY: Comprehensive entry quality trace for every allowed BUY ===
+        const sd2ForTrace = spreadResult2.details;
+        const candleAge = candle.time > 0 ? Math.round(Date.now() / 1000 - candle.time) : -1;
+        const chaseDelta = candle.close > 0 ? ((currentPrice - candle.close) / candle.close) * 100 : 0;
+        const markupDiag = markupTracker.getDynamicMarkupPct(pair, parseFloat(cfgAny?.spreadRevolutxMarkupPct?.toString() || "0.80"));
+        log(`[ENTRY_QUALITY] ${pair}: ALLOWED | regime=${earlyRegime} | spreadKraken=${sd2ForTrace.spreadKrakenPct.toFixed(3)}% | markupUsed=${sd2ForTrace.revolutxMarkupPct.toFixed(3)}% (${sd2ForTrace.markupSource}, ${sd2ForTrace.markupSamples} samples) | spreadEff=${sd2ForTrace.spreadEffectivePct.toFixed(3)}% | threshold=${sd2ForTrace.thresholdPct.toFixed(2)}% | stalenessAge=${candleAge}s | chaseDelta=${chaseDelta.toFixed(3)}% | candleClose=$${candle.close.toFixed(2)} | currentPrice=$${currentPrice.toFixed(2)} | signals=${signal.signalsCount}/${adjustedMinSignals}`, "trading");
+        await botLogger.info("ENTRY_QUALITY_ALLOWED", `BUY permitido con trazabilidad completa`, {
+          pair, regime: earlyRegime, strategy: selectedStrategyId,
+          spreadKrakenPct: sd2ForTrace.spreadKrakenPct,
+          markupUsedPct: sd2ForTrace.revolutxMarkupPct,
+          markupSource: sd2ForTrace.markupSource,
+          markupSamples: sd2ForTrace.markupSamples,
+          markupEma: markupDiag.ema,
+          spreadEffectivePct: sd2ForTrace.spreadEffectivePct,
+          thresholdPct: sd2ForTrace.thresholdPct,
+          stalenessAgeSec: candleAge,
+          chaseDeltaPct: chaseDelta,
+          candleClosePrice: candle.close,
+          currentPrice,
+          signalsCount: signal.signalsCount,
+          minSignalsRequired: adjustedMinSignals,
+          confidence: signal.confidence,
+          orderUsd: tradeAmountUSD,
+        });
 
         const success = await this.executeTrade(
           pair, 
@@ -4744,6 +4836,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
         return false;
       }
 
+      // D1: Save Kraken reference price BEFORE it gets overwritten by real fill price
+      const krakenReferencePrice = price;
+
       const resolvedOrderPrice = Number((order as any)?.price ?? (order as any)?.executedPrice ?? (order as any)?.average_price ?? (order as any)?.executed_price);
       const resolvedOrderVolume = Number((order as any)?.volume ?? (order as any)?.executedVolume ?? (order as any)?.executed_size ?? (order as any)?.filled_size);
       const resolvedOrderCost = Number((order as any)?.cost ?? (order as any)?.executed_value ?? (order as any)?.executed_notional ?? (order as any)?.executed_quote_size ?? (order as any)?.filled_value);
@@ -4759,6 +4854,14 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       }
       volume = volumeNum.toFixed(8);
       totalUSD = volumeNum * price;
+
+      // D1: Compute realEntryCostPct and feed to MarkupTracker for dynamic markup learning
+      let realEntryCostPct: number | null = null;
+      if (type === "buy" && krakenReferencePrice > 0 && price > 0) {
+        realEntryCostPct = ((price - krakenReferencePrice) / krakenReferencePrice) * 100;
+        markupTracker.recordEntry(pair, realEntryCostPct);
+        log(`[D1_ENTRY_COST] ${pair}: krakenRef=$${krakenReferencePrice.toFixed(4)}, executed=$${price.toFixed(4)}, realEntryCostPct=${realEntryCostPct.toFixed(4)}%`, "trading");
+      }
 
       const executedAt = new Date();
       const priceStr = price.toString();

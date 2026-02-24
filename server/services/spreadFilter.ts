@@ -5,6 +5,7 @@
 
 import { log } from "../utils/logger";
 import { botLogger } from "./botLogger";
+import { markupTracker } from "./MarkupTracker";
 
 // === Pure functions ===
 
@@ -35,6 +36,9 @@ export interface SpreadCheckDetails {
   spreadKrakenPct: number; spreadEffectivePct: number;
   thresholdPct: number; floorPct: number; capPct: number;
   revolutxMarkupPct: number;
+  markupSource: "dynamic" | "fixed" | "none";
+  markupSamples: number;
+  markupEma: number;
   tradingExchange: string; dataExchange: string;
   decision: "ALLOW" | "REJECT" | "SKIP_MISSING_DATA";
   reason: string;
@@ -79,6 +83,7 @@ export class SpreadFilter {
         bid: ticker.bid, ask: ticker.ask, mid: (ticker.bid + ticker.ask) / 2,
         spreadKrakenPct: 0, spreadEffectivePct: 0,
         thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
+        markupSource: "none", markupSamples: 0, markupEma: 0,
         tradingExchange, dataExchange,
         decision: "ALLOW", reason: "Spread filter disabled in config",
       }};
@@ -98,15 +103,38 @@ export class SpreadFilter {
         bid, ask, mid: 0,
         spreadKrakenPct: 0, spreadEffectivePct: 0,
         thresholdPct: 0, floorPct: 0, capPct: 0, revolutxMarkupPct: 0,
+        markupSource: "none", markupSamples: 0, markupEma: 0,
         tradingExchange, dataExchange,
         decision: "SKIP_MISSING_DATA", reason: "bid/ask data invalid or missing",
       }};
     }
 
     const mid = (bid + ask) / 2;
-    const revolutxMarkupPct = tradingExchange === "revolutx"
+    const fixedMarkupPct = tradingExchange === "revolutx"
       ? parseFloat(config?.spreadRevolutxMarkupPct?.toString() || "0.80")
       : 0;
+
+    // D2: Use dynamic markup from MarkupTracker when enabled
+    const dynamicMarkupEnabled = config?.dynamicMarkupEnabled ?? true;
+    let revolutxMarkupPct: number;
+    let markupSource: "dynamic" | "fixed" | "none";
+    let markupSamples = 0;
+    let markupEma = 0;
+
+    if (tradingExchange === "revolutx" && dynamicMarkupEnabled) {
+      const dynamic = markupTracker.getDynamicMarkupPct(pair, fixedMarkupPct);
+      revolutxMarkupPct = dynamic.markupPct;
+      markupSource = dynamic.source;
+      markupSamples = dynamic.samples;
+      markupEma = dynamic.ema;
+    } else if (tradingExchange === "revolutx") {
+      revolutxMarkupPct = fixedMarkupPct;
+      markupSource = "fixed";
+    } else {
+      revolutxMarkupPct = 0;
+      markupSource = "none";
+    }
+
     const spreadEffectivePct = spreadKrakenPct + revolutxMarkupPct;
     const floorPct = parseFloat(config?.spreadFloorPct?.toString() || "0.30");
     const capPct = parseFloat(config?.spreadCapPct?.toString() || "3.50");
@@ -117,6 +145,7 @@ export class SpreadFilter {
       return { ok: true, details: {
         bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
         thresholdPct, floorPct, capPct, revolutxMarkupPct,
+        markupSource, markupSamples, markupEma,
         tradingExchange, dataExchange,
         decision: "ALLOW", reason: `Spread ${spreadEffectivePct.toFixed(3)}% < floor ${floorPct}%`,
       }};
@@ -154,6 +183,7 @@ export class SpreadFilter {
     return { ok: !blocked, details: {
       bid, ask, mid, spreadKrakenPct, spreadEffectivePct,
       thresholdPct, floorPct, capPct, revolutxMarkupPct,
+      markupSource, markupSamples, markupEma,
       tradingExchange, dataExchange, decision, reason,
     }};
   }
