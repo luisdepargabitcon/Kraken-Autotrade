@@ -5,6 +5,98 @@
 
 ---
 
+## 2026-02-24 — FEAT: Mejoras integrales Sistema FISCO
+
+### Resumen Ejecutivo
+Se han implementado todas las correcciones solicitadas para el módulo FISCO, mejorando la organización, UX y funcionalidad del sistema fiscal.
+
+### Cambios Implementados
+
+#### 1. Subpestaña "ANEXO – EXTRACTO DE TRANSACCIONES"
+- **Problema**: Estaba integrada dentro de la pestaña Fisco sin separación clara
+- **Solución**: 
+  - Crear estructura de tabs con `Tabs` y `TabsContent`
+  - Separar en "Resumen Fiscal" y "Anexo: Extracto de Transacciones"
+  - Mejorar navegación y organización visual
+
+#### 2. Operaciones Recientes y Filtro de Fechas
+- **Orden**: Corregido para mostrar operaciones en orden descendente (DESC)
+  - Modificado `ORDER BY executed_at DESC` en `/api/fisco/operations`
+- **Filtro de Fechas**: Implementado date-range picker moderno
+  - Reemplazado inputs `<input type="date">` por componentes `Calendar` + `Popover`
+  - Añadido `date-fns` con locale español para formato `dd/MM/yyyy`
+  - Mejor UX con selección visual y controles intuitivos
+
+#### 3. Resumen de Ganancias y Pérdidas (Detalle por Lotes)
+- **Funcionalidad**: Modal con detalles completos FIFO por activo
+- **Implementación**:
+  - Filas clicables en Section B para abrir modal
+  - Queries para lotes (`/api/fisco/lots`) y disposals (`/api/fisco/disposals`)
+  - Modal con dos tablas: "Lotes de Compra (FIFO)" y "Ventas y Ganancias/Pérdidas"
+  - Información completa: fechas, cantidades, costos, método FIFO
+
+#### 4. Activos Considerados en el Cálculo
+- **Problema**: Solo consideraba activos operados por el bot
+- **Solución**:
+  - Obtener balances actuales de Kraken y RevolutX
+  - Combinar con activos de operaciones históricas
+  - Inicializar todos los activos en Section D para asegurar visibilidad
+  - Considerar operaciones manuales, transferencias, staking
+
+#### 5. Histórico Completo de Operaciones
+- **Problema**: No aparecían operaciones anteriores a 2025
+- **Solución**:
+  - Modificado pipeline FISCO para eliminar límites de fecha
+  - Kraken: `fetchAll: true` (ya recuperaba todo)
+  - RevolutX: Eliminado `startMs` para obtener historial completo
+  - Logs actualizados para indicar "FULL HISTORY - NO LIMIT"
+
+#### 6. Sincronización Automática Exchange → Bot
+- **Requerimiento**: Sincronización diaria 08:00 con notificaciones Telegram
+- **Implementación**:
+  - Scheduler con `node-cron` a las 08:00 (Europe/Madrid)
+  - Llamada a `/api/fisco/run` para sincronización completa
+  - Notificaciones Telegram para éxito y errores
+  - Variables de entorno: `FISCO_DAILY_SYNC_CRON` y `FISCO_DAILY_SYNC_TZ`
+
+### Archivos Modificados
+
+#### Frontend
+- `client/src/pages/Fisco.tsx`
+  - Nueva estructura con tabs
+  - Date-range picker moderno
+  - Modal para detalles de lotes
+  - Handlers para interacciones
+
+#### Backend
+- `server/routes/fisco.routes.ts`
+  - Orden DESC en operaciones
+  - Inclusión de todos los activos del exchange
+  - Historial completo sin límites
+- `server/routes.ts`
+  - Scheduler FISCO diario 08:00
+  - Notificaciones Telegram integradas
+
+### Dependencias Añadidas
+- `date-fns` - Para manejo de fechas y locale español
+
+### Variables de Entorno
+```bash
+# FISCO Daily Sync (opcional, valores por defecto incluidos)
+FISCO_DAILY_SYNC_CRON=0 8 * * *
+FISCO_DAILY_SYNC_TZ=Europe/Madrid
+```
+
+### Beneficios Alcanzados
+1. **Organización**: Separación clara entre resumen fiscal y extracto detallado
+2. **UX**: Date picker moderno e intuitivo
+3. **Transparencia**: Detalle completo de cálculos FIFO por activo
+4. **Completitud**: Todos los activos del exchange considerados
+5. **Historial**: Acceso a operaciones completas sin límite artificial
+6. **Automatización**: Sincronización diaria automática con notificaciones
+
+---
+
 ## 2026-02-24 — FIX/FEAT: Mejora calidad de entradas (D1 + D2 + MINI-B + Observabilidad)
 
 ### Problema

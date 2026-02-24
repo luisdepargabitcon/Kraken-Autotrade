@@ -319,7 +319,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       let revolutxOrders: any[] = [];
 
       if (krakenService.isInitialized()) {
-        console.log("[fisco/run] Fetching Kraken ledger...");
+        console.log("[fisco/run] Fetching Kraken ledger (FULL HISTORY - NO LIMIT)...");
         const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
         const ledger = ledgerResp?.ledger || {};
         krakenLedgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
@@ -333,16 +333,17 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
           time: e.time,
         }));
-        console.log(`[fisco/run] Kraken: ${krakenLedgerEntries.length} ledger entries`);
+        console.log(`[fisco/run] Kraken: ${krakenLedgerEntries.length} ledger entries (FULL HISTORY)`);
       }
 
       if (revolutXService.isInitialized()) {
-        console.log("[fisco/run] Fetching RevolutX orders...");
+        console.log("[fisco/run] Fetching RevolutX orders (FULL HISTORY - NO LIMIT)...");
+        // Remove startMs to get ALL history, not just from a date
         revolutxOrders = await revolutXService.getHistoricalOrders({
-          startMs,
           states: ["filled"],
+          // No startMs - get complete history
         });
-        console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders`);
+        console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders (FULL HISTORY)`);
       }
 
       // 3. Normalize
@@ -467,7 +468,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         query += ` AND executed_at <= $${paramIdx++}`;
         params.push(new Date(toFilter + 'T23:59:59.999Z'));
       }
-      query += ` ORDER BY executed_at ASC`;
+      query += ` ORDER BY executed_at DESC`;
 
       const result = await pool.query(query, params);
 
@@ -674,6 +675,39 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       };
 
       // --- Section D: Visión general de cartera (balance 01/01 vs 31/12) ---
+      // Include ALL exchange assets, not just bot operations
+      // Get current balances from exchanges to ensure all assets are included
+      let allExchangeAssets: string[] = [];
+      
+      try {
+        // Get Kraken balance
+        if (krakenService.isInitialized()) {
+          const krakenBalance = await krakenService.getBalance();
+          allExchangeAssets.push(...Object.keys(krakenBalance));
+        }
+        
+        // Get RevolutX balance (if available)
+        if (revolutXService.isInitialized()) {
+          try {
+            const revolutxBalance = await revolutXService.getBalance();
+            allExchangeAssets.push(...Object.keys(revolutxBalance));
+          } catch (e) {
+            console.log('[fisco] RevolutX balance not available, using operations only');
+          }
+        }
+      } catch (e) {
+        console.log('[fisco] Could not fetch live balances, using operations only');
+      }
+      
+      // Get assets from operations as fallback
+      const opsAssetsQ = await pool.query(`
+        SELECT DISTINCT asset FROM fisco_operations
+      `);
+      const opsAssets = opsAssetsQ.rows.map((r: any) => r.asset);
+      
+      // Combine and deduplicate all assets
+      const allAssets = [...new Set([...allExchangeAssets, ...opsAssets])].sort();
+      
       // Compute running balances from all operations
       const balanceQ = await pool.query(`
         SELECT asset, exchange, op_type, amount::numeric as amount, executed_at
@@ -683,7 +717,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         ORDER BY executed_at ASC
       `, [`${year}-01-01`]);
 
-      // Build per-asset balances
+      // Build per-asset balances - initialize for ALL assets
       const assetBalances = new Map<string, {
         saldo_inicio: number;
         entradas: number;
@@ -691,6 +725,11 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         saldo_fin: number;
         exchanges: Set<string>;
       }>();
+      
+      // Initialize all assets to ensure they appear even with zero activity
+      for (const asset of allAssets) {
+        assetBalances.set(asset, { saldo_inicio: 0, entradas: 0, salidas: 0, saldo_fin: 0, exchanges: new Set() });
+      }
 
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);
       const yearEnd = new Date(`${year + 1}-01-01T00:00:00Z`);

@@ -198,6 +198,112 @@ export async function registerRoutes(
       console.error('[startup] Failed to schedule RevolutX daily sync:', e?.message || e);
     }
     
+    // FISCO daily sync scheduler (08:00 server time)
+    try {
+      const fiscoCron = process.env.FISCO_DAILY_SYNC_CRON || '0 8 * * *';
+      const fiscoTz = process.env.FISCO_DAILY_SYNC_TZ || 'Europe/Madrid';
+
+      cron.schedule(
+        fiscoCron,
+        async () => {
+          try {
+            console.log('[fisco-daily-sync] Starting daily fiscal data synchronization...');
+            const startTime = Date.now();
+            
+            const port = parseInt(process.env.PORT || '5000', 10);
+            const url = `http://127.0.0.1:${port}/api/fisco/run`;
+            
+            const f = (globalThis as any).fetch as undefined | ((...args: any[]) => Promise<any>);
+            
+            let response;
+            if (f) {
+              response = await f(url);
+            } else {
+              // Node.js fallback
+              response = await new Promise<any>((resolve, reject) => {
+                const http = require('http');
+                const req = http.request(url, (res: any) => {
+                  let data = '';
+                  res.on('data', (chunk: any) => data += chunk);
+                  res.on('end', () => {
+                    try {
+                      resolve({
+                        ok: res.statusCode === 200,
+                        status: res.statusCode,
+                        json: async () => JSON.parse(data)
+                      });
+                    } catch (e) {
+                      reject(e);
+                    }
+                  });
+                });
+                req.on('error', reject);
+                req.end();
+              });
+            }
+            
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            
+            console.log(`[fisco-daily-sync] Completed in ${elapsed}s - ${result.normalized?.total || 0} operations processed`);
+            
+            // Send Telegram notification
+            try {
+              const ErrorAlertService = (await import('./services/ErrorAlertService')).ErrorAlertService;
+              const alertService = ErrorAlertService.getInstance();
+              
+              const message = `✅ <b>SINCRONIZACIÓN FISCAL COMPLETADA</b>\n━━━━━━━━━━━━━━━━━━━\n🕒 ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}\n📊 Operaciones: ${result.normalized?.total || 0}\n⏱️ Duración: ${elapsed}s\n💾 Última sincronización: ${new Date().toISOString()}`;
+              
+              await alertService.sendCriticalError({
+                type: 'SYSTEM_ERROR',
+                message: message,
+                function: 'fisco-daily-sync',
+                fileName: 'routes.ts',
+                severity: 'LOW', // Use LOW for info messages
+                timestamp: new Date(),
+              });
+              
+              console.log('[fisco-daily-sync] Telegram notification sent');
+            } catch (telegramError: any) {
+              console.error('[fisco-daily-sync] Failed to send Telegram notification:', telegramError.message);
+            }
+            
+          } catch (e: any) {
+            console.error('[fisco-daily-sync] Error:', e?.message || e);
+            
+            // Send error notification to Telegram
+            try {
+              const ErrorAlertService = (await import('./services/ErrorAlertService')).ErrorAlertService;
+              const alertService = ErrorAlertService.getInstance();
+              
+              const message = `❌ <b>ERROR EN SINCRONIZACIÓN FISCAL</b>\n━━━━━━━━━━━━━━━━━━━\n🕒 ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}\n❌ Error: ${e?.message || 'Unknown error'}\n📍 Archivo: routes.ts\n📍 Función: fisco-daily-sync`;
+              
+              await alertService.sendCriticalError({
+                type: 'SYSTEM_ERROR',
+                message: message,
+                function: 'fisco-daily-sync',
+                fileName: 'routes.ts',
+                severity: 'MEDIUM',
+                timestamp: new Date(),
+              });
+              
+              console.log('[fisco-daily-sync] Error notification sent to Telegram');
+            } catch (telegramError: any) {
+              console.error('[fisco-daily-sync] Failed to send error notification:', telegramError.message);
+            }
+          }
+        },
+        { timezone: fiscoTz }
+      );
+      console.log(`[startup] FISCO daily sync scheduled: ${fiscoCron} (${fiscoTz})`);
+    } catch (e: any) {
+      console.error('[startup] Failed to schedule FISCO daily sync:', e?.message || e);
+    }
+    
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();
     if (botConfig?.isActive && krakenService.isInitialized()) {

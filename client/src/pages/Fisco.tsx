@@ -4,10 +4,16 @@ import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
-  AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X
+  AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X,
+  CalendarIcon, Plus, Minus
 } from "lucide-react";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 // ============================================================
 // Types
@@ -39,6 +45,33 @@ interface FiscoMetaResponse {
 interface FiscoOpsResponse {
   count: number;
   operations: any[];
+}
+
+interface LotDetail {
+  id: string;
+  asset: string;
+  quantity: number;
+  remaining_qty: number;
+  cost_eur: number;
+  unit_cost_eur: number;
+  fee_eur: number;
+  acquired_at: string;
+  is_closed: boolean;
+  operation: any;
+}
+
+interface DisposalDetail {
+  id: string;
+  sell_operation_id: number;
+  lot_id: string | null;
+  quantity: number;
+  proceeds_eur: number;
+  cost_basis_eur: number;
+  gain_loss_eur: number;
+  disposed_at: string;
+  asset: string;
+  pair: string;
+  exchange: string;
 }
 
 // ============================================================
@@ -227,14 +260,18 @@ export default function Fisco() {
   // --- State ---
   const [selectedYear, setSelectedYear] = useState<string>(String(new Date().getFullYear()));
   const [selectedExchange, setSelectedExchange] = useState<string>("");
-  const [showAnexo, setShowAnexo] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("resumen");
 
   // Anexo filters
   const [anexoAsset, setAnexoAsset] = useState("");
   const [anexoExchange, setAnexoExchange] = useState("");
   const [anexoType, setAnexoType] = useState("");
-  const [anexoFrom, setAnexoFrom] = useState("");
-  const [anexoTo, setAnexoTo] = useState("");
+  const [anexoFromDate, setAnexoFromDate] = useState<Date | undefined>();
+  const [anexoToDate, setAnexoToDate] = useState<Date | undefined>();
+  
+  // Modal for lot details
+  const [selectedAssetForLots, setSelectedAssetForLots] = useState<string | null>(null);
+  const [showLotModal, setShowLotModal] = useState(false);
 
   // --- Meta query ---
   const metaQ = useQuery<FiscoMetaResponse>({
@@ -263,15 +300,40 @@ export default function Fisco() {
   if (anexoAsset) anexoP.set("asset", anexoAsset);
   if (anexoExchange) anexoP.set("exchange", anexoExchange);
   if (anexoType) anexoP.set("type", anexoType);
-  if (anexoFrom) anexoP.set("from", anexoFrom);
-  if (anexoTo) anexoP.set("to", anexoTo);
+  if (anexoFromDate) anexoP.set("from", anexoFromDate.toISOString().split('T')[0]);
+  if (anexoToDate) anexoP.set("to", anexoToDate.toISOString().split('T')[0]);
   const anexoUrl = `/api/fisco/operations?${anexoP.toString()}`;
 
   const anexoQ = useQuery<FiscoOpsResponse>({
     queryKey: [anexoUrl],
     refetchOnWindowFocus: false,
     retry: false,
-    enabled: showAnexo,
+    enabled: activeTab === "anexo",
+  });
+  
+  // --- Lots query for modal ---
+  const lotsP = new URLSearchParams();
+  if (selectedAssetForLots) lotsP.set("asset", selectedAssetForLots);
+  const lotsUrl = `/api/fisco/lots?${lotsP.toString()}`;
+  
+  const lotsQ = useQuery<{ count: number; lots: LotDetail[] }>({
+    queryKey: [lotsUrl],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: showLotModal && !!selectedAssetForLots,
+  });
+  
+  // --- Disposals query for modal ---
+  const disposalsP = new URLSearchParams();
+  if (selectedYear) disposalsP.set("year", parseInt(selectedYear));
+  if (selectedAssetForLots) disposalsP.set("asset", selectedAssetForLots);
+  const disposalsUrl = `/api/fisco/disposals?${disposalsP.toString()}`;
+  
+  const disposalsQ = useQuery<{ count: number; disposals: DisposalDetail[] }>({
+    queryKey: [disposalsUrl],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: showLotModal && !!selectedAssetForLots,
   });
 
   // --- Sync pipeline ---
@@ -299,9 +361,28 @@ export default function Fisco() {
   const assetOptions = [{ value: "", label: "Todos" }, ...(meta?.assets || []).map(a => ({ value: a, label: a }))];
   const typeOptions = [
     { value: "", label: "Todos" }, { value: "trade_buy", label: "Compra" }, { value: "trade_sell", label: "Venta" },
-    { value: "deposit", label: "Dep\u00f3sito" }, { value: "withdrawal", label: "Retiro" },
-    { value: "staking", label: "Staking" }, { value: "conversion", label: "Conversi\u00f3n" },
+    { value: "deposit", label: "Depósito" }, { value: "withdrawal", label: "Retiro" },
+    { value: "staking", label: "Staking" }, { value: "conversion", label: "Conversión" },
   ];
+  
+  // --- Handlers ---
+  const openLotModal = (asset: string) => {
+    setSelectedAssetForLots(asset);
+    setShowLotModal(true);
+  };
+  
+  const closeLotModal = () => {
+    setShowLotModal(false);
+    setSelectedAssetForLots(null);
+  };
+  
+  const clearAnexoFilters = () => {
+    setAnexoAsset("");
+    setAnexoExchange("");
+    setAnexoType("");
+    setAnexoFromDate(undefined);
+    setAnexoToDate(undefined);
+  };
 
   // --- Section B totals ---
   const bTotals = (report?.section_b || []).reduce((s, r) => ({
@@ -432,7 +513,16 @@ export default function Fisco() {
           </Card>
         )}
 
-        {/* ========== SECTION A: Resumen transmisiones ========== */}
+        {/* ========== TABS STRUCTURE ========== */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="resumen">Resumen Fiscal</TabsTrigger>
+            <TabsTrigger value="anexo">Anexo: Extracto de Transacciones</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="resumen" className="space-y-5">
+            {/* All existing sections A-D here */}
+            {/* ========== SECTION A: Resumen transmisiones ========== */}
         {report && (
           <SectionCard title={`Resumen de ganancias y p\u00e9rdidas derivadas de las transmisiones de activos el ${selectedYear}`}>
             <div className="overflow-x-auto">
@@ -489,7 +579,7 @@ export default function Fisco() {
                 </thead>
                 <tbody>
                   {report.section_b.map((r, i) => (
-                    <tr key={i} className="border-b border-border/30 hover:bg-white/5">
+                    <tr key={i} className="border-b border-border/30 hover:bg-white/5 cursor-pointer" onClick={() => openLotModal(r.asset)}>
                       <td className="py-2 px-4 font-mono font-bold">{r.asset}</td>
                       <td className="py-2 px-4 capitalize">{r.exchange}</td>
                       <td className="py-2 px-4">{r.tipo}</td>
@@ -587,67 +677,104 @@ export default function Fisco() {
           </SectionCard>
         )}
 
-        {/* ========== SECTION E: Anexo — Operaciones (collapsible) ========== */}
-        <Card className="border border-border">
-          <CardHeader
-            className="cursor-pointer hover:bg-white/5 transition-colors py-3 px-5"
-            onClick={() => setShowAnexo(!showAnexo)}
-          >
-            <CardTitle className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <FileText className="h-4 w-4" />
-                Anexo: Extracto de Transacciones {selectedYear}
-              </span>
-              <span className="flex items-center gap-2">
-                {showAnexo && anexoQ.data && (
-                  <Badge variant="outline" className="text-xs">{anexoQ.data.count} ops</Badge>
-                )}
-                {showAnexo ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </span>
-            </CardTitle>
-          </CardHeader>
+          </SectionCard>
+        )}
 
-          {showAnexo && (
-            <CardContent className="pt-0 px-5 pb-5">
-              {/* Filters */}
-              <div className="flex flex-wrap items-end gap-3 p-3 bg-card/50 border border-border rounded-lg mb-4">
-                <Filter className="h-4 w-4 text-muted-foreground mt-5 hidden sm:block" />
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Desde</label>
-                  <input type="date" value={anexoFrom} onChange={(e) => setAnexoFrom(e.target.value)}
-                    className="h-9 px-2 rounded-md border border-border bg-background text-sm" />
+          </TabsContent>
+
+          <TabsContent value="anexo" className="space-y-5">
+            {/* Anexo content */}
+            <Card className="border border-border">
+              <CardHeader className="py-3 px-5">
+                <CardTitle className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <FileText className="h-4 w-4" />
+                    Extracto de Transacciones {selectedYear}
+                  </span>
+                  {anexoQ.data && (
+                    <Badge variant="outline" className="text-xs">{anexoQ.data.count} ops</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="pt-0 px-5 pb-5">
+                {/* Filters */}
+                <div className="flex flex-wrap items-end gap-3 p-3 bg-card/50 border border-border rounded-lg mb-4">
+                  <Filter className="h-4 w-4 text-muted-foreground mt-5 hidden sm:block" />
+                  
+                  {/* Date Range Picker */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Desde</label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="h-9 px-2 text-sm justify-start text-left font-normal"
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {anexoFromDate ? format(anexoFromDate, "dd/MM/yyyy", { locale: es }) : "Seleccionar"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={anexoFromDate}
+                          onSelect={setAnexoFromDate}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Hasta</label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="h-9 px-2 text-sm justify-start text-left font-normal"
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {anexoToDate ? format(anexoToDate, "dd/MM/yyyy", { locale: es }) : "Seleccionar"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={anexoToDate}
+                          onSelect={setAnexoToDate}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Activo</label>
+                    <select value={anexoAsset} onChange={(e) => setAnexoAsset(e.target.value)}
+                      className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
+                      {assetOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Exchange</label>
+                    <select value={anexoExchange} onChange={(e) => setAnexoExchange(e.target.value)}
+                      className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
+                      {exchOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Tipo</label>
+                    <select value={anexoType} onChange={(e) => setAnexoType(e.target.value)}
+                      className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
+                      {typeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground h-9 mt-auto"
+                    onClick={clearAnexoFilters}>
+                    <X className="h-3 w-3 mr-1" /> Limpiar
+                  </Button>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Hasta</label>
-                  <input type="date" value={anexoTo} onChange={(e) => setAnexoTo(e.target.value)}
-                    className="h-9 px-2 rounded-md border border-border bg-background text-sm" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Activo</label>
-                  <select value={anexoAsset} onChange={(e) => setAnexoAsset(e.target.value)}
-                    className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
-                    {assetOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Exchange</label>
-                  <select value={anexoExchange} onChange={(e) => setAnexoExchange(e.target.value)}
-                    className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
-                    {exchOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Tipo</label>
-                  <select value={anexoType} onChange={(e) => setAnexoType(e.target.value)}
-                    className="h-9 px-2 rounded-md border border-border bg-background text-sm min-w-[100px]">
-                    {typeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <Button variant="ghost" size="sm" className="text-muted-foreground h-9 mt-auto"
-                  onClick={() => { setAnexoAsset(""); setAnexoExchange(""); setAnexoType(""); setAnexoFrom(""); setAnexoTo(""); }}>
-                  <X className="h-3 w-3 mr-1" /> Limpiar
-                </Button>
-              </div>
 
               {/* Operations table */}
               {anexoQ.isLoading && (
@@ -709,3 +836,105 @@ export default function Fisco() {
     </div>
   );
 }
+
+{/* ========== MODAL: LOT DETAILS ========== */}
+{showLotModal && selectedAssetForLots && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-border">
+        <h3 className="text-lg font-semibold">Detalle de Lotes - {selectedAssetForLots}</h3>
+        <Button variant="ghost" size="sm" onClick={closeLotModal}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      
+      <div className="p-4 overflow-y-auto max-h-[60vh]">
+        {lotsQ.isLoading || disposalsQ.isLoading ? (
+          <div className="text-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Lots Table */}
+            <div>
+              <h4 className="text-md font-medium mb-3">Lotes de Compra (FIFO)</h4>
+              {lotsQ.data?.lots && lotsQ.data.lots.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo EUR</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Precio Unit.</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Restante</th>
+                        <th className="text-center py-2 px-3 text-blue-400 font-semibold text-xs">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lotsQ.data.lots.map((lot: LotDetail) => (
+                        <tr key={lot.id} className="border-b border-border/30">
+                          <td className="py-2 px-3 font-mono text-xs">{fmtDate(lot.acquired_at)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{qty(lot.quantity, 6)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{eur(lot.cost_eur)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{eur(lot.unit_cost_eur)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{qty(lot.remaining_qty, 6)}</td>
+                          <td className="py-2 px-3 text-center">
+                            <Badge className={lot.is_closed ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}>
+                              {lot.is_closed ? "Cerrado" : "Abierto"}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">No se encontraron lotes para este activo.</p>
+              )}
+            </div>
+            
+            {/* Disposals Table */}
+            <div>
+              <h4 className="text-md font-medium mb-3">Ventas y Ganancias/Pérdidas</h4>
+              {disposalsQ.data?.disposals && disposalsQ.data.disposals.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-500/10">
+                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Fecha Venta</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Cantidad</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ingresos EUR</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Costo Base EUR</th>
+                        <th className="text-right py-2 px-3 text-blue-400 font-semibold text-xs">Ganancia/Pérdida EUR</th>
+                        <th className="text-left py-2 px-3 text-blue-400 font-semibold text-xs">Método</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {disposalsQ.data.disposals.map((disposal: DisposalDetail) => (
+                        <tr key={disposal.id} className="border-b border-border/30">
+                          <td className="py-2 px-3 font-mono text-xs">{fmtDate(disposal.disposed_at)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{qty(disposal.quantity, 6)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{eur(disposal.proceeds_eur)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{eur(disposal.cost_basis_eur)}</td>
+                          <td className={`py-2 px-3 text-right font-mono font-bold ${disposal.gain_loss_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {eur(disposal.gain_loss_eur)}
+                          </td>
+                          <td className="py-2 px-3">
+                            <Badge variant="outline" className="text-xs">FIFO</Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">No se encontraron ventas para este activo en el período seleccionado.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
