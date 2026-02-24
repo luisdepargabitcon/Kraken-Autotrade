@@ -511,6 +511,14 @@ async function runMigration() {
       "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS risk_level TEXT DEFAULT 'medium'",
       "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS active_pairs TEXT[] DEFAULT ARRAY['BTC/USD','ETH/USD','SOL/USD']",
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS error_alert_chat_id TEXT',
+      // D2: Dynamic markup from real entry cost history
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS dynamic_markup_enabled BOOLEAN NOT NULL DEFAULT true',
+      // MINI-B: Staleness gate
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS staleness_gate_enabled BOOLEAN NOT NULL DEFAULT true',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS staleness_max_sec INTEGER NOT NULL DEFAULT 60',
+      // MINI-B: Chase gate
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_gate_enabled BOOLEAN NOT NULL DEFAULT true',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_max_pct DECIMAL(5,2) NOT NULL DEFAULT 0.50',
     ];
     
     // open_positions columns

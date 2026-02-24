@@ -55,4 +55,26 @@ ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS notif_cooldown_trades INTEGER NO
 ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS notif_cooldown_errors INTEGER NOT NULL DEFAULT 60;
 ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS error_alert_chat_id TEXT;
 
+-- Spread filter
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_filter_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_dynamic_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_max_pct NUMERIC(5,2) NOT NULL DEFAULT 2.00;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_threshold_trend NUMERIC(5,2) NOT NULL DEFAULT 1.50;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_threshold_range NUMERIC(5,2) NOT NULL DEFAULT 2.00;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_threshold_transition NUMERIC(5,2) NOT NULL DEFAULT 2.50;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_cap_pct NUMERIC(5,2) NOT NULL DEFAULT 3.50;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_floor_pct NUMERIC(5,2) NOT NULL DEFAULT 0.30;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_revolutx_markup_pct NUMERIC(5,2) NOT NULL DEFAULT 0.80;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_telegram_alert_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS spread_telegram_cooldown_ms INTEGER NOT NULL DEFAULT 600000;
+
+-- D2: Dynamic markup from real entry cost history
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS dynamic_markup_enabled BOOLEAN NOT NULL DEFAULT true;
+-- MINI-B: Staleness gate
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS staleness_gate_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS staleness_max_sec INTEGER NOT NULL DEFAULT 60;
+-- MINI-B: Chase gate
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_gate_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_max_pct NUMERIC(5,2) NOT NULL DEFAULT 0.50;
+
 COMMIT;
