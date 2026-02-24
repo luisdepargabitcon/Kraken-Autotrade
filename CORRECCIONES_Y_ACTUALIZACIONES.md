@@ -5,6 +5,54 @@
 
 ---
 
+## 2026-02-24 — FIX/FEAT: Mejora calidad de entradas (D1 + D2 + MINI-B + Observabilidad)
+
+### Problema
+Entradas que nacen en rojo pese a spread filter endurecido. Causa raíz: discrepancia entre precio de referencia (Kraken) y precio de ejecución (RevolutX), timing tardío tras cierre de vela.
+
+### Cambios implementados
+
+**D1 — Coherencia de precio de ejecución**
+- `tradingEngine.ts`: Guarda `krakenReferencePrice` antes de que se sobrescriba con el fill real de RevolutX
+- Calcula `realEntryCostPct = (executedPrice - krakenRef) / krakenRef * 100` tras cada BUY
+- Alimenta automáticamente al `MarkupTracker` para aprendizaje dinámico
+- Log `[D1_ENTRY_COST]` con krakenRef, executed, realEntryCostPct
+
+**D2 — Markup dinámico por par (sin llamadas extra a RevolutX)**
+- Nuevo servicio `server/services/MarkupTracker.ts`: EMA rolling de `realEntryCostPct` por par
+- `spreadFilter.ts`: usa markup dinámico cuando `dynamicMarkupEnabled=true` (default)
+- Fallback a markup fijo si <3 samples históricos
+- Floor 0.10%, Cap 5.00% para sanidad
+- Campo `markupSource` ("dynamic"/"fixed"/"none") + `markupSamples` + `markupEma` en SpreadCheckDetails
+
+**MINI-B — Timing gates (staleness + chase)**
+- **Staleness gate**: bloquea si `candleAge > stalenessMaxSec` (default 60s para 5min candles)
+- **Chase gate**: bloquea si `currentPrice > candleClose + chaseMaxPct%` (default 0.50%)
+- Reason codes: `STALE_CANDLE_BLOCK`, `CHASE_BLOCK`
+- Solo aplica en modo velas (candle mode), no en ciclos
+
+**Observabilidad**
+- Log `[ENTRY_QUALITY]` en cada BUY permitido: regime, spreadKraken, markupUsed, markupSource, spreadEff, threshold, stalenessAge, chaseDelta, candleClose, currentPrice, signals
+- `botLogger` event types: `ENTRY_QUALITY_ALLOWED`, `D1_ENTRY_COST`
+- Cada bloqueo incluye reason code + valores numéricos para calibración
+
+**Config / Feature flags** (schema + DB)
+- `dynamic_markup_enabled` (boolean, default true)
+- `staleness_gate_enabled` (boolean, default true)
+- `staleness_max_sec` (integer, default 60)
+- `chase_gate_enabled` (boolean, default true)
+- `chase_max_pct` (decimal, default 0.50)
+
+### Archivos modificados
+- `server/services/MarkupTracker.ts` (NUEVO)
+- `server/services/spreadFilter.ts`
+- `server/services/tradingEngine.ts`
+- `server/services/botLogger.ts`
+- `shared/schema.ts`
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`
+
+---
+
 ## 2026-02-23 — FEAT: FISCO UI Rediseño Completo estilo Bit2Me
 
 ### Objetivo
