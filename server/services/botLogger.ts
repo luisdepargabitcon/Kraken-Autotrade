@@ -119,7 +119,10 @@ export type EventType =
   | "BREAKEVEN_ARMED"
   | "TRAILING_UPDATED"
   | "POSITION_CLOSED_SG"
-  | "TRADE_PERSIST_FAIL";
+  | "TRADE_PERSIST_FAIL"
+  // Entry quality & timing gates (D1/D2/MINI-B)
+  | "ENTRY_QUALITY_ALLOWED"
+  | "D1_ENTRY_COST";
 
 interface LogMeta {
   [key: string]: any;

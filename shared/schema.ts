@@ -153,6 +153,14 @@ export const botConfig = pgTable("bot_config", {
   spreadRevolutxMarkupPct: decimal("spread_revolutx_markup_pct", { precision: 5, scale: 2 }).notNull().default("0.80"),
   spreadTelegramAlertEnabled: boolean("spread_telegram_alert_enabled").notNull().default(true),
   spreadTelegramCooldownMs: integer("spread_telegram_cooldown_ms").notNull().default(600000),
+  // D2: Dynamic markup from real entry cost history (no extra API calls)
+  dynamicMarkupEnabled: boolean("dynamic_markup_enabled").notNull().default(true),
+  // MINI-B: Staleness gate — block if candle is too old
+  stalenessGateEnabled: boolean("staleness_gate_enabled").notNull().default(true),
+  stalenessMaxSec: integer("staleness_max_sec").notNull().default(60),
+  // MINI-B: Chase gate — block if price moved up too much since candle close
+  chaseGateEnabled: boolean("chase_gate_enabled").notNull().default(true),
+  chaseMaxPct: decimal("chase_max_pct", { precision: 5, scale: 2 }).notNull().default("0.50"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
