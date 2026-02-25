@@ -196,6 +196,9 @@ interface DecisionTraceContext {
   // Campos de observabilidad Router FASE 1
   regimeRouterEnabled?: boolean | null;
   feeCushionEffectivePct?: number | null;
+  // Campos de diagnóstico D2/MINI-B (enriquecidos en emitPairDecisionTrace)
+  spreadDiag?: { markupSource: string; markupPct: number; markupSamples: number; markupEma: number } | null;
+  timingDiag?: { candleAgeSec: number; lastCandleCloseIso: string | null } | null;
 }
 
 // Cache para datos del último análisis completo por par (sin llamadas API extra)
@@ -4269,6 +4272,27 @@ El bot ha pausado las operaciones de COMPRA.
       }
     }
     
+    // === D2/MINI-B Diagnostics: enriquecer traza con spread/markup y timing ===
+    let spreadDiag: DecisionTraceContext["spreadDiag"] = null;
+    let timingDiag: DecisionTraceContext["timingDiag"] = null;
+    try {
+      const cfgAny = this.dynamicConfig as any;
+      const fixedMarkupPct = parseFloat(cfgAny?.spreadRevolutxMarkupPct?.toString() || "0.80");
+      const mkDiag = markupTracker.getDynamicMarkupPct(pair, fixedMarkupPct);
+      spreadDiag = {
+        markupSource: mkDiag.source,
+        markupPct: parseFloat(mkDiag.markupPct.toFixed(4)),
+        markupSamples: mkDiag.samples,
+        markupEma: parseFloat(mkDiag.ema.toFixed(4)),
+      };
+      // Timing: calcular edad de la última vela desde el cache
+      const lastCandleIso = trace.lastCandleClosedAt || null;
+      if (lastCandleIso) {
+        const candleAgeSec = Math.round((Date.now() - new Date(lastCandleIso).getTime()) / 1000);
+        timingDiag = { candleAgeSec, lastCandleCloseIso: lastCandleIso };
+      }
+    } catch (_e) { /* best-effort, no romper traza */ }
+
     // Asegurar que finalSignal y finalReason estén definidos
     const safeTrace: DecisionTraceContext = {
       ...trace,
@@ -4276,6 +4300,8 @@ El bot ha pausado las operaciones de COMPRA.
       finalReason: trace.finalReason || "Sin señal en este ciclo",
       blockReasonCode: derivedBlockCode,
       smartGuardDecision: trace.smartGuardDecision || "NOOP",
+      spreadDiag,
+      timingDiag,
     };
     
     log(`[PAIR_DECISION_TRACE] ${JSON.stringify(safeTrace)}`, "trading");
