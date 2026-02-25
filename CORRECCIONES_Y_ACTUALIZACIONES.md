@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-02-25 — FIX: Correcciones PDF Fiscal (branding, datos, normalización, 2024)
+
+### Cambios Implementados
+
+1. **Branding PDF**: Sustituido "KRAKENBOT.AI" por "Gestor Fiscal de Criptoactivos" en todas las páginas. Variable centralizada `BRAND_LABEL`.
+2. **Tabla agregada por activo**: Añadida tabla "B) Resumen por activo (agregado)" que fusiona exchanges, debajo de la tabla "A) Por activo y exchange". Ambas con fila "Total año".
+3. **Origen de Datos**: Sustituido "genesis" por etiqueta dinámica basada en exchanges presentes en el informe (ej: "Kraken + Revolutx").
+4. **Cuenta**: Sustituido "BÓSIM" por "Cuenta Principal" en PDF y dashboard.
+5. **EUR.HOLD normalizado**: Añadidos mappings para tickers Kraken con sufijos (.HOLD, .S, .M, .F, .P) en `normalizer.ts`. Fallback con regex para futuros sufijos. Balance de Kraken en Section D ahora se normaliza via `krakenService.normalizeAsset()`.
+6. **Selector de años 2024+**: El selector ahora muestra siempre años desde 2024 hasta el actual, independientemente de si hay datos en DB. Permite generar informes vacíos para verificar.
+
+### Diagnóstico: Operaciones 2024 faltantes
+- El pipeline `/api/fisco/run` ya usa `fetchAll: true` sin filtro de fecha → trae historial completo de Kraken y RevolutX.
+- Si no aparecen operaciones 2024, es porque: (a) no se ha ejecutado sync tras el deploy, o (b) las APIs de los exchanges no devuelven datos de ese periodo (Kraken sí guarda todo; RevolutX puede tener límite).
+- **Solución**: Ejecutar "Sincronizar Datos" desde la UI. El pipeline traerá todo el historial disponible y 2024 aparecerá si existen operaciones.
+
+### Archivos Modificados
+- `client/src/pages/Fisco.tsx` — Branding, labels dinámicos, tabla agregada, selector años
+- `server/services/fisco/normalizer.ts` — ASSET_MAP ampliado, normalización con fallback regex
+- `server/routes/fisco.routes.ts` — Normalización de balance Kraken en Section D
+
+---
+
 ## 2026-02-25 — FEAT: Observabilidad D2/MINI-B en PAIR_DECISION_TRACE
 
 ### Resumen

@@ -33,10 +33,19 @@ const ASSET_MAP: Record<string, string> = {
   XXBT: "BTC", XETH: "ETH", XXRP: "XRP", XLTC: "LTC", XDOT: "DOT",
   ZUSD: "USD", ZEUR: "EUR", ZGBP: "GBP", ZJPY: "JPY",
   XBT: "BTC",
+  // Kraken suffixed variants (staking, hold, funded)
+  "EUR.HOLD": "EUR", "USD.HOLD": "USD", "GBP.HOLD": "GBP",
+  "EUR.M": "EUR", "USD.M": "USD",
+  "ETH2.S": "ETH", "ETH2": "ETH",
+  "DOT.S": "DOT", "XBT.M": "BTC",
 };
 
 function normalizeAsset(raw: string): string {
-  return ASSET_MAP[raw] || raw;
+  // Direct lookup first
+  if (ASSET_MAP[raw]) return ASSET_MAP[raw];
+  // Strip common Kraken suffixes: .HOLD, .S, .M, .F
+  const stripped = raw.replace(/\.(HOLD|S|M|F|P)$/, "");
+  return ASSET_MAP[stripped] || stripped;
 }
 
 // ============================================================

@@ -685,10 +685,10 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       let allExchangeAssets: string[] = [];
       
       try {
-        // Get Kraken balance
+        // Get Kraken balance — normalize raw tickers (EUR.HOLD → EUR, XXBT → BTC, etc.)
         if (krakenService.isInitialized()) {
           const krakenBalance = await krakenService.getBalance();
-          allExchangeAssets.push(...Object.keys(krakenBalance));
+          allExchangeAssets.push(...Object.keys(krakenBalance).map(k => krakenService.normalizeAsset(k)));
         }
         
         // Get RevolutX balance (if available)

@@ -121,6 +121,15 @@ const OP_TYPE_LABELS: Record<string, { label: string; color: string }> = {
 
 function generateBit2MePDF(report: AnnualReportResponse) {
   const y = report.year;
+
+  // --- Configurable labels ---
+  const BRAND_LABEL = "Gestor Fiscal de Criptoactivos";
+  const exchangesInReport = [...new Set(report.section_b.map(r => r.exchange))];
+  const dataSourceLabel = exchangesInReport.length > 0
+    ? exchangesInReport.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(" + ")
+    : "Kraken + RevolutX";
+  const accountLabel = "Cuenta Principal";
+
   const css = `
     body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 0; }
     .page { page-break-after: always; padding: 50px 60px; max-width: 900px; margin: 0 auto; }
@@ -143,19 +152,19 @@ function generateBit2MePDF(report: AnnualReportResponse) {
     @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   `;
 
-  const meta = `Generado: ${new Date().toLocaleString("es-ES")} | M\u00e9todo: FIFO | Fuentes: Kraken + RevolutX | \u00daltima sincronizaci\u00f3n: ${report.last_sync ? fmtDateShort(report.last_sync) : "N/A"}`;
+  const meta = `Generado: ${new Date().toLocaleString("es-ES")} | M\u00e9todo: FIFO | Fuentes: ${dataSourceLabel} | \u00daltima sincronizaci\u00f3n: ${report.last_sync ? fmtDateShort(report.last_sync) : "N/A"}`;
 
   // Page 1: Section A — Transmissions summary
   const a = report.section_a;
   const pageA = `
     <div class="page">
-      <div class="brand">KRAKENBOT.AI</div>
+      <div class="brand">${BRAND_LABEL}</div>
       <h2>Resumen de ganancias y p\u00e9rdidas derivadas de las transmisiones de activos el ${y}</h2>
       <table>
         <tr><th>Origen de Datos</th><th>Cuenta</th><th colspan="3">Ganancias y p\u00e9rdidas de capital</th></tr>
         <tr><th></th><th></th><th>Ganancias en EUR</th><th>P\u00e9rdidas en EUR</th><th>Total en EUR</th></tr>
         <tr>
-          <td>genesis</td><td>B\u00d3SIM</td>
+          <td>${dataSourceLabel}</td><td>${accountLabel}</td>
           <td class="positive">${eur(a.ganancias_eur)}</td>
           <td class="negative">${eur(a.perdidas_eur)}</td>
           <td class="${a.total_eur >= 0 ? 'positive' : 'negative'}">${eur(a.total_eur)}</td>
@@ -178,13 +187,37 @@ function generateBit2MePDF(report: AnnualReportResponse) {
   }), { vt: 0, va: 0, gp: 0 });
   const pageB = `
     <div class="page">
-      <div class="brand">KRAKENBOT.AI</div>
-      <h2>Resumen de ganancias y p\u00e9rdidas por activo el ${y}</h2>
+      <div class="brand">${BRAND_LABEL}</div>
+      <h2>A) Resumen de ganancias y p\u00e9rdidas por activo y exchange el ${y}</h2>
       <table>
         <tr><th>Ticker</th><th>Exchange</th><th>Tipo</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
         ${bRows}
         <tr class="total-row"><td colspan="3">Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
       </table>
+      ${(() => {
+        // Aggregated by asset (merge exchanges)
+        const aggMap = new Map<string, { vt: number; va: number; gp: number }>();
+        for (const r of report.section_b) {
+          const prev = aggMap.get(r.asset) || { vt: 0, va: 0, gp: 0 };
+          prev.vt += r.valor_transmision_eur;
+          prev.va += r.valor_adquisicion_eur;
+          prev.gp += r.ganancia_perdida_eur;
+          aggMap.set(r.asset, prev);
+        }
+        const aggRows = Array.from(aggMap.entries()).map(([asset, v]) => `
+          <tr>
+            <td>${asset}</td>
+            <td>${eur(v.vt)}</td><td>${eur(v.va)}</td>
+            <td class="${v.gp >= 0 ? 'positive' : 'negative'}">${eur(v.gp)}</td>
+          </tr>`).join("");
+        return `
+          <h2 style="margin-top:24px;">B) Resumen por activo (agregado) el ${y}</h2>
+          <table>
+            <tr><th>Ticker</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
+            ${aggRows}
+            <tr class="total-row"><td>Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
+          </table>`;
+      })()}
       <div class="footer-page">Resumen de ganancias y p\u00e9rdidas por activo el ${y} \u2014 P\u00e1gina 2</div>
     </div>`;
 
@@ -192,7 +225,7 @@ function generateBit2MePDF(report: AnnualReportResponse) {
   const c = report.section_c;
   const pageC = `
     <div class="page">
-      <div class="brand">KRAKENBOT.AI</div>
+      <div class="brand">${BRAND_LABEL}</div>
       <h2>Resumen de rendimiento de capital mobiliario en ${y}</h2>
       <h2 style="font-size:14px;color:#334155;">Entradas en EUR</h2>
       <table>
@@ -215,7 +248,7 @@ function generateBit2MePDF(report: AnnualReportResponse) {
     </tr>`).join("");
   const pageD = `
     <div class="page">
-      <div class="brand">KRAKENBOT.AI</div>
+      <div class="brand">${BRAND_LABEL}</div>
       <h2>Visi\u00f3n general de valores en cartera y cambios en valores de cartera en ${y}</h2>
       <table>
         <tr><th>Activo</th><th>Exchange</th><th>Saldo 01/01/${y}</th><th>Entradas (${y})</th><th>Salidas (${y})</th><th>Saldo 31/12/${y}</th></tr>
@@ -351,9 +384,11 @@ export default function Fisco() {
   const isRunning = runPipeline.isPending;
 
   // --- Options ---
-  const yearOptions = (meta?.years || []).length > 0
-    ? meta!.years.map(y => String(y))
-    : [String(new Date().getFullYear())];
+  // Always show years from 2024 to current, plus any additional years from DB
+  const currentYear = new Date().getFullYear();
+  const baseYears = Array.from({ length: currentYear - 2023 }, (_, i) => currentYear - i); // e.g. [2026, 2025, 2024]
+  const dbYears = meta?.years || [];
+  const yearOptions = [...new Set([...baseYears, ...dbYears])].sort((a, b) => b - a).map(String);
   const exchOptions = [
     { value: "", label: "Todos los exchanges" },
     ...(meta?.exchanges || []).map(e => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) })),
@@ -539,8 +574,8 @@ export default function Fisco() {
                     </thead>
                     <tbody>
                       <tr className="border-b border-border/50">
-                        <td className="py-2.5 px-4">genesis</td>
-                        <td className="py-2.5 px-4">BÓSIM</td>
+                        <td className="py-2.5 px-4">{(() => { const exs = [...new Set((report?.section_b || []).map(r => r.exchange))]; return exs.length > 0 ? exs.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(" + ") : "Kraken + RevolutX"; })()}</td>
+                        <td className="py-2.5 px-4">Cuenta Principal</td>
                         <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
                         <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
                         <td className={`py-2.5 px-4 text-right font-mono font-bold ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
