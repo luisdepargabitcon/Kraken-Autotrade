@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-02-25 — FEAT: Observabilidad D2/MINI-B en PAIR_DECISION_TRACE
+
+### Resumen
+Enriquecimiento del log `PAIR_DECISION_TRACE` con campos diagnósticos `spreadDiag` y `timingDiag` para validar D2 (MarkupTracker/spread) y MINI-B (staleness/chase) sin necesidad de señal BUY activa.
+
+### Campos Añadidos
+- **`spreadDiag`**: `{ markupSource, markupPct, markupSamples, markupEma }` — muestra la fuente de markup (fixed/dynamic), el porcentaje aplicado, muestras en EMA y valor EMA actual.
+- **`timingDiag`**: `{ candleAgeSec, lastCandleCloseIso }` — edad en segundos de la última vela cerrada y su timestamp ISO.
+
+### Validación (2026-02-25 13:46–13:52 UTC)
+- 24 trazas analizadas (12 scans × 2 pares): **100% con campos presentes**
+- `markupSource=fixed`, `markupPct=0.8`, `markupSamples=0` → correcto (sin fills recientes)
+- `candleAgeSec` crece ~30s entre scans → coherente con ciclo de 30s
+- 0 errores, 0 crasheos
+
+### Archivos Modificados
+- `server/services/tradingEngine.ts` — Interfaz `DecisionTraceContext` + método `emitPairDecisionTrace`
+
+### Commit
+- `ccf537e` — `feat(observability): enriquecer PAIR_DECISION_TRACE con spreadDiag y timingDiag`
+
+---
+
 ## 2026-02-24 — FIX: Verificación y corrección de errores Sistema FISCO
 
 ### Problemas Detectados y Corregidos
