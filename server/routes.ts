@@ -47,6 +47,8 @@ export async function registerRoutes(
     tradingEngine,
     getTradingEngine: () => tradingEngine,
     setTradingEngine: (engine: TradingEngine) => { tradingEngine = engine; },
+    krakenService,
+    revolutxService,
   };
 
   // Health check endpoint - MUST be registered before any other routes
@@ -897,6 +899,12 @@ export async function registerRoutes(
   registerFiscoRoutes(app, routerDeps);
 
   // ============================================================
+  // FISCO ALERTS ENDPOINTS (new)
+  // ============================================================
+  const { registerFiscoAlertsRoutes } = await import('./routes/fiscoAlerts.routes');
+  registerFiscoAlertsRoutes(app, routerDeps);
+
+  // ============================================================
   // TEST & DEBUG ENDPOINTS (modularized)
   // ============================================================
   const { registerTestRoutes } = await import('./routes/test.routes');
@@ -916,6 +924,17 @@ export async function registerRoutes(
   // ============================================
   const { registerBackupRoutes } = await import('./routes/backups.routes');
   await registerBackupRoutes(app, routerDeps);
+
+  // ============================================
+  // FISCO SCHEDULER INITIALIZATION
+  // ============================================
+  try {
+    const { fiscoScheduler } = await import('./services/FiscoScheduler');
+    fiscoScheduler.initialize();
+    console.log('[startup] FISCO Scheduler initialized successfully');
+  } catch (error: any) {
+    console.error('[startup] Failed to initialize FISCO Scheduler:', error);
+  }
 
   // === AUTO-REBUILD P&L ON STARTUP (background, non-blocking) ===
   setTimeout(async () => {

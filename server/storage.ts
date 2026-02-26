@@ -30,6 +30,11 @@ import {
   type AppliedTrade,
   type OrderIntent,
   type InsertOrderIntent,
+  // FISCO types
+  type FiscoAlertConfigRow,
+  type FiscoSyncHistoryRow,
+  type InsertFiscoAlertConfig,
+  type InsertFiscoSyncHistory,
   botConfig as botConfigTable,
   trades as tradesTable,
   appliedTrades as appliedTradesTable,
@@ -46,7 +51,10 @@ import {
   trainingTrades as trainingTradesTable,
   orderIntents as orderIntentsTable,
   hybridReentryWatches as hybridReentryWatchesTable,
-  alertThrottle as alertThrottleTable
+  alertThrottle as alertThrottleTable,
+  // FISCO tables
+  fiscoAlertConfig,
+  fiscoSyncHistory
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -257,6 +265,18 @@ export interface IStorage {
   upsertAlertThrottle(key: string, timestamp: number): Promise<void>;
   deleteAlertThrottleByPrefix(prefix: string): Promise<number>;
   loadAlertThrottles(prefix?: string): Promise<Map<string, number>>;
+
+  // FISCO Alert Configuration
+  getFiscoAlertConfig(chatId: string): Promise<FiscoAlertConfigRow | undefined>;
+  createFiscoAlertConfig(config: InsertFiscoAlertConfig): Promise<FiscoAlertConfigRow>;
+  updateFiscoAlertConfig(chatId: string, updates: Partial<InsertFiscoAlertConfig>): Promise<FiscoAlertConfigRow>;
+  deleteFiscoAlertConfig(chatId: string): Promise<void>;
+
+  // FISCO Sync History
+  getFiscoSyncHistory(limit?: number): Promise<FiscoSyncHistoryRow[]>;
+  getFiscoSyncByRunId(runId: string): Promise<FiscoSyncHistoryRow | undefined>;
+  createFiscoSyncHistory(history: InsertFiscoSyncHistory): Promise<FiscoSyncHistoryRow>;
+  updateFiscoSyncHistory(runId: string, updates: Partial<FiscoSyncHistoryRow>): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2526,6 +2546,68 @@ export class DatabaseStorage implements IStorage {
       map.set(row.key, row.lastAlertAt.getTime());
     }
     return map;
+  }
+
+  // === FISCO ALERT CONFIGURATION ===
+
+  async getFiscoAlertConfig(chatId: string): Promise<FiscoAlertConfigRow | undefined> {
+    const [row] = await db.select().from(fiscoAlertConfig)
+      .where(eq(fiscoAlertConfig.chatId, chatId))
+      .limit(1);
+    return row;
+  }
+
+  async createFiscoAlertConfig(config: InsertFiscoAlertConfig): Promise<FiscoAlertConfigRow> {
+    const [row] = await db.insert(fiscoAlertConfig)
+      .values(config)
+      .returning();
+    return row;
+  }
+
+  async updateFiscoAlertConfig(chatId: string, updates: Partial<InsertFiscoAlertConfig>): Promise<FiscoAlertConfigRow> {
+    const [row] = await db.update(fiscoAlertConfig)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(fiscoAlertConfig.chatId, chatId))
+      .returning();
+    if (!row) {
+      throw new Error(`FISCO alert config not found for chat ${chatId}`);
+    }
+    return row;
+  }
+
+  async deleteFiscoAlertConfig(chatId: string): Promise<void> {
+    await db.delete(fiscoAlertConfig)
+      .where(eq(fiscoAlertConfig.chatId, chatId));
+  }
+
+  // === FISCO SYNC HISTORY ===
+
+  async getFiscoSyncHistory(limit: number = 50): Promise<FiscoSyncHistoryRow[]> {
+    return await db.select()
+      .from(fiscoSyncHistory)
+      .orderBy(desc(fiscoSyncHistory.startedAt))
+      .limit(limit);
+  }
+
+  async getFiscoSyncByRunId(runId: string): Promise<FiscoSyncHistoryRow | undefined> {
+    const [row] = await db.select()
+      .from(fiscoSyncHistory)
+      .where(eq(fiscoSyncHistory.runId, runId))
+      .limit(1);
+    return row;
+  }
+
+  async createFiscoSyncHistory(history: InsertFiscoSyncHistory): Promise<FiscoSyncHistoryRow> {
+    const [row] = await db.insert(fiscoSyncHistory)
+      .values(history)
+      .returning();
+    return row;
+  }
+
+  async updateFiscoSyncHistory(runId: string, updates: Partial<FiscoSyncHistoryRow>): Promise<void> {
+    await db.update(fiscoSyncHistory)
+      .set(updates)
+      .where(eq(fiscoSyncHistory.runId, runId));
   }
 }
 

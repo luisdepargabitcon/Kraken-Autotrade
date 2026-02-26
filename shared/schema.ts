@@ -300,6 +300,35 @@ export const telegramChats = pgTable("telegram_chats", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// FISCO Alert Configuration Table
+export const fiscoAlertConfig = pgTable("fisco_alert_config", {
+  id: serial("id").primaryKey(),
+  chatId: text("chat_id").notNull().unique(),
+  // Alert toggles
+  syncDailyEnabled: boolean("sync_daily_enabled").notNull().default(true),
+  syncManualEnabled: boolean("sync_manual_enabled").notNull().default(true),
+  reportGeneratedEnabled: boolean("report_generated_enabled").notNull().default(true),
+  errorSyncEnabled: boolean("error_sync_enabled").notNull().default(true),
+  // Notification preferences
+  notifyAlways: boolean("notify_always").notNull().default(false), // Notificar siempre vs solo si hay cambios
+  summaryThreshold: integer("summary_threshold").notNull().default(30), // >30 ops = resumen
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// FISCO Sync History
+export const fiscoSyncHistory = pgTable("fisco_sync_history", {
+  id: serial("id").primaryKey(),
+  runId: text("run_id").notNull().unique(),
+  mode: text("mode").notNull(), // 'auto' | 'manual'
+  triggeredBy: text("triggered_by"), // 'scheduler' | 'ui_button' | 'telegram_command'
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  status: text("status").notNull().default('running'), // 'running' | 'completed' | 'failed'
+  resultsJson: jsonb("results_json"), // Estadísticas por exchange
+  errorJson: jsonb("error_json"),
+});
+
 export const alertPreferencesSchema = z.object({
   trade_buy: z.boolean().optional(),
   trade_sell: z.boolean().optional(),
@@ -316,9 +345,42 @@ export const alertPreferencesSchema = z.object({
   error_nonce: z.boolean().optional(),
   balance_exposure: z.boolean().optional(),
   heartbeat_periodic: z.boolean().optional(),
+  // FISCO alerts
+  fisco_sync_daily: z.boolean().optional(),
+  fisco_sync_manual: z.boolean().optional(),
+  fisco_report_generated: z.boolean().optional(),
+  fisco_error_sync: z.boolean().optional(),
 });
 
 export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;
+
+// FISCO Alert Config Schema
+export const fiscoAlertConfigSchema = z.object({
+  syncDailyEnabled: z.boolean(),
+  syncManualEnabled: z.boolean(),
+  reportGeneratedEnabled: z.boolean(),
+  errorSyncEnabled: z.boolean(),
+  notifyAlways: z.boolean(),
+  summaryThreshold: z.number().min(1).max(1000),
+});
+
+export type FiscoAlertConfig = z.infer<typeof fiscoAlertConfigSchema>;
+
+// FISCO Sync Result Schema
+export const fiscoSyncResultSchema = z.object({
+  exchange: z.string(),
+  status: z.enum(['success', 'warning', 'error']),
+  tradesImported: z.number(),
+  depositsImported: z.number(),
+  withdrawalsImported: z.number(),
+  stakingRewardsImported: z.number(),
+  totalOperations: z.number(),
+  assetsAffected: z.array(z.string()),
+  error: z.string().optional(),
+  lastSyncAt: z.string().optional(),
+});
+
+export type FiscoSyncResult = z.infer<typeof fiscoSyncResultSchema>;
 
 export const botEvents = pgTable("bot_events", {
   id: serial("id").primaryKey(),
@@ -619,6 +681,26 @@ export const alertThrottle = pgTable("alert_throttle", {
 });
 
 export type AlertThrottleRow = typeof alertThrottle.$inferSelect;
+
+// Insert schemas for FISCO tables
+export const insertFiscoAlertConfigSchema = createInsertSchema(fiscoAlertConfig).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  chatId: z.string(),
+});
+
+export const insertFiscoSyncHistorySchema = createInsertSchema(fiscoSyncHistory).omit({
+  id: true,
+  completedAt: true,
+});
+
+// Export types for FISCO tables
+export type FiscoAlertConfigRow = typeof fiscoAlertConfig.$inferSelect;
+export type FiscoSyncHistoryRow = typeof fiscoSyncHistory.$inferSelect;
+export type InsertFiscoAlertConfig = z.infer<typeof insertFiscoAlertConfigSchema>;
+export type InsertFiscoSyncHistory = z.infer<typeof insertFiscoSyncHistorySchema>;
 
 // ============================================================
 // FISCO: Fiscal Control Tables (exchange-only data)

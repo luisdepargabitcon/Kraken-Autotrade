@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import type { TradingEngine } from "../services/tradingEngine";
+import { krakenService } from "../services/kraken";
+import { revolutXService } from "../services/exchanges/RevolutXService";
 
 /**
  * Shared dependencies injected into route modules.
@@ -9,6 +11,8 @@ export interface RouterDeps {
   tradingEngine: TradingEngine | null;
   getTradingEngine: () => TradingEngine | null;
   setTradingEngine: (engine: TradingEngine) => void;
+  krakenService: typeof krakenService;
+  revolutxService: typeof revolutXService;
 }
 
 /**

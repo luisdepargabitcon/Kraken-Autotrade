@@ -5,6 +5,53 @@
 
 ---
 
+## 2026-02-26 — FEAT: Módulo FISCO Expandido (Alertas Telegram + Sync Automático + Informe → Telegram)
+
+### Resumen
+Ampliación completa del módulo FISCO para:
+1. Alertas Telegram configurables desde la UI (toggles + canal destino)
+2. Sincronización automática diaria Exchange → Bot a las 08:00 (Europe/Madrid)
+3. Botón UI + comando Telegram `/informe_fiscal` para: sync → generar informe → enviar a Telegram
+4. **REGLA CRÍTICA**: El informe fiscal usa EXACTAMENTE la misma plantilla existente (`generateBit2MePDF`), sin cambios
+
+### Nuevos Archivos Creados
+- `server/services/FiscoSyncService.ts` — Servicio unificado de sincronización para todos los exchanges (Kraken + RevolutX). Importa trades, depósitos, retiros, staking. Guarda historial en DB con runId/mode/status.
+- `server/services/FiscoTelegramNotifier.ts` — Envío de alertas configurables. Tipos: sync_daily, sync_manual, report_generated, sync_error. Mensajes HTML profesionales con emojis, resumen/detalle según umbral (>30 ops = resumen).
+- `server/services/FiscoScheduler.ts` — Job cron diario a las 08:00 Europe/Madrid. Ejecuta sync completo y envía alerta. Singleton con initialize/shutdown.
+- `server/routes/fiscoAlerts.routes.ts` — Endpoints API: GET/PUT alertas config, POST sync manual, POST generar informe, GET sync status/history, GET health check.
+
+### Archivos Modificados
+- `shared/schema.ts` — Nuevas tablas: `fisco_alert_config` (toggles alertas, chat destino, umbral), `fisco_sync_history` (historial syncs con runId). Tipos Zod + insert schemas. AlertPreferences extendido con alertas FISCO.
+- `server/storage.ts` — Interfaz IStorage extendida + implementación DatabaseStorage: CRUD para fisco_alert_config y fisco_sync_history.
+- `server/routes.ts` — Registro de rutas fiscoAlerts + inicialización del FiscoScheduler en startup.
+- `server/routes/types.ts` — RouterDeps extendido con krakenService y revolutxService.
+- `server/services/telegram.ts` — Nuevos comandos: `/informe_fiscal`, `/fiscal`, `/reporte`, `/impuestos`. Control de acceso (solo chat configurado). Pipeline: sync → generar informe real → enviar.
+- `client/src/pages/Fisco.tsx` — Nuevo botón "Informe → Telegram" (verde, icono Send). Mutación `generateAndSend` que llama a `/api/fisco/report/generate`. Estados: Generando/Enviado/Error.
+
+### Correcciones de Auditoría (bugs detectados y corregidos)
+1. **FiscoSyncService**: Campos `rawJson`/`raw` corregidos a `rawData` + `pair` (campos reales de NormalizedOperation). Método `getOrderHistory` corregido a `getHistoricalOrders` (método real de RevolutXService). Eliminado `updatedAt` de fiscoSyncHistory (no existe en schema).
+2. **FiscoTelegramNotifier**: `sendTelegramMessage` corregido a `telegramService.sendToChat()` (firma real). `(storage as any).db` corregido a importar `db` directamente.
+3. **FiscoScheduler**: Cron `'0 7 * * *'` corregido a `'0 8 * * *'` con timezone Europe/Madrid (el timezone ya maneja la hora directamente).
+4. **generateExistingFiscalReport**: Mock HTML reemplazado por llamada real a `/api/fisco/annual-report` + generación HTML idéntica a la plantilla del frontend.
+5. **Schema**: `insertFiscoSyncHistorySchema` corregido para permitir `startedAt`.
+
+### Endpoints API Nuevos
+- `GET /api/fisco/alerts/config` — Obtener configuración alertas FISCO
+- `PUT /api/fisco/alerts/config` — Actualizar configuración
+- `POST /api/fisco/sync/manual` — Sincronización manual (async, devuelve runId)
+- `GET /api/fisco/sync/:runId` — Estado de sync por runId
+- `GET /api/fisco/sync/history` — Historial de sincronizaciones
+- `POST /api/fisco/report/generate` — Pipeline completo: sync → report → telegram
+- `GET /api/fisco/report/existing` — Obtener informe sin sincronizar
+- `GET /api/fisco/alerts/health` — Health check de servicios FISCO
+
+### Comandos Telegram Nuevos
+- `/informe_fiscal` — Pipeline completo (sync + report + envío)
+- `/fiscal`, `/reporte`, `/impuestos` — Alias del anterior
+- Control de acceso: solo chat por defecto configurado
+
+---
+
 ## 2026-02-25 — FIX: Correcciones PDF Fiscal (branding, datos, normalización, 2024)
 
 ### Cambios Implementados

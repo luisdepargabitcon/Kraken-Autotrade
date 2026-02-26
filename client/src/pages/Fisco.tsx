@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
   AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X,
-  CalendarIcon, Plus, Minus
+  CalendarIcon, Plus, Minus, Send
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -383,6 +383,23 @@ export default function Fisco() {
 
   const isRunning = runPipeline.isPending;
 
+  // --- Generate fiscal report + sync + send to Telegram ---
+  const generateAndSend = useMutation({
+    mutationFn: async () => {
+      const resp = await fetch("/api/fisco/report/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: parseInt(selectedYear), exchange: selectedExchange || undefined }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+      return resp.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco"] });
+    },
+  });
+  const isSending = generateAndSend.isPending;
+
   // --- Options ---
   // Always show years from 2024 to current, plus any additional years from DB
   const currentYear = new Date().getFullYear();
@@ -481,6 +498,23 @@ export default function Fisco() {
                 className="gap-2 h-11 bg-blue-600 hover:bg-blue-700"
               >
                 <Download className="h-4 w-4" /> Generar PDF
+              </Button>
+
+              <Button
+                onClick={() => generateAndSend.mutate()}
+                disabled={isSending || isRunning}
+                className="gap-2 h-11 bg-emerald-600 hover:bg-emerald-700"
+                title="Sincroniza exchanges, genera informe fiscal y lo envía a Telegram"
+              >
+                {isSending ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" /> Generando...</>
+                ) : generateAndSend.isSuccess ? (
+                  <><Send className="h-4 w-4" /> Enviado ✓</>
+                ) : generateAndSend.isError ? (
+                  <><AlertTriangle className="h-4 w-4" /> Error</>
+                ) : (
+                  <><Send className="h-4 w-4" /> Informe → Telegram</>
+                )}
               </Button>
             </div>
           </div>
