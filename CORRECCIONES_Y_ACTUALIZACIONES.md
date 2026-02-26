@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-02-26 — FEAT: Panel UI Alertas FISCO + Fixes críticos de rutas
+
+### Cambios Implementados
+
+1. **Nueva tab "Alertas Telegram" en Fisco.tsx**: Panel completo con toggles Switch para activar/desactivar cada tipo de alerta (sync diaria, sync manual, informe generado, errores). Incluye preferencias de notificación (notificar siempre, umbral de resumen). Guardado automático al cambiar cada toggle.
+2. **Historial de sincronización**: Tabla con fecha, modo, origen, estado y duración de cada sync. Botón "Sync Manual" integrado.
+3. **Card info comandos Telegram**: Muestra los 4 comandos disponibles (`/informe_fiscal`, `/fiscal`, `/reporte`, `/impuestos`).
+4. **FIX endpoint PUT `/api/fisco/alerts/config`**: Cambiado de validación full-schema a partial update (soporta enviar solo un campo). Upsert automático con defaults.
+5. **FIX orden de rutas**: `/api/fisco/sync/history` movida ANTES de `/api/fisco/sync/:runId` para evitar que Express capture "history" como parámetro `:runId`.
+
+### Archivos Modificados
+- `client/src/pages/Fisco.tsx` — Tab "Alertas Telegram" completa (toggles, historial, comandos info)
+- `server/routes/fiscoAlerts.routes.ts` — PUT partial update + orden correcto de rutas
+
+---
+
 ## 2026-02-26 — FEAT: Módulo FISCO Expandido (Alertas Telegram + Sync Automático + Informe → Telegram)
 
 ### Resumen

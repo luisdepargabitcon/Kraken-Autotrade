@@ -57,7 +57,7 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
     }
   });
 
-  // Actualizar configuración de alertas FISCO
+  // Actualizar configuración de alertas FISCO (partial update)
   app.put("/api/fisco/alerts/config", async (req, res) => {
     try {
       const defaultChat = await storage.getDefaultChat();
@@ -65,11 +65,16 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
         return res.status(404).json({ error: "No default Telegram chat configured" });
       }
 
-      // Validar datos de entrada
-      const validatedData = insertFiscoAlertConfigSchema.parse({
-        ...req.body,
-        chatId: defaultChat.chatId
+      // Partial update schema — only validate fields that are present
+      const partialSchema = z.object({
+        syncDailyEnabled: z.boolean().optional(),
+        syncManualEnabled: z.boolean().optional(),
+        reportGeneratedEnabled: z.boolean().optional(),
+        errorSyncEnabled: z.boolean().optional(),
+        notifyAlways: z.boolean().optional(),
+        summaryThreshold: z.number().int().min(1).max(500).optional(),
       });
+      const updates = partialSchema.parse(req.body);
 
       // Upsert configuración
       const existing = await db
@@ -80,17 +85,26 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
 
       let result;
       if (existing[0]) {
-        // Actualizar existente
+        // Merge partial updates with existing
         result = await db
           .update(fiscoAlertConfig)
-          .set({ ...validatedData, updatedAt: new Date() })
+          .set({ ...updates, updatedAt: new Date() })
           .where(eq(fiscoAlertConfig.chatId, defaultChat.chatId))
           .returning();
       } else {
-        // Crear nueva
+        // Create new with defaults + partial overrides
+        const defaults = {
+          chatId: defaultChat.chatId,
+          syncDailyEnabled: true,
+          syncManualEnabled: true,
+          reportGeneratedEnabled: true,
+          errorSyncEnabled: true,
+          notifyAlways: false,
+          summaryThreshold: 30,
+        };
         result = await db
           .insert(fiscoAlertConfig)
-          .values(validatedData)
+          .values({ ...defaults, ...updates })
           .returning();
       }
 
@@ -146,6 +160,18 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
     }
   });
 
+  // Obtener historial de sincronizaciones (MUST be before :runId route)
+  app.get("/api/fisco/sync/history", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const history = await fiscoSyncService.getSyncHistory(limit);
+      res.json(history);
+    } catch (error: any) {
+      console.error('[FISCO Alerts] Error getting sync history:', error);
+      res.status(500).json({ error: "Failed to get sync history" });
+    }
+  });
+
   // Obtener estado de sincronización por runId
   app.get("/api/fisco/sync/:runId", async (req, res) => {
     try {
@@ -160,18 +186,6 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
     } catch (error: any) {
       console.error('[FISCO Alerts] Error getting sync status:', error);
       res.status(500).json({ error: "Failed to get sync status" });
-    }
-  });
-
-  // Obtener historial de sincronizaciones
-  app.get("/api/fisco/sync/history", async (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 50;
-      const history = await fiscoSyncService.getSyncHistory(limit);
-      res.json(history);
-    } catch (error: any) {
-      console.error('[FISCO Alerts] Error getting sync history:', error);
-      res.status(500).json({ error: "Failed to get sync history" });
     }
   });
 

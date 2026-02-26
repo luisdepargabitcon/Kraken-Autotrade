@@ -7,10 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
   AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X,
-  CalendarIcon, Plus, Minus, Send
+  CalendarIcon, Plus, Minus, Send, Bell, Settings2, Clock, Zap, FileWarning
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -72,6 +74,29 @@ interface DisposalDetail {
   asset: string;
   pair: string;
   exchange: string;
+}
+
+interface FiscoAlertConfig {
+  id?: number;
+  chatId: string;
+  syncDailyEnabled: boolean;
+  syncManualEnabled: boolean;
+  reportGeneratedEnabled: boolean;
+  errorSyncEnabled: boolean;
+  notifyAlways: boolean;
+  summaryThreshold: number;
+}
+
+interface FiscoSyncHistoryItem {
+  id: number;
+  runId: string;
+  mode: string;
+  triggeredBy: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  resultsJson: any;
+  errorJson: any;
 }
 
 // ============================================================
@@ -400,6 +425,47 @@ export default function Fisco() {
   });
   const isSending = generateAndSend.isPending;
 
+  // --- FISCO Alert Config ---
+  const alertConfigQ = useQuery<FiscoAlertConfig>({
+    queryKey: ["/api/fisco/alerts/config"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "alertas",
+  });
+
+  const updateAlertConfig = useMutation({
+    mutationFn: async (config: Partial<FiscoAlertConfig>) => {
+      const resp = await fetch("/api/fisco/alerts/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+      return resp.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco/alerts/config"] });
+    },
+  });
+
+  const syncHistoryQ = useQuery<FiscoSyncHistoryItem[]>({
+    queryKey: ["/api/fisco/sync/history"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "alertas",
+  });
+
+  const triggerManualSync = useMutation({
+    mutationFn: async () => {
+      const resp = await fetch("/api/fisco/sync/manual", { method: "POST" });
+      if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+      return resp.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco/sync/history"] });
+    },
+  });
+
   // --- Options ---
   // Always show years from 2024 to current, plus any additional years from DB
   const currentYear = new Date().getFullYear();
@@ -584,9 +650,10 @@ export default function Fisco() {
 
         {/* ========== TABS STRUCTURE ========== */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="resumen">Resumen Fiscal</TabsTrigger>
-            <TabsTrigger value="anexo">Anexo: Extracto de Transacciones</TabsTrigger>
+            <TabsTrigger value="anexo">Anexo: Transacciones</TabsTrigger>
+            <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
           </TabsList>
 
           {/* ==================== TAB: RESUMEN FISCAL ==================== */}
@@ -907,6 +974,265 @@ export default function Fisco() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* ==================== TAB: ALERTAS TELEGRAM ==================== */}
+          <TabsContent value="alertas" className="space-y-5">
+
+            {/* Alert Toggles Card */}
+            <Card className="border border-border">
+              <CardHeader className="py-3 px-5 bg-blue-500/10 border-b border-blue-500/20">
+                <CardTitle className="flex items-center gap-2 text-sm text-blue-400">
+                  <Settings2 className="h-4 w-4" />
+                  Configuración de Alertas Fiscales por Telegram
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-5">
+                {alertConfigQ.isLoading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
+                    <p className="text-xs text-muted-foreground mt-2">Cargando configuración...</p>
+                  </div>
+                ) : alertConfigQ.isError ? (
+                  <div className="text-center py-6 text-muted-foreground text-sm">
+                    <AlertTriangle className="h-5 w-5 mx-auto mb-2 text-yellow-400" />
+                    No hay configuración de alertas aún. Se creará automáticamente al activar una alerta.
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Toggle rows */}
+                    <div className="grid gap-4">
+                      {/* Sync Daily */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-emerald-500/10">
+                            <Clock className="h-4 w-4 text-emerald-400" />
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Sincronización diaria (08:00)</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando el cron diario sincroniza los exchanges</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={alertConfigQ.data?.syncDailyEnabled ?? true}
+                          onCheckedChange={(checked) => updateAlertConfig.mutate({ syncDailyEnabled: checked })}
+                          disabled={updateAlertConfig.isPending}
+                        />
+                      </div>
+
+                      {/* Sync Manual */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-blue-500/10">
+                            <Zap className="h-4 w-4 text-blue-400" />
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Sincronización manual</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">Alerta al sincronizar manualmente desde UI o Telegram</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={alertConfigQ.data?.syncManualEnabled ?? true}
+                          onCheckedChange={(checked) => updateAlertConfig.mutate({ syncManualEnabled: checked })}
+                          disabled={updateAlertConfig.isPending}
+                        />
+                      </div>
+
+                      {/* Report Generated */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-purple-500/10">
+                            <FileText className="h-4 w-4 text-purple-400" />
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Informe fiscal generado</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando se genera y envía un informe fiscal</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={alertConfigQ.data?.reportGeneratedEnabled ?? true}
+                          onCheckedChange={(checked) => updateAlertConfig.mutate({ reportGeneratedEnabled: checked })}
+                          disabled={updateAlertConfig.isPending}
+                        />
+                      </div>
+
+                      {/* Error Sync */}
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-red-500/10">
+                            <FileWarning className="h-4 w-4 text-red-400" />
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Errores de sincronización</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando falla la sincronización de exchanges</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={alertConfigQ.data?.errorSyncEnabled ?? true}
+                          onCheckedChange={(checked) => updateAlertConfig.mutate({ errorSyncEnabled: checked })}
+                          disabled={updateAlertConfig.isPending}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Separator */}
+                    <div className="border-t border-border pt-4">
+                      <h4 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Preferencias de notificación</h4>
+                      <div className="grid gap-4">
+                        {/* Notify Always */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-yellow-500/10">
+                              <Bell className="h-4 w-4 text-yellow-400" />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Notificar siempre</Label>
+                              <p className="text-xs text-muted-foreground mt-0.5">Enviar alerta incluso si no hay operaciones nuevas</p>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={alertConfigQ.data?.notifyAlways ?? false}
+                            onCheckedChange={(checked) => updateAlertConfig.mutate({ notifyAlways: checked })}
+                            disabled={updateAlertConfig.isPending}
+                          />
+                        </div>
+
+                        {/* Summary Threshold */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-cyan-500/10">
+                              <Filter className="h-4 w-4 text-cyan-400" />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Umbral de resumen</Label>
+                              <p className="text-xs text-muted-foreground mt-0.5">Si hay más operaciones que este número, envía resumen en lugar de detalle</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={500}
+                              value={alertConfigQ.data?.summaryThreshold ?? 30}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                if (val >= 1 && val <= 500) updateAlertConfig.mutate({ summaryThreshold: val });
+                              }}
+                              className="w-20 h-9 px-2 rounded-md border border-border bg-background text-sm text-center font-mono"
+                            />
+                            <span className="text-xs text-muted-foreground">ops</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Save status */}
+                    {updateAlertConfig.isPending && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Guardando...</p>
+                    )}
+                    {updateAlertConfig.isSuccess && (
+                      <p className="text-xs text-green-400">✓ Configuración guardada</p>
+                    )}
+                    {updateAlertConfig.isError && (
+                      <p className="text-xs text-red-400">✗ Error al guardar: {(updateAlertConfig.error as Error).message}</p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Sync History Card */}
+            <Card className="border border-border">
+              <CardHeader className="py-3 px-5 bg-blue-500/10 border-b border-blue-500/20">
+                <CardTitle className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 text-blue-400">
+                    <Clock className="h-4 w-4" />
+                    Historial de Sincronización
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-8 text-xs"
+                    onClick={() => triggerManualSync.mutate()}
+                    disabled={triggerManualSync.isPending}
+                  >
+                    {triggerManualSync.isPending ? (
+                      <><Loader2 className="h-3 w-3 animate-spin" /> Sincronizando...</>
+                    ) : (
+                      <><RefreshCw className="h-3 w-3" /> Sync Manual</>
+                    )}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {syncHistoryQ.isLoading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
+                  </div>
+                ) : syncHistoryQ.data && syncHistoryQ.data.length > 0 ? (
+                  <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card z-10">
+                        <tr className="bg-blue-500/10">
+                          <th className="text-left py-2 px-3 text-blue-400 font-semibold text-[10px]">Fecha</th>
+                          <th className="text-left py-2 px-3 text-blue-400 font-semibold text-[10px]">Modo</th>
+                          <th className="text-left py-2 px-3 text-blue-400 font-semibold text-[10px]">Origen</th>
+                          <th className="text-center py-2 px-3 text-blue-400 font-semibold text-[10px]">Estado</th>
+                          <th className="text-right py-2 px-3 text-blue-400 font-semibold text-[10px]">Duración</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {syncHistoryQ.data.map((item) => {
+                          const duration = item.completedAt && item.startedAt
+                            ? ((new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime()) / 1000).toFixed(1) + "s"
+                            : "—";
+                          return (
+                            <tr key={item.id} className="border-b border-border/30 hover:bg-white/5">
+                              <td className="py-1.5 px-3 font-mono whitespace-nowrap">{fmtDate(item.startedAt)}</td>
+                              <td className="py-1.5 px-3 capitalize">{item.mode}</td>
+                              <td className="py-1.5 px-3 text-muted-foreground">{item.triggeredBy || "—"}</td>
+                              <td className="py-1.5 px-3 text-center">
+                                <Badge className={
+                                  item.status === "completed" ? "bg-green-500/20 text-green-400" :
+                                  item.status === "failed" ? "bg-red-500/20 text-red-400" :
+                                  "bg-yellow-500/20 text-yellow-400"
+                                }>
+                                  {item.status === "completed" ? "✓ OK" : item.status === "failed" ? "✗ Error" : "⟳ En curso"}
+                                </Badge>
+                              </td>
+                              <td className="py-1.5 px-3 text-right font-mono">{duration}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    Sin historial de sincronización aún.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Telegram Commands Info Card */}
+            <Card className="border border-dashed border-border">
+              <CardContent className="py-4 px-5">
+                <div className="flex items-start gap-3">
+                  <Send className="h-5 w-5 text-blue-400 mt-0.5 shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-foreground mb-1">Comandos Telegram disponibles</p>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground">
+                      <code className="font-mono">/informe_fiscal</code><span>Pipeline completo: sync + informe + envío</span>
+                      <code className="font-mono">/fiscal</code><span>Alias de /informe_fiscal</span>
+                      <code className="font-mono">/reporte</code><span>Alias de /informe_fiscal</span>
+                      <code className="font-mono">/impuestos</code><span>Alias de /informe_fiscal</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
           </TabsContent>
         </Tabs>
 
