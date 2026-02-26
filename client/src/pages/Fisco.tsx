@@ -1056,8 +1056,12 @@ export default function Fisco() {
                       )}
                     </div>
 
-                    {/* Toggle rows */}
-                    <div className="grid gap-4">
+                    {/* Toggle rows — disabled until a channel is selected */}
+                    {(() => { const noChannel = !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"; return (
+                    <div className={`grid gap-4 ${noChannel ? "opacity-50 pointer-events-none" : ""}`}>
+                      {noChannel && (
+                        <p className="text-xs text-yellow-400 -mb-2">Selecciona un canal arriba para poder configurar los toggles</p>
+                      )}
                       {/* Sync Daily */}
                       <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
                         <div className="flex items-center gap-3">
@@ -1072,7 +1076,7 @@ export default function Fisco() {
                         <Switch
                           checked={alertConfigQ.data?.syncDailyEnabled ?? true}
                           onCheckedChange={(checked) => updateAlertConfig.mutate({ syncDailyEnabled: checked })}
-                          disabled={updateAlertConfig.isPending}
+                          disabled={updateAlertConfig.isPending || noChannel}
                         />
                       </div>
 
@@ -1090,7 +1094,7 @@ export default function Fisco() {
                         <Switch
                           checked={alertConfigQ.data?.syncManualEnabled ?? true}
                           onCheckedChange={(checked) => updateAlertConfig.mutate({ syncManualEnabled: checked })}
-                          disabled={updateAlertConfig.isPending}
+                          disabled={updateAlertConfig.isPending || noChannel}
                         />
                       </div>
 
@@ -1108,7 +1112,7 @@ export default function Fisco() {
                         <Switch
                           checked={alertConfigQ.data?.reportGeneratedEnabled ?? true}
                           onCheckedChange={(checked) => updateAlertConfig.mutate({ reportGeneratedEnabled: checked })}
-                          disabled={updateAlertConfig.isPending}
+                          disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
                         />
                       </div>
 
@@ -1126,10 +1130,11 @@ export default function Fisco() {
                         <Switch
                           checked={alertConfigQ.data?.errorSyncEnabled ?? true}
                           onCheckedChange={(checked) => updateAlertConfig.mutate({ errorSyncEnabled: checked })}
-                          disabled={updateAlertConfig.isPending}
+                          disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
                         />
                       </div>
                     </div>
+                    ); })()}
 
                     {/* Separator */}
                     <div className="border-t border-border pt-4">
@@ -1149,7 +1154,7 @@ export default function Fisco() {
                           <Switch
                             checked={alertConfigQ.data?.notifyAlways ?? false}
                             onCheckedChange={(checked) => updateAlertConfig.mutate({ notifyAlways: checked })}
-                            disabled={updateAlertConfig.isPending}
+                            disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
                           />
                         </div>
 

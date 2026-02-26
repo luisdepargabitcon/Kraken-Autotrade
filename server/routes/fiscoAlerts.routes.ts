@@ -76,16 +76,16 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
       let targetChatId = updates.chatId;
       if (!targetChatId) {
         // Check if there's already a FISCO config in DB
-        const existingConfigs = await db.select().from(fiscoAlertConfig).limit(1);
-        if (existingConfigs[0]) {
-          targetChatId = existingConfigs[0].chatId;
-        } else {
-          // Fallback to default Telegram chat
-          const defaultChat = await storage.getDefaultChat();
-          if (!defaultChat) {
-            return res.status(400).json({ error: "Selecciona un canal de Telegram para alertas FISCO" });
+        try {
+          const existingConfigs = await db.select().from(fiscoAlertConfig).limit(1);
+          if (existingConfigs[0]) {
+            targetChatId = existingConfigs[0].chatId;
           }
-          targetChatId = defaultChat.chatId;
+        } catch (e: any) {
+          console.warn('[FISCO Alerts] Could not query fisco_alert_config:', e?.message);
+        }
+        if (!targetChatId) {
+          return res.status(400).json({ error: "Selecciona un canal de Telegram para alertas FISCO" });
         }
       }
 
