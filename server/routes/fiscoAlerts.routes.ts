@@ -29,28 +29,34 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   app.get("/api/fisco/alerts/config", async (req, res) => {
     try {
       const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) {
-        return res.status(404).json({ error: "No default Telegram chat configured" });
-      }
+      const chatId = defaultChat?.chatId || "not_configured";
 
       // Buscar configuración específica de FISCO para este chat
-      const configs = await db
-        .select()
-        .from(fiscoAlertConfig)
-        .where(eq(fiscoAlertConfig.chatId, defaultChat.chatId))
-        .limit(1);
+      let config: any = null;
+      if (defaultChat) {
+        try {
+          const configs = await db
+            .select()
+            .from(fiscoAlertConfig)
+            .where(eq(fiscoAlertConfig.chatId, chatId))
+            .limit(1);
+          config = configs[0] || null;
+        } catch (e: any) {
+          console.warn('[FISCO Alerts] DB query error (table may not exist yet):', e?.message);
+        }
+      }
 
-      const config = configs[0] || {
-        chatId: defaultChat.chatId,
+      // Return defaults if no config found
+      res.json(config || {
+        chatId,
         syncDailyEnabled: true,
         syncManualEnabled: true,
         reportGeneratedEnabled: true,
         errorSyncEnabled: true,
         notifyAlways: false,
-        summaryThreshold: 30
-      };
-
-      res.json(config);
+        summaryThreshold: 30,
+        _noDefaultChat: !defaultChat,
+      });
     } catch (error: any) {
       console.error('[FISCO Alerts] Error getting config:', error);
       res.status(500).json({ error: "Failed to get FISCO alerts config" });
@@ -165,10 +171,10 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
     try {
       const limit = parseInt(req.query.limit as string) || 50;
       const history = await fiscoSyncService.getSyncHistory(limit);
-      res.json(history);
+      res.json(history); // Returns [] if table doesn't exist yet
     } catch (error: any) {
-      console.error('[FISCO Alerts] Error getting sync history:', error);
-      res.status(500).json({ error: "Failed to get sync history" });
+      console.error('[FISCO Alerts] Error getting sync history:', error?.message || error);
+      res.json([]); // Graceful fallback — empty array instead of 500
     }
   });
 

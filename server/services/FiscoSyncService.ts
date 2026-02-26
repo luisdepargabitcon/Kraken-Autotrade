@@ -14,7 +14,7 @@ import {
   fiscoSyncHistory,
   fiscoOperations
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface SyncOptions {
@@ -374,11 +374,16 @@ export class FiscoSyncService {
    * Obtiene el historial de sincronizaciones
    */
   async getSyncHistory(limit: number = 50): Promise<FiscoSyncHistoryRow[]> {
-    return await db
-      .select()
-      .from(fiscoSyncHistory)
-      .orderBy(fiscoSyncHistory.startedAt)
-      .limit(limit);
+    try {
+      return await db
+        .select()
+        .from(fiscoSyncHistory)
+        .orderBy(desc(fiscoSyncHistory.startedAt))
+        .limit(limit);
+    } catch (error: any) {
+      console.error('[FiscoSyncService] getSyncHistory error:', error?.message || error);
+      return [];
+    }
   }
 
   /**
