@@ -93,21 +93,38 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
       const { chatId: _newChatId, ...toggleUpdates } = updates;
 
       // Upsert configuración
-      const existing = await db
-        .select()
-        .from(fiscoAlertConfig)
-        .limit(1);
+      let existing = null;
+      try {
+        existing = await db
+          .select()
+          .from(fiscoAlertConfig)
+          .limit(1);
+      } catch (dbError: any) {
+        console.error('[FISCO Alerts] DB query error (table may not exist):', dbError?.message || dbError);
+        return res.status(500).json({ 
+          error: "Database table not available. Please redeploy to create FISCO tables.",
+          details: dbError?.message 
+        });
+      }
 
       let result;
       if (existing[0]) {
         // Merge partial updates with existing — also update chatId if provided
         const setData: any = { ...toggleUpdates, updatedAt: new Date() };
         if (_newChatId) setData.chatId = _newChatId;
-        result = await db
-          .update(fiscoAlertConfig)
-          .set(setData)
-          .where(eq(fiscoAlertConfig.id, existing[0].id))
-          .returning();
+        try {
+          result = await db
+            .update(fiscoAlertConfig)
+            .set(setData)
+            .where(eq(fiscoAlertConfig.id, existing[0].id))
+            .returning();
+        } catch (updateError: any) {
+          console.error('[FISCO Alerts] UPDATE error:', updateError?.message || updateError);
+          return res.status(500).json({ 
+            error: "Failed to update FISCO config",
+            details: updateError?.message 
+          });
+        }
       } else {
         // Create new with defaults + partial overrides
         const defaults = {
@@ -119,19 +136,30 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
           notifyAlways: false,
           summaryThreshold: 30,
         };
-        result = await db
-          .insert(fiscoAlertConfig)
-          .values({ ...defaults, ...toggleUpdates })
-          .returning();
+        try {
+          result = await db
+            .insert(fiscoAlertConfig)
+            .values({ ...defaults, ...toggleUpdates })
+            .returning();
+        } catch (insertError: any) {
+          console.error('[FISCO Alerts] INSERT error:', insertError?.message || insertError);
+          return res.status(500).json({ 
+            error: "Failed to create FISCO config",
+            details: insertError?.message 
+          });
+        }
       }
 
       res.json(result[0]);
     } catch (error: any) {
-      console.error('[FISCO Alerts] Error updating config:', error);
+      console.error('[FISCO Alerts] Unexpected error updating config:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid config data", details: error.errors });
       }
-      res.status(500).json({ error: "Failed to update FISCO alerts config" });
+      res.status(500).json({ 
+        error: "Failed to update FISCO alerts config",
+        details: error?.message 
+      });
     }
   });
 
