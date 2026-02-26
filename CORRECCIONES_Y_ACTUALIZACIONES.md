@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-02-26 — FIX: Crash startup VPS (revolutxService undefined) + Auto-migración tablas FISCO
+
+### Problema
+La app crasheaba al iniciar en VPS con `ReferenceError: revolutxService is not defined` en `routes.ts`.
+
+### Causa Raíz
+En `routes.ts` línea 51, se usaba shorthand property `revolutxService` (minúscula x), pero el import real es `revolutXService` (mayúscula X). TypeScript no detecta el error porque la propiedad del interface `RouterDeps` se llama `revolutxService`, pero en runtime la variable `revolutxService` no existe — solo existe `revolutXService`.
+
+### Correcciones
+1. **FIX `routes.ts`**: Cambiado `revolutxService,` → `revolutxService: revolutXService,` (asignación explícita).
+2. **Auto-migración tablas FISCO en `script/migrate.ts`**: Añadidas migraciones `CREATE TABLE IF NOT EXISTS` para:
+   - `fisco_alert_config` — configuración de alertas por chat
+   - `fisco_sync_history` — historial de sincronizaciones
+   - `fisco_operations` — operaciones importadas de exchanges
+   - `fisco_lots` — lotes FIFO de compra
+   - `fisco_disposals` — ventas con ganancia/pérdida
+
+### Archivos Modificados
+- `server/routes.ts` — Fix asignación revolutxService
+- `script/migrate.ts` — Auto-creación tablas FISCO
+
+---
+
 ## 2026-02-26 — FEAT: Panel UI Alertas FISCO + Fixes críticos de rutas
 
 ### Cambios Implementados

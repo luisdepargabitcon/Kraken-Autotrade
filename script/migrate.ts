@@ -789,6 +789,105 @@ async function runMigration() {
       console.log("[migrate] Constraint note:", e);
     }
     
+    // ============================================================
+    // FISCO: Fiscal Control Tables
+    // ============================================================
+    console.log("[migrate] Ensuring fisco_alert_config table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_alert_config (
+        id SERIAL PRIMARY KEY,
+        chat_id TEXT NOT NULL UNIQUE,
+        sync_daily_enabled BOOLEAN NOT NULL DEFAULT true,
+        sync_manual_enabled BOOLEAN NOT NULL DEFAULT true,
+        report_generated_enabled BOOLEAN NOT NULL DEFAULT true,
+        error_sync_enabled BOOLEAN NOT NULL DEFAULT true,
+        notify_always BOOLEAN NOT NULL DEFAULT false,
+        summary_threshold INTEGER NOT NULL DEFAULT 30,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`,
+      "fisco_alert_config"
+    );
+
+    console.log("[migrate] Ensuring fisco_sync_history table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_sync_history (
+        id SERIAL PRIMARY KEY,
+        run_id TEXT NOT NULL UNIQUE,
+        mode TEXT NOT NULL,
+        triggered_by TEXT,
+        started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMP,
+        status TEXT NOT NULL DEFAULT 'running',
+        results_json JSONB,
+        error_json JSONB
+      )`,
+      "fisco_sync_history"
+    );
+
+    // fisco_operations may already exist from fisco.routes — ensure it does
+    console.log("[migrate] Ensuring fisco_operations table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_operations (
+        id SERIAL PRIMARY KEY,
+        exchange TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        op_type TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        amount DECIMAL(18,8) NOT NULL,
+        price_eur DECIMAL(18,8),
+        total_eur DECIMAL(18,8),
+        fee_eur DECIMAL(18,8) DEFAULT 0,
+        counter_asset TEXT,
+        pair TEXT,
+        executed_at TIMESTAMP NOT NULL,
+        raw_data JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(exchange, external_id)
+      )`,
+      "fisco_operations"
+    );
+
+    console.log("[migrate] Ensuring fisco_lots table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_lots (
+        id SERIAL PRIMARY KEY,
+        asset TEXT NOT NULL,
+        exchange TEXT NOT NULL,
+        quantity DECIMAL(18,8) NOT NULL,
+        remaining_qty DECIMAL(18,8) NOT NULL,
+        cost_eur DECIMAL(18,8) NOT NULL,
+        unit_cost_eur DECIMAL(18,8) NOT NULL,
+        fee_eur DECIMAL(18,8) DEFAULT 0,
+        acquired_at TIMESTAMP NOT NULL,
+        is_closed BOOLEAN NOT NULL DEFAULT false,
+        source_operation_id INTEGER REFERENCES fisco_operations(id),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`,
+      "fisco_lots"
+    );
+
+    console.log("[migrate] Ensuring fisco_disposals table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_disposals (
+        id SERIAL PRIMARY KEY,
+        sell_operation_id INTEGER NOT NULL REFERENCES fisco_operations(id),
+        lot_id INTEGER NOT NULL REFERENCES fisco_lots(id),
+        quantity DECIMAL(18,8) NOT NULL,
+        proceeds_eur DECIMAL(18,8) NOT NULL,
+        cost_basis_eur DECIMAL(18,8) NOT NULL,
+        gain_loss_eur DECIMAL(18,8) NOT NULL,
+        disposed_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`,
+      "fisco_disposals"
+    );
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

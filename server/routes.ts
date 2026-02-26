@@ -48,7 +48,7 @@ export async function registerRoutes(
     getTradingEngine: () => tradingEngine,
     setTradingEngine: (engine: TradingEngine) => { tradingEngine = engine; },
     krakenService,
-    revolutxService,
+    revolutxService: revolutXService,
   };
 
   // Health check endpoint - MUST be registered before any other routes
