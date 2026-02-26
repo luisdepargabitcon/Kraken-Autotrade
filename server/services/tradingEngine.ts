@@ -2255,9 +2255,9 @@ El bot ha pausado las operaciones de COMPRA.
       
       // Ajustar minSignalsRequired según régimen (modo scans)
       const baseMinSignalsScan = signal.minSignalsRequired ?? 5;
-      const adjustedMinSignalsScan = earlyRegime === "TRANSITION" 
-        ? Math.min(baseMinSignalsScan, 4) 
-        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsScan) : baseMinSignalsScan);
+      const adjustedMinSignalsScan = earlyRegime 
+        ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsScan) 
+        : baseMinSignalsScan;
       
       // Actualizar trace con señal raw + régime + signalsCount
       this.updatePairTrace(pair, {
@@ -2430,9 +2430,8 @@ El bot ha pausado las operaciones de COMPRA.
                 log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
-              // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
-              const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
-              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
+              // Adjust minSignals based on regime — unified via getRegimeMinSignals (respects dynamic preset)
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
               regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
@@ -3172,9 +3171,9 @@ El bot ha pausado las operaciones de COMPRA.
       
       // Pre-calcular adjustedMinSignals para régimen (usado en analyzeWithCandleStrategy)
       const baseMinSignalsForStrategy = 5; // Base para momentum
-      const adjustedMinSignalsForStrategy = earlyRegime === "TRANSITION" 
-        ? Math.min(baseMinSignalsForStrategy, 4) 
-        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsForStrategy) : baseMinSignalsForStrategy);
+      const adjustedMinSignalsForStrategy = earlyRegime 
+        ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignalsForStrategy) 
+        : baseMinSignalsForStrategy;
       
       // === ROUTER: Select strategy based on regime ===
       let selectedStrategyId = `momentum_candles_${timeframe}`;
@@ -3224,9 +3223,9 @@ El bot ha pausado las operaciones de COMPRA.
       
       // Ajustar minSignalsRequired según régimen (antes de guardar en trace/cache)
       const baseMinSignals = signal.minSignalsRequired ?? 5;
-      const adjustedMinSignals = earlyRegime === "TRANSITION" 
-        ? Math.min(baseMinSignals, 4) 
-        : (earlyRegime ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) : baseMinSignals);
+      const adjustedMinSignals = earlyRegime 
+        ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) 
+        : baseMinSignals;
       
       // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
       this.updatePairTrace(pair, {
@@ -3442,9 +3441,8 @@ El bot ha pausado las operaciones de COMPRA.
                 log(`[ROUTER] ${pair}: TRANSITION regime - allowing entry with sizing ${(transitionSizeFactor * 100).toFixed(0)}%`, "trading");
               }
               
-              // Adjust minSignals based on regime (RANGE = 6, TREND = 5, TRANSITION = 4)
-              const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
-              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
+              // Adjust minSignals based on regime — unified via getRegimeMinSignals (respects dynamic preset)
+              requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
               regimeInfo = ` [Régimen: ${regimeAnalysis.regime}]`;
             } catch (regimeError: any) {
               // On regime detection error, fallback to base SMART_GUARD (5 signals)
@@ -5809,8 +5807,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
             const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
             regime = regimeAnalysis.regime;
             regimeReason = regimeAnalysis.reason;
-            const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
-            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
           } catch (err) {
             regime = "ERROR";
             regimeReason = "Error obteniendo régimen";
@@ -5861,8 +5858,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
             const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
             regime = regimeAnalysis.regime;
             regimeReason = regimeAnalysis.reason;
-            const baseForRegime = regimeAnalysis.regime === "TRANSITION" ? 4 : 5;
-            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, baseForRegime);
+            requiredSignals = this.getRegimeMinSignals(regimeAnalysis.regime, 5);
           } catch (err) {
             regime = "ERROR";
             regimeReason = "Error obteniendo régimen";
