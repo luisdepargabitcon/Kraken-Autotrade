@@ -19,11 +19,19 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 
-// Ensure FISCO tables exist (self-healing if migration didn't run)
+// Ensure FISCO tables exist with correct schema (self-healing)
 let fiscoTablesEnsured = false;
 async function ensureFiscoTables() {
   if (fiscoTablesEnsured) return;
   try {
+    // Check if fisco_alert_config has correct columns — if not, recreate
+    try {
+      await db.execute(sql`SELECT sync_daily_enabled FROM fisco_alert_config LIMIT 0`);
+    } catch {
+      // Column doesn't exist or table doesn't exist — drop and recreate
+      console.log('[FISCO] Recreating fisco_alert_config with correct schema...');
+      await db.execute(sql`DROP TABLE IF EXISTS fisco_alert_config CASCADE`);
+    }
     await db.execute(sql`CREATE TABLE IF NOT EXISTS fisco_alert_config (
       id SERIAL PRIMARY KEY,
       chat_id TEXT NOT NULL UNIQUE,
@@ -36,6 +44,14 @@ async function ensureFiscoTables() {
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     )`);
+
+    // Same for fisco_sync_history
+    try {
+      await db.execute(sql`SELECT run_id FROM fisco_sync_history LIMIT 0`);
+    } catch {
+      console.log('[FISCO] Recreating fisco_sync_history with correct schema...');
+      await db.execute(sql`DROP TABLE IF EXISTS fisco_sync_history CASCADE`);
+    }
     await db.execute(sql`CREATE TABLE IF NOT EXISTS fisco_sync_history (
       id SERIAL PRIMARY KEY,
       run_id TEXT NOT NULL UNIQUE,
@@ -47,8 +63,9 @@ async function ensureFiscoTables() {
       results_json JSONB,
       error_json JSONB
     )`);
+
     fiscoTablesEnsured = true;
-    console.log('[FISCO] Tables ensured');
+    console.log('[FISCO] Tables ensured with correct schema');
   } catch (e: any) {
     console.error('[FISCO] ensureFiscoTables error:', e?.message);
   }
