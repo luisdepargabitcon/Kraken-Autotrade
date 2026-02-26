@@ -12,10 +12,8 @@ import {
   escapeHtml, 
   formatSpanishDate 
 } from "./telegram/templates";
-import { storage } from "../storage";
 import { telegramService } from "./telegram";
 import { db } from "../db";
-import { eq } from "drizzle-orm";
 import { fiscoAlertConfig } from "@shared/schema";
 
 export interface SyncAlertOptions {
@@ -238,29 +236,22 @@ export class FiscoTelegramNotifier {
   }
 
   /**
-   * Envía mensaje al chat configurado
+   * Envía mensaje al chat configurado en FISCO alert config
    */
   private async sendToConfiguredChat(message: string, alertType: string): Promise<void> {
     try {
-      // Obtener chat por defecto o el configurado para FISCO
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) {
-        console.warn(`[FISCO Telegram] No default chat configured for ${alertType} alert`);
+      const config = await this.getAlertConfig();
+      const chatId = config?.chatId;
+      if (!chatId || chatId === 'not_configured') {
+        console.warn(`[FISCO Telegram] No FISCO chat configured for ${alertType} alert`);
         return;
       }
 
-      // Verificar si el tipo de alerta está habilitado en las preferencias del chat
-      const preferences = defaultChat.alertPreferences as any || {};
-      if (preferences[`fisco_${alertType}`] === false) {
-        console.log(`[FISCO Telegram] Alert type ${alertType} disabled for chat ${defaultChat.chatId}`);
-        return;
-      }
+      await telegramService.sendToChat(chatId, message, { parseMode: 'HTML' });
 
-      await telegramService.sendToChat(defaultChat.chatId, message, { parseMode: 'HTML' });
-
-      console.log(`[FISCO Telegram] ${alertType} alert sent to chat ${defaultChat.chatId}`);
+      console.log(`[FISCO Telegram] ${alertType} alert sent to chat ${chatId}`);
     } catch (error: any) {
-      console.error(`[FISCO Telegram] Failed to send ${alertType} alert:`, error);
+      console.error(`[FISCO Telegram] Failed to send ${alertType} alert:`, error?.message || error);
     }
   }
 
@@ -269,22 +260,19 @@ export class FiscoTelegramNotifier {
    */
   private async sendHtmlReport(htmlContent: string, runId: string): Promise<void> {
     try {
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) return;
+      const config = await this.getAlertConfig();
+      const chatId = config?.chatId;
+      if (!chatId || chatId === 'not_configured') return;
 
-      // Crear archivo temporal
-      const filename = `informe_fiscal_${runId}.html`;
-      
-      // Enviar como documento (esto requeriría implementación adicional)
-      // Por ahora, enviamos un mensaje con el contenido truncado
+      // Enviar como mensaje con contenido truncado
       const truncatedContent = htmlContent.length > 3000 
         ? htmlContent.substring(0, 3000) + '...\n\n[Contenido truncado - ver archivo completo]'
         : htmlContent;
 
-      await telegramService.sendToChat(defaultChat.chatId, `📄 <b>Informe Fiscal (HTML)</b>\n\n<pre>${escapeHtml(truncatedContent)}</pre>`, { parseMode: 'HTML' });
+      await telegramService.sendToChat(chatId, `📄 <b>Informe Fiscal (HTML)</b>\n\n<pre>${escapeHtml(truncatedContent)}</pre>`, { parseMode: 'HTML' });
 
     } catch (error: any) {
-      console.error('[FISCO Telegram] Failed to send HTML report:', error);
+      console.error('[FISCO Telegram] Failed to send HTML report:', error?.message || error);
     }
   }
 
@@ -293,38 +281,34 @@ export class FiscoTelegramNotifier {
    */
   private async sendTextReport(textContent: string): Promise<void> {
     try {
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) return;
+      const config = await this.getAlertConfig();
+      const chatId = config?.chatId;
+      if (!chatId || chatId === 'not_configured') return;
 
       const truncatedContent = textContent.length > 4000 
         ? textContent.substring(0, 4000) + '...\n\n[Contenido truncado]'
         : textContent;
 
-      await telegramService.sendToChat(defaultChat.chatId, `📄 <b>Informe Fiscal</b>\n\n${truncatedContent}`, { parseMode: 'HTML' });
+      await telegramService.sendToChat(chatId, `📄 <b>Informe Fiscal</b>\n\n${truncatedContent}`, { parseMode: 'HTML' });
 
     } catch (error: any) {
-      console.error('[FISCO Telegram] Failed to send text report:', error);
+      console.error('[FISCO Telegram] Failed to send text report:', error?.message || error);
     }
   }
 
   /**
-   * Obtiene configuración de alertas FISCO
+   * Obtiene configuración de alertas FISCO (usa el chatId propio de FISCO, no el default global)
    */
   private async getAlertConfig(): Promise<FiscoAlertConfigRow | undefined> {
     try {
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) return undefined;
-
-      // Buscar configuración específica de FISCO para este chat
       const configs = await db
         .select()
         .from(fiscoAlertConfig)
-        .where(eq(fiscoAlertConfig.chatId, defaultChat.chatId))
         .limit(1);
 
       return configs[0];
-    } catch (error) {
-      console.error('[FISCO Telegram] Error getting alert config:', error);
+    } catch (error: any) {
+      console.error('[FISCO Telegram] Error getting alert config:', error?.message || error);
       return undefined;
     }
   }
