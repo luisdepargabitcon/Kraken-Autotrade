@@ -12,8 +12,9 @@ import { Label } from "@/components/ui/label";
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
   AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X,
-  CalendarIcon, Plus, Minus, Send, Bell, Settings2, Clock, Zap, FileWarning
+  CalendarIcon, Plus, Minus, Send, Bell, Settings2, Clock, Zap, FileWarning, MessageSquare
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -85,6 +86,14 @@ interface FiscoAlertConfig {
   errorSyncEnabled: boolean;
   notifyAlways: boolean;
   summaryThreshold: number;
+  _noDefaultChat?: boolean;
+}
+
+interface TelegramChatInfo {
+  id: number;
+  name: string;
+  chatId: string;
+  isActive: boolean;
 }
 
 interface FiscoSyncHistoryItem {
@@ -424,6 +433,18 @@ export default function Fisco() {
     },
   });
   const isSending = generateAndSend.isPending;
+
+  // --- Telegram Chats (for channel selector) ---
+  const telegramChatsQ = useQuery<TelegramChatInfo[]>({
+    queryKey: ["telegramChats"],
+    queryFn: async () => {
+      const res = await fetch("/api/telegram/chats");
+      if (!res.ok) throw new Error("Failed to fetch chats");
+      return res.json();
+    },
+    refetchOnWindowFocus: false,
+    enabled: activeTab === "alertas",
+  });
 
   // --- FISCO Alert Config ---
   const alertConfigQ = useQuery<FiscoAlertConfig>({
@@ -1000,6 +1021,41 @@ export default function Fisco() {
                   </div>
                 ) : (
                   <div className="space-y-6">
+                    {/* Channel Selector */}
+                    <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 rounded-lg bg-cyan-500/10">
+                          <MessageSquare className="h-4 w-4 text-cyan-400" />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">Canal de destino para alertas FISCO</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">Selecciona el chat/grupo de Telegram donde se enviarán informes y alertas fiscales</p>
+                        </div>
+                      </div>
+                      <Select
+                        value={alertConfigQ.data?.chatId || "not_configured"}
+                        onValueChange={(chatId) => updateAlertConfig.mutate({ chatId })}
+                        disabled={updateAlertConfig.isPending || !telegramChatsQ.data?.length}
+                      >
+                        <SelectTrigger className="w-full mt-2">
+                          <SelectValue placeholder="Seleccionar canal..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {telegramChatsQ.data?.filter(c => c.isActive).map((chat) => (
+                            <SelectItem key={chat.chatId} value={chat.chatId}>
+                              {chat.name} ({chat.chatId})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {alertConfigQ.data?._noDefaultChat && (!alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured") && (
+                        <p className="text-xs text-yellow-400 mt-2 flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          No hay canal configurado — selecciona uno para activar las alertas FISCO
+                        </p>
+                      )}
+                    </div>
+
                     {/* Toggle rows */}
                     <div className="grid gap-4">
                       {/* Sync Daily */}

@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-02-26 — FEAT: Selector de canal Telegram para alertas FISCO
+
+### Cambios
+1. **Selector de canal en tab "Alertas Telegram"** (`Fisco.tsx`): Dropdown con todos los canales Telegram activos (TECNICO, CANAL ERRORES, CANAL TRADES). El usuario elige a qué canal enviar informes y alertas fiscales.
+2. **Backend PUT `/api/fisco/alerts/config`**: Acepta `chatId` del body para cambiar canal destino. Ya no depende de un "default chat" global.
+3. **Backend GET `/api/fisco/alerts/config`**: Busca config existente en DB directamente, sin depender del default chat.
+4. **Warning visual**: Muestra aviso amarillo si no hay canal seleccionado aún.
+
+### Archivos Modificados
+- `client/src/pages/Fisco.tsx` — Selector canal Telegram + query telegramChats
+- `server/routes/fiscoAlerts.routes.ts` — GET/PUT independientes de default chat
+
+---
+
 ## 2026-02-26 — FIX: Crash startup VPS (revolutxService undefined) + Auto-migración tablas FISCO
 
 ### Problema

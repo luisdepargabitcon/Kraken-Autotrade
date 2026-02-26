@@ -28,34 +28,28 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   // Obtener configuración de alertas FISCO para el chat actual
   app.get("/api/fisco/alerts/config", async (req, res) => {
     try {
-      const defaultChat = await storage.getDefaultChat();
-      const chatId = defaultChat?.chatId || "not_configured";
-
-      // Buscar configuración específica de FISCO para este chat
+      // Try to find any existing FISCO alert config
       let config: any = null;
-      if (defaultChat) {
-        try {
-          const configs = await db
-            .select()
-            .from(fiscoAlertConfig)
-            .where(eq(fiscoAlertConfig.chatId, chatId))
-            .limit(1);
-          config = configs[0] || null;
-        } catch (e: any) {
-          console.warn('[FISCO Alerts] DB query error (table may not exist yet):', e?.message);
-        }
+      try {
+        const configs = await db
+          .select()
+          .from(fiscoAlertConfig)
+          .limit(1);
+        config = configs[0] || null;
+      } catch (e: any) {
+        console.warn('[FISCO Alerts] DB query error (table may not exist yet):', e?.message);
       }
 
-      // Return defaults if no config found
+      // Return existing config or defaults
       res.json(config || {
-        chatId,
+        chatId: "not_configured",
         syncDailyEnabled: true,
         syncManualEnabled: true,
         reportGeneratedEnabled: true,
         errorSyncEnabled: true,
         notifyAlways: false,
         summaryThreshold: 30,
-        _noDefaultChat: !defaultChat,
+        _noDefaultChat: true,
       });
     } catch (error: any) {
       console.error('[FISCO Alerts] Error getting config:', error);
@@ -66,13 +60,9 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   // Actualizar configuración de alertas FISCO (partial update)
   app.put("/api/fisco/alerts/config", async (req, res) => {
     try {
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat) {
-        return res.status(404).json({ error: "No default Telegram chat configured" });
-      }
-
-      // Partial update schema — only validate fields that are present
+      // Partial update schema — chatId can be provided to change destination channel
       const partialSchema = z.object({
+        chatId: z.string().optional(),
         syncDailyEnabled: z.boolean().optional(),
         syncManualEnabled: z.boolean().optional(),
         reportGeneratedEnabled: z.boolean().optional(),
@@ -82,25 +72,46 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
       });
       const updates = partialSchema.parse(req.body);
 
+      // Determine target chatId: from body, from existing config, or from default chat
+      let targetChatId = updates.chatId;
+      if (!targetChatId) {
+        // Check if there's already a FISCO config in DB
+        const existingConfigs = await db.select().from(fiscoAlertConfig).limit(1);
+        if (existingConfigs[0]) {
+          targetChatId = existingConfigs[0].chatId;
+        } else {
+          // Fallback to default Telegram chat
+          const defaultChat = await storage.getDefaultChat();
+          if (!defaultChat) {
+            return res.status(400).json({ error: "Selecciona un canal de Telegram para alertas FISCO" });
+          }
+          targetChatId = defaultChat.chatId;
+        }
+      }
+
+      // Separate chatId from toggle updates for the SET clause
+      const { chatId: _newChatId, ...toggleUpdates } = updates;
+
       // Upsert configuración
       const existing = await db
         .select()
         .from(fiscoAlertConfig)
-        .where(eq(fiscoAlertConfig.chatId, defaultChat.chatId))
         .limit(1);
 
       let result;
       if (existing[0]) {
-        // Merge partial updates with existing
+        // Merge partial updates with existing — also update chatId if provided
+        const setData: any = { ...toggleUpdates, updatedAt: new Date() };
+        if (_newChatId) setData.chatId = _newChatId;
         result = await db
           .update(fiscoAlertConfig)
-          .set({ ...updates, updatedAt: new Date() })
-          .where(eq(fiscoAlertConfig.chatId, defaultChat.chatId))
+          .set(setData)
+          .where(eq(fiscoAlertConfig.id, existing[0].id))
           .returning();
       } else {
         // Create new with defaults + partial overrides
         const defaults = {
-          chatId: defaultChat.chatId,
+          chatId: targetChatId,
           syncDailyEnabled: true,
           syncManualEnabled: true,
           reportGeneratedEnabled: true,
@@ -110,7 +121,7 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
         };
         result = await db
           .insert(fiscoAlertConfig)
-          .values({ ...defaults, ...updates })
+          .values({ ...defaults, ...toggleUpdates })
           .returning();
       }
 
