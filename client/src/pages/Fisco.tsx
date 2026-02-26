@@ -461,7 +461,10 @@ export default function Fisco() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
-      if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.details || body.error || resp.statusText);
+      }
       return resp.json();
     },
     onSuccess: () => {
@@ -1195,7 +1198,7 @@ export default function Fisco() {
                       <p className="text-xs text-green-400">✓ Configuración guardada</p>
                     )}
                     {updateAlertConfig.isError && (
-                      <p className="text-xs text-red-400">✗ Error al guardar: {(updateAlertConfig.error as Error).message}</p>
+                      <p className="text-xs text-red-400">✗ Error: {(updateAlertConfig.error as Error).message}</p>
                     )}
                   </div>
                 )}

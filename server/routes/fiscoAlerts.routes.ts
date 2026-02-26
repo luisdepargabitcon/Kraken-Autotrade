@@ -15,11 +15,49 @@ import { storage } from "../storage";
 import { fiscoSyncService } from "../services/FiscoSyncService";
 import { fiscoTelegramNotifier } from "../services/FiscoTelegramNotifier";
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 
+// Ensure FISCO tables exist (self-healing if migration didn't run)
+let fiscoTablesEnsured = false;
+async function ensureFiscoTables() {
+  if (fiscoTablesEnsured) return;
+  try {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS fisco_alert_config (
+      id SERIAL PRIMARY KEY,
+      chat_id TEXT NOT NULL UNIQUE,
+      sync_daily_enabled BOOLEAN NOT NULL DEFAULT true,
+      sync_manual_enabled BOOLEAN NOT NULL DEFAULT true,
+      report_generated_enabled BOOLEAN NOT NULL DEFAULT true,
+      error_sync_enabled BOOLEAN NOT NULL DEFAULT true,
+      notify_always BOOLEAN NOT NULL DEFAULT false,
+      summary_threshold INTEGER NOT NULL DEFAULT 30,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS fisco_sync_history (
+      id SERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL UNIQUE,
+      mode TEXT NOT NULL,
+      triggered_by TEXT,
+      started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'running',
+      results_json JSONB,
+      error_json JSONB
+    )`);
+    fiscoTablesEnsured = true;
+    console.log('[FISCO] Tables ensured');
+  } catch (e: any) {
+    console.error('[FISCO] ensureFiscoTables error:', e?.message);
+  }
+}
+
 export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void {
+
+  // Ensure tables on first request
+  ensureFiscoTables().catch(() => {});
 
   // ============================================================
   // CONFIGURACIÓN DE ALERTAS FISCO
@@ -28,6 +66,7 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   // Obtener configuración de alertas FISCO para el chat actual
   app.get("/api/fisco/alerts/config", async (req, res) => {
     try {
+      await ensureFiscoTables();
       // Try to find any existing FISCO alert config
       let config: any = null;
       try {
@@ -60,6 +99,7 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   // Actualizar configuración de alertas FISCO (partial update)
   app.put("/api/fisco/alerts/config", async (req, res) => {
     try {
+      await ensureFiscoTables();
       // Partial update schema — chatId can be provided to change destination channel
       const partialSchema = z.object({
         chatId: z.string().optional(),
