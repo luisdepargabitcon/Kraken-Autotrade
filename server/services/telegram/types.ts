@@ -255,6 +255,10 @@ export const TELEGRAM_COMMANDS = [
   { command: "channels", description: "Configurar alertas por chat" },
   { command: "pausar", description: "Pausar el bot" },
   { command: "reanudar", description: "Activar el bot" },
+  { command: "informe_fiscal", description: "Generar y enviar informe fiscal" },
+  { command: "fiscal", description: "Alias de /informe_fiscal" },
+  { command: "reporte", description: "Alias de /informe_fiscal" },
+  { command: "impuestos", description: "Alias de /informe_fiscal" },
   { command: "ayuda", description: "Ver lista de comandos" },
   { command: "refresh_commands", description: "[Admin] Actualizar comandos en Telegram" },
 ] as const;

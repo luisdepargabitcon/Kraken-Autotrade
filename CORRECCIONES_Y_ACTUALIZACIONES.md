@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-02-27 — FIX: Comandos Telegram actualizados + alertas FISCO
+
+### Problemas
+1. Comandos FISCO (`/informe_fiscal`, `/fiscal`, `/reporte`, `/impuestos`) no aparecían en la lista de comandos de Telegram
+2. `handleInformeFiscal` hacía full sync desde 2020 + usaba plantilla HTML vieja ("KrakenBot Fiscal")
+3. `/ayuda` no mostraba sección FISCO
+4. `/menu` no tenía botón "Informe Fiscal"
+5. Callback `logs_page_` no estaba manejado (paginación de logs rota)
+6. `handleInformeFiscal` verificaba `defaultChat` como auth — bloqueaba uso legítimo
+
+### Correcciones
+1. **`types.ts`**: Añadidos 4 comandos FISCO a `TELEGRAM_COMMANDS`
+2. **`handleInformeFiscal`**: Reescrito — sin sync, llama a `/api/fisco/report/existing` (misma plantilla que UI), envía como archivo HTML adjunto al chat que lo solicita
+3. **`handleAyuda`**: Añadida sección "📄 FISCO (Fiscal)" con los 4 comandos
+4. **`handleMenu`**: Añadido botón "📄 Informe Fiscal" con callback `MENU_FISCO`
+5. **`handleCallbackQuery`**: Añadido case `MENU_FISCO` + handling dinámico para `logs_page_` y `logs_info`
+6. Eliminada plantilla HTML duplicada/obsoleta `generateFiscalReport` de telegram.ts
+
+### Archivos Modificados
+- `server/services/telegram/types.ts` — TELEGRAM_COMMANDS con FISCO
+- `server/services/telegram.ts` — handleInformeFiscal, handleAyuda, handleMenu, callbacks
+
+---
+
 ## 2026-02-27 — FIX: Pipeline Informe→Telegram (schema + notifier + sync innecesaria)
 
 ### Problemas

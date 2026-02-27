@@ -1065,6 +1065,7 @@ export class TelegramService {
   private async handleAyuda(chatId: number) {
     // Generate help from TELEGRAM_COMMANDS to ensure 1:1 sync
     const infoCommands = ["estado", "balance", "cartera", "posiciones", "ganancias", "exposicion", "ultimas", "logs"];
+    const fiscoCommands = ["informe_fiscal", "fiscal", "reporte", "impuestos"];
     const configCommands = ["config", "uptime", "menu", "channels"];
     const controlCommands = ["pausar", "reanudar"];
     const adminCommands = ["refresh_commands"];
@@ -1078,6 +1079,7 @@ export class TelegramService {
     
     const sections = [
       formatSection("📊 Información:", infoCommands),
+      formatSection("📄 FISCO (Fiscal):", fiscoCommands),
       formatSection("⚙️ Configuración:", configCommands),
       formatSection("🔧 Control:", controlCommands),
       formatSection("🔐 Admin:", adminCommands),
@@ -1542,101 +1544,39 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
 
   private async handleInformeFiscal(chatId: number) {
     try {
-      // Verificar si el usuario tiene permisos (admin o chat configurado)
-      const defaultChat = await storage.getDefaultChat();
-      if (!defaultChat || defaultChat.chatId !== chatId.toString()) {
-        await this.bot?.sendMessage(chatId, "❌ <b>Acceso denegado</b>\n\nEste comando solo está disponible para usuarios autorizados.", { parse_mode: "HTML" });
-        return;
+      // Enviar mensaje de inicio
+      await this.bot?.sendMessage(chatId, "🔄 <b>Generando informe fiscal...</b>\n\nGenerando informe desde datos existentes.", { parse_mode: "HTML" });
+
+      const currentYear = new Date().getFullYear();
+      const port = parseInt(process.env.PORT || "5000", 10);
+
+      // Obtener HTML del informe usando el endpoint interno (misma plantilla que UI)
+      const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/report/existing?year=${currentYear}`);
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        throw new Error(`Error obteniendo informe: ${errBody}`);
+      }
+      const data = await resp.json() as any;
+      const htmlContent = data.content;
+
+      if (!htmlContent || htmlContent.length < 100) {
+        throw new Error("El informe está vacío. Verifica que hay datos sincronizados.");
       }
 
-      // Enviar mensaje de inicio
-      await this.bot?.sendMessage(chatId, "🔄 <b>Generando informe fiscal...</b>\n\nIniciando sincronización de exchanges y generación del informe.", { parse_mode: "HTML" });
+      // Enviar como archivo HTML adjunto (misma plantilla que botón Generar PDF)
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `Informe_Fiscal_${currentYear}_${dateStr}.html`;
+      const fileBuffer = Buffer.from(htmlContent, 'utf-8');
+      const caption = `📄 <b>Informe Fiscal ${currentYear}</b>\n📅 Generado: ${formatSpanishDate()}\n💡 <i>Abrir en navegador para ver el informe completo</i>`;
 
-      // Importar servicios dinámicamente para evitar dependencias circulares
-      const { fiscoSyncService } = await import("./FiscoSyncService");
-      const { fiscoTelegramNotifier } = await import("./FiscoTelegramNotifier");
-      const { randomUUID } = await import("crypto");
+      await this.sendDocumentToChat(chatId.toString(), fileBuffer, filename, caption);
 
-      const runId = randomUUID();
-      
-      // Ejecutar pipeline completo: sync → generate → send
-      setTimeout(async () => {
-        try {
-          // 1. Sincronizar exchanges
-          const syncSummary = await fiscoSyncService.syncAllExchanges({
-            runId,
-            mode: 'manual',
-            triggeredBy: 'telegram_command',
-            fullSync: true
-          });
-
-          if (syncSummary.status === 'failed') {
-            await this.bot?.sendMessage(chatId, `❌ <b>Error en sincronización</b>\n\n${syncSummary.errors.join(', ')}`, { parse_mode: "HTML" });
-            return;
-          }
-
-          // 2. Generar informe fiscal (usar año actual)
-          const currentYear = new Date().getFullYear();
-          
-          // Simular generación del informe (en realidad llamaríamos al endpoint existente)
-          const reportContent = await this.generateFiscalReport(currentYear);
-          
-          // 3. Enviar notificación y informe
-          await fiscoTelegramNotifier.sendReportGeneratedAlert({
-            reportContent,
-            reportFormat: 'html',
-            runId
-          });
-
-          await this.bot?.sendMessage(chatId, `✅ <b>Informe fiscal generado</b>\n\nAño: ${currentYear}\nOperaciones sincronizadas: ${syncSummary.totalOperations}\n\nEl informe ha sido enviado a este chat.`, { parse_mode: "HTML" });
-
-        } catch (error: any) {
-          console.error('[Telegram] Error en handleInformeFiscal:', error);
-          await this.bot?.sendMessage(chatId, `❌ <b>Error generando informe</b>\n\n${escapeHtml(error.message)}`, { parse_mode: "HTML" });
-        }
-      }, 1000);
+      await this.bot?.sendMessage(chatId, `✅ <b>Informe fiscal enviado</b>\n\nAño: ${currentYear}\nFormato: HTML (abrir en navegador)`, { parse_mode: "HTML" });
 
     } catch (error: any) {
       console.error('[Telegram] Error en handleInformeFiscal:', error);
-      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+      await this.bot?.sendMessage(chatId, `❌ <b>Error generando informe</b>\n\n${escapeHtml(error.message)}`, { parse_mode: "HTML" });
     }
-  }
-
-  // Genera informe fiscal real llamando al endpoint existente /api/fisco/annual-report
-  private async generateFiscalReport(year: number): Promise<string> {
-    const port = parseInt(process.env.PORT || "5000", 10);
-    const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/annual-report?year=${year}`);
-    if (!resp.ok) {
-      const errBody = await resp.text();
-      throw new Error(`annual-report endpoint returned ${resp.status}: ${errBody}`);
-    }
-    const report = await resp.json() as any;
-
-    // Generar HTML usando la misma plantilla que el frontend (generateBit2MePDF)
-    const BRAND = "KrakenBot Fiscal";
-    const src = "Todos los exchanges";
-    const y = year.toString();
-    const eur = (v: number) => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const qty = (v: number) => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 8 });
-    const fmtD = (d: string | null) => d ? new Date(d).toLocaleDateString("es-ES") : "N/A";
-
-    const css = `body{font-family:'Segoe UI',Tahoma,sans-serif;color:#1e293b;margin:0;padding:0}.page{padding:30px 40px;page-break-after:always;max-width:900px;margin:0 auto}.brand{text-align:center;font-size:22px;font-weight:700;color:#2563eb;margin-bottom:20px}h2{font-size:15px;color:#334155;margin:18px 0 10px}table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}th{background:#f1f5f9;color:#475569;font-weight:600;text-align:left;padding:8px 12px;border-bottom:2px solid #e2e8f0}td{padding:7px 12px;border-bottom:1px solid #f1f5f9}.positive{color:#16a34a;font-weight:600}.negative{color:#dc2626;font-weight:600}.total-row td{font-weight:700;background:#f8fafc;border-top:2px solid #e2e8f0}.meta{text-align:center;color:#94a3b8;font-size:11px;margin-top:20px}.footer-page{text-align:center;color:#94a3b8;font-size:10px;margin-top:30px;border-top:1px solid #e2e8f0;padding-top:10px}`;
-    const meta = `Generado: ${new Date().toLocaleString("es-ES")} | Método: FIFO | Fuentes: ${src} | Última sincronización: ${fmtD(report.last_sync)}`;
-
-    const a = report.section_a;
-    const pageA = `<div class="page"><div class="brand">${BRAND}</div><h2>Resumen de ganancias y pérdidas derivadas de las transmisiones de activos el ${y}</h2><table><tr><th>Origen</th><th>Cuenta</th><th>Ganancias EUR</th><th>Pérdidas EUR</th><th>Total EUR</th></tr><tr><td>${src}</td><td>Cuenta principal</td><td class="positive">${eur(a.ganancias_eur)}</td><td class="negative">${eur(a.perdidas_eur)}</td><td class="${a.total_eur>=0?'positive':'negative'}">${eur(a.total_eur)}</td></tr><tr class="total-row"><td colspan="2">Total ${y}</td><td>${eur(a.ganancias_eur)}</td><td>${eur(a.perdidas_eur)}</td><td>${eur(a.total_eur)}</td></tr></table><div class="meta">${meta}</div><div class="footer-page">Página 1</div></div>`;
-
-    const bRows = (report.section_b||[]).map((r:any)=>`<tr><td>${r.asset}</td><td>${r.exchange}</td><td>${r.tipo}</td><td>${eur(r.valor_transmision_eur)}</td><td>${eur(r.valor_adquisicion_eur)}</td><td class="${r.ganancia_perdida_eur>=0?'positive':'negative'}">${eur(r.ganancia_perdida_eur)}</td></tr>`).join("");
-    const bT = (report.section_b||[]).reduce((s:any,r:any)=>({vt:s.vt+r.valor_transmision_eur,va:s.va+r.valor_adquisicion_eur,gp:s.gp+r.ganancia_perdida_eur}),{vt:0,va:0,gp:0});
-    const pageB = `<div class="page"><div class="brand">${BRAND}</div><h2>Resumen por activo y exchange el ${y}</h2><table><tr><th>Ticker</th><th>Exchange</th><th>Tipo</th><th>Transmisión EUR</th><th>Adquisición EUR</th><th>G/P EUR</th></tr>${bRows}<tr class="total-row"><td colspan="3">Total</td><td>${eur(bT.vt)}</td><td>${eur(bT.va)}</td><td>${eur(bT.gp)}</td></tr></table><div class="footer-page">Página 2</div></div>`;
-
-    const c = report.section_c;
-    const pageC = `<div class="page"><div class="brand">${BRAND}</div><h2>Capital mobiliario ${y}</h2><table><tr><td>Staking</td><td>${eur(c.staking)}</td></tr><tr><td>Masternodos</td><td>${eur(c.masternodes)}</td></tr><tr><td>Lending</td><td>${eur(c.lending)}</td></tr><tr><td>Distribuciones</td><td>${eur(c.distribuciones)}</td></tr></table><table><tr class="total-row"><td>Total</td><td>${eur(c.total_eur)}</td></tr></table><div class="footer-page">Página 3</div></div>`;
-
-    const dRows = (report.section_d||[]).map((r:any)=>`<tr><td>${r.asset}</td><td>${(r.exchanges||[]).join(", ")}</td><td>${qty(r.saldo_inicio)}</td><td>${qty(r.entradas)}</td><td>${qty(r.salidas)}</td><td>${qty(r.saldo_fin)}</td></tr>`).join("");
-    const pageD = `<div class="page"><div class="brand">${BRAND}</div><h2>Cartera ${y}</h2><table><tr><th>Activo</th><th>Exchange</th><th>Saldo 01/01</th><th>Entradas</th><th>Salidas</th><th>Saldo 31/12</th></tr>${dRows}</table><div class="footer-page">Página 4</div></div>`;
-
-    return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Informe Fiscal ${y}</title><style>${css}</style></head><body>${pageA}${pageB}${pageC}${pageD}</body></html>`;
   }
 
   private async handleLogs(chatId: number, args?: string[]) {
@@ -1817,6 +1757,7 @@ ${emojiTotal} P&L: ${pnlTotal >= 0 ? '+' : ''}$${pnlTotal.toFixed(2)}
           { text: "⏰ Reporte diario", callback_data: "MENU_DAILY" },
         ],
         [
+          { text: "📄 Informe Fiscal", callback_data: "MENU_FISCO" },
           { text: "❓ Ayuda", callback_data: "MENU_HELP" },
         ],
       ],
@@ -1936,6 +1877,9 @@ ${b} Balance | ${h} Heartbeat
         case "MENU_DAILY":
           await this.handleDailyConfig(chatId);
           break;
+        case "MENU_FISCO":
+          await this.handleInformeFiscal(chatId);
+          break;
         case "MENU_HELP":
           await this.handleAyuda(chatId);
           break;
@@ -1950,7 +1894,17 @@ ${b} Balance | ${h} Heartbeat
           await this.handleListChats(chatId);
           break;
         default:
-          await this.bot?.sendMessage(chatId, "⚠️ Opción no reconocida");
+          // Handle dynamic callbacks
+          if (data.startsWith("logs_page_")) {
+            const page = parseInt(data.replace("logs_page_", ""));
+            if (!isNaN(page)) {
+              await this.handleLogs(chatId, [`page=${page}`]);
+            }
+          } else if (data === "logs_info") {
+            // Do nothing — just dismiss the loading state
+          } else {
+            await this.bot?.sendMessage(chatId, "⚠️ Opción no reconocida");
+          }
       }
     } catch (error: any) {
       console.error("Callback error:", error);
