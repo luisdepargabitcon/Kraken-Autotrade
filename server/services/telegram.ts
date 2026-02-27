@@ -2290,6 +2290,29 @@ Incluye:
     }
   }
 
+  async sendDocumentToChat(chatId: string, fileBuffer: Buffer, filename: string, caption?: string): Promise<boolean> {
+    if (!this.bot) {
+      console.warn("Telegram bot not initialized");
+      return false;
+    }
+
+    try {
+      const prefix = await this.getMessagePrefixHTML();
+      const fullCaption = caption ? prefix + caption : prefix + `📄 ${filename}`;
+      await this.bot.sendDocument(chatId, fileBuffer, {
+        caption: fullCaption,
+        parse_mode: "HTML",
+      }, {
+        filename,
+        contentType: 'text/html',
+      });
+      return true;
+    } catch (error) {
+      console.error(`Failed to send document to chat ${chatId}:`, error);
+      return false;
+    }
+  }
+
   async sendAlertToMultipleChats(message: string, alertType: AlertType): Promise<void> {
     if (!this.bot) {
       console.warn(`[telegram] sendAlertToMultipleChats: bot not initialized (alertType=${alertType})`);

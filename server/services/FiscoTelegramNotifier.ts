@@ -256,7 +256,7 @@ export class FiscoTelegramNotifier {
   }
 
   /**
-   * Envía informe HTML como archivo
+   * Envía informe HTML como archivo adjunto
    */
   private async sendHtmlReport(htmlContent: string, runId: string): Promise<void> {
     try {
@@ -264,12 +264,13 @@ export class FiscoTelegramNotifier {
       const chatId = config?.chatId;
       if (!chatId || chatId === 'not_configured') return;
 
-      // Enviar como mensaje con contenido truncado
-      const truncatedContent = htmlContent.length > 3000 
-        ? htmlContent.substring(0, 3000) + '...\n\n[Contenido truncado - ver archivo completo]'
-        : htmlContent;
+      const year = new Date().getFullYear();
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `Informe_Fiscal_${year}_${dateStr}.html`;
+      const fileBuffer = Buffer.from(htmlContent, 'utf-8');
+      const caption = `📄 <b>Informe Fiscal ${year}</b>\n📅 Generado: ${formatSpanishDate(new Date())}\n💡 <i>Abrir en navegador para ver el informe completo</i>`;
 
-      await telegramService.sendToChat(chatId, `📄 <b>Informe Fiscal (HTML)</b>\n\n<pre>${escapeHtml(truncatedContent)}</pre>`, { parseMode: 'HTML' });
+      await telegramService.sendDocumentToChat(chatId, fileBuffer, filename, caption);
 
     } catch (error: any) {
       console.error('[FISCO Telegram] Failed to send HTML report:', error?.message || error);
