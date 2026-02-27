@@ -45,10 +45,14 @@ async function ensureFiscoTables() {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     )`);
 
-    // Same for fisco_sync_history
+    // Same for fisco_sync_history (validate schema by checking triggered_by column)
+    let syncHistoryNeedsRecreate = false;
     try {
-      await db.execute(sql`SELECT run_id FROM fisco_sync_history LIMIT 0`);
+      await db.execute(sql`SELECT triggered_by FROM fisco_sync_history LIMIT 0`);
     } catch {
+      syncHistoryNeedsRecreate = true;
+    }
+    if (syncHistoryNeedsRecreate) {
       console.log('[FISCO] Recreating fisco_sync_history with correct schema...');
       await db.execute(sql`DROP TABLE IF EXISTS fisco_sync_history CASCADE`);
     }
