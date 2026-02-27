@@ -311,43 +311,29 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
         return res.status(400).json({ error: "Invalid year" });
       }
 
-      // Iniciar pipeline: sync → generate → send
+      // Iniciar pipeline: generate → send (NO sync — usar datos existentes en DB)
       res.json({ 
         message: "Fiscal report generation started",
         runId,
         status: "running",
-        pipeline: ["sync", "generate", "send"]
+        pipeline: ["generate", "send"]
       });
 
-      // Ejecutar pipeline en background
+      // Ejecutar pipeline en background (sin sync — datos ya están en DB)
       setTimeout(async () => {
         try {
-          // 1. Sincronizar exchanges
-          const syncSummary = await fiscoSyncService.syncAllExchanges({
-            runId,
-            mode: 'manual',
-            triggeredBy: 'ui_button',
-            fullSync: true
-          });
-
-          if (syncSummary.status === 'failed') {
-            await fiscoTelegramNotifier.sendSyncErrorAlert(
-              `Sync failed: ${syncSummary.errors.join(', ')}`,
-              runId
-            );
-            return;
-          }
-
-          // 2. Generar informe fiscal (reutilizar lógica existente)
+          // 1. Generar informe fiscal desde datos existentes en DB
+          console.log(`[FISCO Alerts] Generating report for year=${reportYear} exchange=${exchange || 'all'} runId=${runId}`);
           const reportContent = await generateExistingFiscalReport(reportYear, exchange);
           
-          // 3. Enviar informe a Telegram
+          // 2. Enviar informe a Telegram
           await fiscoTelegramNotifier.sendReportGeneratedAlert({
             reportContent,
-            reportFormat: 'html', // El informe actual se genera como HTML
+            reportFormat: 'html',
             runId
           });
 
+          console.log(`[FISCO Alerts] Report sent to Telegram (runId=${runId})`);
         } catch (error: any) {
           console.error('[FISCO Alerts] Error in report pipeline:', error);
           await fiscoTelegramNotifier.sendSyncErrorAlert(

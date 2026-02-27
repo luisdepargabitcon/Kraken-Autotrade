@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-02-27 — FIX: Pipeline Informe→Telegram (schema + notifier + sync innecesaria)
+
+### Problemas
+1. `fisco_alert_config` tenía columnas incorrectas → error `column "sync_daily_enabled" does not exist`
+2. `fisco_sync_history` tenía columnas incorrectas → error `column "triggered_by" does not exist`
+3. `FiscoTelegramNotifier` usaba `storage.getDefaultChat()` (chat global) en vez del chatId configurado en FISCO
+4. Botón "Informe → Telegram" hacía full sync desde 2020 antes de generar informe → rate limit Kraken
+
+### Correcciones
+1. **Self-healing tables** (`fiscoAlerts.routes.ts`): `ensureFiscoTables()` valida columnas clave (`sync_daily_enabled`, `triggered_by`). Si faltan → DROP + CREATE con schema correcto.
+2. **FiscoTelegramNotifier** (`FiscoTelegramNotifier.ts`): Todos los métodos (`sendToConfiguredChat`, `sendHtmlReport`, `sendTextReport`, `getAlertConfig`) ahora leen el `chatId` directamente de `fisco_alert_config` (el canal seleccionado en la UI), no del default chat global. Eliminado import `storage`.
+3. **Pipeline sin sync** (`fiscoAlerts.routes.ts`): Botón "Informe → Telegram" ahora solo genera informe desde datos existentes en DB y lo envía. Sin sync previa (el botón "Sincronizar" ya existe para eso).
+
+### Archivos Modificados
+- `server/routes/fiscoAlerts.routes.ts` — Self-healing tables + pipeline sin sync
+- `server/services/FiscoTelegramNotifier.ts` — Usa chatId de config FISCO
+
+---
+
 ## 2026-02-26 — FEAT: Selector de canal Telegram para alertas FISCO
 
 ### Cambios
