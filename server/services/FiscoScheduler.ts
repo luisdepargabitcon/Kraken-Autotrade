@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 export class FiscoScheduler {
   private static instance: FiscoScheduler;
   private dailySyncJob: cron.ScheduledTask | null = null;
+  private annualReportJob: cron.ScheduledTask | null = null;
   private isInitialized = false;
 
   public static getInstance(): FiscoScheduler {
@@ -41,8 +42,17 @@ export class FiscoScheduler {
     // Iniciar el job
     this.dailySyncJob.start();
 
+    // Job anual: 1 de enero a las 10:00 (Europe/Madrid) — enviar informe del año anterior
+    this.annualReportJob = cron.schedule('0 10 1 1 *', async () => {
+      await this.executeAnnualReport();
+    }, {
+      timezone: "Europe/Madrid"
+    });
+    this.annualReportJob.start();
+
     this.isInitialized = true;
     console.log('[FISCO Scheduler] Daily sync job scheduled for 08:00 Europe/Madrid');
+    console.log('[FISCO Scheduler] Annual report job scheduled for 10:00 on January 1st Europe/Madrid');
   }
 
   /**
@@ -54,6 +64,11 @@ export class FiscoScheduler {
     if (this.dailySyncJob) {
       this.dailySyncJob.stop();
       this.dailySyncJob = null;
+    }
+
+    if (this.annualReportJob) {
+      this.annualReportJob.stop();
+      this.annualReportJob = null;
     }
 
     this.isInitialized = false;
@@ -131,16 +146,68 @@ export class FiscoScheduler {
   }
 
   /**
+   * Ejecuta el informe fiscal anual del año anterior y lo envía por Telegram
+   */
+  private async executeAnnualReport(): Promise<void> {
+    const previousYear = new Date().getFullYear() - 1;
+    console.log(`[FISCO Scheduler] Generating annual fiscal report for year ${previousYear}`);
+
+    try {
+      const port = parseInt(process.env.PORT || "5000", 10);
+      const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/report/existing?year=${previousYear}`);
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        throw new Error(`annual-report endpoint returned ${resp.status}: ${errBody}`);
+      }
+      const data = await resp.json() as any;
+      const htmlContent = data.content;
+
+      if (!htmlContent || htmlContent.length < 100) {
+        throw new Error(`Report for year ${previousYear} is empty`);
+      }
+
+      // Enviar como archivo HTML adjunto al canal FISCO configurado
+      const { fiscoAlertConfig } = await import("@shared/schema");
+      const { db } = await import("../db");
+      const configs = await db.select().from(fiscoAlertConfig).limit(1);
+      const chatId = configs[0]?.chatId;
+
+      if (!chatId || chatId === 'not_configured') {
+        console.warn('[FISCO Scheduler] No FISCO chat configured, skipping annual report');
+        return;
+      }
+
+      const { telegramService } = await import("./telegram");
+      const filename = `Informe_Fiscal_${previousYear}_Anual.html`;
+      const fileBuffer = Buffer.from(htmlContent, 'utf-8');
+      const caption = `📄 <b>Informe Fiscal Anual ${previousYear}</b>\n📅 Generado automáticamente el 1 de enero de ${previousYear + 1}\n💡 <i>Abrir en navegador para ver el informe completo</i>`;
+
+      await telegramService.sendDocumentToChat(chatId, fileBuffer, filename, caption);
+
+      console.log(`[FISCO Scheduler] Annual report for ${previousYear} sent to chat ${chatId}`);
+
+    } catch (error: any) {
+      console.error(`[FISCO Scheduler] Annual report failed:`, error?.message || error);
+      await fiscoTelegramNotifier.sendSyncErrorAlert(
+        `Annual report generation failed for year ${previousYear}: ${error.message}`,
+        randomUUID()
+      );
+    }
+  }
+
+  /**
    * Obtiene el estado del scheduler
    */
   getStatus(): {
     isInitialized: boolean;
     dailySyncJobActive: boolean;
+    annualReportJobActive: boolean;
     nextRun?: string;
   } {
     return {
       isInitialized: this.isInitialized,
-      dailySyncJobActive: this.dailySyncJob !== null, // Si existe el task, está activo
+      dailySyncJobActive: this.dailySyncJob !== null,
+      annualReportJobActive: this.annualReportJob !== null,
       nextRun: this.getNextRunTime()
     };
   }
