@@ -35,6 +35,10 @@ import {
   type FiscoSyncHistoryRow,
   type InsertFiscoAlertConfig,
   type InsertFiscoSyncHistory,
+  // TimeStop Smart Config
+  type TimeStopConfigRow,
+  type InsertTimeStopConfig,
+  timeStopConfig as timeStopConfigTable,
   botConfig as botConfigTable,
   trades as tradesTable,
   appliedTrades as appliedTradesTable,
@@ -2608,6 +2612,73 @@ export class DatabaseStorage implements IStorage {
     await db.update(fiscoSyncHistory)
       .set(updates)
       .where(eq(fiscoSyncHistory.runId, runId));
+  }
+
+  // === TIME STOP SMART CONFIG ===
+
+  async getTimeStopConfigs(): Promise<TimeStopConfigRow[]> {
+    return await db.select()
+      .from(timeStopConfigTable)
+      .where(eq(timeStopConfigTable.isActive, true))
+      .orderBy(timeStopConfigTable.priority);
+  }
+
+  async getTimeStopConfigForPair(pair: string, market: string = 'spot'): Promise<TimeStopConfigRow | undefined> {
+    // Try exact match first, then wildcard fallback
+    const [exact] = await db.select()
+      .from(timeStopConfigTable)
+      .where(and(
+        eq(timeStopConfigTable.pair, pair),
+        eq(timeStopConfigTable.market, market),
+        eq(timeStopConfigTable.isActive, true),
+      ))
+      .limit(1);
+    if (exact) return exact;
+
+    // Fallback to wildcard
+    const [wildcard] = await db.select()
+      .from(timeStopConfigTable)
+      .where(and(
+        eq(timeStopConfigTable.pair, '*'),
+        eq(timeStopConfigTable.market, market),
+        eq(timeStopConfigTable.isActive, true),
+      ))
+      .limit(1);
+    return wildcard;
+  }
+
+  async getAllTimeStopConfigs(): Promise<TimeStopConfigRow[]> {
+    return await db.select()
+      .from(timeStopConfigTable)
+      .orderBy(timeStopConfigTable.priority);
+  }
+
+  async upsertTimeStopConfig(config: InsertTimeStopConfig): Promise<TimeStopConfigRow> {
+    const existing = await db.select()
+      .from(timeStopConfigTable)
+      .where(and(
+        eq(timeStopConfigTable.pair, config.pair),
+        eq(timeStopConfigTable.market, config.market ?? 'spot'),
+      ))
+      .limit(1);
+
+    if (existing.length > 0) {
+      const [updated] = await db.update(timeStopConfigTable)
+        .set({ ...config, updatedAt: new Date() })
+        .where(eq(timeStopConfigTable.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(timeStopConfigTable)
+      .values(config)
+      .returning();
+    return created;
+  }
+
+  async deleteTimeStopConfig(id: number): Promise<void> {
+    await db.delete(timeStopConfigTable)
+      .where(eq(timeStopConfigTable.id, id));
   }
 }
 

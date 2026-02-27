@@ -122,7 +122,11 @@ export type EventType =
   | "TRADE_PERSIST_FAIL"
   // Entry quality & timing gates (D1/D2/MINI-B)
   | "ENTRY_QUALITY_ALLOWED"
-  | "D1_ENTRY_COST";
+  | "D1_ENTRY_COST"
+  // Smart TimeStop events
+  | "TIME_STOP_EXPIRED_DISABLED"
+  | "TIME_STOP_CLOSE"
+  | "TIME_STOP_LIMIT_FALLBACK";
 
 interface LogMeta {
   [key: string]: any;

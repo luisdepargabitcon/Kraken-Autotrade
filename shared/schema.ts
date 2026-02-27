@@ -672,6 +672,51 @@ export const insertMasterBackupSchema = createInsertSchema(masterBackups).omit({
 export type MasterBackup = typeof masterBackups.$inferSelect;
 export type InsertMasterBackup = z.infer<typeof insertMasterBackupSchema>;
 
+// Smart TimeStop configuration: per-asset/market TTL with regime multipliers and close policy
+export const timeStopConfig = pgTable("time_stop_config", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),                          // e.g. 'BTC/USD', '*' for default
+  market: text("market").notNull().default("spot"),      // 'spot', 'futures', etc.
+
+  // Base TTL in hours
+  ttlBaseHours: decimal("ttl_base_hours", { precision: 8, scale: 2 }).notNull().default("36.00"),
+
+  // Regime multipliers (applied to ttlBaseHours)
+  factorTrend: decimal("factor_trend", { precision: 5, scale: 3 }).notNull().default("1.200"),
+  factorRange: decimal("factor_range", { precision: 5, scale: 3 }).notNull().default("0.800"),
+  factorTransition: decimal("factor_transition", { precision: 5, scale: 3 }).notNull().default("1.000"),
+
+  // TTL clamp limits (in hours)
+  minTtlHours: decimal("min_ttl_hours", { precision: 8, scale: 2 }).notNull().default("4.00"),
+  maxTtlHours: decimal("max_ttl_hours", { precision: 8, scale: 2 }).notNull().default("168.00"),
+
+  // Close policy on expiry
+  closeOrderType: text("close_order_type").notNull().default("market"),          // 'market' or 'limit'
+  limitFallbackSeconds: integer("limit_fallback_seconds").notNull().default(30), // fallback to market after N seconds
+
+  // Logging & alerts
+  telegramAlertEnabled: boolean("telegram_alert_enabled").notNull().default(true),
+  logExpiryEvenIfDisabled: boolean("log_expiry_even_if_disabled").notNull().default(true),
+
+  // Priority (lower = higher priority)
+  priority: integer("priority").notNull().default(100),
+
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  pairMarketUnique: unique().on(table.pair, table.market),
+}));
+
+export const insertTimeStopConfigSchema = createInsertSchema(timeStopConfig).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type TimeStopConfigRow = typeof timeStopConfig.$inferSelect;
+export type InsertTimeStopConfig = z.infer<typeof insertTimeStopConfigSchema>;
+
 // Alert throttle: persists SG alert and time-stop notification timestamps across restarts
 export const alertThrottle = pgTable("alert_throttle", {
   id: serial("id").primaryKey(),

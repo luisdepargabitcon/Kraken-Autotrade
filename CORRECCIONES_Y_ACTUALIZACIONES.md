@@ -5,6 +5,56 @@
 
 ---
 
+## 2026-02-27 — FEAT: Smart TimeStop — TTL por activo con multiplicadores de régimen
+
+### Descripción
+TimeStop rediseñado como stop temporal real con TTL inteligente per-asset/mercado, multiplicadores por régimen de mercado, y política de cierre configurable.
+
+### Funcionalidad
+1. **TTL per-asset**: Cada par tiene su propio TTL base en la tabla `time_stop_config` (ej: BTC=48h, SOL=24h)
+2. **Multiplicador por régimen**: `TTL_final = clamp(TTL_base * factorRegime, minTTL, maxTTL)`
+   - TREND: factor 1.2-1.5 (más tiempo para capturar tendencias)
+   - RANGE: factor 0.7-0.8 (cortar posiciones estancadas más rápido)
+   - TRANSITION: factor 0.9-1.0 (neutral)
+3. **Cierre real al expirar**: El bot ejecuta VENTA (closeReason=TIMESTOP) al expirar el TTL
+4. **Excepción UI toggle**: Si timeStopDisabled=true, NO ejecuta venta pero SÍ registra el evento
+5. **Política de cierre**: Market (default) o Limit con fallback a Market tras X segundos
+6. **Alertas Telegram**: Mensajes diferenciados para expirado+cerrado, expirado+desactivado
+7. **Configuración wildcard**: Fila `*:spot` como fallback si un par no tiene config específica
+8. **Fallback legacy**: Si no existe tabla `time_stop_config`, usa `bot_config.timeStopHours`
+
+### Nuevos Archivos
+- `db/migrations/016_time_stop_smart_config.sql` — Migración: tabla + seeds (BTC, ETH, SOL, XRP, wildcard)
+- `server/services/TimeStopService.ts` — Servicio: cálculo TTL inteligente, caché in-memory 5min
+- `server/routes/timestop.routes.ts` — API CRUD: GET/PUT/DELETE /api/config/timestop + preview TTL
+
+### Archivos Modificados
+- `shared/schema.ts` — Tabla Drizzle `timeStopConfig` + types + insert schema
+- `server/storage.ts` — Métodos: getTimeStopConfigs, getTimeStopConfigForPair, upsertTimeStopConfig, deleteTimeStopConfig
+- `server/services/exitManager.ts` — checkTimeStop y checkSmartGuardExit reescritos para usar Smart TimeStop
+- `server/services/exitManager.ts` — IExitManagerHost: nuevo método `getMarketRegime(pair)`
+- `server/services/tradingEngine.ts` — createExitHost: implementa `getMarketRegime` via RegimeManager
+- `server/services/botLogger.ts` — Nuevos EventTypes: TIME_STOP_EXPIRED_DISABLED, TIME_STOP_CLOSE, TIME_STOP_LIMIT_FALLBACK
+- `server/routes.ts` — Registro de rutas TimeStop
+
+### API Endpoints
+- `GET /api/config/timestop` — Lista todas las configs
+- `GET /api/config/timestop/:pair` — Config para un par (con fallback wildcard)
+- `GET /api/config/timestop/:pair/preview` — Preview TTL calculado por régimen
+- `PUT /api/config/timestop` — Upsert config (crear/actualizar)
+- `DELETE /api/config/timestop/:id` — Eliminar config
+
+### Valores Seed por Defecto
+| Par | TTL Base | Factor TREND | Factor RANGE | Min TTL | Max TTL |
+|-----|----------|-------------|-------------|---------|---------|
+| BTC/USD | 48h | 1.500 | 0.700 | 6h | 240h |
+| ETH/USD | 36h | 1.300 | 0.750 | 4h | 168h |
+| SOL/USD | 24h | 1.200 | 0.800 | 3h | 120h |
+| XRP/USD | 24h | 1.200 | 0.800 | 3h | 120h |
+| * (default) | 36h | 1.200 | 0.800 | 4h | 168h |
+
+---
+
 ## 2026-02-27 — FIX: Comandos Telegram actualizados + alertas FISCO
 
 ### Problemas

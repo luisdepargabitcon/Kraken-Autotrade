@@ -16,6 +16,7 @@ import { environment } from "./environment";
 import { toConfidencePct } from "../utils/confidence";
 import { ExchangeFactory } from "./exchanges/ExchangeFactory";
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
+import { checkSmartTimeStop, type MarketRegime, type TimeStopCheckResult } from "./TimeStopService";
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import type { TelegramService } from "./telegram";
 
@@ -135,6 +136,9 @@ export interface IExitManagerHost {
 
   // Services
   getTelegramService(): TelegramService;
+
+  // Market regime (for smart TimeStop TTL calculation)
+  getMarketRegime(pair: string): Promise<MarketRegime>;
 }
 
 // ====================================================================
@@ -316,7 +320,9 @@ export class ExitManager {
     };
   }
 
-  // === TIME-STOP ===
+  // === SMART TIME-STOP ===
+  // Uses per-asset/market TTL with regime multipliers from time_stop_config table.
+  // TTL_final = clamp(TTL_base[asset,market] * factorRegime, minTTL, maxTTL)
 
   async checkTimeStop(
     position: OpenPosition,
@@ -334,115 +340,138 @@ export class ExitManager {
     shouldClose: boolean;
     reason: string;
     ageHours: number;
+    closeOrderType?: "market" | "limit";
+    limitFallbackSeconds?: number;
   }> {
     const { lotId, openedAt, pair, entryPrice, timeStopDisabled } = position;
-    const now = Date.now();
-    const ageMs = now - openedAt;
-    const ageHours = ageMs / (1000 * 60 * 60);
-    const timeStopHours = exitConfig.timeStopHours;
 
-    if (timeStopDisabled) {
-      return {
-        triggered: false,
-        expired: false,
-        shouldClose: false,
-        reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} disabled=true`,
-        ageHours,
-      };
+    // Get current market regime for smart TTL calculation
+    let regime: MarketRegime = "TRANSITION";
+    try {
+      regime = await this.host.getMarketRegime(pair);
+    } catch (e: any) {
+      log(`[TIME_STOP] Failed to get regime for ${pair}, using TRANSITION: ${e?.message}`, "trading");
     }
 
-    if (ageHours < timeStopHours) {
+    // Use Smart TimeStop Service (per-asset TTL + regime multiplier + clamp)
+    const tsResult: TimeStopCheckResult = await checkSmartTimeStop(
+      pair,
+      openedAt,
+      regime,
+      timeStopDisabled ?? false,
+    );
+
+    const { ageHours, ttlHours, expired, shouldClose, closeOrderType, limitFallbackSeconds, telegramAlertEnabled, logExpiryEvenIfDisabled, configSource } = tsResult;
+
+    // Not expired yet
+    if (!expired) {
       return {
         triggered: false,
         expired: false,
         shouldClose: false,
         reason: "",
         ageHours,
+        closeOrderType,
+        limitFallbackSeconds,
       };
     }
 
-    const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
-    const minCloseNetPct = this.calculateMinCloseNetPct(exitConfig.takerFeePct, exitConfig.takerFeePct, exitConfig.profitBufferPct);
+    // Expired but disabled by UI toggle
+    if (expired && !shouldClose) {
+      // Log event even when disabled
+      if (logExpiryEvenIfDisabled) {
+        await botLogger.info("TIME_STOP_EXPIRED_DISABLED", `TimeStop expirado pero DESACTIVADO para ${pair}`, {
+          pair, lotId, ageHours, ttlHours, regime, configSource, timeStopDisabled,
+        });
+      }
 
-    if (exitConfig.timeStopMode === "hard") {
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard FORCE_CLOSE`, "trading");
+      // Notify once about expiry (even disabled) for visibility
+      const now = Date.now();
+      const lastNotify = this.timeStopNotified.get(lotId) || 0;
+      const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
 
-      if (this.host.getTelegramService().isInitialized()) {
-        await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+      if (shouldNotify && telegramAlertEnabled && !position.timeStopExpiredAt) {
+        this.timeStopNotified.set(lotId, now);
+        this.persistThrottle("ts:", lotId, now);
+        position.timeStopExpiredAt = now;
+        this.host.setPosition(lotId, position);
+        await this.host.savePositionToDB(pair, position);
+
+        if (this.host.getTelegramService().isInitialized()) {
+          const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
+          await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop HARD - Cierre Inmediato</b>
+⏰ <b>Time-Stop Expirado (DESACTIVADO)</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
+   • TTL inteligente: <code>${ttlHours.toFixed(1)} horas</code>
+   • Régimen: <code>${regime}</code>
+   • Config: <code>${configSource}</code>
 
 📊 <b>Estado:</b>
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
-⚡ <b>ACCIÓN:</b> La posición se cerrará INMEDIATAMENTE [modo HARD]
+⚠️ <b>TimeStop DESACTIVADO — NO se ejecutará venta automática</b>
+💡 Evento registrado. Puedes cerrar manualmente.
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+        }
       }
 
       return {
         triggered: true,
         expired: true,
-        shouldClose: true,
-        reason: `Time-stop expirado (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [modo HARD]`,
+        shouldClose: false,
+        reason: tsResult.reason,
         ageHours,
+        closeOrderType,
+        limitFallbackSeconds,
       };
     }
 
-    // SOFT MODE: Check if profit is sufficient to close
-    if (priceChange >= minCloseNetPct) {
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} PROFIT_EXIT_OK`, "trading");
-      return {
-        triggered: true,
-        expired: true,
-        shouldClose: true,
-        reason: `Time-stop expirado + profit suficiente (+${priceChange.toFixed(2)}% >= ${minCloseNetPct.toFixed(2)}%)`,
-        ageHours,
-      };
-    }
+    // Expired AND enabled → CLOSE POSITION (closeReason=TIMESTOP)
+    const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
+    log(`[TIME_STOP_CLOSE] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h regime=${regime} closeType=${closeOrderType} config=${configSource}`, "trading");
 
-    // SOFT MODE: No force close
-    const lastNotify = this.timeStopNotified.get(lotId) || 0;
-    const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
-
-    if (shouldNotify && !position.timeStopExpiredAt) {
+    // Mark expiry timestamp
+    if (!position.timeStopExpiredAt) {
+      const now = Date.now();
       this.timeStopNotified.set(lotId, now);
       this.persistThrottle("ts:", lotId, now);
       position.timeStopExpiredAt = now;
       this.host.setPosition(lotId, position);
       await this.host.savePositionToDB(pair, position);
-      log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft grossPnl=${priceChange.toFixed(2)} WAITING_PROFIT_OR_MANUAL`, "trading");
+    }
 
-      if (this.host.getTelegramService().isInitialized()) {
-        await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+    // Send Telegram alert
+    if (telegramAlertEnabled && this.host.getTelegramService().isInitialized()) {
+      await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop Alcanzado</b>
+⏰ <b>Time-Stop EXPIRADO — Cierre Automático</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite configurado: <code>${timeStopHours} horas</code>
+   • TTL inteligente: <code>${ttlHours.toFixed(1)} horas</code>
+   • Régimen: <code>${regime}</code>
+   • Config: <code>${configSource}</code>
 
 📊 <b>Estado:</b>
    • Ganancia actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
-   • Mínimo para cierre auto: <code>+${minCloseNetPct.toFixed(2)}%</code>
 
-💡 Se cerrará automáticamente cuando supere +${minCloseNetPct.toFixed(2)}%
-⚠️ <b>Puedes cerrarla manualmente si lo prefieres</b>
+⚡ <b>ACCIÓN:</b> Cerrando posición [closeReason=TIMESTOP, tipo=${closeOrderType}]
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
-      }
     }
 
     return {
       triggered: true,
       expired: true,
-      shouldClose: false,
-      reason: `[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft WAITING_PROFIT_OR_MANUAL`,
+      shouldClose: true,
+      reason: tsResult.reason,
       ageHours,
+      closeOrderType,
+      limitFallbackSeconds,
     };
   }
 
@@ -974,39 +1003,64 @@ export class ExitManager {
     const paramsSource = `SMART_GUARD snapshot`;
     const lotId = position.lotId;
 
-    // === TIME-STOP CHECK ===
-    if (!position.timeStopDisabled) {
-      const exitConfig = await this.getAdaptiveExitConfig();
-      const now = Date.now();
-      const ageMs = now - position.openedAt;
-      const ageHours = ageMs / (1000 * 60 * 60);
-      const timeStopHours = exitConfig.timeStopHours;
+    // === SMART TIME-STOP CHECK (per-asset TTL + regime multiplier) ===
+    {
+      let regime: MarketRegime = "TRANSITION";
+      try {
+        regime = await this.host.getMarketRegime(pair);
+      } catch (e: any) {
+        log(`[TIME_STOP_SG] Failed to get regime for ${pair}, using TRANSITION: ${e?.message}`, "trading");
+      }
 
-      if (ageHours >= timeStopHours) {
-        // TIME-STOP HARD
-        if (exitConfig.timeStopMode === "hard") {
-          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=hard SMART_GUARD FORCE_CLOSE`, "trading");
+      const tsResult: TimeStopCheckResult = await checkSmartTimeStop(
+        pair,
+        position.openedAt,
+        regime,
+        position.timeStopDisabled ?? false,
+      );
 
-          const telegram = this.host.getTelegramService();
-          if (telegram.isInitialized()) {
-            await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+      if (tsResult.expired) {
+        const { ageHours, ttlHours, shouldClose, closeOrderType, limitFallbackSeconds, telegramAlertEnabled, configSource } = tsResult;
+
+        if (shouldClose) {
+          // TIMESTOP EXPIRED + ENABLED → Execute SELL (closeReason=TIMESTOP)
+          log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h regime=${regime} closeType=${closeOrderType} FORCE_CLOSE`, "trading");
+
+          // Mark expiry
+          if (!position.timeStopExpiredAt) {
+            const now = Date.now();
+            this.timeStopNotified.set(lotId, now);
+            this.persistThrottle("ts:", lotId, now);
+            position.timeStopExpiredAt = now;
+            this.host.setPosition(lotId, position);
+            await this.host.savePositionToDB(pair, position);
+          }
+
+          // Telegram alert
+          if (telegramAlertEnabled) {
+            const telegram = this.host.getTelegramService();
+            if (telegram.isInitialized()) {
+              await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop HARD - Cierre Forzado</b>
+⏰ <b>Time-Stop EXPIRADO — Cierre Forzado</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Modo: <code>SMART_GUARD</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite: <code>${timeStopHours} horas</code>
+   • TTL inteligente: <code>${ttlHours.toFixed(1)} horas</code>
+   • Régimen: <code>${regime}</code>
+   • Config: <code>${configSource}</code>
 
 📊 <b>Estado:</b>
    • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
-⚡ <b>ACCIÓN:</b> Cierre forzado por Time-Stop HARD
+⚡ <b>ACCIÓN:</b> Cierre forzado [closeReason=TIMESTOP, tipo=${closeOrderType}]
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+            }
           }
 
-          // Ejecutar cierre forzado
+          // Execute sell
           const minVolume = this.host.getOrderMin(pair);
           if (position.amount >= minVolume) {
             const freshBalances = await this.host.getTradingExchange().getBalance();
@@ -1022,47 +1076,61 @@ export class ExitManager {
                 aiSampleId: position.aiSampleId,
                 openedAt: position.openedAt
               };
+
+              await botLogger.info("TIME_STOP_CLOSE", `TimeStop cierre forzado en ${pair} [SMART_GUARD]`, {
+                pair, lotId, ageHours, ttlHours, regime, closeOrderType, configSource,
+                priceChangePct: priceChange, sellAmount,
+              });
+
               await this.host.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice,
-                `Time-Stop HARD (${ageHours.toFixed(0)}h >= ${timeStopHours}h) [SMART_GUARD]`,
+                `TimeStop expirado (${ageHours.toFixed(0)}h >= ${ttlHours.toFixed(1)}h) [SMART_GUARD, ${regime}, ${configSource}]`,
                 undefined, undefined, undefined, sellContext);
             }
           }
-          return;
-        }
+          return; // Position closed, skip rest of SmartGuard logic
+        } else {
+          // TIMESTOP EXPIRED but DISABLED by toggle → log + notify only
+          const now = Date.now();
+          const lastNotify = this.timeStopNotified.get(lotId) || 0;
+          const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
 
-        // TIME-STOP SOFT
-        const lastNotify = this.timeStopNotified.get(lotId) || 0;
-        const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
+          if (shouldNotify && !position.timeStopExpiredAt) {
+            this.timeStopNotified.set(lotId, now);
+            this.persistThrottle("ts:", lotId, now);
+            position.timeStopExpiredAt = now;
+            this.host.setPosition(lotId, position);
+            await this.host.savePositionToDB(pair, position);
+            log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h DISABLED_BY_TOGGLE — LOG_ONLY`, "trading");
 
-        if (shouldNotify && !position.timeStopExpiredAt) {
-          this.timeStopNotified.set(lotId, now);
-          this.persistThrottle("ts:", lotId, now);
-          position.timeStopExpiredAt = now;
-          this.host.setPosition(lotId, position);
-          await this.host.savePositionToDB(pair, position);
-          log(`[TIME_STOP_EXPIRED] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} mode=soft SMART_GUARD ALERT_ONLY`, "trading");
+            await botLogger.info("TIME_STOP_EXPIRED_DISABLED", `TimeStop expirado pero DESACTIVADO en ${pair} [SMART_GUARD]`, {
+              pair, lotId, ageHours, ttlHours, regime, configSource,
+            });
 
-          const telegram = this.host.getTelegramService();
-          if (telegram.isInitialized()) {
-            await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            if (telegramAlertEnabled) {
+              const telegram = this.host.getTelegramService();
+              if (telegram.isInitialized()) {
+                await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
-⏰ <b>Time-Stop Alcanzado (SMART_GUARD)</b>
+⏰ <b>Time-Stop Expirado (DESACTIVADO)</b>
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
    • Modo: <code>SMART_GUARD</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • Límite: <code>${timeStopHours} horas</code>
+   • TTL inteligente: <code>${ttlHours.toFixed(1)} horas</code>
+   • Régimen: <code>${regime}</code>
 
 📊 <b>Estado:</b>
    • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
-💡 <b>SmartGuard sigue gestionando la posición</b>
-⚠️ Puedes cerrarla manualmente si lo prefieres
+⚠️ <b>TimeStop DESACTIVADO — NO se ejecutará venta</b>
+💡 SmartGuard sigue gestionando la posición
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+              }
+            }
           }
+          // Continue with SmartGuard logic (BE, trailing, etc.)
         }
-        // En SOFT mode, continúa con la lógica de SmartGuard
       }
     }
 

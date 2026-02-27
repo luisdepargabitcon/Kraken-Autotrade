@@ -693,6 +693,14 @@ export class TradingEngine {
       clearExposureAlert: (pair) => { this.lastExposureAlert.delete(pair); },
       setCurrentUsdBalance: (balance) => { this.currentUsdBalance = balance; },
       getTelegramService: () => this.telegramService,
+      getMarketRegime: async (pair: string) => {
+        try {
+          const analysis = await this.getMarketRegimeWithCache(pair);
+          return analysis.regime as any;
+        } catch {
+          return "TRANSITION" as any;
+        }
+      },
     };
   }
 

@@ -905,6 +905,12 @@ export async function registerRoutes(
   registerFiscoAlertsRoutes(app, routerDeps);
 
   // ============================================================
+  // SMART TIMESTOP CONFIG ENDPOINTS (modularized)
+  // ============================================================
+  const { registerTimeStopRoutes } = await import('./routes/timestop.routes');
+  registerTimeStopRoutes(app, routerDeps);
+
+  // ============================================================
   // TEST & DEBUG ENDPOINTS (modularized)
   // ============================================================
   const { registerTestRoutes } = await import('./routes/test.routes');
