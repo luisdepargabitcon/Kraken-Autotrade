@@ -1423,7 +1423,8 @@ export class TradingEngine {
     timeframe: string,
     candle: OHLCCandle,
     adjustedMinSignals?: number,
-    regime?: MarketRegime | string | null
+    regime?: MarketRegime | string | null,
+    adx?: number
   ): Promise<TradeSignal> {
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
     const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
@@ -1539,7 +1540,7 @@ export class TradingEngine {
     
     // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
     if (mtfAnalysis && signal.action !== "hold") {
-      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime);
+      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime, adx);
       if (mtfBoost.filtered) {
         // Preserve signalsCount from original signal for diagnostic trace
         // Si es filtro MTF_STRICT, enviar alerta de rechazo
@@ -2140,6 +2141,7 @@ El bot ha pausado las operaciones de COMPRA.
                 isIntermediateCycle = false;
                 this.initPairTrace(pair, expDefault.maxAllowed, false);
                 log(`Nueva vela cerrada ${pair}/${signalTimeframe} @ ${new Date(candle.time * 1000).toISOString()}`, "trading");
+                this.invalidateMtfCache(pair);
                 await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
               } else {
                 // No hay vela nueva, ciclo intermedio
@@ -3160,6 +3162,7 @@ El bot ha pausado las operaciones de COMPRA.
       // === EARLY REGIME DETECTION (always, for diagnostic trace in candles mode) ===
       let earlyRegime: string | null = null;
       let earlyRegimeReason: string | null = null;
+      let earlyRegimeAdx: number | undefined = undefined;
       const regimeEnabledEarly = botConfigForScan?.regimeDetectionEnabled ?? false;
       const routerEnabled = (botConfigForScan as any)?.regimeRouterEnabled ?? false;
       
@@ -3168,6 +3171,7 @@ El bot ha pausado las operaciones de COMPRA.
           const regimeAnalysis = await this.getMarketRegimeWithCache(pair);
           earlyRegime = regimeAnalysis.regime;
           earlyRegimeReason = regimeAnalysis.reason;
+          earlyRegimeAdx = regimeAnalysis.adx;
         } catch (regimeErr: any) {
           earlyRegime = "ERROR";
           earlyRegimeReason = regimeErr.message;
@@ -3203,13 +3207,13 @@ El bot ha pausado las operaciones de COMPRA.
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime, earlyRegimeAdx);
           routerApplied = true;
           log(`[ROUTER] ${pair}: TRANSITION regime → momentum_candles + overrides`, "trading");
         } else {
           // TREND or other: Use standard momentum
           selectedStrategyId = `momentum_candles_${timeframe}`;
-          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
+          signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime, earlyRegimeAdx);
           if (earlyRegime === "TREND") {
             routerApplied = true;
             log(`[ROUTER] ${pair}: TREND regime → momentum_candles`, "trading");
@@ -3217,7 +3221,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
       } else {
         // Router disabled: use standard momentum strategy
-        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime);
+        signal = await this.analyzeWithCandleStrategy(pair, timeframe, candle, adjustedMinSignalsForStrategy, earlyRegime, earlyRegimeAdx);
       }
       
       // Registrar resultado del escaneo para candles
@@ -4085,8 +4089,8 @@ El bot ha pausado las operaciones de COMPRA.
   }
 
   // === MTF FILTER (delegated to strategies.ts) ===
-  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis, regime?: MarketRegime | string | null) {
-    return _applyMTFFilter(signal, mtf, regime);
+  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis, regime?: MarketRegime | string | null, adx?: number) {
+    return _applyMTFFilter(signal, mtf, regime, adx);
   }
 
   // === CYCLE-MODE STRATEGIES (delegated to strategies.ts) ===
@@ -5412,6 +5416,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
   }
 
   // === MTF ANALYSIS (delegated to MtfAnalyzer) ===
+  private invalidateMtfCache(pair: string): void { this.mtfAnalyzer.invalidate(pair); }
   private async getMultiTimeframeData(pair: string): Promise<MultiTimeframeData | null> { return this.mtfAnalyzer.getMultiTimeframeData(pair); }
   private analyzeTimeframeTrend(candles: OHLCCandle[]): "bullish" | "bearish" | "neutral" { return _analyzeTimeframeTrend(candles); }
   private analyzeMultiTimeframe(mtfData: MultiTimeframeData): TrendAnalysis { return _analyzeMultiTimeframe(mtfData); }

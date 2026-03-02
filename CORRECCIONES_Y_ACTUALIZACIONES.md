@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-03-02 — FEAT: MTF Threshold Dinámico por ADX + Mejora de datos MTF (Fase 1 + 2)
+
+### Descripción
+Reducción de overfiltering en régimen TRANSITION mediante threshold MTF dinámico basado en ADX. Mejora de calidad y actualidad de los datos multi-timeframe.
+
+### Problema resuelto
+El filtro MTF en TRANSITION usaba un threshold hardcodeado de 0.30 para compras. En mercados con ADX bajo (16–20), este threshold bloqueaba señales de rebote legítimas, causando sequías operativas de varios días a pesar de movimientos del 5–6%.
+
+### FASE 1 — Threshold dinámico por ADX en TRANSITION
+
+**Archivo:** `server/services/strategies.ts` → `applyMTFFilter()`
+- Nueva firma: `applyMTFFilter(signal, mtf, regime, adx?: number)`
+- Lógica dinámica solo para `TRANSITION`:
+  - `ADX < 20` → threshold = **-0.10** (mercado débil, permite rebotes)
+  - `ADX 20–24` → threshold = **0.00** (neutral)
+  - `ADX ≥ 25` → threshold = **0.15** (tendencia formándose)
+  - `ADX undefined` → threshold = **0.30** (fallback al comportamiento anterior)
+- RANGE y TREND: sin cambios
+- Log enriquecido: `"MTF insuficiente en TRANSITION (-0.44 < 0.00, ADX=22, 5m=neutral/1h=bearish/4h=bearish)"`
+
+**Archivo:** `server/services/tradingEngine.ts`
+- `analyzeWithCandleStrategy()`: añadido parámetro `adx?: number`
+- `analyzePairAndTradeWithCandles()`: captura `earlyRegimeAdx = regimeAnalysis.adx` y lo propaga a los 3 call sites de `analyzeWithCandleStrategy()`
+- Delegate `applyMTFFilter()` actualizado para pasar `adx`
+
+### FASE 2 — Mejora de datos MTF
+
+**Archivo:** `server/services/mtfAnalysis.ts`
+- **5m: `slice(-50)` → `slice(-100)`** — mayor historial para EMA/HH/LL del corto plazo (~8.3h contexto vs ~4.1h anterior)
+- 1h y 4h: sin cambio (mantienen `slice(-50)`)
+- Nuevo método `MtfAnalyzer.invalidate(pair)` para eliminar cache bajo demanda
+
+**Archivo:** `server/services/tradingEngine.ts`
+- Nuevo delegate `invalidateMtfCache(pair)` → `this.mtfAnalyzer.invalidate(pair)`
+- En cierre de vela 15m (`isNewCandleClosed`): **`invalidateMtfCache(pair)` se llama ANTES de `analyzePairAndTradeWithCandles()`** → garantiza datos MTF frescos en cada evaluación completa, sin impactar ciclos intermedios
+
+### Criterios de aceptación
+- ✅ Logs muestran threshold dinámico real con ADX en TRANSITION
+- ✅ Reason incluye componentes 5m/1h/4h del MTF
+- ✅ 5m usa 100 velas; 1h y 4h conservan 50
+- ✅ MTF se refresca en cada cierre de vela 15m (no usa caché de hasta 5 min)
+- ✅ Sin cambios en scoring MTF (`analyzeMultiTimeframe`), TREND ni RANGE
+
+---
+
 ## 2026-02-27 — FEAT: Smart TimeStop — TTL por activo con multiplicadores de régimen
 
 ### Descripción

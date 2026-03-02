@@ -640,20 +640,33 @@ export function meanReversionSimpleStrategy(pair: string, candles: OHLCCandle[],
 export function applyMTFFilter(
   signal: TradeSignal,
   mtf: TrendAnalysis,
-  regime?: MarketRegime | string | null
+  regime?: MarketRegime | string | null,
+  adx?: number
 ): { filtered: boolean; confidenceBoost: number; reason: string; filterType?: "MTF_STRICT" | "MTF_STANDARD" } {
   if (signal.action === "buy") {
-    // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4) ===
-    // En TRANSITION: exigir MTF >= 0.3 para compras
+    // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4 + threshold dinámico ADX) ===
+    // En TRANSITION: threshold dinámico según ADX (evita compras contra tendencia mayor)
     // En RANGE: exigir MTF >= 0.2 para compras
-    // Esto evita compras contra tendencia mayor en regímenes inestables
-    if (regime === "TRANSITION" && mtf.alignment < 0.3) {
-      return {
-        filtered: true,
-        confidenceBoost: 0,
-        reason: `MTF insuficiente en TRANSITION (${mtf.alignment.toFixed(2)} < 0.30)`,
-        filterType: "MTF_STRICT"
-      };
+    if (regime === "TRANSITION") {
+      let threshold: number;
+      if (adx == null) {
+        threshold = 0.30;
+      } else if (adx < 20) {
+        threshold = -0.10;
+      } else if (adx < 25) {
+        threshold = 0.00;
+      } else {
+        threshold = 0.15;
+      }
+      if (mtf.alignment < threshold) {
+        const adxStr = adx != null ? `, ADX=${adx.toFixed(0)}` : "";
+        return {
+          filtered: true,
+          confidenceBoost: 0,
+          reason: `MTF insuficiente en TRANSITION (${mtf.alignment.toFixed(2)} < ${threshold.toFixed(2)}${adxStr}, 5m=${mtf.shortTerm}/1h=${mtf.mediumTerm}/4h=${mtf.longTerm})`,
+          filterType: "MTF_STRICT"
+        };
+      }
     }
     if (regime === "RANGE" && mtf.alignment < 0.2) {
       return {

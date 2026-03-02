@@ -161,6 +161,10 @@ export class MtfAnalyzer {
     this.host = host;
   }
 
+  invalidate(pair: string): void {
+    this.mtfCache.delete(pair);
+  }
+
   async getMultiTimeframeData(pair: string): Promise<MultiTimeframeData | null> {
     try {
       const cached = this.mtfCache.get(pair);
@@ -175,7 +179,7 @@ export class MtfAnalyzer {
       ]);
 
       const data: MultiTimeframeData = {
-        tf5m: tf5m.slice(-50),
+        tf5m: tf5m.slice(-100),
         tf1h: tf1h.slice(-50),
         tf4h: tf4h.slice(-50),
         lastUpdate: Date.now(),
