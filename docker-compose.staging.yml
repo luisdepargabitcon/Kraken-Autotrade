@@ -39,8 +39,10 @@ services:
       - REVOLUTX_SYNC_ENABLED=true
       - BACKUP_SCRIPTS_DIR=/app/scripts
       - BACKUP_DIR=/app/backups
+      - AI_MODEL_DIR=/app/ml_models
     volumes:
       - ./backups:/app/backups
+      - ai_models_staging:/app/ml_models
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "3020:5000"
@@ -49,6 +51,7 @@ services:
 
 volumes:
   pgdata_staging:
+  ai_models_staging:
 
 networks:
   krakenbot-staging-net:

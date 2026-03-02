@@ -9,7 +9,7 @@ import json
 import os
 import pickle
 
-MODEL_DIR = "/tmp/models"
+MODEL_DIR = os.environ.get("AI_MODEL_DIR", "/tmp/models")
 MODEL_PATH = f"{MODEL_DIR}/ai_filter.joblib"
 STATUS_PATH = f"{MODEL_DIR}/ai_status.json"
 
@@ -56,9 +56,18 @@ def train(samples_path):
     ensure_model_dir()
     
     with open(samples_path, 'r') as f:
-        samples = json.load(f)
+        raw = json.load(f)
     
-    complete_samples = [s for s in samples if s.get("isComplete") and s.get("labelWin") is not None]
+    # Support both {train:[...], val:[...]} (new TS format) and flat array (legacy)
+    if isinstance(raw, dict):
+        samples = raw.get("train", []) + raw.get("val", [])
+    elif isinstance(raw, list):
+        samples = raw
+    else:
+        print(json.dumps({"success": False, "error": "Unexpected samples format"}))
+        sys.exit(1)
+    
+    complete_samples = [s for s in samples if s.get("labelWin") is not None]
     
     if len(complete_samples) < 50:
         print(json.dumps({"success": False, "error": f"Not enough samples: {len(complete_samples)}"}))

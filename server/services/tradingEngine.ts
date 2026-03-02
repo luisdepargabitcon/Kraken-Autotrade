@@ -162,6 +162,7 @@ type BlockReasonCode =
   | "NO_POSITION"             // Sin posición para vender
   | "STALE_CANDLE_BLOCK"      // Vela obsoleta (timing gate)
   | "CHASE_BLOCK"             // Precio se alejó del cierre de vela (chase gate)
+  | "AI_FILTER_BLOCK"         // Bloqueado por filtro ML predictivo
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
@@ -1613,6 +1614,43 @@ export class TradingEngine {
 
   private meanReversionSimpleStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
     return _meanReversionSimpleStrategy(pair, candles, currentPrice);
+  }
+
+  private async buildAiFeatures(pair: string, timeframe: string, confidence: number, spreadPct: number): Promise<AiFeatures> {
+    try {
+      const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
+      const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+      if (!candles || candles.length < 27) {
+        return aiService.extractFeatures({ confidence: confidence * 100, spreadPct });
+      }
+      const closed = candles.slice(0, -1);
+      const closes = closed.map(c => c.close);
+      const rsi = _calculateRSI(closes.slice(-14));
+      const macd = _calculateMACD(closes);
+      const bb = _calculateBollingerBands(closes);
+      const atrInput = closed.slice(-15).map(c => ({ price: c.close, timestamp: c.time, high: c.high, low: c.low, volume: c.volume }));
+      const atr = _calculateATR(atrInput);
+      const ema12 = _calculateEMA(closes.slice(-12), 12);
+      const ema26 = _calculateEMA(closes.slice(-26), 26);
+      const last = closed[closed.length - 1].close;
+      const p1h  = closed.length >= 12  ? ((last - closed[closed.length - 12].close)  / closed[closed.length - 12].close)  * 100 : 0;
+      const p4h  = closed.length >= 48  ? ((last - closed[closed.length - 48].close)  / closed[closed.length - 48].close)  * 100 : 0;
+      const p24h = closed.length >= 100 ? ((last - closed[closed.length - 100].close) / closed[closed.length - 100].close) * 100 : 0;
+      const recentVol = closed.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
+      const prevVol   = closed.slice(-10, -5).reduce((s, c) => s + c.volume, 0) / 5;
+      const volChange = prevVol > 0 ? ((recentVol - prevVol) / prevVol) * 100 : 0;
+      return aiService.extractFeatures({
+        rsi,
+        macd: { line: macd.macd, signal: macd.signal, histogram: macd.histogram },
+        bollinger: { upper: bb.upper, middle: bb.middle, lower: bb.lower },
+        atr, ema12, ema26,
+        volume24hChange: volChange,
+        priceChange1h: p1h, priceChange4h: p4h, priceChange24h: p24h,
+        spreadPct, confidence: confidence * 100,
+      });
+    } catch {
+      return aiService.extractFeatures({ confidence: confidence * 100, spreadPct });
+    }
   }
 
   async start() {
@@ -3863,6 +3901,44 @@ El bot ha pausado las operaciones de COMPRA.
           confidence: signal.confidence,
           orderUsd: tradeAmountUSD,
         });
+
+        // === AI FILTER / SHADOW MODE ===
+        try {
+          const aiCfg = await storage.getAiConfig();
+          const aiFilterOn = aiCfg?.filterEnabled ?? false;
+          const aiShadowOn = aiCfg?.shadowEnabled ?? false;
+          if (aiFilterOn || aiShadowOn) {
+            const aiFeatures = await this.buildAiFeatures(pair, timeframe, signal.confidence, sd2ForTrace.spreadEffectivePct);
+            const prediction = await aiService.predict(aiFeatures);
+            log(`[AI] ${pair}: score=${prediction.score.toFixed(3)} thr=${prediction.threshold} approve=${prediction.approve} filter=${aiFilterOn} shadow=${aiShadowOn}`, "trading");
+            if (aiShadowOn) {
+              storage.saveAiShadowDecision({
+                tradeId: `CANDLES-${Date.now()}-${pair}`,
+                score: prediction.score.toFixed(4),
+                threshold: prediction.threshold.toFixed(4),
+                wouldBlock: !prediction.approve,
+              }).catch((e: any) => log(`[AI] shadow save error: ${e.message}`, "trading"));
+            }
+            if (aiFilterOn && !prediction.approve) {
+              log(`[AI_FILTER_BLOCK] ${pair}: BUY bloqueado por ML (score=${prediction.score.toFixed(3)} < thr=${prediction.threshold})`, "trading");
+              await botLogger.info("TRADE_SKIPPED", `BUY bloqueado por filtro ML`, {
+                pair, signal: "BUY", reason: "AI_FILTER_BLOCK",
+                aiScore: prediction.score, aiThreshold: prediction.threshold,
+                strategy: selectedStrategyId,
+              });
+              this.updatePairTrace(pair, {
+                smartGuardDecision: "BLOCK",
+                blockReasonCode: "AI_FILTER_BLOCK",
+                blockDetails: { aiScore: prediction.score, aiThreshold: prediction.threshold },
+                finalSignal: "NONE",
+                finalReason: `ML: score=${prediction.score.toFixed(3)} < ${prediction.threshold}`,
+              });
+              return;
+            }
+          }
+        } catch (aiErr: any) {
+          log(`[AI] filtro ML error (non-fatal): ${aiErr.message}`, "trading");
+        }
 
         const success = await this.executeTrade(
           pair, 

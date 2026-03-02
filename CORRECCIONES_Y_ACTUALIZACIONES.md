@@ -5,6 +5,61 @@
 
 ---
 
+## 2026-03-02 — FIX: Motor IA/ML — Fixes críticos pipeline (Fixes #1-#4)
+
+### Resumen
+Cuatro fixes críticos identificados en la Fase 1 de verificación del Motor IA/ML. El pipeline existía pero estaba roto en dos puntos críticos: (1) el entrenamiento nunca funcionaba por incompatibilidad de formato JSON y (2) el filtro predictivo no estaba conectado al flujo de trading.
+
+### FIX #1 — mlTrainer.py: Formato JSON incompatible TS↔Python (CRÍTICO)
+**Archivo:** `server/services/mlTrainer.py`
+- **Bug**: TypeScript enviaba `{train: [...], val: [...]}` pero Python iteraba el objeto como si fuera un array, obteniendo solo las claves "train" y "val". Resultado: `complete_samples = []` siempre → entrenamiento fallaba con "Not enough samples: 0".
+- **Fix**: Detectar formato del JSON: si es `dict` → concatenar `train + val`; si es `list` → usarlo directamente.
+- **Fix**: Eliminar filtro `isComplete` (no existe en `training_trades`, solo existe `labelWin`).
+- **Fix**: Usar `AI_MODEL_DIR` env var en lugar de `/tmp/models` hardcodeado.
+
+### FIX #2 — tradingEngine.ts: AI filter no integrado en flujo de trading (CRÍTICO)
+**Archivo:** `server/services/tradingEngine.ts`
+- **Bug**: `filterEnabled` y `shadowEnabled` existían en DB pero nadie los leía en el motor de trading. `aiService.predict()` nunca se llamaba antes de ejecutar un BUY.
+- **Fix**: Bloque `=== AI FILTER / SHADOW MODE ===` inyectado justo antes de `executeTrade` en el flujo BUY candles (`analyzePairAndTradeWithCandles`):
+  - Lee `aiCfg.filterEnabled` y `aiCfg.shadowEnabled` de DB.
+  - Si alguno activo: calcula features reales → llama `aiService.predict(features)`.
+  - Si `filterEnabled` y `!prediction.approve` → bloquea BUY con `blockReasonCode: "AI_FILTER_BLOCK"`.
+  - Si `shadowEnabled` → guarda predicción en `ai_shadow_decisions` sin bloquear.
+- Añadido `"AI_FILTER_BLOCK"` al union type `BlockReasonCode`.
+
+### FIX #3 — tradingEngine.ts: Features hardcodeadas (rsi: 50) (ALTO)
+**Archivo:** `server/services/tradingEngine.ts`
+- **Bug**: El sample collection usaba `rsi: 50` fijo. El modelo se entrenaría con features ficticias.
+- **Fix**: Nuevo método privado `buildAiFeatures(pair, timeframe, confidence, spreadPct)`:
+  - Obtiene velas desde el exchange (cache existente).
+  - Calcula RSI-14, MACD (line/signal/hist), Bollinger Bands (upper/middle/lower), ATR-14, EMA-12, EMA-26.
+  - Calcula priceChange1h/4h/24h desde velas históricas (12/48/100 periodos de 5m).
+  - Calcula volume24hChange como ratio últimas 5 vs previas 5 velas.
+  - Fallback a features vacías si no hay suficientes velas (≥27 requeridas).
+
+### FIX #4 — Persistencia del modelo fuera de /tmp (MEDIO)
+**Archivos:** `server/services/aiService.ts`, `server/services/mlTrainer.py`, `docker-compose.staging.yml`
+- **Bug**: Modelo guardado en `/tmp/models/` → se perdía en cada reinicio del contenedor Docker.
+- **Fix**: Variable de entorno `AI_MODEL_DIR` con fallback a `/tmp/models`.
+- **Fix docker-compose.staging.yml**: Añadido `AI_MODEL_DIR=/app/ml_models` + volumen persistente `ai_models_staging:/app/ml_models`.
+
+### Estado del Motor IA/ML tras fixes
+
+| Componente | Antes | Después |
+|------------|-------|---------|
+| Backfill | ✅ FUNCIONA | ✅ Sin cambios |
+| Labeling | ✅ FUNCIONA | ✅ Sin cambios |
+| Training | ❌ NO FUNCIONA | ✅ FUNCIONA (Fix #1) |
+| AI Filter activo | ❌ NO CONECTADO | ✅ INTEGRADO (Fix #2) |
+| Shadow Mode | ❌ NO CONECTADO | ✅ INTEGRADO (Fix #2) |
+| Features realistas | ❌ rsi=50 fijo | ✅ RSI/MACD/BB/ATR/EMA reales (Fix #3) |
+| Persistencia modelo | ⚠️ /tmp (efímero) | ✅ Volumen Docker persistente (Fix #4) |
+
+### Nota: umbral mínimo de entrenamiento
+El modelo requiere 300 samples etiquetados (actualmente 163). Hasta alcanzar 300, el filtro activo no se puede activar (`canActivate=false`). El shadow mode sí puede activarse (registra predicciones sin bloquear) para monitorear el comportamiento del modelo en tiempo real una vez entrenado.
+
+---
+
 ## 2026-03-02 — FEAT: MTF Threshold Dinámico por ADX + Mejora de datos MTF (Fase 1 + 2)
 
 ### Descripción

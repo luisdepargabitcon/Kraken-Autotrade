@@ -72,7 +72,7 @@ export interface AiDiagnostic {
   avgHoldTimeMinutes: number | null;
 }
 
-const MODEL_DIR = "/tmp/models";
+const MODEL_DIR = process.env.AI_MODEL_DIR || "/tmp/models";
 const MODEL_PATH = `${MODEL_DIR}/ai_filter.joblib`;
 const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
 
