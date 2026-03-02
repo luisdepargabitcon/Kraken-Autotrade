@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,28 +78,30 @@ export default function AiMl() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const { data: status, isLoading: statusLoading } = useQuery({
+  const { data: status, isLoading: statusLoading, isFetching: statusFetching, refetch: refetchStatus } = useQuery({
     queryKey: ["/api/ai/status"],
     queryFn: () => API("/api/ai/status"),
     refetchInterval: 15000,
   });
 
-  const { data: diag, isLoading: diagLoading } = useQuery({
+  const { data: diag, isLoading: diagLoading, refetch: refetchDiag } = useQuery({
     queryKey: ["/api/ai/diagnostic"],
     queryFn: () => API("/api/ai/diagnostic"),
     refetchInterval: 30000,
   });
 
-  const { data: shadowReport } = useQuery({
+  const { data: shadowReport, refetch: refetchShadow } = useQuery({
     queryKey: ["/api/ai/shadow/report"],
     queryFn: () => API("/api/ai/shadow/report"),
     refetchInterval: 60000,
   });
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["/api/ai/status"] });
-    qc.invalidateQueries({ queryKey: ["/api/ai/diagnostic"] });
-    qc.invalidateQueries({ queryKey: ["/api/ai/shadow/report"] });
+  const [refreshing, setRefreshing] = useState(false);
+
+  const invalidate = async () => {
+    setRefreshing(true);
+    await Promise.all([refetchStatus(), refetchDiag(), refetchShadow()]);
+    setRefreshing(false);
   };
 
   const backfillMut = useMutation({
@@ -162,10 +165,12 @@ export default function AiMl() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            {(loading || refreshing) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             {status && <PhaseBadge phase={status.phase} label={status.phaseLabel} />}
-            <Button variant="outline" size="sm" className="font-mono text-xs" onClick={invalidate}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            <Button variant="outline" size="sm" className="font-mono text-xs" onClick={invalidate} disabled={refreshing}>
+              {refreshing
+                ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
               Actualizar
             </Button>
           </div>
