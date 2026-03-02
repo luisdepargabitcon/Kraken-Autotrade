@@ -16,6 +16,7 @@ import Guide from "@/pages/Guide";
 import Monitor from "@/pages/Monitor";
 import Backups from "@/pages/Backups";
 import Fisco from "@/pages/Fisco";
+import AiMl from "@/pages/AiMl";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/monitor" component={Monitor} />
       <Route path="/backups" component={Backups} />
       <Route path="/fisco" component={Fisco} />
+      <Route path="/ai" component={AiMl} />
       
       <Route component={NotFound} />
     </Switch>
