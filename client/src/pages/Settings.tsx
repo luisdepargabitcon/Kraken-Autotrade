@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield, ChevronRight, Trash2, Plus, X } from "lucide-react";
+import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield, ChevronRight, Trash2, Plus, X, Database, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { SignalThresholdConfig } from "@/components/dashboard/SignalThresholdConfig";
@@ -122,6 +122,32 @@ interface BotConfig {
   spreadRevolutxMarkupPct: string;
   spreadTelegramAlertEnabled: boolean;
   spreadTelegramCooldownMs: number;
+  // Log Retention fields
+  logRetentionEnabled: boolean;
+  logRetentionDays: number;
+  eventsRetentionEnabled: boolean;
+  eventsRetentionDays: number;
+  lastLogPurgeAt: string | null;
+  lastLogPurgeCount: number;
+  lastEventsPurgeAt: string | null;
+  lastEventsPurgeCount: number;
+}
+
+interface RetentionStatus {
+  logs: {
+    retentionEnabled: boolean;
+    retentionDays: number;
+    totalRows: number;
+    lastPurgeAt: string | null;
+    lastPurgeCount: number;
+  };
+  events: {
+    retentionEnabled: boolean;
+    retentionDays: number;
+    totalRows: number;
+    lastPurgeAt: string | null;
+    lastPurgeCount: number;
+  };
 }
 
 export default function Settings() {
@@ -264,6 +290,32 @@ export default function Settings() {
     },
     onError: () => {
       toast.error("Error al entrenar modelo");
+    },
+  });
+
+  const { data: retentionStatus, refetch: refetchRetention } = useQuery<RetentionStatus>({
+    queryKey: ["retentionStatus"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/retention-status");
+      if (!res.ok) throw new Error("Failed to fetch retention status");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+
+  const runPurgeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/run-retention-purge", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to run purge");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      refetchRetention();
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] });
+      toast.success(`Purga completada: -${data.logsDeleted} logs, -${data.eventsDeleted} eventos`);
+    },
+    onError: () => {
+      toast.error("Error al ejecutar purga manual");
     },
   });
 
@@ -1317,6 +1369,144 @@ export default function Settings() {
 
             {/* Trading Configuration Dashboard */}
             <TradingConfigDashboard />
+
+            {/* Log Retention */}
+            <Card className="glass-panel border-border/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/20 rounded-lg">
+                    <Database className="h-6 w-6 text-emerald-400" />
+                  </div>
+                  <div>
+                    <CardTitle>Retención de Logs</CardTitle>
+                    <CardDescription>Limpieza automática diaria de server_logs y bot_events para controlar el tamaño de la base de datos.</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Status row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg border border-border/50 bg-card/30 space-y-1">
+                    <p className="text-xs text-muted-foreground">server_logs</p>
+                    <p className="text-lg font-mono font-semibold">{retentionStatus?.logs.totalRows?.toLocaleString() ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground">filas actuales</p>
+                    {retentionStatus?.logs.lastPurgeAt && (
+                      <p className="text-xs text-emerald-400">
+                        Última purga: {new Date(retentionStatus.logs.lastPurgeAt).toLocaleDateString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {retentionStatus.logs.lastPurgeCount > 0 && ` (-${retentionStatus.logs.lastPurgeCount.toLocaleString()})`}
+                      </p>
+                    )}
+                    {!retentionStatus?.logs.lastPurgeAt && (
+                      <p className="text-xs text-yellow-400">Sin purga registrada</p>
+                    )}
+                  </div>
+                  <div className="p-3 rounded-lg border border-border/50 bg-card/30 space-y-1">
+                    <p className="text-xs text-muted-foreground">bot_events</p>
+                    <p className="text-lg font-mono font-semibold">{retentionStatus?.events.totalRows?.toLocaleString() ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground">filas actuales</p>
+                    {retentionStatus?.events.lastPurgeAt && (
+                      <p className="text-xs text-emerald-400">
+                        Última purga: {new Date(retentionStatus.events.lastPurgeAt).toLocaleDateString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {retentionStatus.events.lastPurgeCount > 0 && ` (-${retentionStatus.events.lastPurgeCount.toLocaleString()})`}
+                      </p>
+                    )}
+                    {!retentionStatus?.events.lastPurgeAt && (
+                      <p className="text-xs text-yellow-400">Sin purga registrada</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* server_logs retention config */}
+                <div className="space-y-3 p-4 border border-emerald-500/20 rounded-lg bg-emerald-500/5">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-medium">Retención de server_logs</Label>
+                      <p className="text-xs text-muted-foreground">Elimina logs del servidor más antiguos que N días</p>
+                    </div>
+                    <Switch
+                      checked={config?.logRetentionEnabled ?? true}
+                      onCheckedChange={(checked) => updateMutation.mutate({ logRetentionEnabled: checked } as any)}
+                      data-testid="switch-log-retention"
+                    />
+                  </div>
+                  {(config?.logRetentionEnabled ?? true) && (
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm">Conservar últimos</Label>
+                      <Select
+                        value={String(config?.logRetentionDays ?? 7)}
+                        onValueChange={(v) => updateMutation.mutate({ logRetentionDays: parseInt(v) } as any)}
+                      >
+                        <SelectTrigger className="w-36 bg-background/50" data-testid="select-log-retention-days">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="3">3 días (~340 MB)</SelectItem>
+                          <SelectItem value="5">5 días (~570 MB)</SelectItem>
+                          <SelectItem value="7">7 días (~840 MB)</SelectItem>
+                          <SelectItem value="14">14 días (~1.6 GB)</SelectItem>
+                          <SelectItem value="30">30 días (~3.4 GB)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+
+                {/* bot_events retention config */}
+                <div className="space-y-3 p-4 border border-blue-500/20 rounded-lg bg-blue-500/5">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-medium">Retención de bot_events</Label>
+                      <p className="text-xs text-muted-foreground">Elimina eventos del motor más antiguos que N días</p>
+                    </div>
+                    <Switch
+                      checked={config?.eventsRetentionEnabled ?? true}
+                      onCheckedChange={(checked) => updateMutation.mutate({ eventsRetentionEnabled: checked } as any)}
+                      data-testid="switch-events-retention"
+                    />
+                  </div>
+                  {(config?.eventsRetentionEnabled ?? true) && (
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm">Conservar últimos</Label>
+                      <Select
+                        value={String(config?.eventsRetentionDays ?? 14)}
+                        onValueChange={(v) => updateMutation.mutate({ eventsRetentionDays: parseInt(v) } as any)}
+                      >
+                        <SelectTrigger className="w-36 bg-background/50" data-testid="select-events-retention-days">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="7">7 días</SelectItem>
+                          <SelectItem value="14">14 días</SelectItem>
+                          <SelectItem value="30">30 días</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual purge button */}
+                <div className="flex items-center gap-3 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runPurgeMutation.mutate()}
+                    disabled={runPurgeMutation.isPending}
+                    className="flex items-center gap-2"
+                    data-testid="button-run-purge"
+                  >
+                    {runPurgeMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    Purgar ahora
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    La purga automática corre cada 24h al arrancar el servidor.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* AI Integration */}
             <Card className="glass-panel border-border/50">

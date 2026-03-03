@@ -3,6 +3,7 @@ import type { RegisterRoutes } from "./types";
 import { storage } from "../storage";
 import { botLogger } from "../services/botLogger";
 import { serverLogsService } from "../services/serverLogsService";
+import { logRetentionScheduler } from "../services/LogRetentionScheduler";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -399,6 +400,46 @@ export const registerAdminRoutes: RegisterRoutes = (app, _deps) => {
     } catch (error: any) {
       console.error("[api/admin/create-indexes] Error:", error.message);
       res.status(500).json({ error: "Failed to create indexes" });
+    }
+  });
+
+  // GET retention status (current config + last purge info)
+  app.get("/api/admin/retention-status", async (req, res) => {
+    try {
+      const config = await storage.getBotConfig();
+      const logsCount = await serverLogsService.getLogsCount();
+      const eventsCount = await botLogger.getEventsCount();
+
+      res.json({
+        logs: {
+          retentionEnabled: config?.logRetentionEnabled ?? true,
+          retentionDays: config?.logRetentionDays ?? 7,
+          totalRows: logsCount,
+          lastPurgeAt: config?.lastLogPurgeAt ?? null,
+          lastPurgeCount: config?.lastLogPurgeCount ?? 0,
+        },
+        events: {
+          retentionEnabled: config?.eventsRetentionEnabled ?? true,
+          retentionDays: config?.eventsRetentionDays ?? 14,
+          totalRows: eventsCount,
+          lastPurgeAt: config?.lastEventsPurgeAt ?? null,
+          lastPurgeCount: config?.lastEventsPurgeCount ?? 0,
+        },
+      });
+    } catch (error: any) {
+      console.error("[api/admin/retention-status] Error:", error.message);
+      res.status(500).json({ error: "Failed to get retention status" });
+    }
+  });
+
+  // POST run-retention-purge (manual trigger)
+  app.post("/api/admin/run-retention-purge", async (req, res) => {
+    try {
+      const result = await logRetentionScheduler.runPurge();
+      res.json({ success: true, logsDeleted: result.logsDeleted, eventsDeleted: result.eventsDeleted });
+    } catch (error: any) {
+      console.error("[api/admin/run-retention-purge] Error:", error.message);
+      res.status(500).json({ error: "Failed to run retention purge" });
     }
   });
 

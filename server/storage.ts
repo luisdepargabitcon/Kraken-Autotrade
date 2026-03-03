@@ -1690,6 +1690,10 @@ export class DatabaseStorage implements IStorage {
       { column: 'error_alert_chat_id', table: 'bot_config' },
       { column: 'signal_rejection_alerts_enabled', table: 'bot_config' },
       { column: 'signal_rejection_alert_chat_id', table: 'bot_config' },
+      { column: 'log_retention_enabled', table: 'bot_config' },
+      { column: 'log_retention_days', table: 'bot_config' },
+      { column: 'events_retention_enabled', table: 'bot_config' },
+      { column: 'events_retention_days', table: 'bot_config' },
     ];
     
     const requiredOpenPositionsColumns = [
@@ -1753,6 +1757,14 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'error_alert_chat_id', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS error_alert_chat_id TEXT' },
         { table: 'bot_config', column: 'signal_rejection_alerts_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS signal_rejection_alerts_enabled BOOLEAN DEFAULT true' },
         { table: 'bot_config', column: 'signal_rejection_alert_chat_id', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS signal_rejection_alert_chat_id TEXT' },
+        { table: 'bot_config', column: 'log_retention_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS log_retention_enabled BOOLEAN NOT NULL DEFAULT true' },
+        { table: 'bot_config', column: 'log_retention_days', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 7' },
+        { table: 'bot_config', column: 'events_retention_enabled', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS events_retention_enabled BOOLEAN NOT NULL DEFAULT true' },
+        { table: 'bot_config', column: 'events_retention_days', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS events_retention_days INTEGER NOT NULL DEFAULT 14' },
+        { table: 'bot_config', column: 'last_log_purge_at', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_at TIMESTAMP' },
+        { table: 'bot_config', column: 'last_log_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_count INTEGER DEFAULT 0' },
+        { table: 'bot_config', column: 'last_events_purge_at', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP' },
+        { table: 'bot_config', column: 'last_events_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0' },
         
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },

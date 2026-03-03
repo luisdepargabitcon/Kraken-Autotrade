@@ -207,6 +207,14 @@ export async function registerRoutes(
     } catch (e: any) {
       console.error('[startup] Failed to initialize FiscoKrakenRetryWorker:', e?.message || e);
     }
+
+    // Inicializar LogRetentionScheduler (purga automática diaria de server_logs y bot_events)
+    try {
+      const { logRetentionScheduler } = await import('./services/LogRetentionScheduler');
+      logRetentionScheduler.initialize();
+    } catch (e: any) {
+      console.error('[startup] Failed to initialize LogRetentionScheduler:', e?.message || e);
+    }
     
     // Auto-start if bot was active
     const botConfig = await storage.getBotConfig();

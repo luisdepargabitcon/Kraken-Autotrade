@@ -2,6 +2,46 @@
 
 ---
 
+## 2026-03-03 — FEAT: Retención de Logs Configurable desde UI (Opción D)
+
+### Resumen
+Implementación completa de gestión automática del crecimiento de `server_logs` y `bot_events`. La tabla `server_logs` había alcanzado 837 MB (1.5M filas, 88% del espacio total de DB). Se implementa un scheduler interno Node.js con política de retención configurable desde el dashboard de ajustes, sin depender de cron externos.
+
+### Diagnóstico previo
+- `server_logs`: 837 MB — 1,506,139 filas — **88% de la DB**
+- `bot_events`: 100 MB
+- Total DB: 952 MB
+- El script `scripts/purge-events.sh` existía pero el cron del VPS no estaba verificado como activo
+- Función `purgeOldLogs()` y endpoint `/api/admin/purge-logs` ya existían pero sin scheduler automático interno
+
+### Archivos Creados
+- `db/migrations/017_log_retention_config.sql` — Añade 8 columnas a `bot_config`: `log_retention_enabled`, `log_retention_days`, `events_retention_enabled`, `events_retention_days`, `last_log_purge_at`, `last_log_purge_count`, `last_events_purge_at`, `last_events_purge_count`
+- `server/services/LogRetentionScheduler.ts` — Scheduler singleton. Se inicializa al arrancar el servidor. Corre purga cada 24h (o al startup si hace >23h desde última purga). Lee configuración de `bot_config`. Registra filas eliminadas y timestamp de última purga.
+
+### Archivos Modificados
+- `shared/schema.ts` — Añadidas 8 columnas de retención al Drizzle table `botConfig`
+- `server/routes/admin.routes.ts` — Importa `logRetentionScheduler`. Añade `GET /api/admin/retention-status` y `POST /api/admin/run-retention-purge`
+- `server/routes.ts` — Inicializa `LogRetentionScheduler` al startup (después de `FiscoKrakenRetryWorker`)
+- `server/storage.ts` — Añade 8 columnas de retención a `checkSchemaHealth()` y `runSchemaMigration()` (auto-migración Docker)
+- `client/src/pages/Settings.tsx` — Añade card "Retención de Logs" con: contadores de filas actuales, toggle on/off por tabla, selector de días (3/5/7/14/30 para logs; 7/14/30 para eventos), estado de última purga, botón "Purgar ahora" (manual)
+
+### Comportamiento del Scheduler
+- **Arranque**: comprueba si han pasado >23h desde `lastLogPurgeAt`. Si es así, purga inmediatamente.
+- **Interval**: cada 24h vuelve a comprobar y purgar si corresponde
+- **DELETE seguro**: usa `WHERE timestamp < cutoffDate` (nunca TRUNCATE)
+- **VACUUM**: no ejecutado por el scheduler (PostgreSQL autovacuum lo gestiona)
+- **Sin bloqueo de trading**: operación asíncrona independiente del motor de trading
+
+### Defaults
+- `server_logs`: retención 7 días activada (estabiliza tabla en ~840 MB con volumen actual)
+- `bot_events`: retención 14 días activada
+
+### Endpoints Nuevos
+- `GET /api/admin/retention-status` — Estado actual: filas totales, configuración, última purga
+- `POST /api/admin/run-retention-purge` — Purga manual inmediata
+
+---
+
 ## 2026-03-04 — FIX: Doble scheduler FISCO + Mejoras retry RATE_LIMIT
 
 ### Resumen

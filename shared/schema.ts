@@ -161,6 +161,15 @@ export const botConfig = pgTable("bot_config", {
   // MINI-B: Chase gate — block if price moved up too much since candle close
   chaseGateEnabled: boolean("chase_gate_enabled").notNull().default(true),
   chaseMaxPct: decimal("chase_max_pct", { precision: 5, scale: 2 }).notNull().default("0.50"),
+  // Log Retention: auto-managed daily purge of server_logs and bot_events
+  logRetentionEnabled: boolean("log_retention_enabled").notNull().default(true),
+  logRetentionDays: integer("log_retention_days").notNull().default(7),
+  eventsRetentionEnabled: boolean("events_retention_enabled").notNull().default(true),
+  eventsRetentionDays: integer("events_retention_days").notNull().default(14),
+  lastLogPurgeAt: timestamp("last_log_purge_at"),
+  lastLogPurgeCount: integer("last_log_purge_count").default(0),
+  lastEventsPurgeAt: timestamp("last_events_purge_at"),
+  lastEventsPurgeCount: integer("last_events_purge_count").default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
