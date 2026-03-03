@@ -519,6 +519,15 @@ async function runMigration() {
       // MINI-B: Chase gate
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_gate_enabled BOOLEAN NOT NULL DEFAULT true',
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS chase_max_pct DECIMAL(5,2) NOT NULL DEFAULT 0.50',
+      // Log Retention (017)
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS log_retention_enabled BOOLEAN NOT NULL DEFAULT true',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 7',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS events_retention_enabled BOOLEAN NOT NULL DEFAULT true',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS events_retention_days INTEGER NOT NULL DEFAULT 14',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_at TIMESTAMP',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_count INTEGER DEFAULT 0',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP',
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0',
     ];
     
     // open_positions columns
