@@ -5,6 +5,7 @@
 import * as cron from "node-cron";
 import { fiscoSyncService } from "./FiscoSyncService";
 import { fiscoTelegramNotifier } from "./FiscoTelegramNotifier";
+import { fiscoKrakenRetryWorker } from "./FiscoKrakenRetryWorker";
 import { randomUUID } from "crypto";
 
 export class FiscoScheduler {
@@ -91,6 +92,20 @@ export class FiscoScheduler {
         fullSync: true
       });
 
+      // Detectar RATE_LIMIT Kraken en resultados y programar reintento
+      const krakenResult = summary.results.find(r => r.exchange === 'Kraken' && r.status === 'error');
+      if (krakenResult?.error) {
+        const isRateLimit = krakenResult.error.includes('EAPI:Rate limit') || krakenResult.error.includes('Rate limit exceed');
+        if (isRateLimit) {
+          try {
+            const { nextRetryAt, retryCount } = await fiscoKrakenRetryWorker.scheduleRetry('RATE_LIMIT', krakenResult.error);
+            await fiscoTelegramNotifier.sendKrakenRetryScheduled(nextRetryAt, retryCount + 1, 'RATE_LIMIT').catch(() => {});
+          } catch (retryErr: any) {
+            console.error('[FISCO Scheduler] Failed to schedule Kraken retry:', retryErr.message);
+          }
+        }
+      }
+
       // Enviar alerta de sincronización diaria
       await fiscoTelegramNotifier.sendSyncDailyAlert({
         results: summary.results,
@@ -103,7 +118,18 @@ export class FiscoScheduler {
 
     } catch (error: any) {
       console.error(`[FISCO Scheduler] Daily sync failed:`, error);
-      
+
+      // Detectar RATE_LIMIT Kraken incluso en fallo global del sync
+      const isRateLimit = error.message?.includes('EAPI:Rate limit') || error.message?.includes('Rate limit exceed') || (error as any).errorCode === 'RATE_LIMIT';
+      if (isRateLimit) {
+        try {
+          const { nextRetryAt, retryCount } = await fiscoKrakenRetryWorker.scheduleRetry('RATE_LIMIT', error.message);
+          await fiscoTelegramNotifier.sendKrakenRetryScheduled(nextRetryAt, retryCount + 1, 'RATE_LIMIT').catch(() => {});
+        } catch (retryErr: any) {
+          console.error('[FISCO Scheduler] Failed to schedule Kraken retry in catch:', retryErr.message);
+        }
+      }
+
       // Enviar alerta de error
       await fiscoTelegramNotifier.sendSyncErrorAlert(
         `Daily sync failed: ${error.message}`,

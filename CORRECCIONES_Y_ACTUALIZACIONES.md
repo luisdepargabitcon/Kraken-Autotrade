@@ -2,6 +2,55 @@
 
 ---
 
+## 2026-03-04 — FIX: Doble scheduler FISCO + Mejoras retry RATE_LIMIT
+
+### Resumen
+Fix bloqueante de doble scheduler (2 syncs paralelos a las 08:30) + 4 mejoras de robustez detectadas en auditoría post-deploy.
+
+### P1 CRÍTICO — Eliminar cron inline redundante en routes.ts
+
+**Archivo:** `server/routes.ts`
+
+- **Bug**: Existían 2 schedulers independientes disparando a las 08:30:
+  - A) `cron.schedule(fiscoCron, ...)` inline en `routes.ts` → llamaba `GET /api/fisco/run` → `saveFiscoToDB` (DELETE+INSERT)
+  - B) `fiscoScheduler.initialize()` → `FiscoScheduler.executeDailySync()` → `syncAllExchanges()`
+- **Consecuencias**: Doble consumo de rate limit Kraken, doble Telegram, condición de carrera en `DELETE FROM fisco_operations/lots/disposals`
+- **Fix**: Eliminado completamente el bloque inline de `routes.ts` (líneas 203-328). Scheduler oficial es único: `FiscoScheduler.initialize()` en línea ~636
+- El endpoint `/api/fisco/run` sigue existiendo para uso manual
+
+### P2 CRÍTICO — scheduleRetry() movido a FiscoScheduler.executeDailySync()
+
+**Archivo:** `server/services/FiscoScheduler.ts`
+
+- Añadido import estático: `import { fiscoKrakenRetryWorker } from "./FiscoKrakenRetryWorker"`
+- En `executeDailySync()` tras `syncAllExchanges()`: busca `results.find(r => r.exchange === 'Kraken' && r.status === 'error')`, detecta `EAPI:Rate limit` en el mensaje
+- En el `catch` de `executeDailySync()`: detecta RATE_LIMIT incluso en fallo global (no depende de que RevolutX funcione para programar retry)
+- En ambos casos: llama `fiscoKrakenRetryWorker.scheduleRetry()` + `sendKrakenRetryScheduled(nextRetryAt, retryCount+1, 'RATE_LIMIT')`
+
+### P3 MEDIO — Reset diario completo del estado retry
+
+**Archivo:** `server/services/FiscoKrakenRetryWorker.ts`
+
+- **Bug**: `resetExhausted()` solo reseteaba filas con `status='exhausted'`. Filas `resolved` del día anterior mantenían `retryCount` alto → primer retry del nuevo día usaba delay largo (ej: 20m en vez de 5m)
+- **Fix**: `resetExhausted()` ahora resetea TODAS las filas de `exchange='kraken'` a `retryCount=0, status='resolved'` sin filtrar por status
+
+### P4 BAJO — Telegram muestra intento real
+
+**Archivo:** `server/services/FiscoKrakenRetryWorker.ts` + `FiscoScheduler.ts`
+
+- **Bug**: `sendKrakenRetryScheduled(nextRetryAt, 0, ...)` siempre mostraba attempt=1 (hardcoded 0)
+- **Fix**: `scheduleRetry()` ahora retorna `{ nextRetryAt: Date; retryCount: number }` en vez de solo `Date`. FiscoScheduler usa `retryCount + 1` como número de intento real
+
+### P5 BAJO — Doble delay eliminado en paginación Kraken
+
+**Archivo:** `server/services/kraken.ts`
+
+- **Bug**: `RATE_LIMIT_DELAY = 3500ms` en ambos loops de paginación + `callKraken 500ms` = ~4s/página
+- **Fix**: `RATE_LIMIT_DELAY = 1000ms` — efectivo 1.5s/página. Para ledger completo (~20 páginas): 30s vs 84s anteriores
+- Comportamiento seguro mantenido: `callKraken` sigue gestionando errores RATE_LIMIT reales
+
+---
+
 ## 2026-03-04 — FEAT: Cron fiscal 08:30 + Rate limiter Kraken + Retry worker Kraken
 
 ### Resumen

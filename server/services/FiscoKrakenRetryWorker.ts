@@ -54,7 +54,7 @@ export class FiscoKrakenRetryWorker {
    * Programa un reintento Kraken tras un fallo RATE_LIMIT.
    * Si ya existe un nextRetryAt futuro y estado pending, no sobreescribe.
    */
-  async scheduleRetry(errorCode: string, errorMsg: string): Promise<Date> {
+  async scheduleRetry(errorCode: string, errorMsg: string): Promise<{ nextRetryAt: Date; retryCount: number }> {
     const now = new Date();
 
     try {
@@ -67,7 +67,7 @@ export class FiscoKrakenRetryWorker {
         // No sobreescribir si ya hay un retry pendiente en el futuro
         if (row.status === 'pending' && row.nextRetryAt && row.nextRetryAt > now) {
           console.log(`[FiscoRetryWorker] Retry already scheduled at ${row.nextRetryAt.toISOString()}, skipping`);
-          return row.nextRetryAt;
+          return { nextRetryAt: row.nextRetryAt, retryCount: row.retryCount };
         }
 
         const retryCount = row.status === 'exhausted' ? 0 : (row.retryCount);
@@ -84,7 +84,7 @@ export class FiscoKrakenRetryWorker {
         }).where(eq(fiscoSyncRetry.exchange, 'kraken'));
 
         console.log(`[FiscoRetryWorker] Kraken retry scheduled at ${nextRetryAt.toISOString()} (attempt ${retryCount + 1})`);
-        return nextRetryAt;
+        return { nextRetryAt, retryCount };
       } else {
         const delayMs = withJitter(BACKOFF_DELAYS_MS[0]);
         const nextRetryAt = new Date(now.getTime() + delayMs);
@@ -100,11 +100,11 @@ export class FiscoKrakenRetryWorker {
         });
 
         console.log(`[FiscoRetryWorker] Kraken retry scheduled at ${nextRetryAt.toISOString()} (attempt 1)`);
-        return nextRetryAt;
+        return { nextRetryAt, retryCount: 0 };
       }
     } catch (err: any) {
       console.error('[FiscoRetryWorker] scheduleRetry error:', err?.message || err);
-      return new Date(now.getTime() + BACKOFF_DELAYS_MS[0]);
+      return { nextRetryAt: new Date(now.getTime() + BACKOFF_DELAYS_MS[0]), retryCount: 0 };
     }
   }
 
@@ -227,16 +227,13 @@ export class FiscoKrakenRetryWorker {
 
   private async resetExhausted(): Promise<void> {
     try {
-      const result = await db.update(fiscoSyncRetry).set({
+      await db.update(fiscoSyncRetry).set({
         retryCount: 0,
         nextRetryAt: null,
         status: 'resolved',
         updatedAt: new Date(),
-      }).where(and(
-        eq(fiscoSyncRetry.exchange, 'kraken'),
-        eq(fiscoSyncRetry.status, 'exhausted'),
-      ));
-      console.log('[FiscoRetryWorker] Midnight reset: exhausted Kraken retries cleared');
+      }).where(eq(fiscoSyncRetry.exchange, 'kraken'));
+      console.log('[FiscoRetryWorker] Midnight reset: daily Kraken retry state cleared');
     } catch (err: any) {
       console.error('[FiscoRetryWorker] resetExhausted error:', err?.message || err);
     }

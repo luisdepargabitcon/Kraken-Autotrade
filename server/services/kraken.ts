@@ -323,7 +323,7 @@ export class KrakenService implements IExchangeService {
     const allTrades: Record<string, any> = {};
     let offset = 0;
     let totalCount = 0;
-    const RATE_LIMIT_DELAY = 3500; // 3.5 segundos entre llamadas (Kraken rate limit = 15 calls/min for private)
+    const RATE_LIMIT_DELAY = 1000; // 1s extra entre páginas (callKraken ya añade 500ms min)
     
     console.log("[kraken] Fetching all trades history with pagination...");
     
@@ -418,7 +418,7 @@ export class KrakenService implements IExchangeService {
     const allLedger: Record<string, any> = {};
     let offset = 0;
     let totalCount = 0;
-    const RATE_LIMIT_DELAY = 3500; // 3.5 segundos entre llamadas
+    const RATE_LIMIT_DELAY = 1000; // 1s extra entre páginas (callKraken ya añade 500ms min)
 
     console.log(`[kraken] Fetching all ledger entries with pagination...`);
 
