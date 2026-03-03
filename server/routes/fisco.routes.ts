@@ -318,32 +318,50 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       let krakenLedgerEntries: any[] = [];
       let revolutxOrders: any[] = [];
 
+      const exchangeErrors: Array<{ exchange: string; errorCode: string; message: string }> = [];
+
       if (krakenService.isInitialized()) {
-        console.log("[fisco/run] Fetching Kraken ledger (FULL HISTORY - NO LIMIT)...");
-        const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
-        const ledger = ledgerResp?.ledger || {};
-        krakenLedgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
-          id,
-          refid: e.refid,
-          type: e.type,
-          subtype: e.subtype,
-          asset: e.asset,
-          amount: typeof e.amount === "string" ? parseFloat(e.amount) : e.amount,
-          fee: typeof e.fee === "string" ? parseFloat(e.fee) : e.fee,
-          balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
-          time: e.time,
-        }));
-        console.log(`[fisco/run] Kraken: ${krakenLedgerEntries.length} ledger entries (FULL HISTORY)`);
+        console.log("[fisco/run] Fetching Kraken ledger (FULL HISTORY)...");
+        try {
+          const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
+          const ledger = ledgerResp?.ledger || {};
+          krakenLedgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
+            id,
+            refid: e.refid,
+            type: e.type,
+            subtype: e.subtype,
+            asset: e.asset,
+            amount: typeof e.amount === "string" ? parseFloat(e.amount) : e.amount,
+            fee: typeof e.fee === "string" ? parseFloat(e.fee) : e.fee,
+            balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
+            time: e.time,
+          }));
+          console.log(`[fisco/run] Kraken: ${krakenLedgerEntries.length} ledger entries`);
+        } catch (krakenErr: any) {
+          const isRateLimit = krakenErr.message?.includes("EAPI:Rate limit") || krakenErr.message?.includes("Rate limit exceed");
+          const errorCode = isRateLimit ? "RATE_LIMIT" : "SYNC_ERROR";
+          console.error(`[fisco/run] Kraken fetch failed (${errorCode}): ${krakenErr.message}`);
+          exchangeErrors.push({ exchange: "Kraken", errorCode, message: krakenErr.message });
+        }
       }
 
       if (revolutXService.isInitialized()) {
-        console.log("[fisco/run] Fetching RevolutX orders (FULL HISTORY - NO LIMIT)...");
-        // Remove startMs to get ALL history, not just from a date
-        revolutxOrders = await revolutXService.getHistoricalOrders({
-          states: ["filled"],
-          // No startMs - get complete history
+        console.log("[fisco/run] Fetching RevolutX orders (FULL HISTORY)...");
+        try {
+          revolutxOrders = await revolutXService.getHistoricalOrders({ states: ["filled"] });
+          console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders`);
+        } catch (revxErr: any) {
+          console.error(`[fisco/run] RevolutX fetch failed: ${revxErr.message}`);
+          exchangeErrors.push({ exchange: "RevolutX", errorCode: "SYNC_ERROR", message: revxErr.message });
+        }
+      }
+
+      if (exchangeErrors.length > 0 && krakenLedgerEntries.length === 0 && revolutxOrders.length === 0) {
+        return res.status(500).json({
+          status: "error",
+          message: "All exchanges failed to sync",
+          exchange_errors: exchangeErrors,
         });
-        console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders (FULL HISTORY)`);
       }
 
       // 3. Normalize
@@ -379,8 +397,10 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       // Total P&L
       const totalGainLoss = fifo.disposals.reduce((sum, d) => sum + d.gainLossEur, 0);
 
-      res.json({
-        status: "ok",
+      const httpStatus = exchangeErrors.length > 0 ? 207 : 200;
+      res.status(httpStatus).json({
+        status: exchangeErrors.length > 0 ? "partial_success" : "ok",
+        exchange_errors: exchangeErrors.length > 0 ? exchangeErrors : undefined,
         elapsed_seconds: parseFloat(elapsed),
         usd_eur_rate: usdEurRate,
         raw_counts: {

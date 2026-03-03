@@ -244,21 +244,29 @@ export async function registerRoutes(
               });
             }
             
-            if (!response.ok) {
+            if (response.status >= 500) {
               throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
             const result = await response.json();
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            const isPartial = response.status === 207 || result.status === "partial_success";
+            const exchangeErrs: Array<{ exchange: string; errorCode: string; message: string }> = result.exchange_errors || [];
             
-            console.log(`[fisco-daily-sync] Completed in ${elapsed}s - ${result.normalized?.total || 0} operations processed`);
+            console.log(`[fisco-daily-sync] ${isPartial ? 'Partial success' : 'Completed'} in ${elapsed}s - ${result.normalized?.total || 0} operations processed${isPartial ? ` (${exchangeErrs.length} exchange(s) failed)` : ''}`);
             
             // Send Telegram notification
             try {
               const ErrorAlertService = (await import('./services/ErrorAlertService')).ErrorAlertService;
               const alertService = ErrorAlertService.getInstance();
               
-              const message = `✅ <b>SINCRONIZACIÓN FISCAL COMPLETADA</b>\n━━━━━━━━━━━━━━━━━━━\n🕒 ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}\n📊 Operaciones: ${result.normalized?.total || 0}\n⏱️ Duración: ${elapsed}s\n💾 Última sincronización: ${new Date().toISOString()}`;
+              const statusEmoji = isPartial ? '⚠️' : '✅';
+              const statusLabel = isPartial ? 'PARCIAL' : 'COMPLETADA';
+              let exchangeDetail = '';
+              if (exchangeErrs.length > 0) {
+                exchangeDetail = '\n' + exchangeErrs.map(e => `❌ ${e.exchange}: ${e.errorCode} — ${e.message.slice(0, 80)}`).join('\n');
+              }
+              const message = `${statusEmoji} <b>SINCRONIZACIÓN FISCAL ${statusLabel}</b>\n━━━━━━━━━━━━━━━━━━━\n🕒 ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}\n📊 Operaciones: ${result.normalized?.total || 0}\n⏱️ Duración: ${elapsed}s${exchangeDetail}`;
               
               await alertService.sendCriticalError({
                 type: 'SYSTEM_ERROR',

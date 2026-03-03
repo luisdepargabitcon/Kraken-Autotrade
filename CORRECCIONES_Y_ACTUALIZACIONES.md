@@ -5,6 +5,52 @@
 
 ---
 
+## 2026-03-03 — FIX: INCIDENCIA — fisco-daily-sync HTTP 500 + MTF snapshot N/A
+
+### Resumen
+Dos incidencias detectadas el 03/03/2026 a través de alertas Telegram en staging.
+
+### FIX A — fisco-daily-sync: nunca HTTP 500 global por fallo de un exchange (CRÍTICO)
+
+**Archivos:** `server/routes/fisco.routes.ts`, `server/routes.ts`
+
+**Bug raíz**: `/api/fisco/run` llamaba `krakenService.getLedgers({ fetchAll: true })` sin try/catch por exchange. Cuando Kraken devolvió `EAPI:Rate limit exceeded`, la excepción propagaba hasta el handler global → HTTP 500 → el cron de `routes.ts` lanzaba error.
+
+**Fix en `fisco.routes.ts`**:
+- Envuelto fetch de Kraken en try/catch individual. Si falla: registrar en `exchangeErrors[]` y continuar con RevolutX.
+- Envuelto fetch de RevolutX en try/catch individual. Ídem.
+- Detección específica de rate limit Kraken: mensaje contiene `EAPI:Rate limit` → `errorCode: "RATE_LIMIT"` (en vez de genérico `SYNC_ERROR`).
+- Si TODOS los exchanges fallan (0 operaciones) → 500 con breakdown.
+- Si AL MENOS UNO tiene datos → continuar FIFO + retornar **HTTP 207** con `status: "partial_success"` y `exchange_errors: [...]`.
+
+**Fix en `routes.ts` cron**:
+- Cambiado `if (!response.ok)` por `if (response.status >= 500)`. Los status 200/207 ya no se tratan como error.
+- Notificación Telegram actualizada: si 207 → `⚠️ SINCRONIZACIÓN FISCAL PARCIAL` con lista de exchanges fallidos + `errorCode`.
+- Mensaje incluye `❌ Kraken: RATE_LIMIT — EAPI:Rate limit exceeded` para traceabilidad.
+
+**Comportamiento esperado tras fix**:
+- Kraken falla por rate limit → RevolutX sincroniza correctamente → respuesta 207 → notificación `⚠️ PARCIAL` en Telegram (no error).
+- Solo se genera alerta de error si AMBOS exchanges fallan simultáneamente.
+
+### FIX B — MTF_STRICT snapshot: currentPrice/ema20/volumeRatio = N/A (ALTO)
+
+**Archivo:** `server/services/tradingEngine.ts`
+
+**Bug raíz**: En `analyzeWithCandleStrategy`, las métricas BUY (`currentPrice`, `ema20`, `volumeRatio`, `priceVsEma20Pct`) se calculaban dentro del bloque `ANTI_CRESTA` (scoped al `if`), por lo que no estaban disponibles cuando el bloque `MTF_STRICT` llamaba a `sendSignalRejectionAlert`. El alert se enviaba sin esos campos → todos aparecían como "N/A" en el snapshot de Telegram.
+
+**Fix**:
+- Extraídas las métricas BUY en un bloque `buyMetrics` ANTES de ambos filtros (ANTI_CRESTA y MTF).
+- El bloque ANTI_CRESTA ahora desestructura `{ ema20, currentPrice, priceVsEma20Pct, volumeRatio } = buyMetrics`.
+- El bloque MTF_STRICT pasa `buyMetrics.{campo}` tanto a `sendSignalRejectionAlert` como a `maybeCreateHybridReentryWatch`.
+
+**Nota sobre mtfAlignment=-0.70/-0.33**: Estos valores son **comportamiento esperado** por cuantización de la fórmula `twoAligned`:
+- Si `twoAligned=true` y `shortTerm !== "neutral"`: alignment = -0.7 (totalScore < 0)
+- Si `twoAligned=true` pero `shortTerm === "neutral"`: cae al branch `else` → alignment = totalScore/4.5 ≈ -0.33
+
+No es un bug. Los valores son deterministas según la combinación de tendencias 5m/1h/4h.
+
+---
+
 ## 2026-03-02 — FIX: Motor IA/ML — Fixes críticos pipeline (Fixes #1-#4)
 
 ### Resumen

@@ -1456,20 +1456,28 @@ export class TradingEngine {
       }
     }
     
+    // Pre-compute BUY metrics — disponibles para ANTI_CRESTA y MTF_STRICT alert
+    let buyMetrics = { currentPrice: 0, ema20: 0, priceVsEma20Pct: 0, volumeRatio: 1 };
+    if (signal.action === "buy" && closedCandles.length >= 20) {
+      const _closes = closedCandles.map(c => c.close);
+      const _ema20  = this.calculateEMA(_closes.slice(-20), 20);
+      const _price  = candle.close;
+      const _volumes = closedCandles.slice(-20).map(c => c.volume);
+      const _avgVol  = _volumes.reduce((a, b) => a + b, 0) / _volumes.length;
+      const _lastVol = closedCandles[closedCandles.length - 1]?.volume || 0;
+      buyMetrics = {
+        currentPrice: _price,
+        ema20: _ema20,
+        priceVsEma20Pct: _ema20 > 0 ? ((_price - _ema20) / _ema20) : 0,
+        volumeRatio: _avgVol > 0 ? _lastVol / _avgVol : 1,
+      };
+    }
+
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
     // Bloquea compras cuando: volumen > 1.5x promedio Y precio > 1% sobre EMA20
     // Esto evita compras tardías en momentum agotado
     if (signal.action === "buy" && closedCandles.length >= 20) {
-      const closes = closedCandles.map(c => c.close);
-      const ema20 = this.calculateEMA(closes.slice(-20), 20);
-      const currentPrice = candle.close;
-      const priceVsEma20Pct = ema20 > 0 ? ((currentPrice - ema20) / ema20) : 0;
-      
-      // Calcular ratio de volumen
-      const volumes = closedCandles.slice(-20).map(c => c.volume);
-      const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-      const currentVolume = closedCandles[closedCandles.length - 1]?.volume || 0;
-      const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
+      const { ema20, currentPrice, priceVsEma20Pct, volumeRatio } = buyMetrics;
 
       const watchReason = activeHybridWatch ? this.normalizeHybridReason(activeHybridWatch.reason) : null;
       if (
@@ -1553,6 +1561,10 @@ export class TradingEngine {
             reason: 'MTF_STRICT',
             regime: regime?.toString(),
             rawSignal: signal.action.toUpperCase(),
+            rejectPrice: buyMetrics.currentPrice || undefined,
+            ema20: buyMetrics.ema20 || undefined,
+            priceVsEma20Pct: buyMetrics.priceVsEma20Pct,
+            volumeRatio: buyMetrics.volumeRatio,
             mtfAlignment: mtfAnalysis.alignment,
             signalsCount: signal.signalsCount,
             minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
@@ -1570,6 +1582,10 @@ export class TradingEngine {
               minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
               selectedStrategy: `momentum_candles_${timeframe}`,
               rawSignal: signal.action.toUpperCase(),
+              currentPrice: buyMetrics.currentPrice || undefined,
+              ema20: buyMetrics.ema20 || undefined,
+              volumeRatio: buyMetrics.volumeRatio,
+              priceVsEma20Pct: buyMetrics.priceVsEma20Pct,
             }
           ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert: ${err.message}`, "trading"));
         }
