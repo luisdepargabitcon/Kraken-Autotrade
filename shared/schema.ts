@@ -815,3 +815,17 @@ export type FiscoOperation = typeof fiscoOperations.$inferSelect;
 export type FiscoLot = typeof fiscoLots.$inferSelect;
 export type FiscoDisposal = typeof fiscoDisposals.$inferSelect;
 export type FiscoSummary = typeof fiscoSummary.$inferSelect;
+
+// FISCO Sync Retry — persiste estado de reintentos por exchange (ej: Kraken RATE_LIMIT)
+export const fiscoSyncRetry = pgTable("fisco_sync_retry", {
+  id: serial("id").primaryKey(),
+  exchange: text("exchange").notNull().unique(),
+  retryCount: integer("retry_count").notNull().default(0),
+  nextRetryAt: timestamp("next_retry_at"),
+  lastErrorCode: text("last_error_code"),
+  lastErrorMsg: text("last_error_msg"),
+  status: text("status").notNull().default('pending'), // 'pending' | 'exhausted' | 'resolved'
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type FiscoSyncRetryRow = typeof fiscoSyncRetry.$inferSelect;

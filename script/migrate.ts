@@ -888,6 +888,23 @@ async function runMigration() {
       "fisco_disposals"
     );
 
+    // fisco_sync_retry: persiste estado de reintentos Kraken (RATE_LIMIT backoff)
+    console.log("[migrate] Ensuring fisco_sync_retry table exists...");
+    await tryExecute(
+      db,
+      `CREATE TABLE IF NOT EXISTS fisco_sync_retry (
+        id SERIAL PRIMARY KEY,
+        exchange TEXT NOT NULL UNIQUE,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        next_retry_at TIMESTAMP,
+        last_error_code TEXT,
+        last_error_msg TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`,
+      "fisco_sync_retry"
+    );
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

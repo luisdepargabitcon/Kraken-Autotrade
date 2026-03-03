@@ -200,9 +200,9 @@ export async function registerRoutes(
       console.error('[startup] Failed to schedule RevolutX daily sync:', e?.message || e);
     }
     
-    // FISCO daily sync scheduler (08:00 server time)
+    // FISCO daily sync scheduler (08:30 server time)
     try {
-      const fiscoCron = process.env.FISCO_DAILY_SYNC_CRON || '0 8 * * *';
+      const fiscoCron = process.env.FISCO_DAILY_SYNC_CRON || '30 8 * * *';
       const fiscoTz = process.env.FISCO_DAILY_SYNC_TZ || 'Europe/Madrid';
 
       cron.schedule(
@@ -255,6 +255,19 @@ export async function registerRoutes(
             
             console.log(`[fisco-daily-sync] ${isPartial ? 'Partial success' : 'Completed'} in ${elapsed}s - ${result.normalized?.total || 0} operations processed${isPartial ? ` (${exchangeErrs.length} exchange(s) failed)` : ''}`);
             
+            // Programar reintento Kraken si RATE_LIMIT
+            const krakenRateLimitErr = exchangeErrs.find(e => e.exchange === 'Kraken' && e.errorCode === 'RATE_LIMIT');
+            if (krakenRateLimitErr) {
+              try {
+                const { fiscoKrakenRetryWorker } = await import('./services/FiscoKrakenRetryWorker');
+                const nextRetryAt = await fiscoKrakenRetryWorker.scheduleRetry('RATE_LIMIT', krakenRateLimitErr.message);
+                const { fiscoTelegramNotifier } = await import('./services/FiscoTelegramNotifier');
+                await fiscoTelegramNotifier.sendKrakenRetryScheduled(nextRetryAt, 0, 'RATE_LIMIT').catch(() => {});
+              } catch (retryErr: any) {
+                console.error('[fisco-daily-sync] Failed to schedule Kraken retry:', retryErr.message);
+              }
+            }
+
             // Send Telegram notification
             try {
               const ErrorAlertService = (await import('./services/ErrorAlertService')).ErrorAlertService;
@@ -273,7 +286,7 @@ export async function registerRoutes(
                 message: message,
                 function: 'fisco-daily-sync',
                 fileName: 'routes.ts',
-                severity: 'LOW', // Use LOW for info messages
+                severity: 'LOW',
                 timestamp: new Date(),
               });
               
@@ -312,6 +325,14 @@ export async function registerRoutes(
       console.log(`[startup] FISCO daily sync scheduled: ${fiscoCron} (${fiscoTz})`);
     } catch (e: any) {
       console.error('[startup] Failed to schedule FISCO daily sync:', e?.message || e);
+    }
+
+    // Inicializar FiscoKrakenRetryWorker (tick cada minuto)
+    try {
+      const { fiscoKrakenRetryWorker } = await import('./services/FiscoKrakenRetryWorker');
+      fiscoKrakenRetryWorker.initialize();
+    } catch (e: any) {
+      console.error('[startup] Failed to initialize FiscoKrakenRetryWorker:', e?.message || e);
     }
     
     // Auto-start if bot was active

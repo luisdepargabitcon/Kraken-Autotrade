@@ -1,5 +1,70 @@
 # 📝 BITÁCORA TÉCNICA - KRAKEN AUTOTRADE
 
+---
+
+## 2026-03-04 — FEAT: Cron fiscal 08:30 + Rate limiter Kraken + Retry worker Kraken
+
+### Resumen
+Tres mejoras de robustez para la sincronización fiscal:
+1. Cron fiscal movido de 08:00 a 08:30 (Europe/Madrid)
+2. Rate limiter global para TODAS las llamadas a la API de Kraken
+3. Worker de reintento persistente para Kraken cuando RATE_LIMIT (backoff exponencial + Telegram)
+
+---
+
+### TASK 1 — Cron fiscal 08:00 → 08:30 (Europe/Madrid)
+
+**Archivos:** `server/services/FiscoScheduler.ts`, `server/routes.ts`
+
+- `FiscoScheduler.ts`: cron `'0 8 * * *'` → `'30 8 * * *'`, `setHours(8,0)` → `setHours(8,30)`, log actualizado
+- `routes.ts`: default `FISCO_DAILY_SYNC_CRON` de `'0 8 * * *'` → `'30 8 * * *'`, comentario actualizado
+- `FiscoTelegramNotifier.ts`: etiqueta `getTriggerLabel('scheduler')` actualizada a `08:30`
+
+---
+
+### TASK 2 — Reintento Kraken con backoff persistente (RATE_LIMIT)
+
+**Archivos nuevos:**
+- `server/services/FiscoKrakenRetryWorker.ts`: worker que corre cada minuto, detecta retries pendientes en DB, ejecuta `syncKrakenOnly`, aplica backoff con jitter ±20%
+- Backoff: +5m, +10m, +20m, +40m, +60m, +60m (máx 6 intentos)
+- Reset automático a medianoche para `exhausted`
+
+**Archivos modificados:**
+- `shared/schema.ts`: tabla `fisco_sync_retry` (exchange, retryCount, nextRetryAt, lastErrorCode, lastErrorMsg, status)
+- `script/migrate.ts`: `CREATE TABLE IF NOT EXISTS fisco_sync_retry`
+- `server/services/FiscoSyncService.ts`: `syncKrakenOnly(runId)` expuesto como método público
+- `server/services/FiscoTelegramNotifier.ts`: métodos `sendKrakenRetryScheduled`, `sendKrakenRetryRecovered`, `sendKrakenRetryExhausted`
+- `server/routes/fisco.routes.ts`: endpoint `GET /api/fisco/run-kraken` (solo Kraken, devuelve 429 en RATE_LIMIT)
+- `server/routes.ts`: inicializa `fiscoKrakenRetryWorker.initialize()` al arrancar; cuando el cron obtiene 207+RATE_LIMIT → llama `scheduleRetry()` + `sendKrakenRetryScheduled()`
+
+**Flujo:**
+1. Cron 08:30 → `/api/fisco/run` → 207 parcial con Kraken RATE_LIMIT
+2. `routes.ts` detecta el error → `fiscoKrakenRetryWorker.scheduleRetry()` → guarda en DB con `nextRetryAt = now + 5m±20%`
+3. Telegram: `⚠️ Kraken RATE_LIMIT, reintento programado HH:MM`
+4. Worker tick cada minuto: si `nextRetryAt <= now` → llama `syncKrakenOnly()`
+5. Si OK → `status='resolved'` + Telegram `✅ Kraken RECUPERADO`
+6. Si RATE_LIMIT de nuevo → `retryCount++`, nuevo `nextRetryAt` con backoff
+7. Si `retryCount >= 6` → `status='exhausted'` + Telegram `🔴 REINTENTOS AGOTADOS`
+8. A medianoche → reset `exhausted` → listo para el día siguiente
+
+---
+
+### TASK 3 — Rate limiter global Kraken
+
+**Archivos nuevos:**
+- `server/utils/krakenRateLimiter.ts`: cola FIFO con `minTime` entre llamadas (default 500ms), concurrencia configurable
+- Config: `KRAKEN_MIN_TIME_MS=500`, `KRAKEN_CONCURRENCY=1` (env vars)
+- Error tipado: si Kraken responde `EAPI:Rate limit`, lanza `{ errorCode: 'RATE_LIMIT' }`
+
+**Archivos modificados:**
+- `server/services/kraken.ts`:
+  - Import `krakenRateLimiter`
+  - Nuevo método privado `callKraken<T>(fn)` → wrapper del limiter
+  - `executeWithNonceRetry`: `operation()` → `this.callKraken(operation)` (todas las llamadas privadas)
+  - Calls públicos: `loadPairMetadata`, `getTicker`, `getTickerRaw`, `getAssetPairs`, `getOHLC` → `this.callKraken(() => ...)`
+
+---
+
 > Registro detallado de cambios, fixes y mejoras en el sistema de trading autónomo.  
 > Documentación completa de problemas resueltos y decisiones técnicas.
 

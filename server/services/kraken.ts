@@ -1,6 +1,7 @@
 import * as KrakenAPI from "node-kraken-api";
 import { telegramService } from "./telegram";
 import { storage } from "../storage";
+import { krakenRateLimiter } from "../utils/krakenRateLimiter";
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult } from "./exchanges/IExchangeService";
 import type { PairMetadata } from "./exchanges/IExchangeService";
 
@@ -37,7 +38,7 @@ export class KrakenService implements IExchangeService {
   async loadPairMetadata(pairs: string[]): Promise<void> {
     try {
       console.log(`[kraken] Loading pair metadata for: ${pairs.join(", ")}`);
-      const response = await this.publicClient.assetPairs();
+      const response = await this.callKraken(() => this.publicClient.assetPairs()) as any;
       
       for (const pair of pairs) {
         const krakenPair = this.formatPair(pair);
@@ -124,6 +125,10 @@ export class KrakenService implements IExchangeService {
     return this.client !== null;
   }
 
+  private callKraken<T>(fn: () => Promise<T>): Promise<T> {
+    return krakenRateLimiter.schedule(fn);
+  }
+
   private async executeWithNonceRetry<T>(
     endpoint: string,
     operation: () => Promise<T>
@@ -133,7 +138,7 @@ export class KrakenService implements IExchangeService {
         if (attempt > 1) {
           await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 2]));
         }
-        return await operation();
+        return await this.callKraken(operation);
       } catch (error: any) {
         const isNonceError = error.message?.includes("EAPI:Invalid nonce") || 
                             error.message?.includes("Invalid nonce");
@@ -199,7 +204,7 @@ export class KrakenService implements IExchangeService {
 
   async getTicker(pair: string): Promise<Ticker> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.publicClient.ticker({ pair: krakenPair });
+    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair })) as any;
     const tickerData = response[krakenPair] || Object.values(response)[0];
     return {
       bid: parseFloat(tickerData?.b?.[0] || '0'),
@@ -211,12 +216,12 @@ export class KrakenService implements IExchangeService {
 
   async getTickerRaw(pair: string): Promise<any> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.publicClient.ticker({ pair: krakenPair });
+    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair })) as any;
     return response;
   }
 
   async getAssetPairs() {
-    return await this.publicClient.assetPairs();
+    return await this.callKraken(() => this.publicClient.assetPairs());
   }
 
   async placeOrder(params: {
@@ -478,7 +483,7 @@ export class KrakenService implements IExchangeService {
     volume: number;
   }[]> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.publicClient.ohlc({ pair: krakenPair, interval });
+    const response = await this.callKraken(() => this.publicClient.ohlc({ pair: krakenPair, interval })) as any;
     
     const pairData = Object.values(response).find(Array.isArray) as any[];
     if (!pairData) return [];

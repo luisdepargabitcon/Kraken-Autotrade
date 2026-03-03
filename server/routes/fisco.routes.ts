@@ -297,6 +297,74 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
   });
 
   // ============================================================
+  // KRAKEN-ONLY SYNC: usado por FiscoKrakenRetryWorker
+  // Sincroniza solo Kraken (ledger → normalize → insert)
+  // ============================================================
+  app.get("/api/fisco/run-kraken", async (req, res) => {
+    try {
+      if (!krakenService.isInitialized()) {
+        return res.status(503).json({ status: "error", errorCode: "NOT_INITIALIZED", message: "Kraken not initialized" });
+      }
+
+      console.log("[fisco/run-kraken] Starting Kraken-only fiscal sync...");
+      const t0 = Date.now();
+
+      const usdEurRate = await getUsdToEurRate();
+      let krakenLedgerEntries: any[] = [];
+
+      try {
+        const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
+        const ledger = ledgerResp?.ledger || {};
+        krakenLedgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
+          id, refid: e.refid, type: e.type, subtype: e.subtype, asset: e.asset,
+          amount: typeof e.amount === "string" ? parseFloat(e.amount) : e.amount,
+          fee: typeof e.fee === "string" ? parseFloat(e.fee) : e.fee,
+          balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
+          time: e.time,
+        }));
+      } catch (err: any) {
+        const isRateLimit = err.message?.includes("EAPI:Rate limit") || err.message?.includes("Rate limit exceed");
+        const errorCode = isRateLimit ? "RATE_LIMIT" : "SYNC_ERROR";
+        console.error(`[fisco/run-kraken] Kraken fetch failed (${errorCode}): ${err.message}`);
+        return res.status(isRateLimit ? 429 : 500).json({ status: "error", errorCode, message: err.message });
+      }
+
+      const krakenOps = await normalizeKrakenLedger(krakenLedgerEntries);
+
+      let inserted = 0;
+      for (const op of krakenOps) {
+        try {
+          await pool.query(
+            `INSERT INTO fisco_operations (exchange, external_id, op_type, asset, amount, price_eur, total_eur, fee_eur, counter_asset, pair, executed_at, raw_data)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (exchange, external_id) DO NOTHING`,
+            ['kraken', op.externalId, op.opType, op.asset, op.amount.toString(),
+             op.priceEur?.toString() ?? null, op.totalEur?.toString() ?? null,
+             op.feeEur?.toString() || '0', op.counterAsset ?? null, op.pair ?? null,
+             op.executedAt, JSON.stringify(op.rawData ?? {})]
+          );
+          inserted++;
+        } catch {}
+      }
+
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(`[fisco/run-kraken] Done in ${elapsed}s — ${inserted} ops upserted`);
+
+      res.json({
+        status: "ok",
+        elapsed_seconds: parseFloat(elapsed),
+        usd_eur_rate: usdEurRate,
+        raw_kraken_entries: krakenLedgerEntries.length,
+        normalized: krakenOps.length,
+        inserted,
+      });
+    } catch (err: any) {
+      console.error("[fisco/run-kraken] Unexpected error:", err.message);
+      res.status(500).json({ status: "error", errorCode: "UNEXPECTED", message: err.message });
+    }
+  });
+
+  // ============================================================
   // FULL PIPELINE: Fetch → Normalize → FIFO → Summary
   // Single endpoint that does everything. Can take several minutes.
   // Optional: ?year=2026 to filter summary by year

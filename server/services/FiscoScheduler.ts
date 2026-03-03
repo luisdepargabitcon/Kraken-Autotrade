@@ -31,9 +31,9 @@ export class FiscoScheduler {
 
     console.log('[FISCO Scheduler] Initializing daily sync jobs...');
 
-    // Job diario a las 08:00 (Europe/Madrid)
+    // Job diario a las 08:30 (Europe/Madrid)
     // Con timezone: "Europe/Madrid", cron interpreta la hora directamente en esa zona
-    this.dailySyncJob = cron.schedule('0 8 * * *', async () => {
+    this.dailySyncJob = cron.schedule('30 8 * * *', async () => {
       await this.executeDailySync();
     }, {
       timezone: "Europe/Madrid"
@@ -51,7 +51,7 @@ export class FiscoScheduler {
     this.annualReportJob.start();
 
     this.isInitialized = true;
-    console.log('[FISCO Scheduler] Daily sync job scheduled for 08:00 Europe/Madrid');
+    console.log('[FISCO Scheduler] Daily sync job scheduled for 08:30 Europe/Madrid');
     console.log('[FISCO Scheduler] Annual report job scheduled for 10:00 on January 1st Europe/Madrid');
   }
 
@@ -223,8 +223,8 @@ export class FiscoScheduler {
       const now = new Date();
       const nextRun = new Date();
       
-      // Establecer hora 08:00 Europe/Madrid
-      nextRun.setHours(8, 0, 0, 0);
+      // Establecer hora 08:30 Europe/Madrid
+      nextRun.setHours(8, 30, 0, 0);
       
       // Si ya pasó hoy, programar para mañana
       if (nextRun <= now) {

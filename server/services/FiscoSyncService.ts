@@ -159,6 +159,13 @@ export class FiscoSyncService {
   }
 
   /**
+   * Sincroniza SOLO Kraken (usado por FiscoKrakenRetryWorker)
+   */
+  async syncKrakenOnly(runId: string): Promise<FiscoSyncResult> {
+    return this.syncKraken(runId, true);
+  }
+
+  /**
    * Sincroniza datos de Kraken
    */
   private async syncKraken(runId: string, fullSync?: boolean): Promise<FiscoSyncResult> {

@@ -88,6 +88,62 @@ export class FiscoTelegramNotifier {
   }
 
   /**
+   * Notifica que Kraken falló por RATE_LIMIT y se programó reintento
+   */
+  async sendKrakenRetryScheduled(nextRetryAt: Date, retryCount: number, errorCode: string): Promise<void> {
+    const config = await this.getAlertConfig();
+    if (!config?.errorSyncEnabled) return;
+    const hhmm = nextRetryAt.toLocaleTimeString('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit' });
+    const message = [
+      `⚠️ <b>FISCO — Kraken RATE_LIMIT</b>`,
+      `━━━━━━━━━━━━━━━━━━━`,
+      `🏦 <b>Exchange:</b> Kraken`,
+      `❌ <b>Error:</b> <code>${escapeHtml(errorCode)}</code>`,
+      `🔄 <b>Intento:</b> ${retryCount + 1}`,
+      `⏰ <b>Reintento programado:</b> ${hhmm} (Europe/Madrid)`,
+      ``,
+      `<i>El bot reintentará automáticamente hasta 6 veces con backoff exponencial.</i>`,
+    ].join('\n');
+    await this.sendToConfiguredChat(message, 'kraken_retry_scheduled');
+  }
+
+  /**
+   * Notifica que Kraken sync se recuperó correctamente tras reintentos
+   */
+  async sendKrakenRetryRecovered(totalAttempts: number, opsImported: number): Promise<void> {
+    const config = await this.getAlertConfig();
+    if (!config?.syncDailyEnabled && !config?.errorSyncEnabled) return;
+    const message = [
+      `✅ <b>FISCO — Kraken RECUPERADO</b>`,
+      `━━━━━━━━━━━━━━━━━━━`,
+      `🏦 <b>Exchange:</b> Kraken`,
+      `🔄 <b>Intentos necesarios:</b> ${totalAttempts}`,
+      `📦 <b>Operaciones importadas:</b> ${opsImported}`,
+      `📅 <b>Fecha:</b> ${formatSpanishDate(new Date())}`,
+    ].join('\n');
+    await this.sendToConfiguredChat(message, 'kraken_retry_recovered');
+  }
+
+  /**
+   * Notifica que se agotaron todos los reintentos de Kraken
+   */
+  async sendKrakenRetryExhausted(totalAttempts: number, lastErrorCode: string): Promise<void> {
+    const config = await this.getAlertConfig();
+    if (!config?.errorSyncEnabled) return;
+    const message = [
+      `🔴 <b>FISCO — Kraken REINTENTOS AGOTADOS</b>`,
+      `━━━━━━━━━━━━━━━━━━━`,
+      `🏦 <b>Exchange:</b> Kraken`,
+      `❌ <b>Último error:</b> <code>${escapeHtml(lastErrorCode)}</code>`,
+      `🔄 <b>Intentos realizados:</b> ${totalAttempts}`,
+      `📅 <b>Fecha:</b> ${formatSpanishDate(new Date())}`,
+      ``,
+      `<i>⚠️ Kraken no pudo sincronizarse. Se reintentará mañana a las 08:30.</i>`,
+    ].join('\n');
+    await this.sendToConfiguredChat(message, 'kraken_retry_exhausted');
+  }
+
+  /**
    * Envía alerta de error en sincronización
    */
   async sendSyncErrorAlert(error: string, runId: string, exchange?: string): Promise<void> {
@@ -331,7 +387,7 @@ export class FiscoTelegramNotifier {
    */
   private getTriggerLabel(triggeredBy: string): string {
     switch (triggeredBy) {
-      case 'scheduler': return 'Programador (08:00)';
+      case 'scheduler': return 'Programador (08:30)';
       case 'ui_button': return 'Botón UI';
       case 'telegram_command': return 'Comando Telegram';
       default: return triggeredBy;
