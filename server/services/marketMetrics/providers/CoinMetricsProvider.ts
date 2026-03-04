@@ -21,88 +21,93 @@ const TRACKED_ASSETS: Record<string, string> = {
 export class CoinMetricsProvider implements IMetricsProvider {
   readonly name = "coinmetrics";
   readonly enabled = true;
-  readonly optional = false;
+  readonly optional = true; // Free tier no garantiza todos los assets/métricas
 
   async fetch(): Promise<ProviderFetchResult> {
     try {
       const records: RawMetricRecord[] = [];
       const now = new Date();
-      const errors: string[] = [];
 
-      // CoinMetrics Community API: asset metrics endpoint
-      // Métricas disponibles gratis: FlowInExUSD, FlowOutExUSD, FlowNetInExUSD
-      const assets = Object.keys(TRACKED_ASSETS);
-      const assetList = Object.values(TRACKED_ASSETS).join(",");
-      const metrics = "FlowInExUSD,FlowOutExUSD,FlowNetInExUSD";
-
-      // Fecha de ayer (los datos community tienen 1d lag)
+      // Fecha de ayer (datos community tienen 1d lag) — formato YYYY-MM-DD
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const startDate = yesterday.toISOString().split("T")[0];
-      const endDate = new Date().toISOString().split("T")[0];
+      const endDate   = new Date().toISOString().split("T")[0];
+      const metrics   = "FlowInExUSD,FlowOutExUSD,FlowNetInExUSD";
 
-      const url = `${COINMETRICS_BASE}/timeseries/asset-metrics?assets=${assetList}&metrics=${metrics}&start_time=${startDate}&end_time=${endDate}&page_size=10`;
+      // Fetch por asset individual: CoinMetrics Community no siempre tiene
+      // métricas de flujo para todos los assets (SOL, XRP pueden dar 400).
+      // Saltar silenciosamente si el asset no está disponible en el tier gratuito.
+      for (const [symbol, cmAsset] of Object.entries(TRACKED_ASSETS)) {
+        try {
+          const url = `${COINMETRICS_BASE}/timeseries/asset-metrics?assets=${cmAsset}&metrics=${metrics}&start_time=${startDate}&end_time=${endDate}&page_size=5`;
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      let resp: Response;
-      try {
-        resp = await fetch(url, {
-          signal: controller.signal,
-          headers: { "Accept": "application/json" },
-        });
-      } finally {
-        clearTimeout(timeout);
+          let resp: Response;
+          try {
+            resp = await fetch(url, {
+              signal: controller.signal,
+              headers: { "Accept": "application/json" },
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
+
+          if (resp.status === 400) {
+            // Asset/métrica no disponible en tier gratuito — skip silencioso
+            log(`[CoinMetrics] ${symbol}: métricas de flujo no disponibles (tier gratuito)`, "trading");
+            continue;
+          }
+          if (resp.status === 429) {
+            log("[CoinMetrics] Rate limit (429), deteniendo fetch", "trading");
+            break;
+          }
+          if (!resp.ok) {
+            log(`[CoinMetrics] ${symbol}: HTTP ${resp.status}`, "trading");
+            continue;
+          }
+
+          const data = await resp.json() as any;
+          const dataPoints: any[] = data?.data ?? [];
+
+          for (const point of dataPoints) {
+            const tsProvider = point.time ? new Date(point.time) : now;
+            const netflow = parseFloat(point.FlowNetInExUSD ?? "");
+            const inflow  = parseFloat(point.FlowInExUSD ?? "");
+            const outflow = parseFloat(point.FlowOutExUSD ?? "");
+
+            if (Number.isFinite(netflow)) {
+              records.push({
+                source: SOURCE,
+                metric: "exchange_netflow",
+                asset: symbol,
+                pair: null,
+                value: parseFloat(netflow.toFixed(2)),
+                tsProvider,
+                meta: { inflow, outflow, date: point.time },
+              });
+            }
+            if (Number.isFinite(inflow)) {
+              records.push({
+                source: SOURCE,
+                metric: "exchange_inflow_usd",
+                asset: symbol,
+                pair: null,
+                value: parseFloat(inflow.toFixed(2)),
+                tsProvider,
+                meta: { date: point.time },
+              });
+            }
+          }
+        } catch (assetErr: any) {
+          const msg = assetErr?.name === "AbortError" ? "Timeout" : (assetErr?.message ?? String(assetErr));
+          log(`[CoinMetrics] Error fetching ${symbol}: ${msg}`, "trading");
+        }
       }
 
-      if (!resp.ok) {
-        if (resp.status === 429) {
-          return { records: [], error: "Rate limit (429)", unavailable: true };
-        }
-        return { records: [], error: `HTTP ${resp.status}`, unavailable: true };
-      }
-
-      const data = await resp.json() as any;
-      const dataPoints: any[] = data?.data ?? [];
-
-      for (const point of dataPoints) {
-        const cmAsset: string = (point.asset ?? "").toLowerCase();
-        const symbol = Object.entries(TRACKED_ASSETS)
-          .find(([, cm]) => cm === cmAsset)?.[0] ?? cmAsset.toUpperCase();
-
-        const tsProvider = point.time ? new Date(point.time) : now;
-
-        const netflow = parseFloat(point.FlowNetInExUSD ?? "");
-        const inflow  = parseFloat(point.FlowInExUSD ?? "");
-        const outflow = parseFloat(point.FlowOutExUSD ?? "");
-
-        if (Number.isFinite(netflow)) {
-          records.push({
-            source: SOURCE,
-            metric: "exchange_netflow",
-            asset: symbol,
-            pair: null,
-            value: parseFloat(netflow.toFixed(2)),
-            tsProvider,
-            meta: { inflow, outflow, date: point.time },
-          });
-        }
-
-        if (Number.isFinite(inflow)) {
-          records.push({
-            source: SOURCE,
-            metric: "exchange_inflow_usd",
-            asset: symbol,
-            pair: null,
-            value: parseFloat(inflow.toFixed(2)),
-            tsProvider,
-            meta: { date: point.time },
-          });
-        }
-      }
-
-      if (errors.length) {
-        log(`[CoinMetrics] Parcial: ${errors.join("; ")}`, "trading");
+      if (records.length === 0) {
+        return { records: [], error: "Métricas de flujo no disponibles en tier gratuito", unavailable: true };
       }
 
       log(`[CoinMetrics] Obtenidas ${records.length} métricas de flujos`, "trading");
