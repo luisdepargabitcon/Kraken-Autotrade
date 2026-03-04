@@ -170,6 +170,8 @@ export const botConfig = pgTable("bot_config", {
   lastLogPurgeCount: integer("last_log_purge_count").default(0),
   lastEventsPurgeAt: timestamp("last_events_purge_at"),
   lastEventsPurgeCount: integer("last_events_purge_count").default(0),
+  // Market Metrics module config (JSONB)
+  marketMetricsConfig: jsonb("market_metrics_config"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

@@ -22,5 +22,6 @@ export interface ProviderFetchResult {
 export interface IMetricsProvider {
   readonly name: string;
   readonly enabled: boolean;
+  readonly optional: boolean; // true = requires API key; false = free/public API
   fetch(): Promise<ProviderFetchResult>;
 }

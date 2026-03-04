@@ -2,6 +2,34 @@
 
 ---
 
+## 2026-03-04 — FIX: Módulo Market Metrics — toggle bloqueado y providers "No disponible"
+
+### Problema
+El panel de Métricas mostraba todos los proveedores como "No disponible" y el toggle de activación no persistía al guardarse.
+
+### Causas raíz identificadas
+1. **`marketMetricsConfig` no estaba en el schema Drizzle** (`shared/schema.ts`) → `updateBotConfig({ marketMetricsConfig })` era silenciosamente ignorado por el ORM → el toggle nunca guardaba el estado
+2. **`providerStatus` inicia como Map vacío** (todos `available: false`) → `refresh()` no corre con `enabled=false` (default) → DeFiLlama y CoinMetrics aparecen como "No disponible" aunque son gratuitos
+3. **No había proveedor gratuito de derivados** → CoinGlass requiere API key → sin alternativa libre para OI/funding rate
+
+### Cambios realizados
+- **`shared/schema.ts`** — Añadido `marketMetricsConfig: jsonb("market_metrics_config")` al schema Drizzle de `bot_config`. Fix crítico: sin esto Drizzle ignoraba la columna en updates
+- **`server/services/marketMetrics/providers/IMetricsProvider.ts`** — Añadido campo `optional: boolean` a la interfaz
+- **`server/services/marketMetrics/providers/BinanceFuturesProvider.ts`** — NUEVO proveedor gratuito (sin API key): Open Interest (USD) y Funding Rate (%) vía Binance Futures public API. Sustituye a CoinGlass si no hay `COINGLASS_API_KEY`
+- **`server/services/marketMetrics/providers/*.ts`** — Añadido `optional` a cada provider: `false` para DeFiLlama/CoinMetrics/Binance (gratuitos), `true` para WhaleAlert/CoinGlass (requieren key)
+- **`server/services/marketMetrics/MarketMetricsService.ts`** — Selección dinámica de provider derivados: Binance si no hay `COINGLASS_API_KEY`, CoinGlass si hay. Añadido `refreshForced()` (ignora enabled). Expone `configured` y `optional` por provider en `getProviderStatuses()`
+- **`server/routes/marketMetrics.routes.ts`** — `/refresh` ahora usa `refreshForced()` → permite actualizar datos aunque el módulo esté desactivado
+- **`client/src/components/strategies/MarketMetricsTab.tsx`** — Lógica de display por estado de provider: verde=disponible, azul=disponible sin fetch, ámbar=opcional sin key, rojo=error. Botón "Actualizar datos" siempre habilitado. Añadido Binance a la lista de providers
+
+### Resultado esperado post-fix
+- DeFiLlama (Stablecoins) → Disponible (azul → verde tras primer refresh)
+- CoinMetrics (Flujos) → Disponible (azul → verde tras primer refresh)
+- WhaleAlert (Ballenas) → Opcional — sin API key (ámbar)
+- Binance Futures (Derivados) → Disponible (azul → verde tras primer refresh)
+- Toggle de activación: funciona correctamente, persiste en DB
+
+---
+
 ## 2026-01-XX — FEAT: Módulo Market Metrics (métricas de mercado como plugin)
 
 ### Resumen

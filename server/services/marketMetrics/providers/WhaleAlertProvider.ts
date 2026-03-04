@@ -18,6 +18,7 @@ const TRACKED_SYMBOLS = new Set(["btc", "eth", "sol", "xrp", "ton", "usdt", "usd
 
 export class WhaleAlertProvider implements IMetricsProvider {
   readonly name = "whalealert";
+  readonly optional = true;
 
   get enabled(): boolean {
     return !!process.env.WHALE_ALERT_API_KEY;

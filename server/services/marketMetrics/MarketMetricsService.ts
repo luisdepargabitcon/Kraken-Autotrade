@@ -10,6 +10,7 @@ import { deFiLlamaProvider } from "./providers/DeFiLlamaProvider";
 import { coinMetricsProvider } from "./providers/CoinMetricsProvider";
 import { whaleAlertProvider } from "./providers/WhaleAlertProvider";
 import { coinGlassProvider } from "./providers/CoinGlassProvider";
+import { binanceFuturesProvider } from "./providers/BinanceFuturesProvider";
 import type { IMetricsProvider } from "./providers/IMetricsProvider";
 import {
   type MarketMetricsConfig,
@@ -23,6 +24,8 @@ interface ProviderStatus {
   lastError: string | null;
   available: boolean;
   recordCount: number;
+  configured: boolean;  // tiene API key configurada o es gratuito
+  optional: boolean;    // true = requiere API key (no bloquea si falta)
 }
 
 class MarketMetricsService {
@@ -33,7 +36,9 @@ class MarketMetricsService {
     deFiLlamaProvider,
     coinMetricsProvider,
     whaleAlertProvider,
-    coinGlassProvider,
+    // BinanceFutures: proveedor gratuito de OI y funding rate (sin API key)
+    // CoinGlass queda como alternativa de pago si hay COINGLASS_API_KEY
+    ...(process.env.COINGLASS_API_KEY ? [coinGlassProvider] : [binanceFuturesProvider]),
   ];
 
   // ---- Configuración (cargada desde bot_config o DEFAULT) ----
@@ -50,19 +55,24 @@ class MarketMetricsService {
     return { ...DEFAULT_METRICS_CONFIG };
   }
 
-  // ---- Ingestar datos de todos los providers activos ----
+  // ---- Refresh forzado (manual desde UI) — ignora enabled flag ----
+  async refreshForced(): Promise<void> {
+    return this.runRefresh();
+  }
+
+  // ---- Ingestar datos de todos los providers activos (automático por cron) ----
   async refresh(): Promise<void> {
+    const config = await this.getConfig();
+    if (!config.enabled) return;
+    return this.runRefresh();
+  }
+
+  private async runRefresh(): Promise<void> {
     if (this.isRefreshing) {
       log("[MarketMetrics] Refresh ya en progreso, saltando", "trading");
       return;
     }
     this.isRefreshing = true;
-    const config = await this.getConfig();
-
-    if (!config.enabled) {
-      this.isRefreshing = false;
-      return;
-    }
 
     log("[MarketMetrics] Iniciando refresh de métricas...", "trading");
 
@@ -158,18 +168,28 @@ class MarketMetricsService {
         lastError: null,
         available: false,
         recordCount: 0,
+        configured: provider.enabled,
+        optional: provider.optional,
       };
-      result[provider.name] = { ...status, name: provider.name };
+      result[provider.name] = {
+        ...status,
+        name: provider.name,
+        configured: provider.enabled,
+        optional: provider.optional,
+      };
     }
     return result;
   }
 
   private setProviderStatus(name: string, partial: Partial<ProviderStatus>): void {
+    const provider = this.providers.find(p => p.name === name);
     const prev = this.providerStatus.get(name) ?? {
       lastFetch: null,
       lastError: null,
       available: false,
       recordCount: 0,
+      configured: provider?.enabled ?? false,
+      optional: provider?.optional ?? false,
     };
     this.providerStatus.set(name, {
       ...prev,

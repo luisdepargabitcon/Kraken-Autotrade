@@ -21,6 +21,7 @@ const TRACKED_ASSETS: Record<string, string> = {
 export class CoinMetricsProvider implements IMetricsProvider {
   readonly name = "coinmetrics";
   readonly enabled = true;
+  readonly optional = false;
 
   async fetch(): Promise<ProviderFetchResult> {
     try {

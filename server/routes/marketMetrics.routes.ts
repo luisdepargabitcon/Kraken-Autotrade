@@ -60,14 +60,11 @@ export function registerMarketMetricsRoutes(app: Express): void {
   });
 
   // POST /api/market-metrics/refresh — forzar refresh manual de datos
+  // Permitido incluso con módulo desactivado (para probar proveedores o precalentar datos)
   app.post("/api/market-metrics/refresh", async (req, res) => {
     try {
-      const config = await marketMetricsService.getConfig();
-      if (!config.enabled) {
-        return res.status(400).json({ error: "Módulo de métricas desactivado" });
-      }
       // Ejecutar en background sin esperar (puede tardar varios segundos)
-      marketMetricsService.refresh().catch((e: any) =>
+      marketMetricsService.refreshForced().catch((e: any) =>
         console.error("[market-metrics/refresh] Error:", e?.message ?? e)
       );
       res.json({ success: true, message: "Refresh de métricas iniciado en background" });

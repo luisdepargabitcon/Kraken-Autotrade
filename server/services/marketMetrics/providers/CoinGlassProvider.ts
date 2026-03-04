@@ -15,6 +15,7 @@ const TRACKED_SYMBOLS = ["BTC", "ETH", "SOL", "XRP"];
 
 export class CoinGlassProvider implements IMetricsProvider {
   readonly name = "coinglass";
+  readonly optional = true;
 
   get enabled(): boolean {
     return !!process.env.COINGLASS_API_KEY;

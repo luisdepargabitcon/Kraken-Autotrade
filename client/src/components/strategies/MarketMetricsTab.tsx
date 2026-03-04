@@ -22,6 +22,8 @@ interface ProviderStatus {
   lastFetch: string | null;
   lastError: string | null;
   recordCount: number;
+  configured: boolean;  // tiene API key o es gratuito
+  optional: boolean;    // requiere API key
 }
 
 interface MetricsStatus {
@@ -44,6 +46,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   coinmetrics: "CoinMetrics (Flujos)",
   whalealert:  "WhaleAlert (Ballenas)",
   coinglass:   "CoinGlass (Derivados)",
+  binance:     "Binance Futures (Derivados)",
 };
 
 const METRIC_LABELS: Record<string, string> = {
@@ -175,7 +178,7 @@ export function MarketMetricsTab() {
               size="sm"
               variant="outline"
               onClick={() => refreshMutation.mutate()}
-              disabled={refreshMutation.isPending || !config?.enabled}
+              disabled={refreshMutation.isPending}
               className="gap-1.5 text-xs"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
@@ -284,49 +287,63 @@ export function MarketMetricsTab() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {Object.entries(PROVIDER_LABELS).map(([key, label]) => {
-              const ps = status?.providers?.[key];
-              const isAvailable = ps?.available ?? false;
-              return (
-                <div
-                  key={key}
-                  className="flex items-center justify-between rounded-md border border-border/30 px-3 py-2"
-                >
+            {Object.entries(status?.providers ?? {}).length === 0
+            ? Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between rounded-md border border-border/30 px-3 py-2 opacity-60">
                   <div className="flex items-center gap-2">
-                    {isAvailable ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-400 shrink-0" />
-                    )}
+                    <Minus className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="text-sm">{label}</span>
-                    {(key === "whalealert" || key === "coinglass") && (
-                      <Badge variant="outline" className="text-xs text-amber-400 border-amber-400/40">API Key</Badge>
-                    )}
                   </div>
-                  <div className="text-right">
-                    <div className="text-xs text-muted-foreground">
-                      {isAvailable ? (
-                        <span className="flex items-center gap-1 text-green-400">
-                          <Clock className="h-3 w-3" />
-                          {formatAge(ps?.lastFetch ?? null)} · {ps?.recordCount ?? 0} métricas
-                        </span>
-                      ) : (
-                        <span className="text-red-400/70 text-xs truncate max-w-[200px]">
-                          {ps?.lastError ?? "No disponible"}
-                        </span>
+                  <span className="text-xs text-muted-foreground">Sin datos (haz refresh)</span>
+                </div>
+              ))
+            : Object.entries(status?.providers ?? {}).map(([key, ps]) => {
+                const label = PROVIDER_LABELS[key] ?? key;
+                const isAvailable = ps?.available ?? false;
+                const isConfigured = ps?.configured ?? false;
+                const isOptional = ps?.optional ?? false;
+                const hasFetched = ps?.lastFetch !== null && ps?.lastFetch !== undefined;
+
+                let icon;
+                let statusText;
+                if (isAvailable) {
+                  icon = <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />;
+                  statusText = <span className="flex items-center gap-1 text-green-400"><Clock className="h-3 w-3" />{formatAge(ps?.lastFetch ?? null)} · {ps?.recordCount ?? 0} métricas</span>;
+                } else if (isOptional && !isConfigured) {
+                  icon = <Minus className="h-4 w-4 text-amber-400 shrink-0" />;
+                  statusText = <span className="text-amber-400/80 text-xs">Opcional — sin API key</span>;
+                } else if (!isConfigured) {
+                  icon = <XCircle className="h-4 w-4 text-red-400 shrink-0" />;
+                  statusText = <span className="text-red-400/70 text-xs">{ps?.lastError ?? "No configurado"}</span>;
+                } else if (!hasFetched) {
+                  icon = <Clock className="h-4 w-4 text-blue-400 shrink-0" />;
+                  statusText = <span className="text-blue-400/80 text-xs">Disponible — pulsa Actualizar datos</span>;
+                } else {
+                  icon = <XCircle className="h-4 w-4 text-red-400 shrink-0" />;
+                  statusText = <span className="text-red-400/70 text-xs truncate max-w-[200px]">{ps?.lastError ?? "Error en último fetch"}</span>;
+                }
+
+                return (
+                  <div key={key} className="flex items-center justify-between rounded-md border border-border/30 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      {icon}
+                      <span className="text-sm">{label}</span>
+                      {isOptional && (
+                        <Badge variant="outline" className="text-xs text-amber-400 border-amber-400/40">API Key</Badge>
                       )}
                     </div>
+                    <div className="text-right text-xs text-muted-foreground">{statusText}</div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+          }
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            DeFiLlama y CoinMetrics son gratuitos. WhaleAlert y CoinGlass requieren
+            DeFiLlama, CoinMetrics y Binance Futures son gratuitos. WhaleAlert requiere
             <code className="mx-1 text-xs bg-muted px-1 rounded">WHALE_ALERT_API_KEY</code>
-            y
+            (si se configura, CoinGlass requiere
             <code className="mx-1 text-xs bg-muted px-1 rounded">COINGLASS_API_KEY</code>
-            en variables de entorno.
+            y sustituye a Binance).
           </p>
         </CardContent>
       </Card>

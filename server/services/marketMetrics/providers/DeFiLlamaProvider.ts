@@ -16,6 +16,7 @@ const TRACKED_STABLECOINS = ["USDT", "USDC", "DAI", "FRAX", "BUSD", "TUSD", "USD
 export class DeFiLlamaProvider implements IMetricsProvider {
   readonly name = "defillama";
   readonly enabled = true;
+  readonly optional = false;
 
   async fetch(): Promise<ProviderFetchResult> {
     try {
