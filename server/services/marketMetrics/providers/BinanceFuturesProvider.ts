@@ -49,7 +49,9 @@ export class BinanceFuturesProvider implements IMetricsProvider {
     }
   }
 
-  private async doFetch(url: string): Promise<any | null> {
+  // Returns null if symbol not supported (400 Invalid symbol) — caller skips silently
+  // Returns undefined on other errors — caller logs and skips
+  private async doFetch(url: string): Promise<any | null | undefined> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
@@ -57,9 +59,13 @@ export class BinanceFuturesProvider implements IMetricsProvider {
         signal: controller.signal,
         headers: { "Accept": "application/json" },
       });
+      if (resp.status === 400) {
+        // Binance returns 400 for invalid/unsupported symbols — skip silently
+        return null;
+      }
       if (!resp.ok) {
         log(`[Binance] HTTP ${resp.status} for ${url}`, "trading");
-        return null;
+        return undefined;
       }
       return await resp.json();
     } finally {
@@ -73,6 +79,8 @@ export class BinanceFuturesProvider implements IMetricsProvider {
       try {
         const url = `${BINANCE_FUTURES_DATA}/openInterestHist?symbol=${symbol}&period=5m&limit=1`;
         const data = await this.doFetch(url);
+        if (data === null) continue;           // 400 = symbol no soportado en Binance Futures
+        if (data === undefined) continue;      // otro error HTTP — ya logueado
         if (!Array.isArray(data) || data.length === 0) continue;
 
         const row = data[0];
@@ -100,6 +108,8 @@ export class BinanceFuturesProvider implements IMetricsProvider {
       try {
         const url = `${BINANCE_FUTURES_BASE}/fundingRate?symbol=${symbol}&limit=1`;
         const data = await this.doFetch(url);
+        if (data === null) continue;           // 400 = symbol no soportado en Binance Futures
+        if (data === undefined) continue;      // otro error HTTP — ya logueado
         if (!Array.isArray(data) || data.length === 0) continue;
 
         const row = data[0];
