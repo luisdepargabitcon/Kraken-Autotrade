@@ -852,6 +852,44 @@ export async function registerRoutes(
     console.error('[startup] Failed to initialize FISCO Scheduler:', error);
   }
 
+  // ============================================================
+  // MARKET METRICS ENDPOINTS
+  // ============================================================
+  const { registerMarketMetricsRoutes } = await import('./routes/marketMetrics.routes');
+  registerMarketMetricsRoutes(app);
+
+  // ============================================
+  // MARKET METRICS SCHEDULER
+  // Refresca métricas cada 4 horas por defecto
+  // ============================================
+  try {
+    const { marketMetricsService } = await import('./services/marketMetrics');
+    const metricsCron = process.env.MARKET_METRICS_CRON || '0 */4 * * *';
+    cron.schedule(metricsCron, async () => {
+      try {
+        await marketMetricsService.refresh();
+      } catch (e: any) {
+        console.error('[market-metrics-cron] Error:', e?.message ?? e);
+      }
+    });
+    console.log(`[startup] Market Metrics scheduler initialized: ${metricsCron}`);
+
+    // Primer refresh al arrancar (30s delay para dejar inicializar servicios)
+    setTimeout(async () => {
+      try {
+        const cfg = await marketMetricsService.getConfig();
+        if (cfg.enabled) {
+          console.log('[startup] Market Metrics: ejecutando primer refresh...');
+          await marketMetricsService.refresh();
+        }
+      } catch (e: any) {
+        console.warn('[startup] Market Metrics primer refresh (non-critical):', e?.message ?? e);
+      }
+    }, 30_000);
+  } catch (e: any) {
+    console.error('[startup] Failed to initialize Market Metrics scheduler:', e?.message ?? e);
+  }
+
   // === AUTO-REBUILD P&L ON STARTUP (background, non-blocking) ===
   setTimeout(async () => {
     try {

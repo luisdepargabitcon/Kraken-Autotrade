@@ -281,6 +281,39 @@ export interface IStorage {
   getFiscoSyncByRunId(runId: string): Promise<FiscoSyncHistoryRow | undefined>;
   createFiscoSyncHistory(history: InsertFiscoSyncHistory): Promise<FiscoSyncHistoryRow>;
   updateFiscoSyncHistory(runId: string, updates: Partial<FiscoSyncHistoryRow>): Promise<void>;
+
+  // Market Metrics
+  saveMarketMetricSnapshot(record: {
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsProvider: Date | null;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }): Promise<void>;
+  getLatestMarketMetrics(): Promise<Array<{
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }>>;
+  saveMarketMetricEvaluation(record: {
+    pair: string;
+    side: string;
+    enabled: boolean;
+    score: number;
+    riskLevel: string;
+    bias: string;
+    action: string;
+    mode: string;
+    reasons: string[];
+    snapshot: Record<string, unknown>;
+  }): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2691,6 +2724,81 @@ export class DatabaseStorage implements IStorage {
   async deleteTimeStopConfig(id: number): Promise<void> {
     await db.delete(timeStopConfigTable)
       .where(eq(timeStopConfigTable.id, id));
+  }
+
+  // === MARKET METRICS ===
+
+  async saveMarketMetricSnapshot(record: {
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsProvider: Date | null;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }): Promise<void> {
+    await db.execute(sql`
+      INSERT INTO market_metrics_snapshots
+        (source, metric, asset, pair, value, ts_provider, ts_ingested, meta)
+      VALUES
+        (${record.source}, ${record.metric}, ${record.asset}, ${record.pair},
+         ${record.value}, ${record.tsProvider}, ${record.tsIngested},
+         ${JSON.stringify(record.meta)}::jsonb)
+    `);
+  }
+
+  async getLatestMarketMetrics(): Promise<Array<{
+    source: string;
+    metric: string;
+    asset: string | null;
+    pair: string | null;
+    value: number;
+    tsIngested: Date;
+    meta: Record<string, unknown>;
+  }>> {
+    // Obtener el snapshot más reciente por (metric, asset) en las últimas 24h
+    const rows = await db.execute(sql`
+      SELECT DISTINCT ON (metric, COALESCE(asset, ''))
+        source, metric, asset, pair,
+        CAST(value AS FLOAT) AS value,
+        ts_ingested,
+        meta
+      FROM market_metrics_snapshots
+      WHERE ts_ingested > NOW() - INTERVAL '24 hours'
+      ORDER BY metric, COALESCE(asset, ''), ts_ingested DESC
+    `);
+    return (rows.rows as any[]).map(r => ({
+      source:     r.source,
+      metric:     r.metric,
+      asset:      r.asset ?? null,
+      pair:       r.pair ?? null,
+      value:      parseFloat(r.value),
+      tsIngested: new Date(r.ts_ingested),
+      meta:       (typeof r.meta === "string" ? JSON.parse(r.meta) : r.meta) ?? {},
+    }));
+  }
+
+  async saveMarketMetricEvaluation(record: {
+    pair: string;
+    side: string;
+    enabled: boolean;
+    score: number;
+    riskLevel: string;
+    bias: string;
+    action: string;
+    mode: string;
+    reasons: string[];
+    snapshot: Record<string, unknown>;
+  }): Promise<void> {
+    await db.execute(sql`
+      INSERT INTO market_metrics_evaluations
+        (pair, side, enabled, score, risk_level, bias, action, mode, reasons, snapshot)
+      VALUES
+        (${record.pair}, ${record.side}, ${record.enabled}, ${record.score},
+         ${record.riskLevel}, ${record.bias}, ${record.action}, ${record.mode},
+         ${record.reasons}::text[], ${JSON.stringify(record.snapshot)}::jsonb)
+    `);
   }
 }
 

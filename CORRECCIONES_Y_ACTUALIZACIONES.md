@@ -2,6 +2,85 @@
 
 ---
 
+## 2026-01-XX — FEAT: Módulo Market Metrics (métricas de mercado como plugin)
+
+### Resumen
+Implementación completa del módulo de Métricas de Mercado como plugin opcional no intrusivo. El módulo evalúa flujos de capital, liquidez (stablecoins), apalancamiento (derivados) y actividad de ballenas antes de cada orden BUY, pudiendo PERMITIR, AJUSTAR o BLOQUEAR la operación. Diseñado con fail-safe total: si los datos fallan o el módulo está desactivado, el bot opera exactamente igual que antes (passthrough). Integrado en un único punto en `tradingEngine.ts`.
+
+### Arquitectura
+- **Plugin pattern**: El módulo no modifica ninguna estrategia ni filtro existente
+- **Único punto de integración**: `applyMarketMetricsGate()` llamado justo antes de `executeTrade("buy")` en ambos modos (ciclo y candle)
+- **Fail-safe**: Cualquier excepción en el gate → passthrough automático, nunca bloquea
+- **Modo observación**: Registra evaluaciones en DB pero nunca bloquea ni ajusta (ideal para validar)
+- **Modo activo**: Aplica BLOQUEAR o AJUSTAR según score de riesgo calculado
+
+### Fases completadas
+
+#### FASE 1: Módulo core (tipos, engine, service)
+- `server/services/marketMetrics/MarketMetricsTypes.ts` — Tipos: `RiskLevel`, `Bias`, `MetricsAction`, `MetricsMode`, `MarketMetricsDecision`, `MetricSnapshot`, `MarketMetricsConfig`, `DEFAULT_METRICS_CONFIG`, `makePassthroughDecision()`
+- `server/services/marketMetrics/MarketMetricsEngine.ts` — Motor de evaluación: scoring por 6 métricas (netflow, whale inflow, stablecoins, OI, funding rate, liquidaciones), umbrales base, multiplicadores de sensibilidad, cálculo de acción PERMITIR/AJUSTAR/BLOQUEAR
+- `server/services/marketMetrics/MarketMetricsService.ts` — Orquestador de ingesta y lectura de métricas desde DB
+- `server/services/marketMetrics/index.ts` — Re-exportaciones del módulo
+
+#### FASE 2: Proveedores de datos
+- `server/services/marketMetrics/providers/IMetricsProvider.ts` — Interfaz `IMetricsProvider` con `fetch(): ProviderFetchResult`
+- `server/services/marketMetrics/providers/DeFiLlamaProvider.ts` — Suministro/contracción de stablecoins (gratis, sin API key)
+- `server/services/marketMetrics/providers/CoinMetricsProvider.ts` — Flujos netos hacia exchanges (gratis con límites)
+- `server/services/marketMetrics/providers/WhaleAlertProvider.ts` — Inflow de ballenas a exchanges (requiere `WHALE_ALERT_API_KEY`)
+- `server/services/marketMetrics/providers/CoinGlassProvider.ts` — Open Interest, Funding Rate, Liquidaciones (requiere `COINGLASS_API_KEY`)
+
+#### FASE 3: Migración DB
+- `db/migrations/018_market_metrics.sql` — Tablas `market_metrics_snapshots` y `market_metrics_evaluations`. Columna `market_metrics_config` JSONB en `bot_config`
+
+#### FASE 4: Scheduler de ingesta
+- `server/routes.ts` — Cron `0 */4 * * *` (cada 4h, configurable via `MARKET_METRICS_CRON` env). Primer refresh a los 30s del arranque si `enabled=true`
+
+#### FASE 5 & 6: Engine integrado en tradingEngine
+- `server/services/tradingEngine.ts` — Método privado `applyMarketMetricsGate()` al final de la clase. Integrado en dos puntos: línea ~3001 (modo ciclo) y línea ~3973 (modo candle), justo antes de `executeTrade("buy")`. Alertas Telegram en castellano natural cuando acción=BLOQUEAR
+
+#### FASE 7: UI
+- `client/src/components/strategies/MarketMetricsTab.tsx` — Tab completo con: toggle habilitado, selector modo (observación/activo), sensibilidad, aplicar a BUY/SELL, estado de proveedores, últimas métricas
+- `client/src/pages/Strategies.tsx` — Añadida navegación por pestañas "Configuración" y "Métricas". Import de `MarketMetricsTab`
+
+#### FASE 8: API Routes
+- `server/routes/marketMetrics.routes.ts` — Endpoints: `GET /api/market-metrics/config`, `POST /api/market-metrics/config`, `GET /api/market-metrics/status`, `GET /api/market-metrics/snapshots`, `POST /api/market-metrics/refresh`
+- `server/storage.ts` — Métodos: `saveMarketMetricSnapshot()`, `getLatestMarketMetrics()`, `saveMarketMetricEvaluation()` en interfaz `IStorage` y clase `DatabaseStorage`
+
+#### FASE 9: Alertas Telegram
+- Mensaje en castellano natural: "⚠️ BUY bloqueado — Riesgo de mercado. Par: X. Riesgo: ALTO (score N). Sesgado: BAJISTA. Razones: ..."
+- Máximo 2 razones por alerta
+- Solo se envía en modo activo (nunca en observación)
+
+### Configuración por defecto
+```json
+{
+  "enabled": false,
+  "mode": "observacion",
+  "applyToBuy": true,
+  "applyToSell": false,
+  "sensitivity": "normal"
+}
+```
+
+### Variables de entorno opcionales
+- `WHALE_ALERT_API_KEY` — Activa WhaleAlert provider
+- `COINGLASS_API_KEY` — Activa CoinGlass provider (OI, funding, liquidaciones)
+- `MARKET_METRICS_CRON` — Override del cron de ingesta (default: `0 */4 * * *`)
+
+### Instrucciones de activación en producción
+1. Ejecutar migración: `psql -U krakenstaging -d krakenbot_staging -f db/migrations/018_market_metrics.sql`
+2. Deploy en VPS staging
+3. Activar en UI: Estrategias → Métricas → Módulo habilitado → Modo: Observación
+4. Dejar 24-48h en observación para validar evaluaciones en DB
+5. Si evaluaciones son coherentes, cambiar a modo Activo
+
+### Regresión
+- Con `enabled: false` (default): comportamiento idéntico al anterior, cero impacto
+- Con providers fallando: passthrough automático
+- Con cualquier error en el gate: passthrough automático (fail-safe)
+
+---
+
 ## 2026-03-03 — FEAT: Retención de Logs Configurable desde UI (Opción D)
 
 ### Resumen

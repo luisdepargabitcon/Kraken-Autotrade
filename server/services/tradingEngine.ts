@@ -68,6 +68,7 @@ import {
   type IAlertBuilderHost,
   type AlertExitConfig,
 } from "./alertBuilder";
+import { marketMetricsService, marketMetricsEngine } from "./marketMetrics";
 
 // TradeSignal imported from ./strategies
 
@@ -2997,7 +2998,20 @@ El bot ha pausado las operaciones de COMPRA.
         const markupDiagCycle = markupTracker.getDynamicMarkupPct(pair, parseFloat((botConfigCheck as any)?.spreadRevolutxMarkupPct?.toString() || "0.80"));
         log(`[ENTRY_QUALITY] ${pair}: ALLOWED (cycle) | regime=${earlyRegime} | spreadKraken=${sdForTrace.spreadKrakenPct.toFixed(3)}% | markupUsed=${sdForTrace.revolutxMarkupPct.toFixed(3)}% (${sdForTrace.markupSource}, ${sdForTrace.markupSamples} samples) | spreadEff=${sdForTrace.spreadEffectivePct.toFixed(3)}% | threshold=${sdForTrace.thresholdPct.toFixed(2)}% | signals=${signal.signalsCount}/${adjustedMinSignalsScan}`, "trading");
 
-        const success = await this.executeTrade(pair, "buy", tradeVolume.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
+        // === MARKET METRICS GATE (punto único de integración) ===
+        const mmGateCycle = await this.applyMarketMetricsGate({
+          pair,
+          side: "buy",
+          tradeVolume,
+          tradeAmountUSD,
+          strategyId: "momentum_cycle",
+          regime: earlyRegime,
+          signalsCount: signal.signalsCount,
+        });
+        if (mmGateCycle.blocked) return;
+        const finalVolumeCycle = mmGateCycle.adjustedVolume;
+
+        const success = await this.executeTrade(pair, "buy", finalVolumeCycle.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
         if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
           try {
             await storage.markHybridReentryWatchTriggered({
@@ -3956,10 +3970,23 @@ El bot ha pausado las operaciones de COMPRA.
           log(`[AI] filtro ML error (non-fatal): ${aiErr.message}`, "trading");
         }
 
+        // === MARKET METRICS GATE (punto único de integración) ===
+        const mmGateCandles = await this.applyMarketMetricsGate({
+          pair,
+          side: "buy",
+          tradeVolume,
+          tradeAmountUSD,
+          strategyId: selectedStrategyId,
+          regime: earlyRegime,
+          signalsCount: signal.signalsCount,
+        });
+        if (mmGateCandles.blocked) return;
+        const finalVolumeCandles = mmGateCandles.adjustedVolume;
+
         const success = await this.executeTrade(
           pair, 
           "buy", 
-          tradeVolume.toFixed(8), 
+          finalVolumeCandles.toFixed(8), 
           currentPrice, 
           `${signal.reason} [${selectedStrategyId}]`, 
           adjustmentInfo,
@@ -5993,5 +6020,147 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
       lastScanAt: this.lastScanTime > 0 ? new Date(this.lastScanTime).toISOString() : null,
       regimeDetectionEnabled,
     };
+  }
+
+  // === MARKET METRICS GATE ===
+  // Punto único de integración: evalúa métricas de mercado antes de executeTrade BUY.
+  // Retorna: { blocked: boolean; adjustedVolume: number }
+  // Nunca lanza excepción: si falla → passthrough (no bloquea).
+  private async applyMarketMetricsGate(params: {
+    pair: string;
+    side: "buy" | "sell";
+    tradeVolume: number;
+    tradeAmountUSD: number;
+    strategyId?: string;
+    regime?: string | null;
+    signalsCount?: number;
+  }): Promise<{ blocked: boolean; adjustedVolume: number }> {
+    try {
+      const config = await marketMetricsService.getConfig();
+
+      // Passthrough si módulo desactivado
+      if (!config.enabled) {
+        return { blocked: false, adjustedVolume: params.tradeVolume };
+      }
+
+      const { metrics, stalenessMs } = await marketMetricsService.getLatestMetrics(config);
+
+      const decision = marketMetricsEngine.evaluate(
+        {
+          pair: params.pair,
+          side: params.side,
+          regime: params.regime,
+          strategyId: params.strategyId,
+          signalsCount: params.signalsCount,
+          tradeAmountUSD: params.tradeAmountUSD,
+        },
+        metrics,
+        config,
+        stalenessMs
+      );
+
+      // Persistir evaluación en DB (no bloqueante)
+      storage.saveMarketMetricEvaluation({
+        pair: params.pair,
+        side: params.side,
+        enabled: decision.enabled,
+        score: decision.score,
+        riskLevel: decision.riskLevel,
+        bias: decision.bias,
+        action: decision.action,
+        mode: decision.mode,
+        reasons: decision.reasons,
+        snapshot: {
+          metrics,
+          adjustments: decision.adjustments,
+          scoreBreakdown: decision.details.scoreBreakdown,
+        },
+      }).catch((e: any) => log(`[MM_GATE] saveEvaluation error: ${e?.message ?? e}`, "trading"));
+
+      // Actualizar trace con resultado de métricas
+      this.updatePairTrace(params.pair, {
+        blockReasonCode: decision.action === "BLOQUEAR" ? "MARKET_METRICS_BLOCK" : undefined,
+        blockDetails: decision.action !== "PERMITIR" ? {
+          metricsAction: decision.action,
+          metricsScore: decision.score,
+          metricsRisk: decision.riskLevel,
+          metricsBias: decision.bias,
+          metricsReasons: decision.reasons,
+          metricsMode: decision.mode,
+        } : undefined,
+      } as any);
+
+      // En modo observación: loguear pero nunca bloquear
+      if (decision.mode === "observacion") {
+        if (decision.action !== "PERMITIR") {
+          log(
+            `[MM_GATE] ${params.pair} OBSERVACIÓN: action=${decision.action} risk=${decision.riskLevel} score=${decision.score} — no bloquea (modo observación)`,
+            "trading"
+          );
+        }
+        return { blocked: false, adjustedVolume: params.tradeVolume };
+      }
+
+      // Modo activo: aplicar decisión
+      if (decision.action === "BLOQUEAR") {
+        const reasonsText = decision.reasons.slice(0, 2).join("; ");
+        log(
+          `[MM_GATE] ${params.pair} BUY BLOQUEADO por métricas: risk=${decision.riskLevel} score=${decision.score} — ${reasonsText}`,
+          "trading"
+        );
+        await botLogger.info("TRADE_SKIPPED", `BUY bloqueado por métricas de mercado`, {
+          pair: params.pair,
+          signal: "BUY",
+          reason: "MARKET_METRICS_BLOCK",
+          metricsScore: decision.score,
+          metricsRisk: decision.riskLevel,
+          metricsBias: decision.bias,
+          metricsReasons: decision.reasons,
+        });
+        this.updatePairTrace(params.pair, {
+          smartGuardDecision: "BLOCK",
+          finalSignal: "NONE",
+          finalReason: `Métricas de mercado: ${decision.riskLevel} — ${decision.reasons[0] ?? "riesgo elevado"}`,
+        });
+
+        // Alerta Telegram en castellano natural
+        if (this.telegramService.isInitialized()) {
+          const reasonsMsg = decision.reasons.slice(0, 2).join("\n• ");
+          const msg = `⚠️ <b>BUY bloqueado — Riesgo de mercado</b>\n\nPar: <b>${params.pair}</b>\nRiesgo: <b>${decision.riskLevel}</b> (score ${decision.score})\nSesgado: ${decision.bias}\n\n• ${reasonsMsg}\n\n<i>Módulo: Métricas de Mercado</i>`;
+          this.telegramService.sendMessage(msg).catch((e: any) =>
+            log(`[MM_GATE] telegram error: ${e?.message ?? e}`, "trading")
+          );
+        }
+
+        return { blocked: true, adjustedVolume: params.tradeVolume };
+      }
+
+      if (decision.action === "AJUSTAR") {
+        const mult = decision.adjustments?.sizeMultiplier ?? 0.7;
+        const adjustedVolume = params.tradeVolume * mult;
+        const reasonsText = decision.reasons[0] ?? "condiciones moderadas";
+        log(
+          `[MM_GATE] ${params.pair} BUY AJUSTADO: volumen ${params.tradeVolume.toFixed(8)} → ${adjustedVolume.toFixed(8)} (×${mult}) — ${reasonsText}`,
+          "trading"
+        );
+        await botLogger.info("TRADE_ADJUSTED", `BUY ajustado por métricas de mercado`, {
+          pair: params.pair,
+          originalVolume: params.tradeVolume,
+          adjustedVolume,
+          sizeMultiplier: mult,
+          metricsScore: decision.score,
+          metricsRisk: decision.riskLevel,
+          metricsReasons: decision.reasons,
+        });
+        return { blocked: false, adjustedVolume };
+      }
+
+      // PERMITIR: passthrough sin cambios
+      return { blocked: false, adjustedVolume: params.tradeVolume };
+    } catch (gateErr: any) {
+      // Fail-safe: cualquier error en el gate → passthrough, nunca bloquea
+      log(`[MM_GATE] Error (fail-safe passthrough): ${gateErr?.message ?? gateErr}`, "trading");
+      return { blocked: false, adjustedVolume: params.tradeVolume };
+    }
   }
 }
