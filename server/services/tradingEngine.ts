@@ -2201,6 +2201,13 @@ El bot ha pausado las operaciones de COMPRA.
               } else {
                 // No hay vela nueva, ciclo intermedio
                 this.initPairTrace(pair, expDefault.maxAllowed, true);
+                // OBJ-A: actualizar lastScanResults para reflejar estado intermedio actual en diagnostic UI
+                this.lastScanResults.set(pair, {
+                  signal: "NONE",
+                  reason: "Ciclo intermedio - sin vela 15m cerrada",
+                  cooldownSec: this.getCooldownRemainingSec(pair),
+                  exposureAvailable: expDefault.maxAllowed,
+                });
               }
             } else {
               // Modo ciclo = siempre análisis completo
@@ -3194,6 +3201,21 @@ El bot ha pausado las operaciones de COMPRA.
 
         log(`${pair}: SELL signal - vendiendo ${sellVolume.toFixed(8)} (lot: ${lotAmount.toFixed(8)}, balance: ${realAssetBalance.toFixed(8)}, value: $${sellValueUsd.toFixed(2)})`, "trading");
 
+        // OBJ-C: Guard upstream — sin posición rastreada, bloquear limpiamente antes de intentar ejecutar orden
+        if (!existingPosition) {
+          log(`[WARN] ${pair}: SELL señal con balance real pero sin posición rastreada — abortando sin ejecutar orden`, "trading");
+          await botLogger.warn("SELL_BLOCKED_NO_CONTEXT", `SELL bloqueado (upstream guard) — sin posición rastreada para trazabilidad`, {
+            pair, type: "sell", assetBalance, reason: signal.reason,
+          });
+          this.updatePairTrace(pair, {
+            blockReasonCode: "NO_POSITION",
+            finalSignal: "NONE",
+            finalReason: "SELL sin posición rastreada — bloqueado antes de ejecutar orden",
+          });
+          this.emitPairDecisionTrace(pair);
+          return;
+        }
+
         const sellContext = existingPosition 
           ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
           : undefined;
@@ -4150,6 +4172,21 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         log(`${pair}: SELL signal [${selectedStrategyId}] - vendiendo ${sellVolume.toFixed(8)} (value: $${sellValueUsd.toFixed(2)})`, "trading");
+
+        // OBJ-C: Guard upstream — sin posición rastreada, bloquear limpiamente antes de intentar ejecutar orden
+        if (!existingPosition) {
+          log(`[WARN] ${pair}: SELL señal (candles) con balance real pero sin posición rastreada — abortando sin ejecutar orden`, "trading");
+          await botLogger.warn("SELL_BLOCKED_NO_CONTEXT", `SELL bloqueado (upstream guard, candles) — sin posición rastreada para trazabilidad`, {
+            pair, type: "sell", assetBalance, reason: signal.reason, strategyId: selectedStrategyId,
+          });
+          this.updatePairTrace(pair, {
+            blockReasonCode: "NO_POSITION",
+            finalSignal: "NONE",
+            finalReason: "SELL sin posición rastreada — bloqueado antes de ejecutar orden",
+          });
+          this.emitPairDecisionTrace(pair);
+          return;
+        }
 
         const sellContext = existingPosition 
           ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }

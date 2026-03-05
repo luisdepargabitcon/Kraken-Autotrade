@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-03-05 — FIX: Diagnóstico UI + Ciclo Intermedio + Guard SELL sin contexto (OBJ-A/B/C)
+
+### Problema
+1. **OBJ-A (UI)**: El endpoint `/api/scan/diagnostic` mostraba datos de señal **obsoletos** para pares en ciclo intermedio (14 de cada 15 minutos en modo velas 15m). `lastScanResults` sólo se actualizaba durante análisis completos, por lo que entre cierres de vela la UI podía mostrar `BUY` (del último análisis completo) cuando el par estaba bloqueado por ciclo intermedio.
+2. **OBJ-B (isIntermediateCycle)**: La lógica de `isIntermediateCycle` es **correcta por diseño**. Entre cierres de vela 15m (la mayoría del tiempo), el sistema espera. La inconsistencia entre pares con diferente `lastCandleClosedAt` dentro del mismo scan es efecto del procesamiento secuencial: si una vela cierra a mitad de scan, los pares procesados antes ven la vela antigua. No es un bug.
+3. **OBJ-C (sellContext)**: Cuando existía balance real en el exchange pero sin posición rastreada en el bot (`existingPosition=null`), el SELL llegaba hasta `executeTrade()` con `sellContext=undefined`, generando un log `[ERROR]` innecesario. El bloqueo era correcto pero el manejo era sucio (error downstream en vez de warning upstream).
+
+### Causa raíz
+- **OBJ-A**: `lastScanResults.set()` nunca se llamaba en el path de ciclo intermedio (lines 2201-2204 del scan loop), dejando datos del último análisis completo como estado visible.
+- **OBJ-C**: Doble validación: `NO_POSITION` check (lines 3057/4033) sólo bloquea si `assetBalance <= 0`, dejando pasar el caso "balance real sin posición rastreada" (orphan). Este caso llegaba a `executeTrade` sin `sellContext`.
+
+### Cambios realizados
+- **`server/services/tradingEngine.ts`** — 3 cambios:
+  1. **OBJ-A (línea ~2201)**: En el `else` del ciclo intermedio (`isNewCandleClosed=false`), se actualiza `lastScanResults` con `signal: "NONE"` y `reason: "Ciclo intermedio - sin vela 15m cerrada"`. Garantiza que `/api/scan/diagnostic` (y la UI Monitor) refleje el estado actual real, no datos stale del último análisis completo.
+  2. **OBJ-C (línea ~3204)**: Guard upstream en `analyzePairAndTrade` — si `existingPosition` es null antes del SELL, se emite `botLogger.warn("SELL_BLOCKED_NO_CONTEXT")`, se actualiza el trace con `blockReasonCode: "NO_POSITION"` y se retorna limpiamente sin llegar a `executeTrade`.
+  3. **OBJ-C (línea ~4176)**: Mismo guard upstream en `analyzePairAndTradeWithCandles`.
+
+### Comportamiento post-fix
+- **UI Monitor / Diagnóstico**: La columna "Razón" muestra "Ciclo intermedio - sin vela 15m cerrada" en lugar de señal stale del último análisis completo.
+- **SELL sin contexto**: Log cambia de `[ERROR]` a `[WARN]`, trace queda con `finalReason: "SELL sin posición rastreada — bloqueado antes de ejecutar orden"`. No se intenta ninguna orden.
+- **isIntermediateCycle**: Comportamiento sin cambio (correcto). Documentado como diseño intencional.
+
+---
+
 ## 2026-03-04 — FIX: Módulo Market Metrics — toggle bloqueado y providers "No disponible"
 
 ### Problema
