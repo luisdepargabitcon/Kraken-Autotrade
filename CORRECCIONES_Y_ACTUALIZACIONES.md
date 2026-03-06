@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-03-06 — FIX: Rate Limiting Kraken + Hot-Reload Feature Flags
+
+### Problemas detectados en logs de producción
+
+| # | Problema | Severidad |
+|---|---|---|
+| 1 | **Rate limiting Kraken**: Polling 5s (FASE 1) con 5 pares causa `"EGeneral:Too many requests"` frecuentes | CRÍTICO |
+| 2 | **Hot-reload roto**: Endpoint PUT feature-flags emitía `"configUpdated"` pero listener espera `"config:updated"` con payload `{configId}` | ALTO |
+
+### Correcciones
+
+| Archivo | Cambio |
+|---|---|
+| `server/services/tradingEngine.ts` | **NUEVO método `shouldPollForNewCandle()`**: Cálculo alineado al reloj (`Math.floor(now/interval)*interval + interval`), ventana acotada [-30s, +10s] del cierre esperado, y dedup para evitar re-consultar vela ya procesada. Reduce llamadas API de ~60/min a ~3-8/min |
+| `server/services/tradingEngine.ts` | Integración del guard en `runTradingCycle()`: ciclos intermedios saltan API call cuando no toca |
+| `server/routes/config.ts` | Fix evento: `configService.emit("config:updated", { configId: activeConfigId })` (antes: `"configUpdated"`, string plano) |
+
+### Impacto
+- **Antes**: 5 pares × 12 scans/min = ~60 OHLC calls/min → rate limiting frecuente
+- **Después**: Solo ~5-10 OHLC calls/min (cerca del cierre de vela) → sin rate limiting
+- Hot-reload de feature flags desde UI ahora dispara correctamente `loadDynamicConfig()` en TradingEngine
+
+---
+
 ## 2026-07-12 — FEAT: UI Motor Adaptativo — Pestaña Feature Flags en Estrategias
 
 ### Objetivo
@@ -21,7 +45,7 @@ Proporcionar interfaz visual para activar/desactivar los feature flags del Adapt
 
 ### Características
 - 8 toggles independientes con descripción, fase, y nivel de riesgo (bajo/medio/alto)
-- Hot-reload: cambios se aplican sin reiniciar el bot (emit `configUpdated`)
+- Hot-reload: cambios se aplican sin reiniciar el bot (emit `config:updated`)
 - Refetch automático cada 10s para sincronizar estado
 - Fallback a defaults si no hay config activa (muestra warning)
 - Log `FEATURE_FLAGS_UPDATED` en cada cambio para auditoría

@@ -1439,6 +1439,36 @@ export class TradingEngine {
     return false;
   }
 
+  /**
+   * FASE 1 Rate-limit guard: solo llama a la API de Kraken cuando es probable
+   * que haya una vela nueva cerrada, evitando "Too many requests" con polling 5s.
+   * 
+   * Lógica:
+   *  1. Calcula el próximo cierre de vela alineado al reloj (ej. :00, :15, :30, :45 para 15m)
+   *  2. Si ya procesamos la vela que cierra en ese slot → false (dedup)
+   *  3. Solo consulta API dentro de ventana [-30s, +10s] del cierre esperado
+   * 
+   * Resultado: ~3-8 API calls/min en vez de ~60/min
+   */
+  private shouldPollForNewCandle(pair: string, timeframe: string): boolean {
+    const key = `${pair}:${timeframe}`;
+    const lastTs = this.lastEvaluatedCandle.get(key) || 0;
+    if (lastTs === 0) return true; // Primera ejecución, siempre consultar
+
+    const intervalSec = this.getTimeframeIntervalMinutes(timeframe) * 60;
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // Próximo cierre de vela alineado al reloj
+    const nextExpectedClose = Math.floor(nowSec / intervalSec) * intervalSec + intervalSec;
+
+    // Dedup: si ya procesamos la vela que cierra en este slot, no consultar
+    const lastProcessedCloseTime = lastTs + intervalSec;
+    if (lastProcessedCloseTime >= nextExpectedClose) return false;
+
+    // Ventana de polling: -30s antes a +10s después del cierre esperado
+    return nowSec >= (nextExpectedClose - 30) && nowSec <= (nextExpectedClose + 10);
+  }
+
   private async analyzeWithCandleStrategy(
     pair: string,
     timeframe: string,
@@ -2295,6 +2325,22 @@ El bot ha pausado las operaciones de COMPRA.
             let isIntermediateCycle = true;
             
             if (isCandleMode) {
+              // FASE 1 Rate-limit guard: evitar llamadas innecesarias a Kraken API
+              if (!this.shouldPollForNewCandle(pair, signalTimeframe)) {
+                // No es momento de consultar, ciclo intermedio sin API call
+                this.initPairTrace(pair, expDefault.maxAllowed, true);
+                this.lastScanResults.set(pair, {
+                  signal: "NONE",
+                  reason: "Ciclo intermedio - sin vela 15m cerrada",
+                  cooldownSec: this.getCooldownRemainingSec(pair),
+                  exposureAvailable: expDefault.maxAllowed,
+                });
+                this.emitPairDecisionTrace(pair);
+                log(`[SCAN_PAIR_OK] pair=${pair}`, "trading");
+                scannedPairs.push(pair);
+                continue;
+              }
+
               const candle = await this.getLastClosedCandle(pair, signalTimeframe);
               if (!candle) {
                 // No hay vela, ciclo intermedio con datos cacheados

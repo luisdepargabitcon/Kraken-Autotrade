@@ -397,7 +397,7 @@ export function registerConfigRoutes(app: Express): void {
       }
 
       // Emit update event so TradingEngine hot-reloads
-      configService.emit("configUpdated", activeConfigId);
+      configService.emit("config:updated", { configId: activeConfigId });
 
       await botLogger.info("FEATURE_FLAGS_UPDATED", "Feature flags updated via UI", {
         flags: parsed.data,
