@@ -76,6 +76,7 @@ export const defaultFeatureFlags = {
   dynamicMtfEnabled: false,            // FASE 6: Calibrate MTF threshold dynamically based on ATR%
   volumeOverrideEnabled: false,        // FASE 7: Relax MTF/minSignals thresholds on very high volume
   priceAccelerationFilterEnabled: false, // FASE 8: Block trades when price momentum is decelerating
+  volumeBreakoutOverrideEnabled: false,  // FASE 9: Override MTF rejection on extreme volume breakouts
 } as const;
 
 export const featureFlagsSchema = z.object({
@@ -87,6 +88,7 @@ export const featureFlagsSchema = z.object({
   dynamicMtfEnabled: z.boolean().default(false),
   volumeOverrideEnabled: z.boolean().default(false),
   priceAccelerationFilterEnabled: z.boolean().default(false),
+  volumeBreakoutOverrideEnabled: z.boolean().default(false),
 });
 
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;

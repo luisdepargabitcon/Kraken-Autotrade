@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-03-06 — FEAT: Volume Breakout Override (FASE 9)
+
+### Objetivo
+Capturar breakouts tempranos con volumen institucional incluso cuando el filtro MTF rechazaría la señal. Ejemplo real: `volumeRatio=2.80, mtfAlignment=-0.33` → señal rechazada injustamente.
+
+### Cambios implementados
+
+| Archivo | Cambio |
+|---|---|
+| `shared/config-schema.ts` | Feature flag `volumeBreakoutOverrideEnabled: false` (default off) en schema + defaults |
+| `client/src/components/strategies/FeatureFlagsTab.tsx` | Toggle "Volume Breakout Override" (FASE 9, riesgo medio, icono Flame) |
+| `server/services/tradingEngine.ts` | Lógica override dentro de `if (mtfBoost.filtered)`: si flag activo + `vol≥2.5x` + `ADX≥20` + `alignment>-0.40` + `regime≠RANGE` → bypass MTF con confidence reducida (×0.9, max 0.85) |
+| `server/services/tradingEngine.ts` | Campo `volumeBreakoutOverride?: boolean` en `DecisionTraceContext` para auditoría |
+
+### Condiciones de activación (todas requeridas)
+- `volumeBreakoutOverrideEnabled = true`
+- `signal.action === "buy"`
+- `volumeRatio >= 2.5`
+- `ADX >= 20`
+- `mtfAlignment > -0.40`
+- `regime !== "RANGE"`
+
+### Logging
+```
+[MTF_BREAKOUT_OVERRIDE] ETH/USD vol=2.80 mtf=-0.33 ADX=24 regime=TRANSITION
+```
+Signal reason incluye: `BREAKOUT_OVERRIDE(vol=2.80, mtf=-0.33)` → fluye a Telegram automáticamente.
+
+### Seguridad
+- Flag `false` por defecto → cero cambio de comportamiento hasta activar
+- Confianza reducida 10% cuando se activa override
+- No se activa en RANGE ni con MTF extremadamente negativo (<-0.40)
+
+---
+
 ## 2026-03-06 — FIX: Rate Limiting Kraken + Hot-Reload Feature Flags
 
 ### Problemas detectados en logs de producción

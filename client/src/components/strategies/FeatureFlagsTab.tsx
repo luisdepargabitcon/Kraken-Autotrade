@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Zap, Timer, Layers, Brain, BarChart3, TrendingUp, ShieldAlert, Gauge, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { Zap, Timer, Layers, Brain, BarChart3, TrendingUp, ShieldAlert, Gauge, AlertTriangle, CheckCircle2, Loader2, Flame } from "lucide-react";
 import { toast } from "sonner";
 
 interface FeatureFlags {
@@ -14,6 +14,7 @@ interface FeatureFlags {
   dynamicMtfEnabled: boolean;
   volumeOverrideEnabled: boolean;
   priceAccelerationFilterEnabled: boolean;
+  volumeBreakoutOverrideEnabled: boolean;
 }
 
 interface FlagDef {
@@ -98,6 +99,15 @@ const FLAG_DEFINITIONS: FlagDef[] = [
     risk: "high",
     icon: Zap,
     color: "text-red-500",
+  },
+  {
+    key: "volumeBreakoutOverrideEnabled",
+    label: "Volume Breakout Override",
+    description: "Permite entrar en breakouts con volumen extremo (≥2.5x) aunque el MTF no cumpla totalmente. Requiere ADX≥20, alignment>-0.40 y régimen≠RANGE.",
+    fase: "FASE 9",
+    risk: "medium",
+    icon: Flame,
+    color: "text-orange-600",
   },
 ];
 

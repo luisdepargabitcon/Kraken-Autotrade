@@ -214,6 +214,7 @@ interface DecisionTraceContext {
   atrPct?: number | null;                      // ATR% used for MTF dynamic calibration (FASE 6)
   volumeOverrideTriggered?: boolean | null;    // FASE 7: MTF skipped due to volume spike
   priceAccelBlocked?: boolean | null;          // FASE 8: Trade blocked by price acceleration filter
+  volumeBreakoutOverride?: boolean | null;     // FASE 9: MTF rejection overridden by extreme volume breakout
   featureFlagsActive?: string[] | null;        // List of currently enabled feature flags
 }
 
@@ -1639,6 +1640,21 @@ export class TradingEngine {
     if (mtfAnalysis && signal.action !== "hold" && !skipMtfForVolumeOverride) {
       const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime, adx, atrPctForMtf);
       if (mtfBoost.filtered) {
+        // FASE 9: Volume Breakout Override — permitir entrada si volumen extremo + condiciones de seguridad
+        const volumeBreakoutOverride =
+          flags.volumeBreakoutOverrideEnabled &&
+          signal.action === "buy" &&
+          (signal.volumeRatio ?? 0) >= 2.5 &&
+          (adx ?? 0) >= 20 &&
+          mtfAnalysis.alignment > -0.40 &&
+          regime !== "RANGE";
+
+        if (volumeBreakoutOverride) {
+          log(`[MTF_BREAKOUT_OVERRIDE] ${pair} vol=${(signal.volumeRatio ?? 0).toFixed(2)} mtf=${mtfAnalysis.alignment.toFixed(2)} ADX=${(adx ?? 0).toFixed(0)} regime=${regime}`, "trading");
+          signal.reason += ` | BREAKOUT_OVERRIDE(vol=${(signal.volumeRatio ?? 0).toFixed(2)}, mtf=${mtfAnalysis.alignment.toFixed(2)})`;
+          signal.confidence = Math.min(0.85, signal.confidence * 0.9); // Reducir confianza ligeramente por MTF no alineado
+          this.updatePairTrace(pair, { volumeBreakoutOverride: true });
+        } else {
         // Preserve signalsCount from original signal for diagnostic trace
         // Si es filtro MTF_STRICT, enviar alerta de rechazo
         if (mtfBoost.filterType === "MTF_STRICT" && signal.action === "buy") {
@@ -1686,7 +1702,8 @@ export class TradingEngine {
           signalsCount: signal.signalsCount,
           minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
         };
-      }
+        } // close else (no breakout override)
+      } // close if (mtfBoost.filtered)
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
       if (mtfBoost.confidenceBoost > 0) {
         signal.reason += ` | ${mtfBoost.reason}`;
