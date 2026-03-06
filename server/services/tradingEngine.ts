@@ -1461,9 +1461,11 @@ export class TradingEngine {
     
     let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close, adjustedMinSignals);
 
+    // Feature flags — una sola lectura para toda la función
+    const flags = this.getFeatureFlags();
+
     // FASE 8: Price Acceleration Filter — bloquear si la aceleración de precio es negativa
-    const flagsPA = this.getFeatureFlags();
-    if (flagsPA.priceAccelerationFilterEnabled && signal.action === "buy" && signal.priceAcceleration !== undefined) {
+    if (flags.priceAccelerationFilterEnabled && signal.action === "buy" && signal.priceAcceleration !== undefined) {
       const ACCEL_THRESHOLD = -0.5; // Bloquear si la última vela aceleró <-50% vs la anterior
       if (signal.priceAcceleration < ACCEL_THRESHOLD) {
         log(`[PRICE_ACCEL] ${pair}: BUY bloqueado por deceleración (accel=${signal.priceAcceleration.toFixed(2)} < ${ACCEL_THRESHOLD})`, "trading");
@@ -1583,8 +1585,7 @@ export class TradingEngine {
     }
     
     // FASE 7: Volume Override — relajar MTF check cuando volumeRatio >= 2.5 (breakout de volumen extremo)
-    const flagsVO = this.getFeatureFlags();
-    if (flagsVO.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5) {
+    if (flags.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5) {
       const vol = (signal.volumeRatio ?? 0).toFixed(1);
       log(`[VOLUME_OVERRIDE] ${pair}: volumeRatio=${vol}x >= 2.5 → bypass MTF_STRICT check`, "trading");
       signal = { ...signal, reason: `${signal.reason} | VOLUME_OVERRIDE(${vol}x)` };
@@ -1604,7 +1605,7 @@ export class TradingEngine {
     }
 
     // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
-    const skipMtfForVolumeOverride = flagsVO.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5;
+    const skipMtfForVolumeOverride = flags.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5;
     if (mtfAnalysis && signal.action !== "hold" && !skipMtfForVolumeOverride) {
       const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime, adx, atrPctForMtf);
       if (mtfBoost.filtered) {
@@ -1679,8 +1680,7 @@ export class TradingEngine {
 
     // FASE 2: Early Momentum Entry — evaluar vela en progreso si signal=HOLD y flag activo
     // ⚠️ Riesgo: vela abierta tiene datos incompletos. Usar solo bajo condiciones muy estrictas.
-    const flagsEM = this.getFeatureFlags();
-    if (flagsEM.earlyMomentumEnabled && signal.action === "hold") {
+    if (flags.earlyMomentumEnabled && signal.action === "hold") {
       const currentCandle = candles[candles.length - 1]; // vela en progreso (última = abierta)
       if (currentCandle && closedCandles.length >= 14) {
         const emBody = Math.abs(currentCandle.close - currentCandle.open);
@@ -1701,14 +1701,22 @@ export class TradingEngine {
         const emAtr = emTrValues.reduce((a, b) => a + b, 0) / emTrValues.length;
         const emAtrPct = emSlice.length > 0 ? (emAtr / (emSlice[emSlice.length - 1]?.close || 1)) * 100 : 0;
 
-        const earlyConditions = isBullishEM && emBodyRatio >= 0.70 && emVolumeRatio >= 1.8 && emAtrPct >= 1.0;
+        // FIX 6: Early Momentum debe respetar filtros de seguridad mínimos
+        // Bloquear si MTF 4h+1h son bearish o si RSI > 70 (anti-cresta)
+        const emRsi = closedCandles.length >= 14
+          ? this.calculateRSI((closedCandles as any[]).slice(-14).map((c: any) => c.close))
+          : 50;
+        const mtfSafe = !mtfAnalysis || !(mtfAnalysis.longTerm === "bearish" && mtfAnalysis.mediumTerm === "bearish");
+        const rsiSafe = emRsi < 70;
+
+        const earlyConditions = isBullishEM && emBodyRatio >= 0.70 && emVolumeRatio >= 1.8 && emAtrPct >= 1.0 && mtfSafe && rsiSafe;
 
         if (earlyConditions) {
           log(`[EARLY_MOMENTUM] ${pair}: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x atr=${emAtrPct.toFixed(2)}% → early BUY`, "trading");
           signal = {
             action: "buy",
             pair,
-            confidence: 0.55, // Baja confianza por ser vela en progreso
+            confidence: 0.62, // Baja confianza por ser vela en progreso (mín 0.60 para pasar gate)
             reason: `Early Momentum: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x ATR=${emAtrPct.toFixed(2)}% (vela en progreso)`,
             signalsCount: 1,
             minSignalsRequired: 1,
@@ -4388,7 +4396,7 @@ El bot ha pausado las operaciones de COMPRA.
   // === MTF FILTER (delegated to strategies.ts) ===
   private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis, regime?: MarketRegime | string | null, adx?: number, atrPct?: number) {
     const flags = this.getFeatureFlags();
-    return _applyMTFFilter(signal, mtf, regime, adx, atrPct, flags.volumeOverrideEnabled);
+    return _applyMTFFilter(signal, mtf, regime, adx, atrPct, flags.dynamicMtfEnabled);
   }
 
   // === CYCLE-MODE STRATEGIES (delegated to strategies.ts) ===

@@ -68,6 +68,17 @@ Evolucionar el motor de trading de un sistema de señal simple a un **Adaptive M
 | `server/services/telegram.ts` | FASE 10: sendSignalRejectionAlert extendido |
 | `server/services/signalAccumulator.ts` | FASE 3: NUEVO módulo SignalAccumulator |
 
+### Auditoría post-implementación (6 fixes)
+
+| # | Tipo | Fix aplicado |
+|---|---|---|
+| 1 | **BUG** | Falta flag `dynamicMtfEnabled` — FASE 6 y FASE 7 estaban atadas al mismo `volumeOverrideEnabled`. Añadido flag propio. |
+| 2 | **BUG** | Log `REGIME_CANDIDATE` mostraba `/3` hardcoded en vez de `/confirmScans` dinámico (5 con histéresis). |
+| 3 | **BUG** | FASE 2 confidence=0.55 siempre bloqueada por gate 0.60. Subido a 0.62. |
+| 4 | **ISSUE** | Hold return en `momentumCandlesStrategy` no incluía `signalScore`/`volumeRatio`/`priceAcceleration`. Añadidos. |
+| 5 | **ISSUE** | 3 llamadas redundantes a `getFeatureFlags()` en `analyzeWithCandleStrategy`. Consolidadas en una. |
+| 6 | **BUG** | FASE 2 Early Momentum bypaseaba filtros ANTI_CRESTA y MTF. Añadido guard MTF bearish + RSI>70. |
+
 ### Estado de flags en producción (post-deploy)
 **Todos desactivados por defecto.** Para activar progresivamente via UI config_preset:
 ```json
@@ -79,6 +90,7 @@ Evolucionar el motor de trading de un sistema de señal simple a un **Adaptive M
       "signalAccumulatorEnabled": false,
       "regimeHysteresisEnabled": false,
       "signalScoringEnabled": false,
+      "dynamicMtfEnabled": false,
       "volumeOverrideEnabled": false,
       "priceAccelerationFilterEnabled": false
     }

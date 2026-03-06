@@ -194,7 +194,7 @@ export class RegimeManager {
         const confirmScans = this.hysteresisEnabled ? 5 : REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
         const confirmed = newCount >= confirmScans;
 
-        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
+        log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=${newCount}/${confirmScans} adx=${rawAnalysis.adx.toFixed(1)}${this.hysteresisEnabled ? " (hysteresis)" : ""}`, "trading");
 
         if (confirmed) {
           // Confirmed! Update state and send alert

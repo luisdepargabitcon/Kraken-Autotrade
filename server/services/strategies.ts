@@ -620,6 +620,9 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
     reason: `Sin señal clara velas: ${blockReason} | buy=${buySignals}/sell=${sellSignals}`,
     signalsCount: dominantCount,
     minSignalsRequired,
+    signalScore: Math.max(buyScore, sellScore),
+    volumeRatio,
+    priceAcceleration,
   };
 }
 

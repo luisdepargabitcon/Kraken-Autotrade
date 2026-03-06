@@ -73,6 +73,7 @@ export const defaultFeatureFlags = {
   signalAccumulatorEnabled: false,     // FASE 3: Accumulate signal scores across scans
   regimeHysteresisEnabled: false,      // FASE 4: Require N consecutive detections before regime change
   signalScoringEnabled: false,         // FASE 5: Weight signals (score >= threshold) instead of plain count
+  dynamicMtfEnabled: false,            // FASE 6: Calibrate MTF threshold dynamically based on ATR%
   volumeOverrideEnabled: false,        // FASE 7: Relax MTF/minSignals thresholds on very high volume
   priceAccelerationFilterEnabled: false, // FASE 8: Block trades when price momentum is decelerating
 } as const;
@@ -83,6 +84,7 @@ export const featureFlagsSchema = z.object({
   signalAccumulatorEnabled: z.boolean().default(false),
   regimeHysteresisEnabled: z.boolean().default(false),
   signalScoringEnabled: z.boolean().default(false),
+  dynamicMtfEnabled: z.boolean().default(false),
   volumeOverrideEnabled: z.boolean().default(false),
   priceAccelerationFilterEnabled: z.boolean().default(false),
 });
