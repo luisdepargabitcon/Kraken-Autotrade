@@ -35,6 +35,8 @@ export class RegimeManager {
   private readonly REGIME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   private lastRegime: Map<string, MarketRegime> = new Map();
   private dynamicConfig: TradingConfig | null = null;
+  // FASE 4: Hystéresis configurable — cuando true, requiere 5 confirmaciones en vez de 3
+  private hysteresisEnabled: boolean = false;
 
   constructor(host: IRegimeManagerHost) {
     this.host = host;
@@ -43,6 +45,30 @@ export class RegimeManager {
   /** Called by TradingEngine when dynamicConfig updates */
   setDynamicConfig(config: TradingConfig | null): void {
     this.dynamicConfig = config;
+  }
+
+  // FASE 4: Actualizar flag de histéresis desde TradingEngine
+  setHysteresisEnabled(enabled: boolean): void {
+    if (this.hysteresisEnabled !== enabled) {
+      log(`[REGIME_HYSTERESIS] enabled=${enabled} confirmScansRequired=${enabled ? 5 : REGIME_CONFIG.CONFIRM_SCANS_REQUIRED}`, "trading");
+    }
+    this.hysteresisEnabled = enabled;
+  }
+
+  // FASE 9: Exponer estado de candidato para logging en DecisionTraceContext
+  async getCandidateDiag(pair: string): Promise<{ regimeCandidate: string | null; regimeCandidateCount: number; regimeConfirmed: boolean } | null> {
+    try {
+      const state = await this.getRegimeState(pair);
+      if (!state) return null;
+      const confirmScans = this.hysteresisEnabled ? 5 : REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
+      return {
+        regimeCandidate: state.candidateRegime || null,
+        regimeCandidateCount: state.candidateCount || 0,
+        regimeConfirmed: (state.candidateCount || 0) >= confirmScans,
+      };
+    } catch {
+      return null;
+    }
   }
 
   // === Hash helpers ===
@@ -164,7 +190,9 @@ export class RegimeManager {
       if (rawAnalysis.regime === candidateRegime) {
         // Same candidate: increment count
         const newCount = candidateCount + 1;
-        const confirmed = newCount >= REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
+        // FASE 4: confirmScans aumenta a 5 si regimeHysteresisEnabled=true
+        const confirmScans = this.hysteresisEnabled ? 5 : REGIME_CONFIG.CONFIRM_SCANS_REQUIRED;
+        const confirmed = newCount >= confirmScans;
 
         log(`[REGIME_CANDIDATE] pair=${pair} candidate=${rawAnalysis.regime} count=${newCount}/${REGIME_CONFIG.CONFIRM_SCANS_REQUIRED} adx=${rawAnalysis.adx.toFixed(1)}`, "trading");
 

@@ -63,6 +63,32 @@ export const exchangeConfigSchema = z.object({
   customParams: z.record(z.any()).optional(),
 });
 
+// ─── Feature Flags ────────────────────────────────────────────────────────────
+// All flags default to false — safe to deploy without activating any behaviour.
+// Activate progressively via UI/config_preset to enable each phase.
+
+export const defaultFeatureFlags = {
+  candleCloseTriggerEnabled: false,    // FASE 1: Scan every 5s to detect candle close faster
+  earlyMomentumEnabled: false,         // FASE 2: Allow early entry on strong intra-candle momentum
+  signalAccumulatorEnabled: false,     // FASE 3: Accumulate signal scores across scans
+  regimeHysteresisEnabled: false,      // FASE 4: Require N consecutive detections before regime change
+  signalScoringEnabled: false,         // FASE 5: Weight signals (score >= threshold) instead of plain count
+  volumeOverrideEnabled: false,        // FASE 7: Relax MTF/minSignals thresholds on very high volume
+  priceAccelerationFilterEnabled: false, // FASE 8: Block trades when price momentum is decelerating
+} as const;
+
+export const featureFlagsSchema = z.object({
+  candleCloseTriggerEnabled: z.boolean().default(false),
+  earlyMomentumEnabled: z.boolean().default(false),
+  signalAccumulatorEnabled: z.boolean().default(false),
+  regimeHysteresisEnabled: z.boolean().default(false),
+  signalScoringEnabled: z.boolean().default(false),
+  volumeOverrideEnabled: z.boolean().default(false),
+  priceAccelerationFilterEnabled: z.boolean().default(false),
+});
+
+export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
+
 export const globalConfigSchema = z.object({
   riskPerTradePct: z.number().min(0.1).max(10.0),
   maxTotalExposurePct: z.number().min(10).max(100),
@@ -71,6 +97,7 @@ export const globalConfigSchema = z.object({
   regimeDetectionEnabled: z.boolean(),
   regimeRouterEnabled: z.boolean(),
   hybridGuard: hybridGuardConfigSchema.optional().default(defaultHybridGuardConfig),
+  featureFlags: featureFlagsSchema.optional().default(defaultFeatureFlags),
 });
 
 export const tradingConfigSchema = z.object({

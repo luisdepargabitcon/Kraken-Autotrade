@@ -2,6 +2,92 @@
 
 ---
 
+## 2026-07-12 — FEAT: Adaptive Momentum Engine — Feature Flags + 10 fases implementadas
+
+### Objetivo
+Evolucionar el motor de trading de un sistema de señal simple a un **Adaptive Momentum Engine** con capacidad de aprendizaje, scoring y adaptación al régimen de mercado. Implementación faseada con feature flags (todos `false` por defecto → cero cambio de comportamiento hasta activar).
+
+### Análisis previo realizado
+- Revisión completa de arquitectura: `tradingEngine.ts`, `strategies.ts`, `regimeDetection.ts`, `regimeManager.ts`, `mtfAnalysis.ts`, `indicators.ts`, `schema.ts`, `config-schema.ts`, `telegram.ts`
+- Conflictos identificados y mitigados: rate limits API (FASE 1), incompatibilidad tipos OHLC/OHLCCandle (FASE 6), `CONFIRM_SCANS_REQUIRED` ya implementado en RegimeManager (FASE 4)
+- Orden de implementación elegido por seguridad: 0 → 4 → 1 → 3 → 5 → 6 → 7 → 8 → 9 → 10 → 2
+
+### Fases implementadas
+
+#### FASE 0 — Sistema de Feature Flags
+- **`shared/config-schema.ts`**: Añadido `featureFlagsSchema`, `defaultFeatureFlags` (todos `false`), `FeatureFlags` type, integrado en `globalConfigSchema.featureFlags`
+- **`server/services/tradingEngine.ts`**: Import de `defaultFeatureFlags + FeatureFlags`, helper `getFeatureFlags()` que lee de `dynamicConfig?.global?.featureFlags ?? defaults`
+- **Patrón**: Igual a `hybridGuard` (JSONB en `config_preset`) → hot-reload sin migración de DB
+
+#### FASE 1 — CandleClose Trigger (5s polling)
+- **`server/services/tradingEngine.ts`**: `getIntervalForStrategy(strategy, signalTimeframe?)` — si `candleCloseTriggerEnabled=true` y modo vela, devuelve 5000ms en vez de 30000ms
+- **Resultado**: Detección de cierre de vela en <5s vs <30s actual
+- **Seguridad**: Kraken OHLC pública permite ~1 req/s; 3 pares × 5s = 0.6 req/s ✅
+
+#### FASE 2 — Early Momentum Entry (vela en progreso)
+- **`server/services/tradingEngine.ts`**: En `analyzeWithCandleStrategy`, evaluación de la vela ACTUAL (abierta) cuando signal=HOLD y `earlyMomentumEnabled=true`
+- **Condiciones estrictas**: bodyRatio ≥ 0.70, volumeRatio ≥ 1.8x, ATR% ≥ 1%
+- **Confianza baja**: 0.55 (marcado como `vela en progreso` en el reason)
+
+#### FASE 3 — Signal Accumulator
+- **`server/services/signalAccumulator.ts`**: NUEVO módulo con `SignalAccumulator` class (singleton). BUY/SELL += 1; HOLD × 0.9 (decay). Reset si sin actividad >15min.
+- **`server/services/tradingEngine.ts`**: Import y uso en `analyzePairAndTradeWithCandles`. Si `signalAccumulatorEnabled=true`, boost confidence hasta +0.10 proporcional al score acumulado.
+
+#### FASE 4 — Régimen Histéresis
+- **`server/services/regimeManager.ts`**: `hysteresisEnabled: boolean`, `setHysteresisEnabled(enabled)`, `getCandidateDiag(pair)` — cuando `regimeHysteresisEnabled=true`, confirmScans = 5 (vs 3 actual)
+- **`server/services/tradingEngine.ts`**: `loadDynamicConfig()` propaga flag al RegimeManager vía `setHysteresisEnabled()`
+
+#### FASE 5 — Signal Scoring Engine
+- **`server/services/strategies.ts`**: `SIGNAL_WEIGHTS` table (8 indicadores con pesos 0.8-2.5). `momentumCandlesStrategy` calcula `buyScore`/`sellScore` en paralelo al count. Si `signalScoringEnabled=true`, paths score-based se activan (umbral 6.5). Score incluido en `TradeSignal.signalScore`
+
+#### FASE 6 — MTF Dinámico con ATR%
+- **`server/services/strategies.ts`**: `applyMTFFilter(…, atrPct?, dynamicMtfEnabled?)` — cuando activo en TRANSITION, threshold dinámico ATR-based: >3% ATR → 0.25, >2% → 0.20, >1% → 0.15, else → 0.10
+- **`server/services/tradingEngine.ts`**: ATR% calculado inline sobre OHLC[] en `analyzeWithCandleStrategy`, pasado al filtro MTF
+
+#### FASE 7 — Volume Override
+- **`server/services/tradingEngine.ts`**: Si `volumeOverrideEnabled=true` y `volumeRatio ≥ 2.5`, se omite el check MTF_STRICT (el breakout de volumen supera al filtro de tendencia)
+
+#### FASE 8 — Price Acceleration Filter
+- **`server/services/strategies.ts`**: `priceAcceleration` calculado en `momentumCandlesStrategy` → `d2/|d1|` de últimas 3 velas cerradas
+- **`server/services/tradingEngine.ts`**: Si `priceAccelerationFilterEnabled=true` y `priceAcceleration < -0.5`, BUY se bloquea antes del pipeline MTF
+
+#### FASE 9 — Logging Ampliado
+- **`server/services/tradingEngine.ts`**: `DecisionTraceContext` extendida con: `signalScore`, `signalVolumeRatio`, `priceAcceleration`, `accumBuyScore`, `accumSellScore`, `regimeCandidate`, `regimeCandidateCount`, `atrPct`, `volumeOverrideTriggered`, `priceAccelBlocked`, `featureFlagsActive`
+- `updatePairTrace` en `analyzePairAndTradeWithCandles` propaga todos estos campos
+
+#### FASE 10 — Alertas Telegram Enriquecidas
+- **`server/services/telegram.ts`**: `sendSignalRejectionAlert` extendida con `filterType: "MTF_STRICT" | "ANTI_CRESTA" | "PRICE_ACCEL" | "VOLUME_OVERRIDE"` y context con `signalScore`, `priceAcceleration`, `accumBuyScore`, `accumSellScore`, `atrPct`, `featureFlagsActive`
+
+### Archivos modificados
+| Archivo | Cambios |
+|---|---|
+| `shared/config-schema.ts` | FASE 0: featureFlagsSchema + defaultFeatureFlags + globalConfigSchema |
+| `server/services/tradingEngine.ts` | FASE 0-9: helper flags, scan interval, acumulador, histéresis, ATR, volume override, price accel, logging |
+| `server/services/strategies.ts` | FASE 5-8: SIGNAL_WEIGHTS, signalScore, volumeRatio, priceAcceleration, applyMTFFilter extendido |
+| `server/services/regimeManager.ts` | FASE 4: hysteresisEnabled, setHysteresisEnabled, getCandidateDiag |
+| `server/services/telegram.ts` | FASE 10: sendSignalRejectionAlert extendido |
+| `server/services/signalAccumulator.ts` | FASE 3: NUEVO módulo SignalAccumulator |
+
+### Estado de flags en producción (post-deploy)
+**Todos desactivados por defecto.** Para activar progresivamente via UI config_preset:
+```json
+{
+  "global": {
+    "featureFlags": {
+      "candleCloseTriggerEnabled": false,
+      "earlyMomentumEnabled": false,
+      "signalAccumulatorEnabled": false,
+      "regimeHysteresisEnabled": false,
+      "signalScoringEnabled": false,
+      "volumeOverrideEnabled": false,
+      "priceAccelerationFilterEnabled": false
+    }
+  }
+}
+```
+
+---
+
 ## 2026-03-05 — FIX: Diagnóstico UI + Ciclo Intermedio + Guard SELL sin contexto (OBJ-A/B/C)
 
 ### Problema

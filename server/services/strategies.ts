@@ -31,6 +31,12 @@ export interface TradeSignal {
   signalsCount?: number;      // Number of signals in favor of action
   minSignalsRequired?: number; // Minimum signals required for action
   hybridGuard?: { watchId: number; reason: "ANTI_CRESTA" | "MTF_STRICT" };
+  // FASE 5: Weighted signal score (alongside count-based for diagnostics)
+  signalScore?: number;       // Weighted score of all fired indicators
+  // FASE 7: Volume ratio at signal time (for Volume Override)
+  volumeRatio?: number;       // lastCandle.volume / avg10Volume
+  // FASE 8: Price acceleration (for Price Acceleration Filter)
+  priceAcceleration?: number; // (close[n]-close[n-1])/(close[n-1]-close[n-2]) ratio
 }
 
 export interface TrendAnalysis {
@@ -409,7 +415,19 @@ export function gridStrategy(pair: string, history: PriceData[], currentPrice: n
 
 // ─── Candle-mode strategies (OHLCCandle[]) ───────────────────────────────────
 
-export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number, adjustedMinSignals?: number): TradeSignal {
+// FASE 5: Weighted scoring table for signal indicators in momentumCandlesStrategy
+const SIGNAL_WEIGHTS = {
+  emaAlign:       1.5,  // EMA10 vs EMA20 alignment
+  rsiExtreme:     2.5,  // RSI < 30 or > 70 (strong reversal)
+  rsiMild:        0.8,  // RSI < 45 or > 55 (mild bias)
+  macd:           1.2,  // MACD histogram direction
+  bollinger:      1.0,  // Bollinger band extreme
+  candleBody:     1.0,  // Strong directional candle body
+  volumeHigh:     1.5,  // High volume confirming direction
+  engulfing:      2.0,  // Engulfing candlestick pattern
+} as const;
+
+export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number, adjustedMinSignals?: number, signalScoringEnabled?: boolean): TradeSignal {
   const minSignalsRequired = adjustedMinSignals ?? 5; // Default 5, but can be overridden (e.g., 4 for TRANSITION)
 
   if (candles.length < 20) {
@@ -435,52 +453,73 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
   const volumeRatio = avgVolume > 0 ? lastCandle.volume / avgVolume : 1;
   const isHighVolume = volumeRatio > 1.5;
 
+  // FASE 8: Price acceleration (change-of-change across last 3 closes)
+  let priceAcceleration: number | undefined;
+  if (closes.length >= 3) {
+    const d1 = closes[closes.length - 2] - closes[closes.length - 3]; // previous change
+    const d2 = closes[closes.length - 1] - closes[closes.length - 2]; // latest change
+    priceAcceleration = d1 !== 0 ? d2 / Math.abs(d1) : (d2 > 0 ? 1 : d2 < 0 ? -1 : 0);
+    if (!isFinite(priceAcceleration)) priceAcceleration = 0;
+  }
+
   let buySignals = 0;
   let sellSignals = 0;
   const buyReasons: string[] = [];
   const sellReasons: string[] = [];
+  // FASE 5: Parallel weighted scoring
+  let buyScore = 0;
+  let sellScore = 0;
 
-  if (shortEMA > longEMA) { buySignals++; buyReasons.push("EMA10>EMA20"); }
-  else if (shortEMA < longEMA) { sellSignals++; sellReasons.push("EMA10<EMA20"); }
+  if (shortEMA > longEMA) { buySignals++;  buyReasons.push("EMA10>EMA20");  buyScore  += SIGNAL_WEIGHTS.emaAlign; }
+  else if (shortEMA < longEMA) { sellSignals++; sellReasons.push("EMA10<EMA20"); sellScore += SIGNAL_WEIGHTS.emaAlign; }
 
-  if (rsi < 30) { buySignals += 2; buyReasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`); }
-  else if (rsi < 45) { buySignals++; }
-  else if (rsi > 70) { sellSignals += 2; sellReasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); }
-  else if (rsi > 55) { sellSignals++; }
+  if (rsi < 30) { buySignals += 2; buyReasons.push(`RSI sobrevendido (${rsi.toFixed(0)})`);  buyScore  += SIGNAL_WEIGHTS.rsiExtreme; }
+  else if (rsi < 45) { buySignals++;  buyScore  += SIGNAL_WEIGHTS.rsiMild; }
+  else if (rsi > 70) { sellSignals += 2; sellReasons.push(`RSI sobrecomprado (${rsi.toFixed(0)})`); sellScore += SIGNAL_WEIGHTS.rsiExtreme; }
+  else if (rsi > 55) { sellSignals++; sellScore += SIGNAL_WEIGHTS.rsiMild; }
 
-  if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++; buyReasons.push("MACD alcista"); }
-  else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; sellReasons.push("MACD bajista"); }
+  if (macd.histogram > 0 && macd.macd > macd.signal) { buySignals++;  buyReasons.push("MACD alcista");  buyScore  += SIGNAL_WEIGHTS.macd; }
+  else if (macd.histogram < 0 && macd.macd < macd.signal) { sellSignals++; sellReasons.push("MACD bajista"); sellScore += SIGNAL_WEIGHTS.macd; }
 
-  if (bollinger.percentB < 20) { buySignals++; buyReasons.push("Precio en Bollinger inferior"); }
-  else if (bollinger.percentB > 80) { sellSignals++; sellReasons.push("Precio en Bollinger superior"); }
+  if (bollinger.percentB < 20) { buySignals++;  buyReasons.push("Precio en Bollinger inferior");  buyScore  += SIGNAL_WEIGHTS.bollinger; }
+  else if (bollinger.percentB > 80) { sellSignals++; sellReasons.push("Precio en Bollinger superior"); sellScore += SIGNAL_WEIGHTS.bollinger; }
 
   if (isBullishCandle && bodyRatio > 0.6) {
     buySignals++;
     buyReasons.push("Vela alcista fuerte");
+    buyScore += SIGNAL_WEIGHTS.candleBody;
   } else if (isBearishCandle && bodyRatio > 0.6) {
     sellSignals++;
     sellReasons.push("Vela bajista fuerte");
+    sellScore += SIGNAL_WEIGHTS.candleBody;
   }
 
   if (isHighVolume) {
-    if (isBullishCandle) { buySignals++; buyReasons.push(`Volumen alto alcista (${volumeRatio.toFixed(1)}x)`); }
-    else if (isBearishCandle) { sellSignals++; sellReasons.push(`Volumen alto bajista (${volumeRatio.toFixed(1)}x)`); }
+    if (isBullishCandle) { buySignals++;  buyReasons.push(`Volumen alto alcista (${volumeRatio.toFixed(1)}x)`);  buyScore  += SIGNAL_WEIGHTS.volumeHigh; }
+    else if (isBearishCandle) { sellSignals++; sellReasons.push(`Volumen alto bajista (${volumeRatio.toFixed(1)}x)`); sellScore += SIGNAL_WEIGHTS.volumeHigh; }
   }
 
   if (isBullishCandle && prevCandle && prevCandle.close < prevCandle.open) {
     if (lastCandle.close > prevCandle.open) {
       buySignals++;
       buyReasons.push("Engulfing alcista");
+      buyScore += SIGNAL_WEIGHTS.engulfing;
     }
   }
   if (isBearishCandle && prevCandle && prevCandle.close > prevCandle.open) {
     if (lastCandle.close < prevCandle.open) {
       sellSignals++;
       sellReasons.push("Engulfing bajista");
+      sellScore += SIGNAL_WEIGHTS.engulfing;
     }
   }
 
   const confidence = Math.min(0.95, 0.5 + (Math.max(buySignals, sellSignals) * 0.07));
+
+  // FASE 5: Weighted score threshold (6.5 equivalent to 5 count-based signals)
+  const SCORE_THRESHOLD = 6.5;
+  const scoreBasedBuy  = buyScore  >= SCORE_THRESHOLD && buyScore  > sellScore;
+  const scoreBasedSell = sellScore >= SCORE_THRESHOLD && sellScore > buyScore;
 
   // B2: Filtro anti-FOMO - bloquear BUY en condiciones de entrada tardía
   const isAntifomoTriggered = rsi > 65 && bollinger.percentB > 85 && bodyRatio > 0.7;
@@ -495,15 +534,36 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
         reason: `Anti-FOMO: RSI=${rsi.toFixed(0)} BB%=${bollinger.percentB.toFixed(0)} bodyRatio=${bodyRatio.toFixed(2)} | Señales: ${buySignals}/${sellSignals}`,
         signalsCount: buySignals,
         minSignalsRequired,
+        signalScore: buyScore,
+        volumeRatio,
+        priceAcceleration,
       };
     }
     return {
       action: "buy",
       pair,
       confidence,
-      reason: `Momentum Velas COMPRA: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals}`,
+      reason: `Momentum Velas COMPRA: ${buyReasons.join(", ")} | Señales: ${buySignals}/${sellSignals} Score: ${buyScore.toFixed(1)}`,
       signalsCount: buySignals,
       minSignalsRequired,
+      signalScore: buyScore,
+      volumeRatio,
+      priceAcceleration,
+    };
+  }
+
+  // FASE 5: Score-based buy (fires when count alone is insufficient but score is strong)
+  if (signalScoringEnabled && scoreBasedBuy && buySignals > sellSignals && rsi < 70 && !isAntifomoTriggered) {
+    return {
+      action: "buy",
+      pair,
+      confidence: Math.min(0.95, 0.5 + (buyScore / 15)),
+      reason: `Momentum Score COMPRA: ${buyReasons.join(", ")} | Score: ${buyScore.toFixed(1)} Señales: ${buySignals}/${sellSignals}`,
+      signalsCount: buySignals,
+      minSignalsRequired,
+      signalScore: buyScore,
+      volumeRatio,
+      priceAcceleration,
     };
   }
 
@@ -512,9 +572,27 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
       action: "sell",
       pair,
       confidence,
-      reason: `Momentum Velas VENTA: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals}`,
+      reason: `Momentum Velas VENTA: ${sellReasons.join(", ")} | Señales: ${sellSignals}/${buySignals} Score: ${sellScore.toFixed(1)}`,
       signalsCount: sellSignals,
       minSignalsRequired,
+      signalScore: sellScore,
+      volumeRatio,
+      priceAcceleration,
+    };
+  }
+
+  // FASE 5: Score-based sell (fires when count alone is insufficient but score is strong)
+  if (signalScoringEnabled && scoreBasedSell && sellSignals > buySignals && rsi > 30) {
+    return {
+      action: "sell",
+      pair,
+      confidence: Math.min(0.95, 0.5 + (sellScore / 15)),
+      reason: `Momentum Score VENTA: ${sellReasons.join(", ")} | Score: ${sellScore.toFixed(1)} Señales: ${sellSignals}/${buySignals}`,
+      signalsCount: sellSignals,
+      minSignalsRequired,
+      signalScore: sellScore,
+      volumeRatio,
+      priceAcceleration,
     };
   }
 
@@ -641,15 +719,29 @@ export function applyMTFFilter(
   signal: TradeSignal,
   mtf: TrendAnalysis,
   regime?: MarketRegime | string | null,
-  adx?: number
+  adx?: number,
+  atrPct?: number,          // FASE 6: ATR% for dynamic threshold calibration
+  dynamicMtfEnabled?: boolean // FASE 6: feature flag
 ): { filtered: boolean; confidenceBoost: number; reason: string; filterType?: "MTF_STRICT" | "MTF_STANDARD" } {
+  // FASE 6: MTF Dinámico — ajustar umbral TRANSITION según ATR% (alta volatilidad = umbral más alto)
+  // Si ATR% > 3% → mercado muy volátil → exigir MTF >= 0.25; si ATR% < 1% → relajar a 0.15
+  let transitionDynamicFloor: number | null = null;
+  if (dynamicMtfEnabled && regime === "TRANSITION" && atrPct !== undefined && isFinite(atrPct) && atrPct > 0) {
+    if (atrPct > 3.0) transitionDynamicFloor = 0.25;       // Alta volatilidad: más estricto
+    else if (atrPct > 2.0) transitionDynamicFloor = 0.20;  // Volatilidad media-alta
+    else if (atrPct > 1.0) transitionDynamicFloor = 0.15;  // Volatilidad normal
+    else transitionDynamicFloor = 0.10;                     // Baja volatilidad: más permisivo
+  }
   if (signal.action === "buy") {
     // === MTF ESTRICTO POR RÉGIMEN (Fase 2.4 + threshold dinámico ADX) ===
     // En TRANSITION: threshold dinámico según ADX (evita compras contra tendencia mayor)
     // En RANGE: exigir MTF >= 0.2 para compras
     if (regime === "TRANSITION") {
       let threshold: number;
-      if (adx == null) {
+      if (transitionDynamicFloor !== null) {
+        // FASE 6: ATR-based dynamic threshold overrides ADX-based threshold
+        threshold = transitionDynamicFloor;
+      } else if (adx == null) {
         threshold = 0.30;
       } else if (adx < 20) {
         threshold = -0.10;
@@ -660,10 +752,11 @@ export function applyMTFFilter(
       }
       if (mtf.alignment < threshold) {
         const adxStr = adx != null ? `, ADX=${adx.toFixed(0)}` : "";
+        const atrStr = transitionDynamicFloor !== null && atrPct !== undefined ? `, ATR=${atrPct.toFixed(2)}%` : "";
         return {
           filtered: true,
           confidenceBoost: 0,
-          reason: `MTF insuficiente en TRANSITION (${mtf.alignment.toFixed(2)} < ${threshold.toFixed(2)}${adxStr}, 5m=${mtf.shortTerm}/1h=${mtf.mediumTerm}/4h=${mtf.longTerm})`,
+          reason: `MTF insuficiente en TRANSITION (${mtf.alignment.toFixed(2)} < ${threshold.toFixed(2)}${adxStr}${atrStr}, 5m=${mtf.shortTerm}/1h=${mtf.mediumTerm}/4h=${mtf.longTerm})`,
           filterType: "MTF_STRICT"
         };
       }

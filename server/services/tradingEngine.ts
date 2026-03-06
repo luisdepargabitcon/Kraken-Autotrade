@@ -13,6 +13,8 @@ import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory"
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import { configService } from "./ConfigService";
 import type { TradingConfig } from "@shared/config-schema";
+import { defaultFeatureFlags, type FeatureFlags } from "@shared/config-schema";
+import { signalAccumulator, ACCUMULATOR_THRESHOLD, type AccumulatedSignal } from "./signalAccumulator";
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
 import { markupTracker } from "./MarkupTracker";
 import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
@@ -201,6 +203,18 @@ interface DecisionTraceContext {
   // Campos de diagnóstico D2/MINI-B (enriquecidos en emitPairDecisionTrace)
   spreadDiag?: { markupSource: string; markupPct: number; markupSamples: number; markupEma: number } | null;
   timingDiag?: { candleAgeSec: number; lastCandleCloseIso: string | null } | null;
+  // FASE 9: Adaptive Momentum Engine diagnostics
+  signalScore?: number | null;                 // Weighted indicator score (FASE 5)
+  signalVolumeRatio?: number | null;           // lastCandle.vol / avg10Vol (FASE 7)
+  priceAcceleration?: number | null;           // Price momentum acceleration (FASE 8)
+  accumBuyScore?: number | null;               // Running buy accumulator score (FASE 3)
+  accumSellScore?: number | null;              // Running sell accumulator score (FASE 3)
+  regimeCandidate?: string | null;             // Pending candidate regime (FASE 4)
+  regimeCandidateCount?: number | null;        // Consecutive confirmations of candidate (FASE 4)
+  atrPct?: number | null;                      // ATR% used for MTF dynamic calibration (FASE 6)
+  volumeOverrideTriggered?: boolean | null;    // FASE 7: MTF skipped due to volume spike
+  priceAccelBlocked?: boolean | null;          // FASE 8: Trade blocked by price acceleration filter
+  featureFlagsActive?: string[] | null;        // List of currently enabled feature flags
 }
 
 // Cache para datos del último análisis completo por par (sin llamadas API extra)
@@ -500,6 +514,11 @@ export class TradingEngine {
 
   private getHybridGuardConfig(): any {
     return (this.dynamicConfig as any)?.global?.hybridGuard;
+  }
+
+  // FASE 0: Feature Flags — lee desde dynamicConfig (TradingConfig JSONB), defaults=false
+  private getFeatureFlags(): FeatureFlags {
+    return (this.dynamicConfig as any)?.global?.featureFlags ?? { ...defaultFeatureFlags };
   }
 
   private normalizeHybridReason(reason: string): "ANTI_CRESTA" | "MTF_STRICT" | null {
@@ -1442,6 +1461,21 @@ export class TradingEngine {
     
     let signal = this.momentumCandlesStrategy(pair, closedCandles, candle.close, adjustedMinSignals);
 
+    // FASE 8: Price Acceleration Filter — bloquear si la aceleración de precio es negativa
+    const flagsPA = this.getFeatureFlags();
+    if (flagsPA.priceAccelerationFilterEnabled && signal.action === "buy" && signal.priceAcceleration !== undefined) {
+      const ACCEL_THRESHOLD = -0.5; // Bloquear si la última vela aceleró <-50% vs la anterior
+      if (signal.priceAcceleration < ACCEL_THRESHOLD) {
+        log(`[PRICE_ACCEL] ${pair}: BUY bloqueado por deceleración (accel=${signal.priceAcceleration.toFixed(2)} < ${ACCEL_THRESHOLD})`, "trading");
+        signal = {
+          ...signal,
+          action: "hold",
+          reason: `Price Acceleration Filter: momentum decelerando (${signal.priceAcceleration.toFixed(2)} < ${ACCEL_THRESHOLD}) | ${signal.reason}`,
+          confidence: 0.3,
+        };
+      }
+    }
+
     const hybridCfg = this.getHybridGuardConfig();
     let activeHybridWatch: any | null = null;
     if (hybridCfg?.enabled) {
@@ -1548,9 +1582,31 @@ export class TradingEngine {
       }
     }
     
+    // FASE 7: Volume Override — relajar MTF check cuando volumeRatio >= 2.5 (breakout de volumen extremo)
+    const flagsVO = this.getFeatureFlags();
+    if (flagsVO.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5) {
+      const vol = (signal.volumeRatio ?? 0).toFixed(1);
+      log(`[VOLUME_OVERRIDE] ${pair}: volumeRatio=${vol}x >= 2.5 → bypass MTF_STRICT check`, "trading");
+      signal = { ...signal, reason: `${signal.reason} | VOLUME_OVERRIDE(${vol}x)` };
+    }
+
+    // FASE 6: Calcular ATR% directamente sobre OHLC[] para MTF dinámico
+    let atrPctForMtf: number | undefined;
+    if (closedCandles.length >= 15) {
+      const slice = (closedCandles as any[]).slice(-15);
+      const trValues: number[] = slice.slice(1).map((c: any, i: number) => {
+        const prev = slice[i];
+        return Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+      });
+      const atrVal = trValues.reduce((a: number, b: number) => a + b, 0) / trValues.length;
+      const lastClose = (closedCandles as any[])[closedCandles.length - 1]?.close || 1;
+      atrPctForMtf = isFinite(atrVal) && lastClose > 0 ? (atrVal / lastClose) * 100 : undefined;
+    }
+
     // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
-    if (mtfAnalysis && signal.action !== "hold") {
-      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime, adx);
+    const skipMtfForVolumeOverride = flagsVO.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5;
+    if (mtfAnalysis && signal.action !== "hold" && !skipMtfForVolumeOverride) {
+      const mtfBoost = this.applyMTFFilter(signal, mtfAnalysis, regime, adx, atrPctForMtf);
       if (mtfBoost.filtered) {
         // Preserve signalsCount from original signal for diagnostic trace
         // Si es filtro MTF_STRICT, enviar alerta de rechazo
@@ -1620,13 +1676,55 @@ export class TradingEngine {
         }
       }
     }
-    
+
+    // FASE 2: Early Momentum Entry — evaluar vela en progreso si signal=HOLD y flag activo
+    // ⚠️ Riesgo: vela abierta tiene datos incompletos. Usar solo bajo condiciones muy estrictas.
+    const flagsEM = this.getFeatureFlags();
+    if (flagsEM.earlyMomentumEnabled && signal.action === "hold") {
+      const currentCandle = candles[candles.length - 1]; // vela en progreso (última = abierta)
+      if (currentCandle && closedCandles.length >= 14) {
+        const emBody = Math.abs(currentCandle.close - currentCandle.open);
+        const emRange = currentCandle.high - currentCandle.low;
+        const emBodyRatio = emRange > 0 ? emBody / emRange : 0;
+        const emVolumeAvg = (closedCandles as any[]).slice(-10).reduce((s: number, c: any) => s + (c.volume || 0), 0) / 10;
+        const emVolumeRatio = emVolumeAvg > 0 ? ((currentCandle as any).volume || 0) / emVolumeAvg : 1;
+        const isBullishEM = currentCandle.close > currentCandle.open;
+
+        // Calcular ATR% sobre velas cerradas
+        const emSlice = (closedCandles as any[]).slice(-15);
+        const emTrValues: number[] = emSlice.length >= 2
+          ? emSlice.slice(1).map((c: any, i: number) => {
+              const p = emSlice[i];
+              return Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
+            })
+          : [0];
+        const emAtr = emTrValues.reduce((a, b) => a + b, 0) / emTrValues.length;
+        const emAtrPct = emSlice.length > 0 ? (emAtr / (emSlice[emSlice.length - 1]?.close || 1)) * 100 : 0;
+
+        const earlyConditions = isBullishEM && emBodyRatio >= 0.70 && emVolumeRatio >= 1.8 && emAtrPct >= 1.0;
+
+        if (earlyConditions) {
+          log(`[EARLY_MOMENTUM] ${pair}: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x atr=${emAtrPct.toFixed(2)}% → early BUY`, "trading");
+          signal = {
+            action: "buy",
+            pair,
+            confidence: 0.55, // Baja confianza por ser vela en progreso
+            reason: `Early Momentum: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x ATR=${emAtrPct.toFixed(2)}% (vela en progreso)`,
+            signalsCount: 1,
+            minSignalsRequired: 1,
+            volumeRatio: emVolumeRatio,
+          };
+        }
+      }
+    }
+
     return signal;
   }
 
   // === CANDLE-MODE STRATEGIES (delegated to strategies.ts) ===
   private momentumCandlesStrategy(pair: string, candles: OHLCCandle[], currentPrice: number, adjustedMinSignals?: number): TradeSignal {
-    return _momentumCandlesStrategy(pair, candles, currentPrice, adjustedMinSignals);
+    const flags = this.getFeatureFlags();
+    return _momentumCandlesStrategy(pair, candles, currentPrice, adjustedMinSignals, flags.signalScoringEnabled);
   }
 
   private meanReversionSimpleStrategy(pair: string, candles: OHLCCandle[], currentPrice: number): TradeSignal {
@@ -1778,7 +1876,7 @@ export class TradingEngine {
 ━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_started");
     }
     
-    const intervalMs = this.getIntervalForStrategy(config.strategy);
+    const intervalMs = this.getIntervalForStrategy(config.strategy, config.signalTimeframe);
     this.intervalId = setInterval(() => this.runTradingCycle(), intervalMs);
     
     // Iniciar tick interval para ENGINE_TICK cada 60s
@@ -1814,7 +1912,14 @@ El motor de trading ha sido desactivado.
     }
   }
 
-  private getIntervalForStrategy(strategy: string): number {
+  private getIntervalForStrategy(strategy: string, signalTimeframe?: string): number {
+    // FASE 1: CandleClose Trigger — scan cada 5s en modo vela para detectar cierres rápidamente
+    const flags = this.getFeatureFlags();
+    const isCandleMode = !!signalTimeframe && signalTimeframe !== "cycle" && strategy === "momentum";
+    if (isCandleMode && flags.candleCloseTriggerEnabled) {
+      log(`[FEATURE_FLAG] candleCloseTriggerEnabled=true → intervalo 5s (modo vela ${signalTimeframe})`, "trading");
+      return 5000;
+    }
     switch (strategy) {
       case "scalping": return 10000;
       case "grid": return 15000;
@@ -3316,6 +3421,23 @@ El bot ha pausado las operaciones de COMPRA.
       
       // Registrar resultado del escaneo para candles
       const signalStr = signal.action === "hold" ? "NONE" : signal.action.toUpperCase();
+
+      // FASE 3: Signal Accumulator — acumular evidencia entre scans y boost confidence
+      const featureFlags3 = this.getFeatureFlags();
+      let accumState: AccumulatedSignal | null = null;
+      if (featureFlags3.signalAccumulatorEnabled) {
+        accumState = signalAccumulator.update(pair, signalStr as "BUY" | "SELL" | "NONE");
+        if (signal.action !== "hold") {
+          const sigDir = signal.action.toUpperCase() as "BUY" | "SELL";
+          const boost = signalAccumulator.getConfidenceBoost(pair, sigDir);
+          if (boost > 0) {
+            const prevConf = signal.confidence;
+            signal = { ...signal, confidence: Math.min(0.95, signal.confidence + boost) };
+            log(`[ACCUMULATOR] ${pair} ${sigDir} boost +${boost.toFixed(3)} (${prevConf.toFixed(2)}→${signal.confidence.toFixed(2)}) score=${accumState[sigDir === "BUY" ? "buyScore" : "sellScore"].toFixed(1)}`, "trading");
+          }
+        }
+      }
+
       this.lastScanResults.set(pair, {
         signal: signalStr,
         reason: signal.reason || "Sin señal",
@@ -3329,6 +3451,14 @@ El bot ha pausado las operaciones de COMPRA.
         ? this.getRegimeMinSignals(earlyRegime as MarketRegime, baseMinSignals) 
         : baseMinSignals;
       
+      // FASE 9: Recopilar campos de diagnóstico del Adaptive Momentum Engine
+      const flagsDiag = this.getFeatureFlags();
+      const activeFlags = (Object.entries(flagsDiag) as [string, boolean][])
+        .filter(([, v]) => v === true)
+        .map(([k]) => k);
+      // Regime candidate state para FASE 4 histéresis
+      const regimeCandidateDiag = await this.regimeManager.getCandidateDiag(pair).catch(() => null);
+
       // Actualizar trace con señal raw + régimen + signalsCount (candles mode)
       this.updatePairTrace(pair, {
         selectedStrategy: selectedStrategyId,
@@ -3347,6 +3477,17 @@ El bot ha pausado las operaciones de COMPRA.
         lastRegimeUpdateAt: earlyRegime ? new Date().toISOString() : null,
         // Router observability
         regimeRouterEnabled: routerEnabled,
+        // FASE 9: Adaptive Momentum Engine diagnostics
+        signalScore: signal.signalScore ?? null,
+        signalVolumeRatio: signal.volumeRatio ?? null,
+        priceAcceleration: signal.priceAcceleration ?? null,
+        accumBuyScore: accumState?.buyScore ?? null,
+        accumSellScore: accumState?.sellScore ?? null,
+        regimeCandidate: regimeCandidateDiag?.regimeCandidate ?? null,
+        regimeCandidateCount: regimeCandidateDiag?.regimeCandidateCount ?? null,
+        volumeOverrideTriggered: (flagsDiag.volumeOverrideEnabled && (signal.volumeRatio ?? 0) >= 2.5) || null,
+        priceAccelBlocked: (flagsDiag.priceAccelerationFilterEnabled && signal.action === "hold" && signal.priceAcceleration !== undefined && signal.priceAcceleration < -0.5) || null,
+        featureFlagsActive: activeFlags.length > 0 ? activeFlags : null,
       });
       
       // Cache para ciclos intermedios (evita null en próximos scans sin vela cerrada)
@@ -4245,8 +4386,9 @@ El bot ha pausado las operaciones de COMPRA.
   }
 
   // === MTF FILTER (delegated to strategies.ts) ===
-  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis, regime?: MarketRegime | string | null, adx?: number) {
-    return _applyMTFFilter(signal, mtf, regime, adx);
+  private applyMTFFilter(signal: TradeSignal, mtf: TrendAnalysis, regime?: MarketRegime | string | null, adx?: number, atrPct?: number) {
+    const flags = this.getFeatureFlags();
+    return _applyMTFFilter(signal, mtf, regime, adx, atrPct, flags.volumeOverrideEnabled);
   }
 
   // === CYCLE-MODE STRATEGIES (delegated to strategies.ts) ===
@@ -4316,6 +4458,9 @@ El bot ha pausado las operaciones de COMPRA.
             this.dryRunMode = config.global.dryRunMode;
             log(`[CONFIG] DryRunMode updated: ${this.dryRunMode}`, "trading");
           }
+          // FASE 4: Propagar flag de histéresis al RegimeManager
+          const flags = this.getFeatureFlags();
+          this.regimeManager.setHysteresisEnabled(flags.regimeHysteresisEnabled ?? false);
         }
         
         log(`[CONFIG] Dynamic configuration loaded successfully`, "trading");

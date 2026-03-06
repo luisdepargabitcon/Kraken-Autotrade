@@ -2691,13 +2691,13 @@ _KrakenBot.AI - Trading Autónomo_
 
   /**
    * Send signal rejection alert when advanced filters block a BUY signal
-   * Only for specific rejections: MTF_STRICT, ANTI_CRESTA
+   * Only for specific rejections: MTF_STRICT, ANTI_CRESTA, PRICE_ACCEL, VOLUME_OVERRIDE
    * Configurable via botConfig.signalRejectionAlertsEnabled
    */
   async sendSignalRejectionAlert(
     pair: string,
     rejectionReason: string,
-    filterType: "MTF_STRICT" | "ANTI_CRESTA",
+    filterType: "MTF_STRICT" | "ANTI_CRESTA" | "PRICE_ACCEL" | "VOLUME_OVERRIDE",
     context: {
       regime?: string;
       mtfAlignment?: number;
@@ -2709,6 +2709,13 @@ _KrakenBot.AI - Trading Autónomo_
       rawSignal?: string;
       currentPrice?: number;
       ema20?: number;
+      // FASE 10: Adaptive Momentum Engine context
+      signalScore?: number;
+      priceAcceleration?: number;
+      accumBuyScore?: number;
+      accumSellScore?: number;
+      atrPct?: number;
+      featureFlagsActive?: string[];
     }
   ): Promise<void> {
     // Verificar si las alertas de rechazo están habilitadas en configuración
@@ -2726,13 +2733,17 @@ _KrakenBot.AI - Trading Autónomo_
       timeZone: 'Europe/Madrid'
     });
     
-    const filterEmoji = filterType === "MTF_STRICT" ? "📉" : "🔺";
-    const filterLabel = filterType === "MTF_STRICT" 
-      ? "MTF Estricto" 
+    const filterEmoji = filterType === "MTF_STRICT" ? "📉"
+      : filterType === "PRICE_ACCEL" ? "⏬"
+      : filterType === "VOLUME_OVERRIDE" ? "🔊"
+      : "🔺";
+    const filterLabel = filterType === "MTF_STRICT" ? "MTF Estricto"
+      : filterType === "PRICE_ACCEL" ? "Price Acceleration"
+      : filterType === "VOLUME_OVERRIDE" ? "Volume Override"
       : "Anti-Cresta";
     
     // Build snapshot JSON for debugging
-    const snapshot = {
+    const snapshot: Record<string, any> = {
       pair,
       regime: context.regime || "N/A",
       mtfAlignment: context.mtfAlignment?.toFixed(2) || "N/A",
@@ -2745,6 +2756,13 @@ _KrakenBot.AI - Trading Autónomo_
       currentPrice: context.currentPrice?.toFixed(2) || "N/A",
       ema20: context.ema20?.toFixed(2) || "N/A",
     };
+    // FASE 10: Añadir campos del Adaptive Momentum Engine al snapshot
+    if (context.signalScore !== undefined)      snapshot.signalScore      = context.signalScore.toFixed(2);
+    if (context.priceAcceleration !== undefined) snapshot.priceAcceleration = context.priceAcceleration.toFixed(3);
+    if (context.accumBuyScore !== undefined)    snapshot.accumBuyScore    = context.accumBuyScore.toFixed(1);
+    if (context.accumSellScore !== undefined)   snapshot.accumSellScore   = context.accumSellScore.toFixed(1);
+    if (context.atrPct !== undefined)           snapshot.atrPct           = context.atrPct.toFixed(2) + "%";
+    if (context.featureFlagsActive?.length)     snapshot.featureFlagsActive = context.featureFlagsActive.join(", ");
     
     const message = `🚫 <b>SEÑAL RECHAZADA - FILTRO ${filterLabel.toUpperCase()}</b>
 ━━━━━━━━━━━━━━━━━━━
