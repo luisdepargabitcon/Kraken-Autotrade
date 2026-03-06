@@ -350,6 +350,68 @@ export function registerConfigRoutes(app: Express): void {
     }
   });
 
+  // === FEATURE FLAGS (Adaptive Momentum Engine) ===
+
+  // GET /api/config/feature-flags - Read current feature flags from active config
+  app.get("/api/config/feature-flags", async (req, res) => {
+    try {
+      const config = await configService.getActiveConfig();
+      const { defaultFeatureFlags } = await import("@shared/config-schema");
+      const flags = config?.global?.featureFlags ?? { ...defaultFeatureFlags };
+      res.json({ success: true, data: flags, hasActiveConfig: !!config, timestamp: new Date().toISOString() });
+    } catch (error) {
+      console.error("[config] Error getting feature flags:", error);
+      res.status(500).json({ error: "Failed to get feature flags" });
+    }
+  });
+
+  // PUT /api/config/feature-flags - Update feature flags on active config
+  app.put("/api/config/feature-flags", async (req, res) => {
+    try {
+      const config = await configService.getActiveConfig();
+      if (!config) {
+        return res.status(404).json({ error: "No active configuration found. Create one first via Config Dashboard." });
+      }
+      const activeConfigId = (configService as any).activeConfigId;
+      if (!activeConfigId) {
+        return res.status(404).json({ error: "No active config ID" });
+      }
+
+      const { featureFlagsSchema, defaultFeatureFlags } = await import("@shared/config-schema");
+      const currentFlags = config.global?.featureFlags ?? { ...defaultFeatureFlags };
+      const merged = { ...currentFlags, ...req.body };
+      const parsed = featureFlagsSchema.safeParse(merged);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid feature flags", details: parsed.error.issues });
+      }
+
+      const result = await configService.updateConfig(activeConfigId, {
+        global: { ...config.global, featureFlags: parsed.data },
+      } as any, {
+        description: "Feature flags updated via UI",
+        skipValidation: true,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({ error: "Failed to update feature flags", details: result.errors });
+      }
+
+      // Emit update event so TradingEngine hot-reloads
+      configService.emit("configUpdated", activeConfigId);
+
+      await botLogger.info("FEATURE_FLAGS_UPDATED", "Feature flags updated via UI", {
+        flags: parsed.data,
+        configId: activeConfigId,
+        env: environment.envTag,
+      });
+
+      res.json({ success: true, data: parsed.data, timestamp: new Date().toISOString() });
+    } catch (error) {
+      console.error("[config] Error updating feature flags:", error);
+      res.status(500).json({ error: "Failed to update feature flags" });
+    }
+  });
+
   // === HEALTH CHECK ===
 
   // GET /api/config/health - Check configuration service health

@@ -10,9 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3 } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain } from "lucide-react";
 import { toast } from "sonner";
 import { MarketMetricsTab } from "@/components/strategies/MarketMetricsTab";
+import { FeatureFlagsTab } from "@/components/strategies/FeatureFlagsTab";
 
 interface BotConfig {
   id: number;
@@ -53,7 +54,7 @@ const RISK_LEVELS = [
 
 const AVAILABLE_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC", "XRP/USD", "TON/USD"];
 
-type StrategyTab = "config" | "metricas";
+type StrategyTab = "config" | "metricas" | "motor";
 
 export default function Strategies() {
   const queryClient = useQueryClient();
@@ -151,10 +152,25 @@ export default function Strategies() {
               <BarChart3 className="h-4 w-4" />
               Métricas
             </button>
+            <button
+              onClick={() => setActiveTab("motor")}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
+                activeTab === "motor"
+                  ? "border-violet-500 text-violet-400"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Brain className="h-4 w-4" />
+              Motor Adaptativo
+            </button>
           </div>
 
           {activeTab === "metricas" && (
             <MarketMetricsTab />
+          )}
+
+          {activeTab === "motor" && (
+            <FeatureFlagsTab />
           )}
 
           <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 ${activeTab !== "config" ? "hidden" : ""}`}>

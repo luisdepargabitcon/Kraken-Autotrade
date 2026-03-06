@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-07-12 — FEAT: UI Motor Adaptativo — Pestaña Feature Flags en Estrategias
+
+### Objetivo
+Proporcionar interfaz visual para activar/desactivar los feature flags del Adaptive Momentum Engine sin necesidad de editar configuración JSON manualmente.
+
+### Cambios implementados
+
+| Archivo | Cambio |
+|---|---|
+| `server/routes/config.ts` | Endpoints `GET/PUT /api/config/feature-flags` — lee/escribe flags del config activo, emite evento hot-reload |
+| `server/services/botLogger.ts` | Añadido `FEATURE_FLAGS_UPDATED` a `EventType` |
+| `client/src/components/strategies/FeatureFlagsTab.tsx` | **NUEVO** — Componente con 8 toggles Switch, badges de riesgo, descripciones, estado en tiempo real |
+| `client/src/pages/Strategies.tsx` | Nueva pestaña "Motor Adaptativo" con icono Brain |
+
+### Ubicación en UI
+**Estrategias → Motor Adaptativo** (3ª pestaña junto a Configuración y Métricas)
+
+### Características
+- 8 toggles independientes con descripción, fase, y nivel de riesgo (bajo/medio/alto)
+- Hot-reload: cambios se aplican sin reiniciar el bot (emit `configUpdated`)
+- Refetch automático cada 10s para sincronizar estado
+- Fallback a defaults si no hay config activa (muestra warning)
+- Log `FEATURE_FLAGS_UPDATED` en cada cambio para auditoría
+
+---
+
 ## 2026-07-12 — FEAT: Adaptive Momentum Engine — Feature Flags + 10 fases implementadas
 
 ### Objetivo
