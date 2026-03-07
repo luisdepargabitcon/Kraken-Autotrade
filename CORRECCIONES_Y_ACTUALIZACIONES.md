@@ -2,6 +2,69 @@
 
 ---
 
+## 2026-03-07 — FIX C: Intermediate Cycle ya NO es veto absoluto — permite ejecución con señal cacheada válida
+
+### Problema reportado
+En logs de staging (17:30-18:00 UTC):
+- `intermediateBlockApplied=true` permanente durante todo el intervalo intrabar
+- Señal cacheada válida (BUY/SELL con signals >= minRequired, confidence >= 0.6) nunca se ejecutaba
+- El ciclo intermedio actuaba como **veto absoluto** de ejecución, incluso con señal operable
+- Todos los risk checks reales (NO_POSITION, MAX_LOTS, COOLDOWN, etc.) quedaban sin evaluar
+
+### Root cause
+El bloque `shouldPollForNewCandle() === false` hacía `continue` incondicional, saltando toda la lógica de ejecución. La señal cacheada existía pero nunca se reevaluaba contra los risk checks reales.
+
+### Fix aplicado — `server/services/tradingEngine.ts`
+
+**A) Cache enriquecido con datos de señal**
+- `LastFullAnalysisCache` ahora incluye `rawSignal` (BUY/SELL/NONE), `confidence`, `lastCandle` (OHLCCandle)
+- `cacheFullAnalysis()` almacena estos campos al completar cada análisis
+
+**B) Intermediate Passthrough condicional**
+- Cuando `shouldPollForNewCandle()` retorna `false`, evalúa si la señal cacheada es elegible:
+  - `rawSignal` es BUY o SELL
+  - `signalsCount >= minSignalsRequired`
+  - `confidence >= 0.6`
+  - `lastCandle` existe en cache
+- Si elegible **Y** rate-limit permite (120s entre intentos): llama `analyzePairAndTradeWithCandles()` con vela cacheada
+- Si no elegible o rate-limited: bloqueo intermedio estándar con razón explícita
+
+**C) Skip staleness/chase gates en ejecución intermedia**
+- `analyzePairAndTradeWithCandles()` acepta `intermediateExec: boolean = false`
+- Cuando `intermediateExec=true`: staleness gate y chase gate se desactivan (la vela cacheada es intencionalmente "vieja")
+- Todos los demás risk checks permanecen activos: cooldown, maxLots, exposure, minOrder, spread, regime, Smart Guard, AI filter, etc.
+
+**D) Rate-limiter para ejecución intermedia**
+- `lastIntermediateExecAttempt` Map: evita re-intentar cada 5s
+- Cooldown de 120s entre intentos de ejecución intermedia por par
+- Se resetea automáticamente cuando se detecta vela nueva (`isNewCandleClosed`)
+
+**E) Logs diagnósticos nuevos**
+- `[INTERMEDIATE_EXEC]`: señal elegible, ejecutando con vela cacheada (cachedSignal, signals, confidence, candleAgeSec)
+- `[INTERMEDIATE_EXEC_START]`: inicio de re-ejecución dentro de `analyzePairAndTradeWithCandles`
+- `[INTERMEDIATE_DIAG]`: señal elegible pero rate-limited, o bloqueo por razón específica
+- Razones explícitas de bloqueo: "sin señal direccional", "señales insuficientes", "confianza baja", "rate-limit", etc.
+
+### Bloqueos reales que siguen activos (NO afectados por este fix)
+- Cooldown de par / anti-ráfaga / stop-loss
+- MaxLots per pair (SINGLE/SMART_GUARD)
+- Exposure / minOrder / fondos insuficientes
+- Spread filter
+- Regime TRANSITION pause
+- Smart Guard señales insuficientes
+- AI Filter / Shadow
+- Market Metrics Gate
+- NO_POSITION (para SELL)
+
+### Resultado esperado en logs
+```
+[INTERMEDIATE_EXEC] BTC/USD: signalEligible=true signalSource=cached cachedSignal=SELL signals=3/3 confidence=0.85 candleAgeSec=300 → executing with cached candle
+[INTERMEDIATE_EXEC_START] BTC/USD/15m: re-executing cached signal with candle openAt=... intermediateExec=true (staleness/chase gates skipped)
+// → señal pasa por TODOS los risk checks → puede ser bloqueada por NO_POSITION u otro risk check REAL
+```
+
+---
+
 ## 2026-03-07 — FIX CRÍTICO: Vela cerrada no detectada + Intermediate Gate bloqueando señales válidas
 
 ### Problema reportado

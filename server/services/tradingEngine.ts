@@ -225,7 +225,10 @@ interface LastFullAnalysisCache {
   selectedStrategy: string;
   signalsCount: number;
   minSignalsRequired: number;
+  rawSignal: "BUY" | "SELL" | "NONE";
   rawReason: string;
+  confidence: number;
+  lastCandle: OHLCCandle | null;
   candleClosedAt: string;
   evaluatedAt: string;
   regimeUpdatedAt: string;
@@ -508,6 +511,10 @@ export class TradingEngine {
   
   // Cache para último análisis completo por par (evita null en ciclos intermedios)
   private lastFullAnalysisCache: Map<string, LastFullAnalysisCache> = new Map();
+  
+  // Rate-limit para ejecución intermedia: evitar re-intentar cada 5s cuando ya se intentó
+  private lastIntermediateExecAttempt: Map<string, number> = new Map();
+  private readonly INTERMEDIATE_EXEC_COOLDOWN_SEC = 120; // Mín 120s entre intentos intermedios
 
   // Dynamic configuration from ConfigService
   private dynamicConfig: TradingConfig | null = null;
@@ -2365,24 +2372,62 @@ El bot ha pausado las operaciones de COMPRA.
                 const candleAgeSec = lastProcessedCloseTime > 0 ? nowSec - lastProcessedCloseTime : -1;
                 const expectedNextCloseIso = nextUnprocessedClose > 0 ? new Date(nextUnprocessedClose * 1000).toISOString() : 'unknown';
                 const lastCloseIso = lastProcessedCloseTime > 0 ? new Date(lastProcessedCloseTime * 1000).toISOString() : 'none';
-                // Log diagnóstico solo si hay señal cacheada válida (evitar spam)
-                if (cached && cached.signalsCount >= (cached.minSignalsRequired || 99)) {
-                  log(`[INTERMEDIATE_DIAG] ${pair}: intermediateBlockApplied=true lastCandleClosedAt=${lastCloseIso} expectedNextClose=${expectedNextCloseIso} candleAgeSec=${candleAgeSec} cachedSignal=${cached.rawReason?.substring(0,80)} signals=${cached.signalsCount}/${cached.minSignalsRequired}`, "trading");
+
+                // === FIX C: Evaluar si señal cacheada es elegible para ejecución intermedia ===
+                const cachedDirection = cached?.rawSignal;
+                const signalEligible = !!(cached 
+                  && (cachedDirection === "BUY" || cachedDirection === "SELL")
+                  && cached.signalsCount >= (cached.minSignalsRequired || 99)
+                  && cached.confidence >= 0.6
+                  && cached.lastCandle);
+                
+                // Rate-limit: no re-intentar cada 5s, mínimo INTERMEDIATE_EXEC_COOLDOWN_SEC entre intentos
+                const lastAttempt = this.lastIntermediateExecAttempt.get(pair) || 0;
+                const secSinceLastAttempt = (Date.now() - lastAttempt) / 1000;
+                const rateLimitOk = secSinceLastAttempt >= this.INTERMEDIATE_EXEC_COOLDOWN_SEC;
+
+                if (signalEligible && rateLimitOk && cached && cached.lastCandle) {
+                  // === INTERMEDIATE PASSTHROUGH: señal válida cacheada, intentar ejecución ===
+                  this.lastIntermediateExecAttempt.set(pair, Date.now());
+                  isIntermediateCycle = false; // Permitir ejecución normal
+                  this.initPairTrace(pair, expDefault.maxAllowed, false);
+                  this.updatePairTrace(pair, {
+                    timingDiag: { candleAgeSec, lastCandleCloseIso: lastCloseIso },
+                  });
+                  log(`[INTERMEDIATE_EXEC] ${pair}: signalEligible=true signalSource=cached cachedSignal=${cachedDirection} signals=${cached.signalsCount}/${cached.minSignalsRequired} confidence=${cached.confidence.toFixed(2)} candleAgeSec=${candleAgeSec} → executing with cached candle`, "trading");
+                  
+                  // Re-ejecutar análisis completo con vela cacheada (skip staleness/chase gates)
+                  await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, cached.lastCandle, riskConfig, balances, true);
+                } else {
+                  // === INTERMEDIATE BLOCK: sin señal elegible o rate-limited ===
+                  const blockReason = !cached ? "sin datos previos"
+                    : !cachedDirection || cachedDirection === "NONE" ? "sin señal direccional"
+                    : cached.signalsCount < (cached.minSignalsRequired || 99) ? `señales insuficientes (${cached.signalsCount}/${cached.minSignalsRequired})`
+                    : (cached.confidence ?? 0) < 0.6 ? `confianza baja (${(cached.confidence ?? 0).toFixed(2)})`
+                    : !cached.lastCandle ? "sin vela cacheada"
+                    : !rateLimitOk ? `rate-limit (${Math.round(this.INTERMEDIATE_EXEC_COOLDOWN_SEC - secSinceLastAttempt)}s restantes)`
+                    : "desconocido";
+                  
+                  if (signalEligible && !rateLimitOk) {
+                    log(`[INTERMEDIATE_DIAG] ${pair}: signalEligible=true BUT rateLimited (${Math.round(secSinceLastAttempt)}s/${this.INTERMEDIATE_EXEC_COOLDOWN_SEC}s) cachedSignal=${cachedDirection} signals=${cached!.signalsCount}/${cached!.minSignalsRequired}`, "trading");
+                  } else if (cached && cached.signalsCount >= (cached.minSignalsRequired || 99)) {
+                    log(`[INTERMEDIATE_DIAG] ${pair}: intermediateBlockApplied=true reason=${blockReason} cachedSignal=${cachedDirection} signals=${cached.signalsCount}/${cached.minSignalsRequired}`, "trading");
+                  }
+                  
+                  this.initPairTrace(pair, expDefault.maxAllowed, true);
+                  this.updatePairTrace(pair, {
+                    timingDiag: { candleAgeSec, lastCandleCloseIso: lastCloseIso },
+                  });
+                  this.lastScanResults.set(pair, {
+                    signal: "NONE",
+                    reason: `Ciclo intermedio - ${blockReason} - próxima vela cierra ${expectedNextCloseIso}`,
+                    cooldownSec: this.getCooldownRemainingSec(pair),
+                    exposureAvailable: expDefault.maxAllowed,
+                  });
+                  this.emitPairDecisionTrace(pair);
+                  scannedPairs.push(pair);
+                  continue;
                 }
-                this.initPairTrace(pair, expDefault.maxAllowed, true);
-                // Enriquecer trace con datos de timing
-                this.updatePairTrace(pair, {
-                  timingDiag: { candleAgeSec, lastCandleCloseIso: lastCloseIso },
-                });
-                this.lastScanResults.set(pair, {
-                  signal: "NONE",
-                  reason: `Ciclo intermedio - próxima vela cierra ${expectedNextCloseIso}`,
-                  cooldownSec: this.getCooldownRemainingSec(pair),
-                  exposureAvailable: expDefault.maxAllowed,
-                });
-                this.emitPairDecisionTrace(pair);
-                scannedPairs.push(pair);
-                continue;
               }
 
               const candle = await this.getLastClosedCandle(pair, signalTimeframe);
@@ -2401,6 +2446,8 @@ El bot ha pausado las operaciones de COMPRA.
                 const candleCloseTime = candle.time + intervalSec;
                 log(`[CANDLE_NEW] ${pair}/${signalTimeframe} openAt=${new Date(candle.time * 1000).toISOString()} closeAt=${new Date(candleCloseTime * 1000).toISOString()} prevCloseAt=${lastProcessedCloseTime > 0 ? new Date(lastProcessedCloseTime * 1000).toISOString() : 'none'}`, "trading");
                 this.invalidateMtfCache(pair);
+                // Reset intermediate rate-limiter para nueva vela
+                this.lastIntermediateExecAttempt.delete(pair);
                 await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
               } else {
                 // API devolvió la misma vela que ya procesamos
@@ -3442,9 +3489,14 @@ El bot ha pausado las operaciones de COMPRA.
     timeframe: string,
     candle: OHLCCandle,
     riskConfig: RiskConfig,
-    balances: any
+    balances: any,
+    intermediateExec: boolean = false
   ) {
     try {
+      if (intermediateExec) {
+        log(`[INTERMEDIATE_EXEC_START] ${pair}/${timeframe}: re-executing cached signal with candle openAt=${new Date(candle.time * 1000).toISOString()} intermediateExec=true (staleness/chase gates skipped)`, "trading");
+      }
+      
       const lastTrade = this.lastTradeTime.get(pair) || 0;
       if (Date.now() - lastTrade < this.MIN_TRADE_INTERVAL_MS) {
         return;
@@ -3596,7 +3648,10 @@ El bot ha pausado las operaciones de COMPRA.
         selectedStrategy: selectedStrategyId,
         signalsCount: signal.signalsCount ?? 0,
         minSignalsRequired: adjustedMinSignals,
+        rawSignal: signal.action === "hold" ? "NONE" : (signal.action.toUpperCase() as "BUY" | "SELL" | "NONE"),
         rawReason: signal.reason || "Sin señal",
+        confidence: signal.confidence,
+        lastCandle: candle,
         candleClosedAt: new Date((candle.time + this.getTimeframeIntervalMinutes(timeframe) * 60) * 1000).toISOString(),
         regimeRouterEnabled: routerEnabled,
         feeCushionEffectivePct: getRoundTripWithBufferPct(),
@@ -3894,8 +3949,9 @@ El bot ha pausado las operaciones de COMPRA.
 
         // === MINI-B: STALENESS GATE ===
         // Block if too much time has passed since the candle that generated the signal closed
+        // Skip for intermediate re-executions (cached candle is intentionally "stale")
         const cfgAny = botConfigCheck as any;
-        const stalenessGateEnabled = cfgAny?.stalenessGateEnabled ?? true;
+        const stalenessGateEnabled = (cfgAny?.stalenessGateEnabled ?? true) && !intermediateExec;
         if (stalenessGateEnabled) {
           const candleCloseTimeSec = candle.time; // Unix seconds of the evaluated candle close
           const nowSec = Date.now() / 1000;
@@ -3927,7 +3983,8 @@ El bot ha pausado las operaciones de COMPRA.
 
         // === MINI-B: CHASE GATE ===
         // Block if price has moved up too much since the candle close that generated the signal
-        const chaseGateEnabled = cfgAny?.chaseGateEnabled ?? true;
+        // Skip for intermediate re-executions (price has diverged from cached candle close)
+        const chaseGateEnabled = (cfgAny?.chaseGateEnabled ?? true) && !intermediateExec;
         if (chaseGateEnabled) {
           const candleClosePrice = candle.close;
           const chaseDeltaPct = candleClosePrice > 0 ? ((currentPrice - candleClosePrice) / candleClosePrice) * 100 : 0;
@@ -4646,7 +4703,10 @@ El bot ha pausado las operaciones de COMPRA.
     selectedStrategy: string;
     signalsCount: number;
     minSignalsRequired: number;
+    rawSignal: "BUY" | "SELL" | "NONE";
     rawReason: string;
+    confidence: number;
+    lastCandle: OHLCCandle | null;
     candleClosedAt: string;
     regimeRouterEnabled?: boolean;
     feeCushionEffectivePct?: number | null;
