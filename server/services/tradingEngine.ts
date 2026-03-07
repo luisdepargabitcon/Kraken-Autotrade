@@ -515,6 +515,10 @@ export class TradingEngine {
   // Rate-limit para ejecución intermedia: evitar re-intentar cada 5s cuando ya se intentó
   private lastIntermediateExecAttempt: Map<string, number> = new Map();
   private readonly INTERMEDIATE_EXEC_COOLDOWN_SEC = 120; // Mín 120s entre intentos intermedios
+  
+  // Throttle para logs INTERMEDIATE_DIAG: evitar spam cada 5s
+  private lastIntermediateDiagLog: Map<string, number> = new Map();
+  private readonly INTERMEDIATE_DIAG_LOG_INTERVAL_SEC = 60; // Máx 1 log por par cada 60s
 
   // Dynamic configuration from ConfigService
   private dynamicConfig: TradingConfig | null = null;
@@ -2398,6 +2402,14 @@ El bot ha pausado las operaciones de COMPRA.
                   
                   // Re-ejecutar análisis completo con vela cacheada (skip staleness/chase gates)
                   await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, cached.lastCandle, riskConfig, balances, true);
+                  
+                  // Log resultado de la ejecución intermedia
+                  const execTrace = this.pairDecisionTrace.get(pair);
+                  const execResult = this.lastScanResults.get(pair);
+                  const finalSig = execTrace?.finalSignal || execResult?.signal || "UNKNOWN";
+                  const finalBlocker = execTrace?.blockReasonCode || "none";
+                  const finalReason = execTrace?.finalReason || execResult?.reason || "unknown";
+                  log(`[INTERMEDIATE_EXEC_RESULT] ${pair}: finalSignal=${finalSig} blockedBy=${finalBlocker} reason=${(finalReason || '').substring(0, 120)}`, "trading");
                 } else {
                   // === INTERMEDIATE BLOCK: sin señal elegible o rate-limited ===
                   const blockReason = !cached ? "sin datos previos"
@@ -2408,10 +2420,18 @@ El bot ha pausado las operaciones de COMPRA.
                     : !rateLimitOk ? `rate-limit (${Math.round(this.INTERMEDIATE_EXEC_COOLDOWN_SEC - secSinceLastAttempt)}s restantes)`
                     : "desconocido";
                   
-                  if (signalEligible && !rateLimitOk) {
-                    log(`[INTERMEDIATE_DIAG] ${pair}: signalEligible=true BUT rateLimited (${Math.round(secSinceLastAttempt)}s/${this.INTERMEDIATE_EXEC_COOLDOWN_SEC}s) cachedSignal=${cachedDirection} signals=${cached!.signalsCount}/${cached!.minSignalsRequired}`, "trading");
-                  } else if (cached && cached.signalsCount >= (cached.minSignalsRequired || 99)) {
-                    log(`[INTERMEDIATE_DIAG] ${pair}: intermediateBlockApplied=true reason=${blockReason} cachedSignal=${cachedDirection} signals=${cached.signalsCount}/${cached.minSignalsRequired}`, "trading");
+                  // Throttle: solo logear INTERMEDIATE_DIAG cada INTERMEDIATE_DIAG_LOG_INTERVAL_SEC por par
+                  const lastDiagLog = this.lastIntermediateDiagLog.get(pair) || 0;
+                  const secSinceLastDiag = (Date.now() - lastDiagLog) / 1000;
+                  const shouldLogDiag = secSinceLastDiag >= this.INTERMEDIATE_DIAG_LOG_INTERVAL_SEC;
+                  
+                  if (shouldLogDiag) {
+                    this.lastIntermediateDiagLog.set(pair, Date.now());
+                    if (signalEligible && !rateLimitOk) {
+                      log(`[INTERMEDIATE_DIAG] ${pair}: signalEligible=true BUT rateLimited (${Math.round(secSinceLastAttempt)}s/${this.INTERMEDIATE_EXEC_COOLDOWN_SEC}s) cachedSignal=${cachedDirection} signals=${cached!.signalsCount}/${cached!.minSignalsRequired}`, "trading");
+                    } else if (cached && cached.signalsCount >= (cached.minSignalsRequired || 99)) {
+                      log(`[INTERMEDIATE_DIAG] ${pair}: intermediateBlockApplied=true reason=${blockReason} cachedSignal=${cachedDirection} signals=${cached.signalsCount}/${cached.minSignalsRequired}`, "trading");
+                    }
                   }
                   
                   this.initPairTrace(pair, expDefault.maxAllowed, true);
@@ -2446,8 +2466,9 @@ El bot ha pausado las operaciones de COMPRA.
                 const candleCloseTime = candle.time + intervalSec;
                 log(`[CANDLE_NEW] ${pair}/${signalTimeframe} openAt=${new Date(candle.time * 1000).toISOString()} closeAt=${new Date(candleCloseTime * 1000).toISOString()} prevCloseAt=${lastProcessedCloseTime > 0 ? new Date(lastProcessedCloseTime * 1000).toISOString() : 'none'}`, "trading");
                 this.invalidateMtfCache(pair);
-                // Reset intermediate rate-limiter para nueva vela
+                // Reset intermediate rate-limiter y diag throttle para nueva vela
                 this.lastIntermediateExecAttempt.delete(pair);
+                this.lastIntermediateDiagLog.delete(pair);
                 await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
               } else {
                 // API devolvió la misma vela que ya procesamos
