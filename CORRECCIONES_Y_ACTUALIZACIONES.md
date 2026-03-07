@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-03-07 — FIX CRÍTICO: Vela cerrada no detectada + Intermediate Gate bloqueando señales válidas
+
+### Problema reportado
+En logs de producción (14:30-14:32 UTC):
+- `lastCandleClosedAt` clavado en `14:00:00.000Z` cuando ya existían cierres 14:15 y 14:30
+- `isIntermediateCycle=true` en TODOS los pares durante >2 minutos
+- Señales válidas (ETH 5/3, SOL 5/3, BTC 4/3, XRP 4/3) bloqueadas con `finalSignal=NONE`
+- `finalReason="Ciclo intermedio - sin vela 15m cerrada"` erróneo
+
+### Causa raíz: BUG A — `shouldPollForNewCandle()` calcula mal el próximo cierre
+
+**Antes (buggy):**
+```typescript
+const nextExpectedClose = Math.floor(nowSec / intervalSec) * intervalSec + intervalSec;
+// A las 14:30 → nextExpectedClose = 14:45 (cierre del slot ACTUAL del reloj)
+// Window [-30s,+10s] de 14:45 = [14:44:30, 14:45:10]
+// 14:30:04 NO está en la ventana → returns false ❌
+```
+
+**Después (fix):**
+```typescript
+const nextUnprocessedClose = lastTs + 2 * intervalSec;
+// lastTs=14:00 → nextUnprocessedClose = 14:30 (cierre de la vela NO procesada)
+// Window [-30s,+10s] de 14:30 = [14:29:30, 14:30:10]
+// 14:30:04 SÍ está en la ventana → returns true ✅
+```
+
+### Causa raíz: BUG B — `lastCandleClosedAt` mostraba openTime, no closeTime
+
+`candle.time` en Kraken = openTime de la vela. La vela 14:00-14:15 tiene `time=14:00`.
+El trace mostraba `lastCandleClosedAt=14:00:00` cuando el cierre real es 14:15.
+
+**Fix:** `candle.time + intervalSec` → muestra closeTime correcto.
+
+### Archivos modificados
+
+| Archivo | Función | Cambio |
+|---|---|---|
+| `server/services/tradingEngine.ts` | `shouldPollForNewCandle()` | Reemplazar `nextExpectedClose` (clock-aligned) por `nextUnprocessedClose` (lastTs + 2×interval) + catch-up logging |
+| `server/services/tradingEngine.ts` | `runTradingCycle()` | Logs diagnóstico: `[INTERMEDIATE_DIAG]`, `[CANDLE_NEW]`, `[CANDLE_SAME]` con timing detallado |
+| `server/services/tradingEngine.ts` | `analyzePairAndTradeWithCandles()` | Fix `lastCandleClosedAt` → usa closeTime real (candle.time + intervalSec) |
+| `server/services/tradingEngine.ts` | `cacheFullAnalysis()` call | Fix `candleClosedAt` en cache → closeTime real |
+| `server/services/tradingEngine.ts` | `initPairTrace()` | Mejorar `rawReason`/`finalReason` para ciclos intermedios (mensajes más claros) |
+
+### Logs de diagnóstico añadidos
+```
+[CANDLE_POLL] ETH/USD/15m CATCH-UP: missed window → polling
+[CANDLE_NEW] ETH/USD/15m openAt=...T14:15:00Z closeAt=...T14:30:00Z prevCloseAt=...T14:15:00Z
+[CANDLE_SAME] ETH/USD/15m candleTime=...T14:00:00Z == lastProcessed
+[INTERMEDIATE_DIAG] ETH/USD: intermediateBlockApplied=true lastCandleClosedAt=... expectedNextClose=... candleAgeSec=... signals=5/3
+```
+
+### Validación esperada post-deploy
+- `lastCandleClosedAt` debe avanzar cada 15 minutos (14:15→14:30→14:45→...)
+- Señales con signalsCount≥minSignalsRequired NO deben bloquearse por ciclo intermedio
+- `[CANDLE_NEW]` debe aparecer ~cada 15 minutos por par
+- `[INTERMEDIATE_DIAG]` no debe aparecer con candleAgeSec > 900+60
+
+---
+
 ## 2026-03-06 — FEAT: Volume Breakout Override (FASE 9)
 
 ### Objetivo
