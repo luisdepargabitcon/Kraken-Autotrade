@@ -538,6 +538,43 @@ Implementación completa de gestión automática del crecimiento de `server_logs
 
 ---
 
+## 2026-03-08 — FEAT: Comisiones reales de exchanges en FISCO (Kraken + RevolutX)
+
+### Resumen
+Implementación de captura de fees reales por operación en el sistema fiscal FIFO.
+
+### Diagnóstico previo
+- **Kraken**: fees ya se capturaban correctamente desde el ledger (`received.fee + spent.fee`) ✅
+- **RevolutX**: `feeEur` hardcodeado a 0 con comentario "fees are embedded in the spread" ❌
+- **FIFO engine**: ya usa `feeEur` correctamente — en compras suma al coste base, en ventas descuenta del gain ✅
+
+### Cambio 1 — `RevolutXService.ts`: `getHistoricalOrders()`
+- Añadido `total_fee: number` al tipo de retorno y al objeto acumulado
+- Captura desde raw API: `o.total_fee ?? o.fee_amount ?? o.fee ?? o.commission ?? o.fees?.total_value ?? '0'`
+- Si la API no devuelve fee (campo ausente o 0), el valor queda en 0 y el normalizer aplica fallback
+
+### Cambio 2 — `normalizer.ts`: `normalizeRevolutXOrders()`
+- Añadido `total_fee: number` a la interfaz `RevolutXOrder`
+- Lógica de fee (prioridad):
+  1. **Fee real de API** si `order.total_fee > 0` → se convierte a EUR al tipo de cambio del momento
+  2. **Fallback estimado**: `totalInQuote × 0.0009` (0.09% taker fee publicado por RevolutX)
+- Fórmula: `feeEur = (quoteAsset === 'EUR') ? feeInQuote : feeInQuote × usdEurRate`
+
+### Cambio 3 — `FiscoSyncService.ts`: upsert para actualizar fees
+- Cambiado `onConflictDoNothing()` → `onConflictDoUpdate({ target: [exchange, externalId], set: { feeEur: sql\`excluded.fee_eur\` } })` en **ambos** métodos: `syncKraken()` y `syncRevolutX()`
+- Añadido import `sql` de drizzle-orm
+- Efecto: re-sync diario actualiza automáticamente el `fee_eur` de operaciones existentes si el valor cambia
+
+### Impacto en FIFO
+- **Compras RevolutX**: `costEur = totalEur + feeEur` → coste base aumenta ~0.09% (correcto fiscalmente, la comisión es parte del precio de adquisición)
+- **Ventas RevolutX**: `gainLoss = proceedsEur - costBasisEur - feePortion` → la comisión reduce la ganancia (correcto)
+- Para actualizar datos históricos: ejecutar "Sincronizar" en la UI FISCO (Pipeline completo DELETE+REINSERT)
+
+### Nota sobre RevolutX API
+RevolutX usa arquitectura Coinbase Advanced Trade. El campo fee en `/api/1.0/orders/historical` puede llamarse `total_fee`, `fee_amount`, `fee` o `commission`. El código intenta todos. Si no hay campo, aplica el 0.09% estimado.
+
+---
+
 ## 2026-03-04 — FIX: Doble scheduler FISCO + Mejoras retry RATE_LIMIT
 
 ### Resumen

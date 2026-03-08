@@ -1047,6 +1047,7 @@ export class RevolutXService implements IExchangeService {
     quantity: number;
     filled_quantity: number;
     average_fill_price: number;
+    total_fee: number;
     status: string;
     created_date: number;
     filled_date?: number;
@@ -1071,6 +1072,7 @@ export class RevolutXService implements IExchangeService {
       quantity: number;
       filled_quantity: number;
       average_fill_price: number;
+      total_fee: number;
       status: string;
       created_date: number;
       filled_date?: number;
@@ -1137,6 +1139,10 @@ export class RevolutXService implements IExchangeService {
                 (typeof o.filled_date === 'string' ? (Number(o.filled_date) || new Date(o.filled_date).getTime()) : undefined))
               : undefined;
 
+            const totalFee = parseFloat(
+              o.total_fee ?? o.fee_amount ?? o.fee ?? o.commission ?? o.fees?.total_value ?? '0'
+            ) || 0;
+
             allOrders.push({
               id: orderId,
               client_order_id: o.client_order_id,
@@ -1146,6 +1152,7 @@ export class RevolutXService implements IExchangeService {
               quantity: qty,
               filled_quantity: filledQty,
               average_fill_price: avgPrice,
+              total_fee: totalFee,
               status: (o.status || o.state || '').toLowerCase(),
               created_date: createdDate,
               filled_date: filledDate,

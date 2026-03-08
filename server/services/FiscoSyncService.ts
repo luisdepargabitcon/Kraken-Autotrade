@@ -14,7 +14,7 @@ import {
   fiscoSyncHistory,
   fiscoOperations
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface SyncOptions {
@@ -216,7 +216,10 @@ export class FiscoSyncService {
             pair: op.pair,
             executedAt: op.executedAt,
             rawData: op.rawData
-          }).onConflictDoNothing();
+          }).onConflictDoUpdate({
+            target: [fiscoOperations.exchange, fiscoOperations.externalId],
+            set: { feeEur: sql`excluded.fee_eur` },
+          });
 
           // Contar por tipo
           switch (op.opType) {
@@ -308,7 +311,10 @@ export class FiscoSyncService {
             pair: op.pair,
             executedAt: op.executedAt,
             rawData: op.rawData
-          }).onConflictDoNothing();
+          }).onConflictDoUpdate({
+            target: [fiscoOperations.exchange, fiscoOperations.externalId],
+            set: { feeEur: sql`excluded.fee_eur` },
+          });
 
           // Contar por tipo
           switch (op.opType) {

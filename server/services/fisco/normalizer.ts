@@ -290,6 +290,7 @@ interface RevolutXOrder {
   quantity: number;
   filled_quantity: number;
   average_fill_price: number;
+  total_fee: number;
   status: string;
   created_date: number;
   filled_date?: number;
@@ -323,9 +324,11 @@ export async function normalizeRevolutXOrders(
       totalEur = totalInQuote * usdEurRate;
     }
 
-    // RevolutX doesn't report fees in order data; set to 0
-    // (fees are embedded in the spread)
-    const feeEur = 0;
+    // Fee real de RevolutX si la API lo devuelve; fallback a 0.09% taker fee
+    const rawFeeInQuote = order.total_fee || 0;
+    const estimatedFeeInQuote = totalInQuote * 0.0009; // 0.09% taker fee publicado
+    const feeInQuote = rawFeeInQuote > 0 ? rawFeeInQuote : estimatedFeeInQuote;
+    const feeEur = quoteAsset === "EUR" ? feeInQuote : feeInQuote * usdEurRate;
 
     ops.push({
       exchange: "revolutx",
