@@ -31,6 +31,7 @@ interface AnnualReportResponse {
   section_b: Array<{
     asset: string; exchange: string; tipo: string; num_transmisiones: number;
     valor_transmision_eur: number; valor_adquisicion_eur: number; ganancia_perdida_eur: number;
+    comisiones_eur: number;
   }>;
   section_c: { staking: number; masternodes: number; lending: number; distribuciones: number; total_eur: number };
   section_d: Array<{
@@ -214,42 +215,46 @@ function generateBit2MePDF(report: AnnualReportResponse) {
     <tr>
       <td>${r.asset}</td><td>${r.exchange}</td><td>${r.tipo}</td>
       <td>${eur(r.valor_transmision_eur)}</td><td>${eur(r.valor_adquisicion_eur)}</td>
+      <td style="color:#b45309">${eur(r.comisiones_eur || 0)}</td>
       <td class="${r.ganancia_perdida_eur >= 0 ? 'positive' : 'negative'}">${eur(r.ganancia_perdida_eur)}</td>
     </tr>`).join("");
   const bTotals = report.section_b.reduce((s, r) => ({
-    vt: s.vt + r.valor_transmision_eur, va: s.va + r.valor_adquisicion_eur, gp: s.gp + r.ganancia_perdida_eur,
-  }), { vt: 0, va: 0, gp: 0 });
+    vt: s.vt + r.valor_transmision_eur, va: s.va + r.valor_adquisicion_eur,
+    gp: s.gp + r.ganancia_perdida_eur, com: s.com + (r.comisiones_eur || 0),
+  }), { vt: 0, va: 0, gp: 0, com: 0 });
   const pageB = `
     <div class="page">
       <div class="brand">${BRAND_LABEL}</div>
       <h2>A) Resumen de ganancias y p\u00e9rdidas por activo y exchange el ${y}</h2>
       <table>
-        <tr><th>Ticker</th><th>Exchange</th><th>Tipo</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
+        <tr><th>Ticker</th><th>Exchange</th><th>Tipo</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Comisi\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
         ${bRows}
-        <tr class="total-row"><td colspan="3">Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
+        <tr class="total-row"><td colspan="3">Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.com)}</td><td>${eur(bTotals.gp)}</td></tr>
       </table>
       ${(() => {
         // Aggregated by asset (merge exchanges)
-        const aggMap = new Map<string, { vt: number; va: number; gp: number }>();
+        const aggMap = new Map<string, { vt: number; va: number; gp: number; com: number }>();
         for (const r of report.section_b) {
-          const prev = aggMap.get(r.asset) || { vt: 0, va: 0, gp: 0 };
+          const prev = aggMap.get(r.asset) || { vt: 0, va: 0, gp: 0, com: 0 };
           prev.vt += r.valor_transmision_eur;
           prev.va += r.valor_adquisicion_eur;
           prev.gp += r.ganancia_perdida_eur;
+          prev.com += (r.comisiones_eur || 0);
           aggMap.set(r.asset, prev);
         }
         const aggRows = Array.from(aggMap.entries()).map(([asset, v]) => `
           <tr>
             <td>${asset}</td>
             <td>${eur(v.vt)}</td><td>${eur(v.va)}</td>
+            <td style="color:#b45309">${eur(v.com)}</td>
             <td class="${v.gp >= 0 ? 'positive' : 'negative'}">${eur(v.gp)}</td>
           </tr>`).join("");
         return `
           <h2 style="margin-top:24px;">B) Resumen por activo (agregado) el ${y}</h2>
           <table>
-            <tr><th>Ticker</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
+            <tr><th>Ticker</th><th>Valor transmisi\u00f3n EUR</th><th>Valor adquisici\u00f3n EUR</th><th>Comisi\u00f3n EUR</th><th>Ganancia/P\u00e9rdida EUR</th></tr>
             ${aggRows}
-            <tr class="total-row"><td>Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
+            <tr class="total-row"><td>Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.com)}</td><td>${eur(bTotals.gp)}</td></tr>
           </table>`;
       })()}
       <div class="footer-page">Resumen de ganancias y p\u00e9rdidas por activo el ${y} \u2014 P\u00e1gina 2</div>
@@ -529,8 +534,9 @@ export default function Fisco() {
 
   // --- Section B totals ---
   const bTotals = (report?.section_b || []).reduce((s, r) => ({
-    vt: s.vt + r.valor_transmision_eur, va: s.va + r.valor_adquisicion_eur, gp: s.gp + r.ganancia_perdida_eur,
-  }), { vt: 0, va: 0, gp: 0 });
+    vt: s.vt + r.valor_transmision_eur, va: s.va + r.valor_adquisicion_eur,
+    gp: s.gp + r.ganancia_perdida_eur, com: s.com + (r.comisiones_eur || 0),
+  }), { vt: 0, va: 0, gp: 0, com: 0 });
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -737,6 +743,7 @@ export default function Fisco() {
                         <th className="text-left py-2.5 px-4 text-blue-400 font-semibold text-xs">Tipo</th>
                         <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor transmisión EUR</th>
                         <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Valor adquisición EUR</th>
+                        <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Comisión EUR</th>
                         <th className="text-right py-2.5 px-4 text-blue-400 font-semibold text-xs">Ganancia/Pérdida EUR</th>
                       </tr>
                     </thead>
@@ -748,6 +755,7 @@ export default function Fisco() {
                           <td className="py-2 px-4">{r.tipo}</td>
                           <td className="py-2 px-4 text-right font-mono">{eur(r.valor_transmision_eur)}</td>
                           <td className="py-2 px-4 text-right font-mono">{eur(r.valor_adquisicion_eur)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-yellow-500">{eur(r.comisiones_eur || 0)}</td>
                           <td className={`py-2 px-4 text-right font-mono font-bold ${r.ganancia_perdida_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
                             {eur(r.ganancia_perdida_eur)}
                           </td>
@@ -759,6 +767,7 @@ export default function Fisco() {
                         <td colSpan={3} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
                         <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.vt)}</td>
                         <td className="py-2.5 px-4 text-right font-mono">{eur(bTotals.va)}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-yellow-500">{eur(bTotals.com)}</td>
                         <td className={`py-2.5 px-4 text-right font-mono ${bTotals.gp >= 0 ? "text-green-400" : "text-red-400"}`}>
                           {eur(bTotals.gp)}
                         </td>

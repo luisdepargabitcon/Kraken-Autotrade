@@ -714,7 +714,10 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           COUNT(DISTINCT d.id) as num_transmisiones,
           COALESCE(SUM(d.proceeds_eur::numeric), 0) as valor_transmision_eur,
           COALESCE(SUM(d.cost_basis_eur::numeric), 0) as valor_adquisicion_eur,
-          COALESCE(SUM(d.gain_loss_eur::numeric), 0) as ganancia_perdida_eur
+          COALESCE(SUM(d.gain_loss_eur::numeric), 0) as ganancia_perdida_eur,
+          COALESCE(SUM(
+            d.proceeds_eur::numeric - d.cost_basis_eur::numeric - d.gain_loss_eur::numeric
+          ), 0) as comisiones_eur
         FROM fisco_disposals d
         JOIN fisco_operations o ON o.id = d.sell_operation_id
         WHERE EXTRACT(YEAR FROM d.disposed_at) = $1 ${exchWhere}
@@ -730,6 +733,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         valor_transmision_eur: Math.round(parseFloat(r.valor_transmision_eur) * 100) / 100,
         valor_adquisicion_eur: Math.round(parseFloat(r.valor_adquisicion_eur) * 100) / 100,
         ganancia_perdida_eur: Math.round(parseFloat(r.ganancia_perdida_eur) * 100) / 100,
+        comisiones_eur: Math.round(parseFloat(r.comisiones_eur) * 100) / 100,
       }));
 
       // --- Section C: Resumen de rendimiento de capital mobiliario ---
