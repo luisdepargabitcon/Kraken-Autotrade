@@ -335,6 +335,7 @@ export default function Fisco() {
   const [anexoType, setAnexoType] = useState("");
   const [anexoFromDate, setAnexoFromDate] = useState<Date | undefined>();
   const [anexoToDate, setAnexoToDate] = useState<Date | undefined>();
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   
   // Modal for lot details
   const [selectedAssetForLots, setSelectedAssetForLots] = useState<string | null>(null);
@@ -956,7 +957,16 @@ export default function Fisco() {
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-card z-10">
                         <tr className="bg-blue-500/10">
-                          <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Fecha</th>
+                          <th
+                            className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px] cursor-pointer select-none hover:text-blue-200"
+                            onClick={() => setSortOrder(s => s === "desc" ? "asc" : "desc")}
+                            title="Ordenar por fecha"
+                          >
+                            <span className="flex items-center gap-0.5">
+                              Fecha
+                              {sortOrder === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                            </span>
+                          </th>
                           <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Exchange</th>
                           <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Tipo</th>
                           <th className="text-left py-2 px-2 text-blue-400 font-semibold text-[10px]">Activo</th>
@@ -968,7 +978,11 @@ export default function Fisco() {
                         </tr>
                       </thead>
                       <tbody>
-                        {anexoQ.data.operations.map((op: any) => {
+                        {[...anexoQ.data.operations].sort((a: any, b: any) => {
+                            const ta = new Date(a.executed_at).getTime();
+                            const tb = new Date(b.executed_at).getTime();
+                            return sortOrder === "desc" ? tb - ta : ta - tb;
+                          }).map((op: any) => {
                           const typeInfo = OP_TYPE_LABELS[op.op_type] || { label: op.op_type, color: "bg-gray-500/20 text-gray-400" };
                           return (
                             <tr key={op.id} className="border-b border-border/30 hover:bg-white/5">
@@ -982,7 +996,12 @@ export default function Fisco() {
                               <td className="py-1.5 px-2 text-right font-mono">{qty(op.amount, 6)}</td>
                               <td className="py-1.5 px-2 text-right font-mono">{op.price_eur ? eur(parseFloat(op.price_eur)) : "\u2014"}</td>
                               <td className="py-1.5 px-2 text-right font-mono">{op.total_eur ? eur(parseFloat(op.total_eur)) : "\u2014"}</td>
-                              <td className="py-1.5 px-2 text-right font-mono text-muted-foreground">{eur(parseFloat(op.fee_eur || "0"))}</td>
+                              <td className="py-1.5 px-2 text-right font-mono">
+                                {parseFloat(op.fee_eur || "0") > 0
+                                  ? <span className="text-yellow-400">{eur(parseFloat(op.fee_eur))}</span>
+                                  : <span className="text-muted-foreground">—</span>
+                                }
+                              </td>
                             </tr>
                           );
                         })}
