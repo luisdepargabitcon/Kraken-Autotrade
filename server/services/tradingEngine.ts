@@ -520,6 +520,9 @@ export class TradingEngine {
   private lastIntermediateDiagLog: Map<string, number> = new Map();
   private readonly INTERMEDIATE_DIAG_LOG_INTERVAL_SEC = 60; // Máx 1 log por par cada 60s
 
+  // Cache de ATR% por par (actualizado cada ciclo de análisis, usado por ExitManager para trailing dinámico)
+  private atrPercentCache: Map<string, number> = new Map();
+
   // Dynamic configuration from ConfigService
   private dynamicConfig: TradingConfig | null = null;
   private lastHybridWatchExpireRunMs: number = 0;
@@ -733,6 +736,9 @@ export class TradingEngine {
         } catch {
           return "TRANSITION" as any;
         }
+      },
+      getATRPercent: (pair: string) => {
+        return this.atrPercentCache.get(pair) ?? 0;
       },
     };
   }
@@ -1192,11 +1198,11 @@ export class TradingEngine {
       sgFeeCushionPct: parseFloat(config?.sgFeeCushionPct?.toString() || "0.45"),
       sgFeeCushionAuto: config?.sgFeeCushionAuto ?? true,
       sgTrailStartPct: parseFloat(config?.sgTrailStartPct?.toString() || "2"),
-      sgTrailDistancePct: parseFloat(config?.sgTrailDistancePct?.toString() || "1.5"),
+      sgTrailDistancePct: parseFloat(config?.sgTrailDistancePct?.toString() || "0.85"),
       sgTrailStepPct: parseFloat(config?.sgTrailStepPct?.toString() || "0.25"),
       sgTpFixedEnabled: config?.sgTpFixedEnabled ?? false,
       sgTpFixedPct: parseFloat(config?.sgTpFixedPct?.toString() || "10"),
-      sgScaleOutEnabled: config?.sgScaleOutEnabled ?? false,
+      sgScaleOutEnabled: config?.sgScaleOutEnabled ?? true,
       sgScaleOutPct: parseFloat(config?.sgScaleOutPct?.toString() || "35"),
       sgMinPartUsd: parseFloat(config?.sgMinPartUsd?.toString() || "50"),
       sgScaleOutThreshold: parseFloat(config?.sgScaleOutThreshold?.toString() || "80"),
@@ -1505,6 +1511,13 @@ export class TradingEngine {
     }
     
     const closedCandles = candles.slice(0, -1);
+
+    // Cache ATR% for ExitManager dynamic trailing
+    if (closedCandles.length >= 15) {
+      const atrInput = closedCandles.slice(-15).map(c => ({ price: c.close, timestamp: c.time, high: c.high, low: c.low, volume: c.volume }));
+      const atrPct = _calculateATRPercent(atrInput, 14);
+      if (atrPct > 0) this.atrPercentCache.set(pair, atrPct);
+    }
     
     // B1: Aplicar filtro MTF a Momentum Velas (igual que en ciclos)
     const mtfData = await this.getMultiTimeframeData(pair);
@@ -2565,6 +2578,12 @@ El bot ha pausado las operaciones de COMPRA.
 
       const history = this.priceHistory.get(pair) || [];
       if (history.length < 5) return;
+
+      // Cache ATR% for ExitManager dynamic trailing (cycle mode)
+      if (history.length >= 15) {
+        const atrPct = _calculateATRPercent(history.slice(-15), 14);
+        if (atrPct > 0) this.atrPercentCache.set(pair, atrPct);
+      }
 
       const signal = await this.analyzeWithStrategy(strategy, pair, history, currentPrice);
       

@@ -139,6 +139,9 @@ export interface IExitManagerHost {
 
   // Market regime (for smart TimeStop TTL calculation)
   getMarketRegime(pair: string): Promise<MarketRegime>;
+
+  // ATR% for dynamic trailing distance (cached from last analysis cycle)
+  getATRPercent(pair: string): number;
 }
 
 // ====================================================================
@@ -1138,16 +1141,35 @@ export class ExitManager {
     const beAtPct = snapshot.sgBeAtPct ?? 1.5;
     const feeCushionPct = snapshot.sgFeeCushionPct ?? 0.45;
     const trailStartPct = snapshot.sgTrailStartPct ?? 2.0;
-    const trailDistancePct = snapshot.sgTrailDistancePct ?? 1.5;
+    const trailDistancePctConfig = snapshot.sgTrailDistancePct ?? 0.85;
     const trailStepPct = snapshot.sgTrailStepPct ?? 0.25;
     const tpFixedEnabled = snapshot.sgTpFixedEnabled ?? false;
     const tpFixedPct = snapshot.sgTpFixedPct ?? 10;
-    const scaleOutEnabled = snapshot.sgScaleOutEnabled ?? false;
+    const scaleOutEnabled = snapshot.sgScaleOutEnabled ?? true;
     const scaleOutPct = snapshot.sgScaleOutPct ?? 35;
     const minPartUsd = snapshot.sgMinPartUsd ?? 50;
     const scaleOutThreshold = snapshot.sgScaleOutThreshold ?? 80;
 
     const ultimateSL = snapshot.stopLossPercent;
+
+    // === DYNAMIC TRAILING DISTANCE (ATR + Time Decay) ===
+    // Pro standard: adapt trailing distance to current market volatility and position age
+    const positionAgeHours = (Date.now() - position.openedAt) / (1000 * 60 * 60);
+    const atrPct = this.host.getATRPercent(pair);
+
+    // ATR-based: use 1.5× ATR as trailing distance, capped at config value, floor at 0.3%
+    let effectiveTrailDistancePct = trailDistancePctConfig;
+    if (atrPct > 0) {
+      const atrBasedDist = atrPct * 1.5;
+      effectiveTrailDistancePct = Math.min(trailDistancePctConfig, Math.max(0.3, atrBasedDist));
+    }
+
+    // Time decay: tighten trailing as position ages (halves over 72h, floor 50% of original)
+    const decayFactor = Math.max(0.5, 1 - (positionAgeHours / 72) * 0.5);
+    effectiveTrailDistancePct = Math.max(0.3, effectiveTrailDistancePct * decayFactor);
+
+    // Use effective value throughout
+    const trailDistancePct = effectiveTrailDistancePct;
 
     let shouldSellFull = false;
     let shouldScaleOut = false;
@@ -1165,7 +1187,11 @@ export class ExitManager {
       beArmed: position.sgBreakEvenActivated ?? false,
       trailingArmed: position.sgTrailingActivated ?? false,
       stopPrice: position.sgCurrentStopPrice ?? null,
-      beAtPct, trailStartPct, trailDistancePct, ultimateSL,
+      beAtPct, trailStartPct,
+      trailDistancePct, trailDistancePctConfig, atrPct, decayFactor,
+      positionAgeHours: Math.round(positionAgeHours * 10) / 10,
+      beProgressiveLevel: position.beProgressiveLevel ?? 0,
+      ultimateSL,
     });
 
     // 1. ULTIMATE STOP-LOSS
@@ -1264,6 +1290,47 @@ export class ExitManager {
             takeProfitPrice,
             trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
           });
+        }
+      }
+    }
+
+    // 5b. PROGRESSIVE BREAK-EVEN FLOOR (ratchet stop upward with profit levels)
+    // Pro standard (3Commas SL Breakeven): stop moves to last profit milestone reached
+    if (position.sgBreakEvenActivated && priceChange > 0) {
+      const fees = this.host.getTradingFees();
+      const roundTripFeePct = fees.takerFeePct * 2;
+      const profitBufferPct = 1.0;
+
+      const progressiveResult = this.calculateProgressiveBEStop(
+        position, currentPrice, priceChange, roundTripFeePct, profitBufferPct
+      );
+
+      if (progressiveResult.newStopPrice && progressiveResult.newLevel > (position.beProgressiveLevel ?? 0)) {
+        if (!position.sgCurrentStopPrice || progressiveResult.newStopPrice > position.sgCurrentStopPrice) {
+          const oldStop = position.sgCurrentStopPrice;
+          position.sgCurrentStopPrice = progressiveResult.newStopPrice;
+          position.beProgressiveLevel = progressiveResult.newLevel;
+          positionModified = true;
+          log(`SMART_GUARD ${pair}: ${progressiveResult.reason} | stop $${oldStop?.toFixed(4) ?? 'N/A'} → $${progressiveResult.newStopPrice.toFixed(4)}`, "trading");
+          await botLogger.info("SG_PROGRESSIVE_BE", `SMART_GUARD Progressive BE en ${pair}`, {
+            posId: lotId, pair, level: progressiveResult.newLevel, reason: progressiveResult.reason,
+            prevStop: oldStop, newStop: progressiveResult.newStopPrice, currentPrice, priceChangePct: priceChange,
+          });
+
+          if (this.shouldSendSgAlert(position.lotId, `SG_PROGRESSIVE_BE_L${progressiveResult.newLevel}`)) {
+            const takeProfitPrice = tpFixedEnabled
+              ? position.entryPrice * (1 + tpFixedPct / 100)
+              : undefined;
+            await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
+              stopPrice: progressiveResult.newStopPrice,
+              profitPct: priceChange,
+              reason: `🔒 ${progressiveResult.reason}`,
+              takeProfitPrice,
+              trailingStatus: position.sgTrailingActivated ? {
+                active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
+              } : undefined,
+            });
+          }
         }
       }
     }

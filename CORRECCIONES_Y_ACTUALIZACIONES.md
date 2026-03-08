@@ -2,6 +2,65 @@
 
 ---
 
+## 2026-03-08 — FEAT: Pro Exit Optimization (ATR Dynamic Trailing + Progressive BE + Trail Decay)
+
+### Problema reportado
+Trade TON/USD alcanzó +2.03% de ganancia pero cerró en -0.4% pérdida. El `trailDistancePct` (1.5%) era casi igual al `trailStartPct` (2.0%), dejando solo 0.5% de margen bruto — insuficiente para cubrir fees round-trip (~0.8%) y slippage.
+
+### Investigación
+Auditoría completa de todas las features de exit del bot + investigación de bots profesionales (3Commas, Bitsgap, Pionex, Aesir). Se identificaron 3 mejoras estándar de la industria que el bot ya tenía parcialmente implementadas pero desconectadas:
+
+### Cambios implementados
+
+#### 1. Progressive Break-Even (3Commas SL Breakeven) — conectado al flujo SmartGuard
+- **Archivo:** `server/services/exitManager.ts` (paso 5b, entre trailing update y stop hit check)
+- El código `calculateProgressiveBEStop()` ya existía (L480-514) pero NO estaba conectado al flujo `checkSmartGuardExit()`
+- Ahora se ejecuta automáticamente cuando BE está activado y hay ganancia positiva
+- **Niveles:** +1.5% → stop en roundTripFee | +3.0% → stop en fee+0.5% buffer | +5.0% → stop en fee+1% buffer
+- Actúa como **piso mínimo**: el stop nunca baja por debajo del nivel progresivo alcanzado
+- Envía alerta Telegram por cada nivel alcanzado
+
+#### 2. Trailing Dinámico basado en ATR (estándar 3Commas/Bitsgap pro)
+- **Archivos:** `exitManager.ts`, `tradingEngine.ts`
+- Nueva interfaz: `IExitManagerHost.getATRPercent(pair)` → retorna ATR% cacheado
+- Cache de ATR% se actualiza cada ciclo de análisis (velas y ciclos)
+- **Fórmula:** `effectiveTrailDist = min(configDist, max(0.3%, ATR × 1.5))`
+- En mercados tranquilos (ATR bajo) → trailing más tight → protege más ganancia
+- En mercados volátiles (ATR alto) → más espacio → evita stops prematuros
+- Cap máximo: nunca excede el valor configurado por el usuario
+
+#### 3. Trail Distance Decay temporal (Aesir/Cryptomaton inspired)
+- El trailing se estrecha automáticamente con la edad de la posición
+- **Fórmula:** `decayFactor = max(0.5, 1 - ageHours/72 × 0.5)`
+- A las 0h: factor = 1.0 (distancia completa)
+- A las 36h: factor = 0.75 (75% de distancia)
+- A las 72h+: factor = 0.5 (50% de distancia — mínimo)
+- Libera capital más rápido en posiciones estancadas
+
+#### 4. Config defaults optimizados
+- `sgTrailDistancePct`: 1.50% → **0.85%** (más ajustado para crypto spot)
+- `sgScaleOutEnabled`: false → **true** (venta parcial activada por defecto)
+- Fallbacks actualizados en `exitManager.ts` y `tradingEngine.ts`
+
+### Impacto en caso TON/USD (simulado)
+Con las mejoras activas:
+- A +1.5%: BE activado, Progressive BE L1 → stop en ~+0.8% (entry + fees)
+- A +2.0%: Scale-out vende 35% con +2% ganancia asegurada. Trailing con 0.85% distancia × decay → stop en +1.15%
+- **Resultado estimado: +$0.50-0.70 neto** en vez de -$0.46
+
+### Archivos modificados
+- `server/services/exitManager.ts` — Progressive BE integrado, ATR dynamic trailing, trail decay
+- `server/services/tradingEngine.ts` — ATR% cache per pair, getATRPercent en exit host
+- `server/services/botLogger.ts` — Nuevo EventType `SG_PROGRESSIVE_BE`
+- `shared/schema.ts` — Defaults actualizados (trailDistancePct, scaleOutEnabled)
+
+### Logs de diagnóstico
+- `EXIT_EVAL`: ahora incluye `trailDistancePctConfig`, `atrPct`, `decayFactor`, `positionAgeHours`, `beProgressiveLevel`
+- `SG_PROGRESSIVE_BE`: log + alerta Telegram cuando un nivel progresivo sube el stop
+- Trailing update logs muestran distancia efectiva vs configurada
+
+---
+
 ## 2026-03-07 — FIX C: Intermediate Cycle ya NO es veto absoluto — permite ejecución con señal cacheada válida
 
 ### Problema reportado

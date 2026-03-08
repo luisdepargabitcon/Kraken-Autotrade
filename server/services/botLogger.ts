@@ -55,6 +55,7 @@ export type EventType =
   | "SG_SCALE_OUT"
   | "SG_SCALE_OUT_EXECUTED"
   | "SG_BREAK_EVEN_ACTIVATED"
+  | "SG_PROGRESSIVE_BE"
   // Config events
   | "CONFIG_OVERRIDE_UPDATED"
   // DRY_RUN mode
