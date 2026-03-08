@@ -413,8 +413,10 @@ export default function Fisco() {
   const runPipeline = useMutation({
     mutationFn: async () => {
       const resp = await fetch("/api/fisco/run");
-      if (!resp.ok) throw new Error((await resp.json()).error || resp.statusText);
-      return resp.json();
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || resp.statusText);
+      if (data.status === "partial_error") throw new Error(data.message || "Sincronización parcial — datos existentes preservados");
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/fisco"] });

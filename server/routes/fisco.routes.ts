@@ -424,11 +424,15 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         }
       }
 
-      if (exchangeErrors.length > 0 && krakenLedgerEntries.length === 0 && revolutxOrders.length === 0) {
-        return res.status(500).json({
-          status: "error",
-          message: "All exchanges failed to sync",
+      // Abortar si algún exchange configurado falló — evita borrar datos existentes del otro exchange
+      if (exchangeErrors.length > 0) {
+        console.error(`[fisco/run] Aborting pipeline: ${exchangeErrors.map(e => e.exchange + ': ' + e.errorCode).join(', ')}. Existing DB data preserved.`);
+        return res.status(207).json({
+          status: "partial_error",
+          message: `No se guardaron datos porque hubo errores en: ${exchangeErrors.map(e => e.exchange).join(', ')}. Los datos existentes se han preservado. Corrija el error y vuelva a sincronizar.`,
           exchange_errors: exchangeErrors,
+          kraken_entries_fetched: krakenLedgerEntries.length,
+          revolutx_orders_fetched: revolutxOrders.length,
         });
       }
 
