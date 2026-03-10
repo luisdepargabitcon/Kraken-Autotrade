@@ -5603,6 +5603,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               expectedAmount: parseFloat(volume),
               pollIntervalMs: 3000,
               timeoutMs: 120000,
+              // Pass entry context so FillWatcher stores correct P&L directly, preventing FIFO contamination
+              sellEntryPrice: sellContext?.entryPrice ?? undefined,
+              sellEntryFee: sellContext?.entryFee ?? undefined,
               onFillReceived: (fill) => {
                 log(`[FILL_RECEIVED] ${pair}: ${fill.side} ${fill.amount} @ $${fill.price}`, 'trading');
               },

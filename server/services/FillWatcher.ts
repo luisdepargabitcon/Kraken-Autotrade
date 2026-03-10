@@ -168,6 +168,9 @@ interface WatcherConfig {
   expectedAmount: number;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  // Sell context: entry price and fee for accurate P&L calculation (prevents FIFO contamination)
+  sellEntryPrice?: number;
+  sellEntryFee?: number;
   onFillReceived?: (fill: Fill, position: any) => void;
   onPositionOpen?: (position: any) => void;
   onTimeout?: (clientOrderId: string) => void;
@@ -204,11 +207,30 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
     expectedAmount,
     pollIntervalMs = 3000, // Poll every 3 seconds
     timeoutMs = 120000, // Timeout after 2 minutes
+    sellEntryPrice,
+    sellEntryFee,
     onFillReceived,
     onPositionOpen,
     onTimeout,
     onError,
   } = config;
+
+  // Helper: calculate PnL for a sell given fill price and amount
+  const calcSellPnl = (fillPrice: number, fillAmount: number): { entryPrice: string; pnlUsd: string; pnlPct: string } | null => {
+    if (!sellEntryPrice || sellEntryPrice <= 0) return null;
+    const entryValue = sellEntryPrice * fillAmount;
+    const exitValue = fillPrice * fillAmount;
+    const feePct = exchange === 'revolutx' ? 0.09 : 0.40;
+    const entryFeeUsd = sellEntryFee ?? (entryValue * feePct / 100);
+    const exitFeeUsd = exitValue * feePct / 100;
+    const pnlUsd = (exitValue - entryValue) - entryFeeUsd - exitFeeUsd;
+    const pnlPct = entryValue > 0 ? (pnlUsd / entryValue) * 100 : 0;
+    return {
+      entryPrice: sellEntryPrice.toString(),
+      pnlUsd: pnlUsd.toFixed(8),
+      pnlPct: pnlPct.toFixed(4),
+    };
+  };
 
   // Use a stable, non-optional order-level id for SELL aggregation and lot-matching.
   // Prefer real exchange order id; fallback to clientOrderId if missing.
@@ -292,6 +314,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                   // Always persist trade for late fill (even if there is no pending position, e.g. SELL pendingFill)
                   let persistedTradeId: number | undefined;
                   try {
+                    const latePnl = syntheticFill.side === 'sell' ? calcSellPnl(syntheticFill.price, syntheticFill.amount) : null;
                     const { trade } = await storage.insertTradeIgnoreDuplicate({
                       tradeId: syntheticFill.fillId,
                       exchange,
@@ -304,6 +327,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                       executedByBot: true,
                       status: 'filled',
                       orderIntentId: orderIntent?.id,
+                      ...(latePnl ? { entryPrice: latePnl.entryPrice, realizedPnlUsd: latePnl.pnlUsd, realizedPnlPct: latePnl.pnlPct } : {}),
                     } as any);
                     persistedTradeId = trade?.id;
                   } catch {
@@ -479,11 +503,13 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
             if (!pnlReconciled && fill.side === 'sell') {
               pnlReconciled = true;
               // Prefer lot-based accounting: create an aggregated sell fill keyed by exchangeOrderId and run fifoMatcher.
+              let orderPnl: ReturnType<typeof calcSellPnl> = null;
               try {
                 const avgPrice = totalFilledAmount > 0 ? ((fills.reduce((acc, f) => acc + (f.price * f.amount), 0)) / totalFilledAmount) : fill.price;
                 const feeTotal = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
 
                 // Persist ORDER-LEVEL SELL trade (single row) so P&L can be updated via lot_matches.
+                orderPnl = calcSellPnl(avgPrice, totalFilledAmount);
                 try {
                   const { trade } = await storage.insertTradeIgnoreDuplicate({
                     tradeId: orderLevelId,
@@ -498,6 +524,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                     status: 'filled',
                     orderIntentId: orderIntent?.id,
                     krakenOrderId: orderLevelId,
+                    ...(orderPnl ? { entryPrice: orderPnl.entryPrice, realizedPnlUsd: orderPnl.pnlUsd, realizedPnlPct: orderPnl.pnlPct } : {}),
                   } as any);
                   if (orderIntent && trade?.id) {
                     try {
@@ -524,19 +551,24 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                   executedAt: fill.executedAt,
                   matched: false,
                 } as any);
-                const sellFill = await storage.getTradeFillByTxid(orderLevelId);
-                if (sellFill) {
-                  await fifoMatcher.processSellFill(sellFill);
+                // Only run fifoMatcher if we DON'T have a direct entryPrice (prevents FIFO contamination)
+                if (!orderPnl) {
+                  const sellFill = await storage.getTradeFillByTxid(orderLevelId);
+                  if (sellFill) {
+                    await fifoMatcher.processSellFill(sellFill);
+                  }
                 }
               } catch (e: any) {
                 console.warn(`[FillWatcher] FIFO lot-match failed for sell ${pair}: ${e?.message ?? String(e)}`);
               }
 
-              // Fallback reconcile (should be rare after lot-matching)
-              try {
-                await tryRecalculatePnlForPairExchange({ pair, exchange });
-              } catch (e: any) {
-                console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
+              // Fallback reconcile only when no direct entryPrice available
+              if (!orderPnl) {
+                try {
+                  await tryRecalculatePnlForPairExchange({ pair, exchange });
+                } catch (e: any) {
+                  console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
+                }
               }
             }
             stopFillWatcher(clientOrderId);
@@ -560,6 +592,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                 const feeTotal = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
 
                 // Persist ORDER-LEVEL SELL trade (single row)
+                const noPosPnl = calcSellPnl(avgPrice, totalFilledAmount);
                 try {
                   const { trade } = await storage.insertTradeIgnoreDuplicate({
                     tradeId: orderLevelId,
@@ -574,6 +607,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                     status: 'filled',
                     orderIntentId: orderIntent?.id,
                     krakenOrderId: orderLevelId,
+                    ...(noPosPnl ? { entryPrice: noPosPnl.entryPrice, realizedPnlUsd: noPosPnl.pnlUsd, realizedPnlPct: noPosPnl.pnlPct } : {}),
                   } as any);
                   if (orderIntent && trade?.id) {
                     try {
