@@ -75,6 +75,13 @@ interface OpenPosition {
   timeStopDisabled?: boolean;
   timeStopExpiredAt?: string | null;
   entryFee?: string | null;
+  // SmartGuard real state from server
+  sgBreakEvenActivated?: boolean;
+  sgTrailingActivated?: boolean;
+  sgCurrentStopPrice?: string | null;
+  sgScaleOutDone?: boolean;
+  beProgressiveLevel?: number;
+  configSnapshot?: any;
   // New fields for instant positions
   status?: string | null; // PENDING_FILL | OPEN | FAILED | CANCELLED
   averageEntryPrice?: string | null; // Coste medio
@@ -150,11 +157,13 @@ export default function Terminal() {
     positionMode?: string; 
     activePairs?: string[];
     sgMaxOpenLotsPerPair?: number;
-    sgBePct?: string;
+    sgBeAtPct?: string;
     sgTrailStartPct?: string;
     sgTrailDistancePct?: string;
-    sgTpPct?: string;
-    sgTimeStopHours?: number;
+    sgTpFixedPct?: string;
+    sgTpFixedEnabled?: boolean;
+    sgScaleOutEnabled?: boolean;
+    timeStopHours?: number;
     adaptiveExitEnabled?: boolean;
     takerFeePct?: string;
   }>({
@@ -574,23 +583,32 @@ export default function Terminal() {
     const now = new Date();
     const hoursOpen = (now.getTime() - openedAt.getTime()) / (1000 * 60 * 60);
     
-    const bePct = parseFloat(botConfig?.sgBePct || "2.5");
-    const trailStartPct = parseFloat(botConfig?.sgTrailStartPct || "3.0");
-    const trailDistancePct = parseFloat(botConfig?.sgTrailDistancePct || "1.5");
-    const tpPct = parseFloat(botConfig?.sgTpPct || "5.0");
-    const timeStopHours = botConfig?.sgTimeStopHours || 48;
+    // Use position snapshot if available, otherwise fall back to global config
+    const snap = pos.configSnapshot;
+    const bePct = snap?.sgBeAtPct ?? parseFloat(botConfig?.sgBeAtPct || "1.5");
+    const trailStartPct = snap?.sgTrailStartPct ?? parseFloat(botConfig?.sgTrailStartPct || "2.0");
+    const trailDistancePct = snap?.sgTrailDistancePct ?? parseFloat(botConfig?.sgTrailDistancePct || "0.85");
+    const tpPct = snap?.sgTpFixedPct ?? parseFloat(botConfig?.sgTpFixedPct || "10.0");
+    const tpEnabled = snap?.sgTpFixedEnabled ?? (botConfig?.sgTpFixedEnabled || false);
+    const timeStopHours = botConfig?.timeStopHours || 48;
     const adaptiveEnabled = botConfig?.adaptiveExitEnabled || false;
     
-    const beActive = currentPnlPct >= bePct;
-    const beProgress = Math.min(100, (currentPnlPct / bePct) * 100);
-    const beRemaining = Math.max(0, bePct - currentPnlPct);
+    // USE REAL SERVER STATE (not client-side estimates)
+    const beActive = pos.sgBreakEvenActivated === true;
+    const beProgress = beActive ? 100 : Math.min(100, Math.max(0, (currentPnlPct / bePct) * 100));
+    const beRemaining = beActive ? 0 : Math.max(0, bePct - currentPnlPct);
     
-    const trailActive = currentPnlPct >= trailStartPct;
-    const trailProgress = Math.min(100, (currentPnlPct / trailStartPct) * 100);
-    const trailRemaining = Math.max(0, trailStartPct - currentPnlPct);
+    const trailActive = pos.sgTrailingActivated === true;
+    const trailProgress = trailActive ? 100 : Math.min(100, Math.max(0, (currentPnlPct / trailStartPct) * 100));
+    const trailRemaining = trailActive ? 0 : Math.max(0, trailStartPct - currentPnlPct);
     
-    const tpProgress = Math.min(100, (currentPnlPct / tpPct) * 100);
-    const tpRemaining = Math.max(0, tpPct - currentPnlPct);
+    // Real stop price from server
+    const currentStopPrice = pos.sgCurrentStopPrice ? parseFloat(pos.sgCurrentStopPrice) : null;
+    const progressiveLevel = pos.beProgressiveLevel ?? 0;
+    const scaleOutDone = pos.sgScaleOutDone === true;
+    
+    const tpProgress = tpEnabled ? Math.min(100, Math.max(0, (currentPnlPct / tpPct) * 100)) : 0;
+    const tpRemaining = tpEnabled ? Math.max(0, tpPct - currentPnlPct) : tpPct;
     
     const timeStopProgress = Math.min(100, (hoursOpen / timeStopHours) * 100);
     const timeStopRemaining = Math.max(0, timeStopHours - hoursOpen);
@@ -598,14 +616,14 @@ export default function Terminal() {
     
     let nextExit = "Ninguna activa";
     let nextExitType = "none";
-    if (currentPnlPct >= tpPct) {
+    if (tpEnabled && currentPnlPct >= tpPct) {
       nextExit = "Take-Profit (objetivo alcanzado)";
       nextExitType = "tp";
     } else if (trailActive) {
-      nextExit = "Trailing Stop activo";
+      nextExit = `Trailing Stop ACTIVO${currentStopPrice ? ` @ $${currentStopPrice.toFixed(2)}` : ''}`;
       nextExitType = "trail";
     } else if (beActive) {
-      nextExit = "Break-Even protegiendo";
+      nextExit = `Break-Even PROTEGIENDO${currentStopPrice ? ` @ $${currentStopPrice.toFixed(2)}` : ''}`;
       nextExitType = "be";
     } else if (!timeStopDisabled && hoursOpen >= timeStopHours) {
       nextExit = "Time-Stop (tiempo excedido)";
@@ -621,9 +639,10 @@ export default function Terminal() {
     return {
       bePct, beActive, beProgress, beRemaining,
       trailStartPct, trailActive, trailProgress, trailRemaining, trailDistancePct,
-      tpPct, tpProgress, tpRemaining,
+      tpPct, tpEnabled, tpProgress, tpRemaining,
       timeStopHours, timeStopProgress, timeStopRemaining, timeStopDisabled,
-      hoursOpen, adaptiveEnabled, nextExit, nextExitType, currentPnlPct
+      hoursOpen, adaptiveEnabled, nextExit, nextExitType, currentPnlPct,
+      currentStopPrice, progressiveLevel, scaleOutDone,
     };
   };
 
@@ -1496,6 +1515,12 @@ export default function Terminal() {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     PnL actual: {exitStatus.currentPnlPct >= 0 ? '+' : ''}{exitStatus.currentPnlPct.toFixed(2)}%
+                    {exitStatus.beActive && exitStatus.progressiveLevel > 0 && (
+                      <span className="ml-2 text-green-400">| Nivel BE: {exitStatus.progressiveLevel}/3</span>
+                    )}
+                    {exitStatus.currentStopPrice && (
+                      <span className="ml-2 text-yellow-400">| Stop: ${exitStatus.currentStopPrice.toFixed(2)}</span>
+                    )}
                   </div>
                 </div>
 
@@ -1515,20 +1540,26 @@ export default function Terminal() {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     PnL actual: {exitStatus.currentPnlPct >= 0 ? '+' : ''}{exitStatus.currentPnlPct.toFixed(2)}%
+                    {exitStatus.trailActive && exitStatus.currentStopPrice && (
+                      <span className="ml-2 text-cyan-400">| Stop: ${exitStatus.currentStopPrice.toFixed(2)}</span>
+                    )}
+                    {exitStatus.scaleOutDone && (
+                      <span className="ml-2 text-purple-400">| Scale-out: HECHO</span>
+                    )}
                   </div>
                 </div>
 
                 {/* Take-Profit */}
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Take-Profit ({exitStatus.tpPct}%)</span>
-                    <span className={`text-sm font-mono ${exitStatus.currentPnlPct >= exitStatus.tpPct ? 'text-green-400' : 'text-muted-foreground'}`}>
-                      {exitStatus.currentPnlPct >= exitStatus.tpPct ? '✓ OBJETIVO' : `Falta +${exitStatus.tpRemaining.toFixed(2)}%`}
+                    <span className="text-sm text-muted-foreground">Take-Profit ({exitStatus.tpEnabled ? `${exitStatus.tpPct}%` : 'OFF'})</span>
+                    <span className={`text-sm font-mono ${exitStatus.tpEnabled && exitStatus.currentPnlPct >= exitStatus.tpPct ? 'text-green-400' : 'text-muted-foreground'}`}>
+                      {!exitStatus.tpEnabled ? 'Desactivado' : exitStatus.currentPnlPct >= exitStatus.tpPct ? '✓ OBJETIVO' : `Falta +${exitStatus.tpRemaining.toFixed(2)}%`}
                     </span>
                   </div>
                   <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
                     <div 
-                      className={`h-full transition-all ${exitStatus.currentPnlPct >= exitStatus.tpPct ? 'bg-green-500' : 'bg-green-500/30'}`}
+                      className={`h-full transition-all ${exitStatus.tpEnabled && exitStatus.currentPnlPct >= exitStatus.tpPct ? 'bg-green-500' : 'bg-green-500/30'}`}
                       style={{ width: `${Math.max(0, exitStatus.tpProgress)}%` }}
                     />
                   </div>

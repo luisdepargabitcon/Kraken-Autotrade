@@ -1306,31 +1306,40 @@ export class ExitManager {
       );
 
       if (progressiveResult.newStopPrice && progressiveResult.newLevel > (position.beProgressiveLevel ?? 0)) {
-        if (!position.sgCurrentStopPrice || progressiveResult.newStopPrice > position.sgCurrentStopPrice) {
-          const oldStop = position.sgCurrentStopPrice;
-          position.sgCurrentStopPrice = progressiveResult.newStopPrice;
-          position.beProgressiveLevel = progressiveResult.newLevel;
-          positionModified = true;
-          log(`SMART_GUARD ${pair}: ${progressiveResult.reason} | stop $${oldStop?.toFixed(4) ?? 'N/A'} → $${progressiveResult.newStopPrice.toFixed(4)}`, "trading");
-          await botLogger.info("SG_PROGRESSIVE_BE", `SMART_GUARD Progressive BE en ${pair}`, {
-            posId: lotId, pair, level: progressiveResult.newLevel, reason: progressiveResult.reason,
-            prevStop: oldStop, newStop: progressiveResult.newStopPrice, currentPrice, priceChangePct: priceChange,
-          });
+        const oldStop = position.sgCurrentStopPrice;
+        const shouldUpdateStop = !position.sgCurrentStopPrice || progressiveResult.newStopPrice > position.sgCurrentStopPrice;
+        const effectiveNewStop = shouldUpdateStop ? progressiveResult.newStopPrice : position.sgCurrentStopPrice!;
 
-          if (this.shouldSendSgAlert(position.lotId, `SG_PROGRESSIVE_BE_L${progressiveResult.newLevel}`)) {
-            const takeProfitPrice = tpFixedEnabled
-              ? position.entryPrice * (1 + tpFixedPct / 100)
-              : undefined;
-            await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
-              stopPrice: progressiveResult.newStopPrice,
-              profitPct: priceChange,
-              reason: `🔒 ${progressiveResult.reason}`,
-              takeProfitPrice,
-              trailingStatus: position.sgTrailingActivated ? {
-                active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
-              } : undefined,
-            });
-          }
+        // Always update level (milestone tracking), only update stop if it would be higher
+        position.beProgressiveLevel = progressiveResult.newLevel;
+        if (shouldUpdateStop) {
+          position.sgCurrentStopPrice = progressiveResult.newStopPrice;
+        }
+        positionModified = true;
+
+        const stopNote = shouldUpdateStop
+          ? `stop $${oldStop?.toFixed(4) ?? 'N/A'} → $${progressiveResult.newStopPrice.toFixed(4)}`
+          : `nivel actualizado (trailing stop $${effectiveNewStop.toFixed(4)} ya superior)`;
+        log(`SMART_GUARD ${pair}: ${progressiveResult.reason} | ${stopNote}`, "trading");
+        await botLogger.info("SG_PROGRESSIVE_BE", `SMART_GUARD Progressive BE en ${pair}`, {
+          posId: lotId, pair, level: progressiveResult.newLevel, reason: progressiveResult.reason,
+          prevStop: oldStop, newStop: effectiveNewStop, stopChanged: shouldUpdateStop,
+          currentPrice, priceChangePct: priceChange,
+        });
+
+        if (this.shouldSendSgAlert(position.lotId, `SG_PROGRESSIVE_BE_L${progressiveResult.newLevel}`)) {
+          const takeProfitPrice = tpFixedEnabled
+            ? position.entryPrice * (1 + tpFixedPct / 100)
+            : undefined;
+          await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
+            stopPrice: effectiveNewStop,
+            profitPct: priceChange,
+            reason: `🔒 ${progressiveResult.reason}`,
+            takeProfitPrice,
+            trailingStatus: position.sgTrailingActivated ? {
+              active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
+            } : undefined,
+          });
         }
       }
     }

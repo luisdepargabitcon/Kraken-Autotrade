@@ -2,6 +2,54 @@
 
 ---
 
+## 2026-03-10 — FIX: Exit Optimization no funcionaba — UI mostraba estado client-side, Progressive BE no rastreaba nivel
+
+### Problema reportado
+- Solo se recibieron alertas de trailing en XRP, no en BTC/SOL/ETH
+- Break-Even marcado "ACTIVO" en UI pero no protegía realmente las posiciones
+- Las salidas y seguimiento no funcionaban como se esperaba
+
+### Root cause (4 bugs encontrados)
+
+#### Bug 1: UI `calculateExitStatus` calculaba estado CLIENT-SIDE
+- **Archivo:** `client/src/pages/Terminal.tsx` (función `calculateExitStatus`)
+- La UI calculaba si BE/Trailing estaban activos comparando P&L actual vs umbrales → estimación
+- NO leía los campos reales del servidor (`sgBreakEvenActivated`, `sgTrailingActivated`, `sgCurrentStopPrice`)
+- **Fix:** Reescrita la función para usar estado REAL de la posición desde el servidor
+
+#### Bug 2: Field names incorrectos en config query
+- **Archivo:** `client/src/pages/Terminal.tsx` (query `botConfig`)
+- `sgBePct` → debía ser `sgBeAtPct` (campo Drizzle real)
+- `sgTpPct` → debía ser `sgTpFixedPct`
+- `sgTimeStopHours` → debía ser `timeStopHours`
+- Esto causaba fallback a valores hardcoded incorrectos (2.5%, 5.0%, 48h)
+- **Fix:** Corregidos todos los field names para coincidir con el schema Drizzle
+
+#### Bug 3: Progressive BE no actualizaba `beProgressiveLevel` cuando trailing stop ya era más alto
+- **Archivo:** `server/services/exitManager.ts` (paso 5b)
+- Si el trailing stop ya era > progressive BE stop, el nivel no se actualizaba
+- Esto impedía el rastreo de milestones y las alertas de nivel
+- **Fix:** Ahora siempre actualiza el nivel (milestone tracking), solo el stop price se cambia si es más alto
+
+#### Bug 4: UI no mostraba stop price real, nivel progresivo, ni estado scale-out
+- **Archivo:** `client/src/pages/Terminal.tsx` (dialog de posición)
+- No se mostraba el precio de stop real del servidor
+- No se mostraba el nivel progresivo de BE (1/3, 2/3, 3/3)
+- No se mostraba si scale-out se había ejecutado
+- **Fix:** Añadidos campos SmartGuard al interface + mostrados en el dialog
+
+### Por qué solo XRP recibió alertas de trailing
+- Las posiciones BTC/SOL/ETH ya tenían `sgTrailingActivated=true` del código ANTERIOR (pre-deploy)
+- XRP probablemente cruzó el umbral +2% DESPUÉS del deploy, activando la alerta con el nuevo código
+- **Esto es comportamiento correcto**: las alertas son one-shot por evento
+
+### Archivos modificados
+- `server/services/exitManager.ts` — Fix Progressive BE level tracking
+- `client/src/pages/Terminal.tsx` — Fix calculateExitStatus, field names, dialog UI
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — Documentación
+
+---
+
 ## 2026-03-08 — FEAT: Pro Exit Optimization (ATR Dynamic Trailing + Progressive BE + Trail Decay)
 
 ### Problema reportado
