@@ -94,6 +94,26 @@ export const registerPositionsRoutes: RegisterRoutes = (app, deps) => {
     }
   });
 
+  // Refresh SmartGuard snapshots for all open positions with current config
+  app.post("/api/positions/refresh-snapshots", async (req, res) => {
+    try {
+      const tradingEngine = deps.getTradingEngine();
+      if (!tradingEngine) {
+        return res.status(503).json({ error: "Motor de trading no inicializado" });
+      }
+
+      const result = await tradingEngine.refreshSmartGuardSnapshots();
+      res.json({
+        success: true,
+        message: `Snapshots actualizados: ${result.updated} posiciones, ${result.skipped} omitidas`,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error("[api/positions/refresh-snapshots] Error:", error);
+      res.status(500).json({ error: error.message || "Failed to refresh snapshots" });
+    }
+  });
+
   app.post("/api/positions/:pair/buy", async (req, res) => {
     try {
       const pair = req.params.pair.replace("-", "/");

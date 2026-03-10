@@ -91,6 +91,7 @@ export type EventType =
   | "POSITION_CREATED_VIA_SYNC"
   // Smart-Guard events (position management)
   | "SG_SNAPSHOT_BACKFILLED"
+  | "SG_SNAPSHOT_REFRESH"
   | "SG_BE_ACTIVATED"
   | "SG_TRAIL_ACTIVATED"
   | "SG_STOP_UPDATED"

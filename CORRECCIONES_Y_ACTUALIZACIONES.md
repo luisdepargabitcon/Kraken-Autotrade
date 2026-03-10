@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-03-10 — FEAT: Refresh SmartGuard snapshots para posiciones abiertas
+
+### Problema
+Las posiciones abiertas antes del deploy tienen un `configSnapshot` con valores ANTIGUOS (ej: `sgTrailDistancePct=1.5` en vez de `0.85`, `sgScaleOutEnabled=false` en vez de `true`). Los nuevos cambios de exit optimization no se aplicaban a estas posiciones.
+
+### Solución
+- **Nuevo método:** `TradingEngine.refreshSmartGuardSnapshots()` — actualiza los parámetros SG del snapshot para TODAS las posiciones abiertas SMART_GUARD con la config actual
+- **Nuevo endpoint:** `POST /api/positions/refresh-snapshots` — invoca el método anterior
+- Actualiza tanto la memoria (Map) como la base de datos (DB)
+- Log detallado de cada posición actualizada (valores old → new)
+
+### Uso post-deploy
+```bash
+curl -X POST http://localhost:5000/api/positions/refresh-snapshots
+```
+Respuesta: `{ success: true, updated: N, skipped: M, details: [...] }`
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — Nuevo método `refreshSmartGuardSnapshots()`
+- `server/routes/positions.routes.ts` — Nuevo endpoint `POST /api/positions/refresh-snapshots`
+- `server/services/botLogger.ts` — Nuevo EventType `SG_SNAPSHOT_REFRESH`
+
+---
+
 ## 2026-03-10 — FIX: Exit Optimization no funcionaba — UI mostraba estado client-side, Progressive BE no rastreaba nivel
 
 ### Problema reportado

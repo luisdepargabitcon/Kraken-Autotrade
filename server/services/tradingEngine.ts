@@ -2169,6 +2169,59 @@ ${positionsList}
     }
   }
 
+  // Refresh SmartGuard params in configSnapshot for ALL open SMART_GUARD positions
+  // Used when config changes and user wants new values to apply to existing positions
+  public async refreshSmartGuardSnapshots(): Promise<{ updated: number; skipped: number; details: string[] }> {
+    const currentConfig = await storage.getBotConfig();
+    if (!currentConfig) {
+      return { updated: 0, skipped: 0, details: ["No config found"] };
+    }
+
+    let updated = 0;
+    let skipped = 0;
+    const details: string[] = [];
+
+    for (const [lotId, position] of this.openPositions.entries()) {
+      if (position.entryMode !== "SMART_GUARD" || !position.configSnapshot) {
+        skipped++;
+        details.push(`${position.pair} (${lotId}): skipped (mode=${position.entryMode || 'unknown'})`);
+        continue;
+      }
+
+      const sgParams = this.getSmartGuardParams(position.pair, currentConfig);
+      const oldTrailDist = position.configSnapshot.sgTrailDistancePct;
+      const oldScaleOut = position.configSnapshot.sgScaleOutEnabled;
+
+      // Update SG fields in the snapshot
+      position.configSnapshot.sgBeAtPct = sgParams.sgBeAtPct;
+      position.configSnapshot.sgFeeCushionPct = sgParams.sgFeeCushionPct;
+      position.configSnapshot.sgFeeCushionAuto = sgParams.sgFeeCushionAuto;
+      position.configSnapshot.sgTrailStartPct = sgParams.sgTrailStartPct;
+      position.configSnapshot.sgTrailDistancePct = sgParams.sgTrailDistancePct;
+      position.configSnapshot.sgTrailStepPct = sgParams.sgTrailStepPct;
+      position.configSnapshot.sgTpFixedEnabled = sgParams.sgTpFixedEnabled;
+      position.configSnapshot.sgTpFixedPct = sgParams.sgTpFixedPct;
+      position.configSnapshot.sgScaleOutEnabled = sgParams.sgScaleOutEnabled;
+      position.configSnapshot.sgScaleOutPct = sgParams.sgScaleOutPct;
+      position.configSnapshot.sgMinPartUsd = sgParams.sgMinPartUsd;
+      position.configSnapshot.sgScaleOutThreshold = sgParams.sgScaleOutThreshold;
+
+      // Persist to DB
+      await this.savePositionToDB(position.pair, position);
+
+      const info = `${position.pair} (${lotId}): trailDist ${oldTrailDist}→${sgParams.sgTrailDistancePct}, scaleOut ${oldScaleOut}→${sgParams.sgScaleOutEnabled}`;
+      details.push(info);
+      log(`[SNAPSHOT_REFRESH] ${info}`, "trading");
+      updated++;
+    }
+
+    await botLogger.info("SG_SNAPSHOT_REFRESH", `SmartGuard snapshots refreshed: ${updated} updated, ${skipped} skipped`, {
+      updated, skipped,
+    });
+
+    return { updated, skipped, details };
+  }
+
   private async deletePositionFromDBByLotId(lotId: string) {
     try {
       await storage.deleteOpenPositionByLotId(lotId);
