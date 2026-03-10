@@ -250,15 +250,20 @@ export function SmartExitTab() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs">Edad mínima posición</Label>
-                    <span className="text-xs font-mono text-amber-400">{config.minPositionAgeSec}s</span>
+                    <span className="text-xs font-mono text-amber-400">
+                      {config.minPositionAgeSec >= 60
+                        ? `${Math.floor(config.minPositionAgeSec / 60)}min${config.minPositionAgeSec % 60 > 0 ? ` ${config.minPositionAgeSec % 60}s` : ''}`
+                        : `${config.minPositionAgeSec}s`}
+                    </span>
                   </div>
                   <Slider
                     value={[config.minPositionAgeSec]}
                     min={0}
-                    max={300}
-                    step={10}
+                    max={1800}
+                    step={30}
                     onValueChange={([v]) => updateMutation.mutate({ minPositionAgeSec: v })}
                   />
+                  <p className="text-xs text-muted-foreground">Smart Exit no evalúa hasta que la posición tenga esta antigüedad (máx 30min)</p>
                 </div>
               </CardContent>
             </Card>
