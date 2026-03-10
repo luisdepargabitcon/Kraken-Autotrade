@@ -697,7 +697,9 @@ type AlertSubtype =
   | "system_bot_started" | "system_bot_paused"
   | "error_api" | "error_nonce"
   | "balance_exposure"
-  | "heartbeat_periodic";
+  | "heartbeat_periodic"
+  // Smart Exit Engine alerts
+  | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime";
 
 type EngineController = {
   start: () => Promise<void>;

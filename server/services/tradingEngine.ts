@@ -2092,6 +2092,8 @@ El motor de trading ha sido desactivado.
           sgCurrentStopPrice: pos.sgCurrentStopPrice ? parseFloat(pos.sgCurrentStopPrice) : undefined,
           sgTrailingActivated: pos.sgTrailingActivated ?? false,
           sgScaleOutDone: pos.sgScaleOutDone ?? false,
+          // Smart Exit Engine entry context (restored from DB)
+          entryContext: (pos as any).entryContextJson ?? undefined,
         };
         
         this.openPositions.set(lotId, openPosition);
@@ -2166,6 +2168,8 @@ ${positionsList}
         sgCurrentStopPrice: position.sgCurrentStopPrice?.toString(),
         sgTrailingActivated: position.sgTrailingActivated,
         sgScaleOutDone: position.sgScaleOutDone,
+        // Smart Exit Engine entry context
+        entryContextJson: position.entryContext ?? null,
       });
     } catch (error: any) {
       log(`Error guardando posición ${pair} (${position.lotId}): ${error.message}`, "trading");
@@ -2263,6 +2267,13 @@ ${positionsList}
 
     // Snapshot entries to avoid mutation-during-iteration when deleting closed positions
     const positionEntries = Array.from(this.openPositions.entries());
+
+    // Per-pair cache to avoid duplicate API calls for multiple lots of the same pair
+    const pairCandleCache = new Map<string, OHLCCandle[] | undefined>();
+    const pairPriceCache = new Map<string, number>();
+    const pairMtfCache = new Map<string, string | null>();
+    const pairVolumeRatioCache = new Map<string, number | undefined>();
+
     for (const [lotId, position] of positionEntries) {
       try {
         // Skip if position was already removed (e.g. by SL/TP earlier in cycle)
@@ -2270,39 +2281,58 @@ ${positionsList}
         // Skip if position is already being closed
         if ((position as any).isClosing) continue;
 
-        // Get current price
-        const krakenPair = this.formatKrakenPair(position.pair);
-        const ticker = await this.getDataExchange().getTicker(krakenPair);
-        const currentPrice = Number((ticker as any)?.last ?? 0);
+        const pair = position.pair;
+
+        // Get current price (cached per pair)
+        let currentPrice = pairPriceCache.get(pair);
+        if (currentPrice === undefined) {
+          try {
+            const krakenPair = this.formatKrakenPair(pair);
+            const ticker = await this.getDataExchange().getTicker(krakenPair);
+            currentPrice = Number((ticker as any)?.last ?? 0);
+          } catch { currentPrice = 0; }
+          pairPriceCache.set(pair, currentPrice!);
+        }
         if (!currentPrice || currentPrice <= 0) continue;
 
         // Calculate PnL
         const pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
         const pnlUsd = (currentPrice - position.entryPrice) * position.amount;
 
-        // Get candles for technical analysis
-        let candles: OHLCCandle[] | undefined;
-        try {
-          const rawCandles = await this.getDataExchange().getOHLC(position.pair, intervalMinutes);
-          candles = rawCandles ? rawCandles.slice(0, -1) : undefined; // Exclude unfinished candle
-        } catch { candles = undefined; }
+        // Get candles for technical analysis (cached per pair)
+        let candles = pairCandleCache.get(pair);
+        if (candles === undefined && !pairCandleCache.has(pair)) {
+          try {
+            const rawCandles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+            candles = rawCandles ? rawCandles.slice(0, -1) : undefined;
+          } catch { candles = undefined; }
+          pairCandleCache.set(pair, candles);
+        }
 
-        // Get MTF trend
-        let mtfTrend: string | null = null;
-        try {
-          const mtfData = await this.mtfAnalyzer.getMultiTimeframeData(position.pair);
-          if (mtfData) {
-            const mtfAnalysis = _analyzeMultiTimeframe(mtfData);
-            mtfTrend = mtfAnalysis.shortTerm;
+        // Get MTF trend (cached per pair)
+        let mtfTrend = pairMtfCache.get(pair);
+        if (mtfTrend === undefined && !pairMtfCache.has(pair)) {
+          try {
+            const mtfData = await this.mtfAnalyzer.getMultiTimeframeData(pair);
+            if (mtfData) {
+              const mtfAnalysis = _analyzeMultiTimeframe(mtfData);
+              mtfTrend = mtfAnalysis.shortTerm;
+            } else {
+              mtfTrend = null;
+            }
+          } catch { mtfTrend = null; }
+          pairMtfCache.set(pair, mtfTrend!);
+        }
+
+        // Volume ratio (cached per pair)
+        let volumeRatio = pairVolumeRatioCache.get(pair);
+        if (volumeRatio === undefined && !pairVolumeRatioCache.has(pair)) {
+          if (candles && candles.length >= 10) {
+            const avgVol = candles.slice(-10).reduce((s, c) => s + c.volume, 0) / 10;
+            const lastVol = candles[candles.length - 1]?.volume ?? 0;
+            volumeRatio = avgVol > 0 ? lastVol / avgVol : 1;
           }
-        } catch { mtfTrend = null; }
-
-        // Volume ratio
-        let volumeRatio: number | undefined;
-        if (candles && candles.length >= 10) {
-          const avgVol = candles.slice(-10).reduce((s, c) => s + c.volume, 0) / 10;
-          const lastVol = candles[candles.length - 1]?.volume ?? 0;
-          volumeRatio = avgVol > 0 ? lastVol / avgVol : 1;
+          pairVolumeRatioCache.set(pair, volumeRatio);
         }
 
         const marketData: SmartExitMarketData = {
@@ -2345,7 +2375,7 @@ ${positionsList}
           smartExitEngine.markThresholdHitNotified(lotId);
           if (this.telegramService.isInitialized()) {
             const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "THRESHOLD_HIT");
-            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_threshold" as any);
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_threshold");
             log(`[SMART_EXIT_TELEGRAM] threshold hit sent ${position.pair} lotId=${lotId}`, "trading");
           }
           await botLogger.info("SMART_EXIT_THRESHOLD_HIT", `Smart Exit threshold hit for ${position.pair}`, {
@@ -2359,7 +2389,7 @@ ${positionsList}
           smartExitEngine.markRegimeChangeNotified(lotId);
           if (this.telegramService.isInitialized()) {
             const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "REGIME_CHANGE");
-            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_regime" as any);
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_regime");
             log(`[SMART_EXIT_TELEGRAM] regime change sent ${position.pair} lotId=${lotId}`, "trading");
           }
         }
@@ -2377,7 +2407,7 @@ ${positionsList}
           // Telegram: executed exit
           if (seConfig.notifications.enabled && seConfig.notifications.notifyOnExecutedExit && this.telegramService.isInitialized()) {
             const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "EXECUTED");
-            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_executed" as any);
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_executed");
           }
 
           // Execute the sell via exitManager pattern

@@ -447,6 +447,8 @@ export const openPositions = pgTable("open_positions", {
   timeStopExpiredAt: timestamp("time_stop_expired_at"),
   // Break-even progressive level (1, 2, 3) for fee-aware BE
   beProgressiveLevel: integer("be_progressive_level").default(0),
+  // Smart Exit Engine: entry context snapshot (signals at entry time)
+  entryContextJson: jsonb("entry_context_json"),
   // === NEW: Instant Position & Average Entry Price ===
   // Position lifecycle status: PENDING_FILL → OPEN (or FAILED/CANCELLED)
   status: text("status").default("OPEN"),
