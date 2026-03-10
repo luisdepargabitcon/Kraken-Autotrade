@@ -45,26 +45,46 @@ async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange
 
   const byTimeAsc = recentTrades;
 
-  const buys = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'buy');
-  const sells = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'sell');
+  const allBuys = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'buy');
+  const sells  = byTimeAsc.filter((t: any) => String(t.type).toLowerCase() === 'sell');
 
-  let buyIndex = 0;
-  let buyRemaining = buys[0] ? parseFloat(String(buys[0].amount)) : 0;
+  // Separate FIFO queues: bot trades never mix with sync/external trades
+  const botBuys = allBuys.filter((t: any) => Boolean(t.executedByBot));
+  const extBuys = allBuys.filter((t: any) => !Boolean(t.executedByBot));
+
+  let botBuyIdx = 0;
+  let botBuyRem = botBuys[0] ? parseFloat(String(botBuys[0].amount)) : 0;
+  let extBuyIdx = 0;
+  let extBuyRem = extBuys[0] ? parseFloat(String(extBuys[0].amount)) : 0;
+
+  const consumeFifo = (
+    buys: any[], buyIdx: number, buyRem: number, qty: number
+  ): [number, number] => {
+    let remaining = qty;
+    while (remaining > 0.00000001 && buyIdx < buys.length) {
+      const match = Math.min(buyRem, remaining);
+      remaining -= match;
+      buyRem -= match;
+      if (buyRem <= 0.00000001) {
+        buyIdx++;
+        buyRem = buys[buyIdx] ? parseFloat(String(buys[buyIdx].amount)) : 0;
+      }
+    }
+    return [buyIdx, buyRem];
+  };
 
   for (const sell of sells) {
+    const isBotSell = Boolean((sell as any).executedByBot);
+    const activeBuys = isBotSell ? botBuys : extBuys;
+    let activeBuyIdx = isBotSell ? botBuyIdx : extBuyIdx;
+    let activeBuyRem = isBotSell ? botBuyRem : extBuyRem;
+
     const needsPnl = sell.realizedPnlUsd == null || String(sell.realizedPnlUsd).length === 0;
     if (!needsPnl) {
-      // Still consume FIFO quantities so later sells are priced correctly.
-      let toConsume = parseFloat(String(sell.amount));
-      while (toConsume > 0.00000001 && buyIndex < buys.length) {
-        const matchAmount = Math.min(buyRemaining, toConsume);
-        toConsume -= matchAmount;
-        buyRemaining -= matchAmount;
-        if (buyRemaining <= 0.00000001) {
-          buyIndex++;
-          buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
-        }
-      }
+      // Consume the correct FIFO so later sells are priced correctly.
+      [activeBuyIdx, activeBuyRem] = consumeFifo(activeBuys, activeBuyIdx, activeBuyRem, parseFloat(String(sell.amount)));
+      if (isBotSell) { botBuyIdx = activeBuyIdx; botBuyRem = activeBuyRem; }
+      else { extBuyIdx = activeBuyIdx; extBuyRem = activeBuyRem; }
       continue;
     }
 
@@ -92,6 +112,9 @@ async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange
             const avgEntryPrice = agg.cost / agg.qty;
             const pnlPct = (agg.pnl / agg.cost) * 100;
             await storage.updateTradePnl(sell.id, avgEntryPrice.toFixed(8), agg.pnl.toFixed(8), pnlPct.toFixed(4));
+            [activeBuyIdx, activeBuyRem] = consumeFifo(activeBuys, activeBuyIdx, activeBuyRem, parseFloat(String(sell.amount)));
+            if (isBotSell) { botBuyIdx = activeBuyIdx; botBuyRem = activeBuyRem; }
+            else { extBuyIdx = activeBuyIdx; extBuyRem = activeBuyRem; }
             continue;
           }
         }
@@ -100,44 +123,50 @@ async function tryRecalculatePnlForPairExchange(params: { pair: string; exchange
       // best-effort
     }
 
-    // Strategy 1: engine sells with entryPrice should never use global FIFO (prevents contamination)
+    // Strategy 1: engine sells with stored entryPrice — use it directly (no FIFO)
     try {
       const origin = String((sell as any).origin ?? '').toLowerCase();
-      const executedByBot = Boolean((sell as any).executedByBot);
       const entryPriceRaw = (sell as any).entryPrice;
       const entryPriceNum = entryPriceRaw != null ? parseFloat(String(entryPriceRaw)) : NaN;
-      if (origin === 'engine' && executedByBot && Number.isFinite(entryPriceNum) && entryPriceNum > 0) {
+      if (origin === 'engine' && isBotSell && Number.isFinite(entryPriceNum) && entryPriceNum > 0) {
         const sellPrice = parseFloat(String(sell.price));
         const qty = parseFloat(String(sell.amount));
         const entryValue = entryPriceNum * qty;
         const exitValue = sellPrice * qty;
-        const pnlGross = exitValue - entryValue;
         const feePct = feePctByExchange(exchange);
-        const pnlNet = pnlGross - (entryValue * feePct / 100) - (exitValue * feePct / 100);
+        const pnlNet = (exitValue - entryValue) - (entryValue * feePct / 100) - (exitValue * feePct / 100);
         const pnlPct = entryValue > 0 ? (pnlNet / entryValue) * 100 : 0;
         await storage.updateTradePnl(sell.id, entryPriceNum.toFixed(8), pnlNet.toFixed(8), pnlPct.toFixed(4));
+        [activeBuyIdx, activeBuyRem] = consumeFifo(activeBuys, activeBuyIdx, activeBuyRem, qty);
+        if (isBotSell) { botBuyIdx = activeBuyIdx; botBuyRem = activeBuyRem; }
+        else { extBuyIdx = activeBuyIdx; extBuyRem = activeBuyRem; }
         continue;
       }
     } catch {
       // best-effort
     }
 
+    // Strategy 2: bot-isolated FIFO (for bot sells without stored entryPrice)
+    // Uses ONLY bot buys — never mixes with sync'd external trades
     let sellRemaining = parseFloat(String(sell.amount));
     let totalCost = 0;
     let totalAmount = 0;
 
-    while (sellRemaining > 0.00000001 && buyIndex < buys.length) {
-      const buy = buys[buyIndex];
-      const matchAmount = Math.min(buyRemaining, sellRemaining);
+    while (sellRemaining > 0.00000001 && activeBuyIdx < activeBuys.length) {
+      const buy = activeBuys[activeBuyIdx];
+      const matchAmount = Math.min(activeBuyRem, sellRemaining);
       totalCost += matchAmount * parseFloat(String(buy.price));
       totalAmount += matchAmount;
       sellRemaining -= matchAmount;
-      buyRemaining -= matchAmount;
-      if (buyRemaining <= 0.00000001) {
-        buyIndex++;
-        buyRemaining = buys[buyIndex] ? parseFloat(String(buys[buyIndex].amount)) : 0;
+      activeBuyRem -= matchAmount;
+      if (activeBuyRem <= 0.00000001) {
+        activeBuyIdx++;
+        activeBuyRem = activeBuys[activeBuyIdx] ? parseFloat(String(activeBuys[activeBuyIdx].amount)) : 0;
       }
     }
+
+    if (isBotSell) { botBuyIdx = activeBuyIdx; botBuyRem = activeBuyRem; }
+    else { extBuyIdx = activeBuyIdx; extBuyRem = activeBuyRem; }
 
     if (totalAmount > 0.00000001) {
       const avgEntryPrice = totalCost / totalAmount;
