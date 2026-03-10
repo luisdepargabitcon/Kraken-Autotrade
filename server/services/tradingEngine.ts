@@ -18,6 +18,7 @@ import { signalAccumulator, ACCUMULATOR_THRESHOLD, type AccumulatedSignal } from
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
 import { markupTracker } from "./MarkupTracker";
 import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
+import { smartExitEngine, type SmartExitConfig, type SmartExitMarketData, type SmartExitPosition, type SmartExitDecision, type EntryContext } from "./SmartExitEngine";
 import {
   calculateEMA as _calculateEMA,
   calculateRSI as _calculateRSI,
@@ -374,6 +375,8 @@ interface OpenPosition {
   timeStopDisabled?: boolean;
   timeStopExpiredAt?: number; // Timestamp when time-stop expired (for UI/alerts)
   beProgressiveLevel?: number; // Break-even progressive level (0, 1, 2, 3)
+  // Smart Exit Engine: entry context snapshot
+  entryContext?: EntryContext;
 }
 
 // === ADAPTIVE EXIT ENGINE TYPES ===
@@ -2240,6 +2243,175 @@ ${positionsList}
     }
   }
 
+  // Smart Exit decisions cache — exposed for diagnostics and UI
+  private smartExitDecisions: Map<string, SmartExitDecision> = new Map();
+
+  getSmartExitDecisions(): Map<string, SmartExitDecision> {
+    return this.smartExitDecisions;
+  }
+
+  private async evaluateOpenPositionsWithSmartExit(config: any, balances: any) {
+    if (this.openPositions.size === 0) return;
+
+    const seConfig = smartExitEngine.getConfig(config.smartExitConfig);
+    if (!seConfig.enabled) return;
+
+    const signalTimeframe = config.signalTimeframe || "cycle";
+    const intervalMinutes = signalTimeframe !== "cycle"
+      ? this.getTimeframeIntervalMinutes(signalTimeframe)
+      : 5; // default 5m for candle data
+
+    for (const [lotId, position] of this.openPositions.entries()) {
+      try {
+        // Skip if position is already being closed
+        if ((position as any).isClosing) continue;
+
+        // Get current price
+        const krakenPair = this.formatKrakenPair(position.pair);
+        const ticker = await this.getDataExchange().getTicker(krakenPair);
+        const currentPrice = Number((ticker as any)?.last ?? 0);
+        if (!currentPrice || currentPrice <= 0) continue;
+
+        // Calculate PnL
+        const pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+        const pnlUsd = (currentPrice - position.entryPrice) * position.amount;
+
+        // Get candles for technical analysis
+        let candles: OHLCCandle[] | undefined;
+        try {
+          const rawCandles = await this.getDataExchange().getOHLC(position.pair, intervalMinutes);
+          candles = rawCandles ? rawCandles.slice(0, -1) : undefined; // Exclude unfinished candle
+        } catch { candles = undefined; }
+
+        // Get MTF trend
+        let mtfTrend: string | null = null;
+        try {
+          const mtfData = await this.mtfAnalyzer.getMultiTimeframeData(position.pair);
+          if (mtfData) {
+            const mtfAnalysis = _analyzeMultiTimeframe(mtfData);
+            mtfTrend = mtfAnalysis.shortTerm;
+          }
+        } catch { mtfTrend = null; }
+
+        // Volume ratio
+        let volumeRatio: number | undefined;
+        if (candles && candles.length >= 10) {
+          const avgVol = candles.slice(-10).reduce((s, c) => s + c.volume, 0) / 10;
+          const lastVol = candles[candles.length - 1]?.volume ?? 0;
+          volumeRatio = avgVol > 0 ? lastVol / avgVol : 1;
+        }
+
+        const marketData: SmartExitMarketData = {
+          pair: position.pair,
+          currentPrice,
+          priceHistory: this.priceHistory.get(position.pair) || [],
+          candles,
+          mtfTrend,
+          volumeRatio,
+          orderbookBias: null,
+          exchangeNetflow: null,
+        };
+
+        const sePosition: SmartExitPosition = {
+          lotId,
+          pair: position.pair,
+          entryPrice: position.entryPrice,
+          amount: position.amount,
+          openedAt: position.openedAt,
+          entryMode: position.entryMode,
+          pnlPct,
+          pnlUsd,
+          entryContext: position.entryContext,
+        };
+
+        const decision = smartExitEngine.evaluate(sePosition, marketData, seConfig);
+        this.smartExitDecisions.set(lotId, decision);
+
+        // Log evaluation
+        if (decision.score > 0) {
+          log(`[SMART_EXIT] ${position.pair} (${lotId}) regime=${decision.regime} score=${decision.score} threshold=${decision.threshold} confirm=${decision.confirmationProgress}/${decision.confirmationRequired} pnl=${pnlPct.toFixed(2)}%`, "trading");
+          if (decision.contributions.length > 0) {
+            const sigDetails = decision.contributions.map(c => `${c.signal}(+${c.score})`).join(" ");
+            log(`[SMART_EXIT] ${position.pair} signals: ${sigDetails}`, "trading");
+          }
+        }
+
+        // Telegram: threshold hit notification
+        if (smartExitEngine.shouldNotifyThresholdHit(lotId, decision, seConfig)) {
+          smartExitEngine.markThresholdHitNotified(lotId);
+          if (this.telegramService.isInitialized()) {
+            const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "THRESHOLD_HIT");
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_threshold" as any);
+            log(`[SMART_EXIT_TELEGRAM] threshold hit sent ${position.pair} lotId=${lotId}`, "trading");
+          }
+          await botLogger.info("SMART_EXIT_THRESHOLD_HIT", `Smart Exit threshold hit for ${position.pair}`, {
+            pair: position.pair, lotId, score: decision.score, threshold: decision.threshold,
+            regime: decision.regime, reasons: decision.reasons, pnlPct,
+          });
+        }
+
+        // Telegram: regime change notification
+        if (smartExitEngine.shouldNotifyRegimeChange(lotId, decision, seConfig)) {
+          smartExitEngine.markRegimeChangeNotified(lotId);
+          if (this.telegramService.isInitialized()) {
+            const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "REGIME_CHANGE");
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_regime" as any);
+            log(`[SMART_EXIT_TELEGRAM] regime change sent ${position.pair} lotId=${lotId}`, "trading");
+          }
+        }
+
+        // Execute exit if confirmed
+        if (decision.shouldExit) {
+          log(`[SMART_EXIT] ${position.pair} (${lotId}) EXIT TRIGGERED score=${decision.score} threshold=${decision.threshold} reasons=${decision.reasons.join(",")}`, "trading");
+
+          await botLogger.info("SMART_EXIT_EXECUTED", `Smart Exit executed for ${position.pair}`, {
+            pair: position.pair, lotId, score: decision.score, threshold: decision.threshold,
+            regime: decision.regime, reasons: decision.reasons, pnlPct, pnlUsd,
+            confirmationCycles: decision.confirmationProgress,
+          });
+
+          // Telegram: executed exit
+          if (seConfig.notifications.enabled && seConfig.notifications.notifyOnExecutedExit && this.telegramService.isInitialized()) {
+            const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "EXECUTED");
+            await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_executed" as any);
+          }
+
+          // Execute the sell via exitManager pattern
+          const assetBalance = this.getAssetBalance(position.pair, balances);
+          const sellAmount = Math.min(position.amount, assetBalance);
+          const sellVolume = this.normalizeVolume(position.pair, sellAmount);
+          const minVolume = this.getOrderMin(position.pair);
+
+          if (sellVolume >= minVolume) {
+            const sellContext = {
+              entryPrice: position.entryPrice,
+              aiSampleId: position.aiSampleId,
+              openedAt: position.openedAt,
+            };
+
+            const success = await this.executeTrade(
+              position.pair, "sell", sellVolume.toFixed(8), currentPrice,
+              `Smart Exit: score=${decision.score}/${decision.threshold} regime=${decision.regime} reasons=${decision.reasons.join(",")}`,
+              undefined, undefined, undefined, sellContext
+            );
+
+            if (success) {
+              this.openPositions.delete(lotId);
+              await this.deletePositionFromDBByLotId(lotId);
+              smartExitEngine.resetConfirmation(lotId);
+              this.smartExitDecisions.delete(lotId);
+              this.lastTradeTime.set(position.pair, Date.now());
+            }
+          } else {
+            log(`[SMART_EXIT] ${position.pair} (${lotId}) sell skipped: volume ${sellVolume} < min ${minVolume}`, "trading");
+          }
+        }
+      } catch (error: any) {
+        log(`[SMART_EXIT] Error evaluating ${position.pair} (${lotId}): ${error.message}`, "trading");
+      }
+    }
+  }
+
   private async runTradingCycle() {
     try {
       const config = await storage.getBotConfig();
@@ -2329,6 +2501,9 @@ El bot ha pausado las operaciones de COMPRA.
       for (const pair of config.activePairs) {
         await this.exitManager.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
       }
+
+      // Smart Exit Engine: evaluate open positions if enabled
+      await this.evaluateOpenPositionsWithSmartExit(config, balances);
 
       // Safety: if trading disabled, do not open new positions
       if (!tradingEnabled || positionsInconsistent) {
@@ -5675,6 +5850,39 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
               const entryFee = volumeNum * price * (getTakerFeePct() / 100);
 
+              // Build entry context snapshot for Smart Exit Engine
+              let entryContext: EntryContext | undefined;
+              try {
+                const signalCountMatch = reason?.match(/Señales:\s*(\d+)/);
+                const entrySignalsCount = signalCountMatch ? parseInt(signalCountMatch[1], 10) : 0;
+                let entryCandles: OHLCCandle[] | undefined;
+                try {
+                  const tfMinutes = entrySignalTf !== "cycle" ? this.getTimeframeIntervalMinutes(entrySignalTf) : 5;
+                  const rawCandles = await this.getDataExchange().getOHLC(pair, tfMinutes);
+                  entryCandles = rawCandles ? rawCandles.slice(0, -1) : undefined;
+                } catch { entryCandles = undefined; }
+
+                let entryMtfTrend: string | undefined;
+                try {
+                  const mtfData = await this.mtfAnalyzer.getMultiTimeframeData(pair);
+                  if (mtfData) {
+                    const mtfAnalysis = _analyzeMultiTimeframe(mtfData);
+                    entryMtfTrend = mtfAnalysis.shortTerm;
+                  }
+                } catch { /* ignore */ }
+
+                const entryRegime = currentConfig?.regimeDetectionEnabled
+                  ? (await this.getMarketRegimeWithCache(pair).catch(() => ({ regime: "unknown" }))).regime
+                  : "unknown";
+
+                entryContext = smartExitEngine.buildEntryContext(
+                  entrySignalsCount,
+                  entryCandles || [],
+                  entryMtfTrend,
+                  entryRegime,
+                );
+              } catch { /* entry context is optional */ }
+
               newPosition = {
                 lotId,
                 pair,
@@ -5693,6 +5901,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 sgCurrentStopPrice: undefined,
                 sgTrailingActivated: false,
                 sgScaleOutDone: false,
+                entryContext,
               };
               this.openPositions.set(lotId, newPosition);
               

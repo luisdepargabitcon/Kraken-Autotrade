@@ -82,6 +82,16 @@ interface OpenPosition {
   sgScaleOutDone?: boolean;
   beProgressiveLevel?: number;
   configSnapshot?: any;
+  // Smart Exit Engine state (from API)
+  smartExitState?: {
+    score: number;
+    threshold: number;
+    regime: string;
+    shouldExit: boolean;
+    confirmationProgress: number;
+    confirmationRequired: number;
+    reasons: string[];
+  } | null;
   // New fields for instant positions
   status?: string | null; // PENDING_FILL | OPEN | FAILED | CANCELLED
   averageEntryPrice?: string | null; // Coste medio
@@ -1594,6 +1604,47 @@ export default function Terminal() {
                     Tiempo abierto: {exitStatus.hoursOpen.toFixed(1)} horas
                   </div>
                 </div>
+
+                {/* Smart Exit Engine */}
+                {selectedPosition?.smartExitState && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Smart Exit 🧪</span>
+                      <span className={`text-sm font-mono ${
+                        selectedPosition.smartExitState.shouldExit ? 'text-red-400' :
+                        selectedPosition.smartExitState.score >= selectedPosition.smartExitState.threshold ? 'text-amber-400' :
+                        'text-muted-foreground'
+                      }`}>
+                        {selectedPosition.smartExitState.shouldExit ? '🔴 EXIT' :
+                         selectedPosition.smartExitState.score >= selectedPosition.smartExitState.threshold ? '⚡ UMBRAL' :
+                         `Score ${selectedPosition.smartExitState.score}/${selectedPosition.smartExitState.threshold}`}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all ${
+                          selectedPosition.smartExitState.shouldExit ? 'bg-red-500' :
+                          selectedPosition.smartExitState.score >= selectedPosition.smartExitState.threshold ? 'bg-amber-500' :
+                          'bg-amber-500/30'
+                        }`}
+                        style={{ width: `${Math.min(100, (selectedPosition.smartExitState.score / Math.max(1, selectedPosition.smartExitState.threshold)) * 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Régimen: <span className={`font-mono ${
+                        selectedPosition.smartExitState.regime === 'TREND' ? 'text-green-400' :
+                        selectedPosition.smartExitState.regime === 'CHOP' ? 'text-yellow-400' :
+                        'text-red-400'
+                      }`}>{selectedPosition.smartExitState.regime}</span></span>
+                      <span>Confirm: {selectedPosition.smartExitState.confirmationProgress}/{selectedPosition.smartExitState.confirmationRequired}</span>
+                    </div>
+                    {selectedPosition.smartExitState.reasons.length > 0 && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Señales: {selectedPosition.smartExitState.reasons.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Comisiones */}
                 <div className="p-3 rounded-lg bg-muted/20 border border-muted space-y-1">

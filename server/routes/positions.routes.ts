@@ -75,6 +75,27 @@ export const registerPositionsRoutes: RegisterRoutes = (app, deps) => {
         const netPnlUsd = currentPrice > 0 ? (unrealizedPnlUsd - entryFeeUsd - exitFeeUsd) : 0;
         const netPnlPct = entryValueUsd > 0 && currentPrice > 0 ? (netPnlUsd / entryValueUsd) * 100 : 0;
         
+        // Smart Exit Engine: attach decision state if available
+        let smartExitState: any = undefined;
+        try {
+          const tradingEngine = deps.getTradingEngine();
+          if (tradingEngine) {
+            const decisions = tradingEngine.getSmartExitDecisions();
+            const decision = decisions.get(pos.lotId);
+            if (decision) {
+              smartExitState = {
+                score: decision.score,
+                threshold: decision.threshold,
+                regime: decision.regime,
+                shouldExit: decision.shouldExit,
+                confirmationProgress: decision.confirmationProgress,
+                confirmationRequired: decision.confirmationRequired,
+                reasons: decision.reasons,
+              };
+            }
+          }
+        } catch { /* smartExit state is optional */ }
+
         return {
           ...pos,
           currentPrice: currentPrice.toString(),
@@ -84,6 +105,7 @@ export const registerPositionsRoutes: RegisterRoutes = (app, deps) => {
           netPnlPct: netPnlPct.toFixed(2),
           entryValueUsd: entryValueUsd.toFixed(2),
           currentValueUsd: currentValueUsd.toFixed(2),
+          smartExitState,
         };
       }));
       
@@ -111,6 +133,37 @@ export const registerPositionsRoutes: RegisterRoutes = (app, deps) => {
     } catch (error: any) {
       console.error("[api/positions/refresh-snapshots] Error:", error);
       res.status(500).json({ error: error.message || "Failed to refresh snapshots" });
+    }
+  });
+
+  // Smart Exit Engine diagnostics — returns current Smart Exit state per position
+  app.get("/api/positions/smart-exit-diagnostics", async (req, res) => {
+    try {
+      const tradingEngine = deps.getTradingEngine();
+      if (!tradingEngine) {
+        return res.status(503).json({ error: "Motor de trading no inicializado" });
+      }
+
+      const decisions = tradingEngine.getSmartExitDecisions();
+      const result: Record<string, any> = {};
+      for (const [lotId, decision] of decisions.entries()) {
+        result[lotId] = {
+          score: decision.score,
+          threshold: decision.threshold,
+          regime: decision.regime,
+          shouldExit: decision.shouldExit,
+          confirmationProgress: decision.confirmationProgress,
+          confirmationRequired: decision.confirmationRequired,
+          reasons: decision.reasons,
+          contributions: decision.contributions,
+          pnlPct: decision.pnlPct,
+          positionAgeSec: decision.positionAgeSec,
+        };
+      }
+
+      res.json({ smartExitEnabled: true, positions: result, count: decisions.size });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Smart Exit diagnostics failed" });
     }
   });
 

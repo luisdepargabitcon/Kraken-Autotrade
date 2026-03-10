@@ -2,6 +2,55 @@
 
 ---
 
+## 2026-03-11 — FEAT: Smart Exit Engine (Experimental)
+
+### Descripción
+Implementación completa del Smart Exit Engine — sistema experimental de salida dinámica que evalúa posiciones abiertas usando señales de deterioro técnico, pérdida de condiciones de entrada, y régimen de mercado.
+
+### Archivos creados
+- **`server/services/SmartExitEngine.ts`** — Módulo principal con:
+  - Detección de régimen de mercado (TREND/CHOP/VOLATILE) via ADX, EMA slopes, ATR%
+  - 9 señales de deterioro modulares: EMA Reversal, MACD Reversal, Volume Drop, MTF Alignment Loss, Orderbook Imbalance, Exchange Flows, Entry Signal Deterioration, Stagnation, Market Regime Adjustment
+  - Sistema de scoring con contribuciones por señal
+  - Confirmación temporal configurable (ciclos consecutivos)
+  - Builder de entry context snapshot para deterioro de señal
+  - Helpers de notificación Telegram con cooldown y one-alert-per-event
+  - Builder de mensajes Telegram para 3 tipos de evento
+  - Endpoint de diagnóstico
+- **`client/src/components/strategies/SmartExitTab.tsx`** — UI completa con:
+  - Interruptor master ON/OFF con badge experimental
+  - Sliders para umbral base, ciclos de confirmación, penalización en pérdida, edad mínima
+  - Umbrales por régimen (TREND/CHOP/VOLATILE) con colores
+  - Toggles individuales para cada señal de deterioro con badge de score
+  - Sección de notificaciones Telegram con granularidad por evento
+
+### Archivos modificados
+- **`shared/schema.ts`** — Añadida columna JSONB `smart_exit_config` en bot_config
+- **`server/services/tradingEngine.ts`** — Integración en trading loop:
+  - Import del SmartExitEngine
+  - Campo `entryContext` en interfaz OpenPosition
+  - Método `evaluateOpenPositionsWithSmartExit()` ejecutado cada ciclo después de SL/TP
+  - Entry context snapshot al crear nueva posición
+  - Cache de decisiones (`smartExitDecisions`) expuesta para diagnóstico
+  - Alertas Telegram para threshold hit, executed exit, regime change
+- **`server/services/botLogger.ts`** — Nuevos EventTypes: SMART_EXIT_THRESHOLD_HIT, SMART_EXIT_EXECUTED, SMART_EXIT_REGIME_CHANGE
+- **`server/routes/positions.routes.ts`** — Nuevo endpoint `GET /api/positions/smart-exit-diagnostics` + Smart Exit state incluido en `GET /api/open-positions`
+- **`client/src/pages/Strategies.tsx`** — Nueva tab "Smart Exit" con icono FlaskConical
+- **`client/src/pages/Terminal.tsx`** — Sección Smart Exit en diálogo de detalle de posición con score, régimen, confirmación, y señales activas
+
+### Prioridad de exits
+Stop Loss > Smart Exit > Take Profit > Trailing Stop
+
+### Seguridad
+- Desactivado por defecto (`enabled: false`)
+- No interfiere con SL/TP/Trailing existentes
+- Requiere confirmación temporal (default 3 ciclos)
+- Penalización extra si posición en pérdida
+- Edad mínima de posición (default 30s)
+- Logs detallados para cada evaluación
+
+---
+
 ## 2026-03-10 — FEAT: Refresh SmartGuard snapshots para posiciones abiertas
 
 ### Problema

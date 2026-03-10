@@ -96,6 +96,10 @@ export type EventType =
   | "SG_TRAIL_ACTIVATED"
   | "SG_STOP_UPDATED"
   | "SG_EXIT_TRIGGERED"
+  // Smart Exit Engine events (experimental dynamic exit)
+  | "SMART_EXIT_THRESHOLD_HIT"
+  | "SMART_EXIT_EXECUTED"
+  | "SMART_EXIT_REGIME_CHANGE"
   // Reconcile events (P1-CRITICAL)
   | "POSITION_CREATED_RECONCILE"
   | "POSITION_UPDATED_RECONCILE"

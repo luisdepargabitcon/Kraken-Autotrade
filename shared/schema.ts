@@ -172,6 +172,8 @@ export const botConfig = pgTable("bot_config", {
   lastEventsPurgeCount: integer("last_events_purge_count").default(0),
   // Market Metrics module config (JSONB)
   marketMetricsConfig: jsonb("market_metrics_config"),
+  // Smart Exit Engine config (JSONB) — experimental dynamic exit system
+  smartExitConfig: jsonb("smart_exit_config"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

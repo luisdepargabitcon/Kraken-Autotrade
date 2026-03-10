@@ -10,10 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 import { MarketMetricsTab } from "@/components/strategies/MarketMetricsTab";
 import { FeatureFlagsTab } from "@/components/strategies/FeatureFlagsTab";
+import { SmartExitTab } from "@/components/strategies/SmartExitTab";
 
 interface BotConfig {
   id: number;
@@ -54,7 +55,7 @@ const RISK_LEVELS = [
 
 const AVAILABLE_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC", "XRP/USD", "TON/USD"];
 
-type StrategyTab = "config" | "metricas" | "motor";
+type StrategyTab = "config" | "metricas" | "motor" | "smartexit";
 
 export default function Strategies() {
   const queryClient = useQueryClient();
@@ -163,6 +164,17 @@ export default function Strategies() {
               <Brain className="h-4 w-4" />
               Motor Adaptativo
             </button>
+            <button
+              onClick={() => setActiveTab("smartexit")}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
+                activeTab === "smartexit"
+                  ? "border-amber-500 text-amber-400"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <FlaskConical className="h-4 w-4" />
+              Smart Exit
+            </button>
           </div>
 
           {activeTab === "metricas" && (
@@ -171,6 +183,10 @@ export default function Strategies() {
 
           {activeTab === "motor" && (
             <FeatureFlagsTab />
+          )}
+
+          {activeTab === "smartexit" && (
+            <SmartExitTab />
           )}
 
           <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 ${activeTab !== "config" ? "hidden" : ""}`}>
