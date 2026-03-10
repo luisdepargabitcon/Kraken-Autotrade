@@ -1727,6 +1727,7 @@ export class DatabaseStorage implements IStorage {
       { column: 'log_retention_days', table: 'bot_config' },
       { column: 'events_retention_enabled', table: 'bot_config' },
       { column: 'events_retention_days', table: 'bot_config' },
+      { column: 'smart_exit_config', table: 'bot_config' },
     ];
     
     const requiredOpenPositionsColumns = [
@@ -1736,6 +1737,7 @@ export class DatabaseStorage implements IStorage {
       { column: 'sg_current_stop_price', table: 'open_positions' },
       { column: 'sg_scale_out_done', table: 'open_positions' },
       { column: 'config_snapshot_json', table: 'open_positions' },
+      { column: 'entry_context_json', table: 'open_positions' },
     ];
     
     const allRequiredColumns = [...requiredBotConfigColumns, ...requiredOpenPositionsColumns];

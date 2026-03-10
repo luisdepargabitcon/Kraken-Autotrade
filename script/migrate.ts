@@ -528,6 +528,8 @@ async function runMigration() {
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_count INTEGER DEFAULT 0',
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP',
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0',
+      // Smart Exit Engine (experimental dynamic exit)
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS smart_exit_config JSONB',
     ];
     
     // open_positions columns
@@ -554,6 +556,8 @@ async function runMigration() {
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS time_stop_disabled BOOLEAN DEFAULT false',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS time_stop_expired_at TIMESTAMP WITHOUT TIME ZONE',
       'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS be_progressive_level INTEGER DEFAULT 0',
+      // Smart Exit Engine entry context snapshot
+      'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS entry_context_json JSONB',
     ];
     
     console.log("[migrate] Applying bot_config migrations...");
