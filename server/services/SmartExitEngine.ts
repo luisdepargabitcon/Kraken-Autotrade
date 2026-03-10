@@ -9,8 +9,6 @@
  * Controlled via UI toggle (smartExitConfig.enabled).
  */
 
-import { log } from "../utils/logger";
-import { botLogger } from "./botLogger";
 import {
   calculateEMA,
   calculateMACD,
@@ -243,18 +241,14 @@ export class SmartExitEngine {
     // ATR% for volatility
     const atrPct = calculateATRPercent(priceData.slice(-15), 14);
 
-    // Choppy detection: count EMA20/EMA50 crosses in last 20 candles
+    // Choppy detection: simplified cross detection using raw price vs EMA50
+    // Counts how many times the short-term price crosses over/under the long-term average
     let crossCount = 0;
-    const recentCloses = closes.slice(-20);
-    for (let i = 1; i < recentCloses.length; i++) {
-      const ema20Prev = calculateEMA(closes.slice(0, closes.length - 20 + i), 20);
-      const ema50Prev = calculateEMA(closes.slice(0, closes.length - 20 + i), 50);
-      const ema20Curr = calculateEMA(closes.slice(0, closes.length - 20 + i + 1), 20);
-      const ema50Curr = calculateEMA(closes.slice(0, closes.length - 20 + i + 1), 50);
-      if ((ema20Prev > ema50Prev && ema20Curr < ema50Curr) ||
-          (ema20Prev < ema50Prev && ema20Curr > ema50Curr)) {
-        crossCount++;
-      }
+    const len = closes.length;
+    for (let i = Math.max(1, len - 20); i < len; i++) {
+      const prevAbove = closes[i - 1] > ema50;
+      const currAbove = closes[i] > ema50;
+      if (prevAbove !== currAbove) crossCount++;
     }
 
     // Decision logic
@@ -417,7 +411,7 @@ export class SmartExitEngine {
     const ageSec = (Date.now() - position.openedAt) / 1000;
     const ageMin = ageSec / 60;
 
-    if (ageMin >= config.stagnationMinutes && position.pnlPct < config.stagnationMinPnlPct) {
+    if (ageMin >= config.stagnationMinutes && Math.abs(position.pnlPct) < config.stagnationMinPnlPct) {
       return {
         signal: "STAGNATION",
         score: 1,
@@ -527,11 +521,9 @@ export class SmartExitEngine {
     }
     state.lastScore = totalScore;
 
-    // Regime change tracking
-    if (state.previousRegime !== null && state.previousRegime !== regime) {
-      state.lastRegime = regime;
-    }
-    state.previousRegime = regime;
+    // Regime change tracking — save old regime BEFORE overwriting
+    // shouldNotifyRegimeChange compares previousRegime (old) vs decision.regime (new)
+    state.previousRegime = state.lastRegime;
     state.lastRegime = regime;
 
     const shouldExit = meetsThreshold && state.consecutiveCycles >= config.confirmationCycles;

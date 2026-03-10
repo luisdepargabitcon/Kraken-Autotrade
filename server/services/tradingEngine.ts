@@ -2261,8 +2261,12 @@ ${positionsList}
       ? this.getTimeframeIntervalMinutes(signalTimeframe)
       : 5; // default 5m for candle data
 
-    for (const [lotId, position] of this.openPositions.entries()) {
+    // Snapshot entries to avoid mutation-during-iteration when deleting closed positions
+    const positionEntries = Array.from(this.openPositions.entries());
+    for (const [lotId, position] of positionEntries) {
       try {
+        // Skip if position was already removed (e.g. by SL/TP earlier in cycle)
+        if (!this.openPositions.has(lotId)) continue;
         // Skip if position is already being closed
         if ((position as any).isClosing) continue;
 

@@ -100,8 +100,15 @@ export function SmartExitTab() {
     },
   });
 
-  const config: SmartExitConfig = botConfig?.smartExitConfig
-    ? { ...DEFAULT_CONFIG, ...botConfig.smartExitConfig }
+  const raw = botConfig?.smartExitConfig;
+  const config: SmartExitConfig = raw
+    ? {
+        ...DEFAULT_CONFIG,
+        ...raw,
+        regimeThresholds: { ...DEFAULT_CONFIG.regimeThresholds, ...raw.regimeThresholds },
+        signals: { ...DEFAULT_CONFIG.signals, ...raw.signals },
+        notifications: { ...DEFAULT_CONFIG.notifications, ...raw.notifications },
+      }
     : DEFAULT_CONFIG;
 
   const updateMutation = useMutation({
