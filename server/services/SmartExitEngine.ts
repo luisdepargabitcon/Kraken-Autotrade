@@ -29,6 +29,7 @@ export interface SmartExitConfig {
   exitScoreThresholdBase: number;
   confirmationCycles: number;
   minPositionAgeSec: number;
+  minPnlLossPct: number;
   extraLossThresholdPenalty: number;
   stagnationMinutes: number;
   stagnationMinPnlPct: number;
@@ -65,6 +66,7 @@ export const DEFAULT_SMART_EXIT_CONFIG: SmartExitConfig = {
   exitScoreThresholdBase: 3,
   confirmationCycles: 3,
   minPositionAgeSec: 30,
+  minPnlLossPct: 0,
   extraLossThresholdPenalty: 1,
   stagnationMinutes: 10,
   stagnationMinPnlPct: 0.2,
@@ -186,6 +188,7 @@ export class SmartExitEngine {
       exitScoreThresholdBase: raw.exitScoreThresholdBase ?? 3,
       confirmationCycles: raw.confirmationCycles ?? 3,
       minPositionAgeSec: raw.minPositionAgeSec ?? 30,
+      minPnlLossPct: raw.minPnlLossPct ?? 0,
       extraLossThresholdPenalty: raw.extraLossThresholdPenalty ?? 1,
       stagnationMinutes: raw.stagnationMinutes ?? 10,
       stagnationMinPnlPct: raw.stagnationMinPnlPct ?? 0.2,
@@ -444,6 +447,23 @@ export class SmartExitEngine {
     const effectiveThreshold = position.pnlPct <= 0
       ? baseThreshold + config.extraLossThresholdPenalty
       : baseThreshold;
+
+    // Guard: don't exit if loss is smaller than configured minimum loss threshold
+    // (0 = disabled; only activates for negative PnL)
+    if (config.minPnlLossPct < 0 && position.pnlPct < 0 && position.pnlPct > config.minPnlLossPct) {
+      return {
+        shouldExit: false,
+        score: 0,
+        threshold: effectiveThreshold,
+        regime,
+        confirmationProgress: 0,
+        confirmationRequired: config.confirmationCycles,
+        reasons: [`PnL ${position.pnlPct.toFixed(2)}% above min loss threshold ${config.minPnlLossPct}%`],
+        contributions: [],
+        positionAgeSec,
+        pnlPct: position.pnlPct,
+      };
+    }
 
     // Too young — skip evaluation but still report regime
     if (positionAgeSec < config.minPositionAgeSec) {

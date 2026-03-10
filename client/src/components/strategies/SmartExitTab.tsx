@@ -13,6 +13,7 @@ interface SmartExitConfig {
   exitScoreThresholdBase: number;
   confirmationCycles: number;
   minPositionAgeSec: number;
+  minPnlLossPct: number;
   extraLossThresholdPenalty: number;
   stagnationMinutes: number;
   stagnationMinPnlPct: number;
@@ -47,6 +48,7 @@ const DEFAULT_CONFIG: SmartExitConfig = {
   exitScoreThresholdBase: 3,
   confirmationCycles: 3,
   minPositionAgeSec: 30,
+  minPnlLossPct: 0,
   extraLossThresholdPenalty: 1,
   stagnationMinutes: 10,
   stagnationMinPnlPct: 0.2,
@@ -245,6 +247,27 @@ export function SmartExitTab() {
                     onValueChange={([v]) => updateMutation.mutate({ extraLossThresholdPenalty: v })}
                   />
                   <p className="text-[10px] text-muted-foreground">Se suma al umbral si PnL es negativo (requiere más señales para cerrar en pérdida)</p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Pérdida mínima para cerrar</Label>
+                    <span className="text-xs font-mono text-rose-400">
+                      {(config.minPnlLossPct ?? 0) === 0 ? 'Desactivado' : `${(config.minPnlLossPct ?? 0).toFixed(1)}%`}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[Math.abs(config.minPnlLossPct ?? 0) * 10]}
+                    min={0}
+                    max={50}
+                    step={1}
+                    onValueChange={([v]) => updateMutation.mutate({ minPnlLossPct: v === 0 ? 0 : -(v / 10) })}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {(config.minPnlLossPct ?? 0) === 0
+                      ? 'Desactivado — Smart Exit actúa en cualquier pérdida'
+                      : `Smart Exit bloqueado si pérdida es menor que ${(config.minPnlLossPct ?? 0).toFixed(1)}% (ej. -0.09% → bloqueado)`}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
