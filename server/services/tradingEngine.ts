@@ -2346,6 +2346,27 @@ ${positionsList}
           exchangeNetflow: null,
         };
 
+        // Backfill entryContext for positions opened before Smart Exit Engine was deployed.
+        // Uses current market data as proxy — not perfect but enables ENTRY_SIGNAL_DETERIORATION
+        // to work for all existing positions from the first evaluation cycle onward.
+        if (!position.entryContext && candles && candles.length >= 20) {
+          try {
+            const signalCountMatch = position.signalReason?.match(/Señales:\s*(\d+)/);
+            const backfillSignalsCount = signalCountMatch ? parseInt(signalCountMatch[1], 10) : 3; // assume avg entry quality
+            const builtCtx = smartExitEngine.buildEntryContext(
+              backfillSignalsCount,
+              candles,
+              mtfTrend ?? undefined,
+              undefined,
+              volumeRatio,
+            );
+            position.entryContext = builtCtx;
+            // Persist so this only runs once per position
+            await storage.updateOpenPositionByLotId(lotId, { entryContextJson: builtCtx } as any);
+            log(`[SMART_EXIT] entryContext backfilled for existing position ${pair} (${lotId})`, "trading");
+          } catch { /* backfill is optional */ }
+        }
+
         const sePosition: SmartExitPosition = {
           lotId,
           pair: position.pair,
