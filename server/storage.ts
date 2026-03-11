@@ -144,7 +144,7 @@ export interface IStorage {
   initializeQtyRemainingForAll(): Promise<number>;
 
   listTradesForRebuild(params: { exchanges: string[]; origin: 'bot' | 'engine'; since: Date }): Promise<Trade[]>;
-  getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number>;
+  getRecentBotTradesCount(params: { since: Date; exchange?: string; type?: 'buy' | 'sell' }): Promise<number>;
   
   // Trade fills
   upsertTradeFill(fill: InsertTradeFill): Promise<{ inserted: boolean; fill?: TradeFill }>;
@@ -516,8 +516,8 @@ export class DatabaseStorage implements IStorage {
       .orderBy(tradesTable.executedAt);
   }
 
-  async getRecentBotTradesCount(params: { since: Date; exchange?: string }): Promise<number> {
-    const { since, exchange } = params;
+  async getRecentBotTradesCount(params: { since: Date; exchange?: string; type?: 'buy' | 'sell' }): Promise<number> {
+    const { since, exchange, type } = params;
     // Include both 'bot' (legacy) and 'engine' (new) origins
     const conditions: any[] = [
       or(eq(tradesTable.origin, 'bot'), eq(tradesTable.origin, 'engine')),
@@ -525,6 +525,9 @@ export class DatabaseStorage implements IStorage {
     ];
     if (exchange) {
       conditions.push(eq(tradesTable.exchange, exchange));
+    }
+    if (type) {
+      conditions.push(eq(tradesTable.type, type));
     }
     const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
     const result = await db.select({ count: sql<number>`count(*)` }).from(tradesTable).where(whereClause);

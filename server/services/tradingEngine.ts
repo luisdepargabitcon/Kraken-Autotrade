@@ -2478,10 +2478,11 @@ ${positionsList}
       // Kill-switch: environment can disable all BUY entries (sells/SL/TP still run)
       const tradingEnabled = String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() === 'true';
 
-      // Fail-closed: positions should not be empty if we have bot-origin trades recently.
-      // This prevents "compras a ciegas" after a restart/desync.
+      // Fail-closed: positions should not be empty if we have recent bot BUY trades.
+      // Only BUY trades indicate an inconsistency (position should be open but isn't).
+      // SELL trades are normal — they close positions legitimately.
       const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const recentBotTrades = await storage.getRecentBotTradesCount({ since: since24h });
+      const recentBotTrades = await storage.getRecentBotTradesCount({ since: since24h, type: 'buy' });
       const positionsInconsistent = this.openPositions.size === 0 && recentBotTrades > 0;
 
       // Actualizar tiempo de escaneo y limpiar resultados anteriores
@@ -2562,6 +2563,8 @@ El bot ha pausado las operaciones de COMPRA.
 
       // Safety: if trading disabled, do not open new positions
       if (!tradingEnabled || positionsInconsistent) {
+        const skipReason = !tradingEnabled ? "TRADING_DISABLED" : `POSITIONS_INCONSISTENT(openPos=0,recentBuyTrades=${recentBotTrades})`;
+        log(`[SCAN_SKIP_REASON] reason=${skipReason}`, "trading");
         for (const pair of config.activePairs || []) {
           const expCheck = this.getAvailableExposure(pair, config, this.currentUsdBalance);
           this.initPairTrace(pair, expCheck.maxAllowed, true);
@@ -2572,7 +2575,7 @@ El bot ha pausado las operaciones de COMPRA.
               ? { env: "TRADING_ENABLED" }
               : { recentBotTrades, openPositionsCount: this.openPositions.size },
             finalSignal: "NONE",
-            finalReason: !tradingEnabled ? "TRADING_ENABLED=false" : "Positions inconsistent: openPositions=0 but recent bot trades exist",
+            finalReason: !tradingEnabled ? "TRADING_ENABLED=false" : "Positions inconsistent: openPositions=0 but recent bot BUY trades exist",
           });
         }
         return;
@@ -2580,6 +2583,7 @@ El bot ha pausado las operaciones de COMPRA.
 
       // No abrir nuevas posiciones si se alcanzó el límite diario
       if (this.isDailyLimitReached) {
+        log(`[SCAN_SKIP_REASON] reason=DAILY_LIMIT_REACHED(pnl=${this.dailyPnL.toFixed(2)})`, "trading");
         // Emitir trace para todos los pares activos indicando DAILY_LIMIT
         const activePairsForTrace = config.activePairs || [];
         for (const pair of activePairsForTrace) {
@@ -2598,13 +2602,14 @@ El bot ha pausado las operaciones de COMPRA.
       }
 
       if (this.currentUsdBalance < 5) {
-        log(`Saldo USD insuficiente: $${this.currentUsdBalance.toFixed(2)}`, "trading");
+        log(`[SCAN_SKIP_REASON] reason=INSUFFICIENT_BALANCE(balance=${this.currentUsdBalance.toFixed(2)})`, "trading");
         return;
       }
 
       // MEJORA 2: Verificar horarios de trading
       const tradingHoursCheck = this.isWithinTradingHours(config);
       if (!tradingHoursCheck.withinHours) {
+        log(`[SCAN_SKIP_REASON] reason=TRADING_HOURS(hourUTC=${tradingHoursCheck.hourUTC},allowed=${tradingHoursCheck.start}-${tradingHoursCheck.end})`, "trading");
         log(`Fuera de horario de trading (${tradingHoursCheck.hourUTC}h UTC). Horario: ${tradingHoursCheck.start}h-${tradingHoursCheck.end}h UTC`, "trading");
         // Emitir trace para todos los pares activos indicando TRADING_HOURS
         const activePairsForTrace = config.activePairs || [];
@@ -2631,6 +2636,7 @@ El bot ha pausado las operaciones de COMPRA.
       const failedPairs: string[] = [];
 
       // Mark scan as in progress and clear previous results
+      log(`[SCAN_DISPATCH] activePairs=[${activePairs.join(",")}] balance=$${this.currentUsdBalance.toFixed(2)} tradingEnabled=${tradingEnabled}`, "trading");
       this.scanInProgress = true;
       this.currentScanId = `scan-${Date.now()}`;
       this.lastScanStartTime = Date.now();
@@ -2819,7 +2825,7 @@ El bot ha pausado las operaciones de COMPRA.
         log(`[SCAN_END] scanId=${this.currentScanId} expected=${activePairs.length} done=${scannedPairs.length} failures=${failedPairs.length} durationMs=${durationMs}`, "trading");
       }
     } catch (error: any) {
-      log(`Error en ciclo de trading: ${error.message}`, "trading");
+      log(`[SCAN_ERROR_ROOT] Error en ciclo de trading: ${error.message} stack=${error.stack?.split('\n')[1]?.trim()}`, "trading");
     }
   }
 
