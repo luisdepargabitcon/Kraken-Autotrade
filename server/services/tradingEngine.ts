@@ -2478,12 +2478,12 @@ ${positionsList}
       // Kill-switch: environment can disable all BUY entries (sells/SL/TP still run)
       const tradingEnabled = String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() === 'true';
 
-      // Fail-closed: positions should not be empty if we have recent bot BUY trades.
-      // Only BUY trades indicate an inconsistency (position should be open but isn't).
-      // SELL trades are normal — they close positions legitimately.
-      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const recentBotTrades = await storage.getRecentBotTradesCount({ since: since24h, type: 'buy' });
-      const positionsInconsistent = this.openPositions.size === 0 && recentBotTrades > 0;
+      // Fail-closed: inconsistency = DB has open positions that aren't loaded in memory.
+      // This handles restarts/crashes where open_positions table has rows but memory map is empty.
+      // Normal state (all positions legitimately closed): DB=0, memory=0 → consistent, scan runs.
+      const dbOpenPositionsCount = (await storage.getOpenPositions()).length;
+      const recentBotTrades = dbOpenPositionsCount; // kept for SCAN_SKIP_REASON log compat
+      const positionsInconsistent = dbOpenPositionsCount > this.openPositions.size;
 
       // Actualizar tiempo de escaneo y limpiar resultados anteriores
       this.lastScanTime = Date.now();
@@ -2563,7 +2563,7 @@ El bot ha pausado las operaciones de COMPRA.
 
       // Safety: if trading disabled, do not open new positions
       if (!tradingEnabled || positionsInconsistent) {
-        const skipReason = !tradingEnabled ? "TRADING_DISABLED" : `POSITIONS_INCONSISTENT(openPos=0,recentBuyTrades=${recentBotTrades})`;
+        const skipReason = !tradingEnabled ? "TRADING_DISABLED" : `POSITIONS_INCONSISTENT(dbPos=${dbOpenPositionsCount},memPos=${this.openPositions.size})`;
         log(`[SCAN_SKIP_REASON] reason=${skipReason}`, "trading");
         for (const pair of config.activePairs || []) {
           const expCheck = this.getAvailableExposure(pair, config, this.currentUsdBalance);
