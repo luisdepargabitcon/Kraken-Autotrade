@@ -132,6 +132,8 @@ export type EventType =
   // Smart TimeStop events
   | "TIME_STOP_EXPIRED_DISABLED"
   | "TIME_STOP_CLOSE"
+  | "TIME_STOP_DUST_CLEANUP"
+  | "TIME_STOP_ORPHAN_CLEANUP"
   | "TIME_STOP_LIMIT_FALLBACK"
   // Adaptive Momentum Engine
   | "FEATURE_FLAGS_UPDATED";

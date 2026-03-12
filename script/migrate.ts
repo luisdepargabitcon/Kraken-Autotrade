@@ -805,6 +805,13 @@ async function runMigration() {
     }
     
     // ============================================================
+    // SMART TIME-STOP: per-asset TTL + regime multipliers (016)
+    // ============================================================
+    console.log("[migrate] Ensuring time_stop_config table exists...");
+    const timeStopConfigSqlPath = path.resolve(process.cwd(), "db", "migrations", "016_time_stop_smart_config.sql");
+    await tryExecuteFile(db, timeStopConfigSqlPath, "time_stop_config");
+
+    // ============================================================
     // FISCO: Fiscal Control Tables
     // ============================================================
     console.log("[migrate] Ensuring fisco_alert_config table exists...");

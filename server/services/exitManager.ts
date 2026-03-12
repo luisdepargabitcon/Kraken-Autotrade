@@ -1029,7 +1029,7 @@ export class ExitManager {
           // TIMESTOP EXPIRED + ENABLED → Execute SELL (closeReason=TIMESTOP)
           log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h regime=${regime} closeType=${closeOrderType} FORCE_CLOSE`, "trading");
 
-          // Mark expiry
+          // Mark expiry + send Telegram alert ONCE (first expiry cycle only)
           if (!position.timeStopExpiredAt) {
             const now = Date.now();
             this.timeStopNotified.set(lotId, now);
@@ -1037,13 +1037,11 @@ export class ExitManager {
             position.timeStopExpiredAt = now;
             this.host.setPosition(lotId, position);
             await this.host.savePositionToDB(pair, position);
-          }
 
-          // Telegram alert
-          if (telegramAlertEnabled) {
-            const telegram = this.host.getTelegramService();
-            if (telegram.isInitialized()) {
-              await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            if (telegramAlertEnabled) {
+              const telegram = this.host.getTelegramService();
+              if (telegram.isInitialized()) {
+                await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Time-Stop EXPIRADO — Cierre Forzado</b>
 
@@ -1060,12 +1058,21 @@ export class ExitManager {
 
 ⚡ <b>ACCIÓN:</b> Cierre forzado [closeReason=TIMESTOP, tipo=${closeOrderType}]
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+              }
             }
           }
 
           // Execute sell
           const minVolume = this.host.getOrderMin(pair);
-          if (position.amount >= minVolume) {
+          if (position.amount < minVolume) {
+            // Position is dust — clean up directly
+            log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} amount=${position.amount} < minVolume=${minVolume} — limpiando posición dust`, "trading");
+            await botLogger.warn("TIME_STOP_DUST_CLEANUP", `TimeStop: posición dust limpiada en ${pair} [SMART_GUARD]`, {
+              pair, lotId, amount: position.amount, minVolume, ageHours, ttlHours,
+            });
+            this.host.deletePosition(lotId);
+            await this.host.deletePositionFromDBByLotId(lotId);
+          } else {
             const freshBalances = await this.host.getTradingExchange().getBalance();
             const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
             const sellAmount = Math.min(position.amount, realAssetBalance);
@@ -1088,6 +1095,26 @@ export class ExitManager {
               await this.host.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice,
                 `TimeStop expirado (${ageHours.toFixed(0)}h >= ${ttlHours.toFixed(1)}h) [SMART_GUARD, ${regime}, ${configSource}]`,
                 undefined, undefined, undefined, sellContext);
+            } else {
+              // Real balance too small — clean up orphan + alert
+              log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} realBalance=${realAssetBalance.toFixed(8)} < minVolume=${minVolume} — huérfana, limpiando`, "trading");
+              await botLogger.warn("TIME_STOP_ORPHAN_CLEANUP", `TimeStop: posición huérfana limpiada en ${pair} (balance real insuficiente) [SMART_GUARD]`, {
+                pair, lotId, registeredAmount: position.amount, realBalance: realAssetBalance, minVolume, ageHours,
+              });
+              const telegram = this.host.getTelegramService();
+              if (telegram.isInitialized()) {
+                await telegram.sendAlertWithSubtype(
+                  `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+                  `⏰ <b>Time-Stop: Posición Huérfana Limpiada</b>\n\n` +
+                  `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+                  `🔢 Registrada: <code>${position.amount.toFixed(8)}</code> | Real: <code>${realAssetBalance.toFixed(8)}</code>\n` +
+                  `⚠️ Balance real insuficiente — posición eliminada automáticamente\n` +
+                  `━━━━━━━━━━━━━━━━━━━`,
+                  "errors", "error_api"
+                ).catch(() => {});
+              }
+              this.host.deletePosition(lotId);
+              await this.host.deletePositionFromDBByLotId(lotId);
             }
           }
           return; // Position closed, skip rest of SmartGuard logic
