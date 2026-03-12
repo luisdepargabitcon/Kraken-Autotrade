@@ -2420,7 +2420,7 @@ Incluye:
 
     // FALLBACK: If no chats matched, use default chatId
     if (sentChatIds.size === 0 && this.chatId) {
-      console.warn(`[telegram] sendAlertWithSubtype: no chats matched (alertType=${alertType}, subtype=${subtype}), falling back to default chatId`);
+      console.log(`[telegram] sendAlertWithSubtype: no chats matched (alertType=${alertType}, subtype=${subtype}), falling back to default chatId`);
       try {
         await this.bot.sendMessage(this.chatId, message, { parse_mode: "HTML" });
       } catch (error: any) {

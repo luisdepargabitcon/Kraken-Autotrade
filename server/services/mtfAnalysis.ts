@@ -29,6 +29,7 @@ export interface TrendAnalysis {
 
 const MTF_DIAG_ENABLED = true;
 const MTF_CACHE_TTL = 300000; // 5 minutes
+const MTF_RATE_LIMIT_BACKOFF_MS = 120_000; // 2 min backoff after rate-limit error
 
 // === Host interface ===
 
@@ -156,6 +157,7 @@ export function emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCa
 export class MtfAnalyzer {
   private host: IMtfAnalysisHost;
   private mtfCache: Map<string, MultiTimeframeData> = new Map();
+  private rateLimitBackoff: Map<string, number> = new Map(); // pair → retry-after timestamp
 
   constructor(host: IMtfAnalysisHost) {
     this.host = host;
@@ -172,6 +174,16 @@ export class MtfAnalyzer {
         return cached;
       }
 
+      // Rate-limit backoff: si está activo, usar caché stale en vez de reintentar
+      const backoffUntil = this.rateLimitBackoff.get(pair) || 0;
+      if (Date.now() < backoffUntil) {
+        if (cached) {
+          log(`[MTF_BACKOFF] ${pair}: rate-limit backoff activo (${Math.ceil((backoffUntil - Date.now()) / 1000)}s) → caché stale`, "trading");
+          return cached;
+        }
+        return null;
+      }
+
       const [tf5m, tf1h, tf4h] = await Promise.all([
         this.host.getOHLC(pair, 5),
         this.host.getOHLC(pair, 60),
@@ -186,6 +198,7 @@ export class MtfAnalyzer {
       };
 
       this.mtfCache.set(pair, data);
+      this.rateLimitBackoff.delete(pair); // limpiar backoff al tener éxito
       log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}`, "trading");
 
       // MTF Diagnostic: Verificar rangos temporales
@@ -195,6 +208,15 @@ export class MtfAnalyzer {
 
       return data;
     } catch (error: any) {
+      const isRateLimit = error.message?.includes('Too many requests') ||
+        error.message?.includes('EAPI:Rate limit') ||
+        error.message?.includes('Rate limit exceed');
+      if (isRateLimit) {
+        this.rateLimitBackoff.set(pair, Date.now() + MTF_RATE_LIMIT_BACKOFF_MS);
+        const stale = this.mtfCache.get(pair);
+        log(`[MTF_RATE_LIMIT] ${pair}: rate limit hit → backoff ${MTF_RATE_LIMIT_BACKOFF_MS / 1000}s${stale ? ', usando caché stale' : ', sin datos previos'}`, "trading");
+        return stale ?? null;
+      }
       log(`Error obteniendo datos MTF para ${pair}: ${error.message}`, "trading");
       return null;
     }

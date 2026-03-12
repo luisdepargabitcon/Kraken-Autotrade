@@ -446,6 +446,9 @@ export class TradingEngine {
   
   // Tracking para Momentum (Velas) - última vela evaluada por par+timeframe
   private lastEvaluatedCandle: Map<string, number> = new Map();
+  // Backoff por rate-limit en fetch de vela (pair:tf → retry-after timestamp)
+  private candleFetchBackoff: Map<string, number> = new Map();
+  private readonly CANDLE_FETCH_BACKOFF_MS = 60_000; // 60s backoff tras rate-limit
   
   // Fallback minimums (only used if Kraken API fails)
   private readonly FALLBACK_MINIMUMS: Record<string, number> = {
@@ -1487,12 +1490,26 @@ export class TradingEngine {
   }
 
   private async getLastClosedCandle(pair: string, timeframe: string): Promise<OHLCCandle | null> {
+    const key = `${pair}:${timeframe}`;
+    const backoffUntil = this.candleFetchBackoff.get(key) || 0;
+    if (Date.now() < backoffUntil) {
+      return null; // silencioso durante backoff, evita loop de rate-limit
+    }
     try {
       const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
       const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
       if (!candles || candles.length < 2) return null;
+      this.candleFetchBackoff.delete(key); // limpiar backoff al tener éxito
       return candles[candles.length - 2];
     } catch (error: any) {
+      const isRateLimit = error.message?.includes('Too many requests') ||
+        error.message?.includes('EAPI:Rate limit') ||
+        error.message?.includes('Rate limit exceed');
+      if (isRateLimit) {
+        this.candleFetchBackoff.set(key, Date.now() + this.CANDLE_FETCH_BACKOFF_MS);
+        log(`[CANDLE_RATE_LIMIT] ${pair}/${timeframe}: rate limit → backoff ${this.CANDLE_FETCH_BACKOFF_MS / 1000}s`, "trading");
+        return null;
+      }
       log(`Error obteniendo vela cerrada ${pair}/${timeframe}: ${error.message}`, "trading");
       return null;
     }

@@ -3510,3 +3510,41 @@ private detectLevel(line: string): string {
 - Documentado en BITACORA.md
 
 ---
+
+## 2026-03-12 — FIX: Rate-limit backoff en MTF y candle fetch + telegram warn cosmético
+
+### Problema raíz
+Los logs mostraban `["EGeneral:Too many requests"]` para BTC/USD repitiéndose cada 5 segundos en dos puntos:
+
+1. **`mtfAnalysis.ts` — Loop infinito MTF**: Cuando `getMultiTimeframeData` fallaba por rate-limit de Kraken, retornaba `null` sin actualizar la caché. El siguiente ciclo (5s) encontraba la caché vacía y reintentaba → mismo error → bucle infinito.
+
+2. **`tradingEngine.ts` — Loop infinito candle**: `getLastClosedCandle` fallaba por rate-limit → retornaba `null` → `lastEvaluatedCandle` nunca se actualizaba → `shouldPollForNewCandle` veía `lastTs=0` → retornaba `true` en cada ciclo → reintento perpetuo cada 5s.
+
+3. **`telegram.ts` — WARN innecesario**: `sendAlertWithSubtype` emitía `console.warn` cuando `balance_exposure` no tenía chat configurado, aunque el mensaje SÍ se enviaba correctamente vía fallback al `defaultChatId`.
+
+### Fix aplicado
+
+#### `server/services/mtfAnalysis.ts`
+- **Campo nuevo:** `rateLimitBackoff: Map<string, number>` (pair → retry-after timestamp)
+- **Constante nueva:** `MTF_RATE_LIMIT_BACKOFF_MS = 120_000` (2 minutos de cooldown)
+- **Lógica:** Si el fetch falla por rate-limit → activa backoff 2min + retorna caché stale si disponible. Durante backoff, usa caché stale en vez de reintentar. Limpia backoff en fetch exitoso.
+- **Log nuevo:** `[MTF_RATE_LIMIT]` y `[MTF_BACKOFF]` para trazabilidad.
+
+#### `server/services/tradingEngine.ts`
+- **Campo nuevo:** `candleFetchBackoff: Map<string, number>` (pair:tf → retry-after timestamp)
+- **Constante nueva:** `CANDLE_FETCH_BACKOFF_MS = 60_000` (60s cooldown)
+- **Lógica:** Si `getLastClosedCandle` falla por rate-limit → activa backoff 60s + retorna `null` silencioso. Durante backoff, la función retorna `null` inmediatamente sin llamar a la API. Limpia backoff en fetch exitoso.
+- **Log nuevo:** `[CANDLE_RATE_LIMIT]` al activar backoff.
+
+#### `server/services/telegram.ts`
+- Downgrade de `console.warn` a `console.log` en el caso de fallback a `defaultChatId` — el mensaje se envía correctamente, el warn era ruido innecesario en logs.
+
+### Resultado esperado
+- BTC/USD (y cualquier otro par) deja de generar errores de rate-limit repetitivos cada 5s
+- MTF usa caché stale durante el backoff → el análisis continúa con datos recientes aunque con ligero delay
+- Logs más limpios sin WARNs falsos de Telegram
+
+### Verificación
+- `npx tsc --noEmit` → 0 errores TS
+
+---
