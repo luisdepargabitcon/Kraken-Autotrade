@@ -37,6 +37,24 @@ export interface TradeSignal {
   volumeRatio?: number;       // lastCandle.volume / avg10Volume
   // FASE 8: Price acceleration (for Price Acceleration Filter)
   priceAcceleration?: number; // (close[n]-close[n-1])/(close[n-1]-close[n-2]) ratio
+  // MomentumExpansionDetector result (populated in analyzeWithCandleStrategy for BUY signals)
+  momentumExpansion?: {
+    isExpansion: boolean;
+    score: number;
+    confidence: number;
+    reasons: string[];
+    metrics: {
+      bodyPct: number;
+      rangePct: number;
+      volumeRatio: number;
+      closeLocation: number;
+      priceVsEma20Pct: number;
+      emaSpreadPct: number;
+      macdHistSlope: number;
+      breakoutStrength: number;
+      upperWickRatio: number;
+    };
+  };
 }
 
 export interface TrendAnalysis {

@@ -64,6 +64,11 @@ import {
   type TradeSignal,
 } from "./strategies";
 import {
+  evaluateMomentumExpansion,
+  type MomentumExpansionContext,
+  type MomentumExpansionResult,
+} from "./MomentumExpansionDetector";
+import {
   buildTimeStopAlertMessage as _buildTimeStopAlertMessage,
   sendTimeStopAlert as _sendTimeStopAlert,
   checkExpiredTimeStopPositions as _checkExpiredTimeStopPositions,
@@ -545,6 +550,49 @@ export class TradingEngine {
     if (r === 'ANTI_CRESTA') return 'ANTI_CRESTA';
     if (r === 'MTF_STRICT') return 'MTF_STRICT';
     return null;
+  }
+
+  /**
+   * Determines whether an active ANTI_CRESTA watch should be released to allow a BUY.
+   * Requires ALL of:
+   *   1. priceVsEma20Pct <= maxAbs (price pulled back close to EMA20)
+   *   2. No upper-wick exhaustion (upperWickRatio <= 0.35)
+   *   3. Volume not falling (volumeRatio >= 1.0)
+   *   4. MomentumExpansionDetector confirms expansion (isExpansion = true, score >= 5)
+   */
+  private shouldReleaseAntiCrestaWatch(params: {
+    pair: string;
+    priceVsEma20Pct: number;
+    volumeRatio: number;
+    lastClosedCandle: OHLCCandle;
+    hybridCfg: any;
+    expansionResult: MomentumExpansionResult | null;
+  }): { released: boolean; reason: string } {
+    const { priceVsEma20Pct, volumeRatio, lastClosedCandle, hybridCfg, expansionResult } = params;
+
+    const maxAbs = Number(hybridCfg?.antiCresta?.reentryMaxAbsPriceVsEma20Pct ?? 0.003);
+    const absPct = Math.abs(priceVsEma20Pct);
+
+    if (!Number.isFinite(absPct) || absPct > maxAbs) {
+      return { released: false, reason: `priceVsEma20Pct=${priceVsEma20Pct.toFixed(4)} > maxAbs=${maxAbs}` };
+    }
+
+    const range = Math.max(lastClosedCandle.high - lastClosedCandle.low, 1e-9);
+    const upperWickRatio = (lastClosedCandle.high - Math.max(lastClosedCandle.open, lastClosedCandle.close)) / range;
+    if (upperWickRatio > 0.35) {
+      return { released: false, reason: `upperWickRatio=${upperWickRatio.toFixed(2)} > 0.35 (exhaustion candle)` };
+    }
+
+    if (volumeRatio < 1.0) {
+      return { released: false, reason: `volumeRatio=${volumeRatio.toFixed(2)} < 1.0 (volume falling)` };
+    }
+
+    if (!expansionResult || !expansionResult.isExpansion) {
+      const score = expansionResult?.score ?? 0;
+      return { released: false, reason: `expansion.score=${score} < 5 (no momentum expansion)` };
+    }
+
+    return { released: true, reason: `expansion.score=${expansionResult.score} reasons=[${expansionResult.reasons.join(',')}]` };
   }
 
   private async expireHybridWatchesIfNeeded(): Promise<void> {
@@ -1562,6 +1610,7 @@ export class TradingEngine {
     
     // Pre-compute BUY metrics — disponibles para ANTI_CRESTA y MTF_STRICT alert
     let buyMetrics = { currentPrice: 0, ema20: 0, priceVsEma20Pct: 0, volumeRatio: 1 };
+    let expansionResult: MomentumExpansionResult | null = null;
     if (signal.action === "buy" && closedCandles.length >= 20) {
       const _closes = closedCandles.map(c => c.close);
       const _ema20  = this.calculateEMA(_closes.slice(-20), 20);
@@ -1575,6 +1624,33 @@ export class TradingEngine {
         priceVsEma20Pct: _ema20 > 0 ? ((_price - _ema20) / _ema20) : 0,
         volumeRatio: _avgVol > 0 ? _lastVol / _avgVol : 1,
       };
+
+      // MomentumExpansionDetector — requires >= 27 candles for MACD
+      if (closedCandles.length >= 27) {
+        const _ema10      = this.calculateEMA(_closes.slice(-10), 10);
+        const _prevCloses = _closes.slice(0, -1);
+        const _prevEma10  = this.calculateEMA(_prevCloses.slice(-10), 10);
+        const _prevEma20  = this.calculateEMA(_prevCloses.slice(-20), 20);
+        const _currSpread = _ema20 > 0 ? (_ema10 - _ema20) / _ema20 : 0;
+        const _prevSpread = _prevEma20 > 0 ? (_prevEma10 - _prevEma20) / _prevEma20 : 0;
+        const macdNow  = this.calculateMACD(_closes);
+        const macdPrev = this.calculateMACD(_prevCloses);
+        const lastCandle = closedCandles[closedCandles.length - 1];
+        const prevCandle = closedCandles[closedCandles.length - 2];
+        const expansionCtx: MomentumExpansionContext = {
+          open: lastCandle.open, high: lastCandle.high,
+          low: lastCandle.low,  close: lastCandle.close,
+          volume: lastCandle.volume,
+          avgVolume20: _avgVol,
+          ema10: _ema10, ema20: _ema20,
+          emaSpreadPctDelta: _currSpread - _prevSpread,
+          prevHigh: prevCandle?.high ?? 0,
+          macdHist: macdNow.histogram, prevMacdHist: macdPrev.histogram,
+        };
+        expansionResult = evaluateMomentumExpansion(expansionCtx);
+        log(`[MED_EXPANSION] ${pair}: score=${expansionResult.score} isExpansion=${expansionResult.isExpansion} confidence=${expansionResult.confidence} reasons=[${expansionResult.reasons.join(',')}]`, "trading");
+        signal.momentumExpansion = expansionResult;
+      }
     }
 
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
@@ -1582,6 +1658,7 @@ export class TradingEngine {
     // Esto evita compras tardías en momentum agotado
     if (signal.action === "buy" && closedCandles.length >= 20) {
       const { ema20, currentPrice, priceVsEma20Pct, volumeRatio } = buyMetrics;
+      const lastClosedCandle = closedCandles[closedCandles.length - 1];
 
       const watchReason = activeHybridWatch ? this.normalizeHybridReason(activeHybridWatch.reason) : null;
       if (
@@ -1590,17 +1667,60 @@ export class TradingEngine {
         watchReason === 'ANTI_CRESTA' &&
         hybridCfg?.antiCresta?.enabled !== false
       ) {
-        const maxAbs = Number(hybridCfg?.antiCresta?.reentryMaxAbsPriceVsEma20Pct ?? 0.003);
-        const absPct = Math.abs(priceVsEma20Pct);
-        if (Number.isFinite(absPct) && absPct <= maxAbs) {
+        // FIX: use full shouldReleaseAntiCrestaWatch (priceVsEma20 + wick + vol + detector)
+        const releaseCheck = this.shouldReleaseAntiCrestaWatch({
+          pair, priceVsEma20Pct, volumeRatio,
+          lastClosedCandle, hybridCfg, expansionResult,
+        });
+        log(`[ANTI_CRESTA_RELEASE_CHECK] ${pair}: watchId=${activeHybridWatch.id} released=${releaseCheck.released} reason=${releaseCheck.reason}`, "trading");
+        if (releaseCheck.released) {
           signal.hybridGuard = { watchId: activeHybridWatch.id, reason: 'ANTI_CRESTA' };
           signal.reason = `${signal.reason} | HYBRID_REENTRY(ANTI_CRESTA)`;
+        } else {
+          // HARD BLOCK: watch active and release conditions NOT met
+          log(`[ANTI_CRESTA_WATCH_ACTIVE] ${pair}: watchId=${activeHybridWatch.id} blocking buy | ${releaseCheck.reason}`, "trading");
+          return {
+            action: "hold", pair, confidence: 0.3,
+            reason: `[ANTI_CRESTA_WATCH_ACTIVE] watchId=${activeHybridWatch.id} | ${releaseCheck.reason}`,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+          };
         }
       }
-      
+
+      // === PARTE E — Late Entry Safety Rules ===
+      // Block obvious late entries even when no active watch
+      if (!signal.hybridGuard) {
+        const range = Math.max(lastClosedCandle.high - lastClosedCandle.low, 1e-9);
+        const upperWickRatio = (lastClosedCandle.high - Math.max(lastClosedCandle.open, lastClosedCandle.close)) / range;
+        const closeLocation  = (lastClosedCandle.close - lastClosedCandle.low) / range;
+
+        let lateEntryReason: string | null = null;
+        if (priceVsEma20Pct > 0.012) {
+          lateEntryReason = `LATE_ENTRY_EXTENDED pct=${(priceVsEma20Pct * 100).toFixed(2)}% > 1.2%`;
+        } else if (upperWickRatio > 0.35) {
+          lateEntryReason = `LATE_ENTRY_WICK ratio=${upperWickRatio.toFixed(2)} > 0.35`;
+        } else if (volumeRatio < 1.0 && priceVsEma20Pct > 0.005) {
+          lateEntryReason = `LATE_ENTRY_LOW_VOL vol=${volumeRatio.toFixed(2)}x < 1.0 with extended price`;
+        } else if (closeLocation < 0.6 && priceVsEma20Pct > 0.005) {
+          lateEntryReason = `LATE_ENTRY_CLOSE_LOW loc=${closeLocation.toFixed(2)} < 0.6`;
+        }
+
+        if (lateEntryReason) {
+          log(`[LATE_ENTRY_BLOCK] ${pair}: ${lateEntryReason}`, "trading");
+          return {
+            action: "hold", pair, confidence: 0.3,
+            reason: `[LATE_ENTRY_BLOCK] ${lateEntryReason}`,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+          };
+        }
+      }
+
       // Anti-cresta: volumen alto + sobrecompra respecto a EMA20
       if (volumeRatio > 1.5 && priceVsEma20Pct > 0.01) {
         const rejectionReason = `Anti-Cresta: Volumen ${volumeRatio.toFixed(1)}x + Precio ${(priceVsEma20Pct * 100).toFixed(2)}% sobre EMA20`;
+        log(`[ANTI_CRESTA_BLOCK] ${pair}: reason=${rejectionReason} ttl=${this.getHybridGuardConfig()?.ttlMinutes ?? 120}m`, "trading");
 
         await this.maybeCreateHybridReentryWatch({
           pair,
@@ -1619,7 +1739,6 @@ export class TradingEngine {
           rejectionReasonText: rejectionReason,
         });
         
-        // Enviar alerta de rechazo
         this.telegramService.sendSignalRejectionAlert(
           pair,
           rejectionReason,
@@ -1637,8 +1756,6 @@ export class TradingEngine {
             ema20,
           }
         ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert ANTI_CRESTA: ${err.message}`, "trading"));
-        
-        log(`[ANTI_CRESTA] ${pair}: Señal BUY bloqueada - ${rejectionReason}`, "trading");
         
         return { 
           action: "hold", 
@@ -1757,6 +1874,16 @@ export class TradingEngine {
         if (Number.isFinite(currentAlign) && currentAlign >= minAlign) {
           signal.hybridGuard = { watchId: activeHybridWatch.id, reason: 'MTF_STRICT' };
           signal.reason = `${signal.reason} | HYBRID_REENTRY(MTF_STRICT)`;
+        } else {
+          // HARD BLOCK: MTF_STRICT watch active and alignment NOT met
+          const alignStr = Number.isFinite(currentAlign) ? currentAlign.toFixed(3) : 'N/A';
+          log(`[MTF_STRICT_WATCH_ACTIVE] ${pair}: watchId=${activeHybridWatch.id} blocking buy | alignment=${alignStr} < minAlign=${minAlign}`, "trading");
+          return {
+            action: "hold", pair, confidence: 0.3,
+            reason: `[MTF_STRICT_WATCH_ACTIVE] watchId=${activeHybridWatch.id} | alignment=${alignStr} < ${minAlign}`,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+          };
         }
       }
     }
@@ -3637,6 +3764,36 @@ El bot ha pausado las operaciones de COMPRA.
             finalReason: `Trade ejecutado: ${tradeVolume.toFixed(8)} @ $${currentPrice.toFixed(2)}`,
             feeCushionEffectivePct: effectiveCushionPct,
           });
+
+          // BUY snapshot Telegram alert (Part D) — cycle mode
+          if (this.telegramService.isInitialized()) {
+            const expSnapCycle = (signal as any)?.momentumExpansion ?? null;
+            const antiCrestaStatusCycle: 'passed' | 'watch_released' | 'not_triggered' =
+              hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
+            this.telegramService.sendBuyExecutedSnapshot({
+              pair,
+              exchange: this.getTradingExchangeType(),
+              price: currentPrice,
+              volume: finalVolumeCycle.toFixed(8),
+              totalUsd: tradeAmountUSD,
+              strategy: 'momentum_cycle',
+              regime: earlyRegime ?? undefined,
+              confidence: signal.confidence,
+              signalsCount: signal.signalsCount,
+              signalReason: signal.reason,
+              macdHistSlope: expSnapCycle?.metrics?.macdHistSlope,
+              volumeRatio: expSnapCycle?.metrics?.volumeRatio,
+              priceVsEma20Pct: expSnapCycle?.metrics?.priceVsEma20Pct,
+              expansion: expSnapCycle ? {
+                score: expSnapCycle.score,
+                isExpansion: expSnapCycle.isExpansion,
+                confidence: expSnapCycle.confidence,
+                reasons: expSnapCycle.reasons,
+              } : null,
+              antiCrestaStatus: antiCrestaStatusCycle,
+              watchId: hgInfo?.watchId,
+            }).catch((e: any) => log(`[ALERT_ERR] sendBuyExecutedSnapshot: ${e?.message ?? String(e)}`, 'trading'));
+          }
         }
 
       } else if (signal.action === "sell") {
@@ -4674,6 +4831,37 @@ El bot ha pausado las operaciones de COMPRA.
         
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
+
+          // BUY snapshot Telegram alert (Part D)
+          if (this.telegramService.isInitialized()) {
+            const expSnap = (signal as any)?.momentumExpansion ?? null;
+            const antiCrestaStatus: 'passed' | 'watch_released' | 'not_triggered' =
+              hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
+            this.telegramService.sendBuyExecutedSnapshot({
+              pair,
+              exchange: this.getTradingExchangeType(),
+              price: currentPrice,
+              volume: finalVolumeCandles.toFixed(8),
+              totalUsd: tradeAmountUSD,
+              strategy: selectedStrategyId,
+              regime: earlyRegime ?? undefined,
+              confidence: signal.confidence,
+              signalsCount: signal.signalsCount,
+              signalReason: signal.reason,
+              ema20: expSnap?.metrics?.priceVsEma20Pct != null ? undefined : undefined,
+              macdHistSlope: expSnap?.metrics?.macdHistSlope,
+              volumeRatio: expSnap?.metrics?.volumeRatio,
+              priceVsEma20Pct: expSnap?.metrics?.priceVsEma20Pct,
+              expansion: expSnap ? {
+                score: expSnap.score,
+                isExpansion: expSnap.isExpansion,
+                confidence: expSnap.confidence,
+                reasons: expSnap.reasons,
+              } : null,
+              antiCrestaStatus,
+              watchId: hgInfo?.watchId,
+            }).catch((e: any) => log(`[ALERT_ERR] sendBuyExecutedSnapshot: ${e?.message ?? String(e)}`, 'trading'));
+          }
         }
 
       } else if (signal.action === "sell") {

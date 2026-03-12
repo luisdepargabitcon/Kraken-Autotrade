@@ -2,6 +2,73 @@
 
 ---
 
+## 2026-06 — FEAT: Anti-Cresta Refactor + MomentumExpansionDetector + BUY Snapshot (Partes A-F)
+
+### Descripción
+Refactorización del sistema Anti-Cresta para que el bloqueo sea duro (no solo un watch sin efecto), nuevo módulo detector de expansión de momentum, reglas de entrada tardía, y alerta Telegram con snapshot técnico en cada BUY ejecutado.
+
+### Bug raíz corregido (CRÍTICO)
+**`analyzeWithCandleStrategy` — Anti-Cresta watch sin hard block:**
+El check de liberación de watch (líneas ~1587-1599) sólo anotaba `signal.hybridGuard` cuando se cumplían las condiciones, pero si NO se cumplían, la ejecución caía sin bloquear la compra. Resultado: el watch era cosmético — la compra se ejecutaba igual. Mismo bug en MTF_STRICT (líneas ~1748-1761). Ambos corregidos con `else` de bloqueo duro.
+
+### Archivos creados
+- **`server/services/MomentumExpansionDetector.ts`** — Módulo puro y sin estado para detectar expansiones de momentum saludables:
+  - `evaluateMomentumExpansion(ctx)` retorna `{ isExpansion, score, confidence, reasons, metrics }`
+  - 7 condiciones positivas: STRONG_BODY, CLOSE_NEAR_HIGH, VOLUME_EXPANSION, HEALTHY_EMA_DISTANCE, EMA_EXPANDING, MACD_ACCELERATING, MICRO_BREAKOUT
+  - 1 penalización: UPPER_WICK_EXHAUSTION
+  - `isExpansion = score >= 5`
+- **`server/services/__tests__/momentumExpansionDetector.test.ts`** — 20 tests (todos pass)
+- **`server/services/__tests__/antiCrestaWatch.test.ts`** — 19 tests del bug fix y release logic (todos pass)
+
+### Archivos modificados
+
+#### `server/services/tradingEngine.ts`
+- **Import añadido:** `evaluateMomentumExpansion`, `MomentumExpansionContext`, `MomentumExpansionResult` desde `./MomentumExpansionDetector`
+- **Método nuevo:** `shouldReleaseAntiCrestaWatch({ priceVsEma20Pct, volumeRatio, lastClosedCandle, hybridCfg, expansionResult })` — verifica 4 condiciones: distancia EMA20, wick, volumen, y detector score >= 5
+- **buyMetrics extendido:** se computa `expansionResult` via `evaluateMomentumExpansion` cuando hay >= 27 velas cerradas. Se emite log `[MED_EXPANSION]` y se asigna a `signal.momentumExpansion`
+- **Anti-Cresta watch fix:** si watch ANTI_CRESTA activo + condiciones NO mejoradas → `return hold` con log `[ANTI_CRESTA_WATCH_ACTIVE]`. Si mejoradas → `signal.hybridGuard` + `HYBRID_REENTRY`. Log `[ANTI_CRESTA_RELEASE_CHECK]`
+- **MTF_STRICT watch fix:** mismo patrón — hard block con log `[MTF_STRICT_WATCH_ACTIVE]`
+- **Parte E — Late Entry Rules** (solo si no hay watch liberado):
+  - `priceVsEma20Pct > 0.012` → `[LATE_ENTRY_BLOCK] LATE_ENTRY_EXTENDED`
+  - `upperWickRatio > 0.35` → `[LATE_ENTRY_BLOCK] LATE_ENTRY_WICK`
+  - `volumeRatio < 1.0 && priceVsEma20Pct > 0.005` → `[LATE_ENTRY_BLOCK] LATE_ENTRY_LOW_VOL`
+  - `closeLocation < 0.6 && priceVsEma20Pct > 0.005` → `[LATE_ENTRY_BLOCK] LATE_ENTRY_CLOSE_LOW`
+- **Snapshot BUY:** tras `executeTrade` exitoso en modo candle y ciclo, llama a `telegramService.sendBuyExecutedSnapshot(...)`
+- **Anti-Cresta trigger log mejorado:** `[ANTI_CRESTA_BLOCK]` con TTL
+
+#### `server/services/strategies.ts`
+- Campo opcional añadido a `TradeSignal`: `momentumExpansion?: { isExpansion, score, confidence, reasons, metrics }` — transporta el resultado del detector hasta el punto de ejecución
+
+#### `server/services/telegram.ts`
+- **Método nuevo:** `sendBuyExecutedSnapshot(ctx)` — alerta configurable con:
+  - Datos del trade: par, exchange, precio, volumen, total
+  - Motivo: estrategia, régimen, confianza, señales
+  - Snapshot técnico: EMA10/20, MACD slope, volumeRatio, priceVsEma20Pct, expansion score/reasons
+  - Estado Anti-Cresta: passed / watch_released / not_triggered
+  - Toggle: `botConfig.buySnapshotAlertsEnabled` (default `true`)
+
+#### `shared/schema.ts`
+- **Columna nueva:** `buySnapshotAlertsEnabled: boolean("buy_snapshot_alerts_enabled").notNull().default(true)` — requiere `npm run db:push` en deploy
+
+### Nuevos logs a monitorizar
+| Log | Qué indica |
+|-----|-----------|
+| `[MED_EXPANSION]` | Evaluación del detector por cada BUY candidato |
+| `[ANTI_CRESTA_RELEASE_CHECK]` | Intento de liberación de watch Anti-Cresta |
+| `[ANTI_CRESTA_WATCH_ACTIVE]` | Bloqueo duro por watch activo (BUG FIX) |
+| `[MTF_STRICT_WATCH_ACTIVE]` | Bloqueo duro MTF_STRICT watch activo (BUG FIX) |
+| `[ANTI_CRESTA_BLOCK]` | Anti-Cresta disparado (watch creado) |
+| `[LATE_ENTRY_BLOCK]` | Compra tardía bloqueada por reglas Parte E |
+| `[BUY_SNAPSHOT_BUILD]` | Construcción del snapshot Telegram |
+| `[BUY_SNAPSHOT_TELEGRAM]` | Envío del snapshot (o skip si toggle disabled) |
+
+### Post-deploy: Acción requerida
+```bash
+npm run db:push  # Añadir columna buy_snapshot_alerts_enabled
+```
+
+---
+
 ## 2026-03-11 — FEAT: Smart Exit Engine (Experimental)
 
 ### Descripción

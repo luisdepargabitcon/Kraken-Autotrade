@@ -2893,6 +2893,115 @@ _KrakenBot.AI - Trading Autónomo_
     await this.sendAlertToMultipleChats(message, "trades");
   }
 
+  /**
+   * Send a detailed BUY execution snapshot to Telegram.
+   * Toggle: botConfig.buySnapshotAlertsEnabled (default true)
+   */
+  async sendBuyExecutedSnapshot(ctx: {
+    pair: string;
+    exchange: string;
+    price: number;
+    volume: string;
+    totalUsd: number;
+    orderId?: string;
+    lotId?: string;
+    strategy: string;
+    regime?: string;
+    confidence: number;
+    signalsCount?: number;
+    signalReason?: string;
+    ema10?: number;
+    ema20?: number;
+    macdHistSlope?: number;
+    volumeRatio?: number;
+    priceVsEma20Pct?: number;
+    expansion?: {
+      score: number;
+      isExpansion: boolean;
+      confidence: number;
+      reasons: string[];
+    } | null;
+    antiCrestaStatus: 'passed' | 'watch_released' | 'not_triggered';
+    watchId?: number;
+  }): Promise<void> {
+    const botConfig = await storage.getBotConfig();
+    if (!(botConfig as any)?.buySnapshotAlertsEnabled) {
+      log(`[BUY_SNAPSHOT_TELEGRAM] ${ctx.pair}: toggle disabled, skip`, "trading");
+      return;
+    }
+
+    const env = environment.envTag || "UNKNOWN";
+    const timestamp = new Date().toLocaleTimeString('es-ES', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZone: 'Europe/Madrid',
+    });
+
+    const expansionLine = ctx.expansion
+      ? `score=${ctx.expansion.score} isExp=${ctx.expansion.isExpansion} conf=${ctx.expansion.confidence}% [${ctx.expansion.reasons.slice(0, 3).join(',')}]`
+      : 'N/A (insufficient candles)';
+
+    const antiCrestaLine =
+      ctx.antiCrestaStatus === 'watch_released' ? `✅ Watch liberado (watchId=${ctx.watchId})` :
+      ctx.antiCrestaStatus === 'passed'         ? '✅ Sin restricción' :
+                                                  '✅ No activado';
+
+    const snapshot: Record<string, string> = {
+      pair:            ctx.pair,
+      exchange:        ctx.exchange,
+      price:           `$${Number(ctx.price).toFixed(4)}`,
+      volume:          ctx.volume,
+      totalUsd:        `$${ctx.totalUsd.toFixed(2)}`,
+      strategy:        ctx.strategy,
+      regime:          ctx.regime ?? 'N/A',
+      confidence:      `${(ctx.confidence * 100).toFixed(0)}%`,
+      signals:         ctx.signalsCount != null ? String(ctx.signalsCount) : 'N/A',
+      ema10:           ctx.ema10   != null ? ctx.ema10.toFixed(4)          : 'N/A',
+      ema20:           ctx.ema20   != null ? ctx.ema20.toFixed(4)          : 'N/A',
+      macdHistSlope:   ctx.macdHistSlope   != null ? ctx.macdHistSlope.toFixed(6)   : 'N/A',
+      volumeRatio:     ctx.volumeRatio     != null ? `${ctx.volumeRatio.toFixed(2)}x` : 'N/A',
+      priceVsEma20:    ctx.priceVsEma20Pct != null ? `${(ctx.priceVsEma20Pct * 100).toFixed(3)}%` : 'N/A',
+      expansion:       expansionLine,
+      antiCresta:      antiCrestaLine,
+    };
+    if (ctx.orderId) snapshot.orderId = ctx.orderId;
+    if (ctx.lotId)   snapshot.lotId   = ctx.lotId;
+
+    log(`[BUY_SNAPSHOT_BUILD] ${ctx.pair}: reasons=[${ctx.expansion?.reasons?.join(',') ?? 'N/A'}] score=${ctx.expansion?.score ?? 0}`, "trading");
+
+    const message = `🟢 <b>COMPRA EJECUTADA — SNAPSHOT</b>
+━━━━━━━━━━━━━━━━━━━
+<code>[${env}]</code>
+
+📊 <b>Par:</b> <code>${escapeHtml(ctx.pair)}</code>
+🏦 <b>Exchange:</b> <code>${escapeHtml(ctx.exchange)}</code>
+⏰ <b>Hora:</b> ${timestamp} (Madrid)
+💵 <b>Precio:</b> <code>$${Number(ctx.price).toFixed(4)}</code>
+📦 <b>Cantidad:</b> <code>${escapeHtml(ctx.volume)}</code>
+💰 <b>Total:</b> <code>$${ctx.totalUsd.toFixed(2)}</code>
+
+🎯 <b>MOTIVO DE COMPRA</b>
+• Estrategia: <code>${escapeHtml(ctx.strategy)}</code>
+• Régimen: <code>${escapeHtml(ctx.regime ?? 'N/A')}</code>
+• Confianza: <code>${(ctx.confidence * 100).toFixed(0)}%</code>
+• Señales: ${ctx.signalsCount ?? '?'}
+
+📈 <b>SNAPSHOT TÉCNICO</b>
+• EMA10/EMA20: <code>${ctx.ema10?.toFixed(4) ?? 'N/A'} / ${ctx.ema20?.toFixed(4) ?? 'N/A'}</code>
+• MACD slope: <code>${ctx.macdHistSlope?.toFixed(6) ?? 'N/A'}</code>
+• VolumeRatio: <code>${ctx.volumeRatio?.toFixed(2) ?? 'N/A'}x</code>
+• PriceVsEMA20: <code>${ctx.priceVsEma20Pct != null ? (ctx.priceVsEma20Pct * 100).toFixed(3) + '%' : 'N/A'}</code>
+• Expansion: <code>${escapeHtml(expansionLine)}</code>
+• Anti-Cresta: ${antiCrestaLine}
+
+📋 <b>SNAPSHOT COMPLETO:</b>
+<pre>${escapeHtml(JSON.stringify(snapshot, null, 2))}</pre>
+━━━━━━━━━━━━━━━━━━━
+<i>CHESTER BOT - BUY Snapshot</i>`;
+
+    log(`[BUY_SNAPSHOT_TELEGRAM] ${ctx.pair}: orderId=${ctx.orderId ?? 'N/A'} sending snapshot`, "trading");
+    await this.sendAlertToMultipleChats(message, "trades");
+  }
+
   async sendSystemStatus(isActive: boolean, strategy: string) {
     const emoji = isActive ? "✅" : "⏸️";
     const status = isActive ? "EN LÍNEA" : "PAUSADO";

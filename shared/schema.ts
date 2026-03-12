@@ -141,6 +141,8 @@ export const botConfig = pgTable("bot_config", {
   // Advanced Filters: Signal Rejection Alerts
   signalRejectionAlertsEnabled: boolean("signal_rejection_alerts_enabled").notNull().default(true),
   signalRejectionAlertChatId: text("signal_rejection_alert_chat_id"),
+  // BUY Execution Snapshot Alert (Part D)
+  buySnapshotAlertsEnabled: boolean("buy_snapshot_alerts_enabled").notNull().default(true),
   // Spread Filter configuration
   spreadFilterEnabled: boolean("spread_filter_enabled").notNull().default(true),
   spreadDynamicEnabled: boolean("spread_dynamic_enabled").notNull().default(true),
