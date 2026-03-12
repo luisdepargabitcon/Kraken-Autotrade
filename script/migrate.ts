@@ -530,6 +530,8 @@ async function runMigration() {
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0',
       // Smart Exit Engine (experimental dynamic exit)
       'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS smart_exit_config JSONB',
+      // BUY Execution Snapshot Alert toggle (Part D — Anti-Cresta refactor)
+      'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS buy_snapshot_alerts_enabled BOOLEAN NOT NULL DEFAULT true',
     ];
     
     // open_positions columns
