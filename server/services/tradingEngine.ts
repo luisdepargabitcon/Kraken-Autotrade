@@ -69,6 +69,12 @@ import {
   type MomentumExpansionResult,
 } from "./MomentumExpansionDetector";
 import {
+  buildEntryDecisionContext,
+  validateEntryMetrics,
+  evaluateHardGuards,
+  type EntryDecisionContext,
+} from "./EntryDecisionContext";
+import {
   buildTimeStopAlertMessage as _buildTimeStopAlertMessage,
   sendTimeStopAlert as _sendTimeStopAlert,
   checkExpiredTimeStopPositions as _checkExpiredTimeStopPositions,
@@ -449,6 +455,8 @@ export class TradingEngine {
   // Backoff por rate-limit en fetch de vela (pair:tf → retry-after timestamp)
   private candleFetchBackoff: Map<string, number> = new Map();
   private readonly CANDLE_FETCH_BACKOFF_MS = 60_000; // 60s backoff tras rate-limit
+  // Contexto único de decisión de entrada — fuente de verdad para métricas e indicadores
+  private lastEntryContext: Map<string, EntryDecisionContext> = new Map();
   
   // Fallback minimums (only used if Kraken API fails)
   private readonly FALLBACK_MINIMUMS: Record<string, number> = {
@@ -1625,48 +1633,82 @@ export class TradingEngine {
       }
     }
     
-    // Pre-compute BUY metrics — disponibles para ANTI_CRESTA y MTF_STRICT alert
-    let buyMetrics = { currentPrice: 0, ema20: 0, priceVsEma20Pct: 0, volumeRatio: 1 };
-    let expansionResult: MomentumExpansionResult | null = null;
-    if (signal.action === "buy" && closedCandles.length >= 20) {
-      const _closes = closedCandles.map(c => c.close);
-      const _ema20  = this.calculateEMA(_closes.slice(-20), 20);
-      const _price  = candle.close;
-      const _volumes = closedCandles.slice(-20).map(c => c.volume);
-      const _avgVol  = _volumes.reduce((a, b) => a + b, 0) / _volumes.length;
-      const _lastVol = closedCandles[closedCandles.length - 1]?.volume || 0;
-      buyMetrics = {
-        currentPrice: _price,
-        ema20: _ema20,
-        priceVsEma20Pct: _ema20 > 0 ? ((_price - _ema20) / _ema20) : 0,
-        volumeRatio: _avgVol > 0 ? _lastVol / _avgVol : 1,
-      };
+    // === ENTRY DECISION CONTEXT — fuente única de verdad para todos los indicadores ===
+    // Construido UNA sola vez por ciclo/par. Todos los guardias y detectores leen de aquí.
+    const entryCtx = buildEntryDecisionContext(
+      pair,
+      `momentum_candles_${timeframe}`,
+      timeframe,
+      regime?.toString() ?? null,
+      closedCandles,
+      candle.close,
+      mtfAnalysis?.alignment ?? null
+    );
+    this.lastEntryContext.set(pair, entryCtx);
+    log(`[ENTRY_CONTEXT_BUILT] ${pair}: ema10=${entryCtx.ema10?.toFixed(4) ?? 'N/A'} ema20=${entryCtx.ema20?.toFixed(4) ?? 'N/A'} volRatio=${entryCtx.volumeRatio?.toFixed(2) ?? 'N/A'}x macdSlope=${entryCtx.macdHistSlope?.toFixed(6) ?? 'N/A'} complete=${entryCtx.dataComplete} id=${entryCtx.decisionId}`, "trading");
 
-      // MomentumExpansionDetector — requires >= 27 candles for MACD
-      if (closedCandles.length >= 27) {
-        const _ema10      = this.calculateEMA(_closes.slice(-10), 10);
-        const _prevCloses = _closes.slice(0, -1);
-        const _prevEma10  = this.calculateEMA(_prevCloses.slice(-10), 10);
-        const _prevEma20  = this.calculateEMA(_prevCloses.slice(-20), 20);
-        const _currSpread = _ema20 > 0 ? (_ema10 - _ema20) / _ema20 : 0;
-        const _prevSpread = _prevEma20 > 0 ? (_prevEma10 - _prevEma20) / _prevEma20 : 0;
-        const macdNow  = this.calculateMACD(_closes);
-        const macdPrev = this.calculateMACD(_prevCloses);
-        const lastCandle = closedCandles[closedCandles.length - 1];
-        const prevCandle = closedCandles[closedCandles.length - 2];
-        const expansionCtx: MomentumExpansionContext = {
-          open: lastCandle.open, high: lastCandle.high,
-          low: lastCandle.low,  close: lastCandle.close,
-          volume: lastCandle.volume,
-          avgVolume20: _avgVol,
-          ema10: _ema10, ema20: _ema20,
-          emaSpreadPctDelta: _currSpread - _prevSpread,
-          prevHigh: prevCandle?.high ?? 0,
-          macdHist: macdNow.histogram, prevMacdHist: macdPrev.histogram,
+    // Expansion detector — usa valores del contexto (sin recalcular)
+    let expansionResult: MomentumExpansionResult | null = null;
+    if (signal.action === "buy" &&
+        closedCandles.length >= 27 &&
+        entryCtx.ema10 !== null && entryCtx.ema20 !== null &&
+        entryCtx.macdHist !== null && entryCtx.prevMacdHist !== null &&
+        entryCtx.avgVolume20 !== null) {
+      const _currSpread = entryCtx.ema20 > 0 ? (entryCtx.ema10 - entryCtx.ema20) / entryCtx.ema20 : 0;
+      const _prevSpread = (entryCtx.prevEma20 && entryCtx.prevEma20 > 0 && entryCtx.prevEma10 !== null)
+        ? (entryCtx.prevEma10 - entryCtx.prevEma20) / entryCtx.prevEma20 : 0;
+      const expansionCtxObj: MomentumExpansionContext = {
+        open:   entryCtx.lastCandle!.open,
+        high:   entryCtx.lastCandle!.high,
+        low:    entryCtx.lastCandle!.low,
+        close:  entryCtx.lastCandle!.close,
+        volume: entryCtx.lastCandle!.volume,
+        avgVolume20: entryCtx.avgVolume20,
+        ema10: entryCtx.ema10,
+        ema20: entryCtx.ema20,
+        emaSpreadPctDelta: _currSpread - _prevSpread,
+        prevHigh: entryCtx.prevCandle?.high ?? 0,
+        macdHist: entryCtx.macdHist,
+        prevMacdHist: entryCtx.prevMacdHist,
+      };
+      expansionResult = evaluateMomentumExpansion(expansionCtxObj);
+      entryCtx.expansionResult = expansionResult;
+      signal.momentumExpansion = expansionResult;
+      log(`[MED_EXPANSION] ${pair}: score=${expansionResult.score} isExpansion=${expansionResult.isExpansion} confidence=${expansionResult.confidence} reasons=[${expansionResult.reasons.join(',')}]`, "trading");
+    }
+
+    // Hard guards estructurales — deben evaluarse antes del anti-cresta
+    if (signal.action === "buy") {
+      validateEntryMetrics(entryCtx);
+      const guardResult = evaluateHardGuards(entryCtx);
+      if (guardResult.blocked) {
+        log(`[ENTRY_HARD_GUARD_BLOCK] ${pair}: decisionId=${entryCtx.decisionId} blockers=[${guardResult.blockers.join(' | ')}]`, "trading");
+        this.telegramService.sendSignalRejectionAlert(
+          pair,
+          `Hard Guard: ${guardResult.blockers[0]}`,
+          "HARD_GUARD",
+          {
+            regime: regime?.toString(),
+            mtfAlignment: entryCtx.mtfAlignment ?? undefined,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+            volumeRatio: entryCtx.volumeRatio ?? undefined,
+            priceVsEma20Pct: entryCtx.priceVsEma20Pct ?? undefined,
+            selectedStrategy: `momentum_candles_${timeframe}`,
+            rawSignal: "BUY",
+            currentPrice: candle.close,
+            ema20: entryCtx.ema20 ?? undefined,
+          }
+        ).catch((e: any) => log(`[ALERT_ERR] sendSignalRejectionAlert HARD_GUARD: ${e?.message}`, "trading"));
+        return {
+          action: "hold", pair, confidence: 0.2,
+          reason: `[ENTRY_GUARD_BLOCK] ${guardResult.blockers[0]}`,
+          signalsCount: signal.signalsCount,
+          minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
         };
-        expansionResult = evaluateMomentumExpansion(expansionCtx);
-        log(`[MED_EXPANSION] ${pair}: score=${expansionResult.score} isExpansion=${expansionResult.isExpansion} confidence=${expansionResult.confidence} reasons=[${expansionResult.reasons.join(',')}]`, "trading");
-        signal.momentumExpansion = expansionResult;
+      }
+      if (guardResult.warnings.length > 0) {
+        log(`[ENTRY_HARD_GUARD_WARN] ${pair}: decisionId=${entryCtx.decisionId} warnings=[${guardResult.warnings.join(' | ')}]`, "trading");
       }
     }
 
@@ -1674,7 +1716,11 @@ export class TradingEngine {
     // Bloquea compras cuando: volumen > 1.5x promedio Y precio > 1% sobre EMA20
     // Esto evita compras tardías en momentum agotado
     if (signal.action === "buy" && closedCandles.length >= 20) {
-      const { ema20, currentPrice, priceVsEma20Pct, volumeRatio } = buyMetrics;
+      // Usar valores del contexto (fuente única de verdad)
+      const ema20           = entryCtx.ema20 ?? 0;
+      const currentPrice    = candle.close;
+      const priceVsEma20Pct = entryCtx.priceVsEma20Pct ?? 0;
+      const volumeRatio     = entryCtx.volumeRatio ?? 1;
       const lastClosedCandle = closedCandles[closedCandles.length - 1];
 
       const watchReason = activeHybridWatch ? this.normalizeHybridReason(activeHybridWatch.reason) : null;
@@ -1792,18 +1838,8 @@ export class TradingEngine {
       signal = { ...signal, reason: `${signal.reason} | VOLUME_OVERRIDE(${vol}x)` };
     }
 
-    // FASE 6: Calcular ATR% directamente sobre OHLC[] para MTF dinámico
-    let atrPctForMtf: number | undefined;
-    if (closedCandles.length >= 15) {
-      const slice = (closedCandles as any[]).slice(-15);
-      const trValues: number[] = slice.slice(1).map((c: any, i: number) => {
-        const prev = slice[i];
-        return Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
-      });
-      const atrVal = trValues.reduce((a: number, b: number) => a + b, 0) / trValues.length;
-      const lastClose = (closedCandles as any[])[closedCandles.length - 1]?.close || 1;
-      atrPctForMtf = isFinite(atrVal) && lastClose > 0 ? (atrVal / lastClose) * 100 : undefined;
-    }
+    // FASE 6: ATR% para MTF dinámico — usa EntryDecisionContext (sin recalcular)
+    const atrPctForMtf: number | undefined = entryCtx.atrPct ?? undefined;
 
     // Aplicar filtro MTF si hay señal activa (ahora con régimen para umbrales estrictos)
     const skipMtfForVolumeOverride = flags.volumeOverrideEnabled && signal.action === "buy" && (signal.volumeRatio ?? 0) >= 2.5;
@@ -1822,56 +1858,53 @@ export class TradingEngine {
         if (volumeBreakoutOverride) {
           log(`[MTF_BREAKOUT_OVERRIDE] ${pair} vol=${(signal.volumeRatio ?? 0).toFixed(2)} mtf=${mtfAnalysis.alignment.toFixed(2)} ADX=${(adx ?? 0).toFixed(0)} regime=${regime}`, "trading");
           signal.reason += ` | BREAKOUT_OVERRIDE(vol=${(signal.volumeRatio ?? 0).toFixed(2)}, mtf=${mtfAnalysis.alignment.toFixed(2)})`;
-          signal.confidence = Math.min(0.85, signal.confidence * 0.9); // Reducir confianza ligeramente por MTF no alineado
+          signal.confidence = Math.min(0.85, signal.confidence * 0.9);
           this.updatePairTrace(pair, { volumeBreakoutOverride: true });
         } else {
-        // Preserve signalsCount from original signal for diagnostic trace
-        // Si es filtro MTF_STRICT, enviar alerta de rechazo
-        if (mtfBoost.filterType === "MTF_STRICT" && signal.action === "buy") {
-          await this.maybeCreateHybridReentryWatch({
-            pair,
-            timeframe,
-            strategyId: `momentum_candles_${timeframe}`,
-            reason: 'MTF_STRICT',
-            regime: regime?.toString(),
-            rawSignal: signal.action.toUpperCase(),
-            rejectPrice: buyMetrics.currentPrice || undefined,
-            ema20: buyMetrics.ema20 || undefined,
-            priceVsEma20Pct: buyMetrics.priceVsEma20Pct,
-            volumeRatio: buyMetrics.volumeRatio,
-            mtfAlignment: mtfAnalysis.alignment,
-            signalsCount: signal.signalsCount,
-            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
-            rejectionReasonText: mtfBoost.reason,
-          });
-
-          this.telegramService.sendSignalRejectionAlert(
-            pair,
-            mtfBoost.reason,
-            "MTF_STRICT",
-            {
+          // Si es filtro MTF_STRICT, crear watch y enviar alerta de rechazo
+          if (mtfBoost.filterType === "MTF_STRICT" && signal.action === "buy") {
+            await this.maybeCreateHybridReentryWatch({
+              pair,
+              timeframe,
+              strategyId: `momentum_candles_${timeframe}`,
+              reason: 'MTF_STRICT',
               regime: regime?.toString(),
-              mtfAlignment: mtfAnalysis.alignment,
+              rawSignal: signal.action.toUpperCase(),
+              rejectPrice: entryCtx.currentPrice || undefined,
+              ema20: entryCtx.ema20 || undefined,
+              priceVsEma20Pct: entryCtx.priceVsEma20Pct ?? 0,
+              volumeRatio: entryCtx.volumeRatio ?? 1,
+              mtfAlignment: mtfAnalysis?.alignment,
               signalsCount: signal.signalsCount,
               minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
-              selectedStrategy: `momentum_candles_${timeframe}`,
-              rawSignal: signal.action.toUpperCase(),
-              currentPrice: buyMetrics.currentPrice || undefined,
-              ema20: buyMetrics.ema20 || undefined,
-              volumeRatio: buyMetrics.volumeRatio,
-              priceVsEma20Pct: buyMetrics.priceVsEma20Pct,
-            }
-          ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert: ${err.message}`, "trading"));
-        }
-        
-        return { 
-          action: "hold", 
-          pair, 
-          confidence: 0.3, 
-          reason: `Señal filtrada por MTF: ${mtfBoost.reason}`,
-          signalsCount: signal.signalsCount,
-          minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
-        };
+              rejectionReasonText: mtfBoost.reason,
+            });
+            this.telegramService.sendSignalRejectionAlert(
+              pair,
+              mtfBoost.reason,
+              "MTF_STRICT",
+              {
+                regime: regime?.toString(),
+                mtfAlignment: mtfAnalysis.alignment,
+                signalsCount: signal.signalsCount,
+                minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+                selectedStrategy: `momentum_candles_${timeframe}`,
+                rawSignal: signal.action.toUpperCase(),
+                currentPrice: entryCtx.currentPrice || undefined,
+                ema20: entryCtx.ema20 || undefined,
+                volumeRatio: entryCtx.volumeRatio ?? 1,
+                priceVsEma20Pct: entryCtx.priceVsEma20Pct ?? 0,
+              }
+            ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert: ${err.message}`, "trading"));
+          }
+          return { 
+            action: "hold", 
+            pair, 
+            confidence: 0.3, 
+            reason: `Señal filtrada por MTF: ${mtfBoost.reason}`,
+            signalsCount: signal.signalsCount,
+            minSignalsRequired: adjustedMinSignals ?? signal.minSignalsRequired,
+          };
         } // close else (no breakout override)
       } // close if (mtfBoost.filtered)
       signal.confidence = Math.min(0.95, signal.confidence + mtfBoost.confidenceBoost);
@@ -4849,9 +4882,10 @@ El bot ha pausado las operaciones de COMPRA.
         if (success) {
           this.lastTradeTime.set(pair, Date.now());
 
-          // BUY snapshot Telegram alert (Part D)
+          // BUY snapshot Telegram alert (Part D) — usa EntryDecisionContext como fuente única
           if (this.telegramService.isInitialized()) {
             const expSnap = (signal as any)?.momentumExpansion ?? null;
+            const snapshotCtx = this.lastEntryContext.get(pair) ?? null;
             const antiCrestaStatus: 'passed' | 'watch_released' | 'not_triggered' =
               hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
             this.telegramService.sendBuyExecutedSnapshot({
@@ -4865,10 +4899,12 @@ El bot ha pausado las operaciones de COMPRA.
               confidence: signal.confidence,
               signalsCount: signal.signalsCount,
               signalReason: signal.reason,
-              ema20: expSnap?.metrics?.priceVsEma20Pct != null ? undefined : undefined,
-              macdHistSlope: expSnap?.metrics?.macdHistSlope,
-              volumeRatio: expSnap?.metrics?.volumeRatio,
-              priceVsEma20Pct: expSnap?.metrics?.priceVsEma20Pct,
+              // FIX: usar contexto como fuente de verdad (antes ema20 era siempre undefined)
+              ema10: snapshotCtx?.ema10 ?? undefined,
+              ema20: snapshotCtx?.ema20 ?? undefined,
+              macdHistSlope: snapshotCtx?.macdHistSlope ?? expSnap?.metrics?.macdHistSlope,
+              volumeRatio: snapshotCtx?.volumeRatio ?? expSnap?.metrics?.volumeRatio,
+              priceVsEma20Pct: snapshotCtx?.priceVsEma20Pct ?? expSnap?.metrics?.priceVsEma20Pct,
               expansion: expSnap ? {
                 score: expSnap.score,
                 isExpansion: expSnap.isExpansion,

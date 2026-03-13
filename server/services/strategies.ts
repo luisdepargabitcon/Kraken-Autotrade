@@ -37,6 +37,11 @@ export interface TradeSignal {
   volumeRatio?: number;       // lastCandle.volume / avg10Volume
   // FASE 8: Price acceleration (for Price Acceleration Filter)
   priceAcceleration?: number; // (close[n]-close[n-1])/(close[n-1]-close[n-2]) ratio
+  // Raw indicator values at signal time (populated by momentumCandlesStrategy)
+  ema10?: number;              // EMA10 of closes at signal evaluation
+  ema20?: number;              // EMA20 of closes at signal evaluation
+  macdHist?: number;           // MACD histogram at signal evaluation
+  macdHistSlope?: number;      // macdHist - prevMacdHist (slope; negative = decelerating)
   // MomentumExpansionDetector result (populated in analyzeWithCandleStrategy for BUY signals)
   momentumExpansion?: {
     isExpansion: boolean;
@@ -458,6 +463,9 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
   const rsi = calculateRSI(closes.slice(-14));
   const macd = calculateMACD(closes);
   const bollinger = calculateBollingerBands(closes);
+  // Compute MACD slope (needed for EntryDecisionContext downstream)
+  const prevMacd = closes.length >= 28 ? calculateMACD(closes.slice(0, -1)) : null;
+  const macdHistSlope = prevMacd !== null ? macd.histogram - prevMacd.histogram : undefined;
 
   const lastCandle = candles[candles.length - 1];
   const prevCandle = candles[candles.length - 2];
@@ -567,6 +575,10 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
       signalScore: buyScore,
       volumeRatio,
       priceAcceleration,
+      ema10: shortEMA,
+      ema20: longEMA,
+      macdHist: macd.histogram,
+      macdHistSlope,
     };
   }
 
@@ -582,6 +594,10 @@ export function momentumCandlesStrategy(pair: string, candles: OHLCCandle[], cur
       signalScore: buyScore,
       volumeRatio,
       priceAcceleration,
+      ema10: shortEMA,
+      ema20: longEMA,
+      macdHist: macd.histogram,
+      macdHistSlope,
     };
   }
 

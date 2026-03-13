@@ -2693,13 +2693,13 @@ _KrakenBot.AI - Trading Autónomo_
 
   /**
    * Send signal rejection alert when advanced filters block a BUY signal
-   * Only for specific rejections: MTF_STRICT, ANTI_CRESTA, PRICE_ACCEL, VOLUME_OVERRIDE
+   * Only for specific rejections: MTF_STRICT, ANTI_CRESTA, PRICE_ACCEL, VOLUME_OVERRIDE, HARD_GUARD
    * Configurable via botConfig.signalRejectionAlertsEnabled
    */
   async sendSignalRejectionAlert(
     pair: string,
     rejectionReason: string,
-    filterType: "MTF_STRICT" | "ANTI_CRESTA" | "PRICE_ACCEL" | "VOLUME_OVERRIDE",
+    filterType: "MTF_STRICT" | "ANTI_CRESTA" | "PRICE_ACCEL" | "VOLUME_OVERRIDE" | "HARD_GUARD",
     context: {
       regime?: string;
       mtfAlignment?: number;

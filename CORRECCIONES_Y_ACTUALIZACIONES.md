@@ -3548,3 +3548,78 @@ Los logs mostraban `["EGeneral:Too many requests"]` para BTC/USD repitiéndose c
 - `npx tsc --noEmit` → 0 errores TS
 
 ---
+
+## 2026-07-XX — REFACTOR: Auditoría Motor de Entrada — EntryDecisionContext
+
+### Problema raíz (auditoría completa)
+
+Se identificaron múltiples inconsistencias críticas en el motor de entrada:
+
+1. **EMA10/EMA20 calculadas 5 veces** en archivos distintos con slices de datos diferentes, causando que el snapshot Telegram mostrara valores distintos a los usados para la decisión.
+
+2. **`volumeRatio` con bases inconsistentes**: `strategies.ts` usaba promedio de **10 velas**, mientras `buyMetrics` en `tradingEngine.ts` usaba promedio de **20 velas** → los guards de VOLUME_EXPANSION y VOLUME_OVERRIDE podían contradecirse.
+
+3. **Bug crítico en snapshot BUY**: `ema20: expSnap?.metrics?.priceVsEma20Pct != null ? undefined : undefined` — ternario muerto que siempre retornaba `undefined`. El snapshot NUNCA mostraba el valor de EMA20.
+
+4. **`ema10` nunca llegaba al snapshot**: No existía ruta desde el cálculo hasta `sendBuyExecutedSnapshot`.
+
+5. **Sin hard guards estructurales**: Una señal BUY podía ejecutarse con MACD muy negativo en régimen TRANSITION, o con price extendido sobre EMA20 pero volumen débil.
+
+6. **ATR% recalculado 3 veces** en `analyzeWithCandleStrategy` para diferentes propósitos.
+
+7. **Estrategias no retornaban indicadores calculados**: `momentumCandlesStrategy` calculaba EMA10/EMA20/MACD internamente pero no los exponía en el `TradeSignal`.
+
+### Solución implementada
+
+#### NUEVO: `server/services/EntryDecisionContext.ts`
+- **`EntryDecisionContext`**: interfaz única con todos los indicadores del ciclo (ema10, ema20, prevEma10, prevEma20, macdHist, prevMacdHist, macdHistSlope, avgVolume20, volumeRatio, priceVsEma20Pct, atrPct, lastCandle, prevCandle, expansionResult, mtfAlignment, missingMetrics, blockers, warnings).
+- **`buildEntryDecisionContext()`**: calcula todos los indicadores UNA SOLA VEZ por ciclo/par. Base unificada de 20 velas para `volumeRatio` (mismo que expansion detector).
+- **`validateEntryMetrics()`**: verifica que todos los indicadores requeridos son válidos. Muta `dataComplete` y `missingMetrics`.
+- **`evaluateHardGuards()`**: bloqueos estructurales antes de ejecutar BUY:
+  - `DATA_INCOMPLETE`: métricas requeridas faltantes/inválidas
+  - `MACD_STRONGLY_NEGATIVE_TRANSITION`: slope < -0.003 en régimen TRANSITION
+  - `LOW_VOL_EXTENDED_PRICE`: volumeRatio < 0.8 con precio > 0.5% sobre EMA20
+  - `MTF_STRONGLY_NEGATIVE`: alineación MTF < -0.6
+
+#### `server/services/strategies.ts`
+- **`TradeSignal`** ampliado: campos `ema10?`, `ema20?`, `macdHist?`, `macdHistSlope?`
+- **`momentumCandlesStrategy`**: retorna `ema10`, `ema20`, `macdHist`, `macdHistSlope` en señales BUY
+
+#### `server/services/tradingEngine.ts`
+- **Campo nuevo**: `lastEntryContext: Map<string, EntryDecisionContext>` — almacena el contexto por par
+- **`analyzeWithCandleStrategy`**:
+  - Llama `buildEntryDecisionContext()` UNA vez, almacena en `lastEntryContext`
+  - Log `[ENTRY_CONTEXT_BUILT]` con todos los valores calculados
+  - Expansion detector usa valores del contexto (sin recalcular EMA/MACD)
+  - Hard guards antes de anti-cresta con alerta Telegram `HARD_GUARD`
+  - Anti-cresta lee de `entryCtx.*` en vez de `buyMetrics.*`
+  - MTF rejection alerts usan `entryCtx.*` en vez de `buyMetrics.*`
+  - ATR% para MTF: `const atrPctForMtf = entryCtx.atrPct ?? undefined` (sin recalcular)
+- **`analyzePairAndTradeWithCandles`** (snapshot BUY):
+  - Lee `snapshotCtx = this.lastEntryContext.get(pair)`
+  - **FIX bug**: `ema20: snapshotCtx?.ema20` (antes: siempre `undefined`)
+  - **FIX nuevo**: `ema10: snapshotCtx?.ema10` (antes: nunca disponible)
+  - `macdHistSlope`, `volumeRatio`, `priceVsEma20Pct` desde contexto con fallback a expSnap
+
+#### `server/services/telegram.ts`
+- `sendSignalRejectionAlert()`: acepta `"HARD_GUARD"` como nuevo `filterType` válido
+
+### Resultado esperado
+- Snapshot BUY ahora muestra EMA10/EMA20 correctos (ya no `N/A`)
+- Snapshot y guards usan exactamente los mismos valores calculados
+- `volumeRatio` unificado en base 20 velas en todo el pipeline
+- Señales con datos incompletos o contradictorios bloqueadas antes de ejecutar
+- Log `[ENTRY_CONTEXT_BUILT]` permite auditar todos los indicadores por ciclo
+- Log `[ENTRY_HARD_GUARD_BLOCK]` con `decisionId` para trazabilidad completa
+
+### Archivos modificados
+- `server/services/EntryDecisionContext.ts` (NUEVO)
+- `server/services/strategies.ts`
+- `server/services/tradingEngine.ts`
+- `server/services/telegram.ts`
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`
+
+### Verificación
+- `npx tsc --noEmit` → 0 errores TS
+
+---
