@@ -1680,6 +1680,7 @@ export class TradingEngine {
     // Hard guards estructurales — deben evaluarse antes del anti-cresta
     if (signal.action === "buy") {
       validateEntryMetrics(entryCtx);
+      log(`[ENTRY_DATA_VALIDATION] ${pair}: complete=${entryCtx.dataComplete} missing=[${entryCtx.missingMetrics.join(",")}] id=${entryCtx.decisionId}`, "trading");
       const guardResult = evaluateHardGuards(entryCtx);
       if (guardResult.blocked) {
         log(`[ENTRY_HARD_GUARD_BLOCK] ${pair}: decisionId=${entryCtx.decisionId} blockers=[${guardResult.blockers.join(' | ')}]`, "trading");
@@ -1973,19 +1974,31 @@ export class TradingEngine {
 
         if (earlyConditions) {
           log(`[EARLY_MOMENTUM] ${pair}: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x atr=${emAtrPct.toFixed(2)}% → early BUY`, "trading");
-          signal = {
-            action: "buy",
+          const emSignal = {
+            action: "buy" as const,
             pair,
-            confidence: 0.62, // Baja confianza por ser vela en progreso (mín 0.60 para pasar gate)
+            confidence: 0.62,
             reason: `Early Momentum: bodyRatio=${emBodyRatio.toFixed(2)} vol=${emVolumeRatio.toFixed(1)}x ATR=${emAtrPct.toFixed(2)}% (vela en progreso)`,
             signalsCount: 1,
             minSignalsRequired: 1,
             volumeRatio: emVolumeRatio,
           };
+          // Apply hard guards to Early Momentum BUY — context already built above
+          validateEntryMetrics(entryCtx);
+          const emGuardResult = evaluateHardGuards(entryCtx);
+          if (emGuardResult.blocked) {
+            log(`[EARLY_MOMENTUM_GUARD_BLOCK] ${pair}: decisionId=${entryCtx.decisionId} blockers=[${emGuardResult.blockers.join(' | ')}]`, "trading");
+            signal = { action: "hold", pair, confidence: 0.2, reason: `[EARLY_MOMENTUM_GUARD_BLOCK] ${emGuardResult.blockers[0]}`, signalsCount: 1, minSignalsRequired: 1 };
+          } else {
+            signal = emSignal;
+          }
         }
       }
     }
 
+    if (signal.action === "buy") {
+      log(`[ENTRY_APPROVED] ${pair}: decisionId=${entryCtx.decisionId} confidence=${signal.confidence.toFixed(2)} signals=${signal.signalsCount ?? 0}`, "trading");
+    }
     return signal;
   }
 
@@ -4085,7 +4098,10 @@ El bot ha pausado las operaciones de COMPRA.
           selectedStrategyId = "mean_reversion_simple";
           signal = this.meanReversionSimpleStrategy(pair, closedCandles, currentPrice);
           routerApplied = true;
-          log(`[ROUTER] ${pair}: RANGE regime → mean_reversion_simple`, "trading");
+          // Clear stale EntryDecisionContext — mean_reversion does not build one.
+          // Prevents snapshot from showing old momentum indicators as if they were valid.
+          this.lastEntryContext.delete(pair);
+          log(`[ROUTER] ${pair}: RANGE regime → mean_reversion_simple (context cleared)`, "trading");
         } else if (earlyRegime === "TRANSITION") {
           // TRANSITION: Use momentum with overrides (handled later in sizing/exits)
           selectedStrategyId = `momentum_candles_${timeframe}`;
@@ -4877,11 +4893,6 @@ El bot ha pausado las operaciones de COMPRA.
               }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardOrderExecuted: ${e?.message ?? String(e)}`, 'trading'));
             }
           }
-        }
-        
-        if (success) {
-          this.lastTradeTime.set(pair, Date.now());
-
           // BUY snapshot Telegram alert (Part D) — usa EntryDecisionContext como fuente única
           if (this.telegramService.isInitialized()) {
             const expSnap = (signal as any)?.momentumExpansion ?? null;
@@ -4899,6 +4910,7 @@ El bot ha pausado las operaciones de COMPRA.
               confidence: signal.confidence,
               signalsCount: signal.signalsCount,
               signalReason: signal.reason,
+              decisionId: snapshotCtx?.decisionId,
               // FIX: usar contexto como fuente de verdad (antes ema20 era siempre undefined)
               ema10: snapshotCtx?.ema10 ?? undefined,
               ema20: snapshotCtx?.ema20 ?? undefined,

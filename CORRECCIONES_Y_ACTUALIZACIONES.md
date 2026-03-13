@@ -2,6 +2,81 @@
 
 ---
 
+## 2026-06 — VERIFICACIÓN TÉCNICA COMPLETA: Motor de Entrada (EntryDecisionContext)
+
+### Objetivo
+Verificación técnica completa del refactor del motor de entrada. Fases 1-6 ejecutadas.
+
+### Hallazgos de la auditoría (FASE 1 — Revisión de código)
+
+#### ✅ Confirmado correcto
+- `buildEntryDecisionContext` se construye una sola vez por par/ciclo en `analyzeWithCandleStrategy`
+- `validateEntryMetrics` + `evaluateHardGuards` se ejecutan antes del anti-cresta para señales BUY normales
+- Snapshot Telegram (`sendBuyExecutedSnapshot`) lee exclusivamente de `lastEntryContext` — fuente única de verdad
+- `SmartExitEngine.ts` y `exitManager.ts` calculan sus propios indicadores para salidas — no afectados
+- Modo ciclo (`analyzePairAndTrade`) es independiente, sin impacto del refactor
+
+#### ⚠️ Issues identificados y corregidos
+
+**Issue 1 (MEDIO): Early Momentum bypasaba hard guards**
+- Cuando `earlyMomentumEnabled=true` y la estrategia retornaba "hold", el camino Early Momentum podía crear un BUY sin pasar por `validateEntryMetrics`/`evaluateHardGuards`
+- **Fix**: Se añade bloque de guards explícito para Early Momentum BUY en `analyzeWithCandleStrategy`
+
+**Issue 2 (BAJO): mean_reversion_simple dejaba contexto stale**
+- En régimen RANGE → `mean_reversion_simple`, `lastEntryContext` quedaba con valores del ciclo momentum anterior
+- El snapshot mostraría indicadores de momentum obsoletos como si fueran del momento de la compra
+- **Fix**: `this.lastEntryContext.delete(pair)` justo después de seleccionar `mean_reversion_simple`
+
+**Issue 3 (MEDIO): Faltaban logs de trazabilidad**
+- `validateEntryMetrics` ejecutaba en silencio — sin log correlacionado con `decisionId`
+- No existía log `[ENTRY_APPROVED]` cuando un BUY pasaba todos los guards
+- **Fix**: Añadidos `[ENTRY_DATA_VALIDATION]` y `[ENTRY_APPROVED]` en `tradingEngine.ts`
+
+**Issue 4 (MEDIO): `decisionId` no llegaba al snapshot Telegram**
+- El `[ENTRY_CONTEXT_BUILT]` log tenía `decisionId` pero el snapshot BUY no lo incluía
+- Imposible correlacionar logs de decisión con compra ejecutada
+- **Fix**: `decisionId` añadido como parámetro en `sendBuyExecutedSnapshot` (telegram.ts) y en la llamada (tradingEngine.ts)
+
+#### ℹ️ Issues documentados (no corregidos — bajo impacto)
+- `signal.ema10/ema20/macdHist/macdHistSlope` en `TradeSignal` son dead code (calculados pero no leídos downstream). Sin impacto funcional.
+- `volumeRatio` usa bases distintas: 10-candle en señal (para VOLUME_OVERRIDE) vs 20-candle en contexto (para guards). Inconsistencia documentada, umbrales opuestos hacen conflicto prácticamente imposible.
+
+### Tests creados (FASE 2+3 — Verificación funcional)
+
+**Archivo**: `server/services/__tests__/entryDecisionContext.test.ts`
+**Resultado**: 60/60 tests ✅
+**Cobertura**:
+- CASO A: datos completos → BUY permitido, todos los campos del snapshot disponibles
+- CASO B: <20 velas → DATA_INCOMPLETE blocker, ema10/ema20/volumeRatio=null
+- CASO C: MACD slope muy negativo en TRANSITION → MACD_STRONGLY_NEGATIVE_TRANSITION blocker
+- CASO D: vol<0.8x + price>0.5% sobre EMA20 → LOW_VOL_EXTENDED_PRICE blocker
+- CASO E: campos snapshot consistentes con precio real (priceVsEma20Pct ↔ ema20)
+- CASO F: estructura completa de blockers/warnings/missingMetrics verificada
+- 3.1-3.7: 20+ invariantes de consistencia lógica validados
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — 4 fixes (Early Momentum guards, stale context, logs, decisionId en snapshot call)
+- `server/services/telegram.ts` — añadido `decisionId` a `sendBuyExecutedSnapshot`
+- `server/services/__tests__/entryDecisionContext.test.ts` — NUEVO: 60 tests funcionales
+
+### Tags de log disponibles post-fix
+```
+[ENTRY_CONTEXT_BUILT]      — contexto construido (ema10, ema20, vol, macdSlope, complete, decisionId)
+[ENTRY_DATA_VALIDATION]    — resultado de validateEntryMetrics (complete, missing[])
+[ENTRY_HARD_GUARD_BLOCK]   — BUY bloqueado por hard guard (blockers[])
+[ENTRY_HARD_GUARD_WARN]    — advertencias no bloqueantes
+[EARLY_MOMENTUM_GUARD_BLOCK] — Early Momentum BUY bloqueado por contexto incompleto
+[ENTRY_APPROVED]           — BUY pasa todos los guards
+[MED_EXPANSION]            — resultado del detector de expansión
+```
+
+### Compilación
+TypeScript `--noEmit --skipLibCheck`: **exit 0** (sin errores)
+
+---
+
+---
+
 ## 2026-06 — FEAT: Anti-Cresta Refactor + MomentumExpansionDetector + BUY Snapshot (Partes A-F)
 
 ### Descripción

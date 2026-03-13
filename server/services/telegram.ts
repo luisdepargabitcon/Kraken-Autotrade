@@ -2910,6 +2910,7 @@ _KrakenBot.AI - Trading Autónomo_
     confidence: number;
     signalsCount?: number;
     signalReason?: string;
+    decisionId?: string;
     ema10?: number;
     ema20?: number;
     macdHistSlope?: number;
@@ -2955,6 +2956,7 @@ _KrakenBot.AI - Trading Autónomo_
       regime:          ctx.regime ?? 'N/A',
       confidence:      `${(ctx.confidence * 100).toFixed(0)}%`,
       signals:         ctx.signalsCount != null ? String(ctx.signalsCount) : 'N/A',
+      decisionId:      ctx.decisionId ?? 'N/A',
       ema10:           ctx.ema10   != null ? ctx.ema10.toFixed(4)          : 'N/A',
       ema20:           ctx.ema20   != null ? ctx.ema20.toFixed(4)          : 'N/A',
       macdHistSlope:   ctx.macdHistSlope   != null ? ctx.macdHistSlope.toFixed(6)   : 'N/A',
