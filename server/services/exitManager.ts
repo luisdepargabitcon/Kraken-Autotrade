@@ -640,7 +640,7 @@ export class ExitManager {
       }
 
       try {
-        await telegram.sendAlertToMultipleChats(naturalMessage, "trades");
+        await telegram.sendAlertWithSubtype(naturalMessage, "trades", "trade_trailing");
         log(`[SG_ALERT] Telegram alert sent for ${eventType} ${pair}`, "trading");
       } catch (tgErr: any) {
         log(`[SG_ALERT_ERR] Failed to send Telegram alert for ${eventType} ${pair}: ${tgErr.message}`, "trading");
@@ -978,7 +978,7 @@ export class ExitManager {
           naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
           naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
 
-          await telegram.sendAlertToMultipleChats(naturalMessage, "trades");
+          await telegram.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
         }
 
         this.host.deletePosition(lotId);
@@ -1530,7 +1530,7 @@ export class ExitManager {
           const durationHours = Math.floor(durationMins / 60);
           const durationDays = Math.floor(durationHours / 24);
           const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
-          await telegram.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ${emoji} <b>${sellReason}</b>
 
@@ -1545,7 +1545,7 @@ ${emoji} <b>${sellReason}</b>
 ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)</code>
 
 🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`, "trades");
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_stoploss");
         }
 
         // Reduce position amount by what was sold

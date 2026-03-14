@@ -3575,7 +3575,7 @@ El bot ha pausado las operaciones de COMPRA.
             });
 
             if (this.telegramService.isInitialized()) {
-              await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+              await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⏸️ <b>Par en Espera</b>
 
@@ -3585,7 +3585,7 @@ El bot ha pausado las operaciones de COMPRA.
    • Mínimo requerido: <code>$${minRequiredUSD.toFixed(2)}</code>
 
 ℹ️ Cooldown: ${this.COOLDOWN_DURATION_MS / 60000} min
-━━━━━━━━━━━━━━━━━━━`, "system");
+━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_paused");
             }
           }
           return;
@@ -3904,7 +3904,7 @@ El bot ha pausado las operaciones de COMPRA.
           
           // Notificar a Telegram
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertToMultipleChats(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🛡️ <b>Señal SELL Bloqueada</b>
 
@@ -3915,7 +3915,7 @@ El bot ha pausado las operaciones de COMPRA.
 ⚠️ Solo risk exits (SL/TP/Trailing) permiten vender.
 
 ℹ️ <i>${signal.reason}</i>
-━━━━━━━━━━━━━━━━━━━`, "system");
+━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_paused");
           }
           
           return;
@@ -7087,7 +7087,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
         if (this.telegramService.isInitialized()) {
           const reasonsMsg = decision.reasons.slice(0, 2).join("\n• ");
           const msg = `⚠️ <b>BUY bloqueado — Riesgo de mercado</b>\n\nPar: <b>${params.pair}</b>\nRiesgo: <b>${decision.riskLevel}</b> (score ${decision.score})\nSesgado: ${decision.bias}\n\n• ${reasonsMsg}\n\n<i>Módulo: Métricas de Mercado</i>`;
-          this.telegramService.sendMessage(msg).catch((e: any) =>
+          this.telegramService.sendAlertWithSubtype(msg, "trades", "trade_spread_rejected").catch((e: any) =>
             log(`[MM_GATE] telegram error: ${e?.message ?? e}`, "trading")
           );
         }

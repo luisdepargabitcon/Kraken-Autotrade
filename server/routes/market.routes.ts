@@ -733,7 +733,7 @@ export const registerMarketRoutes: RegisterRoutes = (app, _deps) => {
                           `Precio: <code>${priceStr}</code>`,
                           `ExecutedAt: <code>${executedAt.toISOString()}</code>`,
                         ].join("\n");
-                        await telegramService.sendAlertToMultipleChats(msg, "trades");
+                        await telegramService.sendAlertWithSubtype(msg, "trades", "trade_filled");
                       }
                     }
                   }

@@ -292,22 +292,55 @@ export class FiscoTelegramNotifier {
   }
 
   /**
-   * Envía mensaje al chat configurado en FISCO alert config
+   * Maps internal FISCO alert types to unified AlertSubtype for sendAlertWithSubtype
+   */
+  private mapToUnifiedSubtype(alertType: string): string | null {
+    const mapping: Record<string, string> = {
+      'sync_daily': 'fisco_sync_daily',
+      'sync_manual': 'fisco_sync_manual',
+      'report_generated': 'fisco_report_generated',
+      'sync_error': 'fisco_error_sync',
+      'kraken_retry_scheduled': 'fisco_error_sync',
+      'kraken_retry_recovered': 'fisco_sync_daily',
+      'kraken_retry_exhausted': 'fisco_error_sync',
+    };
+    return mapping[alertType] || null;
+  }
+
+  /**
+   * Envía mensaje usando el sistema unificado (sendAlertWithSubtype) + chat dedicado FISCO
    */
   private async sendToConfiguredChat(message: string, alertType: string): Promise<void> {
+    const unifiedSubtype = this.mapToUnifiedSubtype(alertType);
+
+    // 1) Broadcast via unified system (respects per-chat alertPreferences)
+    if (unifiedSubtype) {
+      try {
+        await telegramService.sendAlertWithSubtype(message, 'fisco' as any, unifiedSubtype as any);
+        console.log(`[FISCO Telegram] ${alertType} → sendAlertWithSubtype(fisco, ${unifiedSubtype})`);
+      } catch (error: any) {
+        console.error(`[FISCO Telegram] sendAlertWithSubtype failed for ${alertType}:`, error?.message || error);
+      }
+    }
+
+    // 2) Also send to FISCO-dedicated chat if configured and not already covered
     try {
       const config = await this.getAlertConfig();
       const chatId = config?.chatId;
-      if (!chatId || chatId === 'not_configured') {
-        console.warn(`[FISCO Telegram] No FISCO chat configured for ${alertType} alert`);
-        return;
+      if (!chatId || chatId === 'not_configured') return;
+
+      // Avoid double-send: check if this chatId is already a registered telegram chat
+      // If it is, sendAlertWithSubtype already sent to it
+      const { storage } = await import('../storage');
+      const registeredChats = await storage.getTelegramChats();
+      const alreadySent = registeredChats.some(c => c.chatId === chatId && c.isActive);
+
+      if (!alreadySent) {
+        await telegramService.sendToChat(chatId, message, { parseMode: 'HTML' });
+        console.log(`[FISCO Telegram] ${alertType} also sent to dedicated FISCO chat ${chatId}`);
       }
-
-      await telegramService.sendToChat(chatId, message, { parseMode: 'HTML' });
-
-      console.log(`[FISCO Telegram] ${alertType} alert sent to chat ${chatId}`);
     } catch (error: any) {
-      console.error(`[FISCO Telegram] Failed to send ${alertType} alert:`, error?.message || error);
+      console.error(`[FISCO Telegram] Failed to send ${alertType} to dedicated chat:`, error?.message || error);
     }
   }
 

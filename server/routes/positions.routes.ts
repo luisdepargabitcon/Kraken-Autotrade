@@ -464,15 +464,15 @@ export const registerPositionsRoutes: RegisterRoutes = (app, deps) => {
       
       // Notificar por Telegram
       if (telegramService?.isInitialized()) {
-        await telegramService.sendMessage(`
-🗑️ *Posición Huérfana Eliminada*
+        await telegramService.sendAlertWithSubtype(`
+🗑️ <b>Posición Huérfana Eliminada</b>
 
-*Par:* ${pair}
-*Lot:* \`${lotId.substring(0, 8)}...\`
-*Cantidad:* ${dbPosition.amount}
+<b>Par:</b> ${pair}
+<b>Lot:</b> <code>${lotId.substring(0, 8)}...</code>
+<b>Cantidad:</b> ${dbPosition.amount}
 
-_Eliminada manualmente desde dashboard (sin orden a Kraken)_
-        `.trim());
+<i>Eliminada manualmente desde dashboard (sin orden a Kraken)</i>
+        `.trim(), "system", "system_bot_paused");
       }
       
       res.json({

@@ -259,7 +259,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
             `Profit: +${profitPct.toFixed(2)}%\n` +
             `Stop movido a: $${stopPrice.toFixed(2)}`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice });
-          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
+          await telegramService.sendAlertWithSubtype(telegramMsg, "trades", "trade_trailing");
           break;
           
         case "SG_TRAILING_ACTIVATED":
@@ -272,7 +272,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
             `Profit: +${profitPct.toFixed(2)}%\n` +
             `Stop dinámico: $${stopPrice.toFixed(2)}`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice });
-          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
+          await telegramService.sendAlertWithSubtype(telegramMsg, "trades", "trade_trailing");
           break;
           
         case "SG_TRAILING_STOP_UPDATED":
@@ -284,7 +284,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
             `Stop: $${oldStop.toFixed(2)} → $${stopPrice.toFixed(2)}\n` +
             `Profit actual: +${profitPct.toFixed(2)}%`;
           await botLogger.info(event, message, { ...baseMeta, stopPrice, oldStop });
-          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
+          await telegramService.sendAlertWithSubtype(telegramMsg, "trades", "trade_trailing");
           break;
           
         case "SG_SCALE_OUT_EXECUTED":
@@ -297,7 +297,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
             `Vendido: ${scaleOutQty} ($${scaleOutUsd.toFixed(2)})\n` +
             `Profit: +${profitPct.toFixed(2)}%`;
           await botLogger.info(event, message, { ...baseMeta, scaleOutQty, scaleOutUsd });
-          await telegramService.sendAlertToMultipleChats(telegramMsg, "status");
+          await telegramService.sendAlertWithSubtype(telegramMsg, "trades", "trade_trailing");
           break;
       }
       

@@ -33,8 +33,9 @@ import {
   buildErrorAlertHTMLSimple,
   buildTradePendingHTML,
   buildHeader,
-  escapeHtml as escapeHtmlNew,
-  formatSpanishDate as formatSpanishDateNew,
+  escapeHtml,
+  formatSpanishDate,
+  formatDuration,
   type ErrorAlertContext,
   type ErrorSeverity,
   type TradeStatus,
@@ -43,82 +44,7 @@ import {
 } from "./telegram/templates";
 import { messageDeduplicator } from "./telegram/deduplication";
 
-// ============================================================
-// HTML ESCAPE HELPER - Previene markup roto en mensajes
-// ============================================================
-function escapeHtml(s: unknown): string {
-  const str = String(s ?? "");
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-// ============================================================
-// SPANISH DATE FORMATTER - Formato profesional de fecha/hora
-// ============================================================
-function formatSpanishDate(dateInput?: string | Date | number): string {
-  try {
-    // Handle null/undefined
-    if (!dateInput) {
-      dateInput = new Date();
-    }
-    
-    const date = new Date(dateInput);
-    
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      console.warn('[formatSpanishDate] Invalid date input:', dateInput);
-      return "N/A";
-    }
-    
-    // Use Intl.DateTimeFormat for consistent formatting
-    return new Intl.DateTimeFormat('es-ES', {
-      timeZone: 'Europe/Madrid',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).format(date);
-  } catch (error) {
-    console.error('[formatSpanishDate] Error formatting date:', error, 'input:', dateInput);
-    return "N/A";
-  }
-}
-
-// ============================================================
-// DURATION FORMATTER - Tiempo transcurrido desde apertura
-// ============================================================
-function formatDuration(openedAt: string | Date | null | undefined): string {
-  if (!openedAt) return "N/A";
-  try {
-    const opened = new Date(openedAt);
-    const now = new Date();
-    const diffMs = now.getTime() - opened.getTime();
-    if (diffMs < 0) return "0m";
-    
-    const minutes = Math.floor(diffMs / 60000);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-    
-    if (days > 0) {
-      const remainingHours = hours % 24;
-      return `${days}d ${remainingHours}h`;
-    }
-    if (hours > 0) {
-      const remainingMinutes = minutes % 60;
-      return `${hours}h ${remainingMinutes}m`;
-    }
-    return `${minutes}m`;
-  } catch {
-    return "N/A";
-  }
-}
+// escapeHtml, formatSpanishDate, formatDuration → imported from ./telegram/templates
 
 // ============================================================
 // BRANDING HELPER - Branding consistente para todos los mensajes
@@ -687,7 +613,7 @@ interface TelegramConfig {
   chatId: string;
 }
 
-type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartbeat" | "strategy";
+type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartbeat" | "strategy" | "fisco";
 
 type AlertSubtype = 
   | "trade_buy" | "trade_sell" | "trade_breakeven" | "trade_trailing" 
@@ -2390,6 +2316,8 @@ Incluye:
         return chat.alertHeartbeat;
       case "strategy":
         return true;
+      case "fisco":
+        return true; // Filtered by subtype via alertPreferences above
       default:
         return false;
     }
@@ -2507,7 +2435,7 @@ Incluye:
       return false;
     }
     
-    await this.sendAlertToMultipleChats(message, alertType);
+    await this.sendAlertWithSubtype(message, alertType, eventType as AlertSubtype);
     this.markEventSent(eventType, pair);
     return true;
   }
@@ -2532,7 +2460,7 @@ ${emoji} *Nueva Operación*
 _KrakenBot.AI - Trading Autónomo_
     `.trim();
 
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   /**
@@ -2573,7 +2501,7 @@ _KrakenBot.AI - Trading Autónomo_
       errorMessage: ctx.errorMessage,
     };
     const message = buildTradeBuyHTMLNew(buyCtx);
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   /**
@@ -2623,7 +2551,7 @@ _KrakenBot.AI - Trading Autónomo_
       netPnlUsd: ctx.netPnlUsd,
     };
     const message = buildTradeSellHTMLNew(sellCtx);
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_sell");
   }
 
   /**
@@ -2631,7 +2559,7 @@ _KrakenBot.AI - Trading Autónomo_
    */
   async sendOrderPending(type: "BUY" | "SELL", pair: string, exchange: string, amount: string, price: string, orderId: string) {
     const message = buildTradePendingHTML(type, pair, exchange, amount, price, orderId);
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_pending");
   }
 
   async sendAlert(title: string, description: string, meta?: Record<string, unknown>) {
@@ -2650,7 +2578,7 @@ _KrakenBot.AI - Trading Autónomo_
     if (errorAlertChatId) {
       await this.sendToChat(errorAlertChatId, message);
     } else {
-      await this.sendAlertToMultipleChats(message, "errors");
+      await this.sendAlertWithSubtype(message, "errors", "error_api");
     }
     this.markEventSent("errors");
   }
@@ -2671,7 +2599,7 @@ _KrakenBot.AI - Trading Autónomo_
     if (errorAlertChatId) {
       await this.sendToChat(errorAlertChatId, message);
     } else {
-      await this.sendAlertToMultipleChats(message, "errors");
+      await this.sendAlertWithSubtype(message, "errors", "error_api");
     }
     this.markEventSent("errors");
   }
@@ -2687,7 +2615,7 @@ _KrakenBot.AI - Trading Autónomo_
     if (errorAlertChatId) {
       await this.sendToChat(errorAlertChatId, message);
     } else {
-      await this.sendAlertToMultipleChats(message, "errors");
+      await this.sendAlertWithSubtype(message, "errors", "error_critical");
     }
     this.markEventSent("errors");
   }
@@ -2790,7 +2718,7 @@ _KrakenBot.AI - Trading Autónomo_
     if (signalRejectionAlertChatId) {
       await this.sendToChat(signalRejectionAlertChatId, message);
     } else {
-      await this.sendAlertToMultipleChats(message, "trades");
+      await this.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
     }
   }
 
@@ -2824,7 +2752,7 @@ _KrakenBot.AI - Trading Autónomo_
 <i>Se re-evaluará la entrada si las condiciones mejoran.</i>
 ━━━━━━━━━━━━━━━━━━━`;
 
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   async sendHybridGuardReentrySignal(ctx: {
@@ -2857,7 +2785,7 @@ _KrakenBot.AI - Trading Autónomo_
 <i>Re-entry candidato: el motor intentará BUY si pasa Smart-Guard.</i>
 ━━━━━━━━━━━━━━━━━━━`;
 
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   async sendHybridGuardOrderExecuted(ctx: {
@@ -2891,7 +2819,7 @@ _KrakenBot.AI - Trading Autónomo_
 
 ━━━━━━━━━━━━━━━━━━━`;
 
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   /**
@@ -3002,7 +2930,7 @@ _KrakenBot.AI - Trading Autónomo_
 <i>CHESTER BOT - BUY Snapshot</i>`;
 
     log(`[BUY_SNAPSHOT_TELEGRAM] ${ctx.pair}: orderId=${ctx.orderId ?? 'N/A'} sending snapshot`, "trading");
-    await this.sendAlertToMultipleChats(message, "trades");
+    await this.sendAlertWithSubtype(message, "trades", "trade_buy");
   }
 
   async sendSystemStatus(isActive: boolean, strategy: string) {
@@ -3017,7 +2945,7 @@ ${emoji} *Estado del Sistema*
 _KrakenBot.AI - Monitoreo_
     `.trim();
 
-    await this.sendAlertToMultipleChats(message, "system");
+    await this.sendAlertWithSubtype(message, "system", "system_bot_started");
   }
 
   async sendBalanceAlert(title: string, description: string) {
@@ -3029,7 +2957,7 @@ ${description}
 _KrakenBot.AI - Balance_
     `.trim();
 
-    await this.sendAlertToMultipleChats(message, "balance");
+    await this.sendAlertWithSubtype(message, "balance", "balance_exposure");
   }
 }
 

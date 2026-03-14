@@ -66,10 +66,71 @@ Auditoría completa + unificación de todo el sistema de notificaciones/alertas 
 - `client/src/pages/Notifications.tsx` — Rediseño completo de la UI
 
 ### Pendiente (próxima iteración)
-- Eliminar helpers duplicados en `telegram.ts` (usar los de `telegram/templates.ts`)
 - Migrar templates legacy a las versiones modulares
-- Conectar `FiscoTelegramNotifier` para que use `sendAlertWithSubtype` con subtipos `fisco_*`
-- Verificar que `SmartExitEngine` usa `sendAlertWithSubtype` con subtipos `smart_exit_*`
+
+---
+
+## 2026-03-15 — FASE FINAL: Verificación, Limpieza e Integración del Sistema de Notificaciones Telegram
+
+### Objetivo
+Garantizar que el sistema unificado de notificaciones Telegram es completo, que TODAS las alertas pasan por `sendAlertWithSubtype`, que la UI refleja exactamente el backend, y que no queda código legacy.
+
+### Cambios Aplicados
+
+**1. Helpers duplicados eliminados (`server/services/telegram.ts`):**
+- `escapeHtml`, `formatSpanishDate`, `formatDuration` → eliminadas las definiciones locales duplicadas.
+- Ahora se importan desde `server/services/telegram/templates.ts` (fuente canónica).
+
+**2. Integración FISCO (`server/services/FiscoTelegramNotifier.ts`):**
+- Añadido `mapToUnifiedSubtype()` que mapea tipos internos FISCO a subtipos unificados (`fisco_sync_daily`, `fisco_sync_manual`, `fisco_report_generated`, `fisco_error_sync`).
+- `sendToConfiguredChat()` refactorizado: ahora usa `sendAlertWithSubtype` para broadcasting (respeta `alertPreferences` por chat) + envío al chat dedicado FISCO si no está ya registrado como chat activo (evita doble envío).
+- Añadido `"fisco"` a `AlertType` y caso `"fisco"` en `shouldSendToChat`.
+
+**3. Integración Smart Exit (verificada — ya integrado):**
+- `tradingEngine.ts` ya usaba `sendAlertWithSubtype` correctamente con `smart_exit_threshold`, `smart_exit_executed`, `smart_exit_regime`.
+
+**4. Migración masiva de `sendAlertToMultipleChats` → `sendAlertWithSubtype`:**
+- `telegram.ts`: `sendBuyAlert` → `trade_buy`, `sendSellAlert` → `trade_sell`, `sendOrderPending` → `trade_pending`, `sendAlert` → `error_api`, `sendErrorAlert` → `error_api`, `sendCriticalError` → `error_critical`, `sendSignalRejectionAlert` → `trade_spread_rejected`, `sendBuyExecutedSnapshot` → `trade_buy`, `sendTradeNotification` → `trade_buy`, `sendSystemStatus` → `system_bot_started`, `sendBalanceAlert` → `balance_exposure`, HybridGuard (Watch/Reentry/Executed) → `trade_buy`.
+- `exitManager.ts`: SmartGuard alerts → `trade_trailing`, position closures → `trade_sell`, forced sells → `trade_stoploss`.
+- `test.routes.ts`: 4 SmartGuard test events → `trade_trailing`.
+- `tradingEngine.ts`: pair cooldown → `system_bot_paused`, SELL blocked → `system_bot_paused`.
+- `market.routes.ts`: trade sync detection → `trade_filled`.
+
+**5. Envíos directos `sendMessage` migrados:**
+- `tradingEngine.ts:7090`: BUY bloqueado por métricas → `sendAlertWithSubtype("trades", "trade_spread_rejected")`.
+- `positions.routes.ts:467`: Posición huérfana eliminada → `sendAlertWithSubtype("system", "system_bot_paused")` + HTML corregido.
+- Solo quedan 2 `sendMessage` directos intencionales: endpoints de test de conectividad en `routes.ts`.
+
+**6. Archivo legacy eliminado:**
+- `server/routes/telegram.routes.ts` eliminado del disco (ya estaba desregistrado de `routes.ts`).
+
+**7. Validación UI ↔ Backend:**
+- 29 subtipos en `alertPreferencesSchema` = 29 subtipos en `AlertSubtype` = 29 toggles en UI (`ALERT_SUBTYPES`).
+- 6 categorías en UI: Trading (12), Riesgo/Smart Guard (4), Estrategia/Régimen (2), Informes/Sistema (4), Errores/Sistema (3), Fiscal/FISCO (4).
+- No existen toggles fantasma ni subtypes sin toggle.
+
+**8. Build TypeScript: 0 errores (verificado múltiples veces con `tsc --noEmit`).**
+
+### Archivos Modificados
+- `server/services/telegram.ts` — helpers eliminados, imports corregidos, AlertType ampliado, todas las llamadas migradas a sendAlertWithSubtype
+- `server/services/FiscoTelegramNotifier.ts` — integrado con sistema unificado vía sendAlertWithSubtype
+- `server/services/exitManager.ts` — 3 llamadas migradas a sendAlertWithSubtype
+- `server/services/tradingEngine.ts` — 3 llamadas migradas a sendAlertWithSubtype
+- `server/routes/test.routes.ts` — 4 llamadas migradas a sendAlertWithSubtype
+- `server/routes/market.routes.ts` — 1 llamada migrada a sendAlertWithSubtype
+- `server/routes/positions.routes.ts` — 1 sendMessage migrado a sendAlertWithSubtype
+
+### Archivos Eliminados
+- `server/routes/telegram.routes.ts` — dead code (rutas duplicadas /api/integrations/telegram/*)
+
+### Criterios de Finalización Cumplidos
+- ✔ Solo existe un sistema de alertas (`sendAlertWithSubtype`)
+- ✔ Todos los envíos pasan por `sendAlertWithSubtype` (excepto 2 test endpoints intencionales)
+- ✔ UI refleja exactamente backend (29 subtipos, 6 categorías)
+- ✔ No hay rutas legacy
+- ✔ No hay helpers duplicados
+- ✔ Trading, Smart Exit y FISCO integrados
+- ✔ Build limpio (0 errores TypeScript)
 
 ---
 
