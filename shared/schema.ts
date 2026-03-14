@@ -376,6 +376,7 @@ export const alertPreferencesSchema = z.object({
   smart_exit_threshold: z.boolean().optional(),
   smart_exit_executed: z.boolean().optional(),
   smart_exit_regime: z.boolean().optional(),
+  smart_exit_suppressed: z.boolean().optional(),
   // FISCO alerts
   fisco_sync_daily: z.boolean().optional(),
   fisco_sync_manual: z.boolean().optional(),

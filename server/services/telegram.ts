@@ -624,7 +624,7 @@ type AlertSubtype =
   | "error_critical" | "error_api" | "error_nonce"
   | "balance_exposure"
   | "heartbeat_periodic"
-  | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime"
+  | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime" | "smart_exit_suppressed"
   | "fisco_sync_daily" | "fisco_sync_manual" | "fisco_report_generated" | "fisco_error_sync"
   | "entry_intent";
 

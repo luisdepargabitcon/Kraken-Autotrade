@@ -33,6 +33,7 @@ export interface SmartExitConfig {
   extraLossThresholdPenalty: number;
   stagnationMinutes: number;
   stagnationMinPnlPct: number;
+  feeBandPct: number;
   regimeThresholds: Record<SmartExitRegime, number>;
   signals: {
     emaReversal: boolean;
@@ -70,6 +71,7 @@ export const DEFAULT_SMART_EXIT_CONFIG: SmartExitConfig = {
   extraLossThresholdPenalty: 1,
   stagnationMinutes: 10,
   stagnationMinPnlPct: 0.2,
+  feeBandPct: 0.25,
   regimeThresholds: {
     TREND: 5,
     CHOP: 2,
@@ -130,6 +132,7 @@ export interface SmartExitDecision {
   contributions: SignalContribution[];
   positionAgeSec: number;
   pnlPct: number;
+  suppressedByFeeBand: boolean;
 }
 
 /** Market data passed from TradingEngine per position evaluation */
@@ -192,6 +195,7 @@ export class SmartExitEngine {
       extraLossThresholdPenalty: raw.extraLossThresholdPenalty ?? 1,
       stagnationMinutes: raw.stagnationMinutes ?? 10,
       stagnationMinPnlPct: raw.stagnationMinPnlPct ?? 0.2,
+      feeBandPct: raw.feeBandPct ?? 0.25,
       regimeThresholds: {
         TREND: raw.regimeThresholds?.TREND ?? 5,
         CHOP: raw.regimeThresholds?.CHOP ?? 2,
@@ -448,6 +452,12 @@ export class SmartExitEngine {
       ? baseThreshold + config.extraLossThresholdPenalty
       : baseThreshold;
 
+    // Fee-band adjustment: flat positions (PnL within fee+spread range) require a
+    // stronger score to avoid exiting at net loss after commissions.
+    const feeBandPct = config.feeBandPct ?? 0.25;
+    const inFeeBand = Math.abs(position.pnlPct) <= feeBandPct;
+    const feeBandThreshold = inFeeBand ? effectiveThreshold + 1 : effectiveThreshold;
+
     // Guard: don't exit if loss is smaller than configured minimum loss threshold
     // (0 = disabled; only activates for negative PnL)
     if (config.minPnlLossPct < 0 && position.pnlPct < 0 && position.pnlPct > config.minPnlLossPct) {
@@ -462,6 +472,7 @@ export class SmartExitEngine {
         contributions: [],
         positionAgeSec,
         pnlPct: position.pnlPct,
+        suppressedByFeeBand: false,
       };
     }
 
@@ -478,6 +489,7 @@ export class SmartExitEngine {
         contributions: [],
         positionAgeSec,
         pnlPct: position.pnlPct,
+        suppressedByFeeBand: false,
       };
     }
 
@@ -532,7 +544,8 @@ export class SmartExitEngine {
 
     // Confirmation tracking
     const state = this.getOrCreateConfirmation(position.lotId);
-    const meetsThreshold = totalScore >= effectiveThreshold;
+    const meetsThreshold = totalScore >= feeBandThreshold;
+    const suppressedByFeeBand = inFeeBand && totalScore >= effectiveThreshold && totalScore < feeBandThreshold;
 
     if (meetsThreshold) {
       state.consecutiveCycles++;
@@ -551,7 +564,7 @@ export class SmartExitEngine {
     return {
       shouldExit,
       score: totalScore,
-      threshold: effectiveThreshold,
+      threshold: feeBandThreshold,
       regime,
       confirmationProgress: Math.min(state.consecutiveCycles, config.confirmationCycles),
       confirmationRequired: config.confirmationCycles,
@@ -559,6 +572,7 @@ export class SmartExitEngine {
       contributions,
       positionAgeSec,
       pnlPct: position.pnlPct,
+      suppressedByFeeBand,
     };
   }
 
@@ -644,13 +658,15 @@ export class SmartExitEngine {
   buildTelegramSnapshot(
     decision: SmartExitDecision,
     position: SmartExitPosition,
-    eventType: "THRESHOLD_HIT" | "EXECUTED" | "REGIME_CHANGE"
+    eventType: "THRESHOLD_HIT" | "EXECUTED" | "REGIME_CHANGE" | "SUPPRESSED"
   ): string {
     const actionText = eventType === "EXECUTED"
       ? "🔴 <b>CIERRE EJECUTADO</b>"
-      : eventType === "THRESHOLD_HIT"
-        ? "⚡ <b>Condición detectada</b>"
-        : "🔄 <b>Cambio de régimen</b>";
+      : eventType === "SUPPRESSED"
+        ? "🚫 <b>Salida suprimida (fee-band)</b>"
+        : eventType === "THRESHOLD_HIT"
+          ? "⚡ <b>Condición detectada</b>"
+          : "🔄 <b>Cambio de régimen</b>";
 
     const reasonsList = decision.reasons.length > 0
       ? decision.reasons.map(r => `   • ${r}`).join("\n")

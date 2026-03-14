@@ -236,10 +236,12 @@ export interface HardGuardResult {
  * Called AFTER the strategy returns BUY, BEFORE order execution.
  *
  * Blockers (prevent BUY):
- *  1. DATA_INCOMPLETE          — required metrics missing/invalid
- *  2. MACD_STRONGLY_NEGATIVE   — macdHistSlope < -0.003 in TRANSITION regime
- *  3. LOW_VOL_EXTENDED_PRICE   — volumeRatio < 0.8 and price > 0.5% above EMA20
- *  4. MTF_STRONGLY_NEGATIVE    — mtfAlignment < -0.6
+ *  1. DATA_INCOMPLETE              — required metrics missing/invalid
+ *  2. MACD_STRONGLY_NEGATIVE       — macdHistSlope < -0.003 in TRANSITION regime
+ *  3. LOW_VOL_EXTENDED_PRICE       — volumeRatio < 0.8 and price > 0.5% above EMA20
+ *  4. MTF_STRONGLY_NEGATIVE        — mtfAlignment < -0.6
+ *  5. TRANSITION_LOW_VOLUME        — volumeRatio < 0.45 in TRANSITION (no participation)
+ *  6. TRANSITION_WEAK_SETUP        — isExpansion=false AND volumeRatio < 0.60 in TRANSITION
  *
  * Warnings (logged, included in snapshot, non-blocking):
  *  - MACD_DECLINING
@@ -281,6 +283,31 @@ export function evaluateHardGuards(ctx: EntryDecisionContext): HardGuardResult {
   // Guard 4: MTF strongly negative
   if (ctx.mtfAlignment !== null && ctx.mtfAlignment < -0.6) {
     blockers.push(`MTF_STRONGLY_NEGATIVE: alignment=${ctx.mtfAlignment.toFixed(3)}`);
+  }
+
+  // Guard 5: Insufficient volume in TRANSITION — no participation confirmation
+  if (
+    ctx.volumeRatio !== null &&
+    ctx.volumeRatio < 0.45 &&
+    ctx.regime === "TRANSITION"
+  ) {
+    blockers.push(
+      `TRANSITION_LOW_VOLUME: vol=${ctx.volumeRatio.toFixed(2)}x < 0.45x — no participation in TRANSITION`
+    );
+  }
+
+  // Guard 6: Weak setup in TRANSITION — no expansion AND volume insufficient
+  // (covers vol range 0.45–0.59 when expansion detector says not an expansion)
+  if (
+    ctx.regime === "TRANSITION" &&
+    ctx.expansionResult !== null &&
+    !ctx.expansionResult.isExpansion &&
+    ctx.volumeRatio !== null &&
+    ctx.volumeRatio < 0.60
+  ) {
+    blockers.push(
+      `TRANSITION_WEAK_SETUP: isExpansion=false vol=${ctx.volumeRatio.toFixed(2)}x < 0.60x in TRANSITION`
+    );
   }
 
   // === Warnings (non-blocking) ===

@@ -452,14 +452,159 @@ console.log("\n=== FASE 4 — Log tags verificados (comprobación de implementac
     "[ENTRY_HARD_GUARD_WARN]",
     "[ENTRY_APPROVED]",
     "[MED_EXPANSION]",
+    "[SMART_EXIT_FEE_BAND_SUPPRESS]",
   ];
   console.log("  ℹ️  Tags esperados en runtime logs:");
   for (const tag of expectedLogTags) {
     console.log(`     ${tag}`);
   }
   console.log("  ℹ️  Para verificar en VPS:");
-  console.log(`     docker compose -f docker-compose.staging.yml logs -f | grep -E "ENTRY_CONTEXT|ENTRY_DATA|ENTRY_HARD|ENTRY_APPROVED|MED_EXPANSION"`);
+  console.log(`     docker compose -f docker-compose.staging.yml logs -f | grep -E "ENTRY_CONTEXT|ENTRY_DATA|ENTRY_HARD|ENTRY_APPROVED|MED_EXPANSION|FEE_BAND"`);
   assert(true, "4: Tags de log documentados (verificación runtime en VPS)");
+}
+
+// ── FASE 5 — Anti Round-Trip Guards ──────────────────────────────────────────
+
+console.log("\n=== FASE 5 — Anti Round-Trip Entry Guards ===\n");
+
+// ── G5: TRANSITION_LOW_VOLUME — vol=0.30x en TRANSITION debe bloquear ────────
+console.log("G5 — TRANSITION_LOW_VOLUME (vol < 0.45x en TRANSITION):");
+{
+  // Build candles con volumen muy bajo (0.30x del promedio)
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  // Override último candle con volumen muy bajo
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 300 }; // 0.30 de 1000 promedio
+  const { ctx, guardResult } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  assert(
+    ctx.volumeRatio !== null && ctx.volumeRatio < 0.45,
+    "G5.1: volumeRatio calculado < 0.45",
+    `got ${ctx.volumeRatio?.toFixed(2)}`
+  );
+  assert(
+    guardResult.blocked === true,
+    "G5.2: blocked=true con vol < 0.45 en TRANSITION",
+    `blocked=${guardResult.blocked}`
+  );
+  assert(
+    guardResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
+    "G5.3: blocker TRANSITION_LOW_VOLUME presente",
+    `blockers=[${guardResult.blockers.join(",")}]`
+  );
+}
+
+// ── G5b: vol=0.30x en TREND — NO debe bloquear (guard solo aplica TRANSITION) ─
+console.log("\nG5b — TRANSITION_LOW_VOLUME NO aplica en TREND:");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 300 }; // 0.30x
+  const { guardResult } = buildAndEvaluate(candles, { regime: "TREND" });
+
+  assert(
+    !guardResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
+    "G5b: TRANSITION_LOW_VOLUME NO bloquea en TREND",
+    `blockers=[${guardResult.blockers.join(",")}]`
+  );
+}
+
+// ── G5c: vol=0.60x en TRANSITION — NO debe bloquear Guard5 (solo <0.45) ──────
+console.log("\nG5c — vol=0.60x en TRANSITION — Guard5 no bloquea:");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 600 }; // 0.60x
+  const { guardResult } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  assert(
+    !guardResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
+    "G5c: Guard5 no bloquea con vol=0.60x en TRANSITION",
+    `blockers=[${guardResult.blockers.join(",")}]`
+  );
+}
+
+// ── G6: TRANSITION_WEAK_SETUP — isExpansion=false + vol=0.50x → bloquear ─────
+console.log("\nG6 — TRANSITION_WEAK_SETUP (isExpansion=false + vol < 0.60x en TRANSITION):");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 500 }; // 0.50x
+  const { ctx, guardResult } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  // Inject expansionResult with isExpansion=false
+  ctx.expansionResult = { isExpansion: false, score: 2, confidence: 0.55, reasons: ["CLOSE_NEAR_HIGH"], metrics: {} as any };
+  // Re-evaluate guards with expansionResult set
+  ctx.blockers = [];
+  ctx.warnings = [];
+  const result = evaluateHardGuards(ctx);
+
+  assert(
+    result.blocked === true,
+    "G6.1: blocked=true con isExpansion=false + vol=0.50x en TRANSITION",
+    `blocked=${result.blocked}`
+  );
+  assert(
+    result.blockers.some((b: string) => b.includes("TRANSITION_WEAK_SETUP")),
+    "G6.2: blocker TRANSITION_WEAK_SETUP presente",
+    `blockers=[${result.blockers.join(",")}]`
+  );
+}
+
+// ── G6b: isExpansion=true + vol=0.50x → debe permitir ────────────────────────
+console.log("\nG6b — isExpansion=true + vol=0.50x → Guard6 no bloquea:");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 500 }; // 0.50x
+  const { ctx } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  ctx.expansionResult = { isExpansion: true, score: 4, confidence: 0.75, reasons: ["EMA_EXPANDING", "VOLUME_SPIKE"], metrics: {} as any };
+  ctx.blockers = [];
+  ctx.warnings = [];
+  const result = evaluateHardGuards(ctx);
+
+  assert(
+    !result.blockers.some((b: string) => b.includes("TRANSITION_WEAK_SETUP")),
+    "G6b: Guard6 no bloquea con isExpansion=true",
+    `blockers=[${result.blockers.join(",")}]`
+  );
+}
+
+// ── G6c: isExpansion=false + vol=0.70x → Guard6 no bloquea (vol>=0.60) ───────
+console.log("\nG6c — isExpansion=false + vol=0.70x → Guard6 no bloquea:");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 700 }; // 0.70x
+  const { ctx } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  ctx.expansionResult = { isExpansion: false, score: 2, confidence: 0.55, reasons: [], metrics: {} as any };
+  ctx.blockers = [];
+  ctx.warnings = [];
+  const result = evaluateHardGuards(ctx);
+
+  assert(
+    !result.blockers.some((b: string) => b.includes("TRANSITION_WEAK_SETUP")),
+    "G6c: Guard6 no bloquea con vol=0.70x (≥ 0.60x threshold)",
+    `blockers=[${result.blockers.join(",")}]`
+  );
+}
+
+// ── G-BTC: Caso real BTC/USD 12:52 — vol=0.30x + isExpansion=false → bloqueado
+console.log("\nG-BTC — Caso real BTC/USD (vol=0.30x, isExpansion=false, TRANSITION):");
+{
+  const candles = makeCandles(30, { baseClose: 70700, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 300 }; // 0.30x de 1000
+  const { ctx, guardResult } = buildAndEvaluate(candles, {
+    regime: "TRANSITION",
+    currentPrice: 70774.6,
+  });
+
+  assert(
+    guardResult.blocked === true,
+    "G-BTC.1: caso BTC/USD real bloqueado por TRANSITION_LOW_VOLUME",
+    `blockers=[${guardResult.blockers.join(",")}]`
+  );
+  assert(
+    guardResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
+    "G-BTC.2: blocker específico TRANSITION_LOW_VOLUME presente",
+    `blockers=[${guardResult.blockers.join(",")}]`
+  );
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

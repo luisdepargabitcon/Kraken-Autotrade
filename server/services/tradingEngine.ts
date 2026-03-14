@@ -2572,6 +2572,16 @@ ${positionsList}
         const decision = smartExitEngine.evaluate(sePosition, marketData, seConfig);
         this.smartExitDecisions.set(lotId, decision);
 
+        // Fee-band suppression: position is flat, exit would cost more than gain
+        if (decision.suppressedByFeeBand) {
+          log(`[SMART_EXIT_FEE_BAND_SUPPRESS] ${position.pair} (${lotId}): score=${decision.score} feeBandThreshold=${decision.threshold} pnl=${pnlPct.toFixed(2)}% reasons=[${decision.reasons.join(',')}] — exit suppressed, flat position would be net loss after fees`, "trading");
+          if (this.telegramService.isInitialized()) {
+            const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "SUPPRESSED");
+            this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_suppressed")
+              .catch((e: any) => log(`[ALERT_ERR] smart_exit_suppressed: ${e?.message ?? String(e)}`, 'trading'));
+          }
+        }
+
         // Log evaluation
         if (decision.score > 0) {
           log(`[SMART_EXIT] ${position.pair} (${lotId}) regime=${decision.regime} score=${decision.score} threshold=${decision.threshold} confirm=${decision.confirmationProgress}/${decision.confirmationRequired} pnl=${pnlPct.toFixed(2)}%`, "trading");

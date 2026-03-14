@@ -2,6 +2,102 @@
 
 ---
 
+## 2026-01-XX — FIX: Auditoría Anti Round-Trip — Entry Quality Floor + Fee-Aware Exit
+
+### Objetivo
+Auditoría completa del flujo Entry → Hold → Smart Exit para identificar y eliminar operaciones round-trip basura (buy-sell casi inmediatas o flat con comisiones negativas). Caso real analizado: BTC/USD compra 12:52, salida 21:40, PnL +0.00% (pérdida neta en comisiones).
+
+### Causa Raíz (ROOT CAUSE) — TIPO A: Entry demasiado laxo
+
+**BTC/USD caso analizado:**
+- Entrada: volumeRatio=0.30x, isExpansion=false, regime=TRANSITION, confidence=88%
+- Salida 8h48m después: MTF_ALIGNMENT_LOSS(score=2) + STAGNATION(score=1) = 3 = threshold exacto
+- PnL: +0.00% gross = pérdida neta tras comisiones
+
+**Por qué pasó el entry:**
+- Guard 3 (LOW_VOL_EXTENDED_PRICE) requiere AMBAS condiciones: vol < 0.8x **Y** priceVsEma20 > 0.5%
+- Con 0.30x vol pero priceVsEma20=0.149% (< 0.5%), la guard NO se activó
+- No existía guard standalone para volumen muy bajo en TRANSITION
+- NO_EXPANSION y LOW_VOLUME eran solo warnings (no bloqueantes)
+
+**Por qué el Smart Exit era CORRECTO:**
+- MTF degradó a neutral/bearish → MTF_ALIGNMENT_LOSS
+- Posición 528 minutos a PnL plano → STAGNATION
+- 6/6 ciclos de confirmación → muy conservador
+- El Smart Exit funcionó bien; el problema estaba en la entrada
+
+### Protecciones Anti Round-Trip existentes (antes de este fix)
+| Protección | Estado | Observación |
+|---|---|---|
+| `minPositionAgeSec: 30` | ❌ Insuficiente | Solo 30 segundos de gracia |
+| `stagnationMinutes: 10` | ✅ Funciona | Espera 10 min mínimo |
+| `extraLossThresholdPenalty: 1` | ✅ Funciona | +1 al threshold si PnL≤0 |
+| `confirmationCycles: 3-6` | ✅ Conservador | 6/6 en el caso BTC |
+| Guard 3: LOW_VOL_EXTENDED_PRICE | ⚠️ Parcial | Requiere ambas condiciones |
+| Anti-FOMO (RSI>65+BB%>85) | ✅ Funciona | No aplica a este caso |
+
+### Cambios Implementados
+
+**1. EntryDecisionContext.ts — Guard 5: TRANSITION_LOW_VOLUME (nueva)**
+- Bloquea BUY si `volumeRatio < 0.45x` en régimen TRANSITION
+- Cubre entradas con participación de mercado insignificante (caso BTC: 0.30x bloqueado)
+- Sin condición adicional de precio — volumen bajo solo ya es suficiente en TRANSITION
+
+**2. EntryDecisionContext.ts — Guard 6: TRANSITION_WEAK_SETUP (nueva)**
+- Bloquea BUY si `isExpansion=false` Y `volumeRatio < 0.60x` en TRANSITION
+- Cubre el rango 0.45x–0.59x cuando el expansión detector confirma que no hay expansión real
+- Ambas guards son acumulativas: Guard 5 cubre vol < 0.45, Guard 6 cubre 0.45–0.59 + noExpansion
+
+**3. SmartExitEngine.ts — Fee-Band Threshold Bump (nuevo)**
+- Nuevo campo `feeBandPct: number` en `SmartExitConfig` (default: 0.25%)
+- Si `|pnlPct| <= feeBandPct` (posición flat dentro del coste de comisiones), se requiere `score >= effectiveThreshold + 1`
+- Previene salidas al +0.00% que resultan en pérdida neta
+- Nuevo campo `suppressedByFeeBand: boolean` en `SmartExitDecision`
+- Nuevo event type `"SUPPRESSED"` en `buildTelegramSnapshot`
+
+**4. tradingEngine.ts — Log + Telegram para exit suprimido**
+- Log `[SMART_EXIT_FEE_BAND_SUPPRESS]` con score, threshold y razones cuando se suprime
+- Alerta Telegram con subtype `smart_exit_suppressed`
+
+**5. telegram.ts + schema.ts — Nuevo subtype**
+- `smart_exit_suppressed` añadido a `AlertSubtype` y `alertPreferencesSchema`
+- Configurable desde la UI de Notificaciones
+
+### Umbrales implementados
+| Guard | Threshold | Racional |
+|---|---|---|
+| TRANSITION_LOW_VOLUME | vol < 0.45x | <45% participación = no hay interés real |
+| TRANSITION_WEAK_SETUP | isExp=false + vol < 0.60x | Sin expansión detectada + vol bajo = setup débil |
+| feeBandPct | 0.25% | Cubre comisiones típicas (maker ~0.10% × 2 + spread) |
+
+### Tests añadidos (FASE 5 — 12 nuevos tests)
+- **G5.1-G5.3**: TRANSITION_LOW_VOLUME bloquea con vol=0.30x en TRANSITION
+- **G5b**: Guard NO aplica en TREND (selectivo por régimen)
+- **G5c**: vol=0.60x en TRANSITION no bloquea Guard5
+- **G6.1-G6.2**: TRANSITION_WEAK_SETUP bloquea con isExpansion=false + vol=0.50x
+- **G6b**: isExpansion=true + vol=0.50x NO bloquea Guard6
+- **G6c**: vol=0.70x (≥ threshold) NO bloquea Guard6
+- **G-BTC.1-G-BTC.2**: Caso real BTC/USD confirmado bloqueado
+- **Total tests**: 71/71 ✅
+
+### Tags de log para trazabilidad
+```
+[ENTRY_HARD_GUARD_BLOCK]          → entrada bloqueada (ya existía)
+[SMART_EXIT_FEE_BAND_SUPPRESS]    → exit suprimido por fee-band (nuevo)
+```
+Filtrar en VPS:
+```bash
+docker compose -f docker-compose.staging.yml logs -f | grep -E "TRANSITION_LOW_VOL|TRANSITION_WEAK|FEE_BAND_SUPPRESS"
+```
+
+### Riesgos y Consideraciones
+- **Riesgo feeBandPct**: En posiciones con pérdida real (PnL < -feeBandPct), el ajuste NO aplica — la lógica solo suprime cuando la posición es genuinamente flat
+- **Riesgo Guard5/6**: Se aplica SOLO a TRANSITION; TREND y CHOP no se ven afectados
+- **Casos edge**: Si expansionResult es null (ciclos muy tempranos), Guard 6 se omite silenciosamente — Guard 5 sigue activa
+- **Retrocompatibilidad**: Todas las configuraciones nuevas tienen defaults seguros; código existente no se rompe
+
+---
+
 ## 2026-03-15 — REFACTOR: Auditoría y Unificación del Sistema de Notificaciones Telegram
 
 ### Objetivo
