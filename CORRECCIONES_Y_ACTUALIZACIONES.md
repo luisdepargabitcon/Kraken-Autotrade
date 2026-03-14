@@ -2,6 +2,75 @@
 
 ---
 
+## 2026-01-XX — FIX: SELL Snapshot Telegram — P&L, entryPrice, holdDuration, exitType
+
+### Objetivo
+Corregir la ausencia de datos en las alertas Telegram de venta (SELL snapshots). Las alertas llegaban vacías (sin P&L, sin precio de entrada, sin duración) porque los datos ya computados no se pasaban al método de notificación.
+
+### Causa Raíz — ROOT CAUSE
+
+**`executeTrade` SELL path: P&L computado pero no pasado a sendSellAlert**
+
+La función `executeTrade` calcula P&L completo en dos lugares:
+1. Líneas 5977-6001: `tradeRealizedPnlUsd`, `tradeRealizedPnlPct` — accesibles en scope exterior
+2. Líneas 6274-6285: `pnlGross`, `pnlNet` — scoped al `if(sellContext)` interior
+
+Pero al llamar `sendSellAlert` en línea ~6386, se pasaba:
+- ❌ `pnlUsd`: no pasado (comentario "will be calculated by calling function" — mentira, nadie lo hacía)
+- ❌ `pnlPct`: no pasado
+- ❌ `entryPrice`: no pasado
+- ❌ `openedAt`: no pasado
+- ❌ `holdDuration`: no pasado
+- ❌ `exitType`: detección case-sensitive → "Stop-Loss" NO contiene "STOP" → todos clasificados como "MANUAL"
+
+**Consecuencia:** El template `buildTradeSellHTML` mostraba "N/D" en P&L, sin precio entrada, sin duración, exitType="MANUAL" para todo.
+
+### Auditoría de pipelines de entrada (FASE A3)
+| Pipeline | Usa evaluateHardGuards | Observación |
+|---|---|---|
+| `analyzePairAndTradeWithCandles` (candle mode) | ✅ | Guards 1-6 activos |
+| Early Momentum dentro de candle mode | ✅ | Guards 1-6 activos |
+| `analyzePairAndTrade` (cycle mode, ln 3801) | ❌ | NO llama evaluateHardGuards — RIESGO RESIDUAL documentado |
+
+### Cambios Implementados
+
+**1. telegram/templates.ts — SimpleTradeSellContext extendido**
+- Añadidos: `entryPrice?: number | string`, `regime?: string`
+- `buildTradeSellHTML`: muestra precio entrada (📌), régimen y estrategia cuando disponibles
+- Trigger truncado a 120 chars para evitar mensajes gigantes con reasons largas de Smart Exit
+
+**2. telegram.ts — sendSellAlert actualizado**
+- Nuevos campos opcionales en ctx: `entryPrice`, `regime`, `strategyLabel`
+- Pasa los nuevos campos a `SimpleTradeSellContext`
+
+**3. tradingEngine.ts — executeTrade SELL path (fix principal)**
+- Usa `tradeRealizedPnlUsd` (ya en scope) → `netPnlUsd`
+- Calcula `pnlGross` y `pnlPct` gross desde `sellContext.entryPrice`
+- Calcula `feeTotal` como `|gross - net|`
+- Extrae `openedAt` y `holdDuration` de `sellContext.openedAt`
+- `exitType` detection: case-insensitive, cubre STOP_LOSS, TAKE_PROFIT, BREAK_EVEN, TRAILING_STOP, TIME_STOP, SMART_EXIT, SCALE_OUT, EMERGENCY, MANUAL
+- Pasa `regime` desde `strategyMeta`, `strategyLabel` desde var ya computada
+
+**4. tradingEngine.ts — manualClose**
+- Añadido `entryPrice: entryPrice` al `sendSellAlert` (ya tenía P&L correcto)
+
+### Pipelines de venta — Única fuente de verdad
+| Path | Via | Snapshot | Datos |
+|---|---|---|---|
+| Smart Exit | `executeTrade` | ✅ CORREGIDO | P&L + entryPrice + holdDuration |
+| SL / TP / Trailing | `executeTrade` (via ExitManager) | ✅ CORREGIDO | P&L + entryPrice + holdDuration |
+| Time Stop | `executeTrade` (via ExitManager) | ✅ CORREGIDO | P&L + entryPrice + holdDuration |
+| Break Even / Scale Out | `executeTrade` (via ExitManager) | ✅ CORREGIDO | P&L + entryPrice + holdDuration |
+| Cierre Manual (Live) | `manualClose` directa | ✅ ya funcionaba | Ahora + entryPrice |
+| Cierre Manual (DRY_RUN) | inline en manualClose | ✅ funciona | basic template |
+| PendingFill SELL (async Kraken) | FillWatcher | ⚠️ Solo "pending" message | FillWatcher no envía snapshot post-fill — riesgo residual |
+
+### Riesgos Residuales
+- **Cycle mode sin guards**: `analyzePairAndTrade` (cycle) no usa `evaluateHardGuards` — entries con vol bajo en TRANSITION pueden pasar por este pipeline. Requiere sprint separado con QA cuidadoso.
+- **PendingFill SELL**: Para órdenes Kraken async, FillWatcher confirma la orden pero no envía SELL snapshot post-fill. El usuario recibe "⏳ Orden SELL enviada" pero no el snapshot completo con P&L. Requiere actualización de FillWatcher.
+
+---
+
 ## 2026-01-XX — FIX: Auditoría Anti Round-Trip — Entry Quality Floor + Fee-Aware Exit
 
 ### Objetivo

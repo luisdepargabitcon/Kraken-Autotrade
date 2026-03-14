@@ -313,6 +313,8 @@ export interface SimpleTradeSellContext {
   errorMessage?: string;
   netPnlUsd?: number;
   // Optional fields from full context
+  entryPrice?: number | string;
+  regime?: string;
   reason?: string;
   strategyLabel?: string;
   confPct?: string;
@@ -455,6 +457,7 @@ export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
     ``,
     `🏦 Exchange: <code>${ctx.exchange}</code>`,
     `💵 Precio venta: <code>$${escapeHtml(ctx.price)}</code>`,
+    ...(ctx.entryPrice !== undefined && ctx.entryPrice !== null ? [`📌 Precio entrada: <code>$${escapeHtml(String(typeof ctx.entryPrice === 'number' ? ctx.entryPrice.toFixed(2) : ctx.entryPrice))}</code>`] : []),
     `📦 Cantidad: <code>${escapeHtml(ctx.amount)}</code>`,
     `💰 Total recibido: <code>$${escapeHtml(ctx.total)}</code>`,
     `⏱️ Duración: <code>${escapeHtml(durationTxt)}</code>`,
@@ -483,13 +486,21 @@ export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
     );
   }
 
+  if (ctx.regime) {
+    lines.push(`🧭 Régimen: <code>${escapeHtml(ctx.regime)}</code>`);
+  }
+
+  if (ctx.strategyLabel) {
+    lines.push(`🔀 Estrategia: <code>${escapeHtml(ctx.strategyLabel)}</code>`);
+  }
+
   lines.push(
     ``,
     `🛡️ Tipo salida: <code>${escapeHtml(ctx.exitType)}</code>`,
   );
 
   if (ctx.trigger) {
-    lines.push(`⚡ Trigger: <code>${escapeHtml(ctx.trigger)}</code>`);
+    lines.push(`⚡ Trigger: <code>${escapeHtml(ctx.trigger.substring(0, 120))}</code>`);
   }
 
   lines.push(

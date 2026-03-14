@@ -6379,10 +6379,46 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               routerStrategy: strategyLabel || undefined,
             });
           } else {
-            // For sell alerts, we need P&L calculation
-            const assetName = pair.replace("/USD", "");
-            
-            // Use new visual sell alert
+            // SELL snapshot — P&L already computed at lines 5970-6001 in tradeRealizedPnl* vars
+            const _sellNetPnl = tradeRealizedPnlUsd ? parseFloat(tradeRealizedPnlUsd) : null;
+            const _sellNetPct = tradeRealizedPnlPct ? parseFloat(tradeRealizedPnlPct) : null;
+            const _sellEntryPrice = sellContext?.entryPrice ?? null;
+            const _sellGrossPnl = (_sellEntryPrice !== null && _sellEntryPrice > 0)
+              ? (price - _sellEntryPrice) * volumeNum
+              : null;
+            const _sellFeeTotal = (_sellGrossPnl !== null && _sellNetPnl !== null)
+              ? Math.abs(_sellGrossPnl - _sellNetPnl)
+              : undefined;
+            // pnlPct gross = (exit - entry) / entry * 100 (net is already in tradeRealizedPnlPct)
+            const _sellGrossPct = (_sellEntryPrice !== null && _sellEntryPrice > 0)
+              ? ((price - _sellEntryPrice) / _sellEntryPrice) * 100
+              : null;
+            // openedAt and holdDuration from sellContext
+            const _sellOpenedAt = sellContext?.openedAt
+              ? (typeof sellContext.openedAt === 'number'
+                  ? new Date(sellContext.openedAt)
+                  : sellContext.openedAt instanceof Date
+                      ? sellContext.openedAt
+                      : new Date(String(sellContext.openedAt)))
+              : undefined;
+            const _sellHoldMs = _sellOpenedAt ? Date.now() - _sellOpenedAt.getTime() : null;
+            const _sellHoldDuration = _sellHoldMs !== null
+              ? (_sellHoldMs >= 3600000
+                  ? `${Math.floor(_sellHoldMs / 3600000)}h ${Math.floor((_sellHoldMs % 3600000) / 60000)}m`
+                  : `${Math.floor(_sellHoldMs / 60000)}m`)
+              : undefined;
+            // exitType: case-insensitive detection covering all automated exit reasons
+            const _reasonUp = reason.toUpperCase();
+            const _sellExitType = _reasonUp.includes("STOP") ? "STOP_LOSS"
+              : _reasonUp.includes("TAKE") || _reasonUp.includes("PROFIT") ? "TAKE_PROFIT"
+              : _reasonUp.includes("BREAKEVEN") || _reasonUp.includes("BREAK_EVEN") || _reasonUp.includes("BREAK EVEN") ? "BREAK_EVEN"
+              : _reasonUp.includes("TRAIL") ? "TRAILING_STOP"
+              : _reasonUp.includes("TIMEST") || (_reasonUp.includes("TIME") && _reasonUp.includes("STOP")) ? "TIME_STOP"
+              : _reasonUp.includes("SMART") ? "SMART_EXIT"
+              : _reasonUp.includes("SCALE") ? "SCALE_OUT"
+              : _reasonUp.includes("EMERGENCY") ? "EMERGENCY"
+              : _reasonUp.includes("MANUAL") ? "MANUAL"
+              : "AUTO";
             await this.telegramService.sendSellAlert({
               pair: pair,
               exchange: exchange,
@@ -6392,10 +6428,18 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               orderId: txid || externalId || `UNKNOWN-${Date.now()}`,
               lotId: tradeId,
               mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
-              exitType: reason.includes("STOP") ? "STOP_LOSS" : reason.includes("PROFIT") ? "TAKE_PROFIT" : "MANUAL",
+              exitType: _sellExitType,
               status: "COMPLETED",
               trigger: reason,
-              // P&L will be calculated by the calling function with position data
+              pnlUsd: _sellGrossPnl,
+              pnlPct: _sellGrossPct,
+              feeUsd: _sellFeeTotal,
+              netPnlUsd: _sellNetPnl ?? undefined,
+              openedAt: _sellOpenedAt,
+              holdDuration: _sellHoldDuration,
+              entryPrice: _sellEntryPrice ?? undefined,
+              regime: (strategyMeta as any)?.regime ?? undefined,
+              strategyLabel: strategyLabel,
             });
           }
           notificationSent = true;
@@ -6783,6 +6827,7 @@ ${pnlEmoji} <b>PnL:</b> <code>${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${
           feeUsd: entryFeeUsd + exitFeeUsd,
           netPnlUsd: actualPnlUsd,
           openedAt: position.openedAt ? new Date(position.openedAt) : undefined,
+          entryPrice: entryPrice,
         });
       }
 

@@ -2526,6 +2526,9 @@ _KrakenBot.AI - Trading Autónomo_
     openedAt?: string | Date;
     holdDuration?: string;
     trigger?: string;
+    entryPrice?: number | string;
+    regime?: string;
+    strategyLabel?: string;
   }) {
     const openedAtDate = ctx.openedAt ? (typeof ctx.openedAt === 'string' ? new Date(ctx.openedAt) : ctx.openedAt) : null;
     const sellCtx: SimpleTradeSellContext = {
@@ -2549,6 +2552,9 @@ _KrakenBot.AI - Trading Autónomo_
       status: ctx.status,
       errorMessage: ctx.errorMessage,
       netPnlUsd: ctx.netPnlUsd,
+      entryPrice: ctx.entryPrice,
+      regime: ctx.regime,
+      strategyLabel: ctx.strategyLabel,
     };
     const message = buildTradeSellHTMLNew(sellCtx);
     await this.sendAlertWithSubtype(message, "trades", "trade_sell");
