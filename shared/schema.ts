@@ -345,26 +345,44 @@ export const fiscoSyncHistory = pgTable("fisco_sync_history", {
 });
 
 export const alertPreferencesSchema = z.object({
+  // Trading
   trade_buy: z.boolean().optional(),
   trade_sell: z.boolean().optional(),
   trade_breakeven: z.boolean().optional(),
   trade_trailing: z.boolean().optional(),
   trade_stoploss: z.boolean().optional(),
   trade_takeprofit: z.boolean().optional(),
+  trade_timestop: z.boolean().optional(),
   trade_daily_pnl: z.boolean().optional(),
+  trade_pending: z.boolean().optional(),
+  trade_filled: z.boolean().optional(),
+  trade_spread_rejected: z.boolean().optional(),
+  // Strategy / Regime
   strategy_regime_change: z.boolean().optional(),
   strategy_router_transition: z.boolean().optional(),
+  // System
   system_bot_started: z.boolean().optional(),
   system_bot_paused: z.boolean().optional(),
+  daily_report: z.boolean().optional(),
+  // Errors
+  error_critical: z.boolean().optional(),
   error_api: z.boolean().optional(),
   error_nonce: z.boolean().optional(),
+  // Risk / Balance
   balance_exposure: z.boolean().optional(),
+  // Heartbeat
   heartbeat_periodic: z.boolean().optional(),
+  // Smart Exit Engine
+  smart_exit_threshold: z.boolean().optional(),
+  smart_exit_executed: z.boolean().optional(),
+  smart_exit_regime: z.boolean().optional(),
   // FISCO alerts
   fisco_sync_daily: z.boolean().optional(),
   fisco_sync_manual: z.boolean().optional(),
   fisco_report_generated: z.boolean().optional(),
   fisco_error_sync: z.boolean().optional(),
+  // Entry intent / signal
+  entry_intent: z.boolean().optional(),
 });
 
 export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;

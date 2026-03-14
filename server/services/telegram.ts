@@ -692,14 +692,15 @@ type AlertType = "trades" | "errors" | "system" | "balance" | "status" | "heartb
 type AlertSubtype = 
   | "trade_buy" | "trade_sell" | "trade_breakeven" | "trade_trailing" 
   | "trade_stoploss" | "trade_takeprofit" | "trade_timestop" | "trade_daily_pnl"
-  | "trade_spread_rejected"
+  | "trade_pending" | "trade_filled" | "trade_spread_rejected"
   | "strategy_regime_change" | "strategy_router_transition"
-  | "system_bot_started" | "system_bot_paused"
-  | "error_api" | "error_nonce"
+  | "system_bot_started" | "system_bot_paused" | "daily_report"
+  | "error_critical" | "error_api" | "error_nonce"
   | "balance_exposure"
   | "heartbeat_periodic"
-  // Smart Exit Engine alerts
-  | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime";
+  | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime"
+  | "fisco_sync_daily" | "fisco_sync_manual" | "fisco_report_generated" | "fisco_error_sync"
+  | "entry_intent";
 
 type EngineController = {
   start: () => Promise<void>;

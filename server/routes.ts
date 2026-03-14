@@ -826,11 +826,8 @@ export async function registerRoutes(
   const { registerTestRoutes } = await import('./routes/test.routes');
   registerTestRoutes(app, routerDeps);
 
-  // ============================================================
-  // TELEGRAM ENDPOINTS (modularized)
-  // ============================================================
-  const { registerTelegramRoutes } = await import('./routes/telegram.routes');
-  registerTelegramRoutes(app, routerDeps);
+  // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
+  // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.
 
   // Register configuration routes
   registerConfigRoutes(app);

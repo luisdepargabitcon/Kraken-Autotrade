@@ -2,6 +2,77 @@
 
 ---
 
+## 2026-03-15 — REFACTOR: Auditoría y Unificación del Sistema de Notificaciones Telegram
+
+### Objetivo
+Auditoría completa + unificación de todo el sistema de notificaciones/alertas de Telegram. Centralizar toda la configuración en la pestaña "Notificaciones" de la UI.
+
+### Hallazgos de la Auditoría
+
+**Rutas duplicadas eliminadas:**
+- `server/routes/telegram.routes.ts` registraba rutas `/api/integrations/telegram/*` que **duplicaban** las rutas `/api/telegram/*` ya definidas en `server/routes.ts`.
+- La ruta `/api/integrations/telegram/send` tenía un **BUG crítico**: creaba `new TelegramService()` sin inicializar (token/chatId nunca configurados), por lo que los mensajes enviados desde ahí **nunca llegaban**.
+- El frontend **nunca usaba** estas rutas duplicadas (usa `/api/telegram/*`).
+
+**Schema incompleto (`alertPreferencesSchema`):**
+- Faltaban 11 subtipos de alerta: `trade_timestop`, `trade_pending`, `trade_filled`, `trade_spread_rejected`, `daily_report`, `error_critical`, `smart_exit_threshold`, `smart_exit_executed`, `smart_exit_regime`, `entry_intent`.
+- El tipo `AlertSubtype` en `telegram.ts` no incluía subtipos de FISCO ni `entry_intent`.
+
+**Toggles globales sin UI en Notificaciones:**
+- `buySnapshotAlertsEnabled` — existía en `bot_config` pero sin toggle en la UI de Notificaciones.
+- `spreadTelegramAlertEnabled` — existía en `bot_config` pero sin toggle en la UI de Notificaciones.
+
+**Categorías de alerta ausentes en la UI:**
+- Smart Exit Engine (threshold, executed, regime)
+- FISCO (sync diario/manual, informe generado, error sync)
+- Spread rechazado, Intención de entrada, Reporte diario
+- Órdenes pendientes/completadas, Errores críticos
+
+**Código duplicado detectado (pendiente de limpieza):**
+- `escapeHtml()` — definida en `telegram.ts` Y en `telegram/templates.ts`
+- `formatSpanishDate()` — definida en ambos archivos
+- `formatDuration()` — definida en ambos archivos
+- `buildPanelUrlFooter()` vs `buildPanelFooter()` — funcionalidad duplicada
+- Templates legacy en `telegram.ts` (buildBotStartedHTML, etc.) vs versiones modulares en `telegram/templates.ts`
+
+### Cambios Aplicados
+
+**1. Schema unificado (`shared/schema.ts`):**
+- `alertPreferencesSchema` ahora incluye **todos** los 30 subtipos de alerta organizados por categoría: Trading (12), Riesgo/Smart Guard (4), Estrategia (2), Informes/Sistema (4), Errores (3), FISCO (4), Entry Intent (1).
+- Tipo `AlertPreferences` generado automáticamente desde Zod.
+
+**2. Backend — Tipo `AlertSubtype` alineado (`server/services/telegram.ts`):**
+- Añadidos subtipos faltantes: `trade_pending`, `trade_filled`, `daily_report`, `error_critical`, todos los `fisco_*`, `entry_intent`.
+- Tipo ahora 100% alineado con `alertPreferencesSchema`.
+
+**3. Backend — Rutas duplicadas eliminadas (`server/routes.ts`):**
+- Removido el registro de `telegram.routes.ts` (líneas 829-833). Las rutas duplicadas `/api/integrations/telegram/*` ya no se registran.
+- Las rutas canónicas `/api/telegram/*` en `routes.ts` siguen funcionando.
+
+**4. Frontend — Rediseño completo de Notificaciones (`client/src/pages/Notifications.tsx`):**
+- **Header**: Indicadores en tiempo real (estado conexión, canales activos, tipos de alerta).
+- **Sección 1 — Mensaje de prueba**: Diseño compacto con selector de destino.
+- **Sección 2 — Alertas Globales** (NUEVA): Toggles maestros para `nonceErrorAlertsEnabled`, `signalRejectionAlertsEnabled`, `buySnapshotAlertsEnabled`, `spreadTelegramAlertEnabled`.
+- **Sección 3 — Destino de Alertas Especiales**: Errores críticos y rechazo de señales en layout side-by-side.
+- **Sección 4 — Cooldowns**: Sección colapsable con grid compacto de 5 cooldowns.
+- **Sección 5 — Canales de Telegram**: Canales con preferencias de alerta expandibles por chat. 7 categorías con 30 subtipos, cada uno con tooltip explicativo.
+- **Sección 6 — Resumen**: Footer con inventario de todas las categorías.
+- **7 categorías de alerta**: Trading, Riesgo/Smart Guard, Estrategia/Régimen, Informes/Sistema, Errores/Sistema, Fiscal/FISCO, Entry Intent.
+
+### Archivos Modificados
+- `shared/schema.ts` — alertPreferencesSchema ampliado (11 subtipos nuevos)
+- `server/services/telegram.ts` — AlertSubtype alineado con schema
+- `server/routes.ts` — Removido registro de telegram.routes.ts duplicado
+- `client/src/pages/Notifications.tsx` — Rediseño completo de la UI
+
+### Pendiente (próxima iteración)
+- Eliminar helpers duplicados en `telegram.ts` (usar los de `telegram/templates.ts`)
+- Migrar templates legacy a las versiones modulares
+- Conectar `FiscoTelegramNotifier` para que use `sendAlertWithSubtype` con subtipos `fisco_*`
+- Verificar que `SmartExitEngine` usa `sendAlertWithSubtype` con subtipos `smart_exit_*`
+
+---
+
 ## 2026-03-14 — FIX CRÍTICO: Snapshot Telegram BUY nunca se enviaba en candle-mode
 
 ### Problema
