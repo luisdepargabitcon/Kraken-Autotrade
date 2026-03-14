@@ -2,6 +2,47 @@
 
 ---
 
+## 2026-03-14 — FIX CRÍTICO: Snapshot Telegram BUY nunca se enviaba en candle-mode
+
+### Problema
+El usuario ejecutó una compra XRP/USD a las 04:15 (89.17 XRP @ $1.4819) y no recibió el snapshot de compra en Telegram. Solo recibió el mensaje "⏳ Orden BUY enviada" (notificación de orden pendiente) pero no el snapshot técnico completo.
+
+### Causa Raíz
+En `analyzePairAndTradeWithCandles` (candle mode), el bloque `sendBuyExecutedSnapshot` estaba anidado **dentro** del bloque condicional:
+```typescript
+if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
+  // ... HybridGuard stuff ...
+  sendBuyExecutedSnapshot(...)  // ← NUNCA ejecuta si hgInfo == null
+}
+```
+Para cualquier BUY normal (sin Hybrid Guard watch activo), `hgInfo = null`, por lo que el bloque completo no ejecutaba y el snapshot nunca se enviaba. El bot lleva tiempo enviando BUYs sin snapshot Telegram.
+
+**Nota**: El cycle mode (`analyzePairAndTrade`) no tenía este bug — `sendBuyExecutedSnapshot` ya estaba en su propio `if (success)` independiente.
+
+### Fix Aplicado
+Movido `sendBuyExecutedSnapshot` fuera del bloque `if (hgInfo)` a su propio bloque `if (success)` en `tradingEngine.ts`:
+```typescript
+}  // cierra if(hgInfo)
+
+// BUY snapshot Telegram alert — fires for ALL successful BUY (not only HybridGuard reentries)
+if (success && this.telegramService.isInitialized()) {
+  sendBuyExecutedSnapshot(...)
+}
+```
+
+### Contexto adicional (00:15 vs 04:15)
+- **00:15**: BUY XRP/USD bloqueado correctamente por MTF_STRICT (mtfAlignment=-0.33 < umbral 0.10). Mensaje Telegram de rechazo era correcto.
+- **04:15**: 4 horas después, MTF alignment mejoró y el BUY pasó todos los filtros. La orden se ejecutó correctamente en RevolutX. El snapshot NO llegó por este bug.
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — bloque `sendBuyExecutedSnapshot` movido fuera del scope `if(hgInfo)` en candle mode (~línea 4868→4898)
+
+### Verificación
+- TypeScript: exit 0
+- Tests: 60/60
+
+---
+
 ## 2026-06 — VERIFICACIÓN TÉCNICA COMPLETA: Motor de Entrada (EntryDecisionContext)
 
 ### Objetivo

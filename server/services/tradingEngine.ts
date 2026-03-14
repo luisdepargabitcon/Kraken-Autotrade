@@ -4893,40 +4893,40 @@ El bot ha pausado las operaciones de COMPRA.
               }).catch((e: any) => log(`[ALERT_ERR] sendHybridGuardOrderExecuted: ${e?.message ?? String(e)}`, 'trading'));
             }
           }
-          // BUY snapshot Telegram alert (Part D) — usa EntryDecisionContext como fuente única
-          if (this.telegramService.isInitialized()) {
-            const expSnap = (signal as any)?.momentumExpansion ?? null;
-            const snapshotCtx = this.lastEntryContext.get(pair) ?? null;
-            const antiCrestaStatus: 'passed' | 'watch_released' | 'not_triggered' =
-              hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
-            this.telegramService.sendBuyExecutedSnapshot({
-              pair,
-              exchange: this.getTradingExchangeType(),
-              price: currentPrice,
-              volume: finalVolumeCandles.toFixed(8),
-              totalUsd: tradeAmountUSD,
-              strategy: selectedStrategyId,
-              regime: earlyRegime ?? undefined,
-              confidence: signal.confidence,
-              signalsCount: signal.signalsCount,
-              signalReason: signal.reason,
-              decisionId: snapshotCtx?.decisionId,
-              // FIX: usar contexto como fuente de verdad (antes ema20 era siempre undefined)
-              ema10: snapshotCtx?.ema10 ?? undefined,
-              ema20: snapshotCtx?.ema20 ?? undefined,
-              macdHistSlope: snapshotCtx?.macdHistSlope ?? expSnap?.metrics?.macdHistSlope,
-              volumeRatio: snapshotCtx?.volumeRatio ?? expSnap?.metrics?.volumeRatio,
-              priceVsEma20Pct: snapshotCtx?.priceVsEma20Pct ?? expSnap?.metrics?.priceVsEma20Pct,
-              expansion: expSnap ? {
-                score: expSnap.score,
-                isExpansion: expSnap.isExpansion,
-                confidence: expSnap.confidence,
-                reasons: expSnap.reasons,
-              } : null,
-              antiCrestaStatus,
-              watchId: hgInfo?.watchId,
-            }).catch((e: any) => log(`[ALERT_ERR] sendBuyExecutedSnapshot: ${e?.message ?? String(e)}`, 'trading'));
-          }
+        }
+
+        // BUY snapshot Telegram alert — fires for ALL successful BUY (not only HybridGuard reentries)
+        if (success && this.telegramService.isInitialized()) {
+          const expSnap = (signal as any)?.momentumExpansion ?? null;
+          const snapshotCtx = this.lastEntryContext.get(pair) ?? null;
+          const antiCrestaStatus: 'passed' | 'watch_released' | 'not_triggered' =
+            hgInfo?.reason === 'ANTI_CRESTA' ? 'watch_released' : 'not_triggered';
+          this.telegramService.sendBuyExecutedSnapshot({
+            pair,
+            exchange: this.getTradingExchangeType(),
+            price: currentPrice,
+            volume: finalVolumeCandles.toFixed(8),
+            totalUsd: tradeAmountUSD,
+            strategy: selectedStrategyId,
+            regime: earlyRegime ?? undefined,
+            confidence: signal.confidence,
+            signalsCount: signal.signalsCount,
+            signalReason: signal.reason,
+            decisionId: snapshotCtx?.decisionId,
+            ema10: snapshotCtx?.ema10 ?? undefined,
+            ema20: snapshotCtx?.ema20 ?? undefined,
+            macdHistSlope: snapshotCtx?.macdHistSlope ?? expSnap?.metrics?.macdHistSlope,
+            volumeRatio: snapshotCtx?.volumeRatio ?? expSnap?.metrics?.volumeRatio,
+            priceVsEma20Pct: snapshotCtx?.priceVsEma20Pct ?? expSnap?.metrics?.priceVsEma20Pct,
+            expansion: expSnap ? {
+              score: expSnap.score,
+              isExpansion: expSnap.isExpansion,
+              confidence: expSnap.confidence,
+              reasons: expSnap.reasons,
+            } : null,
+            antiCrestaStatus,
+            watchId: hgInfo?.watchId,
+          }).catch((e: any) => log(`[ALERT_ERR] sendBuyExecutedSnapshot: ${e?.message ?? String(e)}`, 'trading'));
         }
 
       } else if (signal.action === "sell") {
