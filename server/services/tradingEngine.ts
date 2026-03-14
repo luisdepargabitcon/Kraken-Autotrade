@@ -72,7 +72,9 @@ import {
   buildEntryDecisionContext,
   validateEntryMetrics,
   evaluateHardGuards,
+  runUnifiedEntryGate,
   type EntryDecisionContext,
+  type UnifiedEntryGateResult,
 } from "./EntryDecisionContext";
 import {
   buildTimeStopAlertMessage as _buildTimeStopAlertMessage,
@@ -178,6 +180,7 @@ type BlockReasonCode =
   | "STALE_CANDLE_BLOCK"      // Vela obsoleta (timing gate)
   | "CHASE_BLOCK"             // Precio se alejó del cierre de vela (chase gate)
   | "AI_FILTER_BLOCK"         // Bloqueado por filtro ML predictivo
+  | "HARD_GUARD"              // Bloqueado por unified entry gate (runUnifiedEntryGate)
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
@@ -1679,6 +1682,7 @@ export class TradingEngine {
 
     // Hard guards estructurales — deben evaluarse antes del anti-cresta
     if (signal.action === "buy") {
+      log(`[ENTRY_PIPELINE] ${pair}: pipeline=candle strategy=momentum_candles_${timeframe} regime=${regime ?? "N/A"} confidence=${(signal.confidence * 100).toFixed(0)}% signals=${signal.signalsCount ?? "?"}/${adjustedMinSignals ?? signal.minSignalsRequired}`, "trading");
       validateEntryMetrics(entryCtx);
       log(`[ENTRY_DATA_VALIDATION] ${pair}: complete=${entryCtx.dataComplete} missing=[${entryCtx.missingMetrics.join(",")}] id=${entryCtx.decisionId}`, "trading");
       const guardResult = evaluateHardGuards(entryCtx);
@@ -1711,6 +1715,7 @@ export class TradingEngine {
       if (guardResult.warnings.length > 0) {
         log(`[ENTRY_HARD_GUARD_WARN] ${pair}: decisionId=${entryCtx.decisionId} warnings=[${guardResult.warnings.join(' | ')}]`, "trading");
       }
+      log(`[ENTRY_APPROVED] ${pair}: pipeline=candle regime=${regime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}% decisionId=${entryCtx.decisionId}`, "trading");
     }
 
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
@@ -3143,6 +3148,7 @@ El bot ha pausado las operaciones de COMPRA.
       const existingPosition = existingPositions[0];
 
       if (signal.action === "buy") {
+        log(`[ENTRY_PIPELINE] ${pair}: pipeline=cycle strategy=${strategy} regime=${earlyRegime ?? "N/A"} confidence=${(signal.confidence * 100).toFixed(0)}% signals=${signal.signalsCount ?? "?"}/${adjustedMinSignalsScan}`, "trading");
         if (this.isPairInCooldown(pair)) {
           const cooldownSec = this.getCooldownRemainingSec(pair);
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
@@ -3797,6 +3803,48 @@ El bot ha pausado las operaciones de COMPRA.
         });
         if (mmGateCycle.blocked) return;
         const finalVolumeCycle = mmGateCycle.adjustedVolume;
+
+        // === UNIFIED ENTRY GATE — mandatory for all BUY pipelines ===
+        const cycleGate = runUnifiedEntryGate({
+          pair,
+          pipeline: 'cycle',
+          strategy: 'momentum_cycle',
+          regime: currentRegimeForSizing,
+          signalConfidence: signal.confidence,
+          signalReason: signal.reason,
+          exchange: this.getTradingExchangeType(),
+        });
+        if (cycleGate.blocked) {
+          log(`[ENTRY_HARD_GUARD_BLOCK] ${pair}: pipeline=cycle decisionId=${cycleGate.decisionId} blockers=[${cycleGate.blockers.join(' | ')}]`, "trading");
+          this.updatePairTrace(pair, {
+            smartGuardDecision: "BLOCK",
+            blockReasonCode: "HARD_GUARD",
+            blockDetails: { pipeline: 'cycle', blockers: cycleGate.blockers },
+            finalSignal: "NONE",
+            finalReason: `Hard Guard (cycle): ${cycleGate.blockers[0]}`,
+          });
+          if (this.telegramService.isInitialized()) {
+            this.telegramService.sendSignalRejectionAlert(
+              pair,
+              `Hard Guard (cycle): ${cycleGate.blockers[0]}`,
+              "HARD_GUARD",
+              {
+                regime: currentRegimeForSizing ?? undefined,
+                signalsCount: signal.signalsCount,
+                minSignalsRequired: adjustedMinSignalsScan,
+                selectedStrategy: 'momentum_cycle',
+                rawSignal: "BUY",
+                currentPrice,
+              }
+            ).catch((e: any) => log(`[ALERT_ERR] cycle HARD_GUARD sendSignalRejectionAlert: ${e?.message ?? String(e)}`, "trading"));
+          }
+          return;
+        }
+        if (cycleGate.warnings.length > 0) {
+          log(`[ENTRY_HARD_GUARD_WARN] ${pair}: pipeline=cycle warnings=[${cycleGate.warnings.join(' | ')}]`, "trading");
+        }
+        log(`[ENTRY_APPROVED] ${pair}: pipeline=cycle regime=${currentRegimeForSizing ?? earlyRegime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}% decisionId=${cycleGate.decisionId}`, "trading");
+        log(`[ENTRY_ORDER_SUBMIT] ${pair}: pipeline=cycle volume=${finalVolumeCycle.toFixed(8)} usd=$${(finalVolumeCycle * currentPrice).toFixed(2)} price=${currentPrice.toFixed(2)}`, "trading");
 
         const success = await this.executeTrade(pair, "buy", finalVolumeCycle.toFixed(8), currentPrice, signal.reason, adjustmentInfo, strategyMetaForTrade, executionMeta);
         if (success && !this.dryRunMode && hgCfg?.enabled && hgInfo) {
@@ -4864,6 +4912,8 @@ El bot ha pausado las operaciones de COMPRA.
         if (mmGateCandles.blocked) return;
         const finalVolumeCandles = mmGateCandles.adjustedVolume;
 
+        log(`[ENTRY_ORDER_SUBMIT] ${pair}: pipeline=candle strategy=${selectedStrategyId} volume=${finalVolumeCandles.toFixed(8)} usd=$${(finalVolumeCandles * currentPrice).toFixed(2)} price=${currentPrice.toFixed(2)}`, "trading");
+
         const success = await this.executeTrade(
           pair, 
           "buy", 
@@ -5880,6 +5930,44 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               },
               onTimeout: (coid) => {
                 log(`[FILL_WATCHER_TIMEOUT] ${pair}: No fills after 2 minutes (clientOrderId=${coid})`, 'trading');
+              },
+              onSellCompleted: (summary) => {
+                log(`[FILL_SELL_COMPLETED] ${pair}: exitPrice=${summary.exitPrice.toFixed(2)} amount=${summary.totalAmount.toFixed(8)} pnlUsd=${summary.pnlUsd?.toFixed(4) ?? 'N/A'} pnlPct=${summary.pnlPct?.toFixed(4) ?? 'N/A'}% fee=${summary.feeUsd.toFixed(4)}`, 'trading');
+                const _svc = this.telegramService;
+                const _openedAt = sellContext?.openedAt ? new Date(sellContext.openedAt) : undefined;
+                const _holdDuration = _openedAt
+                  ? (() => {
+                      const diffMs = summary.executedAt.getTime() - _openedAt.getTime();
+                      const h = Math.floor(diffMs / 3600000);
+                      const m = Math.floor((diffMs % 3600000) / 60000);
+                      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+                    })()
+                  : undefined;
+                if (_svc.isInitialized()) {
+                  _svc.sendSellAlert({
+                    pair,
+                    exchange,
+                    price: summary.exitPrice.toFixed(2),
+                    amount: summary.totalAmount.toFixed(8),
+                    total: summary.totalCostUsd.toFixed(2),
+                    orderId: pendingOrderId || clientOrderId,
+                    lotId: clientOrderId,
+                    mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
+                    exitType: reason.toLowerCase().includes("stop") ? "STOP_LOSS"
+                      : reason.toLowerCase().includes("profit") ? "TAKE_PROFIT"
+                      : reason.toLowerCase().includes("smart") ? "SMART_EXIT"
+                      : "AUTO",
+                    status: "COMPLETED",
+                    trigger: `[ASYNC_FILL] ${reason}`,
+                    pnlUsd: summary.pnlUsd,
+                    pnlPct: summary.pnlPct,
+                    feeUsd: summary.feeUsd,
+                    netPnlUsd: summary.pnlUsd ?? undefined,
+                    openedAt: _openedAt,
+                    holdDuration: _holdDuration,
+                    entryPrice: summary.entryPrice?.toFixed(2),
+                  }).catch((e: any) => log(`[ALERT_ERR] FillWatcher onSellCompleted sendSellAlert: ${e?.message ?? String(e)}`, 'trading'));
+                }
               },
             });
             log(`[FILL_WATCHER_STARTED] ${correlationId} | Started FillWatcher for SELL ${pair}`, 'trading');

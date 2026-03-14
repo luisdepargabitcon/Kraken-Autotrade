@@ -204,6 +204,17 @@ interface WatcherConfig {
   onPositionOpen?: (position: any) => void;
   onTimeout?: (clientOrderId: string) => void;
   onError?: (error: Error) => void;
+  /** Called once when a SELL order is fully filled. Use this to send the final SELL Telegram snapshot. */
+  onSellCompleted?: (summary: {
+    exitPrice: number;
+    totalAmount: number;
+    totalCostUsd: number;
+    pnlUsd: number | null;
+    pnlPct: number | null;
+    feeUsd: number;
+    entryPrice: number | null;
+    executedAt: Date;
+  }) => void;
 }
 
 interface Fill {
@@ -242,6 +253,7 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
     onPositionOpen,
     onTimeout,
     onError,
+    onSellCompleted,
   } = config;
 
   // Helper: calculate PnL for a sell given fill price and amount
@@ -600,6 +612,21 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
                 }
               }
             }
+            if (fill.side === 'sell' && onSellCompleted) {
+              const avgPx = totalFilledAmount > 0 ? ((fills.reduce((acc, f) => acc + (f.price * f.amount), 0)) / totalFilledAmount) : fill.price;
+              const feeTot = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
+              const completedPnl = calcSellPnl(avgPx, totalFilledAmount);
+              onSellCompleted({
+                exitPrice: avgPx,
+                totalAmount: totalFilledAmount,
+                totalCostUsd: avgPx * totalFilledAmount,
+                pnlUsd: completedPnl ? parseFloat(completedPnl.pnlUsd) : null,
+                pnlPct: completedPnl ? parseFloat(completedPnl.pnlPct) : null,
+                feeUsd: feeTot,
+                entryPrice: sellEntryPrice ?? null,
+                executedAt: fill.executedAt,
+              });
+            }
             stopFillWatcher(clientOrderId);
             onPositionOpen?.(updatedPosition);
             return;
@@ -675,6 +702,21 @@ export async function startFillWatcher(config: WatcherConfig): Promise<void> {
               } catch (e: any) {
                 console.warn(`[FillWatcher] P&L reconcile note for ${pair}: ${e?.message ?? String(e)}`);
               }
+            }
+            if (onSellCompleted) {
+              const avgPx2 = totalFilledAmount > 0 ? ((fills.reduce((acc, f) => acc + (f.price * f.amount), 0)) / totalFilledAmount) : fill.price;
+              const feeTot2 = fills.reduce((acc, f) => acc + (f.fee || 0), 0);
+              const noPosCompletedPnl = calcSellPnl(avgPx2, totalFilledAmount);
+              onSellCompleted({
+                exitPrice: avgPx2,
+                totalAmount: totalFilledAmount,
+                totalCostUsd: avgPx2 * totalFilledAmount,
+                pnlUsd: noPosCompletedPnl ? parseFloat(noPosCompletedPnl.pnlUsd) : null,
+                pnlPct: noPosCompletedPnl ? parseFloat(noPosCompletedPnl.pnlPct) : null,
+                feeUsd: feeTot2,
+                entryPrice: sellEntryPrice ?? null,
+                executedAt: fill.executedAt,
+              });
             }
             stopFillWatcher(clientOrderId);
             return;

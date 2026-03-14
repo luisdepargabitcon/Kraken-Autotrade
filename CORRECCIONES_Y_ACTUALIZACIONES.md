@@ -2,6 +2,80 @@
 
 ---
 
+## 2026-01-XX — FASE C: Unified Entry Gate — runUnifiedEntryGate + Guard C1 + FillWatcher SELL snapshot
+
+### Objetivo
+Cerrar el riesgo crítico de bypass de hard guards en cycle mode, unificar la arquitectura de entrada BUY para todos los pipelines, añadir logs estructurados de trazabilidad, alertas Telegram al bloquear, y completar el snapshot SELL post-fill para órdenes asíncronas.
+
+### Mapa de pipelines auditado
+
+| Función | Pipeline | EntryDecisionContext | evaluateHardGuards | executeTrade("buy") |
+|---|---|---|---|---|
+| `analyzeWithCandleStrategy` (ln 1575) | candle | ✅ ln 1638 | ✅ ln 1687 | — (retorna señal) |
+| `analyzePairAndTradeWithCandles` (ln 4046) | candle | (usa señal previa) | (evaluado arriba) | ✅ ln 4917 |
+| `analyzePairAndTrade` (ln 3037) | cycle | ❌ | ❌ (previo) | ✅ ln 3846 |
+
+**Gap crítico:** cycle mode usaba `analyzeWithStrategy` (ticker-based, sin candle data) → sin guards de calidad → riesgo de BUY en TRANSITION sin validación.
+
+### Cambios implementados
+
+#### 1. `EntryDecisionContext.ts` — `runUnifiedEntryGate()`
+- Nuevo interfaz `UnifiedEntryGateParams` / `UnifiedEntryGateResult`
+- Función `runUnifiedEntryGate()` — gate único obligatorio para todos los pipelines BUY
+- **Guard C1: `CYCLE_TRANSITION_LOW_CONFIDENCE`**: bloquea cycle mode en TRANSITION si `signalConfidence < 0.80` (proxy de calidad sin candle data, vs umbral estándar 0.60)
+- Para candle/early_momentum: acepta `entryCtx` + `guardResult` ya evaluados, los propaga sin re-evaluar
+- Genera `decisionId` único por decisión (`ugd-{pair}-{pipeline}-{ts}`)
+
+#### 2. `tradingEngine.ts` — Logs estructurados en TODOS los pipelines
+
+**Candle mode (`analyzeWithCandleStrategy`):**
+- `[ENTRY_PIPELINE]` al inicio del bloque BUY con pipeline/strategy/regime/confidence/signals
+- `[ENTRY_APPROVED]` después de que guards pasan
+
+**Candle mode (`analyzePairAndTradeWithCandles`):**
+- `[ENTRY_ORDER_SUBMIT]` justo antes de `executeTrade("buy")` con volume/usd/price
+
+**Cycle mode (`analyzePairAndTrade`):**
+- `[ENTRY_PIPELINE]` al inicio del bloque BUY
+- `runUnifiedEntryGate()` antes de `executeTrade` → Guard C1
+- `[ENTRY_HARD_GUARD_BLOCK]` + `updatePairTrace(blockReasonCode: "HARD_GUARD")` + Telegram `sendSignalRejectionAlert` cuando guard bloquea
+- `[ENTRY_HARD_GUARD_WARN]` para warnings no-bloqueantes
+- `[ENTRY_APPROVED]` + `[ENTRY_ORDER_SUBMIT]` cuando gate aprueba
+
+#### 3. `tradingEngine.ts` — `BlockReasonCode`
+- Añadido `"HARD_GUARD"` al union type `BlockReasonCode`
+
+#### 4. `FillWatcher.ts` — `onSellCompleted` callback
+- Nuevo campo `onSellCompleted` en `WatcherConfig` con summary completo: `exitPrice`, `totalAmount`, `totalCostUsd`, `pnlUsd`, `pnlPct`, `feeUsd`, `entryPrice`, `executedAt`
+- Llamado en **ambos** caminos de fill SELL: con posición (ln 614) y sin posición (ln 705)
+- En `tradingEngine.ts`: callback implementado en SELL FillWatcher → `[FILL_SELL_COMPLETED]` log + `sendSellAlert()` con P&L completo, `holdDuration` calculado, `exitType` por reason
+
+### Tags de log del pipeline (verificable en VPS)
+```
+[ENTRY_PIPELINE]        — inicio de procesamiento BUY (todos los pipelines)
+[ENTRY_CONTEXT_BUILT]  — EntryDecisionContext construido (candle/early_momentum)
+[ENTRY_DATA_VALIDATION] — validateEntryMetrics ejecutado
+[ENTRY_HARD_GUARD_BLOCK] — guard bloquea entrada (candle o cycle)
+[ENTRY_HARD_GUARD_WARN]  — warning no-bloqueante
+[ENTRY_APPROVED]        — gate aprueba la entrada
+[ENTRY_ORDER_SUBMIT]    — orden BUY a punto de enviarse
+[FILL_SELL_COMPLETED]   — SELL async confirmado con P&L
+```
+
+### Tests (`entryDecisionContext.test.ts`)
+- **FASE 6 — 7 nuevos tests (GU1-GU7)**:
+  - GU1: cycle TRANSITION conf=70% → BLOCKED (Guard C1)
+  - GU2: cycle TRANSITION conf=85% → APPROVED
+  - GU3: cycle TREND conf=60% → APPROVED (Guard C1 no aplica)
+  - GU4: cycle regime=null conf=60% → APPROVED
+  - GU5: candle passthrough guardResult.blocked=false → APPROVED
+  - GU6: candle passthrough guardResult bloqueado → propaga blockers
+  - GU7: boundary cycle TRANSITION conf=0.80 exacto → APPROVED
+
+**Total tests: 83/83 ✅ · tsc: clean ✅**
+
+---
+
 ## 2026-01-XX — FIX: SELL Snapshot Telegram — P&L, entryPrice, holdDuration, exitType
 
 ### Objetivo

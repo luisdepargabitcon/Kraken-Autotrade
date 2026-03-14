@@ -23,6 +23,7 @@ import {
   buildEntryDecisionContext,
   validateEntryMetrics,
   evaluateHardGuards,
+  runUnifiedEntryGate,
   type EntryDecisionContext,
 } from "../EntryDecisionContext";
 import type { OHLCCandle } from "../indicators";
@@ -604,6 +605,186 @@ console.log("\nG-BTC — Caso real BTC/USD (vol=0.30x, isExpansion=false, TRANSI
     guardResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
     "G-BTC.2: blocker específico TRANSITION_LOW_VOLUME presente",
     `blockers=[${guardResult.blockers.join(",")}]`
+  );
+}
+
+// ── FASE 6 — runUnifiedEntryGate ─────────────────────────────────────────────
+
+console.log("\n=== FASE 6 — runUnifiedEntryGate (unified gate all pipelines) ===\n");
+
+// ── GU1: Cycle mode + TRANSITION + conf=0.70 → Guard C1 debe bloquear ────────
+console.log("GU1 — cycle TRANSITION conf=70% (<80%) → BLOCKED:");
+{
+  const gateResult = runUnifiedEntryGate({
+    pair: "BTC/USD",
+    pipeline: 'cycle',
+    strategy: 'momentum_cycle',
+    regime: "TRANSITION",
+    signalConfidence: 0.70,
+    signalReason: "Señales: 6/5",
+    exchange: "kraken",
+  });
+
+  assert(
+    gateResult.blocked === true,
+    "GU1.1: blocked=true — cycle TRANSITION conf=70% < 80%",
+    `blocked=${gateResult.blocked}`
+  );
+  assert(
+    gateResult.blockers.some(b => b.includes("CYCLE_TRANSITION_LOW_CONFIDENCE")),
+    "GU1.2: blocker CYCLE_TRANSITION_LOW_CONFIDENCE presente",
+    `blockers=[${gateResult.blockers.join(",")}]`
+  );
+  assert(
+    gateResult.decisionId.startsWith("ugd-BTC_USD-cycle-"),
+    "GU1.3: decisionId tiene formato ugd-{pair}-cycle-{ts}",
+    `decisionId=${gateResult.decisionId}`
+  );
+}
+
+// ── GU2: Cycle mode + TRANSITION + conf=0.85 → aprobado (≥80%) ───────────────
+console.log("\nGU2 — cycle TRANSITION conf=85% (≥80%) → APPROVED:");
+{
+  const gateResult = runUnifiedEntryGate({
+    pair: "ETH/USD",
+    pipeline: 'cycle',
+    strategy: 'momentum_cycle',
+    regime: "TRANSITION",
+    signalConfidence: 0.85,
+    signalReason: "Señales: 7/5",
+    exchange: "kraken",
+  });
+
+  assert(
+    gateResult.approved === true,
+    "GU2.1: approved=true — cycle TRANSITION conf=85% ≥ 80%",
+    `approved=${gateResult.approved}`
+  );
+  assert(
+    gateResult.blockers.length === 0,
+    "GU2.2: sin blockers con conf=85%",
+    `blockers=[${gateResult.blockers.join(",")}]`
+  );
+}
+
+// ── GU3: Cycle mode + TREND + conf=0.60 → siempre aprobado (Guard C1 no aplica)
+console.log("\nGU3 — cycle TREND conf=60% → Guard C1 no aplica → APPROVED:");
+{
+  const gateResult = runUnifiedEntryGate({
+    pair: "SOL/USD",
+    pipeline: 'cycle',
+    strategy: 'momentum_cycle',
+    regime: "TREND",
+    signalConfidence: 0.60,
+    signalReason: "Señales: 5/5",
+    exchange: "kraken",
+  });
+
+  assert(
+    gateResult.approved === true,
+    "GU3.1: approved=true — TREND no aplica Guard C1",
+    `approved=${gateResult.approved}`
+  );
+}
+
+// ── GU4: Cycle mode + regime=null + conf=0.60 → aprobado (null ≠ TRANSITION) ──
+console.log("\nGU4 — cycle regime=null conf=60% → Guard C1 no aplica → APPROVED:");
+{
+  const gateResult = runUnifiedEntryGate({
+    pair: "BTC/USD",
+    pipeline: 'cycle',
+    strategy: 'momentum_cycle',
+    regime: null,
+    signalConfidence: 0.60,
+    signalReason: "Señales: 5/5",
+    exchange: "kraken",
+  });
+
+  assert(
+    gateResult.approved === true,
+    "GU4.1: approved=true — regime=null no activa Guard C1",
+    `approved=${gateResult.approved}`
+  );
+}
+
+// ── GU5: Candle mode passthrough — entryCtx+guardResult → sin blockers extras ─
+console.log("\nGU5 — candle mode passthrough con guardResult.blocked=false:");
+{
+  const candles = makeCandles(30, { baseClose: 50000, closeTrend: "up", volumeMultiplier: 1.5 });
+  const { ctx, guardResult } = buildAndEvaluate(candles, { regime: "TREND", currentPrice: 50500 });
+
+  const gateResult = runUnifiedEntryGate({
+    pair: "BTC/USD",
+    pipeline: 'candle',
+    strategy: 'momentum_candles_5m',
+    regime: "TREND",
+    signalConfidence: 0.82,
+    signalReason: "Señales: 7/5",
+    exchange: "kraken",
+    entryCtx: ctx,
+    guardResult,
+  });
+
+  assert(
+    gateResult.approved === true,
+    "GU5.1: candle mode aprobado cuando guardResult.blocked=false",
+    `approved=${gateResult.approved}`
+  );
+  assert(
+    gateResult.pipelineLabel === "candle:momentum_candles_5m",
+    "GU5.2: pipelineLabel correcto",
+    `pipelineLabel=${gateResult.pipelineLabel}`
+  );
+}
+
+// ── GU6: Candle mode passthrough — entryCtx+guardResult bloqueado → propaga ──
+console.log("\nGU6 — candle mode — propaga blockers del guardResult existente:");
+{
+  const candles = makeCandles(30, { baseClose: 100, closeTrend: "up", volumeMultiplier: 1 });
+  candles[candles.length - 1] = { ...candles[candles.length - 1], volume: 300 }; // 0.30x → TRANSITION_LOW_VOLUME
+  const { ctx, guardResult } = buildAndEvaluate(candles, { regime: "TRANSITION" });
+
+  const gateResult = runUnifiedEntryGate({
+    pair: "ETH/USD",
+    pipeline: 'candle',
+    strategy: 'momentum_candles_5m',
+    regime: "TRANSITION",
+    signalConfidence: 0.82,
+    signalReason: "Señales: 7/5",
+    exchange: "kraken",
+    entryCtx: ctx,
+    guardResult,
+  });
+
+  assert(
+    gateResult.blocked === true,
+    "GU6.1: candle mode bloquea cuando guardResult tiene blockers",
+    `blocked=${gateResult.blocked}`
+  );
+  assert(
+    gateResult.blockers.some(b => b.includes("TRANSITION_LOW_VOLUME")),
+    "GU6.2: blocker TRANSITION_LOW_VOLUME propagado desde guardResult",
+    `blockers=[${gateResult.blockers.join(",")}]`
+  );
+}
+
+// ── GU7: Boundary — cycle TRANSITION conf=0.80 exacto → aprobado (igual al umbral)
+console.log("\nGU7 — cycle TRANSITION conf=80% (exacto umbral) → APPROVED:");
+{
+  const gateResult = runUnifiedEntryGate({
+    pair: "BTC/USD",
+    pipeline: 'cycle',
+    strategy: 'momentum_cycle',
+    regime: "TRANSITION",
+    signalConfidence: 0.80,
+    signalReason: "Señales: 6/5",
+    exchange: "kraken",
+  });
+
+  assert(
+    gateResult.approved === true,
+    "GU7.1: approved=true — conf=0.80 exactamente igual al umbral (< no aplica)",
+    `approved=${gateResult.approved} blockers=[${gateResult.blockers.join(",")}]`
   );
 }
 

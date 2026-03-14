@@ -328,3 +328,84 @@ export function evaluateHardGuards(ctx: EntryDecisionContext): HardGuardResult {
 
   return { blocked: blockers.length > 0, blockers, warnings };
 }
+
+// ─── Unified Entry Gate ────────────────────────────────────────────────────────
+
+/**
+ * Parameters for the unified entry gate.
+ * Used by all BUY pipelines (cycle, candle, early_momentum).
+ */
+export interface UnifiedEntryGateParams {
+  pair: string;
+  /** Pipeline identifier — logged in every structured entry log tag */
+  pipeline: 'cycle' | 'candle' | 'early_momentum';
+  strategy: string;
+  regime: string | null;
+  signalConfidence: number;
+  signalReason: string;
+  exchange: string;
+  /** Pre-built context (candle / early_momentum mode) — if provided, candle guards are reused */
+  entryCtx?: EntryDecisionContext | null;
+  /** Pre-evaluated guard result (candle / early_momentum mode) — if provided, guards don't re-run */
+  guardResult?: HardGuardResult | null;
+}
+
+export interface UnifiedEntryGateResult {
+  approved: boolean;
+  blocked: boolean;
+  blockers: string[];
+  warnings: string[];
+  decisionId: string;
+  pipelineLabel: string;
+}
+
+/**
+ * runUnifiedEntryGate — mandatory single entry point for ALL BUY decisions.
+ *
+ * For candle / early_momentum:
+ *   Pass `entryCtx` + `guardResult` (already evaluated by evaluateHardGuards).
+ *   The gate merges those results and adds uniform logging labels.
+ *
+ * For cycle mode (no candle data):
+ *   Runs cycle-specific quality guards that don't require candle indicators:
+ *   - Guard C1: CYCLE_TRANSITION_LOW_CONFIDENCE
+ *       Blocks entries in TRANSITION regime when signal confidence < 80%.
+ *       Rationale: cycle mode has no volumeRatio/expansionResult to validate
+ *       setup quality; high confidence is used as proxy quality gate.
+ *
+ * All callers MUST emit [ENTRY_PIPELINE], [ENTRY_APPROVED] / [ENTRY_HARD_GUARD_BLOCK],
+ * and [ENTRY_ORDER_SUBMIT] using the returned result.
+ */
+export function runUnifiedEntryGate(params: UnifiedEntryGateParams): UnifiedEntryGateResult {
+  const decisionId = `ugd-${params.pair.replace("/", "_")}-${params.pipeline}-${Date.now()}`;
+  const pipelineLabel = `${params.pipeline}:${params.strategy}`;
+  const allBlockers: string[] = [];
+  const allWarnings: string[] = [];
+
+  if (params.entryCtx && params.guardResult) {
+    // Candle / early_momentum: guards already evaluated by evaluateHardGuards — merge results
+    allBlockers.push(...params.guardResult.blockers);
+    allWarnings.push(...params.guardResult.warnings);
+  } else {
+    // Cycle mode: no candle data available — run cycle-specific guards only
+
+    // Guard C1: CYCLE_TRANSITION_LOW_CONFIDENCE
+    // Cycle mode cannot validate volume ratio or momentum expansion in TRANSITION.
+    // Require confidence >= 80% as proxy for entry quality.
+    const TRANSITION_MIN_CONF_CYCLE = 0.80;
+    if (params.regime === "TRANSITION" && params.signalConfidence < TRANSITION_MIN_CONF_CYCLE) {
+      allBlockers.push(
+        `CYCLE_TRANSITION_LOW_CONFIDENCE: conf=${(params.signalConfidence * 100).toFixed(0)}% < ${(TRANSITION_MIN_CONF_CYCLE * 100).toFixed(0)}% — cycle mode has no volume/expansion data in TRANSITION`
+      );
+    }
+  }
+
+  return {
+    approved: allBlockers.length === 0,
+    blocked: allBlockers.length > 0,
+    blockers: allBlockers,
+    warnings: allWarnings,
+    decisionId,
+    pipelineLabel,
+  };
+}
