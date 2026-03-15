@@ -1748,6 +1748,7 @@ export class TradingEngine {
         } else {
           // HARD BLOCK: watch active and release conditions NOT met
           log(`[ANTI_CRESTA_WATCH_ACTIVE] ${pair}: watchId=${activeHybridWatch.id} blocking buy | ${releaseCheck.reason}`, "trading");
+          log(`[ENTRY_BLOCKED_ANTI_CRESTA] ${pair}: WATCH_ACTIVE watchId=${activeHybridWatch.id}`, "trading");
           return {
             action: "hold", pair, confidence: 0.3,
             reason: `[ANTI_CRESTA_WATCH_ACTIVE] watchId=${activeHybridWatch.id} | ${releaseCheck.reason}`,
@@ -1776,7 +1777,7 @@ export class TradingEngine {
         }
 
         if (lateEntryReason) {
-          log(`[LATE_ENTRY_BLOCK] ${pair}: ${lateEntryReason}`, "trading");
+          log(`[ENTRY_BLOCKED_LATE_ENTRY] ${pair}: ${lateEntryReason}`, "trading");
           return {
             action: "hold", pair, confidence: 0.3,
             reason: `[LATE_ENTRY_BLOCK] ${lateEntryReason}`,
@@ -1789,6 +1790,7 @@ export class TradingEngine {
       // Anti-cresta: volumen alto + sobrecompra respecto a EMA20
       if (volumeRatio > 1.5 && priceVsEma20Pct > 0.01) {
         const rejectionReason = `Anti-Cresta: Volumen ${volumeRatio.toFixed(1)}x + Precio ${(priceVsEma20Pct * 100).toFixed(2)}% sobre EMA20`;
+        log(`[ENTRY_BLOCKED_ANTI_CRESTA] ${pair}: vol=${volumeRatio.toFixed(2)}x pct=${(priceVsEma20Pct * 100).toFixed(2)}%`, "trading");
         log(`[ANTI_CRESTA_BLOCK] ${pair}: reason=${rejectionReason} ttl=${this.getHybridGuardConfig()?.ttlMinutes ?? 120}m`, "trading");
 
         await this.maybeCreateHybridReentryWatch({
@@ -1903,6 +1905,7 @@ export class TradingEngine {
               }
             ).catch(err => log(`[ALERT_ERR] sendSignalRejectionAlert: ${err.message}`, "trading"));
           }
+          log(`[ENTRY_BLOCKED_MTF] ${pair}: ${mtfBoost.reason}`, "trading");
           return { 
             action: "hold", 
             pair, 
