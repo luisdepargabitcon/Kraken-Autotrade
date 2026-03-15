@@ -3148,6 +3148,7 @@ El bot ha pausado las operaciones de COMPRA.
         log(`[ENTRY_PIPELINE] ${pair}: pipeline=cycle strategy=${strategy} regime=${earlyRegime ?? "N/A"} confidence=${(signal.confidence * 100).toFixed(0)}% signals=${signal.signalsCount ?? "?"}/${adjustedMinSignalsScan}`, "trading");
         if (this.isPairInCooldown(pair)) {
           const cooldownSec = this.getCooldownRemainingSec(pair);
+          log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: pair cooldown=${cooldownSec}s`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
             pair,
             signal: "BUY",
@@ -3186,7 +3187,7 @@ El bot ha pausado las operaciones de COMPRA.
           const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
             const remainingSec = Math.ceil(sgMinSecondsBetweenEntries - secondsSinceLastOrder);
-            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
+            log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: anti-burst cooldown=${remainingSec}s`, "trading");
             await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
               pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
               secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntries, remainingSeconds: remainingSec,
@@ -3206,7 +3207,7 @@ El bot ha pausado las operaciones de COMPRA.
             ? "SMART_GUARD_MAX_LOTS_REACHED" 
             : "SINGLE_MODE_POSITION_EXISTS";
           
-          log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
+          log(`[ENTRY_BLOCKED_SLOTS] ${pair}: slots=${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
             pair,
             signal: "BUY",
@@ -3354,7 +3355,7 @@ El bot ha pausado las operaciones de COMPRA.
         // MEJORA 4: Verificar cooldown post stop-loss
         if (this.isPairInStopLossCooldown(pair)) {
           const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
-          log(`${pair}: En cooldown post stop-loss`, "trading");
+          log(`[ENTRY_BLOCKED_STOPLOSS_CD] ${pair}: post-stoploss cooldown=${cooldownSec}s`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
             pair,
             signal: "BUY",
@@ -3396,7 +3397,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
-          log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          log(`[ENTRY_BLOCKED_MAX_POSITION] ${pair}: position=$${(existingPosition.amount * currentPrice).toFixed(2)} > max=$${(riskConfig.maxTradeUSD * 2).toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
             pair,
             signal: "BUY",
@@ -3412,7 +3413,7 @@ El bot ha pausado las operaciones de COMPRA.
         const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
 
         if (freshUsdBalance < minRequiredUSD) {
-          log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          log(`[ENTRY_BLOCKED_FUNDS] ${pair}: USD=$${freshUsdBalance.toFixed(2)} < required=$${minRequiredUSD.toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
             pair,
             signal: "BUY",
@@ -4308,6 +4309,7 @@ El bot ha pausado las operaciones de COMPRA.
       if (signal.action === "buy") {
         if (this.isPairInCooldown(pair)) {
           const cooldownSec = this.getCooldownRemainingSec(pair);
+          log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: pair cooldown=${cooldownSec}s`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - par en cooldown`, {
             pair,
             signal: "BUY",
@@ -4346,7 +4348,7 @@ El bot ha pausado las operaciones de COMPRA.
           const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
             const remainingSec = Math.ceil(sgMinSecondsBetweenEntriesCandles - secondsSinceLastOrder);
-            log(`${pair}: Compra bloqueada - Cooldown anti-ráfaga: ${remainingSec}s`, "trading");
+            log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: anti-burst cooldown=${remainingSec}s`, "trading");
             await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
               pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
               secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntriesCandles, remainingSeconds: remainingSec,
@@ -4366,7 +4368,7 @@ El bot ha pausado las operaciones de COMPRA.
             ? "SMART_GUARD_MAX_LOTS_REACHED" 
             : "SINGLE_MODE_POSITION_EXISTS";
           
-          log(`${pair}: Compra bloqueada - slots ocupados ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
+          log(`[ENTRY_BLOCKED_SLOTS] ${pair}: slots=${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
             pair,
             signal: "BUY",
@@ -4513,7 +4515,7 @@ El bot ha pausado las operaciones de COMPRA.
 
         if (this.isPairInStopLossCooldown(pair)) {
           const cooldownSec = this.getStopLossCooldownRemainingSec(pair);
-          log(`${pair}: En cooldown post stop-loss`, "trading");
+          log(`[ENTRY_BLOCKED_STOPLOSS_CD] ${pair}: post-stoploss cooldown=${cooldownSec}s`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown post stop-loss`, {
             pair,
             signal: "BUY",
@@ -4536,7 +4538,7 @@ El bot ha pausado las operaciones de COMPRA.
         const spreadResult2 = await this.checkSpreadForBuy(pair, spreadTicker2, earlyRegime, botConfigCheck);
         if (!spreadResult2.ok) {
           const sd2 = spreadResult2.details;
-          log(`${pair}: Spread bloqueado (${sd2.spreadEffectivePct.toFixed(3)}% > ${sd2.thresholdPct.toFixed(2)}%) [${sd2.decision}]`, "trading");
+          log(`[ENTRY_BLOCKED_SPREAD] ${pair}: spread=${sd2.spreadEffectivePct.toFixed(3)}% > ${sd2.thresholdPct.toFixed(2)}% [${sd2.decision}]`, "trading");
           this.updatePairTrace(pair, {
             smartGuardDecision: "BLOCK",
             blockReasonCode: "SPREAD_TOO_HIGH",
@@ -4616,7 +4618,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         if (existingPosition && existingPosition.amount * currentPrice > riskConfig.maxTradeUSD * 2) {
-          log(`Posición existente en ${pair} ya es grande: $${(existingPosition.amount * currentPrice).toFixed(2)}`, "trading");
+          log(`[ENTRY_BLOCKED_MAX_POSITION] ${pair}: position=$${(existingPosition.amount * currentPrice).toFixed(2)} > max=$${(riskConfig.maxTradeUSD * 2).toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - posición existente demasiado grande`, {
             pair,
             signal: "BUY",
@@ -4632,7 +4634,7 @@ El bot ha pausado las operaciones de COMPRA.
         const freshUsdBalance = parseFloat(balances?.ZUSD || balances?.USD || "0");
 
         if (freshUsdBalance < minRequiredUSD) {
-          log(`Saldo USD insuficiente para ${pair}: $${freshUsdBalance.toFixed(2)} < $${minRequiredUSD.toFixed(2)}`, "trading");
+          log(`[ENTRY_BLOCKED_FUNDS] ${pair}: USD=$${freshUsdBalance.toFixed(2)} < required=$${minRequiredUSD.toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - fondos insuficientes`, {
             pair,
             signal: "BUY",
