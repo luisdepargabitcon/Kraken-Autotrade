@@ -3638,7 +3638,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         if (tradeVolume < minVolume) {
-          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          log(`[ENTRY_BLOCKED_VOLUME] ${pair}: vol=${tradeVolume.toFixed(8)} < min=${minVolume}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
             pair,
             signal: "BUY",
@@ -3799,7 +3799,7 @@ El bot ha pausado las operaciones de COMPRA.
           regime: earlyRegime,
           signalsCount: signal.signalsCount,
         });
-        if (mmGateCycle.blocked) return;
+        if (mmGateCycle.blocked) { log(`[ENTRY_BLOCKED_MM_GATE] ${pair}: pipeline=cycle blocked by market metrics gate`, "trading"); return; }
         const finalVolumeCycle = mmGateCycle.adjustedVolume;
 
         // === UNIFIED ENTRY GATE — mandatory for all BUY pipelines ===
@@ -4710,7 +4710,7 @@ El bot ha pausado las operaciones de COMPRA.
           // Modos SINGLE/DCA: lógica original
           const profitCheck = this.isProfitableAfterFees(takeProfitPct);
           if (!profitCheck.isProfitable) {
-            log(`${pair}: Trade rechazado - Take-Profit (${takeProfitPct}%) < mínimo rentable`, "trading");
+            log(`[ENTRY_BLOCKED_LOW_PROFIT] ${pair}: take-profit ${takeProfitPct}% < min rentable`, "trading");
             await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - take-profit menor que fees`, {
               pair,
               signal: "BUY",
@@ -4744,7 +4744,7 @@ El bot ha pausado las operaciones de COMPRA.
           : Math.min(exposure.maxAllowed, maxByBalance);
         
         if (effectiveMaxAllowed < minRequiredUSD) {
-          log(`${pair}: Sin exposición disponible`, "trading");
+          log(`[ENTRY_BLOCKED_EXPOSURE] ${pair}: exposure=$${effectiveMaxAllowed.toFixed(2)} < required=$${minRequiredUSD.toFixed(2)}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - sin exposición disponible`, {
             pair,
             signal: "BUY",
@@ -4779,7 +4779,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         if (tradeVolume < minVolume) {
-          log(`${pair}: Volumen ${tradeVolume.toFixed(8)} < mínimo ${minVolume}`, "trading");
+          log(`[ENTRY_BLOCKED_VOLUME] ${pair}: vol=${tradeVolume.toFixed(8)} < min=${minVolume}`, "trading");
           await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - volumen < mínimo`, {
             pair,
             signal: "BUY",
@@ -4908,7 +4908,7 @@ El bot ha pausado las operaciones de COMPRA.
           regime: earlyRegime,
           signalsCount: signal.signalsCount,
         });
-        if (mmGateCandles.blocked) return;
+        if (mmGateCandles.blocked) { log(`[ENTRY_BLOCKED_MM_GATE] ${pair}: pipeline=candle blocked by market metrics gate`, "trading"); return; }
         const finalVolumeCandles = mmGateCandles.adjustedVolume;
 
         log(`[ENTRY_APPROVED] ${pair}: pipeline=candle strategy=${selectedStrategyId} regime=${earlyRegime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}%`, "trading");
