@@ -1715,7 +1715,7 @@ export class TradingEngine {
       if (guardResult.warnings.length > 0) {
         log(`[ENTRY_HARD_GUARD_WARN] ${pair}: decisionId=${entryCtx.decisionId} warnings=[${guardResult.warnings.join(' | ')}]`, "trading");
       }
-      log(`[ENTRY_APPROVED] ${pair}: pipeline=candle regime=${regime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}% decisionId=${entryCtx.decisionId}`, "trading");
+      log(`[ENTRY_GUARDS_PASSED] ${pair}: pipeline=candle regime=${regime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}% decisionId=${entryCtx.decisionId}`, "trading");
     }
 
     // === FILTRO ANTI-CRESTA (Fase 2.4) ===
@@ -2001,9 +2001,6 @@ export class TradingEngine {
       }
     }
 
-    if (signal.action === "buy") {
-      log(`[ENTRY_APPROVED] ${pair}: decisionId=${entryCtx.decisionId} confidence=${signal.confidence.toFixed(2)} signals=${signal.signalsCount ?? 0}`, "trading");
-    }
     return signal;
   }
 
@@ -4912,6 +4909,7 @@ El bot ha pausado las operaciones de COMPRA.
         if (mmGateCandles.blocked) return;
         const finalVolumeCandles = mmGateCandles.adjustedVolume;
 
+        log(`[ENTRY_APPROVED] ${pair}: pipeline=candle strategy=${selectedStrategyId} regime=${earlyRegime ?? "N/A"} conf=${(signal.confidence * 100).toFixed(0)}%`, "trading");
         log(`[ENTRY_ORDER_SUBMIT] ${pair}: pipeline=candle strategy=${selectedStrategyId} volume=${finalVolumeCandles.toFixed(8)} usd=$${(finalVolumeCandles * currentPrice).toFixed(2)} price=${currentPrice.toFixed(2)}`, "trading");
 
         const success = await this.executeTrade(
