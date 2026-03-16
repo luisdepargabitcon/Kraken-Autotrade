@@ -523,13 +523,17 @@ export class ExitManager {
     const lastAlert = this.sgAlertThrottle.get(key);
     const now = Date.now();
     if (lastAlert && throttleMs) {
-      if (now - lastAlert < throttleMs) return false;
+      return now - lastAlert >= throttleMs;
     } else if (lastAlert) {
       return false; // One-shot: already sent
     }
-    this.sgAlertThrottle.set(key, now);
-    this.persistThrottle("sg:", key, now);
     return true;
+  }
+
+  private markSgAlertSent(lotId: string, eventType: string): void {
+    const key = `${lotId}:${eventType}`;
+    this.sgAlertThrottle.set(key, Date.now());
+    this.persistThrottle("sg:", key, Date.now());
   }
 
   async sendSgEventAlert(
@@ -542,22 +546,33 @@ export class ExitManager {
       reason: string;
       takeProfitPrice?: number;
       trailingStatus?: { active: boolean; startPct: number; distancePct: number; stepPct: number };
-    }
+    },
+    throttleMs?: number,
+    eventKey?: string
   ) {
     const { lotId, pair, entryPrice, openedAt } = position;
     const shortLotId = lotId.substring(0, 12);
     const envInfo = environment.getInfo();
+    const resolvedKey = eventKey ?? eventType;
 
-    // Calculate duration
-    const durationMs = openedAt ? Date.now() - openedAt : 0;
-    const durationMins = Math.floor(durationMs / 60000);
-    const durationHours = Math.floor(durationMins / 60);
-    const durationDays = Math.floor(durationHours / 24);
-    const durationTxt = durationDays > 0
-      ? `${durationDays}d ${durationHours % 24}h`
-      : durationHours > 0
-        ? `${durationHours}h ${durationMins % 60}m`
-        : `${durationMins}m`;
+    // === THROTTLE CHECK (read-only, does NOT mark yet) ===
+    if (!this.shouldSendSgAlert(lotId, resolvedKey, throttleMs)) {
+      log(`[POSITION_ALERT] SKIPPED one-shot/throttle: ${eventType} ${pair} key=${resolvedKey}`, "trading");
+      return;
+    }
+
+    // === TELEGRAM INIT CHECK — do NOT mark throttle if TG not ready (allows retry next cycle) ===
+    const telegram = this.host.getTelegramService();
+    const tgInitialized = telegram.isInitialized();
+    log(`[POSITION_ALERT] ${eventType} ${pair} lotId=${shortLotId} tgInit=${tgInitialized} profit=${extra.profitPct.toFixed(2)}%`, "trading");
+
+    if (!tgInitialized) {
+      log(`[POSITION_ALERT] SKIPPED no-tg: ${eventType} ${pair} — throttle NOT marked, will retry next cycle`, "trading");
+      return;
+    }
+
+    // === MARK THROTTLE only after TG confirmed available ===
+    this.markSgAlertSent(lotId, resolvedKey);
 
     // Emit event for /api/events
     await botLogger.info(eventType, `${eventType} en ${pair}`, {
@@ -574,79 +589,91 @@ export class ExitManager {
       reason: extra.reason,
     });
 
-    // Send Telegram notification with natural language + essential data
-    const telegram = this.host.getTelegramService();
-    const tgInitialized = telegram.isInitialized();
-    log(`[SG_ALERT] ${eventType} ${pair} lotId=${shortLotId} tgInit=${tgInitialized} profit=${extra.profitPct.toFixed(2)}%`, "trading");
-    if (tgInitialized) {
-      const formatPrice = (price: number) => {
-        if (price >= 100) return price.toFixed(2);
-        if (price >= 1) return price.toFixed(4);
-        return price.toFixed(6);
-      };
+    // Calculate duration
+    const durationMs = openedAt ? Date.now() - openedAt : 0;
+    const durationMins = Math.floor(durationMs / 60000);
+    const durationHours = Math.floor(durationMins / 60);
+    const durationDays = Math.floor(durationHours / 24);
+    const durationTxt = durationDays > 0
+      ? `${durationDays}d ${durationHours % 24}h`
+      : durationHours > 0
+        ? `${durationHours}h ${durationMins % 60}m`
+        : `${durationMins}m`;
 
-      const assetName = pair.replace("/USD", "");
-      const profitText = extra.profitPct >= 0 ? `+${extra.profitPct.toFixed(2)}%` : `${extra.profitPct.toFixed(2)}%`;
+    const formatPrice = (price: number) => {
+      if (price >= 100) return price.toFixed(2);
+      if (price >= 1) return price.toFixed(4);
+      return price.toFixed(6);
+    };
 
-      let naturalMessage = "";
+    const assetName = pair.replace("/USD", "");
+    const profitText = extra.profitPct >= 0 ? `+${extra.profitPct.toFixed(2)}%` : `${extra.profitPct.toFixed(2)}%`;
 
-      switch (eventType) {
-        case "SG_BREAK_EVEN_ACTIVATED":
-          naturalMessage = `⚖️ <b>Protección activada en ${assetName}</b>\n\n`;
-          naturalMessage += `Tu posición ya está en ganancias (${profitText}). He movido el stop a break-even.\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Stop BE: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          if (extra.takeProfitPrice) {
-            naturalMessage += `🎯 Objetivo: $${formatPrice(extra.takeProfitPrice)}\n`;
-          }
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
+    let naturalMessage = "";
+    let subtype: "trade_breakeven" | "trade_trailing" | "trade_sell";
 
-        case "SG_TRAILING_ACTIVATED":
-          naturalMessage = `📈 <b>Trailing activo en ${assetName}</b>\n\n`;
-          naturalMessage += `¡Las ganancias siguen subiendo! (${profitText}). El trailing ahora sigue el precio.\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Stop trailing: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          if (extra.trailingStatus) {
-            naturalMessage += `🔄 Distancia: ${extra.trailingStatus.distancePct}%\n`;
-          }
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
+    switch (eventType) {
+      case "SG_BREAK_EVEN_ACTIVATED":
+        subtype = "trade_breakeven";
+        naturalMessage = `⚖️ <b>Protección activada en ${assetName}</b>\n\n`;
+        naturalMessage += `Tu posición ya está en ganancias (${profitText}). He movido el stop a break-even.\n\n`;
+        naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+        if (extra.stopPrice) {
+          naturalMessage += `📍 Stop BE: $${formatPrice(extra.stopPrice)}\n`;
+        }
+        if (extra.takeProfitPrice) {
+          naturalMessage += `🎯 Objetivo: $${formatPrice(extra.takeProfitPrice)}\n`;
+        }
+        naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+        break;
 
-        case "SG_TRAILING_STOP_UPDATED":
-          naturalMessage = `🔼 <b>Stop actualizado en ${assetName}</b>\n\n`;
-          naturalMessage += `El precio sigue subiendo (${profitText}). Stop elevado para proteger más ganancias.\n\n`;
-          naturalMessage += `📊 Actual: $${formatPrice(currentPrice)}\n`;
-          if (extra.stopPrice) {
-            naturalMessage += `📍 Nuevo stop: $${formatPrice(extra.stopPrice)}\n`;
-          }
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
-          break;
+      case "SG_TRAILING_ACTIVATED":
+        subtype = "trade_trailing";
+        naturalMessage = `📈 <b>Trailing activo en ${assetName}</b>\n\n`;
+        naturalMessage += `¡Las ganancias siguen subiendo! (${profitText}). El trailing ahora sigue el precio.\n\n`;
+        naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+        if (extra.stopPrice) {
+          naturalMessage += `📍 Stop trailing: $${formatPrice(extra.stopPrice)}\n`;
+        }
+        if (extra.trailingStatus) {
+          naturalMessage += `🔄 Distancia: ${extra.trailingStatus.distancePct}%\n`;
+        }
+        naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+        break;
 
-        case "SG_SCALE_OUT_EXECUTED":
-          naturalMessage = `📊 <b>Venta parcial en ${assetName}</b>\n\n`;
-          naturalMessage += `He vendido parte de la posición para asegurar ganancias (${profitText}).\n\n`;
-          naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
-          naturalMessage += `<i>El resto sigue abierto para capturar más subidas.</i>`;
-          break;
-      }
+      case "SG_TRAILING_STOP_UPDATED":
+        subtype = "trade_trailing";
+        naturalMessage = `🔼 <b>Stop actualizado en ${assetName}</b>\n\n`;
+        naturalMessage += `El precio sigue subiendo (${profitText}). Stop elevado para proteger más ganancias.\n\n`;
+        naturalMessage += `📊 Actual: $${formatPrice(currentPrice)}\n`;
+        if (extra.stopPrice) {
+          naturalMessage += `📍 Nuevo stop: $${formatPrice(extra.stopPrice)}\n`;
+        }
+        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>`;
+        break;
 
-      try {
-        await telegram.sendAlertWithSubtype(naturalMessage, "trades", "trade_trailing");
-        log(`[SG_ALERT] Telegram alert sent for ${eventType} ${pair}`, "trading");
-      } catch (tgErr: any) {
-        log(`[SG_ALERT_ERR] Failed to send Telegram alert for ${eventType} ${pair}: ${tgErr.message}`, "trading");
-      }
-    } else {
-      log(`[SG_ALERT] Telegram NOT initialized - ${eventType} ${pair} alert LOST`, "trading");
+      case "SG_SCALE_OUT_EXECUTED":
+        subtype = "trade_sell";
+        naturalMessage = `📊 <b>Venta parcial en ${assetName}</b>\n\n`;
+        naturalMessage += `He vendido parte de la posición para asegurar ganancias (${profitText}).\n\n`;
+        naturalMessage += `📊 Entrada: $${formatPrice(entryPrice)} | Actual: $${formatPrice(currentPrice)}\n`;
+        naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+        naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
+        naturalMessage += `<i>El resto sigue abierto para capturar más subidas.</i>`;
+        break;
+
+      default:
+        subtype = "trade_trailing";
+    }
+
+    try {
+      await telegram.sendAlertWithSubtype(naturalMessage, "trades", subtype);
+      log(`[POSITION_ALERT] SENT: ${eventType} ${pair} subtype=${subtype}`, "trading");
+    } catch (tgErr: any) {
+      log(`[POSITION_ALERT] SEND_FAILED: ${eventType} ${pair} — clearing throttle for retry: ${tgErr.message}`, "trading");
+      this.sgAlertThrottle.delete(`${lotId}:${resolvedKey}`);
     }
   }
 
@@ -1253,18 +1280,25 @@ export class ExitManager {
         cushionPct: feeCushionPct, currentPrice, priceChangePct: priceChange, rule: `beAtPct=${beAtPct}%`,
       });
 
-      if (this.shouldSendSgAlert(position.lotId, "SG_BREAK_EVEN_ACTIVATED")) {
-        const takeProfitPrice = tpFixedEnabled
-          ? position.entryPrice * (1 + tpFixedPct / 100)
-          : undefined;
-        await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
-          stopPrice: breakEvenPrice,
-          profitPct: priceChange,
-          reason: `Profit +${beAtPct}% alcanzado, stop movido a break-even + comisiones`,
-          takeProfitPrice,
-          trailingStatus: { active: false, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
-        });
-      }
+      await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
+        stopPrice: breakEvenPrice,
+        profitPct: priceChange,
+        reason: `Profit +${beAtPct}% alcanzado, stop movido a break-even + comisiones`,
+        takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+        trailingStatus: { active: false, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
+      });
+    }
+
+    // === RECOVERY: BE already activated in DB but notification was never delivered ===
+    if (position.sgBreakEvenActivated && !this.sgAlertThrottle.has(`${lotId}:SG_BREAK_EVEN_ACTIVATED`)) {
+      log(`[POSITION_ALERT] BE_RECOVERY ${pair} lotId=${lotId.substring(0, 12)}: sgBreakEvenActivated=true but no throttle entry — reenvio de notificacion perdida`, "trading");
+      await this.sendSgEventAlert("SG_BREAK_EVEN_ACTIVATED", position, currentPrice, {
+        stopPrice: position.sgCurrentStopPrice ?? breakEvenPrice,
+        profitPct: priceChange,
+        reason: `Break-even activo (stop @ $${(position.sgCurrentStopPrice ?? breakEvenPrice).toFixed(2)})`,
+        takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+        trailingStatus: { active: position.sgTrailingActivated ?? false, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
+      });
     }
 
     // 4. TRAILING STOP ACTIVATION
@@ -1277,18 +1311,25 @@ export class ExitManager {
       positionModified = true;
       log(`SMART_GUARD ${pair}: Trailing activado (+${priceChange.toFixed(2)}%), stop dinámico @ $${position.sgCurrentStopPrice!.toFixed(4)}`, "trading");
 
-      if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_ACTIVATED")) {
-        const takeProfitPrice = tpFixedEnabled
-          ? position.entryPrice * (1 + tpFixedPct / 100)
-          : undefined;
-        await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
-          stopPrice: position.sgCurrentStopPrice,
-          profitPct: priceChange,
-          reason: `Profit +${trailStartPct}% alcanzado, trailing stop iniciado a ${trailDistancePct}% del máximo`,
-          takeProfitPrice,
-          trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
-        });
-      }
+      await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
+        stopPrice: position.sgCurrentStopPrice,
+        profitPct: priceChange,
+        reason: `Profit +${trailStartPct}% alcanzado, trailing stop iniciado a ${trailDistancePct}% del máximo`,
+        takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+        trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
+      });
+    }
+
+    // === RECOVERY: Trailing already activated in DB but notification was never delivered ===
+    if (position.sgTrailingActivated && !this.sgAlertThrottle.has(`${lotId}:SG_TRAILING_ACTIVATED`)) {
+      log(`[POSITION_ALERT] TRAIL_RECOVERY ${pair} lotId=${lotId.substring(0, 12)}: sgTrailingActivated=true but no throttle entry — reenvio de notificacion perdida`, "trading");
+      await this.sendSgEventAlert("SG_TRAILING_ACTIVATED", position, currentPrice, {
+        stopPrice: position.sgCurrentStopPrice,
+        profitPct: priceChange,
+        reason: `Trailing activo (stop @ $${(position.sgCurrentStopPrice ?? 0).toFixed(2)})`,
+        takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+        trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
+      });
     }
 
     // 5. TRAILING STOP UPDATE
@@ -1306,18 +1347,13 @@ export class ExitManager {
           currentPrice, trailingPct: trailDistancePct, stepPct: trailStepPct, rule: `step=${trailStepPct}%`,
         });
 
-        if (this.shouldSendSgAlert(position.lotId, "SG_TRAILING_STOP_UPDATED", this.SG_TRAIL_UPDATE_THROTTLE_MS)) {
-          const takeProfitPrice = tpFixedEnabled
-            ? position.entryPrice * (1 + tpFixedPct / 100)
-            : undefined;
-          await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
-            stopPrice: newTrailStop,
-            profitPct: priceChange,
-            reason: `Stop actualizado: $${oldStop.toFixed(2)} → $${newTrailStop.toFixed(2)}`,
-            takeProfitPrice,
-            trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
-          });
-        }
+        await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
+          stopPrice: newTrailStop,
+          profitPct: priceChange,
+          reason: `Stop actualizado: $${oldStop.toFixed(2)} → $${newTrailStop.toFixed(2)}`,
+          takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+          trailingStatus: { active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct },
+        }, this.SG_TRAIL_UPDATE_THROTTLE_MS);
       }
     }
 
@@ -1354,20 +1390,15 @@ export class ExitManager {
           currentPrice, priceChangePct: priceChange,
         });
 
-        if (this.shouldSendSgAlert(position.lotId, `SG_PROGRESSIVE_BE_L${progressiveResult.newLevel}`)) {
-          const takeProfitPrice = tpFixedEnabled
-            ? position.entryPrice * (1 + tpFixedPct / 100)
-            : undefined;
-          await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
-            stopPrice: effectiveNewStop,
-            profitPct: priceChange,
-            reason: `🔒 ${progressiveResult.reason}`,
-            takeProfitPrice,
-            trailingStatus: position.sgTrailingActivated ? {
-              active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
-            } : undefined,
-          });
-        }
+        await this.sendSgEventAlert("SG_TRAILING_STOP_UPDATED", position, currentPrice, {
+          stopPrice: effectiveNewStop,
+          profitPct: priceChange,
+          reason: `🔒 ${progressiveResult.reason}`,
+          takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+          trailingStatus: position.sgTrailingActivated ? {
+            active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
+          } : undefined,
+        }, undefined, `SG_PROGRESSIVE_BE_L${progressiveResult.newLevel}`);
       }
     }
 
@@ -1396,20 +1427,15 @@ export class ExitManager {
           position.sgScaleOutDone = true;
           positionModified = true;
 
-          if (this.shouldSendSgAlert(position.lotId, "SG_SCALE_OUT_EXECUTED")) {
-            const takeProfitPrice = tpFixedEnabled
-              ? position.entryPrice * (1 + tpFixedPct / 100)
-              : undefined;
-            await this.sendSgEventAlert("SG_SCALE_OUT_EXECUTED", position, currentPrice, {
-              stopPrice: position.sgCurrentStopPrice,
-              profitPct: priceChange,
-              reason: `Vendido ${scaleOutPct}% de posición ($${partValue.toFixed(2)}) a +${priceChange.toFixed(2)}%`,
-              takeProfitPrice,
-              trailingStatus: position.sgTrailingActivated ? {
-                active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
-              } : undefined,
-            });
-          }
+          await this.sendSgEventAlert("SG_SCALE_OUT_EXECUTED", position, currentPrice, {
+            stopPrice: position.sgCurrentStopPrice,
+            profitPct: priceChange,
+            reason: `Vendido ${scaleOutPct}% de posición ($${partValue.toFixed(2)}) a +${priceChange.toFixed(2)}%`,
+            takeProfitPrice: tpFixedEnabled ? position.entryPrice * (1 + tpFixedPct / 100) : undefined,
+            trailingStatus: position.sgTrailingActivated ? {
+              active: true, startPct: trailStartPct, distancePct: trailDistancePct, stepPct: trailStepPct,
+            } : undefined,
+          });
         }
       }
     }
