@@ -192,33 +192,27 @@ export const registerTradesRoutes: RegisterRoutes = (app, _deps) => {
   });
 
   // === PORTFOLIO SUMMARY (single source of truth) ===
+  // Definition: realizedPnlUsd = NET realized P&L = Σ(sell_revenue - cost_basis - entry_fee - exit_fee)
+  //             for ALL closed SELL trades with status='filled', price>0, amount>0.
+  //             Only sells with realizedPnlUsd stored in DB are included; sellsMissingPnl indicates
+  //             how many sells are excluded (run "Recalcular P&L" to fix).
+  //
+  // SQL validation:
+  //   SELECT SUM(realized_pnl_usd), COUNT(*) FROM trades
+  //   WHERE type='sell' AND status='filled' AND price>0 AND amount>0 AND realized_pnl_usd IS NOT NULL;
   app.get("/api/portfolio-summary", async (req, res) => {
     try {
-      // 1. Realized P&L: sum of all filled SELL trades' realizedPnlUsd
-      const allTrades = await storage.getFilledTradesForPerformance(5000);
-      const sells = allTrades.filter(t => t.type === 'sell');
+      // 1. Realized P&L: single SQL aggregate — no JS limit, per-exchange breakdown, missing PnL count
+      const agg = await storage.getPortfolioRealizedPnlAggregate();
 
-      let realizedPnlUsd = 0;
-      let wins = 0;
-      let losses = 0;
-      let todayRealizedPnl = 0;
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-
-      for (const sell of sells) {
-        if (sell.realizedPnlUsd != null && String(sell.realizedPnlUsd).length > 0) {
-          const pnl = parseFloat(String(sell.realizedPnlUsd));
-          if (Number.isFinite(pnl)) {
-            realizedPnlUsd += pnl;
-            if (pnl > 0) wins++;
-            else if (pnl < 0) losses++;
-
-            const tradeDate = sell.executedAt ? new Date(sell.executedAt) : new Date(sell.createdAt);
-            if (tradeDate >= todayStart) {
-              todayRealizedPnl += pnl;
-            }
-          }
-        }
+      console.log(`[REALIZED_PNL] source=trades_aggregate`);
+      console.log(`[REALIZED_PNL] sellsTotal=${agg.sellsTotal} sellsWithPnl=${agg.sellsWithPnl} sellsMissingPnl=${agg.sellsMissingPnl}`);
+      console.log(`[REALIZED_PNL] gross=n/a fees=included_in_net net=${agg.realizedPnlNet.toFixed(2)}`);
+      console.log(`[REALIZED_PNL] exchange=kraken net=${agg.realizedPnlKraken.toFixed(2)}`);
+      console.log(`[REALIZED_PNL] exchange=revolutx net=${agg.realizedPnlRevolutx.toFixed(2)}`);
+      console.log(`[REALIZED_PNL] today=${agg.todayRealizedPnl.toFixed(2)} wins=${agg.wins} losses=${agg.losses}`);
+      if (agg.sellsMissingPnl > 0) {
+        console.warn(`[REALIZED_PNL] WARNING: ${agg.sellsMissingPnl} sells have no realizedPnlUsd — badge is INCOMPLETE. Run POST /api/trades/rebuild-pnl to fix.`);
       }
 
       // 2. Unrealized P&L: from open positions (current price vs entry)
@@ -253,20 +247,25 @@ export const registerTradesRoutes: RegisterRoutes = (app, _deps) => {
         }
       }
 
-      const totalPnlUsd = realizedPnlUsd + unrealizedPnlUsd;
-      const totalSells = wins + losses;
-      const winRatePct = totalSells > 0 ? (wins / totalSells) * 100 : 0;
+      const totalPnlUsd = agg.realizedPnlNet + unrealizedPnlUsd;
+      const totalSells = agg.wins + agg.losses;
+      const winRatePct = totalSells > 0 ? (agg.wins / totalSells) * 100 : 0;
 
       res.json({
-        realizedPnlUsd: parseFloat(realizedPnlUsd.toFixed(2)),
+        realizedPnlUsd: parseFloat(agg.realizedPnlNet.toFixed(2)),
         unrealizedPnlUsd: parseFloat(unrealizedPnlUsd.toFixed(2)),
         totalPnlUsd: parseFloat(totalPnlUsd.toFixed(2)),
-        todayRealizedPnl: parseFloat(todayRealizedPnl.toFixed(2)),
+        todayRealizedPnl: parseFloat(agg.todayRealizedPnl.toFixed(2)),
         winRatePct: parseFloat(winRatePct.toFixed(2)),
-        wins,
-        losses,
-        totalSells,
+        wins: agg.wins,
+        losses: agg.losses,
+        totalSells: agg.sellsTotal,
         openPositions: positions.length,
+        // Diagnostic fields — used by UI to warn if data is incomplete
+        sellsMissingPnl: agg.sellsMissingPnl,
+        sellsWithPnl: agg.sellsWithPnl,
+        realizedPnlKraken: parseFloat(agg.realizedPnlKraken.toFixed(2)),
+        realizedPnlRevolutx: parseFloat(agg.realizedPnlRevolutx.toFixed(2)),
       });
     } catch (error) {
       console.error("[portfolio-summary] Error:", error);

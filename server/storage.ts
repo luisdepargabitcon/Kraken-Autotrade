@@ -110,6 +110,17 @@ export interface IStorage {
   getUnmatchedBuys(pair: string): Promise<Trade[]>;
   getFilledTradesForPerformance(limit?: number): Promise<Trade[]>;
   rebuildPnlForAllSells(): Promise<{ updated: number; skipped: number; errors: number }>;
+  getPortfolioRealizedPnlAggregate(): Promise<{
+    realizedPnlNet: number;
+    realizedPnlKraken: number;
+    realizedPnlRevolutx: number;
+    sellsTotal: number;
+    sellsWithPnl: number;
+    sellsMissingPnl: number;
+    wins: number;
+    losses: number;
+    todayRealizedPnl: number;
+  }>;
   
   createNotification(notification: InsertNotification): Promise<Notification>;
   getUnsentNotifications(): Promise<Notification[]>;
@@ -714,6 +725,52 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { updated, skipped, errors };
+  }
+
+  // === PORTFOLIO AGGREGATE (single SQL query, no JS limit, per-exchange breakdown) ===
+  // SQL validation equivalent:
+  //   SELECT SUM(realized_pnl_usd) FROM trades WHERE type='sell' AND status='filled' AND price>0 AND amount>0 AND realized_pnl_usd IS NOT NULL;
+  async getPortfolioRealizedPnlAggregate(): Promise<{
+    realizedPnlNet: number;
+    realizedPnlKraken: number;
+    realizedPnlRevolutx: number;
+    sellsTotal: number;
+    sellsWithPnl: number;
+    sellsMissingPnl: number;
+    wins: number;
+    losses: number;
+    todayRealizedPnl: number;
+  }> {
+    const result = await db.select({
+      realizedPnlNet: sql<string>`COALESCE(SUM(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NOT NULL THEN ${tradesTable.realizedPnlUsd} ELSE 0 END), 0)`,
+      realizedPnlKraken: sql<string>`COALESCE(SUM(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.exchange} = 'kraken' AND ${tradesTable.realizedPnlUsd} IS NOT NULL THEN ${tradesTable.realizedPnlUsd} ELSE 0 END), 0)`,
+      realizedPnlRevolutx: sql<string>`COALESCE(SUM(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.exchange} = 'revolutx' AND ${tradesTable.realizedPnlUsd} IS NOT NULL THEN ${tradesTable.realizedPnlUsd} ELSE 0 END), 0)`,
+      sellsTotal: sql<string>`COUNT(CASE WHEN ${tradesTable.type} = 'sell' THEN 1 END)`,
+      sellsWithPnl: sql<string>`COUNT(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NOT NULL THEN 1 END)`,
+      sellsMissingPnl: sql<string>`COUNT(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NULL THEN 1 END)`,
+      wins: sql<string>`COUNT(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NOT NULL AND ${tradesTable.realizedPnlUsd} > 0 THEN 1 END)`,
+      losses: sql<string>`COUNT(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NOT NULL AND ${tradesTable.realizedPnlUsd} < 0 THEN 1 END)`,
+      todayRealizedPnl: sql<string>`COALESCE(SUM(CASE WHEN ${tradesTable.type} = 'sell' AND ${tradesTable.realizedPnlUsd} IS NOT NULL AND DATE(COALESCE(${tradesTable.executedAt}, ${tradesTable.createdAt})) = CURRENT_DATE THEN ${tradesTable.realizedPnlUsd} ELSE 0 END), 0)`,
+    })
+    .from(tradesTable)
+    .where(and(
+      eq(tradesTable.status, 'filled'),
+      gt(tradesTable.price, '0'),
+      gt(tradesTable.amount, '0'),
+    ));
+
+    const row = result[0];
+    return {
+      realizedPnlNet: parseFloat(String(row?.realizedPnlNet ?? '0')),
+      realizedPnlKraken: parseFloat(String(row?.realizedPnlKraken ?? '0')),
+      realizedPnlRevolutx: parseFloat(String(row?.realizedPnlRevolutx ?? '0')),
+      sellsTotal: parseInt(String(row?.sellsTotal ?? '0'), 10),
+      sellsWithPnl: parseInt(String(row?.sellsWithPnl ?? '0'), 10),
+      sellsMissingPnl: parseInt(String(row?.sellsMissingPnl ?? '0'), 10),
+      wins: parseInt(String(row?.wins ?? '0'), 10),
+      losses: parseInt(String(row?.losses ?? '0'), 10),
+      todayRealizedPnl: parseFloat(String(row?.todayRealizedPnl ?? '0')),
+    };
   }
 
   async getTrades(limit: number = 50): Promise<Trade[]> {

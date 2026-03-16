@@ -206,6 +206,10 @@ export default function Terminal() {
     losses: number;
     totalSells: number;
     openPositions: number;
+    sellsMissingPnl?: number;
+    sellsWithPnl?: number;
+    realizedPnlKraken?: number;
+    realizedPnlRevolutx?: number;
   }>({
     queryKey: ["portfolio-summary"],
     queryFn: async () => {
@@ -472,6 +476,7 @@ export default function Terminal() {
       });
       queryClient.invalidateQueries({ queryKey: ["closedTrades"] });
       queryClient.invalidateQueries({ queryKey: ["performance"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolio-summary"] });
     },
     onError: (error: Error) => {
       toast({
@@ -1176,13 +1181,30 @@ export default function Terminal() {
                       <span className="text-xs font-mono text-muted-foreground">
                         {closedData?.total || 0} operaciones
                       </span>
+                      {(portfolioSummary?.realizedPnlKraken !== undefined || portfolioSummary?.realizedPnlRevolutx !== undefined) && (
+                        <span
+                          className="text-[10px] font-mono text-muted-foreground px-1.5 py-0.5 rounded border border-border/40 bg-card/30"
+                          title={`Kraken: $${portfolioSummary?.realizedPnlKraken?.toFixed(2) ?? '0.00'} | RevolutX: $${portfolioSummary?.realizedPnlRevolutx?.toFixed(2) ?? '0.00'}`}
+                        >
+                          KR ${portfolioSummary?.realizedPnlKraken?.toFixed(0) ?? '0'} | RX ${portfolioSummary?.realizedPnlRevolutx?.toFixed(0) ?? '0'}
+                        </span>
+                      )}
+                      {(portfolioSummary?.sellsMissingPnl ?? 0) > 0 && (
+                        <span
+                          className="text-[10px] font-mono text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 flex items-center gap-1"
+                          title={`${portfolioSummary!.sellsMissingPnl} ventas sin P&L calculado — el total mostrado es INCOMPLETO. Haz clic en "Recalcular P&L" para corregirlo.`}
+                        >
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          {portfolioSummary!.sellsMissingPnl} sin P&L
+                        </span>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => rebuildPnlMutation.mutate()}
                         disabled={rebuildPnlMutation.isPending}
                         className="h-7 text-[10px] font-mono text-cyan-400 border-cyan-400/30 hover:bg-cyan-400/10"
-                        title="Recalcular P&L para todas las ventas sin P&L (FIFO)"
+                        title="Recalcular P&L para todas las ventas sin P&L (FIFO). Actualiza el badge P&L Realizado."
                       >
                         {rebuildPnlMutation.isPending ? (
                           <Loader2 className="h-3 w-3 animate-spin mr-1" />
