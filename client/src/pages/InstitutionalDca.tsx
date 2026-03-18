@@ -667,16 +667,16 @@ function HistoryTab() {
                   <td className="p-2">{fmtDate(order.executedAt)}</td>
                   <td className="p-2">{order.pair}</td>
                   <td className="p-2">
-                    <Badge variant="outline" className="text-[10px]">{order.orderType}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{translateOrderType(order.orderType)}</Badge>
                   </td>
                   <td className={cn("p-2", order.side === "buy" ? "text-green-400" : "text-red-400")}>
-                    {order.side.toUpperCase()}
+                    {order.side === "buy" ? "COMPRA" : "VENTA"}
                   </td>
                   <td className="p-2 text-right">{fmtPrice(order.price)}</td>
                   <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
                   <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
                   <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
-                  <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{(order as any).humanReason || order.triggerReason || "—"}</td>
+                  <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
                 </tr>
               ))}
             </tbody>
@@ -807,6 +807,112 @@ function EventsTab() {
   );
 }
 
+// ─── TRADUCCIONES ESPAÑOLAS (fallback client-side) ─────────────────
+
+const EVENT_TITLE_ES: Record<string, string> = {
+  entry_check_passed: "✅ Evaluación de entrada aprobada",
+  entry_check_blocked: "🚫 Evaluación de entrada rechazada",
+  buy_blocked: "🟠 Compra bloqueada",
+  cycle_started: "🟢 Ciclo de compra iniciado",
+  base_buy_executed: "💰 Compra inicial ejecutada",
+  safety_buy_executed: "💰 Compra adicional (safety buy)",
+  tp_armed: "🎯 Toma de ganancias activada",
+  trailing_exit: "✅ Cierre por trailing stop",
+  breakeven_exit: "🛡️ Cierre por protección de capital",
+  emergency_close_all: "🚨 Cierre de emergencia total",
+  mode_transition: "🔄 Cambio de modo del módulo",
+  module_max_drawdown_reached: "⛔ Drawdown máximo del módulo alcanzado",
+  smart_adjustment_applied: "🧠 Ajuste inteligente aplicado",
+  partial_sell_executed: "📤 Venta parcial ejecutada",
+  config_changed: "⚙️ Configuración modificada",
+};
+
+const BLOCK_REASON_ES: Record<string, string> = {
+  no_rebound_confirmed: "Esperando confirmación de rebote",
+  insufficient_dip: "Caída insuficiente",
+  market_score_too_low: "Score de mercado demasiado bajo",
+  module_exposure_max_reached: "Exposición máxima del módulo alcanzada",
+  asset_exposure_max_reached: "Exposición máxima del activo alcanzada",
+  cycle_already_active: "Ya existe un ciclo activo para este par",
+  pair_not_allowed: "Par no permitido",
+  insufficient_simulation_balance: "Saldo de simulación insuficiente",
+  btc_breakdown_blocks_eth: "Caída de BTC bloquea entrada en ETH",
+  breakdown_detected: "Ruptura de estructura detectada",
+  spread_too_high: "Spread demasiado alto",
+  sell_pressure_too_high: "Presión de venta elevada",
+  combined_exposure_exceeded: "Exposición combinada excedida",
+};
+
+const ORDER_TYPE_ES: Record<string, string> = {
+  base_buy: "Compra inicial",
+  safety_buy: "Compra adicional",
+  partial_sell: "Venta parcial (TP)",
+  final_sell: "Venta final (trailing)",
+  breakeven_sell: "Venta de protección",
+  emergency_sell: "Venta de emergencia",
+};
+
+function translateEventTitle(ev: any): string {
+  if (ev.humanTitle) return ev.humanTitle;
+  return EVENT_TITLE_ES[ev.eventType] || ev.eventType.replace(/_/g, " ");
+}
+
+function translateMessage(ev: any): string {
+  if (ev.technicalSummary) return ev.technicalSummary;
+  const msg = ev.message || "";
+  if (ev.eventType === "entry_check_blocked" || ev.eventType === "buy_blocked") {
+    const code = msg.trim();
+    if (BLOCK_REASON_ES[code]) return BLOCK_REASON_ES[code];
+  }
+  return formatMessageES(ev);
+}
+
+function formatMessageES(ev: any): string {
+  const msg = ev.message || "";
+  const pair = ev.pair || "";
+  const mode = ev.mode === "simulation" ? "SIM" : ev.mode === "live" ? "LIVE" : (ev.mode || "").toUpperCase();
+
+  if (ev.eventType === "base_buy_executed" || ev.eventType === "safety_buy_executed") {
+    const match = msg.match(/(?:Base|Safety) buy #(\d+):\s*([\d.]+)\s*@\s*([\d.]+)/i);
+    if (match) return `${pair} | Compra #${match[1]}: ${match[2]} @ $${parseFloat(match[3]).toLocaleString("es-ES", {minimumFractionDigits:2})} [${mode}]`;
+  }
+  if (ev.eventType === "cycle_started") {
+    const match = msg.match(/seedQty=([\d.]+)\s*@\s*([\d.]+)/i);
+    if (match) return `${pair} | Nuevo ciclo: ${match[1]} @ $${parseFloat(match[2]).toLocaleString("es-ES", {minimumFractionDigits:2})} [${mode}]`;
+  }
+  if (ev.eventType === "entry_check_passed") {
+    const match = msg.match(/score=(\d+),?\s*dip=([\d.]+)/i);
+    if (match) return `${pair} | Score=${match[1]}, Caída=${match[2]}% — Entrada aprobada [${mode}]`;
+  }
+  if (ev.eventType === "tp_armed") {
+    return `${pair} | ${msg.replace("TP armed:", "TP activado:").replace("sold", "vendido").replace("trailing", "trailing").replace("on remaining", "restante")} [${mode}]`;
+  }
+  if (ev.eventType === "trailing_exit") {
+    return `${pair} | ${msg.replace("Trailing exit:", "Cierre trailing:").replace("sold", "vendido").replace("realized", "realizado")} [${mode}]`;
+  }
+  if (ev.eventType === "breakeven_exit") {
+    return `${pair} | ${msg.replace("Breakeven exit:", "Cierre protección:")} [${mode}]`;
+  }
+  if (ev.eventType === "mode_transition") {
+    return msg.replace("Mode changed:", "Modo cambiado:");
+  }
+  if (ev.eventType === "emergency_close_all") {
+    return msg.replace("Emergency close:", "Cierre emergencia:");
+  }
+  return msg;
+}
+
+function translateOrderReason(order: any): string {
+  if (order.humanReason) return order.humanReason;
+  const ot = order.orderType;
+  if (ORDER_TYPE_ES[ot]) return ORDER_TYPE_ES[ot] + (order.triggerReason ? ` — ${order.triggerReason}` : "");
+  return order.triggerReason || "—";
+}
+
+function translateOrderType(ot: string): string {
+  return ORDER_TYPE_ES[ot] || ot.replace(/_/g, " ");
+}
+
 // ─── LIVE MONITOR PANEL ────────────────────────────────────────────
 
 function LiveMonitorPanel() {
@@ -828,10 +934,9 @@ function LiveMonitorPanel() {
     const ts = fmtDate(ev.createdAt);
     const sev = ev.severity.toUpperCase().padEnd(8);
     const pair = (ev.pair || "SYS").padEnd(8);
-    // Use human fields if available, fallback to technical
-    const title = (ev as any).humanTitle || ev.eventType;
-    const tech = (ev as any).technicalSummary || ev.message;
-    return `[${ts}] ${sev} ${pair}| ${title} | ${tech}`;
+    const title = translateEventTitle(ev);
+    const detail = translateMessage(ev);
+    return `[${ts}] ${sev} ${pair}| ${title} | ${detail}`;
   });
 
   const handleCopy = useCallback(() => {
@@ -938,9 +1043,10 @@ function EventsLogPanel() {
     if (typeFilter && !ev.eventType.includes(typeFilter)) return false;
     if (searchText) {
       const q = searchText.toLowerCase();
-      const hTitle = ((ev as any).humanTitle || "").toLowerCase();
+      const title = translateEventTitle(ev).toLowerCase();
+      const detail = translateMessage(ev).toLowerCase();
       const hMsg = ((ev as any).humanMessage || "").toLowerCase();
-      if (!ev.message.toLowerCase().includes(q) && !ev.eventType.toLowerCase().includes(q) && !hTitle.includes(q) && !hMsg.includes(q)) return false;
+      if (!title.includes(q) && !detail.includes(q) && !ev.eventType.toLowerCase().includes(q) && !hMsg.includes(q)) return false;
     }
     return true;
   });
@@ -1015,7 +1121,7 @@ function EventsLogPanel() {
               <select className="bg-background border border-border rounded px-2 py-1 text-xs"
                 value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                 <option value="">Todos los tipos</option>
-                {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                {uniqueTypes.map(t => <option key={t} value={t}>{EVENT_TITLE_ES[t]?.replace(/^[^\s]+\s/, "") || t.replace(/_/g, " ")}</option>)}
               </select>
             </div>
             <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
@@ -1065,9 +1171,9 @@ function EventsLogPanel() {
                 </thead>
                 <tbody className="font-mono">
                   {filtered.map((ev) => {
-                    const humanTitle = (ev as any).humanTitle || ev.eventType.replace(/_/g, " ");
+                    const humanTitle = translateEventTitle(ev);
                     const humanMsg = (ev as any).humanMessage || "";
-                    const techSummary = (ev as any).technicalSummary || ev.message;
+                    const techSummary = translateMessage(ev);
                     const isExpanded = expandedId === ev.id;
                     return (
                       <React.Fragment key={ev.id}>
