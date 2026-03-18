@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-07-XX — MÓDULO INSTITUTIONAL DCA (IDCA) — Implementación Completa
+
+### Objetivo
+Nuevo módulo independiente de DCA institucional, completamente aislado del bot principal. Opera solo BTC/USD y ETH/USD con capital reservado, modos simulation/live, smart mode con indicadores gratuitos, y UI completa con 7 subpestañas.
+
+### Archivos Creados (11 nuevos)
+
+#### Backend
+- **`shared/schema.ts`** — 9 tablas nuevas añadidas al final:
+  - `trading_engine_controls` — Toggles independientes (normal bot + IDCA + global pause)
+  - `institutional_dca_config` — Config global del módulo (~60 campos)
+  - `institutional_dca_asset_configs` — Config por par (BTC/USD, ETH/USD)
+  - `institutional_dca_cycles` — Ciclos DCA con estado completo
+  - `institutional_dca_orders` — Órdenes granulares con fees/slippage
+  - `institutional_dca_events` — Audit trail completo
+  - `institutional_dca_backtests` — Resultados de backtests
+  - `institutional_dca_simulation_wallet` — Wallet virtual para simulación
+  - `institutional_dca_ohlcv_cache` — Cache local de velas OHLCV
+- **`db/migrations/019_institutional_dca.sql`** — Migración SQL con CREATE TABLE, indexes y seed data
+- **`server/services/institutionalDca/IdcaRepository.ts`** — Data access layer completo (CRUD para todas las tablas)
+- **`server/services/institutionalDca/IdcaTypes.ts`** — Types, enums, interfaces del módulo
+- **`server/services/institutionalDca/IdcaSmartLayer.ts`** — Smart mode: ATR, EMA, RSI, market score (0-100), trailing dinámico, TP adaptativo, sizing adaptativo, rebound detection, learning micro-adjustments
+- **`server/services/institutionalDca/IdcaTelegramNotifier.ts`** — Alertas Telegram propias con prefijo [SIMULACIÓN], cooldown, toggles por tipo
+- **`server/services/institutionalDca/IdcaEngine.ts`** — Motor principal con scheduler independiente, engines de entry/safety/TP/trailing/breakeven/emergency, mode transitions, drawdown check
+- **`server/services/institutionalDca/index.ts`** — Barrel export
+- **`server/routes/institutionalDca.routes.ts`** — 20+ endpoints API bajo `/api/institutional-dca/*` incluyendo CRUD, summary, emergency close, health, telegram test, export CSV
+
+#### Frontend
+- **`client/src/hooks/useInstitutionalDca.ts`** — 15+ hooks React Query con mutations
+- **`client/src/pages/InstitutionalDca.tsx`** — Página completa con 7 subpestañas: Resumen, Config, Ciclos, Historial, Simulación, Eventos, Telegram
+
+### Archivos Modificados (3)
+- **`server/routes.ts`** — Registro de rutas IDCA + auto-start scheduler al inicio
+- **`client/src/App.tsx`** — Ruta `/institutional-dca` añadida
+- **`client/src/components/dashboard/Nav.tsx`** — Enlace "IDCA" en navegación con icono CircleDollarSign
+
+### Características Implementadas
+- **Aislamiento total** — Sin compartir lógica, tablas, posiciones ni PnL con bot principal
+- **Toggles independientes** — normal_bot_enabled, institutional_dca_enabled, global_trading_pause
+- **Modos** — disabled / simulation (wallet virtual, fees simulados) / live (órdenes reales)
+- **Smart Mode gratuito** — Market score compuesto, ATR trailing dinámico, TP adaptativo por buyCount y volatilidad, sizing adaptativo (aggressive/balanced/defensive), BTC gate para ETH, learning con micro-ajustes
+- **Safety Orders** — Niveles configurables por par con cooldown entre compras
+- **TP/Trailing** — Venta parcial dinámica + trailing stop con soporte breakeven
+- **Emergency Close** — Botón de pánico que cierra todas las posiciones IDCA
+- **Max Drawdown Global** — Pausa automática del módulo al superar límite
+- **Telegram propio** — Alertas independientes con toggles granulares, prefijo [SIMULACIÓN]
+- **Export CSV** — Descarga de órdenes y ciclos en formato CSV
+- **Health endpoint** — Estado del scheduler, último tick, errores
+
+### Notas Técnicas
+- El módulo usa `ExchangeFactory` para obtener precios y datos OHLCV (igual que el bot principal)
+- Los live orders se loguean pero no se ejecutan automáticamente hasta validación en staging
+- La simulación aplica fees (0.4%) y slippage (0.1%) configurables
+- El scheduler corre cada 60s por defecto, configurable desde DB/UI
+
+---
+
 ## 2026-01-XX — FASE C: Unified Entry Gate — runUnifiedEntryGate + Guard C1 + FillWatcher SELL snapshot
 
 ### Objetivo

@@ -865,3 +865,258 @@ export const fiscoSyncRetry = pgTable("fisco_sync_retry", {
 });
 
 export type FiscoSyncRetryRow = typeof fiscoSyncRetry.$inferSelect;
+
+// ============================================================
+// INSTITUTIONAL DCA MODULE — Complete isolation from main bot
+// ============================================================
+
+// Allowed pairs for Institutional DCA v1
+export const INSTITUTIONAL_DCA_ALLOWED_PAIRS = ["BTC/USD", "ETH/USD"] as const;
+export type InstitutionalDcaPair = typeof INSTITUTIONAL_DCA_ALLOWED_PAIRS[number];
+
+// 10.1 Trading Engine Controls — independent toggles for normal bot and IDCA
+export const tradingEngineControls = pgTable("trading_engine_controls", {
+  id: serial("id").primaryKey(),
+  normalBotEnabled: boolean("normal_bot_enabled").notNull().default(true),
+  institutionalDcaEnabled: boolean("institutional_dca_enabled").notNull().default(false),
+  globalTradingPause: boolean("global_trading_pause").notNull().default(false),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type TradingEngineControls = typeof tradingEngineControls.$inferSelect;
+export type InsertTradingEngineControls = typeof tradingEngineControls.$inferInsert;
+
+// 10.2 Institutional DCA Config — global module configuration
+export const institutionalDcaConfig = pgTable("institutional_dca_config", {
+  id: serial("id").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  mode: text("mode").notNull().default("disabled"), // disabled | simulation | live
+  allocatedCapitalUsd: decimal("allocated_capital_usd", { precision: 18, scale: 2 }).notNull().default("1000.00"),
+  protectPrincipal: boolean("protect_principal").notNull().default(true),
+  reinvestMode: text("reinvest_mode").notNull().default("none"), // none | profits_only | full
+  maxModuleExposurePct: decimal("max_module_exposure_pct", { precision: 5, scale: 2 }).notNull().default("80.00"),
+  maxAssetExposurePct: decimal("max_asset_exposure_pct", { precision: 5, scale: 2 }).notNull().default("50.00"),
+  maxModuleDrawdownPct: decimal("max_module_drawdown_pct", { precision: 5, scale: 2 }).notNull().default("15.00"),
+  maxCombinedBtcExposurePct: decimal("max_combined_btc_exposure_pct", { precision: 5, scale: 2 }).notNull().default("40.00"),
+  maxCombinedEthExposurePct: decimal("max_combined_eth_exposure_pct", { precision: 5, scale: 2 }).notNull().default("30.00"),
+  blockOnBreakdown: boolean("block_on_breakdown").notNull().default(true),
+  blockOnHighSpread: boolean("block_on_high_spread").notNull().default(true),
+  blockOnSellPressure: boolean("block_on_sell_pressure").notNull().default(true),
+  schedulerIntervalSeconds: integer("scheduler_interval_seconds").notNull().default(60),
+  localHighLookbackMinutes: integer("local_high_lookback_minutes").notNull().default(1440),
+  // Smart Mode
+  smartModeEnabled: boolean("smart_mode_enabled").notNull().default(true),
+  volatilityTrailingEnabled: boolean("volatility_trailing_enabled").notNull().default(true),
+  adaptiveTpEnabled: boolean("adaptive_tp_enabled").notNull().default(true),
+  adaptivePositionSizingEnabled: boolean("adaptive_position_sizing_enabled").notNull().default(true),
+  btcMarketGateForEthEnabled: boolean("btc_market_gate_for_eth_enabled").notNull().default(true),
+  learningWindowCycles: integer("learning_window_cycles").notNull().default(20),
+  learningAutoApply: boolean("learning_auto_apply").notNull().default(false),
+  // Smart Mode guardrails
+  minTrailingPctBtc: decimal("min_trailing_pct_btc", { precision: 5, scale: 2 }).notNull().default("0.50"),
+  maxTrailingPctBtc: decimal("max_trailing_pct_btc", { precision: 5, scale: 2 }).notNull().default("2.50"),
+  minTrailingPctEth: decimal("min_trailing_pct_eth", { precision: 5, scale: 2 }).notNull().default("0.80"),
+  maxTrailingPctEth: decimal("max_trailing_pct_eth", { precision: 5, scale: 2 }).notNull().default("3.50"),
+  minTpPctBtc: decimal("min_tp_pct_btc", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  maxTpPctBtc: decimal("max_tp_pct_btc", { precision: 5, scale: 2 }).notNull().default("6.00"),
+  minTpPctEth: decimal("min_tp_pct_eth", { precision: 5, scale: 2 }).notNull().default("2.50"),
+  maxTpPctEth: decimal("max_tp_pct_eth", { precision: 5, scale: 2 }).notNull().default("8.00"),
+  marketScoreWeightsJson: jsonb("market_score_weights_json").notNull().default({
+    ema20_distance: 15, ema50_distance: 10, ema20_slope: 10, ema50_slope: 10,
+    rsi: 15, relative_volume: 10, drawdown_from_high: 15, btc_condition: 15,
+  }),
+  // Partial TP range
+  partialTpMinPct: decimal("partial_tp_min_pct", { precision: 5, scale: 2 }).notNull().default("20.00"),
+  partialTpMaxPct: decimal("partial_tp_max_pct", { precision: 5, scale: 2 }).notNull().default("50.00"),
+  // Simulation
+  simulationInitialBalanceUsd: decimal("simulation_initial_balance_usd", { precision: 18, scale: 2 }).notNull().default("10000.00"),
+  simulationFeePct: decimal("simulation_fee_pct", { precision: 5, scale: 3 }).notNull().default("0.400"),
+  simulationSlippagePct: decimal("simulation_slippage_pct", { precision: 5, scale: 3 }).notNull().default("0.100"),
+  simulationTelegramEnabled: boolean("simulation_telegram_enabled").notNull().default(false),
+  // Data retention
+  eventRetentionDays: integer("event_retention_days").notNull().default(90),
+  orderArchiveDays: integer("order_archive_days").notNull().default(180),
+  // Telegram config for IDCA
+  telegramEnabled: boolean("telegram_enabled").notNull().default(false),
+  telegramChatId: text("telegram_chat_id"),
+  telegramThreadId: text("telegram_thread_id"),
+  telegramSummaryMode: text("telegram_summary_mode").notNull().default("compact"), // compact | detailed
+  telegramCooldownSeconds: integer("telegram_cooldown_seconds").notNull().default(30),
+  telegramAlertTogglesJson: jsonb("telegram_alert_toggles_json").notNull().default({
+    cycle_started: true, base_buy_executed: true, safety_buy_executed: true,
+    buy_blocked: true, tp_armed: true, partial_sell_executed: true,
+    trailing_updated: false, trailing_exit: true, breakeven_exit: true,
+    cycle_closed: true, daily_summary: true, critical_error: true,
+    smart_adjustment_applied: true, simulation_alerts_enabled: true,
+  }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaConfigRow = typeof institutionalDcaConfig.$inferSelect;
+export type InsertInstitutionalDcaConfig = typeof institutionalDcaConfig.$inferInsert;
+
+// 10.3 Asset-level configs (one row per pair)
+export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_configs", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(true),
+  minDipPct: decimal("min_dip_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  dipReference: text("dip_reference").notNull().default("local_high"),
+  requireReboundConfirmation: boolean("require_rebound_confirmation").notNull().default(true),
+  trailingBuyEnabled: boolean("trailing_buy_enabled").notNull().default(true),
+  safetyOrdersJson: jsonb("safety_orders_json").notNull().default([
+    { dipPct: 2.0, sizePctOfAssetBudget: 25 },
+    { dipPct: 4.0, sizePctOfAssetBudget: 25 },
+    { dipPct: 6.0, sizePctOfAssetBudget: 25 },
+    { dipPct: 8.0, sizePctOfAssetBudget: 25 },
+  ]),
+  maxSafetyOrders: integer("max_safety_orders").notNull().default(4),
+  takeProfitPct: decimal("take_profit_pct", { precision: 5, scale: 2 }).notNull().default("4.00"),
+  dynamicTakeProfit: boolean("dynamic_take_profit").notNull().default(true),
+  trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }).notNull().default("1.20"),
+  partialTakeProfitPct: decimal("partial_take_profit_pct", { precision: 5, scale: 2 }).notNull().default("30.00"),
+  breakevenEnabled: boolean("breakeven_enabled").notNull().default(true),
+  cooldownMinutesBetweenBuys: integer("cooldown_minutes_between_buys").notNull().default(180),
+  maxCycleDurationHours: integer("max_cycle_duration_hours").notNull().default(720),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaAssetConfigRow = typeof institutionalDcaAssetConfigs.$inferSelect;
+export type InsertInstitutionalDcaAssetConfig = typeof institutionalDcaAssetConfigs.$inferInsert;
+
+// 10.4 Cycles — one active cycle per pair per mode
+export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),
+  strategy: text("strategy").notNull().default("institutional_dca_v1"),
+  mode: text("mode").notNull(), // simulation | live
+  status: text("status").notNull().default("idle"), // idle|waiting_entry|active|tp_armed|trailing_active|paused|blocked|closed
+  capitalReservedUsd: decimal("capital_reserved_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  capitalUsedUsd: decimal("capital_used_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  totalQuantity: decimal("total_quantity", { precision: 18, scale: 8 }).notNull().default("0"),
+  avgEntryPrice: decimal("avg_entry_price", { precision: 18, scale: 8 }),
+  currentPrice: decimal("current_price", { precision: 18, scale: 8 }),
+  unrealizedPnlUsd: decimal("unrealized_pnl_usd", { precision: 18, scale: 2 }).default("0"),
+  unrealizedPnlPct: decimal("unrealized_pnl_pct", { precision: 10, scale: 4 }).default("0"),
+  realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 2 }).default("0"),
+  buyCount: integer("buy_count").notNull().default(0),
+  highestPriceAfterTp: decimal("highest_price_after_tp", { precision: 18, scale: 8 }),
+  tpTargetPct: decimal("tp_target_pct", { precision: 5, scale: 2 }),
+  tpTargetPrice: decimal("tp_target_price", { precision: 18, scale: 8 }),
+  tpArmedAt: timestamp("tp_armed_at"),
+  trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }),
+  trailingActiveAt: timestamp("trailing_active_at"),
+  nextBuyLevelPct: decimal("next_buy_level_pct", { precision: 5, scale: 2 }),
+  nextBuyPrice: decimal("next_buy_price", { precision: 18, scale: 8 }),
+  marketScore: decimal("market_score", { precision: 5, scale: 2 }),
+  volatilityScore: decimal("volatility_score", { precision: 5, scale: 2 }),
+  adaptiveSizeProfile: text("adaptive_size_profile"), // aggressive_quality|balanced|defensive
+  lastBuyAt: timestamp("last_buy_at"),
+  closeReason: text("close_reason"),
+  maxDrawdownPct: decimal("max_drawdown_pct", { precision: 5, scale: 2 }).default("0"),
+  notesJson: jsonb("notes_json"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  closedAt: timestamp("closed_at"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaCycle = typeof institutionalDcaCycles.$inferSelect;
+export type InsertInstitutionalDcaCycle = typeof institutionalDcaCycles.$inferInsert;
+
+// 10.5 Orders — granular order history
+export const institutionalDcaOrders = pgTable("institutional_dca_orders", {
+  id: serial("id").primaryKey(),
+  cycleId: integer("cycle_id").notNull(),
+  pair: text("pair").notNull(),
+  mode: text("mode").notNull(), // simulation | live
+  orderType: text("order_type").notNull(), // base_buy|safety_buy|partial_sell|final_sell|breakeven_sell|emergency_sell
+  buyIndex: integer("buy_index"),
+  side: text("side").notNull(), // buy | sell
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  quantity: decimal("quantity", { precision: 18, scale: 8 }).notNull(),
+  grossValueUsd: decimal("gross_value_usd", { precision: 18, scale: 2 }).notNull(),
+  feesUsd: decimal("fees_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  slippageUsd: decimal("slippage_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  netValueUsd: decimal("net_value_usd", { precision: 18, scale: 2 }).notNull(),
+  triggerReason: text("trigger_reason"),
+  exchangeOrderId: text("exchange_order_id"),
+  executedAt: timestamp("executed_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaOrder = typeof institutionalDcaOrders.$inferSelect;
+export type InsertInstitutionalDcaOrder = typeof institutionalDcaOrders.$inferInsert;
+
+// 10.6 Events — audit trail
+export const institutionalDcaEvents = pgTable("institutional_dca_events", {
+  id: serial("id").primaryKey(),
+  cycleId: integer("cycle_id"),
+  pair: text("pair"),
+  mode: text("mode"),
+  eventType: text("event_type").notNull(),
+  severity: text("severity").notNull().default("info"), // info|warn|error|critical
+  message: text("message").notNull(),
+  payloadJson: jsonb("payload_json"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaEvent = typeof institutionalDcaEvents.$inferSelect;
+export type InsertInstitutionalDcaEvent = typeof institutionalDcaEvents.$inferInsert;
+
+// 10.7 Backtests
+export const institutionalDcaBacktests = pgTable("institutional_dca_backtests", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),
+  fromDate: timestamp("from_date").notNull(),
+  toDate: timestamp("to_date").notNull(),
+  configSnapshotJson: jsonb("config_snapshot_json").notNull(),
+  totalReturnPct: decimal("total_return_pct", { precision: 10, scale: 4 }),
+  totalReturnUsd: decimal("total_return_usd", { precision: 18, scale: 2 }),
+  maxDrawdownPct: decimal("max_drawdown_pct", { precision: 10, scale: 4 }),
+  winRatePct: decimal("win_rate_pct", { precision: 10, scale: 4 }),
+  profitFactor: decimal("profit_factor", { precision: 10, scale: 4 }),
+  cyclesCount: integer("cycles_count"),
+  avgCycleDurationHours: decimal("avg_cycle_duration_hours", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaBacktest = typeof institutionalDcaBacktests.$inferSelect;
+export type InsertInstitutionalDcaBacktest = typeof institutionalDcaBacktests.$inferInsert;
+
+// 10.8 Simulation Wallet
+export const institutionalDcaSimulationWallet = pgTable("institutional_dca_simulation_wallet", {
+  id: serial("id").primaryKey(),
+  initialBalanceUsd: decimal("initial_balance_usd", { precision: 18, scale: 2 }).notNull().default("10000.00"),
+  availableBalanceUsd: decimal("available_balance_usd", { precision: 18, scale: 2 }).notNull().default("10000.00"),
+  usedBalanceUsd: decimal("used_balance_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  unrealizedPnlUsd: decimal("unrealized_pnl_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  totalEquityUsd: decimal("total_equity_usd", { precision: 18, scale: 2 }).notNull().default("10000.00"),
+  totalCyclesSimulated: integer("total_cycles_simulated").notNull().default(0),
+  totalOrdersSimulated: integer("total_orders_simulated").notNull().default(0),
+  lastResetAt: timestamp("last_reset_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type InstitutionalDcaSimulationWalletRow = typeof institutionalDcaSimulationWallet.$inferSelect;
+export type InsertInstitutionalDcaSimulationWallet = typeof institutionalDcaSimulationWallet.$inferInsert;
+
+// 10.9 OHLCV Cache — local data source for backtest and analysis
+export const institutionalDcaOhlcvCache = pgTable("institutional_dca_ohlcv_cache", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),
+  timeframe: text("timeframe").notNull(), // 1m|5m|15m|1h|4h|1d
+  ts: timestamp("ts").notNull(),
+  open: decimal("open", { precision: 18, scale: 8 }).notNull(),
+  high: decimal("high", { precision: 18, scale: 8 }).notNull(),
+  low: decimal("low", { precision: 18, scale: 8 }).notNull(),
+  close: decimal("close", { precision: 18, scale: 8 }).notNull(),
+  volume: decimal("volume", { precision: 18, scale: 8 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  pairTimeframeTsUnique: unique().on(table.pair, table.timeframe, table.ts),
+}));
+
+export type InstitutionalDcaOhlcvCacheRow = typeof institutionalDcaOhlcvCache.$inferSelect;
+export type InsertInstitutionalDcaOhlcvCache = typeof institutionalDcaOhlcvCache.$inferInsert;

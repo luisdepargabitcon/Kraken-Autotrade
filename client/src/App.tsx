@@ -17,6 +17,7 @@ import Monitor from "@/pages/Monitor";
 import Backups from "@/pages/Backups";
 import Fisco from "@/pages/Fisco";
 import AiMl from "@/pages/AiMl";
+import InstitutionalDca from "@/pages/InstitutionalDca";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -34,6 +35,7 @@ function Router() {
       <Route path="/backups" component={Backups} />
       <Route path="/fisco" component={Fisco} />
       <Route path="/ai" component={AiMl} />
+      <Route path="/institutional-dca" component={InstitutionalDca} />
       
       <Route component={NotFound} />
     </Switch>

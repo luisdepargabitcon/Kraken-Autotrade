@@ -1,0 +1,463 @@
+/**
+ * IdcaRepository — Data access layer for the Institutional DCA module.
+ * Completely isolated from the main bot's storage.
+ */
+import { db } from "../../db";
+import { eq, desc, and, sql, lt, ne, inArray } from "drizzle-orm";
+import {
+  tradingEngineControls,
+  institutionalDcaConfig,
+  institutionalDcaAssetConfigs,
+  institutionalDcaCycles,
+  institutionalDcaOrders,
+  institutionalDcaEvents,
+  institutionalDcaBacktests,
+  institutionalDcaSimulationWallet,
+  institutionalDcaOhlcvCache,
+  type TradingEngineControls,
+  type InsertTradingEngineControls,
+  type InstitutionalDcaConfigRow,
+  type InsertInstitutionalDcaConfig,
+  type InstitutionalDcaAssetConfigRow,
+  type InsertInstitutionalDcaAssetConfig,
+  type InstitutionalDcaCycle,
+  type InsertInstitutionalDcaCycle,
+  type InstitutionalDcaOrder,
+  type InsertInstitutionalDcaOrder,
+  type InstitutionalDcaEvent,
+  type InsertInstitutionalDcaEvent,
+  type InstitutionalDcaBacktest,
+  type InsertInstitutionalDcaBacktest,
+  type InstitutionalDcaSimulationWalletRow,
+  type InsertInstitutionalDcaSimulationWallet,
+  type InstitutionalDcaOhlcvCacheRow,
+  type InsertInstitutionalDcaOhlcvCache,
+} from "@shared/schema";
+
+// ─── Trading Engine Controls ───────────────────────────────────────
+
+export async function getTradingEngineControls(): Promise<TradingEngineControls> {
+  const rows = await db.select().from(tradingEngineControls).limit(1);
+  if (rows.length === 0) {
+    const [created] = await db.insert(tradingEngineControls).values({}).returning();
+    return created;
+  }
+  return rows[0];
+}
+
+export async function updateTradingEngineControls(
+  patch: Partial<Omit<InsertTradingEngineControls, "id">>
+): Promise<TradingEngineControls> {
+  const current = await getTradingEngineControls();
+  const [updated] = await db
+    .update(tradingEngineControls)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(tradingEngineControls.id, current.id))
+    .returning();
+  return updated;
+}
+
+// ─── IDCA Config ───────────────────────────────────────────────────
+
+export async function getIdcaConfig(): Promise<InstitutionalDcaConfigRow> {
+  const rows = await db.select().from(institutionalDcaConfig).limit(1);
+  if (rows.length === 0) {
+    const [created] = await db.insert(institutionalDcaConfig).values({}).returning();
+    return created;
+  }
+  return rows[0];
+}
+
+export async function updateIdcaConfig(
+  patch: Partial<Omit<InsertInstitutionalDcaConfig, "id" | "createdAt">>
+): Promise<InstitutionalDcaConfigRow> {
+  const current = await getIdcaConfig();
+  const [updated] = await db
+    .update(institutionalDcaConfig)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(institutionalDcaConfig.id, current.id))
+    .returning();
+  return updated;
+}
+
+// ─── Asset Configs ─────────────────────────────────────────────────
+
+export async function getAssetConfigs(): Promise<InstitutionalDcaAssetConfigRow[]> {
+  return db.select().from(institutionalDcaAssetConfigs);
+}
+
+export async function getAssetConfig(pair: string): Promise<InstitutionalDcaAssetConfigRow | undefined> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaAssetConfigs)
+    .where(eq(institutionalDcaAssetConfigs.pair, pair))
+    .limit(1);
+  return rows[0];
+}
+
+export async function upsertAssetConfig(
+  pair: string,
+  patch: Partial<Omit<InsertInstitutionalDcaAssetConfig, "id" | "createdAt">>
+): Promise<InstitutionalDcaAssetConfigRow> {
+  const existing = await getAssetConfig(pair);
+  if (!existing) {
+    const [created] = await db
+      .insert(institutionalDcaAssetConfigs)
+      .values({ pair, ...patch } as InsertInstitutionalDcaAssetConfig)
+      .returning();
+    return created;
+  }
+  const [updated] = await db
+    .update(institutionalDcaAssetConfigs)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(institutionalDcaAssetConfigs.id, existing.id))
+    .returning();
+  return updated;
+}
+
+// ─── Cycles ────────────────────────────────────────────────────────
+
+export async function getActiveCycle(
+  pair: string,
+  mode: string
+): Promise<InstitutionalDcaCycle | undefined> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .limit(1);
+  return rows[0];
+}
+
+export async function getAllActiveCycles(mode?: string): Promise<InstitutionalDcaCycle[]> {
+  if (mode) {
+    return db
+      .select()
+      .from(institutionalDcaCycles)
+      .where(
+        and(
+          eq(institutionalDcaCycles.mode, mode),
+          ne(institutionalDcaCycles.status, "closed")
+        )
+      );
+  }
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(ne(institutionalDcaCycles.status, "closed"));
+}
+
+export async function createCycle(
+  data: InsertInstitutionalDcaCycle
+): Promise<InstitutionalDcaCycle> {
+  const [created] = await db
+    .insert(institutionalDcaCycles)
+    .values(data)
+    .returning();
+  return created;
+}
+
+export async function updateCycle(
+  id: number,
+  patch: Partial<Omit<InsertInstitutionalDcaCycle, "id" | "startedAt">>
+): Promise<InstitutionalDcaCycle> {
+  const [updated] = await db
+    .update(institutionalDcaCycles)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(institutionalDcaCycles.id, id))
+    .returning();
+  return updated;
+}
+
+export async function getCycleById(id: number): Promise<InstitutionalDcaCycle | undefined> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, id))
+    .limit(1);
+  return rows[0];
+}
+
+export async function getCycles(options: {
+  mode?: string;
+  pair?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<InstitutionalDcaCycle[]> {
+  let query = db.select().from(institutionalDcaCycles);
+  const conditions = [];
+  if (options.mode) conditions.push(eq(institutionalDcaCycles.mode, options.mode));
+  if (options.pair) conditions.push(eq(institutionalDcaCycles.pair, options.pair));
+  if (options.status) conditions.push(eq(institutionalDcaCycles.status, options.status));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  query = query.orderBy(desc(institutionalDcaCycles.startedAt)) as any;
+  if (options.limit) query = query.limit(options.limit) as any;
+  if (options.offset) query = (query as any).offset(options.offset);
+  return query;
+}
+
+export async function closeCyclesBulk(
+  mode: string,
+  reason: string,
+  currentPrices: Record<string, number>
+): Promise<number> {
+  const activeCycles = await getAllActiveCycles(mode);
+  let closed = 0;
+  for (const cycle of activeCycles) {
+    const price = currentPrices[cycle.pair] || 0;
+    await updateCycle(cycle.id, {
+      status: "closed",
+      closeReason: reason,
+      currentPrice: price.toFixed(8),
+      closedAt: new Date(),
+    });
+    closed++;
+  }
+  return closed;
+}
+
+// ─── Orders ────────────────────────────────────────────────────────
+
+export async function createOrder(
+  data: InsertInstitutionalDcaOrder
+): Promise<InstitutionalDcaOrder> {
+  const [created] = await db
+    .insert(institutionalDcaOrders)
+    .values(data)
+    .returning();
+  return created;
+}
+
+export async function getOrdersByCycle(cycleId: number): Promise<InstitutionalDcaOrder[]> {
+  return db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.cycleId, cycleId))
+    .orderBy(desc(institutionalDcaOrders.executedAt));
+}
+
+export async function getOrderHistory(options: {
+  mode?: string;
+  pair?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<InstitutionalDcaOrder[]> {
+  let query = db.select().from(institutionalDcaOrders);
+  const conditions = [];
+  if (options.mode) conditions.push(eq(institutionalDcaOrders.mode, options.mode));
+  if (options.pair) conditions.push(eq(institutionalDcaOrders.pair, options.pair));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  query = query.orderBy(desc(institutionalDcaOrders.executedAt)) as any;
+  if (options.limit) query = query.limit(options.limit) as any;
+  if (options.offset) query = (query as any).offset(options.offset);
+  return query;
+}
+
+// ─── Events ────────────────────────────────────────────────────────
+
+export async function createEvent(
+  data: InsertInstitutionalDcaEvent
+): Promise<InstitutionalDcaEvent> {
+  const [created] = await db
+    .insert(institutionalDcaEvents)
+    .values(data)
+    .returning();
+  return created;
+}
+
+export async function getEvents(options: {
+  cycleId?: number;
+  eventType?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<InstitutionalDcaEvent[]> {
+  let query = db.select().from(institutionalDcaEvents);
+  const conditions = [];
+  if (options.cycleId) conditions.push(eq(institutionalDcaEvents.cycleId, options.cycleId));
+  if (options.eventType) conditions.push(eq(institutionalDcaEvents.eventType, options.eventType));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  query = query.orderBy(desc(institutionalDcaEvents.createdAt)) as any;
+  if (options.limit) query = query.limit(options.limit) as any;
+  if (options.offset) query = (query as any).offset(options.offset);
+  return query;
+}
+
+export async function purgeOldEvents(retentionDays: number): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const result = await db
+    .delete(institutionalDcaEvents)
+    .where(lt(institutionalDcaEvents.createdAt, cutoff));
+  return (result as any).rowCount || 0;
+}
+
+// ─── Backtests ─────────────────────────────────────────────────────
+
+export async function createBacktest(
+  data: InsertInstitutionalDcaBacktest
+): Promise<InstitutionalDcaBacktest> {
+  const [created] = await db
+    .insert(institutionalDcaBacktests)
+    .values(data)
+    .returning();
+  return created;
+}
+
+export async function getBacktests(limit = 20): Promise<InstitutionalDcaBacktest[]> {
+  return db
+    .select()
+    .from(institutionalDcaBacktests)
+    .orderBy(desc(institutionalDcaBacktests.createdAt))
+    .limit(limit);
+}
+
+// ─── Simulation Wallet ─────────────────────────────────────────────
+
+export async function getSimulationWallet(): Promise<InstitutionalDcaSimulationWalletRow> {
+  const rows = await db.select().from(institutionalDcaSimulationWallet).limit(1);
+  if (rows.length === 0) {
+    const [created] = await db
+      .insert(institutionalDcaSimulationWallet)
+      .values({})
+      .returning();
+    return created;
+  }
+  return rows[0];
+}
+
+export async function updateSimulationWallet(
+  patch: Partial<Omit<InsertInstitutionalDcaSimulationWallet, "id">>
+): Promise<InstitutionalDcaSimulationWalletRow> {
+  const current = await getSimulationWallet();
+  const [updated] = await db
+    .update(institutionalDcaSimulationWallet)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(institutionalDcaSimulationWallet.id, current.id))
+    .returning();
+  return updated;
+}
+
+export async function resetSimulationWallet(
+  initialBalance?: number
+): Promise<InstitutionalDcaSimulationWalletRow> {
+  const config = await getIdcaConfig();
+  const balance = initialBalance || parseFloat(String(config.simulationInitialBalanceUsd));
+  return updateSimulationWallet({
+    initialBalanceUsd: balance.toFixed(2),
+    availableBalanceUsd: balance.toFixed(2),
+    usedBalanceUsd: "0",
+    realizedPnlUsd: "0",
+    unrealizedPnlUsd: "0",
+    totalEquityUsd: balance.toFixed(2),
+    totalCyclesSimulated: 0,
+    totalOrdersSimulated: 0,
+    lastResetAt: new Date(),
+  });
+}
+
+// ─── OHLCV Cache ───────────────────────────────────────────────────
+
+export async function upsertOhlcv(
+  data: InsertInstitutionalDcaOhlcvCache
+): Promise<void> {
+  await db
+    .insert(institutionalDcaOhlcvCache)
+    .values(data)
+    .onConflictDoUpdate({
+      target: [
+        institutionalDcaOhlcvCache.pair,
+        institutionalDcaOhlcvCache.timeframe,
+        institutionalDcaOhlcvCache.ts,
+      ],
+      set: {
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        volume: data.volume,
+      },
+    });
+}
+
+export async function getOhlcvRange(
+  pair: string,
+  timeframe: string,
+  from: Date,
+  to: Date
+): Promise<InstitutionalDcaOhlcvCacheRow[]> {
+  return db
+    .select()
+    .from(institutionalDcaOhlcvCache)
+    .where(
+      and(
+        eq(institutionalDcaOhlcvCache.pair, pair),
+        eq(institutionalDcaOhlcvCache.timeframe, timeframe),
+        sql`${institutionalDcaOhlcvCache.ts} >= ${from}`,
+        sql`${institutionalDcaOhlcvCache.ts} <= ${to}`
+      )
+    )
+    .orderBy(institutionalDcaOhlcvCache.ts);
+}
+
+// ─── Summary helpers ───────────────────────────────────────────────
+
+export async function getModuleSummary(mode: string) {
+  const config = await getIdcaConfig();
+  const activeCycles = await getAllActiveCycles(mode);
+  const wallet = mode === "simulation" ? await getSimulationWallet() : null;
+
+  let totalCapitalUsed = 0;
+  let totalUnrealizedPnl = 0;
+  let totalRealizedPnl = 0;
+  let trailingCount = 0;
+  let buysToday = 0;
+  let sellsToday = 0;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  for (const cycle of activeCycles) {
+    totalCapitalUsed += parseFloat(String(cycle.capitalUsedUsd || "0"));
+    totalUnrealizedPnl += parseFloat(String(cycle.unrealizedPnlUsd || "0"));
+    totalRealizedPnl += parseFloat(String(cycle.realizedPnlUsd || "0"));
+    if (cycle.status === "trailing_active") trailingCount++;
+  }
+
+  // Count today's orders
+  const todayOrders = await db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(
+      and(
+        eq(institutionalDcaOrders.mode, mode),
+        sql`${institutionalDcaOrders.executedAt} >= ${todayStart}`
+      )
+    );
+  for (const o of todayOrders) {
+    if (o.side === "buy") buysToday++;
+    else sellsToday++;
+  }
+
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
+
+  return {
+    mode: config.mode,
+    allocatedCapitalUsd: allocatedCapital,
+    capitalUsedUsd: totalCapitalUsed,
+    capitalFreeUsd: allocatedCapital - totalCapitalUsed,
+    realizedPnlUsd: totalRealizedPnl,
+    unrealizedPnlUsd: totalUnrealizedPnl,
+    activeCyclesCount: activeCycles.length,
+    trailingActiveCount: trailingCount,
+    buysToday,
+    sellsToday,
+    smartModeEnabled: config.smartModeEnabled,
+    simulationWallet: wallet,
+    cycles: activeCycles,
+  };
+}

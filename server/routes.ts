@@ -222,6 +222,24 @@ export async function registerRoutes(
       console.log("[startup] Starting trading engine...");
       tradingEngine.start();
     }
+
+    // Institutional DCA Module — register routes & auto-start scheduler
+    try {
+      const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
+      registerInstitutionalDcaRoutes(app);
+
+      const { IdcaRepository, IdcaEngine } = await import('./services/institutionalDca');
+      const idcaControls = await IdcaRepository.getTradingEngineControls();
+      const idcaConfig = await IdcaRepository.getIdcaConfig();
+      if (idcaControls.institutionalDcaEnabled && idcaConfig.mode !== 'disabled' && !idcaControls.globalTradingPause) {
+        console.log('[startup] Starting Institutional DCA scheduler...');
+        await IdcaEngine.startScheduler();
+      } else {
+        console.log('[startup] Institutional DCA module idle (toggle off or mode disabled)');
+      }
+    } catch (e: any) {
+      console.error('[startup] Failed to initialize Institutional DCA module:', e?.message || e);
+    }
   } catch (error) {
     console.error("[startup] Error loading API credentials:", error);
   }
