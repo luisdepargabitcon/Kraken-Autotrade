@@ -934,6 +934,13 @@ async function runMigration() {
     const idcaSqlPath = path.resolve(process.cwd(), "db", "migrations", "019_institutional_dca.sql");
     await tryExecuteFile(db, idcaSqlPath, "institutional_dca");
 
+    // ============================================================
+    // IDCA HUMAN MESSAGES (020)
+    // ============================================================
+    console.log("[migrate] Adding IDCA human message columns...");
+    const idcaHumanPath = path.resolve(process.cwd(), "db", "migrations", "020_idca_human_messages.sql");
+    await tryExecuteFile(db, idcaHumanPath, "idca_human_messages");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

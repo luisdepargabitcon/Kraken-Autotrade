@@ -2,7 +2,7 @@
  * Institutional DCA Module — Main page with sub-tabs.
  * Completely independent from the main bot UI.
  */
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -676,7 +676,7 @@ function HistoryTab() {
                   <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
                   <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
                   <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
-                  <td className="p-2 text-muted-foreground truncate max-w-[200px]">{order.triggerReason || "—"}</td>
+                  <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{(order as any).humanReason || order.triggerReason || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -827,9 +827,11 @@ function LiveMonitorPanel() {
   const liveLines = (events || []).map((ev) => {
     const ts = fmtDate(ev.createdAt);
     const sev = ev.severity.toUpperCase().padEnd(8);
-    const type = ev.eventType.padEnd(28);
-    const pair = (ev.pair || "").padEnd(8);
-    return `[${ts}] ${sev} ${pair} ${type} ${ev.message}`;
+    const pair = (ev.pair || "SYS").padEnd(8);
+    // Use human fields if available, fallback to technical
+    const title = (ev as any).humanTitle || ev.eventType;
+    const tech = (ev as any).technicalSummary || ev.message;
+    return `[${ts}] ${sev} ${pair}| ${title} | ${tech}`;
   });
 
   const handleCopy = useCallback(() => {
@@ -929,18 +931,28 @@ function EventsLogPanel() {
   const [copied, setCopied] = useState(false);
   const { data: events, isLoading } = useIdcaEvents({ limit: 200 });
 
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
   const filtered = (events || []).filter((ev) => {
     if (severityFilter !== "all" && ev.severity !== severityFilter) return false;
     if (typeFilter && !ev.eventType.includes(typeFilter)) return false;
-    if (searchText && !ev.message.toLowerCase().includes(searchText.toLowerCase()) && !ev.eventType.toLowerCase().includes(searchText.toLowerCase())) return false;
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      const hTitle = ((ev as any).humanTitle || "").toLowerCase();
+      const hMsg = ((ev as any).humanMessage || "").toLowerCase();
+      if (!ev.message.toLowerCase().includes(q) && !ev.eventType.toLowerCase().includes(q) && !hTitle.includes(q) && !hMsg.includes(q)) return false;
+    }
     return true;
   });
 
   const toCSV = useCallback(() => {
-    const header = "id,timestamp,severity,type,pair,mode,message\n";
-    const rows = filtered.map(ev =>
-      `${ev.id},${ev.createdAt},${ev.severity},${ev.eventType},${ev.pair || ""},${ev.mode || ""},"${(ev.message || "").replace(/"/g, '""')}"`
-    ).join("\n");
+    const header = "id,timestamp,severity,type,pair,mode,humanTitle,humanMessage,technicalSummary,message\n";
+    const rows = filtered.map(ev => {
+      const ht = ((ev as any).humanTitle || "").replace(/"/g, '""');
+      const hm = ((ev as any).humanMessage || "").replace(/"/g, '""');
+      const ts = ((ev as any).technicalSummary || "").replace(/"/g, '""');
+      return `${ev.id},${ev.createdAt},${ev.severity},${ev.eventType},${ev.pair || ""},${ev.mode || ""},"${ht}","${hm}","${ts}","${(ev.message || "").replace(/"/g, '""')}"`;
+    }).join("\n");
     return header + rows;
   }, [filtered]);
 
@@ -1042,27 +1054,48 @@ function EventsLogPanel() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b border-border/50">
                   <tr className="text-muted-foreground text-[10px]">
-                    <th className="text-left p-2 w-[60px]">Sev</th>
-                    <th className="text-left p-2 w-[120px]">Fecha</th>
-                    <th className="text-left p-2 w-[180px]">Tipo</th>
-                    <th className="text-left p-2 w-[70px]">Par</th>
-                    <th className="text-left p-2 w-[60px]">Modo</th>
-                    <th className="text-left p-2">Mensaje</th>
-                    <th className="text-left p-2 w-[40px]">ID</th>
+                    <th className="text-left p-2 w-[50px]">Sev</th>
+                    <th className="text-left p-2 w-[110px]">Fecha</th>
+                    <th className="text-left p-2 w-[60px]">Par</th>
+                    <th className="text-left p-2 w-[200px]">Motivo</th>
+                    <th className="text-left p-2">Detalle técnico</th>
+                    <th className="text-left p-2 w-[130px]">Tipo interno</th>
+                    <th className="text-left p-2 w-[35px]">ID</th>
                   </tr>
                 </thead>
                 <tbody className="font-mono">
-                  {filtered.map((ev) => (
-                    <tr key={ev.id} className={cn("border-b border-border/20 hover:bg-muted/20", SEVERITY_BG[ev.severity])}>
-                      <td className={cn("p-2 text-[10px] font-bold", SEVERITY_COLOR[ev.severity])}>{ev.severity.toUpperCase()}</td>
-                      <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(ev.createdAt)}</td>
-                      <td className="p-2"><Badge variant="outline" className="text-[10px]">{ev.eventType}</Badge></td>
-                      <td className="p-2 text-[10px]">{ev.pair || "—"}</td>
-                      <td className="p-2 text-[10px]">{ev.mode || "—"}</td>
-                      <td className="p-2 text-[11px] max-w-[400px] truncate" title={ev.message}>{ev.message}</td>
-                      <td className="p-2 text-[10px] text-muted-foreground">#{ev.id}</td>
-                    </tr>
-                  ))}
+                  {filtered.map((ev) => {
+                    const humanTitle = (ev as any).humanTitle || ev.eventType.replace(/_/g, " ");
+                    const humanMsg = (ev as any).humanMessage || "";
+                    const techSummary = (ev as any).technicalSummary || ev.message;
+                    const isExpanded = expandedId === ev.id;
+                    return (
+                      <React.Fragment key={ev.id}>
+                        <tr
+                          className={cn("border-b border-border/20 hover:bg-muted/20 cursor-pointer", SEVERITY_BG[ev.severity])}
+                          onClick={() => setExpandedId(isExpanded ? null : ev.id)}
+                        >
+                          <td className={cn("p-2 text-[10px] font-bold", SEVERITY_COLOR[ev.severity])}>{ev.severity.toUpperCase()}</td>
+                          <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(ev.createdAt)}</td>
+                          <td className="p-2 text-[10px]">{ev.pair || "—"}</td>
+                          <td className="p-2 text-[11px] font-semibold">{humanTitle}</td>
+                          <td className="p-2 text-[10px] text-muted-foreground max-w-[350px] truncate" title={techSummary}>{techSummary}</td>
+                          <td className="p-2"><Badge variant="outline" className="text-[9px]">{ev.eventType}</Badge></td>
+                          <td className="p-2 text-[10px] text-muted-foreground">#{ev.id}</td>
+                        </tr>
+                        {isExpanded && humanMsg && (
+                          <tr className="bg-muted/10">
+                            <td colSpan={7} className="p-3 text-[11px] text-muted-foreground leading-relaxed">
+                              <div className="pl-4 border-l-2 border-blue-500/30">
+                                <span className="font-semibold text-foreground">Explicación: </span>{humanMsg}
+                                {techSummary && <div className="mt-1 text-[10px] font-mono opacity-70">Técnico: {techSummary}</div>}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

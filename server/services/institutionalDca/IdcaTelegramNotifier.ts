@@ -5,6 +5,7 @@
  */
 import { telegramService } from "../telegram";
 import * as repo from "./IdcaRepository";
+import { formatTelegramMessage, type FormatContext } from "./IdcaMessageFormatter";
 import type { TelegramAlertToggles } from "./IdcaTypes";
 import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schema";
 
@@ -86,16 +87,20 @@ export async function alertCycleStarted(cycle: InstitutionalDcaCycle, dipPct: nu
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(cycle.mode)}🟢 <b>CICLO INICIADO — Institutional DCA</b>
+  const ctx: FormatContext = {
+    eventType: "cycle_started",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: parseFloat(String(cycle.currentPrice || "0")),
+    quantity: parseFloat(String(cycle.totalQuantity || "0")),
+    capitalUsed: parseFloat(String(cycle.capitalReservedUsd || "0")),
+    dipPct,
+    marketScore: score,
+    buyCount: 1,
+    sizeProfile: cycle.adaptiveSizeProfile || "balanced",
+  };
 
-<b>Par:</b> ${escapeHtml(cycle.pair)}
-<b>Modo:</b> ${cycle.mode.toUpperCase()}
-<b>Precio:</b> ${fmtPrice(cycle.currentPrice || "0")}
-<b>Caída detectada:</b> -${dipPct.toFixed(1)}%
-<b>Score:</b> ${score}
-<b>Capital reservado ciclo:</b> ${fmtUsd(cycle.capitalReservedUsd)}`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertBuyExecuted(cycle: InstitutionalDcaCycle, order: InstitutionalDcaOrder, orderType: string): Promise<void> {
@@ -104,20 +109,19 @@ export async function alertBuyExecuted(cycle: InstitutionalDcaCycle, order: Inst
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const emoji = orderType === "base_buy" ? "🟢" : "📦";
-  const label = orderType === "base_buy" ? "COMPRA INICIAL" : "SAFETY BUY EJECUTADA";
+  const evType = orderType === "base_buy" ? "base_buy_executed" : "safety_buy_executed";
+  const ctx: FormatContext = {
+    eventType: evType,
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: parseFloat(String(order.price)),
+    quantity: parseFloat(String(order.quantity)),
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    capitalUsed: parseFloat(String(cycle.capitalUsedUsd || "0")),
+    buyCount: cycle.buyCount,
+  };
 
-  const msg = `${simPrefix(cycle.mode)}${emoji} <b>${label}</b>
-
-<b>Par:</b> ${escapeHtml(cycle.pair)}
-<b>Compra:</b> #${cycle.buyCount}
-<b>Precio:</b> ${fmtPrice(order.price)}
-<b>Cantidad:</b> ${parseFloat(String(order.quantity)).toFixed(6)}
-<b>Capital usado ciclo:</b> ${fmtUsd(cycle.capitalUsedUsd)}
-<b>Precio medio:</b> ${fmtPrice(cycle.avgEntryPrice || "0")}
-<b>Siguiente nivel:</b> ${cycle.nextBuyLevelPct ? `-${cycle.nextBuyLevelPct}%` : "N/A"}`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertBuyBlocked(pair: string, mode: string, reason: string, pnlPct: number, buyCount: number): Promise<void> {
@@ -125,14 +129,14 @@ export async function alertBuyBlocked(pair: string, mode: string, reason: string
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(mode)}⛔ <b>COMPRA BLOQUEADA</b>
+  const ctx: FormatContext = {
+    eventType: "buy_blocked",
+    reasonCode: reason,
+    pair, mode, pnlPct, buyCount,
+    blockReasons: [{ code: reason, message: reason }],
+  };
 
-<b>Par:</b> ${escapeHtml(pair)}
-<b>Motivo:</b> ${escapeHtml(reason)}
-<b>PnL actual ciclo:</b> ${fmtPct(pnlPct)}
-<b>Compras ejecutadas:</b> ${buyCount}`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertTpArmed(cycle: InstitutionalDcaCycle, partialPct: number): Promise<void> {
@@ -140,16 +144,19 @@ export async function alertTpArmed(cycle: InstitutionalDcaCycle, partialPct: num
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(cycle.mode)}🎯 <b>TAKE PROFIT ARMADO</b>
+  const ctx: FormatContext = {
+    eventType: "tp_armed",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    price: parseFloat(String(cycle.currentPrice || "0")),
+    pnlPct: parseFloat(String(cycle.unrealizedPnlPct || "0")),
+    tpPct: parseFloat(String(cycle.tpTargetPct || "0")),
+    partialPct,
+    trailingPct: parseFloat(String(cycle.trailingPct || "0")),
+  };
 
-<b>Par:</b> ${escapeHtml(cycle.pair)}
-<b>Precio medio:</b> ${fmtPrice(cycle.avgEntryPrice || "0")}
-<b>Precio actual:</b> ${fmtPrice(cycle.currentPrice || "0")}
-<b>PnL global:</b> ${fmtPct(cycle.unrealizedPnlPct || "0")}
-<b>Venta parcial:</b> ${partialPct.toFixed(0)}%
-<b>Trailing restante:</b> ${cycle.trailingPct}%`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertTrailingExit(cycle: InstitutionalDcaCycle): Promise<void> {
@@ -157,20 +164,27 @@ export async function alertTrailingExit(cycle: InstitutionalDcaCycle): Promise<v
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const duration = cycle.closedAt && cycle.startedAt
+  const durationStr = cycle.closedAt && cycle.startedAt
     ? formatDuration(new Date(cycle.startedAt), new Date(cycle.closedAt))
     : "N/A";
 
-  const msg = `${simPrefix(cycle.mode)}✅ <b>CICLO CERRADO — TRAILING EXIT</b>
+  const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  const realized = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const pnlUsd = realized - capitalUsed;
+  const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
 
-<b>Par:</b> ${escapeHtml(cycle.pair)}
-<b>Resultado:</b> ${fmtUsd(cycle.realizedPnlUsd || "0")}
-<b>Rentabilidad:</b> ${fmtPct(cycle.unrealizedPnlPct || "0")}
-<b>Compras:</b> ${cycle.buyCount}
-<b>Duración:</b> ${duration}
-<b>Motivo:</b> trailing_exit`;
+  const ctx: FormatContext = {
+    eventType: "trailing_exit",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: parseFloat(String(cycle.currentPrice || "0")),
+    pnlPct,
+    pnlUsd,
+    buyCount: cycle.buyCount,
+    durationStr,
+  };
 
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<void> {
@@ -178,29 +192,31 @@ export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(cycle.mode)}🛡️ <b>CICLO CERRADO — BREAKEVEN EXIT</b>
+  const ctx: FormatContext = {
+    eventType: "breakeven_exit",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: parseFloat(String(cycle.currentPrice || "0")),
+    quantity: parseFloat(String(cycle.totalQuantity || "0")),
+    buyCount: cycle.buyCount,
+  };
 
-<b>Par:</b> ${escapeHtml(cycle.pair)}
-<b>Resultado:</b> ${fmtUsd(cycle.realizedPnlUsd || "0")}
-<b>Compras:</b> ${cycle.buyCount}
-<b>Motivo:</b> breakeven_exit`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertEmergencyClose(mode: string, closedCount: number): Promise<void> {
   const { chatId, enabled } = await canSend("critical_error");
   if (!enabled && !chatId) return;
   const config = await repo.getIdcaConfig();
-  // Emergency always sends regardless of toggle
 
-  const msg = `${simPrefix(mode)}🚨 <b>EMERGENCY CLOSE ALL — Institutional DCA</b>
+  const ctx: FormatContext = {
+    eventType: "emergency_close_all",
+    mode,
+    closedCount,
+    triggerSource: "manual",
+  };
 
-<b>Ciclos cerrados:</b> ${closedCount}
-<b>Motivo:</b> Emergency exit activado manualmente
-<b>Timestamp:</b> ${new Date().toISOString()}`;
-
-  await send(chatId || config.telegramChatId || "", msg, config.telegramThreadId || undefined);
+  await send(chatId || config.telegramChatId || "", formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertSmartAdjustment(pair: string, mode: string, field: string, oldVal: number, newVal: number, reason: string): Promise<void> {
@@ -208,13 +224,12 @@ export async function alertSmartAdjustment(pair: string, mode: string, field: st
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(mode)}🧠 <b>AJUSTE SMART APLICADO</b>
+  const ctx: FormatContext = {
+    eventType: "smart_adjustment_applied",
+    pair, mode, field, oldVal, newVal, reason,
+  };
 
-<b>Par:</b> ${escapeHtml(pair)}
-<b>Cambio:</b> ${escapeHtml(field)} ${oldVal} → ${newVal}
-<b>Motivo:</b> ${escapeHtml(reason)}`;
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertModuleDrawdownBreached(mode: string, drawdownPct: number, maxPct: number): Promise<void> {
@@ -222,13 +237,14 @@ export async function alertModuleDrawdownBreached(mode: string, drawdownPct: num
   if (!enabled && !chatId) return;
   const config = await repo.getIdcaConfig();
 
-  const msg = `${simPrefix(mode)}🔴 <b>MAX DRAWDOWN ALCANZADO — Institutional DCA</b>
+  const ctx: FormatContext = {
+    eventType: "module_max_drawdown_reached",
+    mode,
+    drawdownPct,
+    maxDrawdownPct: maxPct,
+  };
 
-<b>Drawdown actual:</b> ${fmtPct(-drawdownPct)}
-<b>Límite configurado:</b> ${fmtPct(-maxPct)}
-<b>Acción:</b> Módulo pausado, nuevas compras bloqueadas`;
-
-  await send(chatId || config.telegramChatId || "", msg, config.telegramThreadId || undefined);
+  await send(chatId || config.telegramChatId || "", formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function sendTestMessage(): Promise<boolean> {

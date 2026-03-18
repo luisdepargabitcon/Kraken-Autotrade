@@ -6,6 +6,7 @@
 import * as repo from "./IdcaRepository";
 import * as smart from "./IdcaSmartLayer";
 import * as telegram from "./IdcaTelegramNotifier";
+import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
 import {
   INSTITUTIONAL_DCA_ALLOWED_PAIRS,
   type InstitutionalDcaCycle,
@@ -34,6 +35,22 @@ let tickCount = 0;
 // Cache for market data
 const priceCache = new Map<string, number>();
 const ohlcCache = new Map<string, smart.OhlcCandle[]>();
+
+// ─── Human Event Helper ───────────────────────────────────────────
+
+async function createHumanEvent(
+  base: { cycleId?: number; pair?: string; mode?: string; eventType: string; severity: string; message: string; payloadJson?: any },
+  fmtCtx: FormatContext
+) {
+  const hm = formatIdcaMessage(fmtCtx);
+  return repo.createEvent({
+    ...base,
+    reasonCode: fmtCtx.reasonCode || fmtCtx.eventType,
+    humanTitle: hm.humanTitle,
+    humanMessage: hm.humanMessage,
+    technicalSummary: hm.technicalSummary,
+  });
+}
 
 // ─── Public API ────────────────────────────────────────────────────
 
@@ -101,13 +118,13 @@ export async function emergencyCloseAll(): Promise<number> {
     }
   }
 
-  await repo.createEvent({
+  await createHumanEvent({
     eventType: "emergency_close_all",
     severity: "critical",
     mode,
     message: `Emergency close: ${closed} cycles closed`,
     payloadJson: { closedCount: closed },
-  });
+  }, { eventType: "emergency_close_all", mode, closedCount: closed, triggerSource: "manual" });
 
   await telegram.alertEmergencyClose(mode, closed);
   return closed;
@@ -204,13 +221,21 @@ async function checkEntry(
       console.log(`${TAG}[ENTRY_BLOCKED] ${pair}: ${reason.code} - ${reason.message}`);
     }
     if (check.blockReasons.length > 0) {
-      await repo.createEvent({
+      await createHumanEvent({
         pair,
         mode,
         eventType: "entry_check_blocked",
         severity: "info",
         message: check.blockReasons.map(r => r.code).join(", "),
         payloadJson: { blockReasons: check.blockReasons },
+      }, {
+        eventType: "entry_check_blocked",
+        reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
+        pair, mode,
+        blockReasons: check.blockReasons,
+        dipPct: check.dipPct,
+        marketScore: check.marketScore,
+        sizeProfile: check.sizeProfile,
       });
     }
     return;
@@ -219,14 +244,13 @@ async function checkEntry(
   // Entry allowed — create cycle and execute base buy
   console.log(`${TAG}[ENTRY_CHECK] ${pair}: Entry allowed, score=${check.marketScore}, dip=${check.dipPct?.toFixed(2)}%`);
 
-  await repo.createEvent({
-    pair,
-    mode,
+  await createHumanEvent({
+    pair, mode,
     eventType: "entry_check_passed",
     severity: "info",
     message: `Entry check passed: score=${check.marketScore}, dip=${check.dipPct?.toFixed(2)}%`,
     payloadJson: { marketScore: check.marketScore, dipPct: check.dipPct, sizeProfile: check.sizeProfile },
-  });
+  }, { eventType: "entry_check_passed", pair, mode, dipPct: check.dipPct, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
 
   // Calculate capital for this cycle
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
@@ -318,6 +342,7 @@ async function checkEntry(
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
     triggerReason: `Entry dip ${check.dipPct?.toFixed(2)}%, score=${check.marketScore}`,
+    humanReason: formatOrderReason("base_buy"),
   });
 
   // Execute real order if live
@@ -336,24 +361,27 @@ async function checkEntry(
     });
   }
 
-  await repo.createEvent({
-    cycleId: cycle.id,
-    pair,
-    mode,
+  const baseFmtCtx: FormatContext = {
+    eventType: "cycle_started", pair, mode,
+    price: currentPrice, quantity, capitalUsed: netValue,
+    dipPct: check.dipPct, marketScore: check.marketScore,
+    buyCount: 1, sizeProfile: check.sizeProfile,
+  };
+
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
     eventType: "cycle_started",
     severity: "info",
     message: `Cycle started: baseBuy=${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
     payloadJson: { price: currentPrice, quantity, capital: netValue, sizeProfile: check.sizeProfile },
-  });
+  }, baseFmtCtx);
 
-  await repo.createEvent({
-    cycleId: cycle.id,
-    pair,
-    mode,
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
     eventType: "base_buy_executed",
     severity: "info",
     message: `Base buy #1: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
-  });
+  }, { ...baseFmtCtx, eventType: "base_buy_executed" });
 
   await telegram.alertCycleStarted(cycle, check.dipPct || 0, check.marketScore || 0);
   await telegram.alertBuyExecuted(cycle, order, "base_buy");
@@ -599,6 +627,7 @@ async function checkSafetyBuy(
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
     triggerReason: `Safety buy #${newBuyCount} at -${safetyOrder.dipPct}%`,
+    humanReason: formatOrderReason("safety_buy"),
   });
 
   if (mode === "live") {
@@ -614,11 +643,15 @@ async function checkSafetyBuy(
     });
   }
 
-  await repo.createEvent({
+  await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "safety_buy_executed",
     severity: "info",
     message: `Safety buy #${newBuyCount}: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
+  }, {
+    eventType: "safety_buy_executed", pair, mode,
+    price: currentPrice, quantity, avgEntry: newAvgPrice,
+    capitalUsed: newTotalCost, buyCount: newBuyCount,
   });
 
   // Re-fetch cycle for telegram alert
@@ -670,6 +703,7 @@ async function armTakeProfit(
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
     triggerReason: `TP armed at ${pnlPct.toFixed(2)}%, partial sell ${partialPct.toFixed(0)}%`,
+    humanReason: formatOrderReason("partial_sell"),
   });
 
   if (mode === "live") {
@@ -707,11 +741,16 @@ async function armTakeProfit(
     });
   }
 
-  await repo.createEvent({
+  await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "tp_armed",
     severity: "info",
     message: `TP armed: sold ${partialPct.toFixed(0)}%, trailing ${trailingPct.toFixed(2)}% on remaining ${remainingQty.toFixed(6)}`,
+  }, {
+    eventType: "tp_armed", pair, mode,
+    pnlPct, tpPct: parseFloat(String(cycle.tpTargetPct || "0")), trailingPct, partialPct,
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    price: currentPrice,
   });
 
   const updatedCycle = await repo.getCycleById(cycle.id);
@@ -779,6 +818,7 @@ async function executeTrailingExit(
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
     triggerReason: "trailing_exit",
+    humanReason: formatOrderReason("final_sell"),
   });
 
   if (mode === "live") {
@@ -787,13 +827,22 @@ async function executeTrailingExit(
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const totalRealized = prevRealized + netValue;
+  const capitalUsedForPnl = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  const pnlPctTrailing = capitalUsedForPnl > 0 ? ((totalRealized - capitalUsedForPnl) / capitalUsedForPnl) * 100 : 0;
+
+  const closedAt = new Date();
+  const startedAt = cycle.startedAt ? new Date(cycle.startedAt) : closedAt;
+  const durMs = closedAt.getTime() - startedAt.getTime();
+  const durH = Math.floor(durMs / 3600000);
+  const durM = Math.floor((durMs % 3600000) / 60000);
+  const durationStr = durH > 24 ? `${Math.floor(durH / 24)}d ${durH % 24}h` : `${durH}h ${durM}m`;
 
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "trailing_exit",
     totalQuantity: "0",
     realizedPnlUsd: totalRealized.toFixed(2),
-    closedAt: new Date(),
+    closedAt,
   });
 
   if (mode === "simulation") {
@@ -801,15 +850,20 @@ async function executeTrailingExit(
     await repo.updateSimulationWallet({
       availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) + netValue).toFixed(2),
       usedBalanceUsd: Math.max(0, parseFloat(String(wallet.usedBalanceUsd)) - sellValueUsd).toFixed(2),
-      realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + totalRealized - parseFloat(String(cycle.capitalUsedUsd))).toFixed(2),
+      realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + totalRealized - capitalUsedForPnl).toFixed(2),
     });
   }
 
-  await repo.createEvent({
+  await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "trailing_exit",
     severity: "info",
     message: `Trailing exit: sold ${remainingQty.toFixed(6)} @ ${currentPrice.toFixed(2)}, realized=${totalRealized.toFixed(2)}`,
+  }, {
+    eventType: "trailing_exit", pair, mode,
+    price: currentPrice, pnlPct: pnlPctTrailing,
+    pnlUsd: totalRealized - capitalUsedForPnl,
+    buyCount: cycle.buyCount, durationStr,
   });
 
   const updatedCycle = await repo.getCycleById(cycle.id);
@@ -848,6 +902,7 @@ async function executeBreakevenExit(
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
     triggerReason: "breakeven_protection",
+    humanReason: formatOrderReason("breakeven_sell"),
   });
 
   if (mode === "live") {
@@ -870,11 +925,14 @@ async function executeBreakevenExit(
     });
   }
 
-  await repo.createEvent({
+  await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "breakeven_exit",
     severity: "warn",
     message: `Breakeven exit: ${totalQty.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
+  }, {
+    eventType: "breakeven_exit", pair, mode,
+    price: currentPrice, quantity: totalQty, buyCount: cycle.buyCount,
   });
 
   const updatedCycle = await repo.getCycleById(cycle.id);
@@ -1055,13 +1113,13 @@ async function checkModuleDrawdown(config: InstitutionalDcaConfigRow, mode: Idca
   const ddPct = Math.abs(Math.min(0, totalUnrealized) / allocatedCapital * 100);
   if (ddPct >= maxDD) {
     console.log(`${TAG}[MODULE_DRAWDOWN] ${ddPct.toFixed(2)}% >= ${maxDD}% — pausing module`);
-    await repo.createEvent({
+    await createHumanEvent({
       mode,
       eventType: "module_max_drawdown_reached",
       severity: "critical",
       message: `Module drawdown ${ddPct.toFixed(2)}% exceeded max ${maxDD}%`,
       payloadJson: { drawdownPct: ddPct, maxPct: maxDD },
-    });
+    }, { eventType: "module_max_drawdown_reached", mode, drawdownPct: ddPct, maxDrawdownPct: maxDD });
     await telegram.alertModuleDrawdownBreached(mode, ddPct, maxDD);
     return false;
   }
@@ -1178,17 +1236,20 @@ async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, 
 
 async function logBlock(pair: string, mode: string, code: string, cycle?: InstitutionalDcaCycle): Promise<void> {
   console.log(`${TAG}[BUY_BLOCKED] ${pair}: ${code}`);
-  await repo.createEvent({
+  const pnlPct = cycle ? parseFloat(String(cycle.unrealizedPnlPct || "0")) : 0;
+  const buyCount = cycle?.buyCount || 0;
+  await createHumanEvent({
     cycleId: cycle?.id,
-    pair,
-    mode,
+    pair, mode,
     eventType: "buy_blocked",
     severity: "warn",
     message: code,
     payloadJson: { blockCode: code },
+  }, {
+    eventType: "buy_blocked", reasonCode: code, pair, mode,
+    pnlPct, buyCount,
+    blockReasons: [{ code, message: code }],
   });
-  const pnlPct = cycle ? parseFloat(String(cycle.unrealizedPnlPct || "0")) : 0;
-  const buyCount = cycle?.buyCount || 0;
   await telegram.alertBuyBlocked(pair, mode, code, pnlPct, buyCount);
 }
 
@@ -1239,13 +1300,13 @@ export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
   // Update config
   await repo.updateIdcaConfig({ mode: newMode });
 
-  await repo.createEvent({
+  await createHumanEvent({
     eventType: "mode_transition",
     severity: "info",
     mode: newMode,
     message: `Mode changed: ${oldMode} -> ${newMode}`,
     payloadJson: { oldMode, newMode },
-  });
+  }, { eventType: "mode_transition", mode: newMode, oldMode, newMode });
 
   // Restart scheduler if needed
   if (newMode === "disabled") {

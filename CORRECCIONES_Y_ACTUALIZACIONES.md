@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-03-19 — IDCA: Sistema de Mensajes Humanos Dual (Castellano Natural + Técnico)
+
+### Cambio
+Refactorización completa del sistema de logs, eventos y alertas del módulo Institutional DCA.
+Se implementó un sistema de mensajes de dos niveles: explicación humana en castellano natural + resumen técnico compacto.
+
+**Arquitectura nueva:**
+1. **IdcaReasonCatalog.ts** — Catálogo centralizado de ~35 reason_codes con títulos humanos, templates de mensajes en castellano, emojis y severidades por defecto
+2. **IdcaMessageFormatter.ts** — Formatter centralizado que recibe contexto del evento y genera: `humanTitle`, `humanMessage`, `technicalSummary`. Incluye formatters específicos para Telegram, Monitor y Orders
+3. **Integración en IdcaEngine.ts** — Helper `createHumanEvent()` que envuelve `repo.createEvent()` con generación automática de campos humanos. Todos los `createEvent` y `createOrder` del engine ahora generan campos humanos
+4. **Telegram reformateado** — Todas las alertas de `IdcaTelegramNotifier.ts` usan `formatTelegramMessage()` del formatter centralizado. Mensajes en castellano con estructura: título + explicación + datos estructurados
+5. **UI Monitor Tiempo Real** — Muestra líneas con formato: `[fecha] SEVERIDAD PAR | Título humano | Resumen técnico`
+6. **UI Log de Eventos** — Nuevas columnas: Motivo (humanTitle), Detalle técnico (technicalSummary), Tipo interno (eventType). Filas clickeables que expanden la explicación humana completa
+7. **UI Historial de Órdenes** — Columna Motivo muestra `humanReason` en vez de `triggerReason` técnico
+
+**Campos nuevos en BD (migración 020):**
+- `institutional_dca_events`: `reason_code`, `human_title`, `human_message`, `technical_summary`
+- `institutional_dca_orders`: `human_reason`
+
+**Compatibilidad:** No se eliminó ningún campo existente. Los campos `event_type`, `message`, `trigger_reason` siguen presentes. La lógica, filtros y API existentes no se rompen.
+
+### Archivos Creados
+- `server/services/institutionalDca/IdcaReasonCatalog.ts`
+- `server/services/institutionalDca/IdcaMessageFormatter.ts`
+- `db/migrations/020_idca_human_messages.sql`
+
+### Archivos Modificados
+- `shared/schema.ts` — Añadidos campos humanos en events y orders
+- `script/migrate.ts` — Registrada migración 020
+- `server/services/institutionalDca/IdcaEngine.ts` — Import formatter, helper createHumanEvent, todos los createEvent/createOrder usan campos humanos
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Todas las alertas usan formatTelegramMessage centralizado
+- `client/src/pages/InstitutionalDca.tsx` — Monitor con líneas humanas, Log con columnas humanas expandibles, Historial con humanReason
+
+---
+
 ## 2026-03-18 — IDCA Nueva Pestaña "Guía" con Documentación Completa
 
 ### Cambio

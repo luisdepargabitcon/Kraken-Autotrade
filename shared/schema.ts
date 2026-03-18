@@ -1041,6 +1041,7 @@ export const institutionalDcaOrders = pgTable("institutional_dca_orders", {
   slippageUsd: decimal("slippage_usd", { precision: 18, scale: 2 }).notNull().default("0"),
   netValueUsd: decimal("net_value_usd", { precision: 18, scale: 2 }).notNull(),
   triggerReason: text("trigger_reason"),
+  humanReason: text("human_reason"),
   exchangeOrderId: text("exchange_order_id"),
   executedAt: timestamp("executed_at").notNull().defaultNow(),
 });
@@ -1055,8 +1056,12 @@ export const institutionalDcaEvents = pgTable("institutional_dca_events", {
   pair: text("pair"),
   mode: text("mode"),
   eventType: text("event_type").notNull(),
+  reasonCode: text("reason_code"),
   severity: text("severity").notNull().default("info"), // info|warn|error|critical
   message: text("message").notNull(),
+  humanTitle: text("human_title"),
+  humanMessage: text("human_message"),
+  technicalSummary: text("technical_summary"),
   payloadJson: jsonb("payload_json"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
