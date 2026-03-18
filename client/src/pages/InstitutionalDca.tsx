@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   BarChart3,
   Bitcoin,
+  BookOpen,
   Brain,
   CircleDollarSign,
   ClipboardCheck,
@@ -121,7 +122,7 @@ export default function InstitutionalDca() {
         <ControlsBar />
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-4 md:grid-cols-7 gap-1 h-auto p-1">
+          <TabsList className="grid grid-cols-4 md:grid-cols-8 gap-1 h-auto p-1">
             <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
             <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
             <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
@@ -129,6 +130,7 @@ export default function InstitutionalDca() {
             <TabsTrigger value="simulation" className="text-xs gap-1"><Wallet className="h-3 w-3" /> Simulación</TabsTrigger>
             <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
             <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
+            <TabsTrigger value="guide" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Guía</TabsTrigger>
           </TabsList>
 
           <TabsContent value="summary"><SummaryTab /></TabsContent>
@@ -138,6 +140,7 @@ export default function InstitutionalDca() {
           <TabsContent value="simulation"><SimulationTab /></TabsContent>
           <TabsContent value="events"><EventsTab /></TabsContent>
           <TabsContent value="telegram"><TelegramTab /></TabsContent>
+          <TabsContent value="guide"><GuideTab /></TabsContent>
         </Tabs>
       </div>
     </div>
@@ -1138,6 +1141,260 @@ function TelegramTab() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GUIDE TAB
+// ════════════════════════════════════════════════════════════════════
+
+function GuideSection({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-mono flex items-center gap-2">
+          <Icon className="h-4 w-4 text-primary" /> {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm leading-relaxed space-y-3">{children}</CardContent>
+    </Card>
+  );
+}
+
+function GuideTab() {
+  return (
+    <div className="space-y-4 max-w-4xl">
+
+      {/* INTRO */}
+      <GuideSection icon={BookOpen} title="¿QUÉ ES INSTITUTIONAL DCA?">
+        <p>
+          El módulo <strong>Institutional DCA (IDCA)</strong> es un sistema de inversión automática que compra BTC y ETH
+          de forma periódica cuando detecta <strong>caídas significativas de precio</strong> (dips), aplicando la estrategia
+          Dollar-Cost Averaging (DCA) de grado institucional.
+        </p>
+        <p>
+          Funciona mediante <strong>ciclos de compra</strong>: cuando el precio cae un porcentaje mínimo configurado,
+          abre un ciclo con una compra base. Si el precio sigue cayendo, ejecuta <strong>safety orders</strong> (compras
+          adicionales a niveles más bajos). Cuando el precio sube hasta el take-profit objetivo, cierra el ciclo con beneficio.
+        </p>
+      </GuideSection>
+
+      {/* INDEPENDENCE */}
+      <GuideSection icon={ShieldAlert} title="INDEPENDENCIA DEL BOT PRINCIPAL">
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 space-y-2">
+          <p className="font-bold text-blue-400">El módulo IDCA es 100% INDEPENDIENTE del bot de trading principal.</p>
+          <ul className="list-disc list-inside space-y-1 text-xs">
+            <li><strong>Base de datos separada:</strong> Usa sus propias tablas (<code>institutional_dca_*</code>), no comparte datos con el bot principal.</li>
+            <li><strong>Scheduler propio:</strong> Tiene su propio temporizador de ejecución, no depende del scan del bot principal.</li>
+            <li><strong>Capital independiente:</strong> Opera con su capital asignado separado; no toca el balance del bot principal.</li>
+            <li><strong>Compras independientes:</strong> Las compras del IDCA no afectan ni son afectadas por las señales del bot principal.</li>
+            <li><strong>Ventas independientes:</strong> Las ventas (take-profit, trailing, breakeven) del IDCA son gestionadas solo por este módulo.</li>
+            <li><strong>Ambos pueden correr simultáneamente</strong> sin interferir entre sí.</li>
+            <li><strong>On/Off independiente:</strong> Puedes desactivar uno sin afectar al otro.</li>
+          </ul>
+        </div>
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-xs">
+          <strong className="text-yellow-400">Nota importante:</strong> La única excepción es el toggle <code>Pausa Global</code>,
+          que pausa AMBOS módulos (el bot principal y el IDCA) como medida de seguridad de emergencia.
+        </div>
+      </GuideSection>
+
+      {/* CONTROLS BAR */}
+      <GuideSection icon={Power} title="BARRA DE CONTROLES (superior)">
+        <div className="space-y-3">
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">IDCA ON/OFF (Switch)</p>
+            <p className="text-xs text-muted-foreground">Activa o desactiva el módulo completo. Si está OFF, el scheduler no ejecuta ticks y no se evalúan compras ni ventas. No afecta al bot principal.</p>
+          </div>
+          <div className="border-l-2 border-yellow-500 pl-3">
+            <p className="font-mono font-bold text-xs">DISABLED / SIMULATION / LIVE (Botones de modo)</p>
+            <ul className="text-xs text-muted-foreground space-y-1 mt-1">
+              <li><strong>DISABLED:</strong> Módulo inactivo. No evalúa mercado ni ejecuta operaciones.</li>
+              <li><strong>SIMULATION:</strong> Usa datos de mercado REALES (precios, velas, indicadores) pero opera con un <strong>saldo virtual de $10,000</strong>. No envía órdenes al exchange. Ideal para probar antes de ir a live.</li>
+              <li><strong>LIVE:</strong> Opera con dinero real. Envía órdenes al exchange. Requiere confirmación al activar.</li>
+            </ul>
+          </div>
+          <div className="border-l-2 border-red-500 pl-3">
+            <p className="font-mono font-bold text-xs">Pausar Global / Reanudar</p>
+            <p className="text-xs text-muted-foreground">Pausa de emergencia que detiene TODOS los módulos (IDCA + bot principal). Útil en situaciones de mercado extremas. Se muestra un badge rojo parpadeante cuando está activa.</p>
+          </div>
+          <div className="border-l-2 border-red-600 pl-3">
+            <p className="font-mono font-bold text-xs">EMERGENCY CLOSE (Botón rojo)</p>
+            <p className="text-xs text-muted-foreground">Cierra TODOS los ciclos activos del IDCA inmediatamente. En modo live, vende las posiciones al precio de mercado. Requiere doble confirmación. Usar solo en emergencias reales.</p>
+          </div>
+        </div>
+      </GuideSection>
+
+      {/* TABS */}
+      <GuideSection icon={LayoutDashboard} title="PESTAÑAS DEL MÓDULO">
+        <div className="space-y-3">
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Resumen</p>
+            <p className="text-xs text-muted-foreground">Vista general con KPIs: capital total, disponible, en uso, P&L realizado, ciclos activos/totales, market score, ATR volatilidad. Muestra estado de salud del scheduler y ciclos activos.</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Config</p>
+            <p className="text-xs text-muted-foreground">Toda la configuración del módulo: capital asignado, límites de exposición, smart mode, trailing dinámico, y configuración por asset (BTC/ETH). Los cambios se aplican inmediatamente.</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Ciclos</p>
+            <p className="text-xs text-muted-foreground">Lista de todos los ciclos de compra (activos y cerrados). Muestra par, estado, capital usado, P&L, precio de entrada vs actual. Exportable a CSV.</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Historial</p>
+            <p className="text-xs text-muted-foreground">Tabla detallada de todas las órdenes ejecutadas (compras base, safety orders, ventas). Incluye precio, cantidad, fees, slippage y resultado.</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Simulación</p>
+            <p className="text-xs text-muted-foreground">Panel del wallet virtual: equity total, balance disponible, P&L realizado, retorno %, ciclos/órdenes simulados. Incluye botón de Reset para reiniciar la simulación.</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Eventos</p>
+            <p className="text-xs text-muted-foreground">Dos subventanas: <strong>Monitor Tiempo Real</strong> (consola estilo terminal con estado del scheduler y eventos en vivo) y <strong>Log de Eventos</strong> (tabla filtrable con descarga CSV/JSON).</p>
+          </div>
+          <div className="border-l-2 border-primary pl-3">
+            <p className="font-mono font-bold text-xs">Telegram</p>
+            <p className="text-xs text-muted-foreground">Configuración de alertas Telegram del IDCA: chat ID, thread ID, cooldown, y toggles individuales por tipo de alerta (ciclo iniciado, compra, venta, error, etc.).</p>
+          </div>
+        </div>
+      </GuideSection>
+
+      {/* CONFIG DETAILS */}
+      <GuideSection icon={Settings2} title="CONFIGURACIÓN DETALLADA">
+        <div className="space-y-4">
+          <div>
+            <p className="font-mono font-bold text-xs mb-2 text-primary">Capital y Exposición</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+              <div className="bg-muted/30 rounded p-2"><strong>Capital Asignado (USD):</strong> Monto total destinado al módulo IDCA. El módulo no usará más que este monto.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Max Exposición Módulo (%):</strong> Porcentaje máximo del capital que puede estar en posiciones abiertas simultáneamente.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Max Exposición por Asset (%):</strong> Límite de exposición por cada par (BTC/ETH) para diversificar riesgo.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Max Drawdown Módulo (%):</strong> Si las pérdidas no realizadas superan este %, el módulo detiene nuevas compras.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Max BTC/ETH Combinado (%):</strong> Límite de exposición combinada entre el bot principal y el IDCA por asset.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Proteger Principal:</strong> Si está ON, el módulo nunca arriesgará el capital inicial, solo operará con ganancias acumuladas.</div>
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono font-bold text-xs mb-2 text-primary">Smart Mode</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+              <div className="bg-muted/30 rounded p-2"><strong>Smart Mode:</strong> Activa el análisis inteligente del mercado (market score, volatilidad) para decidir cuándo comprar. Sin esto, compra solo por % de caída.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Trailing Dinámico (ATR):</strong> Ajusta el trailing stop basándose en la volatilidad actual (ATR) en lugar de usar un % fijo.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>TP Adaptativo:</strong> Ajusta el take-profit dinámicamente según condiciones de mercado y volatilidad.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Sizing Adaptativo:</strong> Ajusta el tamaño de las compras según la volatilidad: más conservador en alta volatilidad, más agresivo en baja.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>BTC Gate para ETH:</strong> No compra ETH si BTC está en tendencia bajista fuerte (correlación de mercado).</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Bloquear en Breakdown:</strong> Detiene compras si detecta ruptura técnica bajista del precio.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Bloquear Spread Alto:</strong> No compra si el spread bid/ask es anormalmente alto (baja liquidez).</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Bloquear Presión Venta:</strong> Detiene compras si detecta presión de venta inusual en el order book.</div>
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono font-bold text-xs mb-2 text-primary">Configuración por Asset (BTC/ETH)</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+              <div className="bg-muted/30 rounded p-2"><strong>Min Dip (%):</strong> Caída mínima del precio (desde máximo reciente) necesaria para activar una compra. Ej: 3% = el precio debe haber caído al menos 3%.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Take Profit (%):</strong> Ganancia objetivo para cerrar el ciclo. Ej: 2.5% = vende cuando el precio sube 2.5% desde el precio promedio de entrada.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Trailing (%):</strong> Porcentaje de retroceso desde el máximo alcanzado para activar la venta. Protege ganancias si el precio sigue subiendo antes de vender.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Max Safety Orders:</strong> Número máximo de compras adicionales si el precio sigue cayendo tras la compra inicial.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Habilitado:</strong> Activa o desactiva las compras para este par específico.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Rebound Confirm:</strong> Requiere confirmación de rebote del precio antes de comprar (evita comprar en caída libre).</div>
+              <div className="bg-muted/30 rounded p-2"><strong>TP Dinámico:</strong> Permite que el take-profit se ajuste según condiciones de mercado para este par.</div>
+              <div className="bg-muted/30 rounded p-2"><strong>Breakeven:</strong> Mueve el stop-loss al punto de entrada cuando el precio ha subido suficiente, asegurando que no se pierde dinero.</div>
+            </div>
+          </div>
+        </div>
+      </GuideSection>
+
+      {/* SIMULATION VS LIVE */}
+      <GuideSection icon={Sparkles} title="SIMULACIÓN vs LIVE: DIFERENCIAS">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border border-border/50">
+            <thead>
+              <tr className="bg-muted/30">
+                <th className="text-left p-2 border-b border-border/50">Aspecto</th>
+                <th className="text-left p-2 border-b border-border/50">Simulación</th>
+                <th className="text-left p-2 border-b border-border/50">Live</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              <tr><td className="p-2 border-b border-border/20">Precios</td><td className="p-2 border-b border-border/20 text-green-400">Reales del exchange</td><td className="p-2 border-b border-border/20 text-green-400">Reales del exchange</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Indicadores (RSI, EMA, ATR)</td><td className="p-2 border-b border-border/20 text-green-400">Calculados con datos reales</td><td className="p-2 border-b border-border/20 text-green-400">Calculados con datos reales</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Market Score</td><td className="p-2 border-b border-border/20 text-green-400">Real</td><td className="p-2 border-b border-border/20 text-green-400">Real</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Lógica de decisión</td><td className="p-2 border-b border-border/20 text-green-400">Idéntica</td><td className="p-2 border-b border-border/20 text-green-400">Idéntica</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Saldo</td><td className="p-2 border-b border-border/20 text-yellow-400">Virtual ($10,000)</td><td className="p-2 border-b border-border/20 text-blue-400">Real del exchange</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Órdenes al exchange</td><td className="p-2 border-b border-border/20 text-red-400">NO se envían</td><td className="p-2 border-b border-border/20 text-green-400">SÍ se envían</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Fees</td><td className="p-2 border-b border-border/20 text-yellow-400">Simulados (configurable)</td><td className="p-2 border-b border-border/20 text-blue-400">Reales del exchange</td></tr>
+              <tr><td className="p-2 border-b border-border/20">Slippage</td><td className="p-2 border-b border-border/20 text-yellow-400">Simulado (configurable)</td><td className="p-2 border-b border-border/20 text-blue-400">Real</td></tr>
+              <tr><td className="p-2">Telegram</td><td className="p-2 text-yellow-400">Prefijo [SIMULACIÓN]</td><td className="p-2 text-blue-400">Sin prefijo</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          La simulación es una réplica exacta del modo live usando datos de mercado reales. La única diferencia es que no
+          se envían órdenes al exchange y se usa un wallet virtual. Es la mejor forma de validar la estrategia antes de arriesgar capital real.
+        </p>
+      </GuideSection>
+
+      {/* CYCLE LIFECYCLE */}
+      <GuideSection icon={Activity} title="CICLO DE VIDA DE UNA OPERACIÓN">
+        <div className="space-y-2 text-xs">
+          <div className="flex items-start gap-3 p-2 rounded bg-muted/20">
+            <Badge className="bg-blue-600 text-[10px] shrink-0">1</Badge>
+            <div><strong>Detección de Dip:</strong> El scheduler monitorea el precio continuamente. Cuando detecta una caída igual o superior al <code>Min Dip %</code> configurado, evalúa si las condiciones de mercado son favorables (smart mode).</div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded bg-muted/20">
+            <Badge className="bg-blue-600 text-[10px] shrink-0">2</Badge>
+            <div><strong>Compra Base:</strong> Si pasa todos los filtros (exposición, drawdown, market score), ejecuta la compra inicial del ciclo al precio de mercado.</div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded bg-muted/20">
+            <Badge className="bg-yellow-600 text-[10px] shrink-0">3</Badge>
+            <div><strong>Safety Orders (opcional):</strong> Si el precio sigue cayendo, ejecuta compras adicionales a niveles predefinidos (ej: -5%, -10%, -15%). Esto baja el precio promedio de entrada.</div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded bg-muted/20">
+            <Badge className="bg-green-600 text-[10px] shrink-0">4</Badge>
+            <div><strong>Take Profit + Trailing:</strong> Cuando el precio sube al nivel de TP, activa el trailing stop. El trailing protege la ganancia dejando correr el precio, vendiendo solo cuando retrocede el % configurado.</div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded bg-muted/20">
+            <Badge className="bg-green-600 text-[10px] shrink-0">5</Badge>
+            <div><strong>Cierre del Ciclo:</strong> Se ejecuta la venta, se registra el P&L realizado, y el capital vuelve a estar disponible para un nuevo ciclo.</div>
+          </div>
+        </div>
+      </GuideSection>
+
+      {/* FAQ */}
+      <GuideSection icon={AlertTriangle} title="PREGUNTAS FRECUENTES">
+        <div className="space-y-3 text-xs">
+          <div>
+            <p className="font-bold">¿El IDCA puede comprar y vender al mismo tiempo que el bot principal?</p>
+            <p className="text-muted-foreground">Sí. Son completamente independientes. El IDCA puede estar comprando BTC mientras el bot principal está vendiendo BTC, sin conflicto.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿Si desactivo el bot principal, se para el IDCA?</p>
+            <p className="text-muted-foreground">No. El IDCA tiene su propio toggle ON/OFF. Solo la "Pausa Global" afecta a ambos.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿La simulación usa el mismo balance que el bot real?</p>
+            <p className="text-muted-foreground">No. La simulación usa un wallet virtual separado (por defecto $10,000). No toca ningún saldo real.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿Puedo cambiar de simulación a live sin perder datos?</p>
+            <p className="text-muted-foreground">Sí. Los datos de simulación se mantienen. Al cambiar a live, empiezan ciclos nuevos con saldo real. Los ciclos de simulación previos quedan en el historial.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿Qué pasa si el servidor se reinicia con ciclos activos?</p>
+            <p className="text-muted-foreground">Los ciclos se mantienen en base de datos. Al reiniciar, el scheduler retoma la gestión de los ciclos activos automáticamente.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿El EMERGENCY CLOSE afecta al bot principal?</p>
+            <p className="text-muted-foreground">No. Solo cierra los ciclos del módulo IDCA. Las posiciones del bot principal no se tocan.</p>
+          </div>
+          <div>
+            <p className="font-bold">¿Qué exchange usa el IDCA?</p>
+            <p className="text-muted-foreground">Usa el mismo exchange configurado para el bot (Kraken/RevolutX), pero con sus propias órdenes y seguimiento independiente.</p>
+          </div>
+        </div>
+      </GuideSection>
+
     </div>
   );
 }

@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-03-18 — IDCA Nueva Pestaña "Guía" con Documentación Completa
+
+### Cambio
+Añadida pestaña "Guía" al módulo Institutional DCA con documentación completa del módulo.
+
+**Secciones incluidas:**
+1. **¿Qué es Institutional DCA?** — Explicación del concepto y funcionamiento de ciclos de compra
+2. **Independencia del Bot Principal** — Detalla que IDCA es 100% independiente (BD, scheduler, capital, compras, ventas) con excepción de Pausa Global
+3. **Barra de Controles** — Documentación de IDCA ON/OFF, modos (Disabled/Simulation/Live), Pausar Global, Emergency Close
+4. **Pestañas del Módulo** — Descripción de cada una de las 8 pestañas
+5. **Configuración Detallada** — Explicación de cada campo: Capital y Exposición, Smart Mode, Config por Asset
+6. **Simulación vs Live** — Tabla comparativa con diferencias exactas
+7. **Ciclo de Vida de una Operación** — Flujo paso a paso: detección dip → compra base → safety orders → trailing → cierre
+8. **Preguntas Frecuentes** — 7 preguntas comunes sobre independencia, modos, emergencia, reinicios
+
+### Archivos Modificados
+- `client/src/pages/InstitutionalDca.tsx` — Añadido `GuideTab`, `GuideSection`, icono `BookOpen`, grid 8 columnas
+
+---
+
 ## 2026-03-18 — IDCA Pestaña Eventos Mejorada: Monitor Tiempo Real + Log
 
 ### Cambio
