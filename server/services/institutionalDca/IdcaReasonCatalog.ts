@@ -248,6 +248,13 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "warn",
   },
 
+  asset_exposure_max_reached: {
+    humanTitle: "Compra bloqueada: exposición máxima del activo",
+    humanTemplate: "No se ejecutó compra adicional en {pair} porque el capital invertido en este ciclo ya alcanzó el porcentaje máximo de exposición por activo configurado.",
+    emoji: "⛔",
+    defaultSeverity: "warn",
+  },
+
   cycle_already_active: {
     humanTitle: "Ciclo activo existente",
     humanTemplate: "No se abrió nuevo ciclo en {pair} porque ya existe un ciclo activo para este par. El IDCA permite un solo ciclo activo por par.",

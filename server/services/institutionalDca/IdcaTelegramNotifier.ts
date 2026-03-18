@@ -11,28 +11,6 @@ import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schem
 
 const lastAlertTimes = new Map<string, number>();
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function fmtUsd(val: number | string): string {
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function fmtPct(val: number | string): string {
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-}
-
-function fmtPrice(val: number | string): string {
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 async function canSend(alertType: string): Promise<{ chatId: string; enabled: boolean }> {
   const config = await repo.getIdcaConfig();
   if (!config.telegramEnabled || !config.telegramChatId) {
@@ -61,10 +39,6 @@ async function canSend(alertType: string): Promise<{ chatId: string; enabled: bo
 
   lastAlertTimes.set(alertType, now);
   return { chatId: config.telegramChatId, enabled: true };
-}
-
-function simPrefix(mode: string): string {
-  return mode === "simulation" ? "[SIMULACIÓN] " : "";
 }
 
 async function send(chatId: string, message: string, threadId?: string): Promise<boolean> {
