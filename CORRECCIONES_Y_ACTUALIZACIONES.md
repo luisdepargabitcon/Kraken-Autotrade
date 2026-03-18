@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-03-18 — IDCA Pestaña Eventos Mejorada: Monitor Tiempo Real + Log
+
+### Cambio
+Reescrita la pestaña "Eventos" del módulo IDCA con dos subventanas:
+
+**1. Monitor Tiempo Real:**
+- Barra de estado: scheduler activo/detenido, modo, toggle, pausa global, ticks, último tick, último error
+- Consola estilo terminal (fondo negro, font-mono) con eventos coloreados por severidad
+- Auto-scroll con botón pausar/reanudar
+- Botón copiar al portapapeles
+- Botón descargar como `.log`
+- Refresh automático cada 10-15s vía React Query
+
+**2. Log de Eventos:**
+- Filtros: severidad (info/warn/error/critical), tipo de evento (dropdown dinámico), búsqueda texto libre
+- Tabla completa: severidad, fecha, tipo, par, modo, mensaje, ID
+- Coloreado por severidad (fondo + texto)
+- Cabecera sticky al hacer scroll
+- Contador de resultados filtrados vs total
+- Copiar todos los filtrados al portapapeles
+- Descargar como CSV
+- Descargar como JSON
+
+### Archivos Modificados
+- `client/src/pages/InstitutionalDca.tsx` — Reescrita `EventsTab()` con `LiveMonitorPanel()` y `EventsLogPanel()`
+
+### Imports añadidos
+- React: `useRef`, `useEffect`, `useCallback`
+- Lucide: `ClipboardCheck`, `Copy`, `Filter`, `Radio`, `Search`, `Terminal`
+
+---
+
 ## 2026-03-18 — IDCA Auto-Migración en script/migrate.ts
 
 ### Cambio

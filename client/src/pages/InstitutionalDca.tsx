@@ -2,7 +2,7 @@
  * Institutional DCA Module — Main page with sub-tabs.
  * Completely independent from the main bot UI.
  */
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,19 +36,25 @@ import {
   Bitcoin,
   Brain,
   CircleDollarSign,
+  ClipboardCheck,
   Clock,
+  Copy,
   Download,
+  Filter,
   Heart,
   LayoutDashboard,
   ListOrdered,
   Pause,
   Play,
   Power,
+  Radio,
   RefreshCw,
+  Search,
   Send,
   Settings2,
   ShieldAlert,
   Sparkles,
+  Terminal,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -764,40 +770,301 @@ function SimulationTab() {
 // EVENTS TAB
 // ════════════════════════════════════════════════════════════════════
 
+const SEVERITY_COLOR: Record<string, string> = {
+  info: "text-blue-400",
+  warn: "text-yellow-400",
+  error: "text-red-400",
+  critical: "text-red-500 font-bold",
+};
+
+const SEVERITY_BG: Record<string, string> = {
+  info: "bg-blue-500/10 border-blue-500/20",
+  warn: "bg-yellow-500/10 border-yellow-500/20",
+  error: "bg-red-500/10 border-red-500/20",
+  critical: "bg-red-500/20 border-red-500/30",
+};
+
 function EventsTab() {
-  const { data: events, isLoading } = useIdcaEvents({ limit: 100 });
+  const [subTab, setSubTab] = useState<"live" | "events">("live");
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <Button size="sm" variant={subTab === "live" ? "default" : "outline"}
+          className="text-xs gap-1" onClick={() => setSubTab("live")}>
+          <Radio className="h-3 w-3" /> Monitor Tiempo Real
+        </Button>
+        <Button size="sm" variant={subTab === "events" ? "default" : "outline"}
+          className="text-xs gap-1" onClick={() => setSubTab("events")}>
+          <Terminal className="h-3 w-3" /> Log de Eventos
+        </Button>
+      </div>
+      {subTab === "live" ? <LiveMonitorPanel /> : <EventsLogPanel />}
+    </div>
+  );
+}
+
+// ─── LIVE MONITOR PANEL ────────────────────────────────────────────
+
+function LiveMonitorPanel() {
+  const { data: health } = useIdcaHealth();
+  const { data: events } = useIdcaEvents({ limit: 30 });
+  const { data: config } = useIdcaConfig();
+  const { data: controls } = useIdcaControls();
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (autoScroll && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [events, autoScroll]);
+
+  const liveLines = (events || []).map((ev) => {
+    const ts = fmtDate(ev.createdAt);
+    const sev = ev.severity.toUpperCase().padEnd(8);
+    const type = ev.eventType.padEnd(28);
+    const pair = (ev.pair || "").padEnd(8);
+    return `[${ts}] ${sev} ${pair} ${type} ${ev.message}`;
+  });
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(liveLines.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [liveLines]);
+
+  const handleDownload = useCallback(() => {
+    const blob = new Blob([liveLines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_live_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [liveLines]);
+
+  return (
+    <div className="space-y-3">
+      {/* Health Status Bar */}
+      <Card className="border-border/50">
+        <CardContent className="p-3">
+          <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
+            <div className="flex items-center gap-1.5">
+              <div className={cn("w-2 h-2 rounded-full animate-pulse", health?.isRunning ? "bg-green-500" : "bg-red-500")} />
+              <span>Scheduler: {health?.isRunning ? "ACTIVO" : "DETENIDO"}</span>
+            </div>
+            <div className="text-muted-foreground">Modo: <span className="text-foreground">{config?.mode?.toUpperCase() || "—"}</span></div>
+            <div className="text-muted-foreground">Toggle: <span className={controls?.institutionalDcaEnabled ? "text-green-400" : "text-red-400"}>{controls?.institutionalDcaEnabled ? "ON" : "OFF"}</span></div>
+            <div className="text-muted-foreground">Pausa Global: <span className={controls?.globalTradingPause ? "text-red-400" : "text-green-400"}>{controls?.globalTradingPause ? "SÍ" : "NO"}</span></div>
+            <div className="text-muted-foreground">Ticks: <span className="text-foreground">{health?.tickCount ?? 0}</span></div>
+            <div className="text-muted-foreground">Último tick: <span className="text-foreground">{health?.lastTickAt ? fmtDate(health.lastTickAt) : "—"}</span></div>
+            {health?.lastError && <div className="text-red-400 truncate max-w-[300px]">Error: {health.lastError}</div>}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Live Console */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-mono flex items-center gap-2">
+              <Radio className="h-4 w-4 text-green-500 animate-pulse" /> CONSOLA EN TIEMPO REAL
+              <Badge variant="outline" className="text-[10px] ml-2">{liveLines.length} líneas</Badge>
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={() => setAutoScroll(!autoScroll)}>
+                {autoScroll ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                {autoScroll ? "Pausar scroll" : "Auto-scroll"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleCopy}>
+                {copied ? <ClipboardCheck className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                {copied ? "Copiado" : "Copiar"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleDownload}>
+                <Download className="h-3 w-3" /> Descargar .log
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="bg-black/80 rounded-b-lg border-t border-border/30 font-mono text-[11px] leading-relaxed overflow-auto max-h-[500px] p-3">
+            {liveLines.length === 0 ? (
+              <div className="text-muted-foreground text-center py-8">Sin actividad reciente. El scheduler genera eventos al ejecutar ticks.</div>
+            ) : (
+              liveLines.map((line, i) => {
+                const ev = (events || [])[i];
+                const sev = ev?.severity || "info";
+                return (
+                  <div key={ev?.id || i} className={cn(
+                    "py-0.5 px-1 rounded-sm hover:bg-white/5 whitespace-pre",
+                    sev === "critical" && "bg-red-500/10",
+                    sev === "error" && "bg-red-500/5",
+                    sev === "warn" && "bg-yellow-500/5",
+                  )}>
+                    <span className={SEVERITY_COLOR[sev]}>{line}</span>
+                  </div>
+                );
+              })
+            )}
+            <div ref={logEndRef} />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── EVENTS LOG PANEL ──────────────────────────────────────────────
+
+function EventsLogPanel() {
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [copied, setCopied] = useState(false);
+  const { data: events, isLoading } = useIdcaEvents({ limit: 200 });
+
+  const filtered = (events || []).filter((ev) => {
+    if (severityFilter !== "all" && ev.severity !== severityFilter) return false;
+    if (typeFilter && !ev.eventType.includes(typeFilter)) return false;
+    if (searchText && !ev.message.toLowerCase().includes(searchText.toLowerCase()) && !ev.eventType.toLowerCase().includes(searchText.toLowerCase())) return false;
+    return true;
+  });
+
+  const toCSV = useCallback(() => {
+    const header = "id,timestamp,severity,type,pair,mode,message\n";
+    const rows = filtered.map(ev =>
+      `${ev.id},${ev.createdAt},${ev.severity},${ev.eventType},${ev.pair || ""},${ev.mode || ""},"${(ev.message || "").replace(/"/g, '""')}"`
+    ).join("\n");
+    return header + rows;
+  }, [filtered]);
+
+  const toJSON = useCallback(() => {
+    return JSON.stringify(filtered, null, 2);
+  }, [filtered]);
+
+  const handleCopy = useCallback(() => {
+    const text = filtered.map(ev =>
+      `[${fmtDate(ev.createdAt)}] ${ev.severity.toUpperCase()} ${ev.eventType} ${ev.pair || ""} — ${ev.message}`
+    ).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [filtered]);
+
+  const handleDownloadCSV = useCallback(() => {
+    const blob = new Blob([toCSV()], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [toCSV]);
+
+  const handleDownloadJSON = useCallback(() => {
+    const blob = new Blob([toJSON()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [toJSON]);
+
+  const uniqueTypes = [...new Set((events || []).map(e => e.eventType))].sort();
 
   if (isLoading) return <div className="text-center py-8 text-muted-foreground">Cargando eventos...</div>;
 
-  const severityColor: Record<string, string> = {
-    info: "text-blue-400",
-    warn: "text-yellow-400",
-    error: "text-red-400",
-    critical: "text-red-500 font-bold",
-  };
-
   return (
-    <div className="space-y-2">
-      {(!events || events.length === 0) ? (
+    <div className="space-y-3">
+      {/* Filters + Actions Bar */}
+      <Card className="border-border/50">
+        <CardContent className="p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+              <select className="bg-background border border-border rounded px-2 py-1 text-xs"
+                value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
+                <option value="all">Todas severidades</option>
+                <option value="info">Info</option>
+                <option value="warn">Warning</option>
+                <option value="error">Error</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <select className="bg-background border border-border rounded px-2 py-1 text-xs"
+                value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                <option value="">Todos los tipos</option>
+                {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              <Input className="h-7 text-xs" placeholder="Buscar en mensajes..." value={searchText}
+                onChange={(e) => setSearchText(e.target.value)} />
+            </div>
+            <Badge variant="outline" className="text-[10px]">{filtered.length} / {(events || []).length}</Badge>
+            <div className="flex gap-1 ml-auto">
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleCopy}>
+                {copied ? <ClipboardCheck className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                {copied ? "Copiado" : "Copiar"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleDownloadCSV}>
+                <Download className="h-3 w-3" /> CSV
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleDownloadJSON}>
+                <Download className="h-3 w-3" /> JSON
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Events Table */}
+      {filtered.length === 0 ? (
         <Card className="border-border/50">
           <CardContent className="p-8 text-center text-muted-foreground">
-            <p className="text-sm">No hay eventos registrados</p>
+            <p className="text-sm">No hay eventos que coincidan con los filtros</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-1">
-          {events.map((ev) => (
-            <div key={ev.id} className="flex items-start gap-2 p-2 rounded border border-border/30 hover:bg-muted/20">
-              <div className={cn("text-[10px] font-mono min-w-[60px]", severityColor[ev.severity])}>
-                {ev.severity.toUpperCase()}
-              </div>
-              <div className="text-[10px] text-muted-foreground min-w-[110px]">{fmtDate(ev.createdAt)}</div>
-              <Badge variant="outline" className="text-[10px] shrink-0">{ev.eventType}</Badge>
-              <div className="text-xs flex-1 truncate">{ev.message}</div>
-              {ev.pair && <span className="text-[10px] text-muted-foreground">{ev.pair}</span>}
+        <Card className="border-border/50">
+          <CardContent className="p-0">
+            <div className="overflow-auto max-h-[600px]">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-background border-b border-border/50">
+                  <tr className="text-muted-foreground text-[10px]">
+                    <th className="text-left p-2 w-[60px]">Sev</th>
+                    <th className="text-left p-2 w-[120px]">Fecha</th>
+                    <th className="text-left p-2 w-[180px]">Tipo</th>
+                    <th className="text-left p-2 w-[70px]">Par</th>
+                    <th className="text-left p-2 w-[60px]">Modo</th>
+                    <th className="text-left p-2">Mensaje</th>
+                    <th className="text-left p-2 w-[40px]">ID</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  {filtered.map((ev) => (
+                    <tr key={ev.id} className={cn("border-b border-border/20 hover:bg-muted/20", SEVERITY_BG[ev.severity])}>
+                      <td className={cn("p-2 text-[10px] font-bold", SEVERITY_COLOR[ev.severity])}>{ev.severity.toUpperCase()}</td>
+                      <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(ev.createdAt)}</td>
+                      <td className="p-2"><Badge variant="outline" className="text-[10px]">{ev.eventType}</Badge></td>
+                      <td className="p-2 text-[10px]">{ev.pair || "—"}</td>
+                      <td className="p-2 text-[10px]">{ev.mode || "—"}</td>
+                      <td className="p-2 text-[11px] max-w-[400px] truncate" title={ev.message}>{ev.message}</td>
+                      <td className="p-2 text-[10px] text-muted-foreground">#{ev.id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
-        </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
