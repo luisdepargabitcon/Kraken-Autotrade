@@ -927,6 +927,13 @@ async function runMigration() {
       "fisco_sync_retry"
     );
 
+    // ============================================================
+    // INSTITUTIONAL DCA MODULE (019)
+    // ============================================================
+    console.log("[migrate] Ensuring Institutional DCA tables exist...");
+    const idcaSqlPath = path.resolve(process.cwd(), "db", "migrations", "019_institutional_dca.sql");
+    await tryExecuteFile(db, idcaSqlPath, "institutional_dca");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

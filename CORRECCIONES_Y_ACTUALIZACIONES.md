@@ -2,6 +2,24 @@
 
 ---
 
+## 2026-03-18 — IDCA Auto-Migración en script/migrate.ts
+
+### Cambio
+Añadida la ejecución automática de `db/migrations/019_institutional_dca.sql` al script de auto-migración `script/migrate.ts`, siguiendo el patrón `tryExecuteFile()` existente.
+
+### Archivos Modificados
+- `script/migrate.ts` — Añadido bloque `INSTITUTIONAL DCA MODULE (019)` al final de `runMigration()`.
+
+### Cadena de ejecución
+1. `Dockerfile` → `CMD ["sh", "-c", "npx tsx script/migrate.ts && npm start"]`
+2. `docker-compose.yml` → `npx tsx script/migrate.ts && npm start`
+3. `script/migrate.ts` → `tryExecuteFile(db, "019_institutional_dca.sql", "institutional_dca")`
+
+### Resultado
+La migración SQL se ejecuta automáticamente al arrancar el contenedor Docker. No requiere intervención manual. Es idempotente (CREATE TABLE IF NOT EXISTS + INSERT WHERE NOT EXISTS).
+
+---
+
 ## 2026-07-XX — MÓDULO INSTITUTIONAL DCA (IDCA) — Implementación Completa
 
 ### Objetivo
