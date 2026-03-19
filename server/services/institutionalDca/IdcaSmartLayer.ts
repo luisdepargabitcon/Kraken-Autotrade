@@ -7,6 +7,8 @@ import type {
   MarketScoreWeights,
   IdcaSizeProfile,
   IdcaPairEvaluation,
+  DynamicTpInput,
+  TpBreakdown,
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
 
@@ -208,6 +210,73 @@ export function computeAdaptiveTp(input: AdaptiveTpInput): number {
   const adjusted = baseTp + clamp(volAdj, -0.5, 0.5);
 
   return clamp(adjusted, input.minTpPct, input.maxTpPct);
+}
+
+// ─── Dynamic Take Profit (evolution of Adaptive TP) ─────────────────
+
+export function computeDynamicTakeProfit(input: DynamicTpInput): TpBreakdown {
+  const isBtc = input.pair === "BTC/USD";
+  const isPlus = input.cycleType === "plus";
+  const cfg = input.config;
+
+  // 1) Base TP from config
+  const baseTpPct = isBtc
+    ? (isPlus ? cfg.baseTpPctBtc : cfg.baseTpPctBtc)
+    : (isPlus ? cfg.baseTpPctEth : cfg.baseTpPctEth);
+
+  // 2) Buy count adjustment: more buys → lower TP to facilitate exit
+  const extraBuys = Math.max(0, input.buyCount - 1);
+  const reductionPerBuy = isPlus ? cfg.reductionPerExtraBuyPlus : cfg.reductionPerExtraBuyMain;
+  const buyCountAdj = -(extraBuys * reductionPerBuy);
+
+  // 3) Volatility adjustment: high vol → slightly wider TP, low vol → tighter
+  const volBaseline = 2.5; // 2.5% as normal crypto daily volatility
+  let volAdj = 0;
+  if (input.volatilityPct > volBaseline * 1.5) {
+    // High volatility
+    volAdj = isPlus ? cfg.highVolatilityAdjustPlus : cfg.highVolatilityAdjustMain;
+  } else if (input.volatilityPct < volBaseline * 0.6) {
+    // Low volatility
+    volAdj = isPlus ? cfg.lowVolatilityAdjustPlus : cfg.lowVolatilityAdjustMain;
+  }
+
+  // 4) Rebound / market score adjustment
+  let reboundAdj = 0;
+  if (input.reboundStrength === "weak" || input.marketScore < 40) {
+    reboundAdj = -(isPlus ? cfg.weakReboundReductionPlus : cfg.weakReboundReductionMain);
+  } else if (input.reboundStrength === "strong" || input.marketScore > 70) {
+    reboundAdj = isPlus ? cfg.strongReboundBonusPlus : cfg.strongReboundBonusMain;
+  }
+
+  // 5) Sum adjustments
+  const rawTp = baseTpPct + buyCountAdj + volAdj + reboundAdj;
+
+  // 6) Guardrails
+  let minTp: number, maxTp: number;
+  if (isPlus) {
+    minTp = isBtc ? cfg.plusMinTpPctBtc : cfg.plusMinTpPctEth;
+    maxTp = isBtc ? cfg.plusMaxTpPctBtc : cfg.plusMaxTpPctEth;
+  } else {
+    minTp = isBtc ? cfg.mainMinTpPctBtc : cfg.mainMinTpPctEth;
+    maxTp = isBtc ? cfg.mainMaxTpPctBtc : cfg.mainMaxTpPctEth;
+  }
+
+  const clampedToMin = rawTp < minTp;
+  const clampedToMax = rawTp > maxTp;
+  const finalTpPct = clamp(rawTp, minTp, maxTp);
+
+  return {
+    finalTpPct: Math.round(finalTpPct * 100) / 100,
+    baseTpPct,
+    buyCountAdjustment: Math.round(buyCountAdj * 100) / 100,
+    volatilityAdjustment: Math.round(volAdj * 100) / 100,
+    reboundAdjustment: Math.round(reboundAdj * 100) / 100,
+    clampedToMin,
+    clampedToMax,
+    cycleType: input.cycleType,
+    minTpPct: minTp,
+    maxTpPct: maxTp,
+  };
 }
 
 // ─── Adaptive Position Sizing ──────────────────────────────────────

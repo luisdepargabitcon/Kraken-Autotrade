@@ -941,6 +941,13 @@ async function runMigration() {
     const idcaHumanPath = path.resolve(process.cwd(), "db", "migrations", "020_idca_human_messages.sql");
     await tryExecuteFile(db, idcaHumanPath, "idca_human_messages");
 
+    // ============================================================
+    // IDCA DYNAMIC TP + CYCLE PLUS (021)
+    // ============================================================
+    console.log("[migrate] Adding IDCA dynamic TP + cycle plus columns...");
+    const idcaDynTpPath = path.resolve(process.cwd(), "db", "migrations", "021_idca_dynamic_tp.sql");
+    await tryExecuteFile(db, idcaDynTpPath, "idca_dynamic_tp");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

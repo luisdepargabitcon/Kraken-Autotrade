@@ -52,6 +52,8 @@ export interface IdcaConfig {
   simulationTelegramEnabled: boolean;
   eventRetentionDays: number;
   orderArchiveDays: number;
+  dynamicTpConfigJson: Record<string, any>;
+  plusConfigJson: Record<string, any>;
   [key: string]: any;
 }
 
@@ -99,6 +101,10 @@ export interface IdcaCycle {
   lastBuyAt: string | null;
   closeReason: string | null;
   maxDrawdownPct: string | null;
+  tpBreakdownJson: any;
+  cycleType: string;
+  parentCycleId: number | null;
+  plusCyclesCompleted: number;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];

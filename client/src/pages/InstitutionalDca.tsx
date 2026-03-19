@@ -474,6 +474,12 @@ function ConfigTab() {
         </CardContent>
       </Card>
 
+      {/* Dynamic TP Config */}
+      <DynamicTpConfigSection config={config} updateConfig={updateConfig} />
+
+      {/* Plus Cycle Config */}
+      <PlusCycleConfigSection config={config} updateConfig={updateConfig} />
+
       {/* Asset Configs */}
       {assetConfigs?.map((ac) => (
         <Card key={ac.pair} className="border-border/50">
@@ -536,6 +542,180 @@ function ToggleField({ label, checked, onChange }: { label: string; checked: boo
       <Switch checked={checked} onCheckedChange={onChange} />
       <Label className="text-xs">{label}</Label>
     </div>
+  );
+}
+
+function SliderField({ label, value, min, max, step, onChange, tooltip }: {
+  label: string; value: number; min: number; max: number; step: number;
+  onChange: (v: number) => void; tooltip?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <Label className="text-[10px] font-mono text-muted-foreground uppercase" title={tooltip}>{label}</Label>
+        <span className="text-xs font-mono font-bold">{value.toFixed(step < 1 ? 1 : 0)}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+        onChange={(e) => onChange(parseFloat(e.target.value))} />
+    </div>
+  );
+}
+
+function DynamicTpConfigSection({ config, updateConfig }: { config: any; updateConfig: any }) {
+  const dtp = config.dynamicTpConfigJson || {};
+  const save = (patch: Record<string, any>) => {
+    updateConfig.mutate({ dynamicTpConfigJson: { ...dtp, ...patch } });
+  };
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-mono flex items-center gap-2">
+          <TrendingUp className="h-4 w-4" /> TAKE PROFIT DINÁMICO
+        </CardTitle>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Cuantas más compras tenga un ciclo, más sentido tiene permitir un TP algo más corto para facilitar la salida en rebotes. El trailing seguirá protegiendo la ganancia una vez alcanzado el TP dinámico.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2 flex items-center gap-1"><Zap className="h-3 w-3" /> Base TP</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Base TP BTC (%)" value={dtp.baseTpPctBtc ?? 4.0} min={0.5} max={10} step={0.1}
+              onChange={(v) => save({ baseTpPctBtc: v })} tooltip="TP base para ciclos BTC" />
+            <SliderField label="Base TP ETH (%)" value={dtp.baseTpPctEth ?? 5.0} min={0.5} max={10} step={0.1}
+              onChange={(v) => save({ baseTpPctEth: v })} tooltip="TP base para ciclos ETH" />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2 flex items-center gap-1"><Settings2 className="h-3 w-3" /> Ajustes por Compras</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Reducción/compra Main" value={dtp.reductionPerExtraBuyMain ?? 0.3} min={0} max={2} step={0.1}
+              onChange={(v) => save({ reductionPerExtraBuyMain: v })} tooltip="Cuánto baja el TP por cada compra extra en ciclo main" />
+            <SliderField label="Reducción/compra Plus" value={dtp.reductionPerExtraBuyPlus ?? 0.2} min={0} max={2} step={0.1}
+              onChange={(v) => save({ reductionPerExtraBuyPlus: v })} tooltip="Cuánto baja el TP por cada compra extra en ciclo plus" />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2 flex items-center gap-1"><Activity className="h-3 w-3" /> Ajustes por Rebote / Volatilidad</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Rebote débil Main (-)" value={dtp.weakReboundReductionMain ?? 0.5} min={0} max={2} step={0.1}
+              onChange={(v) => save({ weakReboundReductionMain: v })} />
+            <SliderField label="Rebote fuerte Main (+)" value={dtp.strongReboundBonusMain ?? 0.3} min={0} max={2} step={0.1}
+              onChange={(v) => save({ strongReboundBonusMain: v })} />
+            <SliderField label="Alta vol Main (+)" value={dtp.highVolatilityAdjustMain ?? 0.3} min={-1} max={2} step={0.1}
+              onChange={(v) => save({ highVolatilityAdjustMain: v })} />
+            <SliderField label="Baja vol Main (-)" value={dtp.lowVolatilityAdjustMain ?? -0.2} min={-2} max={1} step={0.1}
+              onChange={(v) => save({ lowVolatilityAdjustMain: v })} />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+            <SliderField label="Rebote débil Plus (-)" value={dtp.weakReboundReductionPlus ?? 0.3} min={0} max={2} step={0.1}
+              onChange={(v) => save({ weakReboundReductionPlus: v })} />
+            <SliderField label="Rebote fuerte Plus (+)" value={dtp.strongReboundBonusPlus ?? 0.2} min={0} max={2} step={0.1}
+              onChange={(v) => save({ strongReboundBonusPlus: v })} />
+            <SliderField label="Alta vol Plus (+)" value={dtp.highVolatilityAdjustPlus ?? 0.2} min={-1} max={2} step={0.1}
+              onChange={(v) => save({ highVolatilityAdjustPlus: v })} />
+            <SliderField label="Baja vol Plus (-)" value={dtp.lowVolatilityAdjustPlus ?? -0.1} min={-2} max={1} step={0.1}
+              onChange={(v) => save({ lowVolatilityAdjustPlus: v })} />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2 flex items-center gap-1"><ShieldAlert className="h-3 w-3" /> Guardrails Main</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Min TP BTC (%)" value={dtp.mainMinTpPctBtc ?? 2.0} min={0.5} max={5} step={0.1}
+              onChange={(v) => save({ mainMinTpPctBtc: v })} />
+            <SliderField label="Max TP BTC (%)" value={dtp.mainMaxTpPctBtc ?? 6.0} min={2} max={15} step={0.1}
+              onChange={(v) => save({ mainMaxTpPctBtc: v })} />
+            <SliderField label="Min TP ETH (%)" value={dtp.mainMinTpPctEth ?? 2.5} min={0.5} max={5} step={0.1}
+              onChange={(v) => save({ mainMinTpPctEth: v })} />
+            <SliderField label="Max TP ETH (%)" value={dtp.mainMaxTpPctEth ?? 8.0} min={2} max={15} step={0.1}
+              onChange={(v) => save({ mainMaxTpPctEth: v })} />
+          </div>
+          <div className="text-xs font-mono text-muted-foreground mb-2 mt-3 flex items-center gap-1"><ShieldAlert className="h-3 w-3" /> Guardrails Plus</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Min TP BTC (%)" value={dtp.plusMinTpPctBtc ?? 2.5} min={0.5} max={5} step={0.1}
+              onChange={(v) => save({ plusMinTpPctBtc: v })} />
+            <SliderField label="Max TP BTC (%)" value={dtp.plusMaxTpPctBtc ?? 5.0} min={2} max={15} step={0.1}
+              onChange={(v) => save({ plusMaxTpPctBtc: v })} />
+            <SliderField label="Min TP ETH (%)" value={dtp.plusMinTpPctEth ?? 3.0} min={0.5} max={5} step={0.1}
+              onChange={(v) => save({ plusMinTpPctEth: v })} />
+            <SliderField label="Max TP ETH (%)" value={dtp.plusMaxTpPctEth ?? 6.0} min={2} max={15} step={0.1}
+              onChange={(v) => save({ plusMaxTpPctEth: v })} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PlusCycleConfigSection({ config, updateConfig }: { config: any; updateConfig: any }) {
+  const plus = config.plusConfigJson || {};
+  const save = (patch: Record<string, any>) => {
+    updateConfig.mutate({ plusConfigJson: { ...plus, ...patch } });
+  };
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-mono flex items-center gap-2">
+          <Sparkles className="h-4 w-4" /> CICLO PLUS
+        </CardTitle>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          El Ciclo Plus solo se activa cuando el ciclo principal ya agotó sus entradas normales y el precio sigue bajando. Sirve para intentar capturar rebotes tácticos sin abrir un nuevo ciclo principal.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2">Activación</div>
+          <div className="flex flex-wrap gap-4">
+            <ToggleField label="Plus Habilitado" checked={plus.enabled ?? false}
+              onChange={(v) => save({ enabled: v })} />
+            <ToggleField label="Requiere main agotado" checked={plus.requireMainExhausted ?? true}
+              onChange={(v) => save({ requireMainExhausted: v })} />
+            <ToggleField label="Confirmar rebote" checked={plus.requireReboundConfirmation ?? true}
+              onChange={(v) => save({ requireReboundConfirmation: v })} />
+            <ToggleField label="Auto-cerrar si main cierra" checked={plus.autoCloseIfMainClosed ?? true}
+              onChange={(v) => save({ autoCloseIfMainClosed: v })} />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2">Capital y Riesgo</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Capital asignado (%)" value={plus.capitalAllocationPct ?? 15} min={1} max={50} step={1}
+              onChange={(v) => save({ capitalAllocationPct: v })} tooltip="% del capital disponible del módulo para el plus" />
+            <SliderField label="Max exposición asset (%)" value={plus.maxExposurePctPerAsset ?? 20} min={5} max={50} step={1}
+              onChange={(v) => save({ maxExposurePctPerAsset: v })} />
+            <SliderField label="Caída extra activación (%)" value={plus.activationExtraDipPct ?? 4.0} min={1} max={15} step={0.5}
+              onChange={(v) => save({ activationExtraDipPct: v })} tooltip="Caída mínima adicional tras agotarse el main" />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2">Entradas</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="Max entradas plus" value={plus.maxPlusEntries ?? 3} min={1} max={6} step={1}
+              onChange={(v) => save({ maxPlusEntries: v })} />
+            <SliderField label="Max plus por main" value={plus.maxPlusCyclesPerMain ?? 2} min={1} max={4} step={1}
+              onChange={(v) => save({ maxPlusCyclesPerMain: v })} />
+            <SliderField label="Cooldown entre compras (min)" value={plus.cooldownMinutesBetweenBuys ?? 60} min={5} max={360} step={5}
+              onChange={(v) => save({ cooldownMinutesBetweenBuys: v })} />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-mono text-muted-foreground mb-2">Salida Plus</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SliderField label="TP Base BTC (%)" value={plus.baseTpPctBtc ?? 4.0} min={0.5} max={10} step={0.1}
+              onChange={(v) => save({ baseTpPctBtc: v })} />
+            <SliderField label="TP Base ETH (%)" value={plus.baseTpPctEth ?? 4.5} min={0.5} max={10} step={0.1}
+              onChange={(v) => save({ baseTpPctEth: v })} />
+            <SliderField label="Trailing BTC (%)" value={plus.trailingPctBtc ?? 1.0} min={0.3} max={5} step={0.1}
+              onChange={(v) => save({ trailingPctBtc: v })} />
+            <SliderField label="Trailing ETH (%)" value={plus.trailingPctEth ?? 1.2} min={0.3} max={5} step={0.1}
+              onChange={(v) => save({ trailingPctEth: v })} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -609,9 +789,14 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 <Badge variant="outline" className={cn("text-[10px] font-mono border", MODE_COLORS[cycle.mode])}>
                   {cycle.mode?.toUpperCase()}
                 </Badge>
+                {cycle.cycleType === "plus" && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-purple-400 border-purple-400/50">PLUS</Badge>
+                )}
               </div>
               <div className="text-[10px] text-muted-foreground mt-1">
                 Inicio: {fmtDate(cycle.startedAt)} | Compras: {cycle.buyCount} | Score: {cycle.marketScore || "—"}
+                {cycle.tpTargetPct && ` | TP: ${parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%`}
+                {cycle.parentCycleId && ` | Parent: #${cycle.parentCycleId}`}
                 {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
               </div>
             </div>
@@ -629,6 +814,20 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
 
         {expanded && (
           <div className="border-t border-border/30 bg-muted/5">
+            {cycle.tpBreakdownJson && (
+              <div className="px-9 py-2 border-b border-border/20">
+                <div className="text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="font-semibold text-primary">TP Dinámico: {cycle.tpBreakdownJson.finalTpPct?.toFixed(1)}%</span>
+                  <span>Base: {cycle.tpBreakdownJson.baseTpPct?.toFixed(1)}%</span>
+                  <span>Compras: {cycle.tpBreakdownJson.buyCountAdjustment > 0 ? "+" : ""}{cycle.tpBreakdownJson.buyCountAdjustment?.toFixed(1)}%</span>
+                  <span>Volatilidad: {cycle.tpBreakdownJson.volatilityAdjustment > 0 ? "+" : ""}{cycle.tpBreakdownJson.volatilityAdjustment?.toFixed(1)}%</span>
+                  <span>Rebote: {cycle.tpBreakdownJson.reboundAdjustment > 0 ? "+" : ""}{cycle.tpBreakdownJson.reboundAdjustment?.toFixed(1)}%</span>
+                  <span className="text-muted-foreground/60">[{cycle.tpBreakdownJson.minTpPct?.toFixed(1)}-{cycle.tpBreakdownJson.maxTpPct?.toFixed(1)}%]</span>
+                  {cycle.tpBreakdownJson.clampedToMin && <span className="text-yellow-400">clamped min</span>}
+                  {cycle.tpBreakdownJson.clampedToMax && <span className="text-yellow-400">clamped max</span>}
+                </div>
+              </div>
+            )}
             {ordersLoading ? (
               <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground text-xs">
                 <Loader2 className="h-4 w-4 animate-spin" /> Cargando órdenes...

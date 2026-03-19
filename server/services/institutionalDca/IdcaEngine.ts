@@ -19,10 +19,43 @@ import type {
   IdcaBlockReason,
   SafetyOrderLevel,
   IdcaSizeProfile,
+  DynamicTpConfig,
+  IdcaCycleType,
 } from "./IdcaTypes";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 
 const TAG = "[IDCA]";
+
+const DEFAULT_DYNAMIC_TP_CONFIG: DynamicTpConfig = {
+  baseTpPctBtc: 4.0, baseTpPctEth: 5.0,
+  reductionPerExtraBuyMain: 0.3, reductionPerExtraBuyPlus: 0.2,
+  weakReboundReductionMain: 0.5, weakReboundReductionPlus: 0.3,
+  strongReboundBonusMain: 0.3, strongReboundBonusPlus: 0.2,
+  highVolatilityAdjustMain: 0.3, highVolatilityAdjustPlus: 0.2,
+  lowVolatilityAdjustMain: -0.2, lowVolatilityAdjustPlus: -0.1,
+  mainMinTpPctBtc: 2.0, mainMaxTpPctBtc: 6.0,
+  mainMinTpPctEth: 2.5, mainMaxTpPctEth: 8.0,
+  plusMinTpPctBtc: 2.5, plusMaxTpPctBtc: 5.0,
+  plusMinTpPctEth: 3.0, plusMaxTpPctEth: 6.0,
+};
+
+function getDynamicTpConfig(config: InstitutionalDcaConfigRow): DynamicTpConfig {
+  const raw = config.dynamicTpConfigJson as any;
+  if (!raw || typeof raw !== "object") return DEFAULT_DYNAMIC_TP_CONFIG;
+  return { ...DEFAULT_DYNAMIC_TP_CONFIG, ...raw };
+}
+
+function getReboundStrength(pair: string): "none" | "weak" | "strong" {
+  const candles = ohlcCache.get(pair) || [];
+  if (candles.length < 3) return "none";
+  const recentCandles = candles.slice(-5);
+  const localLow = Math.min(...recentCandles.map(c => c.low));
+  const currentPrice = priceCache.get(pair) || recentCandles[recentCandles.length - 1]?.close || 0;
+  const isRebound = smart.detectRebound({ recentCandles, currentPrice, localLow });
+  if (!isRebound) return "none";
+  const bounceFromLow = currentPrice > 0 ? ((currentPrice - localLow) / localLow) * 100 : 0;
+  return bounceFromLow > 1.5 ? "strong" : "weak";
+}
 
 // ─── Engine State ──────────────────────────────────────────────────
 
@@ -267,16 +300,25 @@ async function checkEntry(
   const baseBuyUsd = capitalForCycle * (baseBuyPct / 100);
   const quantity = baseBuyUsd / currentPrice;
 
-  // Compute TP
-  const tpPct = config.adaptiveTpEnabled
-    ? smart.computeAdaptiveTp({
-        pair,
-        buyCount: 1,
-        volatilityPct: getVolatility(pair),
-        minTpPct: parseFloat(String(pair === "BTC/USD" ? config.minTpPctBtc : config.minTpPctEth)),
-        maxTpPct: parseFloat(String(pair === "BTC/USD" ? config.maxTpPctBtc : config.maxTpPctEth)),
-      })
-    : parseFloat(String(assetConfig.takeProfitPct));
+  // Compute TP (dynamic or static fallback)
+  let tpPct: number;
+  let tpBreakdown: any = null;
+  if (config.adaptiveTpEnabled) {
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
+      pair,
+      cycleType: "main",
+      buyCount: 1,
+      marketScore: check.marketScore || 50,
+      volatilityPct: getVolatility(pair),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
+    });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdown = breakdown;
+  } else {
+    tpPct = parseFloat(String(assetConfig.takeProfitPct));
+  }
 
   const tpPrice = currentPrice * (1 + tpPct / 100);
 
@@ -325,6 +367,8 @@ async function checkEntry(
     volatilityScore: (check.volatilityScore || 0).toFixed(2),
     adaptiveSizeProfile: check.sizeProfile || "balanced",
     lastBuyAt: new Date(),
+    tpBreakdownJson: tpBreakdown,
+    cycleType: "main",
   });
 
   // Create order record
@@ -588,16 +632,23 @@ async function checkSafetyBuy(
   const avgForNextBuy = newAvgPrice; // Reference from new avg
   const nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
 
-  // Adaptive TP
+  // Dynamic TP recalculation
   let tpPct = parseFloat(String(assetConfig.takeProfitPct));
+  let tpBreakdownSafety: any = null;
+  const cycleType = (cycle.cycleType as IdcaCycleType) || "main";
   if (config.adaptiveTpEnabled) {
-    tpPct = smart.computeAdaptiveTp({
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
       pair,
+      cycleType,
       buyCount: newBuyCount,
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
       volatilityPct: getVolatility(pair),
-      minTpPct: parseFloat(String(pair === "BTC/USD" ? config.minTpPctBtc : config.minTpPctEth)),
-      maxTpPct: parseFloat(String(pair === "BTC/USD" ? config.maxTpPctBtc : config.maxTpPctEth)),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
     });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdownSafety = breakdown;
   }
   const tpPrice = newAvgPrice * (1 + tpPct / 100);
 
@@ -610,6 +661,7 @@ async function checkSafetyBuy(
     nextBuyPrice: nextBuyPriceCalc?.toFixed(8) || null,
     tpTargetPct: tpPct.toFixed(2),
     tpTargetPrice: tpPrice.toFixed(8),
+    tpBreakdownJson: tpBreakdownSafety,
     lastBuyAt: new Date(),
   });
 

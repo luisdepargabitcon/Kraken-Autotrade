@@ -95,3 +95,70 @@ export const SIZE_PROFILES: Record<IdcaSizeProfile, number[]> = {
   balanced: [25, 25, 25, 25],
   defensive: [15, 20, 30, 35],
 };
+
+export type IdcaCycleType = "main" | "plus";
+
+export interface DynamicTpConfig {
+  baseTpPctBtc: number;
+  baseTpPctEth: number;
+  reductionPerExtraBuyMain: number;
+  reductionPerExtraBuyPlus: number;
+  weakReboundReductionMain: number;
+  weakReboundReductionPlus: number;
+  strongReboundBonusMain: number;
+  strongReboundBonusPlus: number;
+  highVolatilityAdjustMain: number;
+  highVolatilityAdjustPlus: number;
+  lowVolatilityAdjustMain: number;
+  lowVolatilityAdjustPlus: number;
+  mainMinTpPctBtc: number;
+  mainMaxTpPctBtc: number;
+  mainMinTpPctEth: number;
+  mainMaxTpPctEth: number;
+  plusMinTpPctBtc: number;
+  plusMaxTpPctBtc: number;
+  plusMinTpPctEth: number;
+  plusMaxTpPctEth: number;
+}
+
+export interface TpBreakdown {
+  finalTpPct: number;
+  baseTpPct: number;
+  buyCountAdjustment: number;
+  volatilityAdjustment: number;
+  reboundAdjustment: number;
+  clampedToMin: boolean;
+  clampedToMax: boolean;
+  cycleType: IdcaCycleType;
+  minTpPct: number;
+  maxTpPct: number;
+}
+
+export interface DynamicTpInput {
+  pair: string;
+  cycleType: IdcaCycleType;
+  buyCount: number;
+  marketScore: number;
+  volatilityPct: number;
+  reboundStrength: "none" | "weak" | "strong";
+  config: DynamicTpConfig;
+}
+
+export interface PlusConfig {
+  enabled: boolean;
+  maxPlusCyclesPerMain: number;
+  maxPlusEntries: number;
+  capitalAllocationPct: number;
+  activationExtraDipPct: number;
+  requireMainExhausted: boolean;
+  requireReboundConfirmation: boolean;
+  cooldownMinutesBetweenBuys: number;
+  autoCloseIfMainClosed: boolean;
+  maxExposurePctPerAsset: number;
+  entryDipSteps: number[];
+  entrySizingMode: "fixed" | "adaptive";
+  baseTpPctBtc: number;
+  baseTpPctEth: number;
+  trailingPctBtc: number;
+  trailingPctEth: number;
+}
