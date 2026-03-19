@@ -2,6 +2,50 @@
 
 ---
 
+## 2026-03-19 — IDCA: Rediseño Config Tab + Ciclos Expandibles en Resumen
+
+### Commit
+- `b2270ea` — Rediseño completo pestaña Config + ciclos expandibles en Resumen
+
+### Cambios
+
+**1. Ciclos expandibles en pestaña Resumen**
+- Los ciclos activos en la pestaña Resumen ahora usan `CycleDetailRow` (igual que en Ciclos)
+- Se pueden expandir para ver órdenes, TP breakdown, etc. directamente desde el dashboard principal
+
+**2. Rediseño completo de la pestaña Config — 4 bloques**
+
+La pestaña Config se reorganizó de múltiples cards técnicas a **4 bloques claros**:
+
+- **Bloque 1 — Dinero y límites** (sliders rojos): capital asignado, exposición módulo/asset, drawdown, límites combinados BTC/ETH, proteger principal
+- **Bloque 2 — Cuándo comprar** (sliders azules): min dip BTC/ETH, smart mode, rebound confirm, bloqueos (breakdown, spread, presión venta), BTC gate, sizing adaptativo, activos habilitados
+- **Bloque 3 — Cuándo vender** (sliders verdes): TP base BTC/ETH, trailing BTC/ETH, TP dinámico, trailing dinámico ATR, breakeven, sección colapsable "Ajustes finos del TP dinámico" con guardrails
+- **Bloque 4 — Compras extra y Ciclo Plus** (sliders ámbar/cyan): safety orders BTC/ETH, ciclo Plus con reveal condicional (solo visible si está habilitado)
+
+**3. Componentes nuevos**
+
+- **`ColorSlider`** — Slider Radix con dot de color, valor grande visible, descripción. Colores: red, green, blue, cyan, amber, purple
+- **`ConfigBlock`** — Card wrapper con icono, título y descripción del bloque
+- **`ToggleField` mejorado** — Ahora acepta prop `desc` para mostrar explicación debajo del toggle
+
+**4. Mejoras UX**
+
+- Cada control tiene explicación en castellano visible (no oculta en tooltip)
+- Sliders estilo Estrategias: anchos, con valor numérico grande, coloreados por tipo
+- Sección avanzada TP colapsable para no saturar la vista principal
+- Plus config solo visible cuando está habilitado (progressive disclosure)
+- Más separación vertical, divisores suaves, cards limpias
+
+### Archivos Modificados
+- `client/src/pages/InstitutionalDca.tsx`
+
+### Verificación
+- ✅ TypeScript compila limpio (0 errores)
+- ✅ No se modificó backend ni lógica
+- ✅ Todos los campos de configuración preservados
+
+---
+
 ## 2026-03-20 — IDCA: Expansión Triple — Vista Expandible + TP Dinámico + Ciclo Plus
 
 ### Resumen
