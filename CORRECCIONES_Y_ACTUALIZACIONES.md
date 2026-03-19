@@ -2,6 +2,117 @@
 
 ---
 
+## 2026-03-20 — IDCA: Expansión Triple — Vista Expandible + TP Dinámico + Ciclo Plus
+
+### Resumen
+Implementación en 3 fases continuas de mejoras al módulo Institutional DCA:
+1. **FASE 1** — Vista expandible de ciclos con lazy loading de órdenes
+2. **FASE 2** — Take Profit Dinámico con config JSONB, cálculo centralizado y sliders UI
+3. **FASE 3** — Ciclo Plus táctico con activación, entradas, cierre y eventos
+
+### Commits
+- `e56af96` — FASE 1: Vista expandible de ciclos
+- `40e3110` — FASE 2: Dynamic Take Profit system + Plus Cycle config UI
+- `2f4a7ed` — FASE 3: Ciclo Plus complete engine + events + UI
+
+### FASE 1 — Vista Expandible de Ciclos
+- **useIdcaCycleOrders** hook con lazy loading y caching por ciclo
+- **CycleDetailRow** con chevron expand/collapse
+- Subtabla de órdenes con fecha, tipo, lado, precio, cantidad, valor, fees, slippage, motivo humano
+- Totales acumulados al pie de la subtabla
+
+### FASE 2 — Take Profit Dinámico
+**Migración 021:**
+- Config: `dynamic_tp_config_json` JSONB, `plus_config_json` JSONB
+- Cycles: `tp_breakdown_json` JSONB, `cycle_type` TEXT, `parent_cycle_id` INT, `plus_cycles_completed` INT
+
+**Tipos:**
+- `DynamicTpConfig` (20 campos: base TP, reducciones, ajustes vol/rebote, guardrails main/plus)
+- `TpBreakdown` (resultado desglosado del cálculo)
+- `DynamicTpInput`, `PlusConfig`, `IdcaCycleType`
+
+**SmartLayer:**
+- `computeDynamicTakeProfit()` — evolución de `computeAdaptiveTp` con 4 factores: base → buyCount adj → volatility adj → rebound/score adj → clamp guardrails
+
+**Engine:**
+- `getDynamicTpConfig()` + `getReboundStrength()` helpers
+- Ambos call sites de `computeAdaptiveTp` reemplazados por `computeDynamicTakeProfit`
+- `tpBreakdownJson` almacenado en ciclo al crear y en cada safety buy
+
+**UI:**
+- `SliderField` component reutilizable
+- `DynamicTpConfigSection` — 4 grupos: Base TP, Ajustes por Compras, Rebote/Volatilidad, Guardrails Main/Plus
+- `PlusCycleConfigSection` — 4 grupos: Activación, Capital/Riesgo, Entradas, Salida
+- TP breakdown inline en ciclos expandidos
+
+### FASE 3 — Ciclo Plus
+**Repository:**
+- `getActivePlusCycle(pair, mode, parentCycleId)` — busca plus activo por parent
+- `getClosedPlusCyclesCount(parentCycleId)` — cuenta plus cerrados
+- `getActiveCycle` ahora filtra por `cycleType='main'`
+
+**Engine — Activación (`checkPlusActivation`):**
+5 guardias secuenciales:
+1. Main agotado (todas las safety orders usadas)
+2. Max plus cycles por main no alcanzado
+3. Dip extra desde avg del main ≥ `activationExtraDipPct`
+4. Rebound confirmado (si configurado)
+5. Exposición por asset dentro de límites
+
+**Engine — Gestión (`managePlusCycle`):**
+- PnL update cada tick
+- Auto-close si main cierra (`autoCloseIfMainClosed`)
+- TP check → cierre directo (sin partial sell)
+- Trailing logic con trailing pct específico de plus
+- Safety buys con cooldown + dip steps + dynamic TP recalc
+
+**Engine — Cierre (`closePlusCycle`):**
+- Final sell con fees/slippage
+- Realized PnL calculation
+- Simulation wallet update
+- Live sell execution
+- Human event + Telegram notification
+
+**Eventos:**
+- `plus_cycle_activated` — "Ciclo Plus activado"
+- `plus_safety_buy_executed` — "Compra de seguridad Plus ejecutada"
+- `plus_cycle_closed` — "Ciclo Plus cerrado"
+- `FormatContext` extendido: `parentCycleId`, `realizedPnl`, `closeReason`
+
+**UI:**
+- Badge PLUS púrpura en ciclos tipo plus
+- Parent cycle ID en info line
+- TP% actual visible en resumen de ciclo
+
+### Archivos Modificados
+- `db/migrations/021_idca_dynamic_tp.sql` (NUEVO)
+- `script/migrate.ts`
+- `shared/schema.ts`
+- `server/services/institutionalDca/IdcaTypes.ts`
+- `server/services/institutionalDca/IdcaSmartLayer.ts`
+- `server/services/institutionalDca/IdcaEngine.ts`
+- `server/services/institutionalDca/IdcaRepository.ts`
+- `server/services/institutionalDca/IdcaReasonCatalog.ts`
+- `server/services/institutionalDca/IdcaMessageFormatter.ts`
+- `client/src/hooks/useInstitutionalDca.ts`
+- `client/src/pages/InstitutionalDca.tsx`
+
+### Verificación
+- ✅ TypeScript compila limpio (`npx tsc --noEmit` — 0 errors)
+- ✅ Migración 021 registrada en migrate.ts
+- ✅ Plus desactivado por defecto (`enabled: false`)
+- ✅ Dynamic TP backward compatible (usa adaptive TP toggle existente)
+
+### Deploy STG
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+# Migración 021 se ejecuta automáticamente al arrancar
+```
+
+---
+
 ## 2026-03-19 — IDCA: Sistema de Mensajes Humanos Dual (Castellano Natural + Técnico)
 
 ### Cambio
