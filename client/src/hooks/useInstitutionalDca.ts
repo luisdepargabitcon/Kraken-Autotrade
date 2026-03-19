@@ -119,6 +119,7 @@ export interface IdcaOrder {
   slippageUsd: string;
   netValueUsd: string;
   triggerReason: string | null;
+  humanReason: string | null;
   exchangeOrderId: string | null;
   executedAt: string;
 }
@@ -383,5 +384,20 @@ export function useIdcaTelegramTest() {
       const res = await apiRequest("POST", `${PREFIX}/telegram/test`);
       return res.json();
     },
+  });
+}
+
+export function useIdcaCycleOrders(cycleId: number | null) {
+  return useQuery<IdcaOrder[]>({
+    queryKey: ["idca", "cycles", cycleId, "orders"],
+    queryFn: async () => {
+      if (!cycleId) return [];
+      const res = await fetch(`${PREFIX}/cycles/${cycleId}`);
+      if (!res.ok) throw new Error("Failed to fetch cycle orders");
+      const data = await res.json();
+      return data.orders || [];
+    },
+    enabled: !!cycleId,
+    staleTime: 30000,
   });
 }

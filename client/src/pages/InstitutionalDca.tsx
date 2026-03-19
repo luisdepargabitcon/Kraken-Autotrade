@@ -28,6 +28,7 @@ import {
   useEmergencyCloseAll,
   useResetSimulationWallet,
   useIdcaTelegramTest,
+  useIdcaCycleOrders,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -60,6 +61,10 @@ import {
   TrendingUp,
   Wallet,
   Zap,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -581,14 +586,20 @@ function CyclesTab() {
 }
 
 function CycleDetailRow({ cycle }: { cycle: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   return (
     <Card className="border-border/50">
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <CardContent className="p-0">
+        <div
+          className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/20 transition-colors"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="flex items-center gap-2">
+            {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-mono font-bold">{cycle.pair}</span>
@@ -615,6 +626,82 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
             </div>
           </div>
         </div>
+
+        {expanded && (
+          <div className="border-t border-border/30 bg-muted/5">
+            {ordersLoading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground text-xs">
+                <Loader2 className="h-4 w-4 animate-spin" /> Cargando órdenes...
+              </div>
+            ) : (!orders || orders.length === 0) ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground text-xs">
+                <Package className="h-4 w-4 opacity-50" /> Sin órdenes en este ciclo
+              </div>
+            ) : (
+              <div className="overflow-auto max-h-[400px]">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-background/95 border-b border-border/50">
+                    <tr className="text-[10px] text-muted-foreground">
+                      <th className="text-left p-2 pl-9">Fecha</th>
+                      <th className="text-left p-2">Tipo</th>
+                      <th className="text-left p-2">Lado</th>
+                      <th className="text-right p-2">Precio</th>
+                      <th className="text-right p-2">Cantidad</th>
+                      <th className="text-right p-2">Valor USD</th>
+                      <th className="text-right p-2">Fees</th>
+                      <th className="text-right p-2">Slippage</th>
+                      <th className="text-left p-2">Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {orders.map((order) => {
+                      const isBuy = order.side === "buy";
+                      const slip = parseFloat(String(order.slippageUsd || "0"));
+                      return (
+                        <tr key={order.id} className="border-b border-border/20 hover:bg-muted/20">
+                          <td className="p-2 pl-9 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(order.executedAt)}</td>
+                          <td className="p-2">
+                            <Badge variant="outline" className="text-[9px]">{translateOrderType(order.orderType)}</Badge>
+                          </td>
+                          <td className={cn("p-2 font-semibold", isBuy ? "text-green-400" : "text-red-400")}>
+                            {isBuy ? "COMPRA" : "VENTA"}
+                          </td>
+                          <td className="p-2 text-right">{fmtPrice(order.price)}</td>
+                          <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
+                          <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
+                          <td className="p-2 text-right text-muted-foreground">{fmtUsd(order.feesUsd)}</td>
+                          <td className="p-2 text-right text-muted-foreground">{slip > 0 ? fmtUsd(slip) : "—"}</td>
+                          <td className="p-2 text-[10px] text-muted-foreground max-w-[200px] truncate" title={order.triggerReason || ""}>
+                            {translateOrderReason(order)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="border-t border-border/50 bg-muted/10">
+                    <tr className="text-[10px] text-muted-foreground font-semibold">
+                      <td colSpan={2} className="p-2 pl-9">Total: {orders.length} órdenes</td>
+                      <td className="p-2">
+                        <span className="text-green-400">{orders.filter(o => o.side === "buy").length}C</span>
+                        {" / "}
+                        <span className="text-red-400">{orders.filter(o => o.side === "sell").length}V</span>
+                      </td>
+                      <td className="p-2 text-right">—</td>
+                      <td className="p-2 text-right">—</td>
+                      <td className="p-2 text-right">
+                        {fmtUsd(orders.reduce((sum, o) => sum + parseFloat(String(o.netValueUsd || "0")), 0))}
+                      </td>
+                      <td className="p-2 text-right">
+                        {fmtUsd(orders.reduce((sum, o) => sum + parseFloat(String(o.feesUsd || "0")), 0))}
+                      </td>
+                      <td colSpan={2} className="p-2">—</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
