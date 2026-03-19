@@ -290,6 +290,12 @@ Timestamp: ${new Date().toISOString()}`;
   return send(config.telegramChatId, msg, config.telegramThreadId || undefined);
 }
 
+export async function sendRawMessage(message: string): Promise<boolean> {
+  const config = await repo.getIdcaConfig();
+  if (!config.telegramChatId || !config.telegramEnabled) return false;
+  return send(config.telegramChatId, message, config.telegramThreadId || undefined);
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function formatDuration(start: Date, end: Date): string {

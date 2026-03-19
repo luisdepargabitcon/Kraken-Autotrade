@@ -83,6 +83,15 @@ export async function registerRoutes(
     }
   });
 
+  // Diagnostic endpoint for exchange private API coordination
+  app.get("/api/exchange-diagnostics", (req, res) => {
+    try {
+      res.json(ExchangeFactory.getDiagnostics());
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
   // Load saved API credentials on startup
   try {
     const apiConfig = await storage.getApiConfig();

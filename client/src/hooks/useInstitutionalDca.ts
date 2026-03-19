@@ -492,6 +492,19 @@ export function useToggleSoloSalida() {
   });
 }
 
+export function useDeleteManualCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (cycleId: number) => {
+      const res = await apiRequest("DELETE", `${PREFIX}/cycles/${cycleId}/manual`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 export function useIdcaCycleOrders(cycleId: number | null) {
   return useQuery<IdcaOrder[]>({
     queryKey: ["idca", "cycles", cycleId, "orders"],

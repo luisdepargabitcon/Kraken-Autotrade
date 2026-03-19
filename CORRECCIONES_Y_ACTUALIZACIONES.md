@@ -2,6 +2,110 @@
 
 ---
 
+## 2026-03-20 — FASE 1: Corrección error nonce + Coordinación API privada
+
+### Problema
+Error `EAPI:Invalid nonce` intermitente en Kraken. Auditoría completa determinó que la causa más probable es overlap de deploy (contenedor viejo aún procesando mientras el nuevo arranca, ambos con nonces independientes sobre la misma API key). Dentro de un proceso único, el `krakenRateLimiter` con concurrency=1 ya serializa las llamadas correctamente.
+
+### Causa raíz confirmada
+- **Overlap de deploy**: Al reiniciar contenedor Docker, hay una ventana donde dos instancias comparten la misma API key con contadores de nonce independientes en memoria.
+- **RevolutX no usa nonce** — usa firma Ed25519 con timestamp. El error `EAPI:Invalid nonce` es 100% Kraken.
+- **Nonce en memoria**: `lastNonce` se reseteaba a 0 en cada reinicio, lo que podía generar nonces menores que los del proceso anterior si este aún estaba activo.
+
+### Solución implementada
+
+#### A) NonceManager centralizado (`server/services/exchanges/NonceManager.ts`) — NUEVO
+- Generador monotónico: `nonce = max(Date.now() * 1000, lastNonce + 1)`
+- **Padding de arranque de 10s**: Al inicializar, `lastNonce = (Date.now() + 10000) * 1000` para garantizar que nonces del nuevo proceso siempre superen cualquier nonce del proceso anterior
+- Singleton `krakenNonceManager` exportado
+- Stats de diagnóstico: lastNonce, callCount, startupPaddingMs
+
+#### B) BalanceCache compartido (`server/services/exchanges/BalanceCache.ts`) — NUEVO
+- Cache con TTL 5s para balances de cualquier exchange
+- Evita llamadas redundantes de getBalance() desde múltiples módulos
+- Se invalida automáticamente tras placeOrder/cancelOrder
+- Stats: hits, misses, entries
+
+#### C) KrakenService mejorado (`server/services/kraken.ts`)
+- Usa `krakenNonceManager.generate()` en vez del generador local
+- `getBalance()` usa BalanceCache (cache hit evita llamada API)
+- `placeOrder()`, `placeOrderRaw()`, `cancelOrder()` invalidan BalanceCache
+
+#### D) RevolutXService mejorado (`server/services/exchanges/RevolutXService.ts`)
+- **Rate limiter FIFO**: Cola con 250ms mínimo entre peticiones (configurable via `REVOLUTX_MIN_TIME_MS`)
+- `getBalance()` usa BalanceCache
+- `placeOrder()` invalida BalanceCache
+- Stats de rate limiter expuestas
+
+#### E) krakenRateLimiter mejorado (`server/utils/krakenRateLimiter.ts`)
+- Tracking de origen de módulo (campo `origin` opcional en `schedule()`)
+- Contadores: totalCalls, totalErrors
+- Logging automático para llamadas lentas (>2s) o con error
+- Formato: `[KrakenRL] origin=X waited=Yms duration=Zms queue=N`
+
+#### F) ExchangeFactory + Endpoint diagnóstico
+- `ExchangeFactory.getDiagnostics()` — retorna estado completo del sistema de coordinación
+- Endpoint `GET /api/exchange-diagnostics` — nonce stats, rate limiter stats, balance cache stats, exchange status
+
+### Archivos modificados
+- `server/services/exchanges/NonceManager.ts` — NUEVO
+- `server/services/exchanges/BalanceCache.ts` — NUEVO
+- `server/services/kraken.ts` — NonceManager + BalanceCache
+- `server/services/exchanges/RevolutXService.ts` — Rate limiter + BalanceCache
+- `server/utils/krakenRateLimiter.ts` — Origin tracking + stats
+- `server/services/exchanges/ExchangeFactory.ts` — getDiagnostics()
+- `server/routes.ts` — Endpoint /api/exchange-diagnostics
+
+### Verificaciones
+- TypeScript build: OK (0 errores)
+- Todas las llamadas privadas Kraken siguen pasando por krakenRateLimiter (concurrency=1)
+- Nonce padding 10s protege contra overlap de deploy
+- BalanceCache reduce llamadas redundantes
+
+---
+
+## 2026-03-20 — FASE 2: Eliminar ciclos manuales/importados
+
+### Descripción
+Permite eliminar ciclos manuales/importados que se crearon por error, con validaciones de seguridad y confirmación fuerte.
+
+### Reglas de negocio
+1. **Solo ciclos manual/importados** (`isImported=true` OR `sourceType='manual'`)
+2. **Sin actividad post-importación** → Hard delete (ciclo + órdenes + eventos)
+3. **Con ventas post-importación** → Soft delete (archivado con status='archived')
+4. **Ciclos no manuales** → Bloqueado, error 400
+
+### Backend
+- `IdcaRepository.deleteManualCycle(cycleId)` — Lógica de eliminación con validaciones
+- `DELETE /api/institutional-dca/cycles/:id/manual` — Endpoint con validación, evento de trazabilidad y notificación Telegram
+- Evento `manual_cycle_deleted` con payload completo (action, cycleId, pair, reason, deletedBy)
+- `IdcaTelegramNotifier.sendRawMessage()` — Para enviar notificación de eliminación
+
+### Frontend
+- Hook `useDeleteManualCycle()` — Mutation DELETE con invalidación de queries
+- Botón "Eliminar" (icono papelera) visible solo en ciclos manuales/importados no cerrados
+- Modal de confirmación con:
+  - Datos del ciclo (par, tipo, estado, capital, fecha importación)
+  - Aviso de que ciclos con actividad post-importación se archivan
+  - Botones Cancelar / Eliminar con loading state
+- Toast con resultado: eliminado, archivado, o error
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaRepository.ts` — deleteManualCycle()
+- `server/routes/institutionalDca.routes.ts` — DELETE endpoint
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — sendRawMessage()
+- `client/src/hooks/useInstitutionalDca.ts` — useDeleteManualCycle()
+- `client/src/pages/InstitutionalDca.tsx` — Botón eliminar + modal confirmación
+
+### Verificaciones
+- TypeScript build: OK (0 errores)
+- Solo ciclos manuales muestran opción eliminar
+- Ciclos no manuales no muestran botón
+- Endpoint valida tipo de ciclo antes de eliminar
+- Con actividad post-importación → archiva en vez de borrar
+
+---
+
 ## 2026-03-20 — FIX: Auto-migración columnas IDCA (ciclos no aparecían)
 
 ### Problema

@@ -1,8 +1,10 @@
 import crypto from 'crypto';
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from './IExchangeService';
 import { errorAlertService, ErrorAlertService } from '../ErrorAlertService';
+import { balanceCache } from './BalanceCache';
 
 const API_BASE_URL = 'https://revx.revolut.com';
+const REVOLUTX_MIN_TIME_MS = parseInt(process.env.REVOLUTX_MIN_TIME_MS || '250', 10);
 
 export class RevolutXService implements IExchangeService {
   private static instance: RevolutXService;
@@ -24,6 +26,12 @@ export class RevolutXService implements IExchangeService {
   }>();
 
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
+
+  // Rate limiter — cola FIFO para serializar peticiones privadas
+  private rlQueue: Array<{ fn: () => Promise<any>; resolve: (v: any) => void; reject: (e: any) => void; enqueuedAt: number }> = [];
+  private rlRunning = 0;
+  private rlLastCallTime = 0;
+  private rlTotalCalls = 0;
 
   private async signedGetJson<T>(path: string, params?: Record<string, string | number | undefined>, orderedKeys?: string[]): Promise<T> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
@@ -304,38 +312,84 @@ export class RevolutXService implements IExchangeService {
     }
   }
 
+  /**
+   * Rate-limited queue for RevolutX private API calls.
+   * Ensures minimum delay between requests to avoid rate limits.
+   */
+  private scheduleRL<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.rlQueue.push({ fn, resolve, reject, enqueuedAt: Date.now() });
+      void this.drainRL();
+    });
+  }
+
+  private async drainRL(): Promise<void> {
+    if (this.rlRunning >= 1 || this.rlQueue.length === 0) return;
+    this.rlRunning++;
+    const task = this.rlQueue.shift()!;
+
+    const now = Date.now();
+    const wait = REVOLUTX_MIN_TIME_MS - (now - this.rlLastCallTime);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+
+    this.rlLastCallTime = Date.now();
+    this.rlTotalCalls++;
+    const startMs = Date.now();
+    try {
+      task.resolve(await task.fn());
+    } catch (err: any) {
+      const durationMs = Date.now() - startMs;
+      console.log(`[RevolutXRL] ERROR duration=${durationMs}ms err=${err?.message?.slice(0, 80)}`);
+      task.reject(err);
+    } finally {
+      this.rlRunning--;
+      void this.drainRL();
+    }
+  }
+
+  getRateLimiterStats(): { queueLength: number; totalCalls: number } {
+    return { queueLength: this.rlQueue.length, totalCalls: this.rlTotalCalls };
+  }
+
   async getBalance(): Promise<Record<string, number>> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const path = '/api/1.0/balances';
-    const headers = this.getHeaders('GET', path);
-    
-    try {
-      const response = await fetch(API_BASE_URL + path, { headers });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[revolutx] getBalance response:', response.status, errorText);
-        throw new Error(`Revolut X API error: ${response.status} - ${errorText}`);
-      }
-      
-      const data = await response.json() as any[];
-      const balances: Record<string, number> = {};
-      
-      for (const item of data) {
-        const currency = item.currency || item.asset;
-        const available = parseFloat(item.available || item.balance || '0');
-        if (currency) {
-          balances[currency] = available;
+    // Check balance cache first
+    const cached = balanceCache.get('revolutx');
+    if (cached) return cached;
+
+    return this.scheduleRL(async () => {
+      const path = '/api/1.0/balances';
+      const headers = this.getHeaders('GET', path);
+
+      try {
+        const response = await fetch(API_BASE_URL + path, { headers });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('[revolutx] getBalance response:', response.status, errorText);
+          throw new Error(`Revolut X API error: ${response.status} - ${errorText}`);
         }
+
+        const data = await response.json() as any[];
+        const balances: Record<string, number> = {};
+
+        for (const item of data) {
+          const currency = item.currency || item.asset;
+          const available = parseFloat(item.available || item.balance || '0');
+          if (currency) {
+            balances[currency] = available;
+          }
+        }
+
+        console.log('[revolutx] Balances fetched:', Object.keys(balances).length, 'currencies');
+        balanceCache.set('revolutx', balances);
+        return balances;
+      } catch (error: any) {
+        console.error('[revolutx] getBalance error:', error.message);
+        throw error;
       }
-      
-      console.log('[revolutx] Balances fetched:', Object.keys(balances).length, 'currencies');
-      return balances;
-    } catch (error: any) {
-      console.error('[revolutx] getBalance error:', error.message);
-      throw error;
-    }
+    });
   }
 
   async getTicker(pair: string): Promise<Ticker> {
@@ -490,6 +544,7 @@ export class RevolutXService implements IExchangeService {
       };
     }
 
+    balanceCache.invalidate('revolutx');
     const path = '/api/1.0/orders';
     const symbol = this.formatPair(params.pair);
 

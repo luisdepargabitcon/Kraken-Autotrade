@@ -34,6 +34,7 @@ import {
   useImportableStatus,
   useToggleSoloSalida,
   useExchangeFeePresets,
+  useDeleteManualCycle,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -72,6 +73,7 @@ import {
   Package,
   Upload,
   ArrowRightLeft,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -1257,11 +1259,15 @@ function CyclesTab() {
 
 function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
+  const deleteManualCycle = useDeleteManualCycle();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
+
+  const canDelete = (cycle.isImported || cycle.sourceType === 'manual') && cycle.status !== 'closed';
 
   return (
     <Card className={cn("border-border/50", cycle.isImported && "border-l-2 border-l-cyan-500")}>
@@ -1345,17 +1351,31 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     {cycle.importNotes && <span> — {cycle.importNotes}</span>}
                     {cycle.importedAt && <span> | Importado: {fmtDate(cycle.importedAt)}</span>}
                   </div>
-                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <Label className="text-[10px] font-mono text-muted-foreground">Solo Salida</Label>
-                    <Switch
-                      checked={cycle.soloSalida}
-                      onCheckedChange={(v) => {
-                        toggleSoloSalida.mutate({ cycleId: cycle.id, soloSalida: v }, {
-                          onSuccess: () => toast({ title: "Actualizado", description: v ? "Modo: Solo Salida" : "Modo: Gestión Completa" }),
-                          onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
-                        });
-                      }}
-                    />
+                  <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-[10px] font-mono text-muted-foreground">Solo Salida</Label>
+                      <Switch
+                        checked={cycle.soloSalida}
+                        onCheckedChange={(v) => {
+                          toggleSoloSalida.mutate({ cycleId: cycle.id, soloSalida: v }, {
+                            onSuccess: () => toast({ title: "Actualizado", description: v ? "Modo: Solo Salida" : "Modo: Gestión Completa" }),
+                            onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+                          });
+                        }}
+                      />
+                    </div>
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        disabled={deleteManualCycle.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" />
+                        <span className="text-[10px]">Eliminar</span>
+                      </Button>
+                    )}
                   </div>
                 </div>
                 {cycle.isManualCycle && (
@@ -1453,6 +1473,68 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
           </div>
         )}
       </CardContent>
+
+      {/* Delete Manual Cycle Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-full bg-red-500/10">
+                <Trash2 className="h-5 w-5 text-red-400" />
+              </div>
+              <h3 className="text-lg font-semibold">Eliminar ciclo manual</h3>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="text-sm text-muted-foreground space-y-1">
+                <div><strong>Par:</strong> {cycle.pair}</div>
+                <div><strong>Tipo:</strong> {cycle.isManualCycle ? "Manual" : "Importado"} ({cycle.sourceType || "manual"})</div>
+                <div><strong>Estado:</strong> {cycle.status}</div>
+                <div><strong>Capital:</strong> {fmtUsd(cycle.capitalUsedUsd)}</div>
+                {cycle.importedAt && <div><strong>Importado:</strong> {fmtDate(cycle.importedAt)}</div>}
+              </div>
+
+              <div className="p-3 bg-red-500/5 border border-red-500/20 rounded text-xs text-red-300">
+                <strong>Aviso:</strong> Vas a eliminar un ciclo manual importado. Si el ciclo ya tiene actividad real generada por el sistema (ventas post-importación), se archivará en lugar de borrarse. Esta acción no debe usarse si el ciclo ya generó operativa real.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" size="sm" onClick={() => setShowDeleteConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={deleteManualCycle.isPending}
+                onClick={() => {
+                  deleteManualCycle.mutate(cycle.id, {
+                    onSuccess: (data: any) => {
+                      setShowDeleteConfirm(false);
+                      if (data.deleted) {
+                        toast({ title: "Ciclo eliminado", description: `Ciclo #${cycle.id} (${cycle.pair}) eliminado correctamente.` });
+                      } else if (data.archived) {
+                        toast({ title: "Ciclo archivado", description: `Ciclo #${cycle.id} (${cycle.pair}) archivado porque tiene actividad post-importación.`, variant: "default" });
+                      } else {
+                        toast({ title: "No se pudo eliminar", description: data.reason || "Error desconocido", variant: "destructive" });
+                      }
+                    },
+                    onError: (err: any) => {
+                      toast({ title: "Error", description: err.message || "Error al eliminar ciclo", variant: "destructive" });
+                    },
+                  });
+                }}
+              >
+                {deleteManualCycle.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Eliminando...</>
+                ) : (
+                  <><Trash2 className="h-3 w-3 mr-1" /> Eliminar ciclo</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

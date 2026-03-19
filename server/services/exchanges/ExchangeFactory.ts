@@ -1,6 +1,9 @@
 import { IExchangeService } from './IExchangeService';
 import { krakenService } from '../kraken';
 import { revolutXService } from './RevolutXService';
+import { krakenNonceManager } from './NonceManager';
+import { balanceCache } from './BalanceCache';
+import { krakenRateLimiter } from '../../utils/krakenRateLimiter';
 
 export type ExchangeType = 'kraken' | 'revolutx';
 
@@ -213,6 +216,33 @@ export class ExchangeFactoryClass {
     return {
       takerFeePct: exchange.takerFeePct,
       makerFeePct: exchange.makerFeePct
+    };
+  }
+
+  /**
+   * Diagnóstico completo del sistema de coordinación privada.
+   * Incluye: nonce stats, rate limiter, balance cache, exchange status.
+   */
+  getDiagnostics(): Record<string, any> {
+    return {
+      timestamp: new Date().toISOString(),
+      exchanges: {
+        active: this.activeExchange,
+        trading: this.tradingExchange,
+        data: this.dataExchange,
+        kraken: {
+          initialized: krakenService.isInitialized(),
+          enabled: this.exchangeEnabled.kraken,
+        },
+        revolutx: {
+          initialized: revolutXService.isInitialized(),
+          enabled: this.exchangeEnabled.revolutx,
+          rateLimiter: revolutXService.getRateLimiterStats(),
+        },
+      },
+      nonceManager: krakenNonceManager.getStats(),
+      krakenRateLimiter: krakenRateLimiter.getStats(),
+      balanceCache: balanceCache.getStats(),
     };
   }
 }

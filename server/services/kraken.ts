@@ -4,6 +4,8 @@ import { storage } from "../storage";
 import { krakenRateLimiter } from "../utils/krakenRateLimiter";
 import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult } from "./exchanges/IExchangeService";
 import type { PairMetadata } from "./exchanges/IExchangeService";
+import { krakenNonceManager } from "./exchanges/NonceManager";
+import { balanceCache } from "./exchanges/BalanceCache";
 
 const { Kraken } = KrakenAPI as any;
 
@@ -26,7 +28,6 @@ export class KrakenService implements IExchangeService {
   private client: any | null = null;
   private publicClient: any;
   private lastNonceAlertTime: number = 0;
-  private lastNonce: number = 0;
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
   private metadataLastRefresh: number = 0;
   private metadataRefreshTimer: NodeJS.Timeout | null = null;
@@ -108,17 +109,9 @@ export class KrakenService implements IExchangeService {
     this.client = new Kraken({
       key: config.apiKey,
       secret: config.apiSecret,
-      gennonce: () => this.generateNonce(),
+      gennonce: () => krakenNonceManager.generate('kraken-api'),
     });
-  }
-
-  private generateNonce(): number {
-    let nonce = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-    if (nonce <= this.lastNonce) {
-      nonce = this.lastNonce + 1;
-    }
-    this.lastNonce = nonce;
-    return nonce;
+    console.log(`[kraken] Client initialized (NonceManager active, padding=10s)`);
   }
 
   isInitialized(): boolean {
@@ -189,11 +182,17 @@ export class KrakenService implements IExchangeService {
 
   async getBalance(): Promise<Record<string, number>> {
     if (!this.client) throw new Error("Kraken client not initialized");
+    // Check balance cache first
+    const cached = balanceCache.get('kraken');
+    if (cached) {
+      return cached;
+    }
     const rawBalance = await this.executeWithNonceRetry("getBalance", () => this.client.balance());
     const result: Record<string, number> = {};
     for (const [asset, value] of Object.entries(rawBalance as Record<string, string>)) {
       result[asset] = parseFloat(value);
     }
+    balanceCache.set('kraken', result);
     return result;
   }
 
@@ -246,6 +245,7 @@ export class KrakenService implements IExchangeService {
     }
 
     try {
+      balanceCache.invalidate('kraken');
       const result = await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams)) as { txid?: string[] };
       const txids = result?.txid || [];
       return {
@@ -284,12 +284,14 @@ export class KrakenService implements IExchangeService {
       orderParams.price = params.price;
     }
 
+    balanceCache.invalidate('kraken');
     return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams));
   }
 
   async cancelOrder(txid: string): Promise<boolean> {
     if (!this.client) throw new Error("Kraken client not initialized");
     try {
+      balanceCache.invalidate('kraken');
       await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }));
       return true;
     } catch {

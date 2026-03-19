@@ -332,6 +332,82 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Delete Manual Cycle ─────────────────────────────────────────
+
+  app.delete(`${PREFIX}/cycles/:id/manual`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const result = await repo.deleteManualCycle(id);
+
+      if (!result.cycle && result.reason === 'CYCLE_NOT_FOUND') {
+        return res.status(404).json({ error: "Ciclo no encontrado", reason: result.reason });
+      }
+
+      if (result.reason === 'NOT_MANUAL_CYCLE') {
+        return res.status(400).json({
+          error: "Solo se pueden eliminar ciclos manuales/importados",
+          reason: result.reason,
+          cycleId: id,
+          isImported: result.cycle?.isImported,
+          sourceType: result.cycle?.sourceType,
+        });
+      }
+
+      // Log event for traceability
+      if (result.deleted || result.archived) {
+        try {
+          await repo.createEvent({
+            cycleId: result.archived ? id : null,
+            pair: result.cycle?.pair || 'unknown',
+            mode: result.cycle?.mode || 'unknown',
+            eventType: 'manual_cycle_deleted',
+            severity: 'info',
+            message: result.deleted
+              ? `Ciclo manual eliminado (hard delete). Orders: ${result.ordersDeleted}, Events: ${result.eventsDeleted}`
+              : `Ciclo manual archivado (tiene actividad post-importación)`,
+            payloadJson: {
+              action: result.deleted ? 'hard_delete' : 'archive',
+              cycleId: id,
+              pair: result.cycle?.pair,
+              reason: result.reason,
+              ordersDeleted: result.ordersDeleted,
+              eventsDeleted: result.eventsDeleted,
+              deletedBy: 'user',
+            },
+          });
+        } catch (evtErr: any) {
+          console.error('[IDCA] Failed to create delete event:', evtErr.message);
+        }
+
+        // Telegram notification
+        try {
+          const action = result.deleted ? 'eliminado' : 'archivado';
+          await telegram.sendRawMessage(
+            `🗑️ *Ciclo manual ${action}*\n` +
+            `Par: ${result.cycle?.pair}\n` +
+            `CycleId: ${id}\n` +
+            `Acción: ${result.reason}\n` +
+            `Órdenes eliminadas: ${result.ordersDeleted}\n` +
+            `Eventos eliminados: ${result.eventsDeleted}`
+          );
+        } catch { /* ignore telegram errors */ }
+      }
+
+      res.json({
+        success: true,
+        ...result,
+        cycle: undefined, // Don't leak full cycle object in response
+        cycleId: id,
+        pair: result.cycle?.pair,
+      });
+    } catch (e: any) {
+      console.error('[IDCA] deleteManualCycle error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Emergency ─────────────────────────────────────────────────
 
   app.post(`${PREFIX}/emergency/close-all`, async (_req, res) => {
