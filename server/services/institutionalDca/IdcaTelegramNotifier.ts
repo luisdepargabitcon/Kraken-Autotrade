@@ -207,7 +207,7 @@ export async function alertSmartAdjustment(pair: string, mode: string, field: st
 }
 
 export async function alertModuleDrawdownBreached(mode: string, drawdownPct: number, maxPct: number): Promise<void> {
-  const { chatId, enabled } = await canSend("critical_error");
+  const { chatId, enabled } = await canSend("module_max_drawdown_reached");
   if (!enabled && !chatId) return;
   const config = await repo.getIdcaConfig();
 

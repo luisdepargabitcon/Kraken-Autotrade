@@ -1270,6 +1270,10 @@ async function performEntryCheck(
 
 // ─── Module Drawdown Check ─────────────────────────────────────────
 
+const DRAWDOWN_ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between alerts
+let lastDrawdownAlertTime = 0;
+let lastDrawdownAlertPct = 0;
+
 async function checkModuleDrawdown(config: InstitutionalDcaConfigRow, mode: IdcaMode): Promise<boolean> {
   const maxDD = parseFloat(String(config.maxModuleDrawdownPct));
   if (maxDD <= 0) return true;
@@ -1288,16 +1292,33 @@ async function checkModuleDrawdown(config: InstitutionalDcaConfigRow, mode: Idca
 
   const ddPct = Math.abs(Math.min(0, totalUnrealized) / allocatedCapital * 100);
   if (ddPct >= maxDD) {
-    console.log(`${TAG}[MODULE_DRAWDOWN] ${ddPct.toFixed(2)}% >= ${maxDD}% — pausing module`);
-    await createHumanEvent({
-      mode,
-      eventType: "module_max_drawdown_reached",
-      severity: "critical",
-      message: `Module drawdown ${ddPct.toFixed(2)}% exceeded max ${maxDD}%`,
-      payloadJson: { drawdownPct: ddPct, maxPct: maxDD },
-    }, { eventType: "module_max_drawdown_reached", mode, drawdownPct: ddPct, maxDrawdownPct: maxDD });
-    await telegram.alertModuleDrawdownBreached(mode, ddPct, maxDD);
+    const now = Date.now();
+    const timeSinceLast = now - lastDrawdownAlertTime;
+
+    // Only create event + telegram alert if cooldown has expired or drawdown jumped significantly (+5%)
+    if (timeSinceLast >= DRAWDOWN_ALERT_COOLDOWN_MS || Math.abs(ddPct - lastDrawdownAlertPct) >= 5) {
+      console.log(`${TAG}[MODULE_DRAWDOWN] ${ddPct.toFixed(2)}% >= ${maxDD}% — pausing module (alert sent)`);
+      await createHumanEvent({
+        mode,
+        eventType: "module_max_drawdown_reached",
+        severity: "critical",
+        message: `Module drawdown ${ddPct.toFixed(2)}% exceeded max ${maxDD}%`,
+        payloadJson: { drawdownPct: ddPct, maxPct: maxDD },
+      }, { eventType: "module_max_drawdown_reached", mode, drawdownPct: ddPct, maxDrawdownPct: maxDD });
+      await telegram.alertModuleDrawdownBreached(mode, ddPct, maxDD);
+      lastDrawdownAlertTime = now;
+      lastDrawdownAlertPct = ddPct;
+    } else {
+      console.log(`${TAG}[MODULE_DRAWDOWN] ${ddPct.toFixed(2)}% >= ${maxDD}% — pausing (cooldown, next alert in ${Math.ceil((DRAWDOWN_ALERT_COOLDOWN_MS - timeSinceLast) / 60000)}m)`);
+    }
     return false;
+  }
+
+  // Drawdown recovered — reset cooldown so next breach triggers immediately
+  if (lastDrawdownAlertTime > 0) {
+    console.log(`${TAG}[MODULE_DRAWDOWN] Recovered: ${ddPct.toFixed(2)}% < ${maxDD}%`);
+    lastDrawdownAlertTime = 0;
+    lastDrawdownAlertPct = 0;
   }
 
   return true;
