@@ -460,15 +460,19 @@ export async function hasActiveCycleForPair(pair: string, mode: string): Promise
   return rows.length > 0;
 }
 
-export async function getImportableStatus(mode: string): Promise<Record<string, { canImport: boolean; reason?: string }>> {
-  const result: Record<string, { canImport: boolean; reason?: string }> = {};
+export async function getImportableStatus(mode: string): Promise<Record<string, { canImport: boolean; hasActiveCycle: boolean; reason?: string }>> {
+  const result: Record<string, { canImport: boolean; hasActiveCycle: boolean; reason?: string }> = {};
   const allowedPairs = ["BTC/USD", "ETH/USD"];
   for (const pair of allowedPairs) {
     const hasActive = await hasActiveCycleForPair(pair, mode);
     if (hasActive) {
-      result[pair] = { canImport: false, reason: `Ya existe un ciclo activo de ${pair} en IDCA. Ciérralo antes de importar.` };
+      result[pair] = {
+        canImport: true,
+        hasActiveCycle: true,
+        reason: `Ya existe otro ciclo activo de ${pair} en IDCA. Si importas como CICLO MANUAL, convivirán ambos.`,
+      };
     } else {
-      result[pair] = { canImport: true };
+      result[pair] = { canImport: true, hasActiveCycle: false };
     }
   }
   return result;

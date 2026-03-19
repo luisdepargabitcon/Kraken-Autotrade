@@ -178,4 +178,11 @@ export interface ImportPositionRequest {
   notes?: string;
   openedAt?: string;         // ISO date
   feesPaidUsd?: number;
+  // Manual cycle & exchange fields
+  isManualCycle?: boolean;
+  exchangeSource?: string;   // revolut_x | kraken | other
+  estimatedFeePct?: number;
+  estimatedFeeUsd?: number;
+  feesOverrideManual?: boolean;
+  warningAcknowledged?: boolean; // user confirmed coexistence warning
 }

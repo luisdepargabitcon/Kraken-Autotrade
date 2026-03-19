@@ -257,9 +257,23 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  app.get(`${PREFIX}/exchange-fee-presets`, async (_req, res) => {
+    try {
+      const { EXCHANGE_FEE_PRESETS, DEFAULT_EXCHANGE } = await import("../services/institutionalDca/IdcaExchangeFeePresets");
+      res.json({ presets: EXCHANGE_FEE_PRESETS, defaultExchange: DEFAULT_EXCHANGE });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post(`${PREFIX}/import-position`, async (req, res) => {
     try {
-      const { pair, quantity, avgEntryPrice, capitalUsedUsd, sourceType, soloSalida, notes, openedAt, feesPaidUsd } = req.body;
+      const {
+        pair, quantity, avgEntryPrice, capitalUsedUsd, sourceType, soloSalida,
+        notes, openedAt, feesPaidUsd,
+        isManualCycle, exchangeSource, estimatedFeePct, estimatedFeeUsd,
+        feesOverrideManual, warningAcknowledged,
+      } = req.body;
 
       // Validation
       if (!pair || !quantity || !avgEntryPrice) {
@@ -286,6 +300,12 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         notes: notes || undefined,
         openedAt: openedAt || undefined,
         feesPaidUsd: feesPaidUsd ? parseFloat(feesPaidUsd) : undefined,
+        isManualCycle: isManualCycle ?? false,
+        exchangeSource: exchangeSource || "revolut_x",
+        estimatedFeePct: estimatedFeePct != null ? parseFloat(estimatedFeePct) : undefined,
+        estimatedFeeUsd: estimatedFeeUsd != null ? parseFloat(estimatedFeeUsd) : undefined,
+        feesOverrideManual: feesOverrideManual ?? false,
+        warningAcknowledged: warningAcknowledged ?? false,
       });
 
       res.json({ success: true, cycle });

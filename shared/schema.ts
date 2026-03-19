@@ -1050,6 +1050,13 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   soloSalida: boolean("solo_salida").notNull().default(false),
   importNotes: text("import_notes"),
   importSnapshotJson: jsonb("import_snapshot_json"),
+  // Manual cycle & exchange fields
+  isManualCycle: boolean("is_manual_cycle").notNull().default(false),
+  exchangeSource: text("exchange_source"), // revolut_x | kraken | other
+  estimatedFeePct: decimal("estimated_fee_pct", { precision: 8, scale: 4 }),
+  estimatedFeeUsd: decimal("estimated_fee_usd", { precision: 18, scale: 2 }),
+  feesOverrideManual: boolean("fees_override_manual").notNull().default(false),
+  importWarningAcknowledged: boolean("import_warning_acknowledged").notNull().default(false),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

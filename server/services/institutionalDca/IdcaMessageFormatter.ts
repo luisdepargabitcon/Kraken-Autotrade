@@ -52,6 +52,10 @@ export interface FormatContext {
   closeReason?: string;
   soloSalida?: boolean;
   sourceType?: string;
+  isManualCycle?: boolean;
+  exchangeSource?: string;
+  estimatedFeePct?: number;
+  estimatedFeeUsd?: number;
 }
 
 // ─── Core Formatter ─────────────────────────────────────────────────
@@ -206,6 +210,10 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
       if (ctx.soloSalida != null) techParts.push(`SoloSalida=${ctx.soloSalida}`);
       if (ctx.sourceType) techParts.push(`Origen=${ctx.sourceType}`);
+      if (ctx.isManualCycle) techParts.push(`Manual=sí`);
+      if (ctx.exchangeSource) techParts.push(`Exchange=${ctx.exchangeSource}`);
+      if (ctx.estimatedFeePct != null) techParts.push(`Fee=${ctx.estimatedFeePct}%`);
+      if (ctx.estimatedFeeUsd != null) techParts.push(`FeeUSD=$${ctx.estimatedFeeUsd.toFixed(2)}`);
       break;
 
     case "imported_position_closed":
@@ -321,9 +329,13 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       break;
 
     case "imported_position_created":
+      if (ctx.isManualCycle) lines.push(`<b>Tipo:</b> CICLO MANUAL`);
+      if (ctx.exchangeSource) lines.push(`<b>Exchange:</b> ${escapeHtml(ctx.exchangeSource)}`);
       if (ctx.price != null) lines.push(`<b>Precio medio:</b> ${fmtNum(ctx.price)}`);
       if (ctx.quantity != null) lines.push(`<b>Cantidad:</b> ${ctx.quantity.toFixed(6)}`);
-      if (ctx.capitalUsed != null) lines.push(`<b>Capital:</b> $${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.capitalUsed != null) lines.push(`<b>Capital base:</b> $${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.estimatedFeePct != null) lines.push(`<b>Fee estimada:</b> ${ctx.estimatedFeePct}%`);
+      if (ctx.estimatedFeeUsd != null) lines.push(`<b>Fee estimada USD:</b> $${ctx.estimatedFeeUsd.toFixed(2)}`);
       if (ctx.soloSalida != null) lines.push(`<b>Solo salida:</b> ${ctx.soloSalida ? "Sí" : "No"}`);
       if (ctx.sourceType) lines.push(`<b>Origen:</b> ${ctx.sourceType}`);
       break;

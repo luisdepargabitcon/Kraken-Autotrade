@@ -112,6 +112,12 @@ export interface IdcaCycle {
   soloSalida: boolean;
   importNotes: string | null;
   importSnapshotJson: any;
+  isManualCycle: boolean;
+  exchangeSource: string | null;
+  estimatedFeePct: string | null;
+  estimatedFeeUsd: string | null;
+  feesOverrideManual: boolean;
+  importWarningAcknowledged: boolean;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];
@@ -404,7 +410,7 @@ export function useIdcaTelegramTest() {
 
 export interface ImportableStatus {
   mode: string;
-  pairs: Record<string, { canImport: boolean; reason?: string }>;
+  pairs: Record<string, { canImport: boolean; hasActiveCycle: boolean; reason?: string }>;
 }
 
 export interface ImportPositionPayload {
@@ -417,6 +423,35 @@ export interface ImportPositionPayload {
   notes?: string;
   openedAt?: string;
   feesPaidUsd?: number | string;
+  isManualCycle?: boolean;
+  exchangeSource?: string;
+  estimatedFeePct?: number | string;
+  estimatedFeeUsd?: number | string;
+  feesOverrideManual?: boolean;
+  warningAcknowledged?: boolean;
+}
+
+export interface ExchangeFeePreset {
+  key: string;
+  label: string;
+  makerFeePct: number | null;
+  takerFeePct: number | null;
+  defaultFeePct: number;
+  defaultFeeMode: string;
+  useConfigurableDefault: boolean;
+  description: string;
+}
+
+export function useExchangeFeePresets() {
+  return useQuery<{ presets: Record<string, ExchangeFeePreset>; defaultExchange: string }>({
+    queryKey: ["idca", "exchangeFeePresets"],
+    queryFn: async () => {
+      const res = await fetch(`${PREFIX}/exchange-fee-presets`);
+      if (!res.ok) throw new Error("Failed to fetch exchange fee presets");
+      return res.json();
+    },
+    staleTime: 60000,
+  });
 }
 
 export function useImportableStatus() {

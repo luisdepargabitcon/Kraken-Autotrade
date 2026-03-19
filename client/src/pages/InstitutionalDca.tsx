@@ -33,6 +33,7 @@ import {
   useImportPosition,
   useImportableStatus,
   useToggleSoloSalida,
+  useExchangeFeePresets,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -894,6 +895,7 @@ function ConfigTab() {
 
 function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data: importable } = useImportableStatus();
+  const { data: presetsData } = useExchangeFeePresets();
   const importMutation = useImportPosition();
   const { toast } = useToast();
 
@@ -904,16 +906,51 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
   const [sourceType, setSourceType] = useState("manual");
   const [soloSalida, setSoloSalida] = useState(true);
   const [notes, setNotes] = useState("");
+  const [exchangeSource, setExchangeSource] = useState("revolut_x");
+  const [feePct, setFeePct] = useState("0.09");
+  const [feeUsd, setFeeUsd] = useState("");
+  const [feeManuallyEdited, setFeeManuallyEdited] = useState(false);
+  const [warningAck, setWarningAck] = useState(false);
   const [step, setStep] = useState<"form" | "confirm">("form");
 
   const pairStatus = importable?.pairs?.[pair];
-  const canImport = pairStatus?.canImport ?? false;
+  const hasActiveCycle = pairStatus?.hasActiveCycle ?? false;
+  const isManual = sourceType === "manual";
   const computedCapital = quantity && avgEntryPrice ? (parseFloat(quantity) * parseFloat(avgEntryPrice)).toFixed(2) : "";
   const displayCapital = capitalUsedUsd || computedCapital;
+  const presets = presetsData?.presets || {};
+
+  // Recalculate fee USD when capital or feePct changes
+  const computedFeeUsd = displayCapital && feePct
+    ? (parseFloat(displayCapital) * parseFloat(feePct) / 100).toFixed(2)
+    : "";
+
+  // Apply exchange preset
+  const applyExchangePreset = (key: string) => {
+    setExchangeSource(key);
+    const preset = presets[key];
+    if (preset && !feeManuallyEdited) {
+      setFeePct(String(preset.defaultFeePct));
+    }
+  };
+
+  const resetFeeToPreset = () => {
+    const preset = presets[exchangeSource];
+    if (preset) {
+      setFeePct(String(preset.defaultFeePct));
+      setFeeUsd("");
+      setFeeManuallyEdited(false);
+    }
+  };
+
+  const canSubmit = quantity && avgEntryPrice && parseFloat(quantity) > 0 && parseFloat(avgEntryPrice) > 0
+    && (!hasActiveCycle || (isManual && warningAck));
 
   const resetForm = () => {
     setPair("BTC/USD"); setQuantity(""); setAvgEntryPrice(""); setCapitalUsedUsd("");
     setSourceType("manual"); setSoloSalida(true); setNotes(""); setStep("form");
+    setExchangeSource("revolut_x"); setFeePct("0.09"); setFeeUsd(""); setFeeManuallyEdited(false);
+    setWarningAck(false);
   };
 
   const handleSubmit = () => {
@@ -921,10 +958,15 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
       toast({ title: "Error", description: "Cantidad y precio medio deben ser positivos.", variant: "destructive" });
       return;
     }
+    if (hasActiveCycle && isManual && !warningAck) {
+      toast({ title: "Confirmación requerida", description: "Debes aceptar la convivencia con el ciclo activo existente.", variant: "destructive" });
+      return;
+    }
     setStep("confirm");
   };
 
   const handleConfirm = () => {
+    const finalFeeUsd = feeUsd ? parseFloat(feeUsd) : (computedFeeUsd ? parseFloat(computedFeeUsd) : undefined);
     importMutation.mutate({
       pair,
       quantity: parseFloat(quantity),
@@ -933,9 +975,15 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
       sourceType,
       soloSalida,
       notes: notes || undefined,
+      isManualCycle: isManual,
+      exchangeSource,
+      estimatedFeePct: parseFloat(feePct),
+      estimatedFeeUsd: finalFeeUsd,
+      feesOverrideManual: feeManuallyEdited,
+      warningAcknowledged: warningAck,
     }, {
       onSuccess: () => {
-        toast({ title: "Posición importada", description: `Se importó ${pair} correctamente al IDCA.` });
+        toast({ title: "Posición importada", description: `Se importó ${pair} correctamente al IDCA.${isManual ? " (CICLO MANUAL)" : ""}` });
         resetForm();
         onClose();
       },
@@ -947,6 +995,9 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
   };
 
   if (!open) return null;
+
+  const exchangeLabel = presets[exchangeSource]?.label || exchangeSource;
+  const finalDisplayFeeUsd = feeUsd || computedFeeUsd;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -960,7 +1011,7 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
           {step === "form" ? (
             <div className="space-y-4">
               <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
-                <strong>⚠️ Aviso:</strong> No se reconstruye historial. El IDCA gestionará la salida (y opcionalmente compras) desde este punto.
+                <strong>Aviso:</strong> No se reconstruye historial. El IDCA gestionará la salida (y opcionalmente compras) desde este punto.
               </div>
 
               {/* Par */}
@@ -970,12 +1021,32 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
                   {["BTC/USD", "ETH/USD"].map((p) => (
                     <Button key={p} size="sm" variant={pair === p ? "default" : "outline"}
                       className={cn("text-xs h-8 flex-1", pair === p && (p === "BTC/USD" ? "bg-orange-600 hover:bg-orange-700" : "bg-blue-600 hover:bg-blue-700"))}
-                      onClick={() => setPair(p)}>{p}
+                      onClick={() => { setPair(p); setWarningAck(false); }}>{p}
                     </Button>
                   ))}
                 </div>
-                {!canImport && pairStatus && (
-                  <p className="text-[10px] text-red-400 mt-1">{pairStatus.reason}</p>
+              </div>
+
+              {/* Exchange */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">EXCHANGE</Label>
+                <div className="flex gap-1 flex-wrap">
+                  {Object.values(presets).map((p: any) => (
+                    <Button key={p.key} size="sm" variant={exchangeSource === p.key ? "default" : "outline"}
+                      className={cn("text-[10px] h-7", exchangeSource === p.key && "bg-primary")}
+                      onClick={() => applyExchangePreset(p.key)}>
+                      {p.label}
+                    </Button>
+                  ))}
+                  {Object.keys(presets).length === 0 && ["revolut_x", "kraken", "other"].map((k) => (
+                    <Button key={k} size="sm" variant={exchangeSource === k ? "default" : "outline"} className="text-[10px] h-7"
+                      onClick={() => setExchangeSource(k)}>
+                      {k === "revolut_x" ? "Revolut X" : k === "kraken" ? "Kraken" : "Otro"}
+                    </Button>
+                  ))}
+                </div>
+                {presets[exchangeSource]?.description && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{presets[exchangeSource].description}</p>
                 )}
               </div>
 
@@ -997,13 +1068,42 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
                 <Input type="number" step="any" min="0" placeholder={computedCapital ? `Auto: $${computedCapital}` : "Se calcula automáticamente"} value={capitalUsedUsd} onChange={(e) => setCapitalUsedUsd(e.target.value)} className="h-8 text-sm font-mono" />
               </div>
 
+              {/* Fees */}
+              <div className="space-y-2 p-3 rounded-lg border border-border/50 bg-muted/10">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-mono text-muted-foreground">COMISIONES ESTIMADAS</Label>
+                  {feeManuallyEdited && (
+                    <button type="button" className="text-[10px] text-primary underline" onClick={resetFeeToPreset}>
+                      Restaurar fee por defecto
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-mono text-muted-foreground">FEE %</Label>
+                    <Input type="number" step="0.001" min="0" value={feePct}
+                      onChange={(e) => { setFeePct(e.target.value); setFeeManuallyEdited(true); }}
+                      className="h-7 text-xs font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-mono text-muted-foreground">FEE USD {!feeUsd && computedFeeUsd ? `(auto: $${computedFeeUsd})` : ""}</Label>
+                    <Input type="number" step="0.01" min="0" value={feeUsd} placeholder={computedFeeUsd || "—"}
+                      onChange={(e) => { setFeeUsd(e.target.value); setFeeManuallyEdited(true); }}
+                      className="h-7 text-xs font-mono" />
+                  </div>
+                </div>
+                <p className="text-[9px] text-muted-foreground">
+                  La comisión se rellena automáticamente según el exchange. Puedes modificarla si tu caso real es distinto.
+                </p>
+              </div>
+
               {/* Origen */}
               <div className="space-y-1">
                 <Label className="text-xs font-mono text-muted-foreground">ORIGEN DE LA POSICIÓN</Label>
                 <div className="flex gap-1 flex-wrap">
                   {["manual", "normal_bot", "exchange", "external"].map((s) => (
                     <Button key={s} size="sm" variant={sourceType === s ? "default" : "outline"} className="text-[10px] h-7"
-                      onClick={() => setSourceType(s)}>
+                      onClick={() => { setSourceType(s); setWarningAck(false); }}>
                       {s === "manual" ? "Manual" : s === "normal_bot" ? "Bot Normal" : s === "exchange" ? "Exchange" : "Externo"}
                     </Button>
                   ))}
@@ -1027,12 +1127,32 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
               {/* Notas */}
               <div className="space-y-1">
                 <Label className="text-xs font-mono text-muted-foreground">NOTAS (opcional)</Label>
-                <Input placeholder="Ej: Posición abierta el 10/01 en Kraken" value={notes} onChange={(e) => setNotes(e.target.value)} className="h-8 text-sm" />
+                <Input placeholder="Ej: Posición abierta el 10/01 en Revolut X" value={notes} onChange={(e) => setNotes(e.target.value)} className="h-8 text-sm" />
               </div>
+
+              {/* Warning convivencia */}
+              {hasActiveCycle && (
+                <div className="space-y-2">
+                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+                    <strong>Ya existe otro ciclo activo de {pair} en IDCA.</strong> Esta importación se registrará como <strong>CICLO MANUAL</strong> y convivirá con el ciclo actual. Revisa el riesgo y evita que dos motores gestionen la misma posición real sin control.
+                  </div>
+                  {isManual && (
+                    <label className="flex items-start gap-2 cursor-pointer p-2 rounded border border-border/50 bg-muted/10">
+                      <input type="checkbox" checked={warningAck} onChange={(e) => setWarningAck(e.target.checked)} className="mt-1 accent-primary" />
+                      <span className="text-[10px] text-muted-foreground">
+                        Entiendo que esta posición manual puede convivir con otros ciclos y confirmo que quiero importarla igualmente.
+                      </span>
+                    </label>
+                  )}
+                  {!isManual && (
+                    <p className="text-[10px] text-red-400">Cambia el origen a "Manual" para poder importar con ciclo activo existente.</p>
+                  )}
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" className="flex-1 h-9" onClick={() => { resetForm(); onClose(); }}>Cancelar</Button>
-                <Button className="flex-1 h-9" disabled={!canImport || !quantity || !avgEntryPrice || importMutation.isPending}
+                <Button className="flex-1 h-9" disabled={!canSubmit || importMutation.isPending}
                   onClick={handleSubmit}>
                   <Upload className="h-3 w-3 mr-1" /> Revisar e Importar
                 </Button>
@@ -1044,16 +1164,20 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
                 <p className="font-semibold text-primary">¿Confirmar importación?</p>
                 <div className="text-xs space-y-1 font-mono">
                   <p><strong>Par:</strong> {pair}</p>
+                  <p><strong>Exchange:</strong> {exchangeLabel}</p>
                   <p><strong>Cantidad:</strong> {parseFloat(quantity).toFixed(8)}</p>
                   <p><strong>Precio medio:</strong> ${parseFloat(avgEntryPrice).toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                   <p><strong>Capital:</strong> ${parseFloat(displayCapital || "0").toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-                  <p><strong>Origen:</strong> {sourceType}</p>
+                  <p><strong>Fee:</strong> {feePct}% (~${finalDisplayFeeUsd || "0.00"})</p>
+                  <p><strong>Origen:</strong> {sourceType}{isManual ? " (CICLO MANUAL)" : ""}</p>
                   <p><strong>Modo:</strong> {soloSalida ? "Solo Salida" : "Gestión Completa"}</p>
+                  {feeManuallyEdited && <p className="text-yellow-400"><strong>Fee editada manualmente</strong></p>}
+                  {hasActiveCycle && <p className="text-red-400"><strong>Convive con otro ciclo activo</strong></p>}
                   {notes && <p><strong>Notas:</strong> {notes}</p>}
                 </div>
               </div>
               <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
-                ⚠️ Esta acción no se puede deshacer. El ciclo importado se activará inmediatamente y el motor comenzará a gestionarlo.
+                Esta acción no se puede deshacer. El ciclo importado se activará inmediatamente y el motor comenzará a gestionarlo.
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1 h-9" onClick={() => setStep("form")}>Volver</Button>
@@ -1076,10 +1200,12 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
 
 function CyclesTab() {
   const [filter, setFilter] = useState<"all" | "active" | "closed">("all");
+  const [modeFilter, setModeFilter] = useState<"all" | "simulation" | "live">("all");
   const [importOpen, setImportOpen] = useState(false);
   const { data: cycles, isLoading } = useIdcaCycles({
     status: filter === "all" ? undefined : filter,
-    limit: 50,
+    mode: modeFilter === "all" ? undefined : modeFilter,
+    limit: 100,
   });
 
   if (isLoading) return <div className="text-center py-8 text-muted-foreground">Cargando ciclos...</div>;
@@ -1087,11 +1213,19 @@ function CyclesTab() {
   return (
     <div className="space-y-3">
       <ImportPositionModal open={importOpen} onClose={() => setImportOpen(false)} />
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {(["all", "active", "closed"] as const).map((f) => (
           <Button key={f} size="sm" variant={filter === f ? "default" : "outline"} className="text-xs h-7"
             onClick={() => setFilter(f)}>
             {f === "all" ? "Todos" : f === "active" ? "Activos" : "Cerrados"}
+          </Button>
+        ))}
+        <span className="border-l border-border/30 mx-1" />
+        {(["all", "simulation", "live"] as const).map((m) => (
+          <Button key={m} size="sm" variant={modeFilter === m ? "default" : "outline"}
+            className={cn("text-xs h-7", modeFilter === m && m === "simulation" && "bg-blue-600 hover:bg-blue-700", modeFilter === m && m === "live" && "bg-green-600 hover:bg-green-700")}
+            onClick={() => setModeFilter(m)}>
+            {m === "all" ? "Todos modos" : m === "simulation" ? "Simulación" : "Live"}
           </Button>
         ))}
         <Button size="sm" variant="outline" className="text-xs h-7 ml-auto gap-1" onClick={() => setImportOpen(true)}>
@@ -1155,6 +1289,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     <Upload className="h-2.5 w-2.5 mr-0.5" /> IMPORTADO
                   </Badge>
                 )}
+                {cycle.isManualCycle && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-fuchsia-400 border-fuchsia-400/50 bg-fuchsia-400/5 font-bold">
+                    MANUAL
+                  </Badge>
+                )}
                 {cycle.isImported && cycle.soloSalida && (
                   <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
                     SOLO SALIDA
@@ -1163,6 +1302,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {cycle.isImported && !cycle.soloSalida && (
                   <Badge variant="outline" className="text-[10px] font-mono text-green-400 border-green-400/50 bg-green-400/5">
                     GESTIÓN COMPLETA
+                  </Badge>
+                )}
+                {cycle.exchangeSource && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-slate-400 border-slate-400/30 bg-slate-400/5">
+                    {cycle.exchangeSource === "revolut_x" ? "REVOLUT X" : cycle.exchangeSource === "kraken" ? "KRAKEN" : cycle.exchangeSource.toUpperCase()}
                   </Badge>
                 )}
               </div>
@@ -1190,10 +1334,14 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
           <div className="border-t border-border/30 bg-muted/5">
             {/* Import details panel */}
             {cycle.isImported && cycle.status !== "closed" && (
-              <div className="px-9 py-3 border-b border-border/20 bg-cyan-500/5">
+              <div className="px-9 py-3 border-b border-border/20 bg-cyan-500/5 space-y-2">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
-                    <span className="text-cyan-400 font-semibold">Ciclo importado</span>
+                    <span className="text-cyan-400 font-semibold">{cycle.isManualCycle ? "Ciclo manual importado" : "Ciclo importado"}</span>
+                    {cycle.exchangeSource && <span> | Exchange: <strong>{cycle.exchangeSource === "revolut_x" ? "Revolut X" : cycle.exchangeSource === "kraken" ? "Kraken" : cycle.exchangeSource}</strong></span>}
+                    {cycle.estimatedFeePct && <span> | Fee: {parseFloat(String(cycle.estimatedFeePct))}%</span>}
+                    {cycle.estimatedFeeUsd && <span> (~${parseFloat(String(cycle.estimatedFeeUsd)).toFixed(2)})</span>}
+                    {cycle.feesOverrideManual && <span className="text-yellow-400"> [fee manual]</span>}
                     {cycle.importNotes && <span> — {cycle.importNotes}</span>}
                     {cycle.importedAt && <span> | Importado: {fmtDate(cycle.importedAt)}</span>}
                   </div>
@@ -1210,6 +1358,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     />
                   </div>
                 </div>
+                {cycle.isManualCycle && (
+                  <p className="text-[9px] text-muted-foreground/70 italic">
+                    Este ciclo fue creado manualmente por el usuario. El IDCA lo gestiona desde el momento de la importación usando el precio medio y la cantidad introducidos.
+                  </p>
+                )}
               </div>
             )}
             {cycle.tpBreakdownJson && (

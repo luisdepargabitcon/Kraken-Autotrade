@@ -221,7 +221,16 @@ export async function alertModuleDrawdownBreached(mode: string, drawdownPct: num
   await send(chatId || config.telegramChatId || "", formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
-export async function alertImportedPosition(cycle: InstitutionalDcaCycle, soloSalida: boolean, sourceType: string): Promise<void> {
+export async function alertImportedPosition(
+  cycle: InstitutionalDcaCycle,
+  soloSalida: boolean,
+  sourceType: string,
+  isManualCycle: boolean = false,
+  exchangeSource: string = "revolut_x",
+  estimatedFeePct: number = 0,
+  estimatedFeeUsd: number = 0,
+  hadActiveCycle: boolean = false,
+): Promise<void> {
   const { chatId, enabled } = await canSend("cycle_started");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
@@ -235,9 +244,18 @@ export async function alertImportedPosition(cycle: InstitutionalDcaCycle, soloSa
     capitalUsed: parseFloat(String(cycle.capitalUsedUsd || "0")),
     soloSalida,
     sourceType,
+    isManualCycle,
+    exchangeSource,
+    estimatedFeePct,
+    estimatedFeeUsd,
   };
 
-  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
+  let msg = formatTelegramMessage(ctx);
+  if (hadActiveCycle) {
+    msg += `\n\n⚠️ <b>Aviso:</b> ya existía otro ciclo activo en este par al momento de la importación.`;
+  }
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
 }
 
 export async function alertImportedClosed(cycle: InstitutionalDcaCycle, realizedPnl: number, pnlPct: number, durationStr: string): Promise<void> {

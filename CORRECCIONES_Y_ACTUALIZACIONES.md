@@ -2,6 +2,45 @@
 
 ---
 
+## 2026-03-20 — IDCA: Ciclo Manual + Exchange + Fees + Bug Fix Simulación
+
+### Descripción
+Mejora la función "Importar Posición Abierta" para permitir importar posiciones manuales aunque ya haya ciclos activos del mismo par (etiquetándolas como CICLO MANUAL). Añade desplegable de exchange con Revolut X por defecto, autocalcula fees según presets y permite edición manual. Corrige bug de ciclos de simulación no visibles en CyclesTab.
+
+### Archivos Modificados
+- **shared/schema.ts** — Nuevas columnas: `is_manual_cycle`, `exchange_source`, `estimated_fee_pct`, `estimated_fee_usd`, `fees_override_manual`, `import_warning_acknowledged`
+- **server/services/institutionalDca/IdcaExchangeFeePresets.ts** — NUEVO: Presets de fees por exchange (Revolut X 0.09%, Kraken configurable, Otro)
+- **server/services/institutionalDca/IdcaTypes.ts** — Campos nuevos en `ImportPositionRequest`: `isManualCycle`, `exchangeSource`, `estimatedFeePct`, `estimatedFeeUsd`, `feesOverrideManual`, `warningAcknowledged`
+- **server/services/institutionalDca/IdcaRepository.ts** — `getImportableStatus()` ahora devuelve `hasActiveCycle` y permite importar siempre (ya no bloquea)
+- **server/services/institutionalDca/IdcaEngine.ts** — `importPosition()` relaja validación para manual (solo exige warningAcknowledged), guarda exchange/fees/manual en ciclo
+- **server/services/institutionalDca/IdcaMessageFormatter.ts** — FormatContext ampliado con `isManualCycle`, `exchangeSource`, `estimatedFeePct`, `estimatedFeeUsd`
+- **server/services/institutionalDca/IdcaTelegramNotifier.ts** — `alertImportedPosition()` con 8 params: manual, exchange, fees, warning convivencia
+- **server/routes/institutionalDca.routes.ts** — Nuevo `GET /exchange-fee-presets` + actualizado `POST /import-position` con campos nuevos
+- **client/src/hooks/useInstitutionalDca.ts** — `IdcaCycle` ampliado + `useExchangeFeePresets()` hook + `ImportPositionPayload` actualizado + `ImportableStatus` con `hasActiveCycle`
+- **client/src/pages/InstitutionalDca.tsx** — Modal reescrito con exchange dropdown, fees auto/manual, warning convivencia con checkbox obligatorio, badges MANUAL + EXCHANGE, detalle expandido con exchange/fees, filtro por mode en CyclesTab (fix bug simulación)
+
+### Características
+1. **CICLO MANUAL** — Permite importar posiciones manuales aunque ya existan ciclos activos del mismo par
+2. **Exchange dropdown** — Revolut X (defecto), Kraken, Otro con presets de fees
+3. **Autocálculo fees** — Fee USD = capital × feePct/100, recalculada al cambiar exchange/cantidad/precio
+4. **Fees editables** — Campo editable para % y USD; si se modifica, se marca `feesOverrideManual`
+5. **Restaurar fee preset** — Botón "Restaurar fee por defecto del exchange" visible si fee fue editada
+6. **Warning convivencia** — Si hay ciclo activo del mismo par, muestra aviso rojo + checkbox obligatorio
+7. **Badges visuales** — IMPORTADO (cyan), MANUAL (fuchsia), SOLO SALIDA (amber), GESTIÓN COMPLETA (verde), EXCHANGE (slate)
+8. **Detalle expandido** — Muestra exchange, fee%, feeUSD, [fee manual], nota descriptiva para ciclos manuales
+9. **Telegram mejorado** — Tipo: CICLO MANUAL, Exchange, Fee estimada %, Fee estimada USD, aviso convivencia
+10. **Bug fix** — Filtro por mode (Simulación/Live/Todos modos) en CyclesTab + limit subido a 100
+
+### Notas Técnicas
+- Revolut X: maker 0%, taker 0.09% (preset oficial)
+- Kraken: fee configurable (no hardcodeada por producto/volumen)
+- `isManualCycle = true` si sourceType="manual" O se marca explícitamente
+- No se bloquea importación manual con ciclo activo existente; se exige `warningAcknowledged`
+- Sin sourceType="manual" y con ciclo activo, SÍ se bloquea (como antes)
+- Snapshot ampliado con exchange, fees, feesOverride, hadActiveCycleAtImport
+
+---
+
 ## 2026-03-20 — IDCA: Importar Posición Abierta (Import Open Position)
 
 ### Descripción

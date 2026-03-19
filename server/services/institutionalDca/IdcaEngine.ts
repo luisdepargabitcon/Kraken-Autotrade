@@ -108,10 +108,15 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
     throw new Error(`Par no permitido: ${pair}`);
   }
 
-  // Check no active cycle for this pair
+  // Check active cycle for this pair
   const hasActive = await repo.hasActiveCycleForPair(pair, mode);
-  if (hasActive) {
-    throw new Error(`Ya existe un ciclo activo de ${pair} en modo ${mode}. Ciérralo antes de importar.`);
+  const isManual = req.isManualCycle || req.sourceType === "manual";
+
+  if (hasActive && !isManual) {
+    throw new Error(`Ya existe un ciclo activo de ${pair} en modo ${mode}. Ciérralo antes de importar, o importa como CICLO MANUAL.`);
+  }
+  if (hasActive && isManual && !req.warningAcknowledged) {
+    throw new Error(`Ya existe otro ciclo activo de ${pair}. Debes confirmar que aceptas la convivencia para importar como CICLO MANUAL.`);
   }
 
   const capitalUsed = req.capitalUsedUsd ?? req.quantity * req.avgEntryPrice;
@@ -121,6 +126,11 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
   const tpPrice = req.avgEntryPrice * (1 + tpPct / 100);
   const trailingPct = assetConfig ? parseFloat(String(assetConfig.trailingPct)) : 1.2;
 
+  const exchangeSource = req.exchangeSource || "revolut_x";
+  const estimatedFeePct = req.estimatedFeePct ?? 0.09;
+  const estimatedFeeUsd = req.estimatedFeeUsd ?? Math.round((capitalUsed * estimatedFeePct / 100) * 100) / 100;
+  const feesOverride = req.feesOverrideManual ?? false;
+
   const snapshot = {
     importedAt: new Date().toISOString(),
     originalQty: req.quantity,
@@ -129,6 +139,12 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
     sourceType: req.sourceType,
     soloSalida: req.soloSalida,
     feesPaidUsd: req.feesPaidUsd || 0,
+    isManualCycle: isManual,
+    exchangeSource,
+    estimatedFeePct,
+    estimatedFeeUsd,
+    feesOverrideManual: feesOverride,
+    hadActiveCycleAtImport: hasActive,
   };
 
   const cycle = await repo.createImportedCycle({
@@ -157,22 +173,32 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
     soloSalida: req.soloSalida,
     importNotes: req.notes || null,
     importSnapshotJson: snapshot,
+    isManualCycle: isManual,
+    exchangeSource,
+    estimatedFeePct: estimatedFeePct.toFixed(4),
+    estimatedFeeUsd: estimatedFeeUsd.toFixed(2),
+    feesOverrideManual: feesOverride,
+    importWarningAcknowledged: hasActive && isManual,
     startedAt: req.openedAt ? new Date(req.openedAt) : new Date(),
   });
+
+  const manualTag = isManual ? " [CICLO MANUAL]" : "";
+  const exchangeTag = exchangeSource ? ` | Exchange=${exchangeSource}` : "";
 
   await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "imported_position_created",
     severity: "info",
-    message: `Posición importada: ${req.quantity.toFixed(6)} @ ${req.avgEntryPrice.toFixed(2)}, soloSalida=${req.soloSalida}`,
+    message: `Posición importada${manualTag}: ${req.quantity.toFixed(6)} @ ${req.avgEntryPrice.toFixed(2)}, soloSalida=${req.soloSalida}${exchangeTag}, fee=${estimatedFeePct}%`,
     payloadJson: snapshot,
   }, {
     eventType: "imported_position_created", pair, mode,
     price: req.avgEntryPrice, quantity: req.quantity,
     capitalUsed, soloSalida: req.soloSalida, sourceType: req.sourceType,
+    isManualCycle: isManual, exchangeSource, estimatedFeePct, estimatedFeeUsd,
   });
 
-  await telegram.alertImportedPosition(cycle, req.soloSalida, req.sourceType);
+  await telegram.alertImportedPosition(cycle, req.soloSalida, req.sourceType, isManual, exchangeSource, estimatedFeePct, estimatedFeeUsd, hasActive);
 
   return cycle;
 }
