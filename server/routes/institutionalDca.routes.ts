@@ -244,6 +244,74 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Import Position ─────────────────────────────────────────────
+
+  app.get(`${PREFIX}/importable-status`, async (_req, res) => {
+    try {
+      const config = await repo.getIdcaConfig();
+      const mode = config.mode === "disabled" ? "simulation" : config.mode;
+      const status = await repo.getImportableStatus(mode);
+      res.json({ mode, pairs: status });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post(`${PREFIX}/import-position`, async (req, res) => {
+    try {
+      const { pair, quantity, avgEntryPrice, capitalUsedUsd, sourceType, soloSalida, notes, openedAt, feesPaidUsd } = req.body;
+
+      // Validation
+      if (!pair || !quantity || !avgEntryPrice) {
+        return res.status(400).json({ error: "Campos requeridos: pair, quantity, avgEntryPrice" });
+      }
+      if (!["BTC/USD", "ETH/USD"].includes(pair)) {
+        return res.status(400).json({ error: `Par no permitido: ${pair}. Solo BTC/USD o ETH/USD.` });
+      }
+      if (quantity <= 0 || avgEntryPrice <= 0) {
+        return res.status(400).json({ error: "quantity y avgEntryPrice deben ser positivos." });
+      }
+      const validSources = ["manual", "normal_bot", "exchange", "external"];
+      if (sourceType && !validSources.includes(sourceType)) {
+        return res.status(400).json({ error: `sourceType inválido. Permitidos: ${validSources.join(", ")}` });
+      }
+
+      const cycle = await engine.importPosition({
+        pair,
+        quantity: parseFloat(quantity),
+        avgEntryPrice: parseFloat(avgEntryPrice),
+        capitalUsedUsd: capitalUsedUsd ? parseFloat(capitalUsedUsd) : undefined,
+        sourceType: sourceType || "manual",
+        soloSalida: soloSalida ?? true,
+        notes: notes || undefined,
+        openedAt: openedAt || undefined,
+        feesPaidUsd: feesPaidUsd ? parseFloat(feesPaidUsd) : undefined,
+      });
+
+      res.json({ success: true, cycle });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.patch(`${PREFIX}/cycles/:id/solo-salida`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const cycle = await repo.getCycleById(id);
+      if (!cycle) return res.status(404).json({ error: "Ciclo no encontrado" });
+      if (!cycle.isImported) return res.status(400).json({ error: "Solo se puede cambiar soloSalida en ciclos importados" });
+      if (cycle.status === "closed") return res.status(400).json({ error: "El ciclo ya está cerrado" });
+
+      const soloSalida = req.body.soloSalida;
+      if (typeof soloSalida !== "boolean") return res.status(400).json({ error: "soloSalida debe ser booleano" });
+
+      const updated = await repo.updateCycle(id, { soloSalida });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Emergency ─────────────────────────────────────────────────
 
   app.post(`${PREFIX}/emergency/close-all`, async (_req, res) => {

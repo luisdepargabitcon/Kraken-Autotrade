@@ -30,6 +30,9 @@ import {
   useResetSimulationWallet,
   useIdcaTelegramTest,
   useIdcaCycleOrders,
+  useImportPosition,
+  useImportableStatus,
+  useToggleSoloSalida,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -66,6 +69,8 @@ import {
   ChevronRight,
   Loader2,
   Package,
+  Upload,
+  ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -884,11 +889,194 @@ function ConfigTab() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// IMPORT POSITION MODAL
+// ════════════════════════════════════════════════════════════════════
+
+function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data: importable } = useImportableStatus();
+  const importMutation = useImportPosition();
+  const { toast } = useToast();
+
+  const [pair, setPair] = useState("BTC/USD");
+  const [quantity, setQuantity] = useState("");
+  const [avgEntryPrice, setAvgEntryPrice] = useState("");
+  const [capitalUsedUsd, setCapitalUsedUsd] = useState("");
+  const [sourceType, setSourceType] = useState("manual");
+  const [soloSalida, setSoloSalida] = useState(true);
+  const [notes, setNotes] = useState("");
+  const [step, setStep] = useState<"form" | "confirm">("form");
+
+  const pairStatus = importable?.pairs?.[pair];
+  const canImport = pairStatus?.canImport ?? false;
+  const computedCapital = quantity && avgEntryPrice ? (parseFloat(quantity) * parseFloat(avgEntryPrice)).toFixed(2) : "";
+  const displayCapital = capitalUsedUsd || computedCapital;
+
+  const resetForm = () => {
+    setPair("BTC/USD"); setQuantity(""); setAvgEntryPrice(""); setCapitalUsedUsd("");
+    setSourceType("manual"); setSoloSalida(true); setNotes(""); setStep("form");
+  };
+
+  const handleSubmit = () => {
+    if (!quantity || !avgEntryPrice || parseFloat(quantity) <= 0 || parseFloat(avgEntryPrice) <= 0) {
+      toast({ title: "Error", description: "Cantidad y precio medio deben ser positivos.", variant: "destructive" });
+      return;
+    }
+    setStep("confirm");
+  };
+
+  const handleConfirm = () => {
+    importMutation.mutate({
+      pair,
+      quantity: parseFloat(quantity),
+      avgEntryPrice: parseFloat(avgEntryPrice),
+      capitalUsedUsd: capitalUsedUsd ? parseFloat(capitalUsedUsd) : undefined,
+      sourceType,
+      soloSalida,
+      notes: notes || undefined,
+    }, {
+      onSuccess: () => {
+        toast({ title: "Posición importada", description: `Se importó ${pair} correctamente al IDCA.` });
+        resetForm();
+        onClose();
+      },
+      onError: (err: any) => {
+        toast({ title: "Error al importar", description: err.message || "Error desconocido", variant: "destructive" });
+        setStep("form");
+      },
+    });
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-6 space-y-5">
+          <div className="flex items-center gap-3">
+            <Upload className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-bold font-mono">Importar Posición Abierta</h2>
+          </div>
+
+          {step === "form" ? (
+            <div className="space-y-4">
+              <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
+                <strong>⚠️ Aviso:</strong> No se reconstruye historial. El IDCA gestionará la salida (y opcionalmente compras) desde este punto.
+              </div>
+
+              {/* Par */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">PAR</Label>
+                <div className="flex gap-2">
+                  {["BTC/USD", "ETH/USD"].map((p) => (
+                    <Button key={p} size="sm" variant={pair === p ? "default" : "outline"}
+                      className={cn("text-xs h-8 flex-1", pair === p && (p === "BTC/USD" ? "bg-orange-600 hover:bg-orange-700" : "bg-blue-600 hover:bg-blue-700"))}
+                      onClick={() => setPair(p)}>{p}
+                    </Button>
+                  ))}
+                </div>
+                {!canImport && pairStatus && (
+                  <p className="text-[10px] text-red-400 mt-1">{pairStatus.reason}</p>
+                )}
+              </div>
+
+              {/* Cantidad */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">CANTIDAD ({pair === "BTC/USD" ? "BTC" : "ETH"})</Label>
+                <Input type="number" step="any" min="0" placeholder="Ej: 0.015" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="h-8 text-sm font-mono" />
+              </div>
+
+              {/* Precio medio */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">PRECIO MEDIO DE ENTRADA (USD)</Label>
+                <Input type="number" step="any" min="0" placeholder="Ej: 98500.00" value={avgEntryPrice} onChange={(e) => setAvgEntryPrice(e.target.value)} className="h-8 text-sm font-mono" />
+              </div>
+
+              {/* Capital (opcional) */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">CAPITAL INVERTIDO USD (opcional)</Label>
+                <Input type="number" step="any" min="0" placeholder={computedCapital ? `Auto: $${computedCapital}` : "Se calcula automáticamente"} value={capitalUsedUsd} onChange={(e) => setCapitalUsedUsd(e.target.value)} className="h-8 text-sm font-mono" />
+              </div>
+
+              {/* Origen */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">ORIGEN DE LA POSICIÓN</Label>
+                <div className="flex gap-1 flex-wrap">
+                  {["manual", "normal_bot", "exchange", "external"].map((s) => (
+                    <Button key={s} size="sm" variant={sourceType === s ? "default" : "outline"} className="text-[10px] h-7"
+                      onClick={() => setSourceType(s)}>
+                      {s === "manual" ? "Manual" : s === "normal_bot" ? "Bot Normal" : s === "exchange" ? "Exchange" : "Externo"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Solo Salida */}
+              <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50 bg-muted/10">
+                <Switch checked={soloSalida} onCheckedChange={setSoloSalida} className="mt-0.5" />
+                <div>
+                  <Label className="text-sm font-medium">Solo Salida</Label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {soloSalida
+                      ? "El IDCA solo gestionará la salida (TP, trailing, breakeven). No hará compras adicionales ni activará Plus."
+                      : "El IDCA gestionará como ciclo completo: permitirá compras de seguridad, Plus cycles, y lógica completa."
+                    }
+                  </p>
+                </div>
+              </div>
+
+              {/* Notas */}
+              <div className="space-y-1">
+                <Label className="text-xs font-mono text-muted-foreground">NOTAS (opcional)</Label>
+                <Input placeholder="Ej: Posición abierta el 10/01 en Kraken" value={notes} onChange={(e) => setNotes(e.target.value)} className="h-8 text-sm" />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" className="flex-1 h-9" onClick={() => { resetForm(); onClose(); }}>Cancelar</Button>
+                <Button className="flex-1 h-9" disabled={!canImport || !quantity || !avgEntryPrice || importMutation.isPending}
+                  onClick={handleSubmit}>
+                  <Upload className="h-3 w-3 mr-1" /> Revisar e Importar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-3 rounded-lg bg-primary/10 border border-primary/30 text-sm space-y-2">
+                <p className="font-semibold text-primary">¿Confirmar importación?</p>
+                <div className="text-xs space-y-1 font-mono">
+                  <p><strong>Par:</strong> {pair}</p>
+                  <p><strong>Cantidad:</strong> {parseFloat(quantity).toFixed(8)}</p>
+                  <p><strong>Precio medio:</strong> ${parseFloat(avgEntryPrice).toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                  <p><strong>Capital:</strong> ${parseFloat(displayCapital || "0").toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                  <p><strong>Origen:</strong> {sourceType}</p>
+                  <p><strong>Modo:</strong> {soloSalida ? "Solo Salida" : "Gestión Completa"}</p>
+                  {notes && <p><strong>Notas:</strong> {notes}</p>}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
+                ⚠️ Esta acción no se puede deshacer. El ciclo importado se activará inmediatamente y el motor comenzará a gestionarlo.
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1 h-9" onClick={() => setStep("form")}>Volver</Button>
+                <Button className="flex-1 h-9" disabled={importMutation.isPending} onClick={handleConfirm}>
+                  {importMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Upload className="h-3 w-3 mr-1" />}
+                  Confirmar Importación
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CYCLES TAB
 // ════════════════════════════════════════════════════════════════════
 
 function CyclesTab() {
   const [filter, setFilter] = useState<"all" | "active" | "closed">("all");
+  const [importOpen, setImportOpen] = useState(false);
   const { data: cycles, isLoading } = useIdcaCycles({
     status: filter === "all" ? undefined : filter,
     limit: 50,
@@ -898,6 +1086,7 @@ function CyclesTab() {
 
   return (
     <div className="space-y-3">
+      <ImportPositionModal open={importOpen} onClose={() => setImportOpen(false)} />
       <div className="flex gap-2">
         {(["all", "active", "closed"] as const).map((f) => (
           <Button key={f} size="sm" variant={filter === f ? "default" : "outline"} className="text-xs h-7"
@@ -905,7 +1094,10 @@ function CyclesTab() {
             {f === "all" ? "Todos" : f === "active" ? "Activos" : "Cerrados"}
           </Button>
         ))}
-        <Button size="sm" variant="outline" className="text-xs h-7 ml-auto" asChild>
+        <Button size="sm" variant="outline" className="text-xs h-7 ml-auto gap-1" onClick={() => setImportOpen(true)}>
+          <Upload className="h-3 w-3" /> Importar Posición
+        </Button>
+        <Button size="sm" variant="outline" className="text-xs h-7" asChild>
           <a href="/api/institutional-dca/export/cycles" download>
             <Download className="h-3 w-3 mr-1" /> CSV
           </a>
@@ -932,11 +1124,13 @@ function CyclesTab() {
 function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
+  const toggleSoloSalida = useToggleSoloSalida();
+  const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   return (
-    <Card className="border-border/50">
+    <Card className={cn("border-border/50", cycle.isImported && "border-l-2 border-l-cyan-500")}>
       <CardContent className="p-0">
         <div
           className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/20 transition-colors"
@@ -945,7 +1139,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
           <div className="flex items-center gap-2">
             {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-mono font-bold">{cycle.pair}</span>
                 <Badge variant="outline" className={cn("text-[10px] font-mono", STATUS_COLORS[cycle.status])}>
                   {cycle.status?.toUpperCase()}
@@ -956,12 +1150,28 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {cycle.cycleType === "plus" && (
                   <Badge variant="outline" className="text-[10px] font-mono text-purple-400 border-purple-400/50">PLUS</Badge>
                 )}
+                {cycle.isImported && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-cyan-400 border-cyan-400/50 bg-cyan-400/5">
+                    <Upload className="h-2.5 w-2.5 mr-0.5" /> IMPORTADO
+                  </Badge>
+                )}
+                {cycle.isImported && cycle.soloSalida && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
+                    SOLO SALIDA
+                  </Badge>
+                )}
+                {cycle.isImported && !cycle.soloSalida && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-green-400 border-green-400/50 bg-green-400/5">
+                    GESTIÓN COMPLETA
+                  </Badge>
+                )}
               </div>
               <div className="text-[10px] text-muted-foreground mt-1">
                 Inicio: {fmtDate(cycle.startedAt)} | Compras: {cycle.buyCount} | Score: {cycle.marketScore || "—"}
                 {cycle.tpTargetPct && ` | TP: ${parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%`}
                 {cycle.parentCycleId && ` | Parent: #${cycle.parentCycleId}`}
                 {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
+                {cycle.isImported && cycle.sourceType && ` | Origen: ${cycle.sourceType}`}
               </div>
             </div>
           </div>
@@ -978,6 +1188,30 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
 
         {expanded && (
           <div className="border-t border-border/30 bg-muted/5">
+            {/* Import details panel */}
+            {cycle.isImported && cycle.status !== "closed" && (
+              <div className="px-9 py-3 border-b border-border/20 bg-cyan-500/5">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
+                    <span className="text-cyan-400 font-semibold">Ciclo importado</span>
+                    {cycle.importNotes && <span> — {cycle.importNotes}</span>}
+                    {cycle.importedAt && <span> | Importado: {fmtDate(cycle.importedAt)}</span>}
+                  </div>
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <Label className="text-[10px] font-mono text-muted-foreground">Solo Salida</Label>
+                    <Switch
+                      checked={cycle.soloSalida}
+                      onCheckedChange={(v) => {
+                        toggleSoloSalida.mutate({ cycleId: cycle.id, soloSalida: v }, {
+                          onSuccess: () => toast({ title: "Actualizado", description: v ? "Modo: Solo Salida" : "Modo: Gestión Completa" }),
+                          onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             {cycle.tpBreakdownJson && (
               <div className="px-9 py-2 border-b border-border/20">
                 <div className="text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">

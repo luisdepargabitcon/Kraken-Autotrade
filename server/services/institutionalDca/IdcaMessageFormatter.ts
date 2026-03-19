@@ -50,6 +50,8 @@ export interface FormatContext {
   parentCycleId?: number | null;
   realizedPnl?: number;
   closeReason?: string;
+  soloSalida?: boolean;
+  sourceType?: string;
 }
 
 // ─── Core Formatter ─────────────────────────────────────────────────
@@ -198,6 +200,22 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.parentCycleId != null) techParts.push(`Parent=#${ctx.parentCycleId}`);
       break;
 
+    case "imported_position_created":
+      if (ctx.price != null) techParts.push(`AvgEntry=${fmtNum(ctx.price)}`);
+      if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
+      if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.soloSalida != null) techParts.push(`SoloSalida=${ctx.soloSalida}`);
+      if (ctx.sourceType) techParts.push(`Origen=${ctx.sourceType}`);
+      break;
+
+    case "imported_position_closed":
+      if (ctx.price != null) techParts.push(`Close=${fmtNum(ctx.price)}`);
+      if (ctx.realizedPnl != null) techParts.push(`PnL=$${ctx.realizedPnl.toFixed(2)}`);
+      if (ctx.pnlPct != null) techParts.push(`PnL%=${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
+      if (ctx.closeReason) techParts.push(`Motivo=${ctx.closeReason}`);
+      if (ctx.durationStr) techParts.push(`Duración=${ctx.durationStr}`);
+      break;
+
     default:
       // Include any payload keys as tech details
       if (ctx.payload) {
@@ -300,6 +318,22 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       if (ctx.drawdownPct != null) lines.push(`<b>Drawdown actual:</b> -${ctx.drawdownPct.toFixed(2)}%`);
       if (ctx.maxDrawdownPct != null) lines.push(`<b>Límite configurado:</b> -${ctx.maxDrawdownPct.toFixed(2)}%`);
       lines.push(`<b>Acción:</b> Módulo pausado, nuevas compras bloqueadas`);
+      break;
+
+    case "imported_position_created":
+      if (ctx.price != null) lines.push(`<b>Precio medio:</b> ${fmtNum(ctx.price)}`);
+      if (ctx.quantity != null) lines.push(`<b>Cantidad:</b> ${ctx.quantity.toFixed(6)}`);
+      if (ctx.capitalUsed != null) lines.push(`<b>Capital:</b> $${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.soloSalida != null) lines.push(`<b>Solo salida:</b> ${ctx.soloSalida ? "Sí" : "No"}`);
+      if (ctx.sourceType) lines.push(`<b>Origen:</b> ${ctx.sourceType}`);
+      break;
+
+    case "imported_position_closed":
+      if (ctx.price != null) lines.push(`<b>Precio cierre:</b> ${fmtNum(ctx.price)}`);
+      if (ctx.pnlPct != null) lines.push(`<b>PnL final:</b> ${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
+      if (ctx.realizedPnl != null) lines.push(`<b>Resultado:</b> $${ctx.realizedPnl.toFixed(2)}`);
+      if (ctx.durationStr) lines.push(`<b>Duración:</b> ${ctx.durationStr}`);
+      if (ctx.closeReason) lines.push(`<b>Motivo:</b> ${escapeHtml(ctx.closeReason)}`);
       break;
 
     default:

@@ -148,6 +148,22 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "info",
   },
 
+  // ═══ IMPORTACIÓN DE POSICIONES ═══
+
+  imported_position_created: {
+    humanTitle: "Posición importada al IDCA",
+    humanTemplate: "Se importó una posición abierta de {pair} para que el módulo IDCA la gestione desde este momento. El sistema usará el precio medio y la cantidad introducidos como base para decidir la salida. No se reconstruyen compras pasadas.",
+    emoji: "📥",
+    defaultSeverity: "info",
+  },
+
+  imported_position_closed: {
+    humanTitle: "Posición importada cerrada",
+    humanTemplate: "El módulo cerró la posición importada de {pair} cuando se cumplieron las condiciones de salida configuradas. El resultado se calculó desde el momento de la importación.",
+    emoji: "✅",
+    defaultSeverity: "info",
+  },
+
   // ═══ MODO / SISTEMA ═══
 
   mode_transition: {

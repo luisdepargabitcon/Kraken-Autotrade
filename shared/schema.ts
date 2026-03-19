@@ -1042,6 +1042,14 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   cycleType: text("cycle_type").notNull().default("main"), // main | plus
   parentCycleId: integer("parent_cycle_id"),
   plusCyclesCompleted: integer("plus_cycles_completed").notNull().default(0),
+  // Import fields
+  isImported: boolean("is_imported").notNull().default(false),
+  importedAt: timestamp("imported_at"),
+  sourceType: text("source_type"), // manual | normal_bot | exchange | external
+  managedBy: text("managed_by"), // idca | normal_bot | external | manual
+  soloSalida: boolean("solo_salida").notNull().default(false),
+  importNotes: text("import_notes"),
+  importSnapshotJson: jsonb("import_snapshot_json"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

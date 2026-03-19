@@ -2,6 +2,45 @@
 
 ---
 
+## 2026-03-20 — IDCA: Importar Posición Abierta (Import Open Position)
+
+### Descripción
+Nueva funcionalidad que permite importar manualmente una posición abierta de BTC o ETH al módulo Institutional DCA. El bot gestiona la posición desde el punto de importación sin reconstruir historial. Incluye modo "Solo Salida" (solo TP/trailing/breakeven) y "Gestión Completa" (compras adicionales + Plus cycles permitidos).
+
+### Archivos Modificados
+- **shared/schema.ts** — Nuevas columnas en `institutional_dca_cycles`: `is_imported`, `imported_at`, `source_type`, `managed_by`, `solo_salida`, `import_notes`, `import_snapshot_json`
+- **server/services/institutionalDca/IdcaTypes.ts** — Tipos `ImportPositionRequest`, `ImportSourceType`, `ImportManagedBy`
+- **server/services/institutionalDca/IdcaRepository.ts** — Funciones `hasActiveCycleForPair()`, `getImportableStatus()`, `createImportedCycle()`
+- **server/services/institutionalDca/IdcaReasonCatalog.ts** — Eventos `imported_position_created`, `imported_position_closed`
+- **server/services/institutionalDca/IdcaMessageFormatter.ts** — Campos `soloSalida`, `sourceType` en `FormatContext` + switch cases para formateo técnico y Telegram
+- **server/services/institutionalDca/IdcaEngine.ts** — Función `importPosition()` exportada + guards en `evaluatePair` (skip plus si soloSalida) y `handleActiveState` (skip safety buys si soloSalida)
+- **server/services/institutionalDca/IdcaTelegramNotifier.ts** — Alertas `alertImportedPosition()`, `alertImportedClosed()`
+- **server/routes/institutionalDca.routes.ts** — Endpoints `GET /importable-status`, `POST /import-position`, `PATCH /cycles/:id/solo-salida`
+- **client/src/hooks/useInstitutionalDca.ts** — Hooks `useImportableStatus()`, `useImportPosition()`, `useToggleSoloSalida()` + campos import en `IdcaCycle`
+- **client/src/pages/InstitutionalDca.tsx** — Componente `ImportPositionModal` con formulario 2 pasos + botón "Importar Posición" en CyclesTab + badges IMPORTADO/SOLO SALIDA/GESTIÓN COMPLETA en `CycleDetailRow` + toggle soloSalida en panel expandido
+
+### Características
+1. **Modal de importación** — Formulario con par, cantidad, precio medio, capital, origen, solo salida, notas + paso de confirmación
+2. **Validaciones** — No permite importar si ya hay ciclo activo para el par; valida campos requeridos y tipos
+3. **Modo Solo Salida** — Solo gestiona salidas (TP, trailing, breakeven); no hace compras ni activa Plus
+4. **Modo Gestión Completa** — Permite safety buys, Plus cycles y lógica IDCA completa
+5. **Toggle en tiempo real** — Se puede cambiar soloSalida en ciclos activos importados desde la UI
+6. **Badges visuales** — Indicadores claros de IMPORTADO, SOLO SALIDA o GESTIÓN COMPLETA
+7. **Eventos humanos** — `imported_position_created` y `imported_position_closed` con mensajes en español
+8. **Alertas Telegram** — Notificaciones al importar y al cerrar posiciones importadas
+9. **Snapshot** — Se guarda JSON con datos originales de importación para auditoría
+10. **Sin historial falso** — No se crean órdenes ficticias; buyCount=1 como referencia
+
+### Notas Técnicas
+- La migración DB se aplica automáticamente por Drizzle push
+- Pares permitidos: BTC/USD, ETH/USD
+- `sourceType`: manual | normal_bot | exchange | external
+- `managedBy`: siempre "idca" al importar
+- El ciclo importado usa `cycleType: "main"` para compatibilidad con el motor
+- La barra lateral izquierda cyan distingue visualmente los ciclos importados
+
+---
+
 ## 2026-03-19 — IDCA: Rediseño Config Tab + Ciclos Expandibles en Resumen
 
 ### Commit

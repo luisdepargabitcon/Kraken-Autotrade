@@ -105,6 +105,13 @@ export interface IdcaCycle {
   cycleType: string;
   parentCycleId: number | null;
   plusCyclesCompleted: number;
+  isImported: boolean;
+  importedAt: string | null;
+  sourceType: string | null;
+  managedBy: string | null;
+  soloSalida: boolean;
+  importNotes: string | null;
+  importSnapshotJson: any;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];
@@ -389,6 +396,63 @@ export function useIdcaTelegramTest() {
     mutationFn: async () => {
       const res = await apiRequest("POST", `${PREFIX}/telegram/test`);
       return res.json();
+    },
+  });
+}
+
+// ─── Import Position ──────────────────────────────────────────────
+
+export interface ImportableStatus {
+  mode: string;
+  pairs: Record<string, { canImport: boolean; reason?: string }>;
+}
+
+export interface ImportPositionPayload {
+  pair: string;
+  quantity: number | string;
+  avgEntryPrice: number | string;
+  capitalUsedUsd?: number | string;
+  sourceType?: string;
+  soloSalida?: boolean;
+  notes?: string;
+  openedAt?: string;
+  feesPaidUsd?: number | string;
+}
+
+export function useImportableStatus() {
+  return useQuery<ImportableStatus>({
+    queryKey: ["idca", "importableStatus"],
+    queryFn: async () => {
+      const res = await fetch(`${PREFIX}/importable-status`);
+      if (!res.ok) throw new Error("Failed to fetch importable status");
+      return res.json();
+    },
+    staleTime: 10000,
+  });
+}
+
+export function useImportPosition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ImportPositionPayload) => {
+      const res = await apiRequest("POST", `${PREFIX}/import-position`, payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
+export function useToggleSoloSalida() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ cycleId, soloSalida }: { cycleId: number; soloSalida: boolean }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/cycles/${cycleId}/solo-salida`, { soloSalida });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
     },
   });
 }

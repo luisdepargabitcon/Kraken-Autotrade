@@ -98,6 +98,85 @@ export function getHealthStatus() {
   };
 }
 
+export async function importPosition(req: import("./IdcaTypes").ImportPositionRequest): Promise<import("@shared/schema").InstitutionalDcaCycle> {
+  const config = await repo.getIdcaConfig();
+  const mode = config.mode as IdcaMode;
+  if (mode === "disabled") throw new Error("El módulo IDCA está deshabilitado.");
+
+  const pair = req.pair;
+  if (!INSTITUTIONAL_DCA_ALLOWED_PAIRS.includes(pair as any)) {
+    throw new Error(`Par no permitido: ${pair}`);
+  }
+
+  // Check no active cycle for this pair
+  const hasActive = await repo.hasActiveCycleForPair(pair, mode);
+  if (hasActive) {
+    throw new Error(`Ya existe un ciclo activo de ${pair} en modo ${mode}. Ciérralo antes de importar.`);
+  }
+
+  const capitalUsed = req.capitalUsedUsd ?? req.quantity * req.avgEntryPrice;
+  const currentPrice = await getCurrentPrice(pair);
+  const assetConfig = await repo.getAssetConfig(pair);
+  const tpPct = assetConfig ? parseFloat(String(assetConfig.takeProfitPct)) : 4.0;
+  const tpPrice = req.avgEntryPrice * (1 + tpPct / 100);
+  const trailingPct = assetConfig ? parseFloat(String(assetConfig.trailingPct)) : 1.2;
+
+  const snapshot = {
+    importedAt: new Date().toISOString(),
+    originalQty: req.quantity,
+    originalAvgPrice: req.avgEntryPrice,
+    originalCapital: capitalUsed,
+    sourceType: req.sourceType,
+    soloSalida: req.soloSalida,
+    feesPaidUsd: req.feesPaidUsd || 0,
+  };
+
+  const cycle = await repo.createImportedCycle({
+    pair,
+    strategy: "institutional_dca_v1",
+    mode,
+    status: "active",
+    capitalReservedUsd: capitalUsed.toFixed(2),
+    capitalUsedUsd: capitalUsed.toFixed(2),
+    totalQuantity: req.quantity.toFixed(8),
+    avgEntryPrice: req.avgEntryPrice.toFixed(8),
+    currentPrice: (currentPrice || req.avgEntryPrice).toFixed(8),
+    buyCount: 1,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    trailingPct: trailingPct.toFixed(2),
+    marketScore: "50.00",
+    volatilityScore: "0.00",
+    adaptiveSizeProfile: "balanced",
+    lastBuyAt: req.openedAt ? new Date(req.openedAt) : new Date(),
+    cycleType: "main",
+    isImported: true,
+    importedAt: new Date(),
+    sourceType: req.sourceType,
+    managedBy: "idca",
+    soloSalida: req.soloSalida,
+    importNotes: req.notes || null,
+    importSnapshotJson: snapshot,
+    startedAt: req.openedAt ? new Date(req.openedAt) : new Date(),
+  });
+
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
+    eventType: "imported_position_created",
+    severity: "info",
+    message: `Posición importada: ${req.quantity.toFixed(6)} @ ${req.avgEntryPrice.toFixed(2)}, soloSalida=${req.soloSalida}`,
+    payloadJson: snapshot,
+  }, {
+    eventType: "imported_position_created", pair, mode,
+    price: req.avgEntryPrice, quantity: req.quantity,
+    capitalUsed, soloSalida: req.soloSalida, sourceType: req.sourceType,
+  });
+
+  await telegram.alertImportedPosition(cycle, req.soloSalida, req.sourceType);
+
+  return cycle;
+}
+
 export async function startScheduler(): Promise<void> {
   if (schedulerInterval) return;
   const config = await repo.getIdcaConfig();
@@ -234,9 +313,10 @@ async function evaluatePair(
     // Manage existing main cycle
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
 
-    // Plus cycle logic: check for existing plus or activation
+    // Plus cycle logic: skip if imported + soloSalida
+    const isSoloSalida = activeCycle.isImported && activeCycle.soloSalida;
     const plusConfig = getPlusConfig(config);
-    if (plusConfig.enabled) {
+    if (plusConfig.enabled && !isSoloSalida) {
       const existingPlus = await repo.getActivePlusCycle(pair, mode, activeCycle.id);
       if (existingPlus) {
         await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
@@ -245,8 +325,12 @@ async function evaluatePair(
       }
     }
   } else {
-    // Look for new entry
-    await checkEntry(pair, currentPrice, config, assetConfig, mode);
+    // Check if there's an imported cycle (non-main cycleType) still active for this pair
+    const hasAny = await repo.hasActiveCycleForPair(pair, mode);
+    if (!hasAny) {
+      // Look for new entry
+      await checkEntry(pair, currentPrice, config, assetConfig, mode);
+    }
   }
 }
 
@@ -541,8 +625,10 @@ async function handleActiveState(
     }
   }
 
-  // Check safety buy levels
-  await checkSafetyBuy(cycle, currentPrice, config, assetConfig, mode);
+  // Check safety buy levels — skip if imported + soloSalida
+  if (!(cycle.isImported && cycle.soloSalida)) {
+    await checkSafetyBuy(cycle, currentPrice, config, assetConfig, mode);
+  }
 
   // Update recent high
   const currentHigh = priceCache.get(`${pair}_recent_high`) || 0;

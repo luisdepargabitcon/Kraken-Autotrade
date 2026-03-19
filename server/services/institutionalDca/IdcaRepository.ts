@@ -443,6 +443,47 @@ export async function getOhlcvRange(
     .orderBy(institutionalDcaOhlcvCache.ts);
 }
 
+// ─── Import Position ──────────────────────────────────────────────
+
+export async function hasActiveCycleForPair(pair: string, mode: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: institutionalDcaCycles.id })
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+export async function getImportableStatus(mode: string): Promise<Record<string, { canImport: boolean; reason?: string }>> {
+  const result: Record<string, { canImport: boolean; reason?: string }> = {};
+  const allowedPairs = ["BTC/USD", "ETH/USD"];
+  for (const pair of allowedPairs) {
+    const hasActive = await hasActiveCycleForPair(pair, mode);
+    if (hasActive) {
+      result[pair] = { canImport: false, reason: `Ya existe un ciclo activo de ${pair} en IDCA. Ciérralo antes de importar.` };
+    } else {
+      result[pair] = { canImport: true };
+    }
+  }
+  return result;
+}
+
+export async function createImportedCycle(
+  data: InsertInstitutionalDcaCycle
+): Promise<InstitutionalDcaCycle> {
+  const [created] = await db
+    .insert(institutionalDcaCycles)
+    .values(data)
+    .returning();
+  return created;
+}
+
 // ─── Summary helpers ───────────────────────────────────────────────
 
 export async function getModuleSummary(mode: string) {

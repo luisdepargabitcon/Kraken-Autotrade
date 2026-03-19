@@ -162,3 +162,20 @@ export interface PlusConfig {
   trailingPctBtc: number;
   trailingPctEth: number;
 }
+
+// ─── Import Position ──────────────────────────────────────────────
+
+export type ImportSourceType = "manual" | "normal_bot" | "exchange" | "external";
+export type ImportManagedBy = "idca" | "normal_bot" | "external" | "manual";
+
+export interface ImportPositionRequest {
+  pair: string;
+  quantity: number;
+  avgEntryPrice: number;
+  capitalUsedUsd?: number;   // auto-calculated if omitted
+  sourceType: ImportSourceType;
+  soloSalida: boolean;
+  notes?: string;
+  openedAt?: string;         // ISO date
+  feesPaidUsd?: number;
+}
