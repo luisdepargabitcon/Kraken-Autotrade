@@ -1861,7 +1861,17 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'last_events_purge_at', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP' },
         { table: 'bot_config', column: 'last_events_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0' },
         
-        // institutional_dca_cycles — manual cycle + exchange + fees columns
+        // institutional_dca_cycles — all import + manual cycle + exchange + fees columns
+        { table: 'institutional_dca_cycles', column: 'cycle_type', sql: "ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS cycle_type TEXT NOT NULL DEFAULT 'main'" },
+        { table: 'institutional_dca_cycles', column: 'parent_cycle_id', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS parent_cycle_id INTEGER' },
+        { table: 'institutional_dca_cycles', column: 'plus_cycles_completed', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS plus_cycles_completed INTEGER NOT NULL DEFAULT 0' },
+        { table: 'institutional_dca_cycles', column: 'is_imported', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS is_imported BOOLEAN NOT NULL DEFAULT false' },
+        { table: 'institutional_dca_cycles', column: 'imported_at', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS imported_at TIMESTAMP' },
+        { table: 'institutional_dca_cycles', column: 'source_type', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS source_type TEXT' },
+        { table: 'institutional_dca_cycles', column: 'managed_by', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS managed_by TEXT' },
+        { table: 'institutional_dca_cycles', column: 'solo_salida', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS solo_salida BOOLEAN NOT NULL DEFAULT false' },
+        { table: 'institutional_dca_cycles', column: 'import_notes', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS import_notes TEXT' },
+        { table: 'institutional_dca_cycles', column: 'import_snapshot_json', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS import_snapshot_json JSONB' },
         { table: 'institutional_dca_cycles', column: 'is_manual_cycle', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS is_manual_cycle BOOLEAN NOT NULL DEFAULT false' },
         { table: 'institutional_dca_cycles', column: 'exchange_source', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS exchange_source TEXT' },
         { table: 'institutional_dca_cycles', column: 'estimated_fee_pct', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS estimated_fee_pct NUMERIC(8,4)' },
