@@ -21,6 +21,7 @@ import type {
   IdcaSizeProfile,
   DynamicTpConfig,
   IdcaCycleType,
+  PlusConfig,
 } from "./IdcaTypes";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 
@@ -226,12 +227,23 @@ async function evaluatePair(
   const currentPrice = await getCurrentPrice(pair);
   if (currentPrice <= 0) return;
 
-  // Check for existing active cycle
+  // Check for existing active main cycle
   const activeCycle = await repo.getActiveCycle(pair, mode);
 
   if (activeCycle) {
-    // Manage existing cycle
+    // Manage existing main cycle
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
+
+    // Plus cycle logic: check for existing plus or activation
+    const plusConfig = getPlusConfig(config);
+    if (plusConfig.enabled) {
+      const existingPlus = await repo.getActivePlusCycle(pair, mode, activeCycle.id);
+      if (existingPlus) {
+        await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
+      } else {
+        await checkPlusActivation(activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
+      }
+    }
   } else {
     // Look for new entry
     await checkEntry(pair, currentPrice, config, assetConfig, mode);
@@ -1303,6 +1315,448 @@ async function logBlock(pair: string, mode: string, code: string, cycle?: Instit
     blockReasons: [{ code, message: code }],
   });
   await telegram.alertBuyBlocked(pair, mode, code, pnlPct, buyCount);
+}
+
+// ─── Plus Cycle Config Helper ─────────────────────────────────────
+
+const DEFAULT_PLUS_CONFIG: PlusConfig = {
+  enabled: false, maxPlusCyclesPerMain: 2, maxPlusEntries: 3,
+  capitalAllocationPct: 15, activationExtraDipPct: 4.0,
+  requireMainExhausted: true, requireReboundConfirmation: true,
+  cooldownMinutesBetweenBuys: 60, autoCloseIfMainClosed: true,
+  maxExposurePctPerAsset: 20, entryDipSteps: [2.0, 3.5, 5.0],
+  entrySizingMode: "fixed", baseTpPctBtc: 4.0, baseTpPctEth: 4.5,
+  trailingPctBtc: 1.0, trailingPctEth: 1.2,
+};
+
+function getPlusConfig(config: InstitutionalDcaConfigRow): PlusConfig {
+  const raw = config.plusConfigJson as any;
+  if (!raw || typeof raw !== "object") return DEFAULT_PLUS_CONFIG;
+  return { ...DEFAULT_PLUS_CONFIG, ...raw };
+}
+
+// ─── Plus Cycle Activation ────────────────────────────────────────
+
+async function checkPlusActivation(
+  mainCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  plusCfg: PlusConfig
+): Promise<void> {
+  const pair = mainCycle.pair;
+
+  // 1) Main must be exhausted (all safety orders used)
+  if (plusCfg.requireMainExhausted) {
+    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+    const maxBuys = safetyOrders.length + 1; // base + safety orders
+    if (mainCycle.buyCount < maxBuys) return; // main not exhausted yet
+  }
+
+  // 2) Check max plus cycles per main
+  const closedPlusCount = await repo.getClosedPlusCyclesCount(mainCycle.id);
+  if (closedPlusCount >= plusCfg.maxPlusCyclesPerMain) return;
+
+  // 3) Check extra dip from last main buy price
+  const lastBuyPrice = parseFloat(String(mainCycle.avgEntryPrice || "0"));
+  if (lastBuyPrice <= 0) return;
+  const dipFromLastBuy = ((lastBuyPrice - currentPrice) / lastBuyPrice) * 100;
+  if (dipFromLastBuy < plusCfg.activationExtraDipPct) return;
+
+  // 4) Rebound confirmation if required
+  if (plusCfg.requireReboundConfirmation) {
+    const strength = getReboundStrength(pair);
+    if (strength === "none") return;
+  }
+
+  // 5) Exposure check
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
+  const plusCapital = allocatedCapital * (plusCfg.capitalAllocationPct / 100);
+  const allActive = await repo.getAllActiveCycles(mode);
+  const pairExposure = allActive
+    .filter(c => c.pair === pair)
+    .reduce((sum, c) => sum + parseFloat(String(c.capitalUsedUsd || "0")), 0);
+  const maxPairExposure = allocatedCapital * (plusCfg.maxExposurePctPerAsset / 100);
+  if (pairExposure >= maxPairExposure) return;
+
+  // All checks passed — create plus cycle
+  console.log(`${TAG}[PLUS] Activating plus cycle for ${pair}, dip=${dipFromLastBuy.toFixed(2)}% from main avg`);
+
+  const entrySteps = plusCfg.entryDipSteps || [2.0, 3.5, 5.0];
+  const baseBuyUsd = plusCapital / (entrySteps.length || 1);
+  const quantity = baseBuyUsd / currentPrice;
+
+  // Compute TP for plus cycle
+  let tpPct: number;
+  let tpBreakdown: any = null;
+  if (config.adaptiveTpEnabled) {
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
+      pair,
+      cycleType: "plus",
+      buyCount: 1,
+      marketScore: parseFloat(String(mainCycle.marketScore || "50")),
+      volatilityPct: getVolatility(pair),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
+    });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdown = breakdown;
+  } else {
+    const isBtc = pair === "BTC/USD";
+    tpPct = isBtc ? plusCfg.baseTpPctBtc : plusCfg.baseTpPctEth;
+  }
+
+  const tpPrice = currentPrice * (1 + tpPct / 100);
+  const isBtc = pair === "BTC/USD";
+  const trailingPct = isBtc ? plusCfg.trailingPctBtc : plusCfg.trailingPctEth;
+
+  // Simulation fees
+  let fees = 0, slippage = 0, netValue = baseBuyUsd;
+  if (mode === "simulation") {
+    fees = baseBuyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippage = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = baseBuyUsd + fees + slippage;
+  }
+
+  // Next plus entry level
+  const nextDipPct = entrySteps.length > 1 ? entrySteps[1] : null;
+  const nextBuyPrice = nextDipPct ? currentPrice * (1 - nextDipPct / 100) : null;
+
+  const plusCycle = await repo.createCycle({
+    pair,
+    strategy: "institutional_dca_v1_plus",
+    mode,
+    status: "active",
+    capitalReservedUsd: plusCapital.toFixed(2),
+    capitalUsedUsd: netValue.toFixed(2),
+    totalQuantity: quantity.toFixed(8),
+    avgEntryPrice: currentPrice.toFixed(8),
+    currentPrice: currentPrice.toFixed(8),
+    buyCount: 1,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    trailingPct: trailingPct.toFixed(2),
+    nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+    marketScore: mainCycle.marketScore,
+    volatilityScore: mainCycle.volatilityScore,
+    adaptiveSizeProfile: mainCycle.adaptiveSizeProfile,
+    lastBuyAt: new Date(),
+    tpBreakdownJson: tpBreakdown,
+    cycleType: "plus",
+    parentCycleId: mainCycle.id,
+  });
+
+  await repo.createOrder({
+    cycleId: plusCycle.id,
+    pair,
+    mode,
+    orderType: "base_buy",
+    buyIndex: 1,
+    side: "buy",
+    price: currentPrice.toFixed(8),
+    quantity: quantity.toFixed(8),
+    grossValueUsd: baseBuyUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippage.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: `Plus cycle base buy, dip ${dipFromLastBuy.toFixed(1)}% from main avg`,
+    humanReason: formatOrderReason("base_buy"),
+  });
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
+    });
+  }
+
+  // Increment plus count on main
+  await repo.updateCycle(mainCycle.id, {
+    plusCyclesCompleted: (mainCycle.plusCyclesCompleted || 0) + 1,
+  });
+
+  await createHumanEvent({
+    cycleId: plusCycle.id, pair, mode,
+    eventType: "plus_cycle_activated",
+    severity: "info",
+    message: `Plus cycle activated: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, dip=${dipFromLastBuy.toFixed(1)}% from main`,
+    payloadJson: { parentCycleId: mainCycle.id, dipFromLastBuy, plusCapital, tpPct },
+  }, {
+    eventType: "plus_cycle_activated", pair, mode,
+    price: currentPrice, quantity, dipPct: dipFromLastBuy,
+    parentCycleId: mainCycle.id, tpPct,
+  });
+
+  await telegram.alertCycleStarted(plusCycle, dipFromLastBuy, parseFloat(String(mainCycle.marketScore || "50")));
+}
+
+// ─── Plus Cycle Management ────────────────────────────────────────
+
+async function managePlusCycle(
+  plusCycle: InstitutionalDcaCycle,
+  mainCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  plusCfg: PlusConfig
+): Promise<void> {
+  const pair = plusCycle.pair;
+  const avgEntry = parseFloat(String(plusCycle.avgEntryPrice || "0"));
+  const totalQty = parseFloat(String(plusCycle.totalQuantity || "0"));
+  const capitalUsed = parseFloat(String(plusCycle.capitalUsedUsd || "0"));
+
+  if (avgEntry <= 0 || totalQty <= 0) return;
+
+  // Auto-close if main cycle closed
+  if (plusCfg.autoCloseIfMainClosed && mainCycle.status === "closed") {
+    await closePlusCycle(plusCycle, currentPrice, config, mode, "main_cycle_closed");
+    return;
+  }
+
+  // Update PnL
+  const marketValue = totalQty * currentPrice;
+  const unrealizedPnlUsd = marketValue - capitalUsed;
+  const unrealizedPnlPct = capitalUsed > 0 ? (unrealizedPnlUsd / capitalUsed) * 100 : 0;
+
+  const currentDD = unrealizedPnlPct < 0 ? Math.abs(unrealizedPnlPct) : 0;
+  const prevMaxDD = parseFloat(String(plusCycle.maxDrawdownPct || "0"));
+
+  await repo.updateCycle(plusCycle.id, {
+    currentPrice: currentPrice.toFixed(8),
+    unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
+    unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
+    maxDrawdownPct: Math.max(currentDD, prevMaxDD).toFixed(2),
+  });
+
+  // Check TP based on status
+  if (plusCycle.status === "active") {
+    const tpPct = parseFloat(String(plusCycle.tpTargetPct || "3"));
+    if (unrealizedPnlPct >= tpPct) {
+      // Arm TP — for plus cycles we do a direct final sell (simpler than main)
+      await closePlusCycle(plusCycle, currentPrice, config, mode, "tp_reached");
+      return;
+    }
+
+    // Check for plus safety buys
+    await checkPlusSafetyBuy(plusCycle, currentPrice, config, assetConfig, mode, plusCfg);
+
+  } else if (plusCycle.status === "tp_armed" || plusCycle.status === "trailing_active") {
+    // Use same trailing logic as main but with plus trailing pct
+    const isBtc = pair === "BTC/USD";
+    const trailingPct = isBtc ? plusCfg.trailingPctBtc : plusCfg.trailingPctEth;
+    const highestAfterTp = parseFloat(String(plusCycle.highestPriceAfterTp || "0"));
+
+    if (currentPrice > highestAfterTp) {
+      await repo.updateCycle(plusCycle.id, { highestPriceAfterTp: currentPrice.toFixed(8) });
+    } else {
+      const dropFromHigh = highestAfterTp > 0 ? ((highestAfterTp - currentPrice) / highestAfterTp) * 100 : 0;
+      if (dropFromHigh >= trailingPct) {
+        await closePlusCycle(plusCycle, currentPrice, config, mode, "trailing_exit");
+      }
+    }
+  }
+}
+
+async function checkPlusSafetyBuy(
+  plusCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  plusCfg: PlusConfig
+): Promise<void> {
+  const pair = plusCycle.pair;
+  const buyCount = plusCycle.buyCount;
+
+  // Max entries check
+  if (buyCount >= plusCfg.maxPlusEntries) return;
+
+  // Cooldown check
+  const lastBuyAt = plusCycle.lastBuyAt ? new Date(plusCycle.lastBuyAt).getTime() : 0;
+  const cooldownMs = plusCfg.cooldownMinutesBetweenBuys * 60 * 1000;
+  if (Date.now() - lastBuyAt < cooldownMs) return;
+
+  // Next buy price check
+  const nextBuyPrice = parseFloat(String(plusCycle.nextBuyPrice || "0"));
+  if (nextBuyPrice <= 0 || currentPrice > nextBuyPrice) return;
+
+  // Execute plus safety buy
+  const capitalReserved = parseFloat(String(plusCycle.capitalReservedUsd || "0"));
+  const entrySteps = plusCfg.entryDipSteps || [2.0, 3.5, 5.0];
+  const buyUsd = capitalReserved / (entrySteps.length || 1);
+  const quantity = buyUsd / currentPrice;
+
+  let fees = 0, slippageVal = 0, netValue = buyUsd;
+  if (mode === "simulation") {
+    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippageVal = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = buyUsd + fees + slippageVal;
+  }
+
+  const prevQty = parseFloat(String(plusCycle.totalQuantity));
+  const prevCost = parseFloat(String(plusCycle.capitalUsedUsd));
+  const newTotalQty = prevQty + quantity;
+  const newTotalCost = prevCost + netValue;
+  const newAvgPrice = newTotalCost / newTotalQty;
+  const newBuyCount = buyCount + 1;
+
+  // Next level
+  const nextIdx = newBuyCount; // 0-indexed: buyCount is already next index
+  const nextDipPct = entrySteps[nextIdx] ?? null;
+  const nextBuyPriceCalc = nextDipPct ? newAvgPrice * (1 - nextDipPct / 100) : null;
+
+  // Recalculate TP
+  let tpPct = parseFloat(String(plusCycle.tpTargetPct || "3"));
+  let tpBreakdownPlus: any = null;
+  if (config.adaptiveTpEnabled) {
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
+      pair,
+      cycleType: "plus",
+      buyCount: newBuyCount,
+      marketScore: parseFloat(String(plusCycle.marketScore || "50")),
+      volatilityPct: getVolatility(pair),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
+    });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdownPlus = breakdown;
+  }
+  const tpPrice = newAvgPrice * (1 + tpPct / 100);
+
+  await repo.updateCycle(plusCycle.id, {
+    capitalUsedUsd: newTotalCost.toFixed(2),
+    totalQuantity: newTotalQty.toFixed(8),
+    avgEntryPrice: newAvgPrice.toFixed(8),
+    buyCount: newBuyCount,
+    nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPriceCalc?.toFixed(8) || null,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    tpBreakdownJson: tpBreakdownPlus,
+    lastBuyAt: new Date(),
+  });
+
+  await repo.createOrder({
+    cycleId: plusCycle.id,
+    pair,
+    mode,
+    orderType: "safety_buy",
+    buyIndex: newBuyCount,
+    side: "buy",
+    price: currentPrice.toFixed(8),
+    quantity: quantity.toFixed(8),
+    grossValueUsd: buyUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippageVal.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: `Plus safety buy #${newBuyCount}`,
+    humanReason: formatOrderReason("safety_buy"),
+  });
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
+    });
+  }
+
+  await createHumanEvent({
+    cycleId: plusCycle.id, pair, mode,
+    eventType: "plus_safety_buy_executed",
+    severity: "info",
+    message: `Plus safety buy #${newBuyCount}: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
+  }, {
+    eventType: "plus_safety_buy_executed", pair, mode,
+    price: currentPrice, quantity, avgEntry: newAvgPrice,
+    capitalUsed: newTotalCost, buyCount: newBuyCount,
+  });
+}
+
+// ─── Plus Cycle Close ─────────────────────────────────────────────
+
+async function closePlusCycle(
+  plusCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+  reason: string
+): Promise<void> {
+  const pair = plusCycle.pair;
+  const totalQty = parseFloat(String(plusCycle.totalQuantity || "0"));
+  const capitalUsed = parseFloat(String(plusCycle.capitalUsedUsd || "0"));
+  const sellValueUsd = totalQty * currentPrice;
+
+  let fees = 0, slippageVal = 0, netValue = sellValueUsd;
+  if (mode === "simulation") {
+    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippageVal = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = sellValueUsd - fees - slippageVal;
+  }
+
+  const realizedPnl = netValue - capitalUsed;
+
+  await repo.createOrder({
+    cycleId: plusCycle.id,
+    pair,
+    mode,
+    orderType: "final_sell",
+    buyIndex: null,
+    side: "sell",
+    price: currentPrice.toFixed(8),
+    quantity: totalQty.toFixed(8),
+    grossValueUsd: sellValueUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippageVal.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: `Plus cycle closed: ${reason}`,
+    humanReason: formatOrderReason("final_sell"),
+  });
+
+  await repo.updateCycle(plusCycle.id, {
+    status: "closed",
+    closeReason: reason,
+    realizedPnlUsd: realizedPnl.toFixed(2),
+    currentPrice: currentPrice.toFixed(8),
+    closedAt: new Date(),
+  });
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) + netValue).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) - capitalUsed).toFixed(2),
+      realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + realizedPnl).toFixed(2),
+    });
+  }
+
+  if (mode === "live") {
+    await executeRealSell(plusCycle, "final_sell", totalQty);
+  }
+
+  await createHumanEvent({
+    cycleId: plusCycle.id, pair, mode,
+    eventType: "plus_cycle_closed",
+    severity: "info",
+    message: `Plus cycle closed (${reason}): PnL ${realizedPnl >= 0 ? "+" : ""}$${realizedPnl.toFixed(2)}`,
+    payloadJson: { reason, realizedPnl, sellPrice: currentPrice, parentCycleId: plusCycle.parentCycleId },
+  }, {
+    eventType: "plus_cycle_closed", pair, mode,
+    price: currentPrice, realizedPnl,
+    closeReason: reason, parentCycleId: plusCycle.parentCycleId,
+  });
+
+  if (reason === "trailing_exit") {
+    await telegram.alertTrailingExit(plusCycle);
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

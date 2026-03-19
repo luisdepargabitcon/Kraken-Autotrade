@@ -47,6 +47,9 @@ export interface FormatContext {
   reason?: string;
   drawdownPct?: number;
   maxDrawdownPct?: number;
+  parentCycleId?: number | null;
+  realizedPnl?: number;
+  closeReason?: string;
 }
 
 // ─── Core Formatter ─────────────────────────────────────────────────
@@ -170,6 +173,29 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
     case "module_max_drawdown_reached":
       if (ctx.drawdownPct != null) techParts.push(`DD=${ctx.drawdownPct.toFixed(2)}%`);
       if (ctx.maxDrawdownPct != null) techParts.push(`Límite=${ctx.maxDrawdownPct.toFixed(2)}%`);
+      break;
+
+    case "plus_cycle_activated":
+      if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
+      if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
+      if (ctx.dipPct != null) techParts.push(`DipDesdeMain=${ctx.dipPct.toFixed(2)}%`);
+      if (ctx.parentCycleId != null) techParts.push(`Parent=#${ctx.parentCycleId}`);
+      if (ctx.tpPct != null) techParts.push(`TP=${ctx.tpPct.toFixed(1)}%`);
+      break;
+
+    case "plus_safety_buy_executed":
+      if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
+      if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
+      if (ctx.avgEntry != null) techParts.push(`AvgNuevo=${fmtNum(ctx.avgEntry)}`);
+      if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.buyCount != null) techParts.push(`Compra=#${ctx.buyCount}`);
+      break;
+
+    case "plus_cycle_closed":
+      if (ctx.price != null) techParts.push(`Close=${fmtNum(ctx.price)}`);
+      if (ctx.realizedPnl != null) techParts.push(`PnL=$${ctx.realizedPnl.toFixed(2)}`);
+      if (ctx.closeReason) techParts.push(`Motivo=${ctx.closeReason}`);
+      if (ctx.parentCycleId != null) techParts.push(`Parent=#${ctx.parentCycleId}`);
       break;
 
     default:

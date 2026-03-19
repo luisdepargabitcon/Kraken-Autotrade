@@ -128,11 +128,49 @@ export async function getActiveCycle(
       and(
         eq(institutionalDcaCycles.pair, pair),
         eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.cycleType, "main"),
         ne(institutionalDcaCycles.status, "closed")
       )
     )
     .limit(1);
   return rows[0];
+}
+
+export async function getActivePlusCycle(
+  pair: string,
+  mode: string,
+  parentCycleId: number
+): Promise<InstitutionalDcaCycle | undefined> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.cycleType, "plus"),
+        eq(institutionalDcaCycles.parentCycleId, parentCycleId),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .limit(1);
+  return rows[0];
+}
+
+export async function getClosedPlusCyclesCount(
+  parentCycleId: number
+): Promise<number> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.cycleType, "plus"),
+        eq(institutionalDcaCycles.parentCycleId, parentCycleId),
+        eq(institutionalDcaCycles.status, "closed")
+      )
+    );
+  return rows.length;
 }
 
 export async function getAllActiveCycles(mode?: string): Promise<InstitutionalDcaCycle[]> {

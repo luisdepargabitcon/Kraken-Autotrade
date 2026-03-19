@@ -125,6 +125,29 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "critical",
   },
 
+  // ═══ CICLO PLUS ═══
+
+  plus_cycle_activated: {
+    humanTitle: "Ciclo Plus activado",
+    humanTemplate: "Se activó un ciclo táctico Plus en {pair} porque el ciclo principal agotó sus entradas y el precio siguió bajando lo suficiente como para justificar una posición adicional de rebote.",
+    emoji: "⚡",
+    defaultSeverity: "info",
+  },
+
+  plus_safety_buy_executed: {
+    humanTitle: "Compra de seguridad Plus ejecutada",
+    humanTemplate: "Se ejecutó una compra adicional dentro del ciclo Plus de {pair}. El precio siguió bajando tras la entrada inicial del Plus, activando una nueva entrada según los escalones configurados.",
+    emoji: "🔵",
+    defaultSeverity: "info",
+  },
+
+  plus_cycle_closed: {
+    humanTitle: "Ciclo Plus cerrado",
+    humanTemplate: "El ciclo táctico Plus de {pair} fue cerrado. Se liquidó la posición completa del Plus y el resultado se registró de forma independiente al ciclo principal.",
+    emoji: "🏁",
+    defaultSeverity: "info",
+  },
+
   // ═══ MODO / SISTEMA ═══
 
   mode_transition: {
