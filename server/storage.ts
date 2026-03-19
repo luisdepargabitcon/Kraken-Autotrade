@@ -1861,6 +1861,14 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'last_events_purge_at', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP' },
         { table: 'bot_config', column: 'last_events_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0' },
         
+        // institutional_dca_cycles — manual cycle + exchange + fees columns
+        { table: 'institutional_dca_cycles', column: 'is_manual_cycle', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS is_manual_cycle BOOLEAN NOT NULL DEFAULT false' },
+        { table: 'institutional_dca_cycles', column: 'exchange_source', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS exchange_source TEXT' },
+        { table: 'institutional_dca_cycles', column: 'estimated_fee_pct', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS estimated_fee_pct NUMERIC(8,4)' },
+        { table: 'institutional_dca_cycles', column: 'estimated_fee_usd', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS estimated_fee_usd NUMERIC(18,2)' },
+        { table: 'institutional_dca_cycles', column: 'fees_override_manual', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS fees_override_manual BOOLEAN NOT NULL DEFAULT false' },
+        { table: 'institutional_dca_cycles', column: 'import_warning_acknowledged', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS import_warning_acknowledged BOOLEAN NOT NULL DEFAULT false' },
+
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
         { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },

@@ -223,6 +223,16 @@ export async function registerRoutes(
       tradingEngine.start();
     }
 
+    // Proactive schema migration — ensure new columns exist before IDCA queries
+    try {
+      const migrationResult = await storage.runSchemaMigration();
+      if (migrationResult.columnsAdded.length > 0) {
+        console.log(`[startup] Auto-migration: added ${migrationResult.columnsAdded.join(', ')}`);
+      }
+    } catch (e: any) {
+      console.error('[startup] Auto-migration error (non-fatal):', e?.message || e);
+    }
+
     // Institutional DCA Module — register routes & auto-start scheduler
     try {
       const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');

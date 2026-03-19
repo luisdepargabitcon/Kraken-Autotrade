@@ -2,6 +2,20 @@
 
 ---
 
+## 2026-03-20 — FIX: Auto-migración columnas IDCA (ciclos no aparecían)
+
+### Problema
+Los ciclos de simulación dejaron de aparecer en el tab "Ciclos" tras el deploy del commit anterior. Causa: las 6 nuevas columnas (`is_manual_cycle`, `exchange_source`, `estimated_fee_pct`, `estimated_fee_usd`, `fees_override_manual`, `import_warning_acknowledged`) fueron añadidas al schema de Drizzle pero no existían en la tabla PostgreSQL real. Drizzle genera `SELECT ... is_manual_cycle ...` y PostgreSQL responde `column does not exist`, haciendo que TODAS las queries de ciclos fallen.
+
+### Solución
+- **server/storage.ts** — Añadidas las 6 columnas IDCA al array de migraciones de `runSchemaMigration()` con `ADD COLUMN IF NOT EXISTS`
+- **server/routes.ts** — Llamada proactiva a `runSchemaMigration()` justo antes de inicializar el módulo IDCA, para que las columnas existan cuando se registren las rutas
+
+### Resultado
+Al hacer deploy, la app automáticamente crea las columnas faltantes al arrancar. No se requiere ejecutar SQL manual ni `drizzle-kit push`.
+
+---
+
 ## 2026-03-20 — IDCA: Ciclo Manual + Exchange + Fees + Bug Fix Simulación
 
 ### Descripción
