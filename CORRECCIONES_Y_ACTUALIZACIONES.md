@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-03-20 — FEAT: Heartbeat logging en IDCA scheduler
+
+### Problema
+Tras desplegar los fixes de drawdown/Telegram, la UI mostraba "sin movimiento" en la consola en tiempo real. El scheduler ejecutaba ticks correctamente (health: isRunning=true, tickCount>0, lastError=null) pero no generaba logs visibles porque ningún par cumplía condiciones de compra/venta.
+
+### Causa
+La `CONSOLA EN TIEMPO REAL` solo muestra eventos de base de datos (compras, ventas, alertas). Cuando el scheduler evalúa pares sin generar eventos, no hay actividad visible para el usuario.
+
+### Solución
+- **`IdcaEngine.ts`**: Añadido log de heartbeat al final de cada tick con formato:
+  `[IDCA][TICK #N] mode=X | BTC/USD:+0.5% | ETH/USD:-1.2%`
+- Muestra el PnL no realizado de cada par activo, o "waiting" si no hay ciclo, o "ERR" si falló
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — Heartbeat logging en runTick
+
+### Commit
+- `85bdef3` — feat: Add heartbeat logging to IDCA scheduler ticks for visibility
+
+---
+
 ## 2026-03-20 — FIX: Spam de alertas drawdown + cooldown Telegram ignorado
 
 ### Problema
