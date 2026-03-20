@@ -180,7 +180,7 @@ export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<
 
 export async function alertEmergencyClose(mode: string, closedCount: number): Promise<void> {
   const { chatId, enabled } = await canSend("critical_error");
-  if (!enabled && !chatId) return;
+  if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
   const ctx: FormatContext = {
@@ -208,7 +208,7 @@ export async function alertSmartAdjustment(pair: string, mode: string, field: st
 
 export async function alertModuleDrawdownBreached(mode: string, drawdownPct: number, maxPct: number): Promise<void> {
   const { chatId, enabled } = await canSend("module_max_drawdown_reached");
-  if (!enabled && !chatId) return;
+  if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
   const ctx: FormatContext = {
