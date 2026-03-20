@@ -2,6 +2,40 @@
 
 ---
 
+## 2026-03-20 — FIX: Spam de alertas drawdown + cooldown Telegram ignorado
+
+### Problema
+Al importar un ciclo manual con importe erróneo, el drawdown del módulo se disparaba (hasta 4190357019.99%). Tras borrar el ciclo erróneo, el drawdown bajó pero seguía superando el límite (44.41% > 15%). El resultado fue **un evento + alerta Telegram CADA MINUTO** (cada tick del scheduler) sin ningún cooldown.
+
+### Causa raíz (2 bugs)
+
+**Bug 1 — Sin cooldown en `checkModuleDrawdown()`**:
+La función se ejecuta cada tick (~60s). Cuando detectaba drawdown > max, creaba un nuevo evento en DB + alerta Telegram sin memoria de cuándo fue la última alerta.
+
+**Bug 2 — Telegram `canSend()` bypass**:
+`alertModuleDrawdownBreached()` y `alertEmergencyClose()` tenían la condición `if (!enabled && !chatId) return;`. Esto solo retornaba si **ambos** eran falsos. Cuando el cooldown de Telegram estaba activo, `canSend()` devolvía `{ chatId: "algo", enabled: false }`, pero la condición era `true && false = false` → **continuaba enviando**.
+
+### Solución
+
+- **`IdcaEngine.ts`**: Cooldown de 30 minutos entre alertas de drawdown. Re-alerta solo si:
+  - Han pasado ≥30 min, O
+  - El drawdown saltó ≥5% respecto al último alertado
+  - Reset automático del cooldown cuando el drawdown se recupera
+
+- **`IdcaTelegramNotifier.ts`**: Corregida condición `!enabled && !chatId` → `!enabled` en:
+  - `alertModuleDrawdownBreached()`
+  - `alertEmergencyClose()`
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — Cooldown 30min en checkModuleDrawdown
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Fix bypass cooldown Telegram
+
+### Commits
+- `cb38b99` — fix: Add 30min cooldown to drawdown alerts
+- `780cacf` — fix: Telegram cooldown bypass bug
+
+---
+
 ## 2026-03-20 — FASE 1: Corrección error nonce + Coordinación API privada
 
 ### Problema
