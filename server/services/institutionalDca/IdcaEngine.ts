@@ -305,14 +305,24 @@ async function runTick(): Promise<void> {
     await updateOhlcvCache();
 
     // Evaluate each allowed pair
+    const pairResults: string[] = [];
     for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
       try {
         await evaluatePair(pair, config, mode);
+        const cycle = await repo.getActiveCycle(pair, mode);
+        if (cycle) {
+          const pnl = parseFloat(String(cycle.unrealizedPnlPct || "0"));
+          pairResults.push(`${pair}:${pnl >= 0 ? "+" : ""}${pnl.toFixed(1)}%`);
+        } else {
+          pairResults.push(`${pair}:waiting`);
+        }
       } catch (e: any) {
         console.error(`${TAG}[ERROR] ${pair}:`, e.message);
         lastError = `${pair}: ${e.message}`;
+        pairResults.push(`${pair}:ERR`);
       }
     }
+    console.log(`${TAG}[TICK #${tickCount}] mode=${mode} | ${pairResults.join(" | ")}`);
   } catch (e: any) {
     lastError = e.message;
     console.error(`${TAG}[ERROR] Tick failed:`, e.message);
