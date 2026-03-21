@@ -4780,3 +4780,73 @@ Se identificaron múltiples inconsistencias críticas en el motor de entrada:
 - `npx tsc --noEmit` → 0 errores TS
 
 ---
+
+## 2026-03-22 — REFACTORING COMPLETO UI/UX (FASES 1-13)
+
+### Objetivo
+Refactorización completa de la interfaz de usuario y modelo de configuración del bot de trading, ejecutada en fases secuenciales sin interrupciones.
+
+### FASE 1: Auditoría completa UI/código
+- Generado `AUDIT_FASE1.md` con mapa de duplicidades, solapamientos y dependencias IDCA
+- Identificadas secciones duplicadas entre Settings, Strategies y TradingConfigDashboard
+- Mapeadas todas las rutas, componentes y fuentes de verdad
+
+### FASE 2: Nueva arquitectura de navegación
+- `Nav.tsx`: Agrupación de enlaces en 3 categorías con separadores visuales:
+  - **TRADING**: Panel, Trading, Terminal, IDCA
+  - **ANÁLISIS**: Monitor, Cartera, Alertas
+  - **SISTEMA**: Sistema, APIs
+- Renombradas etiquetas: ESTRATEGIAS→TRADING, NOTIFICACIONES→ALERTAS, INTEGRACIONES→APIS
+- `MobileTabBar.tsx`: Actualizado para reflejar nueva nomenclatura
+
+### FASE 3: Reasignación funcional
+- `Settings.tsx`: Eliminado import muerto `SignalThresholdConfig`, eliminada card duplicada "Alertas y Notificaciones", título actualizado a "Sistema"
+- `Strategies.tsx`: Título actualizado a "Trading"
+
+### FASE 4: Modo Simple/Avanzado
+- Toggle `Simple/Avanzado` en header de Trading (persistido en localStorage)
+- **Modo Simple**: Solo tab Configuración con secciones esenciales (Estrategia, Riesgo, Pares)
+- **Modo Avanzado**: Tabs adicionales (Métricas, Motor Adaptativo, Smart Exit) + secciones avanzadas (Señal Momentum, Tamaño Trade, Exposición)
+
+### FASE 5-6: Pestaña Entradas
+- Nueva tab "Entradas" visible en ambos modos
+- **Slider de Exigencia de Señales** (1-10): Ajusta umbrales proporcional por régimen
+  - Tendencia: valor base, Rango: +1 (más estricto), Transición: -1 (más ágil)
+- **Ajuste fino por régimen** (solo modo avanzado): Sliders individuales
+- **Protección Anti-Reentrada**: Cards informativos de cooldowns
+- Conectado a API `/api/trading/signals/config`
+
+### FASE 7: Pestaña Salidas
+- Nueva tab "Salidas" visible en ambos modos
+- **Control de Salidas**: Sliders SL/TP/Trailing con ejemplo visual dinámico
+- **Mecanismos Avanzados**: SmartGuard, TimeStop, SmartExit, Circuit Breaker
+- **Prioridad de salida** documentada visualmente
+
+### FASE 8-9/10: Eliminación de duplicidades
+- Eliminada sección "Control de Riesgo Automático" de tab Configuración
+- Controles SL/TP/Trailing exclusivamente en tab "Salidas"
+
+### FASE 12-13: UX responsive
+- Clase CSS `scrollbar-hide` para scroll horizontal invisible en tabs
+- Tab bar móvil con scroll edge-to-edge
+
+### Archivos modificados
+- `client/src/components/dashboard/Nav.tsx`
+- `client/src/components/mobile/MobileTabBar.tsx`
+- `client/src/pages/Settings.tsx`
+- `client/src/pages/Strategies.tsx`
+- `client/src/index.css`
+- `AUDIT_FASE1.md` (NUEVO)
+
+### Commits
+- `899fed8` — FASE 2+3: Nav + pages renamed
+- `4f0cb99` — FASE 4: Simple/Advanced toggle
+- `3e4a782` — FASE 5-6: Entradas tab
+- `0c9e38c` — FASE 7: Salidas tab
+- `8f91ddd` — FASE 8-9/10: Remove duplicates
+- `c7f187b` — FASE 12-13: UX responsive
+
+### Verificación global
+- `npx tsc --noEmit` → 0 errores TS en cada fase
+
+---
