@@ -596,6 +596,17 @@ async function manageCycle(
     maxDrawdownPct: maxDD.toFixed(2),
   });
 
+  // Log cycle management activity for UI visibility
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
+    eventType: "cycle_management",
+    severity: "debug",
+    message: `Gestión ciclo: PnL=${unrealizedPnlPct.toFixed(2)}%, Precio=${currentPrice.toFixed(2)}`,
+  }, {
+    eventType: "cycle_management", pair, mode,
+    price: currentPrice,
+  });
+
   // Branch by cycle status
   switch (cycle.status) {
     case "active":
