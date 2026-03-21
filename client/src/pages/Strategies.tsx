@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Ticker } from "@/components/dashboard/Ticker";
 import generatedImage from '../assets/dark_digital_hex_grid_background.png';
@@ -114,14 +114,33 @@ export default function Strategies() {
     },
   });
 
-  // Simplified exigency level (1-10) - average of all regime thresholds
-  const exigencyLevel = signalConfig
-    ? Math.round((signalConfig.trend.current + signalConfig.range.current + signalConfig.transition.current) / 3)
-    : 5;
+  // === LOCAL SLIDER STATE (for instant visual feedback) ===
+  const [localSL, setLocalSL] = useState(5);
+  const [localTP, setLocalTP] = useState(7);
+  const [localTrailing, setLocalTrailing] = useState(2);
+  const [localExigency, setLocalExigency] = useState(5);
+  const [localRegime, setLocalRegime] = useState<{ trend: number; range: number; transition: number }>({ trend: 5, range: 6, transition: 4 });
 
-  const handleExigencyChange = (value: number) => {
+  // Sync local state from server config
+  useEffect(() => {
+    if (config) {
+      setLocalSL(parseFloat(config.stopLossPercent || "5"));
+      setLocalTP(parseFloat(config.takeProfitPercent || "7"));
+      setLocalTrailing(parseFloat(config.trailingStopPercent || "2"));
+    }
+  }, [config?.stopLossPercent, config?.takeProfitPercent, config?.trailingStopPercent]);
+
+  useEffect(() => {
+    if (signalConfig) {
+      const avg = Math.round((signalConfig.trend.current + signalConfig.range.current + signalConfig.transition.current) / 3);
+      setLocalExigency(avg);
+      setLocalRegime({ trend: signalConfig.trend.current, range: signalConfig.range.current, transition: signalConfig.transition.current });
+    }
+  }, [signalConfig]);
+
+  // Simplified exigency level (1-10)
+  const handleExigencyCommit = (value: number) => {
     if (!signalConfig) return;
-    // Scale proportionally: trend gets value, range gets value+1 (stricter), transition gets value-1 (looser)
     const trendVal = Math.min(10, Math.max(1, value));
     const rangeVal = Math.min(10, Math.max(1, value + 1));
     const transitionVal = Math.min(10, Math.max(1, value - 1));
@@ -297,11 +316,12 @@ export default function Strategies() {
                         <div className="w-3 h-3 rounded-full bg-emerald-500" />
                         Nivel de Exigencia
                       </Label>
-                      <span className="font-mono text-2xl text-emerald-500">{exigencyLevel}/10</span>
+                      <span className="font-mono text-2xl text-emerald-500">{localExigency}/10</span>
                     </div>
                     <Slider
-                      value={[exigencyLevel]}
-                      onValueChange={(v) => handleExigencyChange(v[0])}
+                      value={[localExigency]}
+                      onValueChange={(v) => setLocalExigency(v[0])}
+                      onValueCommit={(v) => handleExigencyCommit(v[0])}
                       min={1}
                       max={10}
                       step={1}
@@ -321,17 +341,17 @@ export default function Strategies() {
                       <div className="grid grid-cols-3 gap-3">
                         <div className="text-center p-2 rounded-lg border border-green-500/20 bg-green-500/5">
                           <div className="text-xs text-muted-foreground">Tendencia</div>
-                          <div className="font-mono text-lg text-green-500">{signalConfig.trend.current}</div>
+                          <div className="font-mono text-lg text-green-500">{localRegime.trend}</div>
                           <div className="text-[10px] text-muted-foreground">señales mín.</div>
                         </div>
                         <div className="text-center p-2 rounded-lg border border-orange-500/20 bg-orange-500/5">
                           <div className="text-xs text-muted-foreground">Rango</div>
-                          <div className="font-mono text-lg text-orange-500">{signalConfig.range.current}</div>
+                          <div className="font-mono text-lg text-orange-500">{localRegime.range}</div>
                           <div className="text-[10px] text-muted-foreground">señales mín.</div>
                         </div>
                         <div className="text-center p-2 rounded-lg border border-blue-500/20 bg-blue-500/5">
                           <div className="text-xs text-muted-foreground">Transición</div>
-                          <div className="font-mono text-lg text-blue-500">{signalConfig.transition.current}</div>
+                          <div className="font-mono text-lg text-blue-500">{localRegime.transition}</div>
                           <div className="text-[10px] text-muted-foreground">señales mín.</div>
                         </div>
                       </div>
@@ -355,11 +375,12 @@ export default function Strategies() {
                           <div key={regime} className="space-y-2">
                             <div className="flex items-center justify-between">
                               <Label className="text-sm">{labels[regime]}</Label>
-                              <span className={`font-mono text-lg ${colors[regime]}`}>{signalConfig[regime].current}</span>
+                              <span className={`font-mono text-lg ${colors[regime]}`}>{localRegime[regime]}</span>
                             </div>
                             <Slider
-                              value={[signalConfig[regime].current]}
-                              onValueChange={(v) => {
+                              value={[localRegime[regime]]}
+                              onValueChange={(v) => setLocalRegime(prev => ({ ...prev, [regime]: v[0] }))}
+                              onValueCommit={(v) => {
                                 updateSignalConfigMutation.mutate({
                                   [regime]: { ...signalConfig[regime], current: v[0] },
                                 });
@@ -462,11 +483,12 @@ export default function Strategies() {
                           <div className="w-3 h-3 rounded-full bg-red-500" />
                           Stop-Loss
                         </Label>
-                        <span className="font-mono text-2xl text-red-500">-{parseFloat(config?.stopLossPercent || "5").toFixed(1)}%</span>
+                        <span className="font-mono text-2xl text-red-500">-{localSL.toFixed(1)}%</span>
                       </div>
                       <Slider
-                        value={[parseFloat(config?.stopLossPercent || "5")]}
-                        onValueChange={(value) => updateMutation.mutate({ stopLossPercent: value[0].toString() } as any)}
+                        value={[localSL]}
+                        onValueChange={(v) => setLocalSL(v[0])}
+                        onValueCommit={(v) => updateMutation.mutate({ stopLossPercent: v[0].toString() } as any)}
                         min={1}
                         max={20}
                         step={0.5}
@@ -483,11 +505,12 @@ export default function Strategies() {
                           <div className="w-3 h-3 rounded-full bg-green-500" />
                           Take-Profit
                         </Label>
-                        <span className="font-mono text-2xl text-green-500">+{parseFloat(config?.takeProfitPercent || "7").toFixed(1)}%</span>
+                        <span className="font-mono text-2xl text-green-500">+{localTP.toFixed(1)}%</span>
                       </div>
                       <Slider
-                        value={[parseFloat(config?.takeProfitPercent || "7")]}
-                        onValueChange={(value) => updateMutation.mutate({ takeProfitPercent: value[0].toString() } as any)}
+                        value={[localTP]}
+                        onValueChange={(v) => setLocalTP(v[0])}
+                        onValueCommit={(v) => updateMutation.mutate({ takeProfitPercent: v[0].toString() } as any)}
                         min={1}
                         max={30}
                         step={0.5}
@@ -518,11 +541,12 @@ export default function Strategies() {
                       <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
                         <div className="flex items-center justify-between">
                           <Label>Distancia</Label>
-                          <span className="font-mono text-lg text-cyan-500">{parseFloat(config?.trailingStopPercent || "2").toFixed(1)}%</span>
+                          <span className="font-mono text-lg text-cyan-500">{localTrailing.toFixed(1)}%</span>
                         </div>
                         <Slider
-                          value={[parseFloat(config?.trailingStopPercent || "2")]}
-                          onValueChange={(value) => updateMutation.mutate({ trailingStopPercent: value[0].toString() } as any)}
+                          value={[localTrailing]}
+                          onValueChange={(v) => setLocalTrailing(v[0])}
+                          onValueCommit={(v) => updateMutation.mutate({ trailingStopPercent: v[0].toString() } as any)}
                           min={0.5}
                           max={10}
                           step={0.5}
@@ -537,11 +561,11 @@ export default function Strategies() {
                   <div className="bg-muted/30 rounded-lg p-4">
                     <h4 className="font-medium text-sm mb-2">Ejemplo con compra a $100,000:</h4>
                     <p className="text-xs text-muted-foreground">
-                      • <span className="text-red-500">Stop-Loss:</span> Vende si baja a ${(100000 * (1 - parseFloat(config?.stopLossPercent || "5") / 100)).toLocaleString()}
-                      <br />• <span className="text-green-500">Take-Profit:</span> Vende si sube a ${(100000 * (1 + parseFloat(config?.takeProfitPercent || "7") / 100)).toLocaleString()}
+                      • <span className="text-red-500">Stop-Loss:</span> Vende si baja a ${(100000 * (1 - localSL / 100)).toLocaleString()}
+                      <br />• <span className="text-green-500">Take-Profit:</span> Vende si sube a ${(100000 * (1 + localTP / 100)).toLocaleString()}
                       {config?.trailingStopEnabled && (
                         <>
-                          <br />• <span className="text-cyan-500">Trailing:</span> Si sube a $105k y cae {config?.trailingStopPercent}%, vende a ${(105000 * (1 - parseFloat(config?.trailingStopPercent || "2") / 100)).toLocaleString()}
+                          <br />• <span className="text-cyan-500">Trailing:</span> Si sube a $105k y cae {localTrailing.toFixed(1)}%, vende a ${(105000 * (1 - localTrailing / 100)).toLocaleString()}
                         </>
                       )}
                     </p>
