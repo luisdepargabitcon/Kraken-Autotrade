@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical, SlidersHorizontal, LogIn, ShieldCheck } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical, SlidersHorizontal, LogIn, LogOut, ShieldCheck, Timer } from "lucide-react";
 import { toast } from "sonner";
 import { MarketMetricsTab } from "@/components/strategies/MarketMetricsTab";
 import { FeatureFlagsTab } from "@/components/strategies/FeatureFlagsTab";
@@ -55,7 +55,7 @@ const RISK_LEVELS = [
 
 const AVAILABLE_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC", "XRP/USD", "TON/USD"];
 
-type StrategyTab = "config" | "entradas" | "metricas" | "motor" | "smartexit";
+type StrategyTab = "config" | "entradas" | "salidas" | "metricas" | "motor" | "smartexit";
 
 interface SignalConfig {
   trend: { min: number; max: number; current: number };
@@ -225,6 +225,17 @@ export default function Strategies() {
             >
               <LogIn className="h-4 w-4" />
               Entradas
+            </button>
+            <button
+              onClick={() => setActiveTab("salidas")}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
+                activeTab === "salidas"
+                  ? "border-red-500 text-red-400"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <LogOut className="h-4 w-4" />
+              Salidas
             </button>
             {advancedMode && (
               <>
@@ -422,6 +433,193 @@ export default function Strategies() {
                       <br />2. El <strong className="text-purple-500">Hybrid Guard</strong> monitoriza EMA20 y volumen para detectar falsos techos.
                       <br />3. Solo cuando pasan TODOS los filtros se permite una nueva compra.
                       <br />4. Esto previene el bucle compra→venta→compra que destruye capital con fees.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === "salidas" && (
+            <div className="space-y-6">
+              {/* Exit Sensitivity Master Control */}
+              <Card className="glass-panel border-red-500/30">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <LogOut className="h-5 w-5 text-red-500" />
+                    Control de Salidas
+                  </CardTitle>
+                  <CardDescription>
+                    Stop-Loss, Take-Profit y Trailing Stop protegen tu capital automáticamente.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Stop-Loss */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="flex items-center gap-2 text-sm">
+                          <div className="w-3 h-3 rounded-full bg-red-500" />
+                          Stop-Loss
+                        </Label>
+                        <span className="font-mono text-2xl text-red-500">-{parseFloat(config?.stopLossPercent || "5").toFixed(1)}%</span>
+                      </div>
+                      <Slider
+                        value={[parseFloat(config?.stopLossPercent || "5")]}
+                        onValueChange={(value) => updateMutation.mutate({ stopLossPercent: value[0].toString() } as any)}
+                        min={1}
+                        max={20}
+                        step={0.5}
+                        className="[&>span]:bg-red-500"
+                        data-testid="slider-exit-stop-loss"
+                      />
+                      <p className="text-xs text-muted-foreground">Cierre automático si la pérdida supera este %.</p>
+                    </div>
+
+                    {/* Take-Profit */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="flex items-center gap-2 text-sm">
+                          <div className="w-3 h-3 rounded-full bg-green-500" />
+                          Take-Profit
+                        </Label>
+                        <span className="font-mono text-2xl text-green-500">+{parseFloat(config?.takeProfitPercent || "7").toFixed(1)}%</span>
+                      </div>
+                      <Slider
+                        value={[parseFloat(config?.takeProfitPercent || "7")]}
+                        onValueChange={(value) => updateMutation.mutate({ takeProfitPercent: value[0].toString() } as any)}
+                        min={1}
+                        max={30}
+                        step={0.5}
+                        className="[&>span]:bg-green-500"
+                        data-testid="slider-exit-take-profit"
+                      />
+                      <p className="text-xs text-muted-foreground">Asegura ganancias al alcanzar este % de beneficio.</p>
+                    </div>
+                  </div>
+
+                  {/* Trailing Stop */}
+                  <div className="border-t border-border/50 pt-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <Label className="flex items-center gap-2">
+                          <CircleDollarSign className="h-4 w-4 text-cyan-500" />
+                          Trailing Stop
+                        </Label>
+                        <p className="text-xs text-muted-foreground mt-1">Stop dinámico que sube con el precio</p>
+                      </div>
+                      <Switch
+                        checked={config?.trailingStopEnabled || false}
+                        onCheckedChange={(checked) => updateMutation.mutate({ trailingStopEnabled: checked } as any)}
+                        data-testid="switch-exit-trailing"
+                      />
+                    </div>
+                    {config?.trailingStopEnabled && (
+                      <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                        <div className="flex items-center justify-between">
+                          <Label>Distancia</Label>
+                          <span className="font-mono text-lg text-cyan-500">{parseFloat(config?.trailingStopPercent || "2").toFixed(1)}%</span>
+                        </div>
+                        <Slider
+                          value={[parseFloat(config?.trailingStopPercent || "2")]}
+                          onValueChange={(value) => updateMutation.mutate({ trailingStopPercent: value[0].toString() } as any)}
+                          min={0.5}
+                          max={10}
+                          step={0.5}
+                          className="[&>span]:bg-cyan-500"
+                          data-testid="slider-exit-trailing-dist"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Visual Example */}
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="font-medium text-sm mb-2">Ejemplo con compra a $100,000:</h4>
+                    <p className="text-xs text-muted-foreground">
+                      • <span className="text-red-500">Stop-Loss:</span> Vende si baja a ${(100000 * (1 - parseFloat(config?.stopLossPercent || "5") / 100)).toLocaleString()}
+                      <br />• <span className="text-green-500">Take-Profit:</span> Vende si sube a ${(100000 * (1 + parseFloat(config?.takeProfitPercent || "7") / 100)).toLocaleString()}
+                      {config?.trailingStopEnabled && (
+                        <>
+                          <br />• <span className="text-cyan-500">Trailing:</span> Si sube a $105k y cae {config?.trailingStopPercent}%, vende a ${(105000 * (1 - parseFloat(config?.trailingStopPercent || "2") / 100)).toLocaleString()}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Advanced Exit Mechanisms */}
+              <Card className="glass-panel border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-purple-500" />
+                    Mecanismos Avanzados de Salida
+                  </CardTitle>
+                  <CardDescription>
+                    Sistemas inteligentes que trabajan junto al SL/TP para optimizar salidas.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-lg border border-purple-500/20 bg-purple-500/5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-purple-500" />
+                        <span className="font-medium text-sm">SmartGuard</span>
+                        <Badge variant="outline" className="text-purple-400 border-purple-500/50 text-[10px]">AUTO</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Break-Even progresivo + trailing dinámico basado en el régimen de mercado.
+                        Se activa automáticamente cuando el modo de posición es SMART_GUARD.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Timer className="h-4 w-4 text-amber-500" />
+                        <span className="font-medium text-sm">Time-Stop</span>
+                        <Badge variant="outline" className="text-amber-400 border-amber-500/50 text-[10px]">AUTO</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Cierra posiciones que no se mueven tras un período configurable.
+                        Evita capital estancado en trades sin dirección.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-lg border border-blue-500/20 bg-blue-500/5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Brain className="h-4 w-4 text-blue-500" />
+                        <span className="font-medium text-sm">Smart Exit</span>
+                        <Badge variant="outline" className="text-blue-400 border-blue-500/50 text-[10px]">EXPERIMENTAL</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Salida basada en scoring de señales técnicas inversas.
+                        Configurable desde la pestaña Smart Exit (modo avanzado).
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-lg border border-red-500/20 bg-red-500/5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-red-500" />
+                        <span className="font-medium text-sm">Circuit Breaker</span>
+                        <Badge variant="outline" className="text-red-400 border-red-500/50 text-[10px]">SEGURIDAD</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Bloquea ventas duplicadas. Máx 1 venta por posición por minuto.
+                        Protege contra el bug multi-SELL.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="font-medium text-sm mb-2">Prioridad de salida:</h4>
+                    <p className="text-xs text-muted-foreground">
+                      1. <strong className="text-red-500">Circuit Breaker</strong> → bloquea si ya hay venta en curso
+                      <br />2. <strong className="text-red-500">Stop-Loss</strong> → protección máxima de capital
+                      <br />3. <strong className="text-green-500">Take-Profit / Trailing</strong> → asegurar ganancias
+                      <br />4. <strong className="text-purple-500">SmartGuard</strong> → break-even + trailing adaptativo
+                      <br />5. <strong className="text-amber-500">Time-Stop</strong> → liberar capital estancado
+                      <br />6. <strong className="text-blue-500">Smart Exit</strong> → scoring técnico (si habilitado)
                     </p>
                   </div>
                 </CardContent>
