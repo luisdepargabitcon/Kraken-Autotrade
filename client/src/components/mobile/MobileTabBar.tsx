@@ -4,11 +4,11 @@ import { LayoutDashboard, Activity, Monitor, Wallet, Settings, BarChart3 } from 
 
 const tabs = [
   { href: "/", label: "Panel", icon: LayoutDashboard },
-  { href: "/strategies", label: "Estrategias", icon: Activity },
+  { href: "/strategies", label: "Trading", icon: Activity },
   { href: "/terminal", label: "Terminal", icon: BarChart3 },
   { href: "/monitor", label: "Monitor", icon: Monitor },
   { href: "/wallet", label: "Cartera", icon: Wallet },
-  { href: "/settings", label: "Ajustes", icon: Settings },
+  { href: "/settings", label: "Sistema", icon: Settings },
 ];
 
 export function MobileTabBar() {

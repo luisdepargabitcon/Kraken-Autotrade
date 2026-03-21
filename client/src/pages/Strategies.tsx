@@ -116,8 +116,8 @@ export default function Strategies() {
         <main className="flex-1 p-4 md:p-6 max-w-6xl mx-auto w-full space-y-4 md:space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold font-sans tracking-tight">Estrategias de Trading</h1>
-              <p className="text-sm md:text-base text-muted-foreground mt-1">Configura el comportamiento del bot autónomo.</p>
+              <h1 className="text-2xl md:text-3xl font-bold font-sans tracking-tight">Trading</h1>
+              <p className="text-sm md:text-base text-muted-foreground mt-1">Estrategia, señales, riesgo, pares, SL/TP y salidas del bot.</p>
             </div>
             <div className="flex items-center gap-3 md:gap-4">
               <span className="text-xs md:text-sm text-muted-foreground">Bot Activo</span>

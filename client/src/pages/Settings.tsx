@@ -13,7 +13,6 @@ import { Progress } from "@/components/ui/progress";
 import { HardDrive, Bot, Server, Cog, AlertTriangle, Clock, Brain, Loader2, Layers, Eye, EyeOff, Check, Monitor, Shield, ChevronRight, Trash2, Plus, X, Database, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { SignalThresholdConfig } from "@/components/dashboard/SignalThresholdConfig";
 import { TradingConfigDashboard } from "@/components/dashboard/TradingConfigDashboard";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -360,9 +359,9 @@ export default function Settings() {
             <div>
               <h1 className="text-xl md:text-3xl font-bold font-sans tracking-tight flex items-center gap-2 md:gap-3">
                 <Cog className="h-6 w-6 md:h-8 md:w-8 text-primary" />
-                Ajustes del Sistema
+                Sistema
               </h1>
-              <p className="text-sm md:text-base text-muted-foreground mt-1">Configuración del bot, IA y despliegue.</p>
+              <p className="text-sm md:text-base text-muted-foreground mt-1">Modo operación, tokens, horarios, spread, posiciones, logs, IA y despliegue.</p>
             </div>
           </div>
 
@@ -525,28 +524,6 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground text-center">
                   Los tokens se guardan en tu navegador. Recarga la página después de guardar para aplicar cambios.
                 </p>
-              </CardContent>
-            </Card>
-
-            {/* Notifications Link */}
-            <Card className="glass-panel border-border/50">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-yellow-500/20 rounded-lg">
-                    <AlertTriangle className="h-6 w-6 text-yellow-400" />
-                  </div>
-                  <div>
-                    <CardTitle>Alertas y Notificaciones</CardTitle>
-                    <CardDescription>Gestiona los canales de Telegram, cooldowns y tipos de alerta.</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Link href="/notifications">
-                  <Button variant="outline" className="w-full" data-testid="link-notifications">
-                    Ir a Notificaciones
-                  </Button>
-                </Link>
               </CardContent>
             </Card>
 
