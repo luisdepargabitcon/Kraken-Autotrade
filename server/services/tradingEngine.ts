@@ -2622,6 +2622,16 @@ ${positionsList}
 
         // Execute exit if confirmed
         if (decision.shouldExit) {
+          // FASE 0 HOTFIX: Check exit lock from ExitManager before SmartExit sell
+          if (this.exitManager.isExitLocked(lotId)) {
+            log(`[SMART_EXIT] ${position.pair} (${lotId}) EXIT BLOCKED — position locked by another exit path`, "trading");
+            continue;
+          }
+          if (!this.exitManager.checkCircuitBreaker(lotId)) {
+            log(`[SMART_EXIT] ${position.pair} (${lotId}) EXIT BLOCKED — circuit breaker tripped`, "trading");
+            continue;
+          }
+
           log(`[SMART_EXIT] ${position.pair} (${lotId}) EXIT TRIGGERED score=${decision.score} threshold=${decision.threshold} reasons=${decision.reasons.join(",")}`, "trading");
 
           await botLogger.info("SMART_EXIT_EXECUTED", `Smart Exit executed for ${position.pair}`, {
@@ -2636,31 +2646,41 @@ ${positionsList}
             await this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_executed");
           }
 
-          // Execute the sell via exitManager pattern
-          const assetBalance = this.getAssetBalance(position.pair, balances);
-          const sellAmount = Math.min(position.amount, assetBalance);
+          // FASE 0 HOTFIX: Use ONLY position.amount, NOT assetBalance from exchange
+          const sellAmount = position.amount;
           const sellVolume = this.normalizeVolume(position.pair, sellAmount);
           const minVolume = this.getOrderMin(position.pair);
 
           if (sellVolume >= minVolume) {
-            const sellContext = {
-              entryPrice: position.entryPrice,
-              aiSampleId: position.aiSampleId,
-              openedAt: position.openedAt,
-            };
+            // Acquire exit lock
+            if (!this.exitManager.acquireExitLock(lotId)) {
+              log(`[SMART_EXIT] ${position.pair} (${lotId}) sell aborted — could not acquire exit lock`, "trading");
+              continue;
+            }
+            this.exitManager.recordSellAttempt(lotId);
 
-            const success = await this.executeTrade(
-              position.pair, "sell", sellVolume.toFixed(8), currentPrice,
-              `Smart Exit: score=${decision.score}/${decision.threshold} regime=${decision.regime} reasons=${decision.reasons.join(",")}`,
-              undefined, undefined, undefined, sellContext
-            );
+            try {
+              const sellContext = {
+                entryPrice: position.entryPrice,
+                aiSampleId: position.aiSampleId,
+                openedAt: position.openedAt,
+              };
 
-            if (success) {
-              this.openPositions.delete(lotId);
-              await this.deletePositionFromDBByLotId(lotId);
-              smartExitEngine.resetConfirmation(lotId);
-              this.smartExitDecisions.delete(lotId);
-              this.lastTradeTime.set(position.pair, Date.now());
+              const success = await this.executeTrade(
+                position.pair, "sell", sellVolume.toFixed(8), currentPrice,
+                `Smart Exit: score=${decision.score}/${decision.threshold} regime=${decision.regime} reasons=${decision.reasons.join(",")}`,
+                undefined, undefined, undefined, sellContext
+              );
+
+              if (success) {
+                this.openPositions.delete(lotId);
+                await this.deletePositionFromDBByLotId(lotId);
+                smartExitEngine.resetConfirmation(lotId);
+                this.smartExitDecisions.delete(lotId);
+                this.lastTradeTime.set(position.pair, Date.now());
+              }
+            } finally {
+              this.exitManager.releaseExitLock(lotId);
             }
           } else {
             log(`[SMART_EXIT] ${position.pair} (${lotId}) sell skipped: volume ${sellVolume} < min ${minVolume}`, "trading");
@@ -5956,7 +5976,8 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                     orderId: pendingOrderId || clientOrderId,
                     lotId: clientOrderId,
                     mode: this.dryRunMode ? "DRY_RUN" : "LIVE",
-                    exitType: reason.toLowerCase().includes("stop") ? "STOP_LOSS"
+                    exitType: reason.toLowerCase().includes("timestop") || (reason.toLowerCase().includes("time") && reason.toLowerCase().includes("stop") && reason.toLowerCase().includes("expirado")) ? "TIME_STOP"
+                      : reason.toLowerCase().includes("stop") ? "STOP_LOSS"
                       : reason.toLowerCase().includes("profit") ? "TAKE_PROFIT"
                       : reason.toLowerCase().includes("smart") ? "SMART_EXIT"
                       : "AUTO",
@@ -6500,14 +6521,16 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
               : undefined;
             // exitType: case-insensitive detection covering all automated exit reasons
             const _reasonUp = reason.toUpperCase();
-            const _sellExitType = _reasonUp.includes("STOP") ? "STOP_LOSS"
-              : _reasonUp.includes("TAKE") || _reasonUp.includes("PROFIT") ? "TAKE_PROFIT"
-              : _reasonUp.includes("BREAKEVEN") || _reasonUp.includes("BREAK_EVEN") || _reasonUp.includes("BREAK EVEN") ? "BREAK_EVEN"
+            // FASE 0 HOTFIX: TIMESTOP must be checked BEFORE generic "STOP" to avoid misclassification
+            const _sellExitType = _reasonUp.includes("TIMESTOP") || (_reasonUp.includes("TIME") && _reasonUp.includes("STOP") && _reasonUp.includes("EXPIRADO")) ? "TIME_STOP"
               : _reasonUp.includes("TRAIL") ? "TRAILING_STOP"
-              : _reasonUp.includes("TIMEST") || (_reasonUp.includes("TIME") && _reasonUp.includes("STOP")) ? "TIME_STOP"
+              : _reasonUp.includes("BREAKEVEN") || _reasonUp.includes("BREAK_EVEN") || _reasonUp.includes("BREAK EVEN") ? "BREAK_EVEN"
+              : _reasonUp.includes("STOP-LOSS") || _reasonUp.includes("STOPLOSS") || (_reasonUp.includes("STOP") && _reasonUp.includes("LOSS")) ? "STOP_LOSS"
+              : _reasonUp.includes("EMERGENCIA") || _reasonUp.includes("EMERGENCY") ? "STOP_LOSS"
+              : _reasonUp.includes("STOP") && !_reasonUp.includes("TIME") ? "STOP_LOSS"
+              : _reasonUp.includes("TAKE") || _reasonUp.includes("PROFIT") ? "TAKE_PROFIT"
               : _reasonUp.includes("SMART") ? "SMART_EXIT"
               : _reasonUp.includes("SCALE") ? "SCALE_OUT"
-              : _reasonUp.includes("EMERGENCY") ? "EMERGENCY"
               : _reasonUp.includes("MANUAL") ? "MANUAL"
               : "AUTO";
             await this.telegramService.sendSellAlert({
@@ -6736,6 +6759,15 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
       const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
 
       log(`[MANUAL_CLOSE] Iniciando cierre de ${pair} (${positionLotId}): ${amount.toFixed(8)} @ $${currentPrice.toFixed(2)}`, "trading");
+
+      // FASE 0 HOTFIX: Check exit lock before manual close
+      if (this.exitManager.isExitLocked(positionLotId)) {
+        log(`[MANUAL_CLOSE] BLOCKED — position ${positionLotId} is locked by another exit`, "trading");
+        return {
+          success: false,
+          error: "Posición bloqueada: otra operación de cierre está en curso",
+        };
+      }
 
       // En DRY_RUN, simular el cierre
       if (this.dryRunMode) {

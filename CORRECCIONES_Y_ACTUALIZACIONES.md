@@ -2,6 +2,86 @@
 
 ---
 
+## 2026-03-21 — HOTFIX CRÍTICO: Multi-SELL / Venta saldo extra (FASE 0)
+
+### Problema
+Bug crítico de seguridad en producción: el bot ejecutaba múltiples órdenes SELL sobre la misma posición y/o vendía saldo no asignado (externo/hold) del exchange. Manifestaciones:
+1. TimeStop disparaba SELL repetidamente cada ciclo sin eliminar la posición
+2. Múltiples flujos de salida (SL/TP, SmartGuard, SmartExit, TimeStop) podían disparar SELL concurrentes sobre el mismo lote en el mismo ciclo
+3. La reconciliación "UP" absorbía saldo externo del exchange en la posición del bot
+4. Posiciones aparecían como "huérfanas" tras ventas repetidas que agotaban el balance
+5. TimeStop se clasificaba como STOP_LOSS en logs/Telegram (taxonomía incorrecta)
+
+### Causas raíz identificadas
+1. **TimeStop no limpiaba posición tras venta exitosa** — En `checkSmartGuardExit()`, tras llamar `executeTrade()` para TimeStop, la función hacía `return` sin llamar `deletePosition()` ni `deletePositionFromDBByLotId()`. Siguiente ciclo: posición seguía en memoria → TimeStop re-evaluaba (aún expirada) → otro SELL.
+2. **Sin lock de salida por posición** — No existía mecanismo para bloquear SELLs concurrentes. `checkStopLossTakeProfit()` y `evaluateOpenPositionsWithSmartExit()` se ejecutaban secuencialmente en el mismo ciclo y ambos podían disparar SELL sobre el mismo lote. El campo `isClosing` existía en SmartExitEngine pero nunca se establecía.
+3. **Reconciliación UP absorbía saldo externo** — Si el balance real del activo era mayor que `position.amount`, el código aumentaba `position.amount` al balance real (para dust ≤$5). Esto podía absorber holdings externos del usuario.
+4. **Sin circuit breaker** — No había detección ni bloqueo de intentos de venta repetidos en ventana corta.
+5. **Taxonomía TIMESTOP→STOP_LOSS** — La cadena "TimeStop" contiene "stop", lo que provocaba clasificación incorrecta antes de evaluar "timestop" específicamente.
+
+### Solución aplicada
+
+#### A) Exit Lock System (`exitManager.ts`)
+- `exitLocks: Map<string, number>` — Lock por lotId con TTL de 2 minutos (auto-release)
+- `acquireExitLock(lotId)` / `releaseExitLock(lotId)` / `isExitLocked(lotId)`
+- Todo sell ahora requiere lock. Si el lock está tomado, el SELL se bloquea y se logea.
+
+#### B) Circuit Breaker (`exitManager.ts`)
+- `sellAttempts: Map<string, number[]>` — Rastreo de intentos por lotId en ventana de 60s
+- `checkCircuitBreaker(lotId)` — Máximo 1 intento por ventana
+- Si se dispara: log crítico + alerta Telegram + bloqueo del SELL
+
+#### C) safeSell() Method (`exitManager.ts`)
+- Método centralizado que integra: circuit breaker → exit lock → cap de cantidad → executeTrade → cleanup
+- Garantiza que sellAmount nunca exceda `position.amount`
+- Elimina posición de memoria y DB inmediatamente tras éxito
+
+#### D) TimeStop Cleanup Fix (`exitManager.ts`)
+- TimeStop ahora usa `safeSell()` que limpia posición automáticamente
+- Si safeSell falla, verifica balance real para detectar huérfanas
+
+#### E) Reconciliación UP Eliminada (`exitManager.ts`)
+- ELIMINADA la reconciliación hacia arriba (aumentar position.amount al balance real)
+- Ahora solo se logea como advertencia: "Balance real mayor — IGNORADO (FASE 0 safe mode)"
+- Solo se ajusta posición hacia ABAJO (balance real < registrado)
+
+#### F) SmartGuard Sells Protegidos (`exitManager.ts`)
+- Bloque de venta final usa lock + circuit breaker + try/finally
+- sellAmount nunca se aumenta por balance real (solo se reduce)
+- cappedSellAmount = `Math.min(sellAmount, position.amount)`
+
+#### G) SmartExit Sells Protegidos (`tradingEngine.ts`)
+- Usa `position.amount` en lugar de `Math.min(position.amount, assetBalance)`
+- Verifica `isExitLocked()` y `checkCircuitBreaker()` antes de intentar SELL
+- Adquiere lock, ejecuta en try/finally
+
+#### H) Manual Close Protegido (`tradingEngine.ts`)
+- Verifica `isExitLocked()` antes de proceder
+- Retorna error si la posición está bloqueada por otro cierre en curso
+
+#### I) Taxonomía Corregida (`tradingEngine.ts`)
+- TIMESTOP se detecta ANTES que "STOP" genérico en ambos bloques de clasificación
+- Patrón: `"TIMESTOP"` o `("TIME" + "STOP" + "EXPIRADO")` → `"TIME_STOP"`
+- STOP_LOSS solo matchea si NO contiene "TIME"
+
+### Archivos modificados
+- `server/services/exitManager.ts` — Exit locks, circuit breaker, safeSell, fix TimeStop cleanup, eliminar reconciliación UP, proteger todos los sells
+- `server/services/tradingEngine.ts` — Proteger SmartExit sell, manual close, fix taxonomía exitType
+- `server/services/botLogger.ts` — Nuevos EventTypes: CIRCUIT_BREAKER_BLOCKED, EXIT_LOCK_BLOCKED, SAFE_SELL_SUCCESS, SAFE_SELL_FAILED
+
+### Validación
+- TypeScript compila sin errores (`npx tsc --noEmit`)
+- Todos los flujos de salida (TimeStop, SL/TP, Trailing, SmartGuard, SmartExit, Manual) protegidos por exit lock + circuit breaker
+- Cantidad de venta limitada estrictamente a position.amount
+- Balance externo del exchange nunca absorbido
+- Posiciones eliminadas inmediatamente tras venta exitosa
+
+### Riesgos residuales
+- Si el exchange tarda >2min en responder y el lock expira, teóricamente podría haber un segundo intento. El circuit breaker de 60s con max 1 intento mitiga esto.
+- El FillWatcher asíncrono podría confirmar fills tardíos tras eliminar la posición. Esto es por diseño (fill se registra como trade pero la posición ya no existe).
+
+---
+
 ## 2026-03-21 — FEAT: Eventos de gestión de ciclos para visibilidad UI
 
 ### Problema

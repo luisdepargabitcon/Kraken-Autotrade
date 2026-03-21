@@ -172,6 +172,15 @@ export class ExitManager {
   private timeStopNotified: Map<string, number> = new Map();
   private readonly TIME_STOP_NOTIFY_THROTTLE_MS = 60 * 60 * 1000;
 
+  // === FASE 0 HOTFIX: Exit Lock System ===
+  // Prevents multiple simultaneous SELL attempts on the same position
+  private exitLocks: Map<string, number> = new Map(); // lotId → timestamp
+  private readonly EXIT_LOCK_TTL_MS = 120_000; // 2 min TTL to auto-release stale locks
+  // Circuit breaker: track sell attempts per lotId in short window
+  private sellAttempts: Map<string, number[]> = new Map(); // lotId → [timestamps]
+  private readonly CIRCUIT_BREAKER_WINDOW_MS = 60_000; // 1 minute window
+  private readonly CIRCUIT_BREAKER_MAX_ATTEMPTS = 1; // Max 1 sell attempt per window
+
   private throttleLoaded = false;
 
   constructor(host: IExitManagerHost) {
@@ -201,6 +210,127 @@ export class ExitManager {
   private persistThrottle(prefix: string, key: string, timestamp: number): void {
     storage.upsertAlertThrottle(`${prefix}${key}`, timestamp)
       .catch(e => log(`[EXIT_MGR] Throttle persist error: ${e?.message}`, "trading"));
+  }
+
+  // === FASE 0 HOTFIX: Exit Lock Methods ===
+
+  /** Acquire exit lock for a position. Returns true if lock acquired, false if already locked. */
+  acquireExitLock(lotId: string): boolean {
+    const now = Date.now();
+    const existingLock = this.exitLocks.get(lotId);
+    if (existingLock && (now - existingLock) < this.EXIT_LOCK_TTL_MS) {
+      log(`[EXIT_LOCK] BLOCKED: lotId=${lotId.substring(0, 12)} already locked (age=${((now - existingLock) / 1000).toFixed(0)}s)`, "trading");
+      return false;
+    }
+    this.exitLocks.set(lotId, now);
+    log(`[EXIT_LOCK] ACQUIRED: lotId=${lotId.substring(0, 12)}`, "trading");
+    return true;
+  }
+
+  /** Release exit lock for a position. */
+  releaseExitLock(lotId: string): void {
+    this.exitLocks.delete(lotId);
+    log(`[EXIT_LOCK] RELEASED: lotId=${lotId.substring(0, 12)}`, "trading");
+  }
+
+  /** Check if position is currently locked for exit. */
+  isExitLocked(lotId: string): boolean {
+    const lock = this.exitLocks.get(lotId);
+    if (!lock) return false;
+    if ((Date.now() - lock) >= this.EXIT_LOCK_TTL_MS) {
+      this.exitLocks.delete(lotId); // Auto-release stale lock
+      return false;
+    }
+    return true;
+  }
+
+  /** Circuit breaker: check if too many sell attempts on this position. */
+  checkCircuitBreaker(lotId: string): boolean {
+    const now = Date.now();
+    const attempts = this.sellAttempts.get(lotId) || [];
+    // Filter to recent window
+    const recent = attempts.filter(t => (now - t) < this.CIRCUIT_BREAKER_WINDOW_MS);
+    this.sellAttempts.set(lotId, recent);
+    if (recent.length >= this.CIRCUIT_BREAKER_MAX_ATTEMPTS) {
+      log(`[CIRCUIT_BREAKER] TRIPPED: lotId=${lotId.substring(0, 12)} attempts=${recent.length} in ${this.CIRCUIT_BREAKER_WINDOW_MS / 1000}s window`, "trading");
+      return false; // Circuit breaker tripped
+    }
+    return true; // OK to proceed
+  }
+
+  /** Record a sell attempt for circuit breaker tracking. */
+  recordSellAttempt(lotId: string): void {
+    const attempts = this.sellAttempts.get(lotId) || [];
+    attempts.push(Date.now());
+    this.sellAttempts.set(lotId, attempts);
+  }
+
+  /** Safe sell: acquires lock, checks circuit breaker, executes sell, cleans up position. */
+  async safeSell(
+    pair: string,
+    lotId: string,
+    sellAmount: number,
+    currentPrice: number,
+    sellReason: string,
+    position: OpenPosition,
+    sellContext: any
+  ): Promise<boolean> {
+    // 1. Circuit breaker check
+    if (!this.checkCircuitBreaker(lotId)) {
+      await botLogger.error("CIRCUIT_BREAKER_BLOCKED", `Circuit breaker bloqueó SELL en ${pair}`, {
+        pair, lotId, sellReason, sellAmount,
+      });
+      // Send critical Telegram alert
+      const telegram = this.host.getTelegramService();
+      if (telegram.isInitialized()) {
+        await telegram.sendAlertWithSubtype(
+          `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+          `🚨 <b>CIRCUIT BREAKER: SELL BLOQUEADO</b>\n\n` +
+          `📦 Par: <code>${pair}</code> | Lot: <code>${lotId.substring(0, 12)}</code>\n` +
+          `⚡ Trigger: <code>${sellReason}</code>\n` +
+          `⚠️ <b>Múltiples intentos de venta detectados en ventana corta</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━`,
+          "errors", "error_api"
+        );
+      }
+      return false;
+    }
+
+    // 2. Acquire exit lock
+    if (!this.acquireExitLock(lotId)) {
+      return false;
+    }
+
+    // 3. Record attempt
+    this.recordSellAttempt(lotId);
+
+    try {
+      // 4. CRITICAL: Cap sell amount to ONLY the lot's registered amount
+      // NEVER use realAssetBalance if it's higher than position.amount
+      const cappedSellAmount = Math.min(sellAmount, position.amount);
+      if (cappedSellAmount !== sellAmount) {
+        log(`[SAFE_SELL] Capped sell amount from ${sellAmount.toFixed(8)} to ${cappedSellAmount.toFixed(8)} (lot limit) for ${pair} ${lotId.substring(0, 12)}`, "trading");
+      }
+
+      // 5. Execute trade
+      const success = await this.host.executeTrade(
+        pair, "sell", cappedSellAmount.toFixed(8), currentPrice,
+        sellReason, undefined, undefined, undefined, sellContext
+      );
+
+      if (success) {
+        // 6. CRITICAL: Clean up position immediately to prevent re-evaluation
+        this.host.deletePosition(lotId);
+        await this.host.deletePositionFromDBByLotId(lotId);
+        this.host.setLastTradeTime(pair, Date.now());
+        log(`[SAFE_SELL] SUCCESS: ${pair} ${lotId.substring(0, 12)} sold ${cappedSellAmount.toFixed(8)} — position deleted`, "trading");
+      }
+
+      return success;
+    } finally {
+      // Always release lock (even on error)
+      this.releaseExitLock(lotId);
+    }
   }
 
   // === PUBLIC ENTRY POINT (called by TradingEngine.tradingCycle) ===
@@ -807,49 +937,52 @@ export class ExitManager {
         return;
       }
 
-      // VERIFICACIÓN DE BALANCE REAL
-      const freshBalances = await this.host.getTradingExchange().getBalance();
-      const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
-
-      // Reconciliación hacia ARRIBA
-      if (realAssetBalance > sellAmount * 1.005) {
-        const extraAmount = realAssetBalance - sellAmount;
-        const extraValueUsd = extraAmount * currentPrice;
-        if (extraValueUsd <= DUST_THRESHOLD_USD) {
-          log(`🔄 Discrepancia de balance (UP) en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
-          position.amount = realAssetBalance;
-          this.host.setPosition(lotId, position);
-          await this.host.savePositionToDB(pair, position);
-          await botLogger.info("POSITION_RECONCILED", `Posición reconciliada (UP) en ${pair}`, {
-            pair, lotId, direction: "UP", registeredAmount: sellAmount,
-            realBalance: realAssetBalance, extraValueUsd,
-          });
-        } else {
-          log(`⚠️ Balance real mayor al registrado en ${pair} (${lotId}) pero parece HOLD externo (extra $${extraValueUsd.toFixed(2)}). Ignorando reconciliación UP.`, "trading");
-        }
+      // FASE 0 HOTFIX: Check exit lock + circuit breaker BEFORE any sell
+      if (!this.checkCircuitBreaker(lotId)) {
+        await botLogger.error("CIRCUIT_BREAKER_BLOCKED", `Circuit breaker bloqueó SELL legacy en ${pair}`, {
+          pair, lotId, reason, sellAmount,
+        });
+        return;
       }
+      if (!this.acquireExitLock(lotId)) {
+        return;
+      }
+      this.recordSellAttempt(lotId);
 
-      // Si el balance real es menor al 99.5% del esperado
-      if (realAssetBalance < sellAmount * 0.995) {
-        log(`⚠️ Discrepancia de balance en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
+      try {
+        // VERIFICACIÓN DE BALANCE REAL
+        const freshBalances = await this.host.getTradingExchange().getBalance();
+        const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
 
-        if (realAssetBalance < minVolume) {
-          log(`Posición huérfana eliminada en ${pair} (${lotId}): balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
+        // FASE 0 HOTFIX: REMOVED reconciliation UP — NEVER increase position.amount to match exchange balance
+        // This was absorbing external/unmanaged funds into the lot
+        if (realAssetBalance > sellAmount * 1.005) {
+          const extraAmount = realAssetBalance - sellAmount;
+          const extraValueUsd = extraAmount * currentPrice;
+          log(`⚠️ Balance real mayor al registrado en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}, Extra $${extraValueUsd.toFixed(2)} — IGNORADO (FASE 0 safe mode)`, "trading");
+        }
 
-          const usdBalance = parseFloat(String(freshBalances?.ZUSD || freshBalances?.USD || "0"));
-          this.host.setCurrentUsdBalance(usdBalance);
+        // Si el balance real es menor al 99.5% del esperado
+        if (realAssetBalance < sellAmount * 0.995) {
+          log(`⚠️ Discrepancia de balance en ${pair} (${lotId}): Registrado ${sellAmount}, Real ${realAssetBalance}`, "trading");
 
-          this.host.deletePosition(lotId);
-          await this.host.deletePositionFromDBByLotId(lotId);
+          if (realAssetBalance < minVolume) {
+            log(`Posición huérfana eliminada en ${pair} (${lotId}): balance real (${realAssetBalance}) < mínimo (${minVolume})`, "trading");
 
-          this.host.clearStopLossCooldown(pair);
-          this.host.clearExposureAlert(pair);
-          this.host.setPairCooldown(pair);
-          this.host.setLastTradeTime(pair, Date.now());
+            const usdBalance = parseFloat(String(freshBalances?.ZUSD || freshBalances?.USD || "0"));
+            this.host.setCurrentUsdBalance(usdBalance);
 
-          const telegram = this.host.getTelegramService();
-          if (telegram.isInitialized()) {
-            await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            this.host.deletePosition(lotId);
+            await this.host.deletePositionFromDBByLotId(lotId);
+
+            this.host.clearStopLossCooldown(pair);
+            this.host.clearExposureAlert(pair);
+            this.host.setPairCooldown(pair);
+            this.host.setLastTradeTime(pair, Date.now());
+
+            const telegram = this.host.getTelegramService();
+            if (telegram.isInitialized()) {
+              await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🔄 <b>Posición Huérfana Eliminada</b>
 
@@ -861,24 +994,24 @@ export class ExitManager {
 
 ⚠️ La posición no existe en Kraken y fue eliminada.
 ━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
+            }
+
+            await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
+              pair, lotId, registeredAmount: sellAmount, realBalance: realAssetBalance,
+              newUsdBalance: usdBalance,
+            });
+            return;
           }
 
-          await botLogger.warn("ORPHAN_POSITION_CLEANED", `Posición huérfana eliminada en ${pair}`, {
-            pair, lotId, registeredAmount: sellAmount, realBalance: realAssetBalance,
-            newUsdBalance: usdBalance,
-          });
-          return;
-        }
+          // Si hay algo de balance pero menos del registrado, ajustar posición DOWN al real
+          log(`Ajustando posición ${pair} (${lotId}) de ${sellAmount} a ${realAssetBalance}`, "trading");
+          position.amount = realAssetBalance;
+          this.host.setPosition(lotId, position);
+          await this.host.savePositionToDB(pair, position);
 
-        // Si hay algo de balance pero menos del registrado, ajustar posición al real
-        log(`Ajustando posición ${pair} (${lotId}) de ${sellAmount} a ${realAssetBalance}`, "trading");
-        position.amount = realAssetBalance;
-        this.host.setPosition(lotId, position);
-        await this.host.savePositionToDB(pair, position);
-
-        const telegram = this.host.getTelegramService();
-        if (telegram.isInitialized()) {
-          await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          const telegram = this.host.getTelegramService();
+          if (telegram.isInitialized()) {
+            await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🔧 <b>Posición Ajustada</b>
 
@@ -890,131 +1023,135 @@ export class ExitManager {
 
 ℹ️ Se usará la cantidad real para la venta.
 ━━━━━━━━━━━━━━━━━━━`, "strategy", "strategy_router_transition");
+          }
         }
-      }
 
-      log(`${emoji} ${reason} para ${pair} (${lotId})`, "trading");
+        log(`${emoji} ${reason} para ${pair} (${lotId})`, "trading");
 
-      // Usar position.amount (puede haber sido ajustado al balance real)
-      const actualSellAmount = position.amount;
+        // FASE 0 HOTFIX: Use ONLY position.amount (may have been adjusted DOWN, never UP)
+        const actualSellAmount = position.amount;
 
-      // Calcular P&L NETO
-      const grossPnl = (currentPrice - position.entryPrice) * actualSellAmount;
-      const entryValueUsd = position.entryPrice * actualSellAmount;
-      const exitValueUsd = currentPrice * actualSellAmount;
-      const currentFeePct = getTakerFeePct();
-      const entryFeeUsd = position.entryFee ?? (entryValueUsd * currentFeePct / 100);
-      const exitFeeUsd = exitValueUsd * currentFeePct / 100;
-      const pnl = grossPnl - entryFeeUsd - exitFeeUsd;
-      const pnlPercent = (pnl / entryValueUsd) * 100;
+        // Calcular P&L NETO
+        const grossPnl = (currentPrice - position.entryPrice) * actualSellAmount;
+        const entryValueUsd = position.entryPrice * actualSellAmount;
+        const exitValueUsd = currentPrice * actualSellAmount;
+        const currentFeePct = getTakerFeePct();
+        const entryFeeUsd = position.entryFee ?? (entryValueUsd * currentFeePct / 100);
+        const exitFeeUsd = exitValueUsd * currentFeePct / 100;
+        const pnl = grossPnl - entryFeeUsd - exitFeeUsd;
+        const pnlPercent = (pnl / entryValueUsd) * 100;
 
-      const sellContext = {
-        entryPrice: position.entryPrice,
-        entryFee: position.entryFee,
-        sellAmount: actualSellAmount,
-        positionAmount: position.amount,
-        aiSampleId: position.aiSampleId,
-        openedAt: position.openedAt
-      };
-      await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
-        posId: lotId, pair,
-        trigger: reason.includes("Stop-Loss") ? "STOP_HIT" : reason.includes("Take-Profit") ? "TP_HIT" : "TRAIL_HIT",
-        currentPrice, sellAmount: actualSellAmount, reason, priceChangePct: priceChange,
-      });
-      await botLogger.info("EXIT_ORDER_PLACED", `Intentando orden SELL en ${pair}`, {
-        posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
-        price: currentPrice, exchange: this.host.getTradingExchangeType(),
-        computedOrderUsd: actualSellAmount * currentPrice, trigger: reason,
-      });
-      const success = await this.host.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
-
-      if (!success) {
-        await botLogger.error("EXIT_ORDER_FAILED", `FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+        const sellContext = {
+          entryPrice: position.entryPrice,
+          entryFee: position.entryFee,
+          sellAmount: actualSellAmount,
+          positionAmount: position.amount,
+          aiSampleId: position.aiSampleId,
+          openedAt: position.openedAt
+        };
+        await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
+          posId: lotId, pair,
+          trigger: reason.includes("Stop-Loss") ? "STOP_HIT" : reason.includes("Take-Profit") ? "TP_HIT" : "TRAIL_HIT",
+          currentPrice, sellAmount: actualSellAmount, reason, priceChangePct: priceChange,
+        });
+        await botLogger.info("EXIT_ORDER_PLACED", `Intentando orden SELL en ${pair}`, {
           posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
           price: currentPrice, exchange: this.host.getTradingExchangeType(),
-          computedOrderUsd: actualSellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
+          computedOrderUsd: actualSellAmount * currentPrice, trigger: reason,
         });
-        const telegram = this.host.getTelegramService();
-        if (telegram.isInitialized()) {
-          await telegram.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${actualSellAmount.toFixed(8)}</code>\n` +
-            `⚡ Trigger: <code>${reason}</code>\n` +
-            `❌ La orden NO se ejecutó en el exchange\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
+        const success = await this.host.executeTrade(pair, "sell", actualSellAmount.toFixed(8), currentPrice, reason, undefined, undefined, undefined, sellContext);
+
+        if (!success) {
+          await botLogger.error("EXIT_ORDER_FAILED", `FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+            posId: lotId, pair, orderType: "market", side: "sell", qty: actualSellAmount,
+            price: currentPrice, exchange: this.host.getTradingExchangeType(),
+            computedOrderUsd: actualSellAmount * currentPrice, trigger: reason, action: "POSITION_LEFT_OPEN",
+          });
+          const telegram = this.host.getTelegramService();
+          if (telegram.isInitialized()) {
+            await telegram.sendAlertWithSubtype(
+              `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+              `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
+              `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+              `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${actualSellAmount.toFixed(8)}</code>\n` +
+              `⚡ Trigger: <code>${reason}</code>\n` +
+              `❌ La orden NO se ejecutó en el exchange\n` +
+              `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+              `━━━━━━━━━━━━━━━━━━━`,
+              "errors", "error_api"
+            );
+          }
+          return;
         }
-        return;
-      }
 
-      if (success) {
-        const telegram = this.host.getTelegramService();
-        if (telegram.isInitialized()) {
-          const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
-          const durationMins = Math.floor(durationMs / 60000);
-          const durationHours = Math.floor(durationMins / 60);
-          const durationDays = Math.floor(durationHours / 24);
-          const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
+        if (success) {
+          const telegram = this.host.getTelegramService();
+          if (telegram.isInitialized()) {
+            const durationMs = position.openedAt ? Date.now() - position.openedAt : 0;
+            const durationMins = Math.floor(durationMs / 60000);
+            const durationHours = Math.floor(durationMins / 60);
+            const durationDays = Math.floor(durationHours / 24);
+            const durationTxt = durationDays > 0 ? `${durationDays}d ${durationHours % 24}h` : durationHours > 0 ? `${durationHours}h ${durationMins % 60}m` : `${durationMins}m`;
 
-          const assetName = pair.replace("/USD", "");
-          const shortLotId = lotId.substring(0, 12);
+            const assetName = pair.replace("/USD", "");
+            const shortLotId = lotId.substring(0, 12);
 
-          const isStopLoss = reason.toLowerCase().includes("stop-loss") || reason.toLowerCase().includes("stoploss");
-          const isTakeProfit = reason.toLowerCase().includes("take-profit") || reason.toLowerCase().includes("tp fijo");
-          const isTrailing = reason.toLowerCase().includes("trailing");
+            const isStopLoss = reason.toLowerCase().includes("stop-loss") || reason.toLowerCase().includes("stoploss");
+            const isTakeProfit = reason.toLowerCase().includes("take-profit") || reason.toLowerCase().includes("tp fijo");
+            const isTrailing = reason.toLowerCase().includes("trailing");
 
-          let headerEmoji = "";
-          let headerText = "";
-          let resultText = "";
+            let headerEmoji = "";
+            let headerText = "";
+            let resultText = "";
 
-          if (pnl >= 0) {
-            if (isTakeProfit) {
-              headerEmoji = "🎯";
-              headerText = `Take-Profit en ${assetName}`;
-              resultText = `¡Objetivo cumplido! Ganancia de <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
-            } else if (isTrailing) {
-              headerEmoji = "📈";
-              headerText = `Trailing Stop en ${assetName}`;
-              resultText = `El trailing protegió las ganancias: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+            if (pnl >= 0) {
+              if (isTakeProfit) {
+                headerEmoji = "🎯";
+                headerText = `Take-Profit en ${assetName}`;
+                resultText = `¡Objetivo cumplido! Ganancia de <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+              } else if (isTrailing) {
+                headerEmoji = "📈";
+                headerText = `Trailing Stop en ${assetName}`;
+                resultText = `El trailing protegió las ganancias: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+              } else {
+                headerEmoji = "🟢";
+                headerText = `Venta con ganancia en ${assetName}`;
+                resultText = `Resultado: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+              }
             } else {
-              headerEmoji = "🟢";
-              headerText = `Venta con ganancia en ${assetName}`;
-              resultText = `Resultado: <b>+$${pnl.toFixed(2)}</b> (+${pnlPercent.toFixed(2)}%).`;
+              if (isStopLoss) {
+                headerEmoji = "🛑";
+                headerText = `Stop-Loss en ${assetName}`;
+                resultText = `Pérdida limitada a <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
+              } else {
+                headerEmoji = "🔴";
+                headerText = `Venta en ${assetName}`;
+                resultText = `Resultado: <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
+              }
             }
-          } else {
-            if (isStopLoss) {
-              headerEmoji = "🛑";
-              headerText = `Stop-Loss en ${assetName}`;
-              resultText = `Pérdida limitada a <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
-            } else {
-              headerEmoji = "🔴";
-              headerText = `Venta en ${assetName}`;
-              resultText = `Resultado: <b>$${pnl.toFixed(2)}</b> (${pnlPercent.toFixed(2)}%).`;
-            }
+
+            let naturalMessage = `${headerEmoji} <b>${headerText}</b>\n\n`;
+            naturalMessage += `${resultText}\n\n`;
+            naturalMessage += `📊 Entrada: $${position.entryPrice.toFixed(2)} → Salida: $${currentPrice.toFixed(2)}\n`;
+            naturalMessage += `📦 Cantidad: ${actualSellAmount.toFixed(8)}\n`;
+            naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
+            naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
+            naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
+
+            await telegram.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
           }
 
-          let naturalMessage = `${headerEmoji} <b>${headerText}</b>\n\n`;
-          naturalMessage += `${resultText}\n\n`;
-          naturalMessage += `📊 Entrada: $${position.entryPrice.toFixed(2)} → Salida: $${currentPrice.toFixed(2)}\n`;
-          naturalMessage += `📦 Cantidad: ${actualSellAmount.toFixed(8)}\n`;
-          naturalMessage += `⏱️ Duración: ${durationTxt}\n`;
-          naturalMessage += `🔗 Lote: <code>${shortLotId}</code>\n\n`;
-          naturalMessage += `<a href="${environment.panelUrl}">Ver en Panel</a>`;
-
-          await telegram.sendAlertWithSubtype(naturalMessage, "trades", "trade_sell");
+          this.host.deletePosition(lotId);
+          await this.host.deletePositionFromDBByLotId(lotId);
+          this.host.setLastTradeTime(pair, Date.now());
+          await botLogger.info("POSITION_CLOSED_SG", `Posición cerrada en ${pair}`, {
+            posId: lotId, pair, closeReason: reason, avgPrice: currentPrice,
+            pnlNet: pnl, priceChangePct: priceChange, exchange: this.host.getTradingExchangeType(),
+          });
         }
-
-        this.host.deletePosition(lotId);
-        await this.host.deletePositionFromDBByLotId(lotId);
-        this.host.setLastTradeTime(pair, Date.now());
-        await botLogger.info("POSITION_CLOSED_SG", `Posición cerrada en ${pair}`, {
-          posId: lotId, pair, closeReason: reason, avgPrice: currentPrice,
-          pnlNet: pnl, priceChangePct: priceChange, exchange: this.host.getTradingExchangeType(),
-        });
+      } finally {
+        // FASE 0 HOTFIX: Always release exit lock
+        this.releaseExitLock(lotId);
       }
     }
   }
@@ -1089,7 +1226,7 @@ export class ExitManager {
             }
           }
 
-          // Execute sell
+          // Execute sell via safeSell (FASE 0 HOTFIX: lock + circuit breaker + cleanup)
           const minVolume = this.host.getOrderMin(pair);
           if (position.amount < minVolume) {
             // Position is dust — clean up directly
@@ -1100,9 +1237,8 @@ export class ExitManager {
             this.host.deletePosition(lotId);
             await this.host.deletePositionFromDBByLotId(lotId);
           } else {
-            const freshBalances = await this.host.getTradingExchange().getBalance();
-            const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
-            const sellAmount = Math.min(position.amount, realAssetBalance);
+            // FASE 0 HOTFIX: Use ONLY position.amount, never realAssetBalance for sell qty
+            const sellAmount = position.amount;
 
             if (sellAmount >= minVolume) {
               const sellContext = {
@@ -1119,27 +1255,33 @@ export class ExitManager {
                 priceChangePct: priceChange, sellAmount,
               });
 
-              await this.host.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice,
+              // FASE 0 HOTFIX: Use safeSell which handles lock, circuit breaker, cap, and cleanup
+              const sellSuccess = await this.safeSell(
+                pair, lotId, sellAmount, currentPrice,
                 `TimeStop expirado (${ageHours.toFixed(0)}h >= ${ttlHours.toFixed(1)}h) [SMART_GUARD, ${regime}, ${configSource}]`,
-                undefined, undefined, undefined, sellContext);
-            } else {
-              // Real balance too small — clean up orphan + alert
-              log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} realBalance=${realAssetBalance.toFixed(8)} < minVolume=${minVolume} — huérfana, limpiando`, "trading");
-              await botLogger.warn("TIME_STOP_ORPHAN_CLEANUP", `TimeStop: posición huérfana limpiada en ${pair} (balance real insuficiente) [SMART_GUARD]`, {
-                pair, lotId, registeredAmount: position.amount, realBalance: realAssetBalance, minVolume, ageHours,
-              });
-              const telegram = this.host.getTelegramService();
-              if (telegram.isInitialized()) {
-                await telegram.sendAlertWithSubtype(
-                  `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-                  `⏰ <b>Time-Stop: Posición Huérfana Limpiada</b>\n\n` +
-                  `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-                  `🔢 Registrada: <code>${position.amount.toFixed(8)}</code> | Real: <code>${realAssetBalance.toFixed(8)}</code>\n` +
-                  `⚠️ Balance real insuficiente — posición eliminada automáticamente\n` +
-                  `━━━━━━━━━━━━━━━━━━━`,
-                  "errors", "error_api"
-                ).catch(() => {});
+                position, sellContext
+              );
+
+              if (!sellSuccess) {
+                // Check if balance is actually gone (orphan case)
+                try {
+                  const freshBalances = await this.host.getTradingExchange().getBalance();
+                  const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
+                  if (realAssetBalance < minVolume) {
+                    log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} realBalance=${realAssetBalance.toFixed(8)} < minVolume=${minVolume} — huérfana, limpiando`, "trading");
+                    await botLogger.warn("TIME_STOP_ORPHAN_CLEANUP", `TimeStop: posición huérfana limpiada en ${pair} (balance real insuficiente) [SMART_GUARD]`, {
+                      pair, lotId, registeredAmount: position.amount, realBalance: realAssetBalance, minVolume, ageHours,
+                    });
+                    this.host.deletePosition(lotId);
+                    await this.host.deletePositionFromDBByLotId(lotId);
+                  }
+                } catch (balErr: any) {
+                  log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} balance check error after failed sell: ${balErr?.message}`, "trading");
+                }
               }
+            } else {
+              // sellAmount < minVolume — dust, clean up
+              log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} sellAmount=${sellAmount} < minVolume=${minVolume} — dust cleanup`, "trading");
               this.host.deletePosition(lotId);
               await this.host.deletePositionFromDBByLotId(lotId);
             }
@@ -1446,7 +1588,7 @@ export class ExitManager {
       await this.host.savePositionToDB(pair, position);
     }
 
-    // Execute sell if needed
+    // Execute sell if needed (FASE 0 HOTFIX: all sells go through lock + circuit breaker)
     if (shouldSellFull || shouldScaleOut) {
       const minVolume = this.host.getOrderMin(pair);
       let sellAmount = shouldScaleOut
@@ -1477,77 +1619,101 @@ export class ExitManager {
         return;
       }
 
-      // Balance verification
-      const freshBalances = await this.host.getTradingExchange().getBalance();
-      const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
-
-      if (realAssetBalance < sellAmount * 0.995) {
-        if (realAssetBalance < minVolume) {
-          log(`SMART_GUARD: Posición huérfana en ${pair} (${lotId}), eliminando`, "trading");
-          this.host.deletePosition(lotId);
-          await this.host.deletePositionFromDBByLotId(lotId);
-          this.host.setPairCooldown(pair);
-          return;
-        }
-        sellAmount = realAssetBalance;
-        position.amount = realAssetBalance;
+      // FASE 0 HOTFIX: Check exit lock + circuit breaker BEFORE any balance check or sell
+      if (!this.checkCircuitBreaker(lotId)) {
+        await botLogger.error("CIRCUIT_BREAKER_BLOCKED", `SMART_GUARD circuit breaker bloqueó SELL en ${pair}`, {
+          pair, lotId, sellReason, sellAmount,
+        });
+        return;
       }
+      if (!this.acquireExitLock(lotId)) {
+        return;
+      }
+      this.recordSellAttempt(lotId);
 
-      log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
-      await botLogger.info("EXIT_TRIGGERED", `SMART_GUARD salida disparada en ${pair}`, {
-        posId: lotId, pair,
-        trigger: shouldScaleOut ? "SCALE_OUT" : (position.sgTrailingActivated ? "TRAIL_HIT" : (position.sgBreakEvenActivated ? "BE_HIT" : "SL_HIT")),
-        currentPrice, stopPrice: position.sgCurrentStopPrice ?? null, sellAmount,
-        reason: sellReason, priceChangePct: priceChange,
-      });
+      try {
+        // Balance verification — only to detect orphan, NOT to increase sellAmount
+        const freshBalances = await this.host.getTradingExchange().getBalance();
+        const realAssetBalance = this.host.getAssetBalance(pair, freshBalances);
 
-      // Calculate P&L before Telegram alert
-      const sellValueGross = sellAmount * currentPrice;
-      const sellFeeEstimated = sellValueGross * (getTakerFeePct() / 100);
-      const entryValueGross = sellAmount * position.entryPrice;
-      const entryFeeProrated = (position.entryFee || 0) * (sellAmount / position.amount);
-      const pnl = sellValueGross - sellFeeEstimated - entryValueGross - entryFeeProrated;
+        if (realAssetBalance < sellAmount * 0.995) {
+          if (realAssetBalance < minVolume) {
+            log(`SMART_GUARD: Posición huérfana en ${pair} (${lotId}), eliminando`, "trading");
+            this.host.deletePosition(lotId);
+            await this.host.deletePositionFromDBByLotId(lotId);
+            this.host.setPairCooldown(pair);
+            return;
+          }
+          // FASE 0 HOTFIX: Adjust DOWN to real balance, but NEVER UP
+          sellAmount = Math.min(sellAmount, realAssetBalance);
+        }
 
-      const sellContext = {
-        entryPrice: position.entryPrice,
-        entryFee: position.entryFee,
-        sellAmount: sellAmount,
-        positionAmount: position.amount,
-        aiSampleId: position.aiSampleId,
-        openedAt: position.openedAt
-      };
-      await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
-        posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
-        price: currentPrice, exchange: this.host.getTradingExchangeType(),
-        computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
-      });
-      const success = await this.host.executeTrade(pair, "sell", sellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
+        log(`${emoji} ${sellReason} para ${pair} (${lotId})`, "trading");
+        await botLogger.info("EXIT_TRIGGERED", `SMART_GUARD salida disparada en ${pair}`, {
+          posId: lotId, pair,
+          trigger: shouldScaleOut ? "SCALE_OUT" : (position.sgTrailingActivated ? "TRAIL_HIT" : (position.sgBreakEvenActivated ? "BE_HIT" : "SL_HIT")),
+          currentPrice, stopPrice: position.sgCurrentStopPrice ?? null, sellAmount,
+          reason: sellReason, priceChangePct: priceChange,
+        });
 
-      if (!success) {
-        await botLogger.error("EXIT_ORDER_FAILED", `SMART_GUARD FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+        // Calculate P&L before Telegram alert
+        const sellValueGross = sellAmount * currentPrice;
+        const sellFeeEstimated = sellValueGross * (getTakerFeePct() / 100);
+        const entryValueGross = sellAmount * position.entryPrice;
+        const entryFeeProrated = (position.entryFee || 0) * (sellAmount / (position.amount || 1));
+        const pnl = sellValueGross - sellFeeEstimated - entryValueGross - entryFeeProrated;
+
+        const sellContext = {
+          entryPrice: position.entryPrice,
+          entryFee: position.entryFee,
+          sellAmount: sellAmount,
+          positionAmount: position.amount,
+          aiSampleId: position.aiSampleId,
+          openedAt: position.openedAt
+        };
+        await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
           posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,
           price: currentPrice, exchange: this.host.getTradingExchangeType(),
           computedOrderUsd: sellAmount * currentPrice, trigger: sellReason,
-          action: "POSITION_LEFT_OPEN",
         });
-        const telegram = this.host.getTelegramService();
-        if (telegram.isInitialized()) {
-          await telegram.sendAlertWithSubtype(
-            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-            `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
-            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
-            `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${sellAmount.toFixed(8)}</code>\n` +
-            `⚡ Trigger: <code>${sellReason}</code>\n` +
-            `❌ La orden NO se ejecutó en el exchange\n` +
-            `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━`,
-            "errors", "error_api"
-          );
-        }
-        return;
-      }
 
-      if (success) {
+        // FASE 0 HOTFIX: Cap sell amount strictly to position.amount
+        const cappedSellAmount = Math.min(sellAmount, position.amount);
+        const success = await this.host.executeTrade(pair, "sell", cappedSellAmount.toFixed(8), currentPrice, sellReason, undefined, undefined, undefined, sellContext);
+
+        if (!success) {
+          await botLogger.error("EXIT_ORDER_FAILED", `SMART_GUARD FALLO de orden SELL en ${pair} — posición sigue abierta`, {
+            posId: lotId, pair, orderType: "market", side: "sell", qty: cappedSellAmount,
+            price: currentPrice, exchange: this.host.getTradingExchangeType(),
+            computedOrderUsd: cappedSellAmount * currentPrice, trigger: sellReason,
+            action: "POSITION_LEFT_OPEN",
+          });
+          const telegram = this.host.getTelegramService();
+          if (telegram.isInitialized()) {
+            await telegram.sendAlertWithSubtype(
+              `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+              `🚨 <b>FALLO DE ORDEN DE SALIDA</b>\n\n` +
+              `📦 Par: <code>${pair}</code> | Lot: <code>${lotId}</code>\n` +
+              `💵 Precio: <code>$${currentPrice.toFixed(2)}</code> | Qty: <code>${cappedSellAmount.toFixed(8)}</code>\n` +
+              `⚡ Trigger: <code>${sellReason}</code>\n` +
+              `❌ La orden NO se ejecutó en el exchange\n` +
+              `⚠️ <b>POSICIÓN SIGUE ABIERTA — Revisar manualmente</b>\n` +
+              `━━━━━━━━━━━━━━━━━━━`,
+              "errors", "error_api"
+            );
+          }
+          return;
+        }
+
+        // FASE 0 HOTFIX: Determine correct exit subtype for Telegram
+        const isTimeStop = sellReason.toLowerCase().includes("timestop");
+        const isTrailingHit = position.sgTrailingActivated && sellReason.toLowerCase().includes("trailing");
+        const isBEHit = position.sgBreakEvenActivated && sellReason.toLowerCase().includes("break-even");
+        const telegramSubtype = isTimeStop ? "trade_timestop" as any
+          : isTrailingHit ? "trade_trailing" as any
+          : isBEHit ? "trade_breakeven" as any
+          : "trade_sell" as any;
+
         const telegram = this.host.getTelegramService();
         if (telegram.isInitialized()) {
           const pnlEmoji = pnl >= 0 ? "📈" : "📉";
@@ -1565,17 +1731,17 @@ ${emoji} <b>${sellReason}</b>
    • Lot: <code>${lotId}</code>
    • Precio entrada: <code>$${position.entryPrice.toFixed(2)}</code>
    • Precio actual: <code>$${currentPrice.toFixed(2)}</code>
-   • Cantidad vendida: <code>${sellAmount.toFixed(8)}</code>
+   • Cantidad vendida: <code>${cappedSellAmount.toFixed(8)}</code>
    • Duración: <code>${durationTxt}</code>
 
 ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)</code>
 
 🔗 <a href="${environment.panelUrl}">Ver Panel</a>
-━━━━━━━━━━━━━━━━━━━`, "trades", "trade_stoploss");
+━━━━━━━━━━━━━━━━━━━`, "trades", telegramSubtype);
         }
 
         // Reduce position amount by what was sold
-        position.amount -= sellAmount;
+        position.amount -= cappedSellAmount;
 
         const EPSILON = 1e-8;
         const positionIsEmpty = shouldSellFull || position.amount < EPSILON;
@@ -1595,6 +1761,9 @@ ${pnlEmoji} <b>P&L:</b> <code>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${priceC
           log(`SMART_GUARD ${pair} (${lotId}): Venta parcial, restante: ${position.amount.toFixed(8)}`, "trading");
         }
         this.host.setLastTradeTime(pair, Date.now());
+      } finally {
+        // FASE 0 HOTFIX: Always release exit lock
+        this.releaseExitLock(lotId);
       }
     }
   }

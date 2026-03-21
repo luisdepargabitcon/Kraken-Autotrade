@@ -136,7 +136,12 @@ export type EventType =
   | "TIME_STOP_ORPHAN_CLEANUP"
   | "TIME_STOP_LIMIT_FALLBACK"
   // Adaptive Momentum Engine
-  | "FEATURE_FLAGS_UPDATED";
+  | "FEATURE_FLAGS_UPDATED"
+  // FASE 0 HOTFIX: Exit safety events
+  | "CIRCUIT_BREAKER_BLOCKED"
+  | "EXIT_LOCK_BLOCKED"
+  | "SAFE_SELL_SUCCESS"
+  | "SAFE_SELL_FAILED";
 
 interface LogMeta {
   [key: string]: any;
