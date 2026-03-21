@@ -1323,6 +1323,35 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
                 {cycle.isImported && cycle.sourceType && ` | Origen: ${cycle.sourceType}`}
               </div>
+              {/* Price targets bar */}
+              {cycle.status !== "closed" && (
+                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    📍 Precio: <span className="text-primary font-semibold">${fmtPrice(cycle.currentPrice)}</span>
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">|</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    Avg: <span className="text-slate-300">${fmtPrice(cycle.avgEntryPrice)}</span>
+                  </span>
+                  {cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        🎯 Venta TP: <span className="text-green-400 font-semibold">${fmtPrice(cycle.tpTargetPrice)}</span>
+                      </span>
+                    </>
+                  )}
+                  {cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        🛒 Próx. compra: <span className="text-blue-400 font-semibold">${fmtPrice(cycle.nextBuyPrice)}</span>
+                        {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">

@@ -173,6 +173,19 @@ export async function getClosedPlusCyclesCount(
   return rows.length;
 }
 
+export async function getAllActiveCyclesForPair(pair: string, mode: string): Promise<InstitutionalDcaCycle[]> {
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+}
+
 export async function getAllActiveCycles(mode?: string): Promise<InstitutionalDcaCycle[]> {
   if (mode) {
     return db

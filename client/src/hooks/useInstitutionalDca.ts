@@ -101,6 +101,8 @@ export interface IdcaCycle {
   lastBuyAt: string | null;
   closeReason: string | null;
   maxDrawdownPct: string | null;
+  nextBuyLevelPct: string | null;
+  nextBuyPrice: string | null;
   tpBreakdownJson: any;
   cycleType: string;
   parentCycleId: number | null;

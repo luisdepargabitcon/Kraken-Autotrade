@@ -342,11 +342,31 @@ async function evaluatePair(
   const currentPrice = await getCurrentPrice(pair);
   if (currentPrice <= 0) return;
 
+  // Update price/PnL for ALL active cycles of this pair (main, plus, imported, manual)
+  const allPairCycles = await repo.getAllActiveCyclesForPair(pair, mode);
+  for (const c of allPairCycles) {
+    const avg = parseFloat(String(c.avgEntryPrice || "0"));
+    const qty = parseFloat(String(c.totalQuantity || "0"));
+    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
+    if (avg <= 0 || qty <= 0) continue;
+    const mv = qty * currentPrice;
+    const pnlUsd = mv - cap;
+    const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
+    const dd = pnlPct < 0 ? Math.abs(pnlPct) : 0;
+    const prevDD = parseFloat(String(c.maxDrawdownPct || "0"));
+    await repo.updateCycle(c.id, {
+      currentPrice: currentPrice.toFixed(8),
+      unrealizedPnlUsd: pnlUsd.toFixed(2),
+      unrealizedPnlPct: pnlPct.toFixed(4),
+      maxDrawdownPct: Math.max(dd, prevDD).toFixed(2),
+    });
+  }
+
   // Check for existing active main cycle
   const activeCycle = await repo.getActiveCycle(pair, mode);
 
   if (activeCycle) {
-    // Manage existing main cycle
+    // Manage existing main cycle (full logic: safety buys, TP, trailing, etc.)
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
 
     // Plus cycle logic: skip if imported + soloSalida
