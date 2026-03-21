@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical, SlidersHorizontal } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical, SlidersHorizontal, LogIn, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { MarketMetricsTab } from "@/components/strategies/MarketMetricsTab";
 import { FeatureFlagsTab } from "@/components/strategies/FeatureFlagsTab";
@@ -55,7 +55,13 @@ const RISK_LEVELS = [
 
 const AVAILABLE_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "ETH/BTC", "XRP/USD", "TON/USD"];
 
-type StrategyTab = "config" | "metricas" | "motor" | "smartexit";
+type StrategyTab = "config" | "entradas" | "metricas" | "motor" | "smartexit";
+
+interface SignalConfig {
+  trend: { min: number; max: number; current: number };
+  range: { min: number; max: number; current: number };
+  transition: { min: number; max: number; current: number };
+}
 
 export default function Strategies() {
   const queryClient = useQueryClient();
@@ -78,6 +84,53 @@ export default function Strategies() {
       return res.json();
     },
   });
+
+  // Signal config for Entradas tab
+  const { data: signalConfig } = useQuery<SignalConfig>({
+    queryKey: ["signalConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/trading/signals/config");
+      if (!res.ok) throw new Error("Failed to fetch signal config");
+      return res.json();
+    },
+  });
+
+  const updateSignalConfigMutation = useMutation({
+    mutationFn: async (updates: Partial<SignalConfig>) => {
+      const res = await fetch("/api/trading/signals/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error("Failed to update signal config");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["signalConfig"] });
+      toast.success("Umbrales de señal actualizados");
+    },
+    onError: () => {
+      toast.error("Error al actualizar umbrales");
+    },
+  });
+
+  // Simplified exigency level (1-10) - average of all regime thresholds
+  const exigencyLevel = signalConfig
+    ? Math.round((signalConfig.trend.current + signalConfig.range.current + signalConfig.transition.current) / 3)
+    : 5;
+
+  const handleExigencyChange = (value: number) => {
+    if (!signalConfig) return;
+    // Scale proportionally: trend gets value, range gets value+1 (stricter), transition gets value-1 (looser)
+    const trendVal = Math.min(10, Math.max(1, value));
+    const rangeVal = Math.min(10, Math.max(1, value + 1));
+    const transitionVal = Math.min(10, Math.max(1, value - 1));
+    updateSignalConfigMutation.mutate({
+      trend: { ...signalConfig.trend, current: trendVal },
+      range: { ...signalConfig.range, current: rangeVal },
+      transition: { ...signalConfig.transition, current: transitionVal },
+    });
+  };
 
   const updateMutation = useMutation({
     mutationFn: async (updates: Partial<BotConfig>) => {
@@ -162,6 +215,17 @@ export default function Strategies() {
               <Activity className="h-4 w-4" />
               Configuración
             </button>
+            <button
+              onClick={() => setActiveTab("entradas")}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
+                activeTab === "entradas"
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <LogIn className="h-4 w-4" />
+              Entradas
+            </button>
             {advancedMode && (
               <>
                 <button
@@ -200,6 +264,170 @@ export default function Strategies() {
               </>
             )}
           </div>
+
+          {activeTab === "entradas" && (
+            <div className="space-y-6">
+              {/* Signal Exigency Slider */}
+              <Card className="glass-panel border-emerald-500/30">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <SlidersHorizontal className="h-5 w-5 text-emerald-500" />
+                    Exigencia de Señales
+                  </CardTitle>
+                  <CardDescription>
+                    Controla cuántas señales técnicas debe confirmar el bot antes de abrir una posición.
+                    Mayor exigencia = menos operaciones pero más fiables.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-2 text-sm">
+                        <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                        Nivel de Exigencia
+                      </Label>
+                      <span className="font-mono text-2xl text-emerald-500">{exigencyLevel}/10</span>
+                    </div>
+                    <Slider
+                      value={[exigencyLevel]}
+                      onValueChange={(v) => handleExigencyChange(v[0])}
+                      min={1}
+                      max={10}
+                      step={1}
+                      className="[&>span]:bg-emerald-500"
+                      data-testid="slider-signal-exigency"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Agresivo (más trades)</span>
+                      <span>Conservador (menos trades)</span>
+                    </div>
+                  </div>
+
+                  {/* Per-regime breakdown */}
+                  {signalConfig && (
+                    <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+                      <h4 className="font-medium text-sm">Umbrales por régimen de mercado:</h4>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center p-2 rounded-lg border border-green-500/20 bg-green-500/5">
+                          <div className="text-xs text-muted-foreground">Tendencia</div>
+                          <div className="font-mono text-lg text-green-500">{signalConfig.trend.current}</div>
+                          <div className="text-[10px] text-muted-foreground">señales mín.</div>
+                        </div>
+                        <div className="text-center p-2 rounded-lg border border-orange-500/20 bg-orange-500/5">
+                          <div className="text-xs text-muted-foreground">Rango</div>
+                          <div className="font-mono text-lg text-orange-500">{signalConfig.range.current}</div>
+                          <div className="text-[10px] text-muted-foreground">señales mín.</div>
+                        </div>
+                        <div className="text-center p-2 rounded-lg border border-blue-500/20 bg-blue-500/5">
+                          <div className="text-xs text-muted-foreground">Transición</div>
+                          <div className="font-mono text-lg text-blue-500">{signalConfig.transition.current}</div>
+                          <div className="text-[10px] text-muted-foreground">señales mín.</div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        En rango se exige +1 señal extra (mercado lateral más riesgoso). En transición -1 (oportunidades rápidas).
+                      </p>
+                    </div>
+                  )}
+
+                  {advancedMode && signalConfig && (
+                    <div className="space-y-4 border-t border-border/50 pt-4">
+                      <h4 className="font-medium text-sm flex items-center gap-2">
+                        <SlidersHorizontal className="h-4 w-4" />
+                        Ajuste fino por régimen
+                      </h4>
+                      {(["trend", "range", "transition"] as const).map((regime) => {
+                        const labels = { trend: "Tendencia", range: "Rango", transition: "Transición" };
+                        const colors = { trend: "text-green-500", range: "text-orange-500", transition: "text-blue-500" };
+                        const bgColors = { trend: "[&>span]:bg-green-500", range: "[&>span]:bg-orange-500", transition: "[&>span]:bg-blue-500" };
+                        return (
+                          <div key={regime} className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm">{labels[regime]}</Label>
+                              <span className={`font-mono text-lg ${colors[regime]}`}>{signalConfig[regime].current}</span>
+                            </div>
+                            <Slider
+                              value={[signalConfig[regime].current]}
+                              onValueChange={(v) => {
+                                updateSignalConfigMutation.mutate({
+                                  [regime]: { ...signalConfig[regime], current: v[0] },
+                                });
+                              }}
+                              min={signalConfig[regime].min}
+                              max={signalConfig[regime].max}
+                              step={1}
+                              className={bgColors[regime]}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Anti-Reentry Protection */}
+              <Card className="glass-panel border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <ShieldCheck className="h-5 w-5 text-cyan-500" />
+                    Protección Anti-Reentrada
+                  </CardTitle>
+                  <CardDescription>
+                    Cooldowns automáticos para evitar recompras impulsivas tras cierres.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-lg border border-border/50 bg-card/30 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-cyan-500" />
+                        <span className="font-medium text-sm">Cooldown General</span>
+                      </div>
+                      <div className="font-mono text-2xl text-cyan-500">15 min</div>
+                      <p className="text-xs text-muted-foreground">
+                        Tras cualquier venta, el par entra en pausa antes de permitir nuevas compras.
+                      </p>
+                    </div>
+                    <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-red-500" />
+                        <span className="font-medium text-sm">Cooldown Post Stop-Loss</span>
+                      </div>
+                      <div className="font-mono text-2xl text-red-500">30 min</div>
+                      <p className="text-xs text-muted-foreground">
+                        Tras un stop-loss, cooldown extendido para evitar reentrada en tendencia bajista.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-lg border border-purple-500/30 bg-purple-500/5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-purple-500" />
+                      <span className="font-medium text-sm">Hybrid Guard (Anti-Cresta)</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Bloquea reentrada si el precio está demasiado cerca de la EMA20 (potencial techo).
+                      El sistema monitoriza señales recientes y evita comprar en picos.
+                    </p>
+                    <Badge variant="outline" className="text-purple-400 border-purple-500/50">
+                      Activo por defecto
+                    </Badge>
+                  </div>
+
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="font-medium text-sm mb-2">¿Cómo funciona?</h4>
+                    <p className="text-xs text-muted-foreground">
+                      1. Tras vender, el par entra en <strong className="text-cyan-500">cooldown de 15 min</strong> (30 min si fue stop-loss).
+                      <br />2. El <strong className="text-purple-500">Hybrid Guard</strong> monitoriza EMA20 y volumen para detectar falsos techos.
+                      <br />3. Solo cuando pasan TODOS los filtros se permite una nueva compra.
+                      <br />4. Esto previene el bucle compra→venta→compra que destruye capital con fees.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {activeTab === "metricas" && (
             <MarketMetricsTab />
