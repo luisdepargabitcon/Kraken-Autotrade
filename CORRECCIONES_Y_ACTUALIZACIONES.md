@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-03-21 — FEAT: Eventos de gestión de ciclos para visibilidad UI
+
+### Problema
+El sistema IDCA mostraba heartbeat logs pero la UI consola seguía sin movimiento. Los ciclos activos (normales e importados) no generaban eventos durante la fase de gestión, solo durante compras/ventas.
+
+### Causa
+La función `manageCycle()` actualizaba precios y PnL pero no creaba eventos visibles. La UI solo mostraba eventos de base de datos, no logs genéricos.
+
+### Solución
+- **`IdcaEngine.ts`**: Añadido evento `cycle_management` en `manageCycle()` 
+- Formato: `Gestión ciclo: PnL=+0.05%, Precio=70924.50`
+- Severidad: debug para no saturar el stream principal
+- Se ejecuta cada tick para cada ciclo activo
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — Eventos de gestión en manageCycle()
+
+### Commit
+- `ad7482a` — feat: Add cycle management events for UI visibility
+
+---
+
 ## 2026-03-20 — FEAT: Heartbeat logging en IDCA scheduler
 
 ### Problema
