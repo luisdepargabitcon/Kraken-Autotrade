@@ -596,15 +596,24 @@ async function manageCycle(
     maxDrawdownPct: maxDD.toFixed(2),
   });
 
-  // Log cycle management activity for UI visibility
+  // Log cycle management activity for UI visibility (rich context)
   await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "cycle_management",
     severity: "debug",
-    message: `Gestión ciclo: PnL=${unrealizedPnlPct.toFixed(2)}%, Precio=${currentPrice.toFixed(2)}`,
+    message: `Gestión ciclo: PnL=${unrealizedPnlPct >= 0 ? "+" : ""}${unrealizedPnlPct.toFixed(2)}% ($${unrealizedPnlUsd.toFixed(2)}), Precio=${currentPrice.toFixed(2)}, MaxDD=${maxDD.toFixed(2)}%, Estado=${cycle.status}`,
+    payloadJson: { price: currentPrice, avgEntry: avgEntry, pnlPct: unrealizedPnlPct, pnlUsd: unrealizedPnlUsd, maxDD, status: cycle.status, buyCount: cycle.buyCount, totalQty, capitalUsed },
   }, {
     eventType: "cycle_management", pair, mode,
     price: currentPrice,
+    avgEntry,
+    pnlPct: unrealizedPnlPct,
+    pnlUsd: unrealizedPnlUsd,
+    drawdownPct: maxDD,
+    quantity: totalQty,
+    capitalUsed,
+    buyCount: cycle.buyCount || 0,
+    reason: cycle.status,
   });
 
   // Branch by cycle status

@@ -194,6 +194,13 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "warn",
   },
 
+  cycle_management: {
+    humanTitle: "Gestión de ciclo activo",
+    humanTemplate: "Se revisó el ciclo activo de {pair}. El sistema evaluó precio actual, PnL, drawdown y decidió si procede venta parcial, safety buy o espera. El ciclo sigue bajo vigilancia automática.",
+    emoji: "🔄",
+    defaultSeverity: "info",
+  },
+
   scheduler_tick_summary: {
     humanTitle: "Resumen de tick del scheduler",
     humanTemplate: "El scheduler completó un ciclo de evaluación. Se revisaron todos los pares configurados y se tomaron las decisiones correspondientes.",

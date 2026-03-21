@@ -176,6 +176,18 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.reason) techParts.push(`Razón=${ctx.reason}`);
       break;
 
+    case "cycle_management":
+      if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
+      if (ctx.avgEntry != null) techParts.push(`AvgEntry=${fmtNum(ctx.avgEntry)}`);
+      if (ctx.pnlPct != null) techParts.push(`PnL=${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
+      if (ctx.pnlUsd != null) techParts.push(`PnL$=${ctx.pnlUsd >= 0 ? "+" : ""}${ctx.pnlUsd.toFixed(2)}`);
+      if (ctx.drawdownPct != null) techParts.push(`MaxDD=${ctx.drawdownPct.toFixed(2)}%`);
+      if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
+      if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.buyCount != null) techParts.push(`Compras=${ctx.buyCount}`);
+      if (ctx.reason) techParts.push(`Estado=${ctx.reason}`);
+      break;
+
     case "module_max_drawdown_reached":
       if (ctx.drawdownPct != null) techParts.push(`DD=${ctx.drawdownPct.toFixed(2)}%`);
       if (ctx.maxDrawdownPct != null) techParts.push(`Límite=${ctx.maxDrawdownPct.toFixed(2)}%`);
