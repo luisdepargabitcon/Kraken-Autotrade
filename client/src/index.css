@@ -167,3 +167,12 @@
 .mobile-card-value {
   @apply font-mono text-sm;
 }
+
+/* Hide scrollbar but allow scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

@@ -203,7 +203,7 @@ export default function Strategies() {
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex gap-1 border-b border-border/50 pb-0 overflow-x-auto">
+          <div className="flex gap-0.5 md:gap-1 border-b border-border/50 pb-0 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
             <button
               onClick={() => setActiveTab("config")}
               className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
