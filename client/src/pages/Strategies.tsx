@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Zap, Shield, Target, RefreshCw, AlertTriangle, CircleDollarSign, PieChart, Wallet, Clock, CandlestickChart, BarChart3, Brain, FlaskConical, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { MarketMetricsTab } from "@/components/strategies/MarketMetricsTab";
 import { FeatureFlagsTab } from "@/components/strategies/FeatureFlagsTab";
@@ -60,6 +60,15 @@ type StrategyTab = "config" | "metricas" | "motor" | "smartexit";
 export default function Strategies() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<StrategyTab>("config");
+  const [advancedMode, setAdvancedMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("trading_advanced_mode") === "true"; } catch { return false; }
+  });
+
+  const toggleAdvancedMode = (v: boolean) => {
+    setAdvancedMode(v);
+    try { localStorage.setItem("trading_advanced_mode", String(v)); } catch {}
+    if (!v && activeTab !== "config") setActiveTab("config");
+  };
 
   const { data: config, isLoading } = useQuery<BotConfig>({
     queryKey: ["botConfig"],
@@ -120,6 +129,17 @@ export default function Strategies() {
               <p className="text-sm md:text-base text-muted-foreground mt-1">Estrategia, señales, riesgo, pares, SL/TP y salidas del bot.</p>
             </div>
             <div className="flex items-center gap-3 md:gap-4">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 bg-card/50">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">{advancedMode ? "Avanzado" : "Simple"}</span>
+                <Switch
+                  checked={advancedMode}
+                  onCheckedChange={toggleAdvancedMode}
+                  data-testid="switch-advanced-mode"
+                  className="scale-90"
+                />
+              </div>
+              <div className="h-6 w-px bg-border/50" />
               <span className="text-xs md:text-sm text-muted-foreground">Bot Activo</span>
               <Switch
                 checked={config?.isActive || false}
@@ -130,10 +150,10 @@ export default function Strategies() {
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex gap-1 border-b border-border/50 pb-0">
+          <div className="flex gap-1 border-b border-border/50 pb-0 overflow-x-auto">
             <button
               onClick={() => setActiveTab("config")}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
                 activeTab === "config"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -142,39 +162,43 @@ export default function Strategies() {
               <Activity className="h-4 w-4" />
               Configuración
             </button>
-            <button
-              onClick={() => setActiveTab("metricas")}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
-                activeTab === "metricas"
-                  ? "border-violet-500 text-violet-400"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <BarChart3 className="h-4 w-4" />
-              Métricas
-            </button>
-            <button
-              onClick={() => setActiveTab("motor")}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
-                activeTab === "motor"
-                  ? "border-violet-500 text-violet-400"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Brain className="h-4 w-4" />
-              Motor Adaptativo
-            </button>
-            <button
-              onClick={() => setActiveTab("smartexit")}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
-                activeTab === "smartexit"
-                  ? "border-amber-500 text-amber-400"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <FlaskConical className="h-4 w-4" />
-              Smart Exit
-            </button>
+            {advancedMode && (
+              <>
+                <button
+                  onClick={() => setActiveTab("metricas")}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
+                    activeTab === "metricas"
+                      ? "border-violet-500 text-violet-400"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  Métricas
+                </button>
+                <button
+                  onClick={() => setActiveTab("motor")}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
+                    activeTab === "motor"
+                      ? "border-violet-500 text-violet-400"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Brain className="h-4 w-4" />
+                  Motor Adaptativo
+                </button>
+                <button
+                  onClick={() => setActiveTab("smartexit")}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px whitespace-nowrap ${
+                    activeTab === "smartexit"
+                      ? "border-amber-500 text-amber-400"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <FlaskConical className="h-4 w-4" />
+                  Smart Exit
+                </button>
+              </>
+            )}
           </div>
 
           {activeTab === "metricas" && (
@@ -227,7 +251,7 @@ export default function Strategies() {
               </CardContent>
             </Card>
 
-            {config?.strategy === "momentum" && (
+            {advancedMode && config?.strategy === "momentum" && (
               <Card className="glass-panel border-border/50 border-cyan-500/30">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base md:text-lg">
@@ -460,6 +484,8 @@ export default function Strategies() {
             </CardContent>
           </Card>
 
+          {advancedMode && (
+          <>
           <Card className="glass-panel border-border/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -599,6 +625,8 @@ export default function Strategies() {
               </div>
             </CardContent>
           </Card>
+          </>
+          )}
         </main>
       </div>
     </div>
