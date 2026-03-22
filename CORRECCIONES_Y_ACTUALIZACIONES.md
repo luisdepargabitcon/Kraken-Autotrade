@@ -2,6 +2,78 @@
 
 ---
 
+## 2026-03-22 — REFACTOR: Reorganización Settings→Trading + Sliders Maestros
+
+### Objetivo
+Mover todo el contenido de trading desde Settings.tsx (Ajustes del Sistema) a Strategies.tsx (Trading), reorganizándolo en tabs temáticos con sliders maestros 0-100, leyendas explicativas y bloques dinámicos amarillos.
+
+### Cambios realizados
+
+#### A) Nuevos componentes creados (`client/src/components/trading/`)
+- **`MasterSlider.tsx`** — Componente reutilizable de slider maestro 0-100 con:
+  - Etiquetas de polaridad izquierda/derecha
+  - Leyenda fija de 2 líneas en español
+  - Bloque dinámico amarillo que se actualiza al mover el slider
+  - Sección expandible con parámetros reales
+  - Función `lerp()` exportada para interpolación lineal
+- **`MercadoTab.tsx`** — Tab "Mercado" con:
+  - Slider maestro "Protección de Coste" (0-100): controla filtro de spread de forma intuitiva
+  - Horario de Trading (movido desde Settings)
+  - Detección de Régimen de Mercado + Router por Régimen (movido desde Settings)
+- **`RiesgoTab.tsx`** — Tab "Riesgo" con:
+  - Slider maestro "Agresividad de Riesgo" (0-100): controla risk per trade y exposición
+  - Modo de Posición (SINGLE/DCA/SMART_GUARD) (movido desde Settings)
+  - Configuración SMART_GUARD (min entry, max lots) (movido desde Settings)
+  - Base de Cálculo de Exposición (movido desde Strategies config avanzado)
+- **`SalidasTab.tsx`** — Tab "Salidas" mejorado con:
+  - SL/TP/Trailing con leyendas + bloques dinámicos amarillos
+  - Motor de Salidas Inteligente (Adaptive Exit Engine) (movido desde Settings)
+  - Configuración manual SG (BE, trail, TP fijo, scale-out) (movido desde Settings)
+  - Cards de mecanismos avanzados (SmartGuard, Time-Stop, Smart Exit, Circuit Breaker)
+- **`EntradasTab.tsx`** — Tab "Entradas" mejorado con:
+  - Slider de Exigencia de Señales con leyenda + bloque dinámico amarillo
+  - Umbrales por régimen con ajuste fino avanzado
+  - Protección Anti-Reentrada con Hybrid Guard
+
+#### B) Modificaciones en `Strategies.tsx`
+- Añadidos 2 nuevos tabs: **Mercado** y **Riesgo** (visibles siempre, no solo en modo avanzado)
+- Reemplazado contenido inline de tabs Entradas y Salidas por componentes nuevos
+- Eliminadas secciones de "Tamaño de Trade" y "Control de Exposición" (ahora en RiesgoTab)
+- Eliminadas variables de estado locales no usadas (localSL, localTP, etc.)
+- Limpiados imports no usados
+
+#### C) Limpieza de `Settings.tsx`
+- Eliminadas ~820 líneas de contenido de trading:
+  - Horario de Trading
+  - Filtro de Spread (completo con dinámico, umbrales, alertas Telegram)
+  - Modo de Posición + config SMART_GUARD completa
+  - Detección de Régimen + Router por Régimen
+  - Motor de Salida Adaptativo (Adaptive Exit Engine)
+  - TradingConfigDashboard (presets + Hybrid Guard)
+  - PairOverridesSection + PairOverrideFields
+- Limpiada interfaz BotConfig (solo campos de sistema + log retention)
+- Eliminado import de TradingConfigDashboard
+- Limpiados imports de lucide no usados
+
+### Archivos modificados
+- `client/src/components/trading/MasterSlider.tsx` (NUEVO)
+- `client/src/components/trading/MercadoTab.tsx` (NUEVO)
+- `client/src/components/trading/RiesgoTab.tsx` (NUEVO)
+- `client/src/components/trading/SalidasTab.tsx` (NUEVO)
+- `client/src/components/trading/EntradasTab.tsx` (NUEVO)
+- `client/src/pages/Strategies.tsx` (MODIFICADO — de 980 a ~505 líneas)
+- `client/src/pages/Settings.tsx` (MODIFICADO — de 2051 a ~995 líneas)
+
+### Resultado
+- Settings.tsx: Solo contenido de sistema (DRY RUN, Telegram, Logs, IA, NAS, System Info)
+- Strategies.tsx: Todo el contenido de trading organizado en 8 tabs:
+  Configuración | Entradas | Salidas | Mercado | Riesgo | Métricas | Motor | Smart Exit
+- 2 sliders maestros nuevos con UX explicativa completa
+- Todos los sliders existentes enriquecidos con leyendas y bloques dinámicos
+- Compilación TypeScript limpia (0 errores)
+
+---
+
 ## 2026-03-21 — HOTFIX CRÍTICO: Multi-SELL / Venta saldo extra (FASE 0)
 
 ### Problema
