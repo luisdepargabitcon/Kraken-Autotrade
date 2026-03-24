@@ -2,6 +2,88 @@
 
 ---
 
+## 2026-03-24 — REFACTOR: Lógica de salida IDCA + 3 sliders de control
+
+### Problema
+La lógica de salida del IDCA tenía dos defectos principales:
+1. **Break-even cerraba el ciclo** — Al alcanzar pnl>0.5% y detectar caída, ejecutaba `executeBreakevenExit()` que vendía todo. El BE debería ser solo protección, no salida.
+2. **TP era venta parcial dura** — Al alcanzar el `takeProfitPct` (~4%), ejecutaba `armTakeProfit()` que hacía venta parcial inmediata. Debería solo activar trailing sin vender.
+
+### Solución: Nuevo flujo de salida
+
+| Etapa | Antes | Ahora |
+|-------|-------|-------|
+| +1.0% (configurable) | Nada | **Protección armada**: stop en break-even (NO vende) |
+| +3.5% (configurable) | Venta parcial + trailing | **Trailing activado**: tracking máximo (NO vende) |
+| Trailing roto | Venta restante | **Cierre real**: vende cuando el trailing salta |
+| Precio < stop | Cierre completo (breakeven) | Cierre solo si protección armada y precio cae al stop |
+
+### Cambios realizados
+
+#### A) Schema (`shared/schema.ts`)
+- `institutionalDcaAssetConfigs`: 3 nuevos campos
+  - `protectionActivationPct` (decimal 5,2, default 1.00) — Slider 1
+  - `trailingActivationPct` (decimal 5,2, default 3.50) — Slider 2
+  - `trailingMarginPct` (decimal 5,2, default 1.50) — Slider 3
+- `institutionalDcaCycles`: 2 nuevos campos
+  - `protectionArmedAt` (timestamp) — cuándo se armó la protección
+  - `protectionStopPrice` (decimal 18,8) — precio del stop de protección
+
+#### B) Migración SQL (`migrations/add_idca_exit_sliders.sql`)
+- ALTER TABLE para ambas tablas con IF NOT EXISTS
+
+#### C) Backend (`server/services/institutionalDca/IdcaEngine.ts`)
+- `handleActiveState()` completamente reescrita:
+  1. Lee 3 valores de slider desde `assetConfig`
+  2. Arma protección (stop en avgEntry) al alcanzar `protectionActivationPct`
+  3. Activa trailing (sin venta parcial) al alcanzar `trailingActivationPct`
+  4. Cierra ciclo si precio cae a `protectionStopPrice` (protección saltó)
+  5. Sigue evaluando safety buys normalmente
+
+#### D) Telegram (`server/services/institutionalDca/IdcaTelegramNotifier.ts`)
+- `alertProtectionArmed()` — nueva alerta cuando se arma protección
+- `alertTrailingActivated()` — nueva alerta cuando se activa trailing
+
+#### E) Frontend (`client/src/pages/InstitutionalDca.tsx`)
+- Sección "Cuándo vender" reemplazada con 3 sliders nuevos:
+  - 🔵 **Activación de protección** (0.3–2.5%, polaridad Temprana↔Tardía)
+  - 🟢 **Activación del trailing** (1.5–7.0%, polaridad Antes↔Después)
+  - 🟠 **Margen del trailing** (0.3–3.5%, polaridad Ceñido↔Amplio)
+- Cada slider tiene: título, polaridad, leyenda, bloque dinámico amarillo, detalle técnico
+- Resumen visual del flujo: `+1.0% → Protección → +3.5% → Trailing → -1.5% → Cierre`
+- Mantiene toggle de Trailing dinámico (ATR) y sección avanzada de guardrails
+
+#### F) Hook (`client/src/hooks/useInstitutionalDca.ts`)
+- `IdcaAssetConfig`: añadidos `protectionActivationPct`, `trailingActivationPct`, `trailingMarginPct`
+
+### Ejemplo: antes vs después
+
+**ANTES** (ciclo BTC a $100K, avg entry $97K):
+- +0.5%: detecta caída → `executeBreakevenExit()` → **VENDE TODO** a $97.5K
+- +4.0%: `armTakeProfit()` → **venta parcial** 30% a $100.9K + trailing
+
+**AHORA** (mismos valores):
+- +1.0% ($98K): **arma protección** (stop en $97K), NO vende
+- +3.5% ($100.4K): **activa trailing**, NO vende, tracking máximo
+- Precio sigue a $102K: trailing sigue, stop sube
+- Precio cae -1.5% desde máximo ($100.5K): **cierra** con beneficio real
+
+### Archivos modificados
+- `shared/schema.ts` — 5 nuevos campos
+- `migrations/add_idca_exit_sliders.sql` — NUEVO
+- `server/services/institutionalDca/IdcaEngine.ts` — handleActiveState reescrito
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — 2 nuevas alertas
+- `client/src/pages/InstitutionalDca.tsx` — 3 sliders con UX completa
+- `client/src/hooks/useInstitutionalDca.ts` — tipo actualizado
+
+### ⚠️ Acción requerida al deploy
+Ejecutar migración en la DB del NAS/VPS:
+```sql
+-- migrations/add_idca_exit_sliders.sql
+```
+
+---
+
 ## 2026-03-22 — REFACTOR: Reorganización Settings→Trading + Sliders Maestros
 
 ### Objetivo

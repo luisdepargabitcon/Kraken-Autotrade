@@ -633,52 +633,234 @@ function ConfigTab() {
 
       {/* ════ BLOQUE 3 — CUÁNDO VENDER ════ */}
       <ConfigBlock icon={TrendingUp} title="Cuándo vender"
-        desc="Aquí decides cuándo asegurar beneficios o cerrar una posición para proteger ganancias.">
+        desc="Controla la salida del ciclo: primero protección, después trailing, cierre al romper el trailing.">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-          {btc && (
-            <ColorSlider label="TP Base BTC" color="green"
-              value={parseFloat(btc.takeProfitPct)} min={0.5} max={10} step={0.1}
-              onChange={(v) => updateAsset.mutate({ pair: btc.pair, takeProfitPct: String(v) })}
-              desc="Beneficio inicial que el sistema busca antes de empezar a proteger la ganancia en BTC." />
-          )}
-          {eth && (
-            <ColorSlider label="TP Base ETH" color="green"
-              value={parseFloat(eth.takeProfitPct)} min={0.5} max={10} step={0.1}
-              onChange={(v) => updateAsset.mutate({ pair: eth.pair, takeProfitPct: String(v) })}
-              desc="Beneficio inicial que el sistema busca antes de empezar a proteger la ganancia en ETH." />
-          )}
-          {btc && (
-            <ColorSlider label="Trailing BTC" color="green"
-              value={parseFloat(btc.trailingPct)} min={0.3} max={5} step={0.1}
-              onChange={(v) => updateAsset.mutate({ pair: btc.pair, trailingPct: String(v) })}
-              desc="Protege beneficios en BTC si el precio sube y luego retrocede." />
-          )}
-          {eth && (
-            <ColorSlider label="Trailing ETH" color="green"
-              value={parseFloat(eth.trailingPct)} min={0.3} max={5} step={0.1}
-              onChange={(v) => updateAsset.mutate({ pair: eth.pair, trailingPct: String(v) })}
-              desc="Protege beneficios en ETH si el precio sube y luego retrocede." />
-          )}
+        {/* ── SLIDER 1: Activación de protección ── */}
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2 text-sm font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                Activación de protección
+              </Label>
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Temprana</span>
+              <span>Tardía</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            {btc && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">BTC/USD</span>
+                  <span className="font-mono text-sm font-semibold text-blue-400">
+                    {parseFloat(btc.protectionActivationPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(btc.protectionActivationPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: btc.pair, protectionActivationPct: String(v[0]) })}
+                  min={0.3} max={2.5} step={0.1}
+                  className="[&>span]:bg-blue-500"
+                />
+              </div>
+            )}
+            {eth && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">ETH/USD</span>
+                  <span className="font-mono text-sm font-semibold text-blue-400">
+                    {parseFloat(eth.protectionActivationPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(eth.protectionActivationPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: eth.pair, protectionActivationPct: String(v[0]) })}
+                  min={0.3} max={2.5} step={0.1}
+                  className="[&>span]:bg-blue-500"
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Decide cuándo empieza a protegerse el ciclo. Más bajo: protege antes. Más alto: deja más margen.
+          </p>
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+            <p className="text-xs text-yellow-300">
+              <strong>Ahora el bot:</strong>{" "}
+              {btc && parseFloat(btc.protectionActivationPct) <= 0.8
+                ? "activa la protección muy pronto (+0.8% o menos), reduciendo riesgo de devolver el rebote."
+                : btc && parseFloat(btc.protectionActivationPct) >= 1.5
+                ? "deja más aire antes de proteger (+1.5% o más), tolerando más oscilación."
+                : "arma la protección a un nivel moderado, equilibrando seguridad y espacio."}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Al alcanzar este %, el stop se coloca en break-even (precio medio de entrada). No vende, solo protege.
+            </p>
+          </div>
         </div>
 
+        {/* ── SLIDER 2: Activación del trailing ── */}
+        <div className="space-y-4 border-t border-border/30 pt-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2 text-sm font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                Activación del trailing
+              </Label>
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Antes</span>
+              <span>Después</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            {btc && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">BTC/USD</span>
+                  <span className="font-mono text-sm font-semibold text-emerald-400">
+                    {parseFloat(btc.trailingActivationPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(btc.trailingActivationPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: btc.pair, trailingActivationPct: String(v[0]) })}
+                  min={1.5} max={7.0} step={0.1}
+                  className="[&>span]:bg-emerald-500"
+                />
+              </div>
+            )}
+            {eth && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">ETH/USD</span>
+                  <span className="font-mono text-sm font-semibold text-emerald-400">
+                    {parseFloat(eth.trailingActivationPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(eth.trailingActivationPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: eth.pair, trailingActivationPct: String(v[0]) })}
+                  min={1.5} max={7.0} step={0.1}
+                  className="[&>span]:bg-emerald-500"
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Decide cuándo empieza a seguir beneficios con trailing. Más bajo: protege antes. Más alto: deja correr más antes de activar el trailing.
+          </p>
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+            <p className="text-xs text-yellow-300">
+              <strong>Ahora el bot:</strong>{" "}
+              {btc && parseFloat(btc.trailingActivationPct) <= 2.5
+                ? "activa el trailing temprano (+2.5% o menos), asegurando beneficios rápidamente."
+                : btc && parseFloat(btc.trailingActivationPct) >= 4.5
+                ? "da mucho recorrido (+4.5% o más) antes de empezar a proteger ganancias."
+                : "activa el trailing en un nivel equilibrado, capturando buen beneficio antes de proteger."}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Al alcanzar este %, NO vende. Activa el trailing y deja correr mientras el precio siga subiendo.
+            </p>
+          </div>
+        </div>
+
+        {/* ── SLIDER 3: Margen del trailing ── */}
+        <div className="space-y-4 border-t border-border/30 pt-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2 text-sm font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                Margen del trailing
+              </Label>
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Más ceñido</span>
+              <span>Más amplio</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            {btc && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">BTC/USD</span>
+                  <span className="font-mono text-sm font-semibold text-orange-400">
+                    {parseFloat(btc.trailingMarginPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(btc.trailingMarginPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: btc.pair, trailingMarginPct: String(v[0]) })}
+                  min={0.3} max={3.5} step={0.1}
+                  className="[&>span]:bg-orange-500"
+                />
+              </div>
+            )}
+            {eth && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">ETH/USD</span>
+                  <span className="font-mono text-sm font-semibold text-orange-400">
+                    {parseFloat(eth.trailingMarginPct).toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(eth.trailingMarginPct)]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: eth.pair, trailingMarginPct: String(v[0]) })}
+                  min={0.3} max={3.5} step={0.1}
+                  className="[&>span]:bg-orange-500"
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Decide cuánto beneficio deja respirar antes de cerrar. Más ceñido: asegura antes. Más amplio: deja correr más.
+          </p>
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+            <p className="text-xs text-yellow-300">
+              <strong>Ahora el bot:</strong>{" "}
+              {btc && parseFloat(btc.trailingMarginPct) <= 0.8
+                ? "cerrará rápido al menor giro (-0.8% o menos), protegiendo al máximo."
+                : btc && parseFloat(btc.trailingMarginPct) >= 2.0
+                ? "dejará mucho espacio al movimiento (-2.0% o más), tolerando retrocesos amplios."
+                : "permite un retroceso moderado antes de cerrar, equilibrando protección y recorrido."}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Cuando el precio cae este % desde su máximo tras activar el trailing, se cierra el ciclo.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Resumen visual del flujo ── */}
+        <div className="border-t border-border/30 pt-4">
+          <div className="bg-muted/30 rounded-lg p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground">Flujo de salida del ciclo:</p>
+            <div className="flex items-center gap-2 text-xs flex-wrap">
+              <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">
+                +{btc ? parseFloat(btc.protectionActivationPct).toFixed(1) : "1.0"}%
+              </span>
+              <span className="text-muted-foreground">→ Protección armada</span>
+              <span className="text-muted-foreground mx-1">→</span>
+              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono">
+                +{btc ? parseFloat(btc.trailingActivationPct).toFixed(1) : "3.5"}%
+              </span>
+              <span className="text-muted-foreground">→ Trailing activo</span>
+              <span className="text-muted-foreground mx-1">→</span>
+              <span className="px-2 py-0.5 rounded bg-orange-500/20 text-orange-400 font-mono">
+                -{btc ? parseFloat(btc.trailingMarginPct).toFixed(1) : "1.5"}%
+              </span>
+              <span className="text-muted-foreground">→ Cierre</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Ajustes finos (legacy + advanced) ── */}
         <div className="border-t border-border/30 pt-4 space-y-3">
-          <ToggleField label="TP dinámico" checked={config.adaptiveTpEnabled}
-            onChange={(v) => updateConfig.mutate({ adaptiveTpEnabled: v })}
-            desc="Hace que el objetivo de beneficio se adapte al contexto del ciclo en vez de usar siempre el mismo porcentaje." />
           <ToggleField label="Trailing dinámico (ATR)" checked={config.volatilityTrailingEnabled}
             onChange={(v) => updateConfig.mutate({ volatilityTrailingEnabled: v })}
-            desc="Ajusta el trailing automáticamente según la volatilidad actual del mercado." />
-          {btc && (
-            <ToggleField label="Breakeven BTC" checked={btc.breakevenEnabled}
-              onChange={(v) => updateAsset.mutate({ pair: btc.pair, breakevenEnabled: v })}
-              desc="Permite cerrar cerca del punto de entrada para evitar que una operación ganadora se convierta en pérdida." />
-          )}
-          {eth && (
-            <ToggleField label="Breakeven ETH" checked={eth.breakevenEnabled}
-              onChange={(v) => updateAsset.mutate({ pair: eth.pair, breakevenEnabled: v })}
-              desc="Permite cerrar cerca del punto de entrada para evitar que una operación ganadora se convierta en pérdida." />
-          )}
+            desc="Ajusta el margen del trailing automáticamente según la volatilidad actual del mercado." />
         </div>
 
         {/* Guardrails TP — collapsible advanced section */}

@@ -998,6 +998,10 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }).notNull().default("1.20"),
   partialTakeProfitPct: decimal("partial_take_profit_pct", { precision: 5, scale: 2 }).notNull().default("30.00"),
   breakevenEnabled: boolean("breakeven_enabled").notNull().default(true),
+  // New exit sliders: protection → trailing → close
+  protectionActivationPct: decimal("protection_activation_pct", { precision: 5, scale: 2 }).notNull().default("1.00"),
+  trailingActivationPct: decimal("trailing_activation_pct", { precision: 5, scale: 2 }).notNull().default("3.50"),
+  trailingMarginPct: decimal("trailing_margin_pct", { precision: 5, scale: 2 }).notNull().default("1.50"),
   cooldownMinutesBetweenBuys: integer("cooldown_minutes_between_buys").notNull().default(180),
   maxCycleDurationHours: integer("max_cycle_duration_hours").notNull().default(720),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1057,6 +1061,9 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   estimatedFeeUsd: decimal("estimated_fee_usd", { precision: 18, scale: 2 }),
   feesOverrideManual: boolean("fees_override_manual").notNull().default(false),
   importWarningAcknowledged: boolean("import_warning_acknowledged").notNull().default(false),
+  // Protection & trailing state
+  protectionArmedAt: timestamp("protection_armed_at"),
+  protectionStopPrice: decimal("protection_stop_price", { precision: 18, scale: 8 }),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

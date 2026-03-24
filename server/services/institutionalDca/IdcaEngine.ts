@@ -671,7 +671,7 @@ async function handleTpArmedState(
   }
 }
 
-// ─── Active State: Check safety buys + TP trigger ──────────────────
+// ─── Active State: Protection → Trailing Activation → Exit ──────────
 
 async function handleActiveState(
   cycle: InstitutionalDcaCycle,
@@ -682,31 +682,86 @@ async function handleActiveState(
   mode: IdcaMode
 ): Promise<void> {
   const pair = cycle.pair;
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
 
-  // Check if TP reached
-  const tpPct = parseFloat(String(cycle.tpTargetPct || assetConfig.takeProfitPct));
-  if (pnlPct >= tpPct) {
-    await armTakeProfit(cycle, currentPrice, config, assetConfig, mode);
+  // Read slider config values
+  const protectionActivationPct = parseFloat(String(assetConfig.protectionActivationPct ?? "1.00"));
+  const trailingActivationPct = parseFloat(String(assetConfig.trailingActivationPct ?? "3.50"));
+  const trailingMarginPct = parseFloat(String(assetConfig.trailingMarginPct ?? "1.50"));
+
+  const isProtectionArmed = !!cycle.protectionArmedAt;
+  const protectionStopPrice = parseFloat(String(cycle.protectionStopPrice || "0"));
+
+  // 1. ARM PROTECTION (break-even as safety net, NOT an exit)
+  if (!isProtectionArmed && pnlPct >= protectionActivationPct && avgEntry > 0) {
+    const stopPrice = avgEntry; // break-even = avg entry price
+    await repo.updateCycle(cycle.id, {
+      protectionArmedAt: new Date(),
+      protectionStopPrice: stopPrice.toFixed(8),
+    });
+
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "protection_armed",
+      severity: "info",
+      message: `Protección armada a +${pnlPct.toFixed(2)}%: stop en $${stopPrice.toFixed(2)} (break-even)`,
+    }, {
+      eventType: "protection_armed", pair, mode,
+      price: currentPrice, avgEntry, pnlPct,
+    });
+
+    await telegram.alertProtectionArmed(cycle, currentPrice, stopPrice, pnlPct);
+    // Don't return — continue checking trailing activation in same tick
+  }
+
+  // 2. ACTIVATE TRAILING (no partial sell — just start tracking highest price)
+  const effectiveProtectionArmed = isProtectionArmed || pnlPct >= protectionActivationPct;
+  if (effectiveProtectionArmed && pnlPct >= trailingActivationPct) {
+    // Compute trailing pct — use slider value, optionally adapt with ATR
+    let effectiveTrailingPct = trailingMarginPct;
+    if (config.volatilityTrailingEnabled) {
+      effectiveTrailingPct = smart.computeDynamicTrailing({
+        atrPct: getVolatility(pair),
+        baseTrailingPct: trailingMarginPct,
+        minTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.minTrailingPctBtc : config.minTrailingPctEth)),
+        maxTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.maxTrailingPctBtc : config.maxTrailingPctEth)),
+      });
+    }
+
+    await repo.updateCycle(cycle.id, {
+      status: "trailing_active",
+      trailingActiveAt: new Date(),
+      highestPriceAfterTp: currentPrice.toFixed(8),
+      trailingPct: effectiveTrailingPct.toFixed(2),
+    });
+
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "trailing_activated",
+      severity: "info",
+      message: `Trailing activado a +${pnlPct.toFixed(2)}%: margen ${effectiveTrailingPct.toFixed(2)}%, máximo $${currentPrice.toFixed(2)}`,
+    }, {
+      eventType: "trailing_activated", pair, mode,
+      price: currentPrice, pnlPct, trailingPct: effectiveTrailingPct,
+      avgEntry,
+    });
+
+    await telegram.alertTrailingActivated(cycle, currentPrice, pnlPct, effectiveTrailingPct);
+    return; // Transition done, next tick will be handleTrailingState
+  }
+
+  // 3. PROTECTION STOP HIT (price fell back to break-even after protection was armed)
+  if (isProtectionArmed && protectionStopPrice > 0 && currentPrice <= protectionStopPrice) {
+    await executeBreakevenExit(cycle, currentPrice, config, mode);
     return;
   }
 
-  // Check breakeven protection
-  if (assetConfig.breakevenEnabled && pnlPct > 0.5) {
-    // Check if losing structure — simplified: if price drops from recent high
-    const recentHigh = priceCache.get(`${pair}_recent_high`) || currentPrice;
-    const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
-    if (dropFromHigh > 1.5 && pnlPct < 1.0) {
-      await executeBreakevenExit(cycle, currentPrice, config, mode);
-      return;
-    }
-  }
-
-  // Check safety buy levels — skip if imported + soloSalida
+  // 4. Check safety buy levels — skip if imported + soloSalida
   if (!(cycle.isImported && cycle.soloSalida)) {
     await checkSafetyBuy(cycle, currentPrice, config, assetConfig, mode);
   }
 
-  // Update recent high
+  // 5. Update recent high
   const currentHigh = priceCache.get(`${pair}_recent_high`) || 0;
   if (currentPrice > currentHigh) {
     priceCache.set(`${pair}_recent_high`, currentPrice);

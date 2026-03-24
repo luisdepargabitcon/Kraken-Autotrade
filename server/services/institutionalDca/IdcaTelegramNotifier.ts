@@ -113,6 +113,50 @@ export async function alertBuyBlocked(pair: string, mode: string, reason: string
   await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
+export async function alertProtectionArmed(
+  cycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  stopPrice: number,
+  pnlPct: number
+): Promise<void> {
+  const { chatId, enabled } = await canSend("protection_armed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const msg = `🛡️ <b>IDCA Protección Armada</b>\n\n` +
+    `📦 Par: <code>${cycle.pair}</code> [${cycle.mode}]\n` +
+    `📊 PnL: <code>+${pnlPct.toFixed(2)}%</code>\n` +
+    `💰 Precio medio: <code>$${avgEntry.toFixed(2)}</code>\n` +
+    `📍 Precio actual: <code>$${currentPrice.toFixed(2)}</code>\n` +
+    `🔒 Stop protección: <code>$${stopPrice.toFixed(2)}</code>\n\n` +
+    `✅ El ciclo está protegido. Si el precio cae al stop, se cierra en break-even.`;
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingActivated(
+  cycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  pnlPct: number,
+  trailingMarginPct: number
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_activated");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const msg = `🚀 <b>IDCA Trailing Activado</b>\n\n` +
+    `📦 Par: <code>${cycle.pair}</code> [${cycle.mode}]\n` +
+    `📊 PnL: <code>+${pnlPct.toFixed(2)}%</code>\n` +
+    `💰 Precio medio: <code>$${avgEntry.toFixed(2)}</code>\n` +
+    `📍 Precio actual: <code>$${currentPrice.toFixed(2)}</code>\n` +
+    `📐 Margen trailing: <code>${trailingMarginPct.toFixed(2)}%</code>\n\n` +
+    `✅ Dejando correr beneficios. Cierre cuando el trailing salte.`;
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
 export async function alertTpArmed(cycle: InstitutionalDcaCycle, partialPct: number): Promise<void> {
   const { chatId, enabled } = await canSend("tp_armed");
   if (!enabled) return;
