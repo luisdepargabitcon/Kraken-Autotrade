@@ -1879,6 +1879,15 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_cycles', column: 'fees_override_manual', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS fees_override_manual BOOLEAN NOT NULL DEFAULT false' },
         { table: 'institutional_dca_cycles', column: 'import_warning_acknowledged', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS import_warning_acknowledged BOOLEAN NOT NULL DEFAULT false' },
 
+        // institutional_dca_cycles — IDCA exit slider state
+        { table: 'institutional_dca_cycles', column: 'protection_armed_at', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS protection_armed_at TIMESTAMP' },
+        { table: 'institutional_dca_cycles', column: 'protection_stop_price', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS protection_stop_price DECIMAL(18,8)' },
+
+        // institutional_dca_asset_configs — IDCA exit slider config
+        { table: 'institutional_dca_asset_configs', column: 'protection_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS protection_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 1.00' },
+        { table: 'institutional_dca_asset_configs', column: 'trailing_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 3.50' },
+        { table: 'institutional_dca_asset_configs', column: 'trailing_margin_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_margin_pct DECIMAL(5,2) NOT NULL DEFAULT 1.50' },
+
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
         { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },
