@@ -510,6 +510,32 @@ export function useDeleteManualCycle() {
   });
 }
 
+export function useIdcaClosedCycles(limit: number = 50) {
+  return useQuery<IdcaCycle[]>({
+    queryKey: ["idca", "cycles", "closed", limit],
+    queryFn: async () => {
+      const res = await fetch(`${PREFIX}/cycles?status=closed&limit=${limit}`);
+      if (!res.ok) throw new Error("Failed to fetch closed cycles");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+}
+
+export function useIdcaCycleEvents(cycleId: number | null) {
+  return useQuery<IdcaEvent[]>({
+    queryKey: ["idca", "events", "cycle", cycleId],
+    queryFn: async () => {
+      if (!cycleId) return [];
+      const res = await fetch(`${PREFIX}/events?cycleId=${cycleId}&limit=100`);
+      if (!res.ok) throw new Error("Failed to fetch cycle events");
+      return res.json();
+    },
+    enabled: !!cycleId,
+    staleTime: 30000,
+  });
+}
+
 export function useIdcaCycleOrders(cycleId: number | null) {
   return useQuery<IdcaOrder[]>({
     queryKey: ["idca", "cycles", cycleId, "orders"],

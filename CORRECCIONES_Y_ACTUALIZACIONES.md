@@ -2,6 +2,71 @@
 
 ---
 
+## 2026-03-26 — FEAT: IDCA Visibilidad y Seguimiento (Telegram + UI)
+
+### Objetivo
+Mejorar significativamente la visibilidad y seguimiento del módulo IDCA tanto en alertas Telegram como en la interfaz web.
+
+### Cambios realizados
+
+#### A) Telegram — Mensajes ricos y contextuales (`IdcaMessageFormatter.ts`)
+- **FormatContext expandido** con 12 nuevos campos: `maxBuyCount`, `nextBuyPrice`, `nextBuyLevelPct`, `protectionActivationPct`, `trailingActivationPct`, `trailingMarginPct`, `totalCapitalReserved`, `totalFeesUsd`, `protectionArmed`, `trailingActive`, `stopPrice`, `prevAvgEntry`
+- **`formatTelegramMessage()` reescrito completo** — cada tipo de evento genera un mensaje visual con:
+  - Iconos por sección (📦 par, 💵 precio, 📊 cantidad, 💰 capital, etc.)
+  - Etiqueta modo `[🧪 SIM]` / `[🟢 LIVE]`
+  - Bloques estructurados: datos principales, estado del ciclo, resultado, resumen
+  - Comentarios inteligentes contextuales (mejora promedio, compras restantes, resultado)
+- **19 tipos de evento** con formato dedicado: cycle_started, base_buy, safety_buy, protection_armed, trailing_activated, tp_armed, trailing_exit, breakeven_exit, emergency_close, buy_blocked, smart_adjustment, module_drawdown, imported_position, imported_closed, plus_cycle_activated, plus_cycle_closed, etc.
+
+#### B) Telegram — Notifier enriquecido (`IdcaTelegramNotifier.ts`)
+- **`alertCycleStarted`**: ahora incluye maxBuyCount, nextBuyPrice, protectionActivationPct, trailingActivationPct, totalCapitalReserved
+- **`alertBuyExecuted`**: nuevo parámetro `prevAvgEntry` para mostrar mejora del promedio; incluye maxBuyCount, nextBuyPrice, protectionActivationPct, trailingActivationPct, protectionArmed
+- **`alertProtectionArmed`**: migrado de HTML hardcoded a usar `formatTelegramMessage()` con trailingActivationPct
+- **`alertTrailingActivated`**: migrado de HTML hardcoded a usar `formatTelegramMessage()`
+- **`alertTrailingExit`**: añadido avgEntry, capitalUsed, totalFeesUsd (suma fees de todas las órdenes del ciclo)
+- **`alertBreakevenExit`**: añadido avgEntry, capitalUsed, durationStr, totalFeesUsd, pnlUsd
+
+#### C) Catálogo de eventos (`IdcaReasonCatalog.ts`)
+- Nuevas entradas: `protection_armed`, `trailing_activated` con títulos, plantillas y emojis
+
+#### D) UI — HistoryTab transformado (`InstitutionalDca.tsx`)
+- **Vista dual**: botones "Ciclos" / "Órdenes" para elegir perspectiva
+- **Vista Ciclos** (nueva, por defecto):
+  - Barra agregada: total ciclos, wins/losses/neutral, PnL total
+  - Tarjetas por ciclo cerrado con borde color resultado (verde/rojo/gris)
+  - Icono resultado (✅/🔴/⚖️), par, modo, badges, duración, compras, motivo cierre
+  - PnL en USD y % prominente
+  - Expandible con detalle completo:
+    - **PnL Breakdown**: capital invertido, realizado bruto, fees, PnL neto, PnL %
+    - **Timeline del ciclo**: eventos filtrados (sin cycle_management) con fecha, severidad y título
+    - **Tabla de órdenes**: fecha, tipo, lado, precio, cantidad, valor, fees, motivo
+- **Vista Órdenes**: tabla plana clásica mantenida como alternativa
+
+#### E) UI — CycleDetailRow mejorado
+- **Badges de protección/trailing** para ciclos activos:
+  - 🛡️ Protección ARMADA (con precio stop) / Protección pendiente
+  - 🎯 Trailing ACTIVO (con margen % y precio máximo) / Trailing pendiente
+
+#### F) UI — Traducciones y hooks
+- `EVENT_TITLE_ES`: añadidos `protection_armed`, `trailing_activated`, `imported_position_created`, `imported_position_closed`, `plus_cycle_activated`, `plus_cycle_closed`
+- Nuevos hooks: `useIdcaClosedCycles(limit)`, `useIdcaCycleEvents(cycleId)`
+
+#### G) Engine (`IdcaEngine.ts`)
+- `checkSafetyBuy`: pasa `prevAvgEntry` al llamar `telegram.alertBuyExecuted()`
+
+### Archivos modificados
+1. `server/services/institutionalDca/IdcaMessageFormatter.ts` — FormatContext + formatTelegramMessage rewrite
+2. `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Todas las funciones de alerta enriquecidas
+3. `server/services/institutionalDca/IdcaReasonCatalog.ts` — 2 nuevas entradas
+4. `server/services/institutionalDca/IdcaEngine.ts` — prevAvgEntry en safety buy
+5. `client/src/pages/InstitutionalDca.tsx` — HistoryTab rewrite + CycleDetailRow badges + EVENT_TITLE_ES
+6. `client/src/hooks/useInstitutionalDca.ts` — 2 nuevos hooks
+
+### Compilación
+✅ `tsc --noEmit` limpio, sin errores
+
+---
+
 ## 2026-03-24 — REFACTOR: Lógica de salida IDCA + 3 sliders de control
 
 ### Problema

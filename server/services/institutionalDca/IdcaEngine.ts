@@ -935,10 +935,11 @@ async function checkSafetyBuy(
     capitalUsed: newTotalCost, buyCount: newBuyCount,
   });
 
-  // Re-fetch cycle for telegram alert
+  // Re-fetch cycle for telegram alert — pass previous avg so Telegram can show improvement
+  const prevAvg = parseFloat(String(cycle.avgEntryPrice || "0"));
   const updatedCycle = await repo.getCycleById(cycle.id);
   if (updatedCycle) {
-    await telegram.alertBuyExecuted(updatedCycle, order, "safety_buy");
+    await telegram.alertBuyExecuted(updatedCycle, order, "safety_buy", prevAvg);
   }
 }
 

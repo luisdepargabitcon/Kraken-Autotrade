@@ -111,6 +111,20 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "warn",
   },
 
+  protection_armed: {
+    humanTitle: "Protección armada (break-even)",
+    humanTemplate: "El ciclo de {pair} alcanzó beneficio suficiente para armar la protección. Si el precio retrocede al punto de entrada, se cerrará en break-even protegiendo el capital.",
+    emoji: "🛡️",
+    defaultSeverity: "info",
+  },
+
+  trailing_activated: {
+    humanTitle: "Trailing activado",
+    humanTemplate: "El ciclo de {pair} superó el umbral de beneficio para activar el trailing. El sistema dejará correr el precio y cerrará cuando retroceda el margen configurado.",
+    emoji: "🎯",
+    defaultSeverity: "info",
+  },
+
   cycle_closed: {
     humanTitle: "Ciclo cerrado",
     humanTemplate: "El ciclo de {pair} fue cerrado. {closeDetail}",

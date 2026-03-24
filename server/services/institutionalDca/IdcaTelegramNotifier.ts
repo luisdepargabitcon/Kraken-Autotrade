@@ -60,29 +60,39 @@ export async function alertCycleStarted(cycle: InstitutionalDcaCycle, dipPct: nu
   const { chatId, enabled } = await canSend("cycle_started");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
+  const assetConfig = await repo.getAssetConfig(cycle.pair);
 
+  const maxSafety = assetConfig?.maxSafetyOrders ?? 3;
   const ctx: FormatContext = {
     eventType: "cycle_started",
     pair: cycle.pair,
     mode: cycle.mode,
     price: parseFloat(String(cycle.currentPrice || "0")),
     quantity: parseFloat(String(cycle.totalQuantity || "0")),
-    capitalUsed: parseFloat(String(cycle.capitalReservedUsd || "0")),
+    capitalUsed: parseFloat(String(cycle.capitalUsedUsd || "0")),
+    totalCapitalReserved: parseFloat(String(cycle.capitalReservedUsd || "0")),
     dipPct,
     marketScore: score,
     buyCount: 1,
+    maxBuyCount: maxSafety + 1,
     sizeProfile: cycle.adaptiveSizeProfile || "balanced",
+    nextBuyPrice: parseFloat(String(cycle.nextBuyPrice || "0")) || undefined,
+    nextBuyLevelPct: parseFloat(String(cycle.nextBuyLevelPct || "0")) || undefined,
+    protectionActivationPct: parseFloat(String(assetConfig?.protectionActivationPct ?? "1.00")),
+    trailingActivationPct: parseFloat(String(assetConfig?.trailingActivationPct ?? "3.50")),
   };
 
   await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
-export async function alertBuyExecuted(cycle: InstitutionalDcaCycle, order: InstitutionalDcaOrder, orderType: string): Promise<void> {
+export async function alertBuyExecuted(cycle: InstitutionalDcaCycle, order: InstitutionalDcaOrder, orderType: string, prevAvgEntry?: number): Promise<void> {
   const alertKey = orderType === "base_buy" ? "base_buy_executed" : "safety_buy_executed";
   const { chatId, enabled } = await canSend(alertKey);
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
+  const assetConfig = await repo.getAssetConfig(cycle.pair);
 
+  const maxSafety = assetConfig?.maxSafetyOrders ?? 3;
   const evType = orderType === "base_buy" ? "base_buy_executed" : "safety_buy_executed";
   const ctx: FormatContext = {
     eventType: evType,
@@ -92,7 +102,15 @@ export async function alertBuyExecuted(cycle: InstitutionalDcaCycle, order: Inst
     quantity: parseFloat(String(order.quantity)),
     avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
     capitalUsed: parseFloat(String(cycle.capitalUsedUsd || "0")),
+    totalCapitalReserved: parseFloat(String(cycle.capitalReservedUsd || "0")),
     buyCount: cycle.buyCount,
+    maxBuyCount: maxSafety + 1,
+    nextBuyPrice: parseFloat(String(cycle.nextBuyPrice || "0")) || undefined,
+    nextBuyLevelPct: parseFloat(String(cycle.nextBuyLevelPct || "0")) || undefined,
+    protectionActivationPct: parseFloat(String(assetConfig?.protectionActivationPct ?? "1.00")),
+    trailingActivationPct: parseFloat(String(assetConfig?.trailingActivationPct ?? "3.50")),
+    protectionArmed: !!cycle.protectionArmedAt,
+    prevAvgEntry,
   };
 
   await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
@@ -122,17 +140,20 @@ export async function alertProtectionArmed(
   const { chatId, enabled } = await canSend("protection_armed");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
+  const assetConfig = await repo.getAssetConfig(cycle.pair);
 
-  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
-  const msg = `🛡️ <b>IDCA Protección Armada</b>\n\n` +
-    `📦 Par: <code>${cycle.pair}</code> [${cycle.mode}]\n` +
-    `📊 PnL: <code>+${pnlPct.toFixed(2)}%</code>\n` +
-    `💰 Precio medio: <code>$${avgEntry.toFixed(2)}</code>\n` +
-    `📍 Precio actual: <code>$${currentPrice.toFixed(2)}</code>\n` +
-    `🔒 Stop protección: <code>$${stopPrice.toFixed(2)}</code>\n\n` +
-    `✅ El ciclo está protegido. Si el precio cae al stop, se cierra en break-even.`;
+  const ctx: FormatContext = {
+    eventType: "protection_armed",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: currentPrice,
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    pnlPct,
+    stopPrice,
+    trailingActivationPct: parseFloat(String(assetConfig?.trailingActivationPct ?? "3.50")),
+  };
 
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertTrailingActivated(
@@ -145,16 +166,18 @@ export async function alertTrailingActivated(
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
-  const msg = `🚀 <b>IDCA Trailing Activado</b>\n\n` +
-    `📦 Par: <code>${cycle.pair}</code> [${cycle.mode}]\n` +
-    `📊 PnL: <code>+${pnlPct.toFixed(2)}%</code>\n` +
-    `💰 Precio medio: <code>$${avgEntry.toFixed(2)}</code>\n` +
-    `📍 Precio actual: <code>$${currentPrice.toFixed(2)}</code>\n` +
-    `📐 Margen trailing: <code>${trailingMarginPct.toFixed(2)}%</code>\n\n` +
-    `✅ Dejando correr beneficios. Cierre cuando el trailing salte.`;
+  const ctx: FormatContext = {
+    eventType: "trailing_activated",
+    pair: cycle.pair,
+    mode: cycle.mode,
+    price: currentPrice,
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    pnlPct,
+    trailingPct: trailingMarginPct,
+    trailingMarginPct,
+  };
 
-  await send(chatId, msg, config.telegramThreadId || undefined);
+  await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
 }
 
 export async function alertTpArmed(cycle: InstitutionalDcaCycle, partialPct: number): Promise<void> {
@@ -191,15 +214,22 @@ export async function alertTrailingExit(cycle: InstitutionalDcaCycle): Promise<v
   const pnlUsd = realized - capitalUsed;
   const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
 
+  // Sum fees from all orders in cycle
+  const orders = await repo.getOrdersByCycle(cycle.id);
+  const totalFees = orders.reduce((sum: number, o: any) => sum + parseFloat(String(o.feesUsd || "0")), 0);
+
   const ctx: FormatContext = {
     eventType: "trailing_exit",
     pair: cycle.pair,
     mode: cycle.mode,
     price: parseFloat(String(cycle.currentPrice || "0")),
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    capitalUsed,
     pnlPct,
     pnlUsd,
     buyCount: cycle.buyCount,
     durationStr,
+    totalFeesUsd: totalFees,
   };
 
   await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);
@@ -210,13 +240,29 @@ export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
+  const durationStr = cycle.closedAt && cycle.startedAt
+    ? formatDuration(new Date(cycle.startedAt), new Date(cycle.closedAt))
+    : "N/A";
+
+  const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  const realized = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const pnlUsd = realized - capitalUsed;
+
+  // Sum fees from all orders in cycle
+  const orders = await repo.getOrdersByCycle(cycle.id);
+  const totalFees = orders.reduce((sum: number, o: any) => sum + parseFloat(String(o.feesUsd || "0")), 0);
+
   const ctx: FormatContext = {
     eventType: "breakeven_exit",
     pair: cycle.pair,
     mode: cycle.mode,
     price: parseFloat(String(cycle.currentPrice || "0")),
-    quantity: parseFloat(String(cycle.totalQuantity || "0")),
+    avgEntry: parseFloat(String(cycle.avgEntryPrice || "0")),
+    capitalUsed,
+    pnlUsd,
     buyCount: cycle.buyCount,
+    durationStr,
+    totalFeesUsd: totalFees,
   };
 
   await send(chatId, formatTelegramMessage(ctx), config.telegramThreadId || undefined);

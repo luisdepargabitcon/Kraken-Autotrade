@@ -30,6 +30,8 @@ import {
   useResetSimulationWallet,
   useIdcaTelegramTest,
   useIdcaCycleOrders,
+  useIdcaClosedCycles,
+  useIdcaCycleEvents,
   useImportPosition,
   useImportableStatus,
   useToggleSoloSalida,
@@ -1534,6 +1536,32 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   )}
                 </div>
               )}
+              {/* Protection / Trailing status badges */}
+              {cycle.status !== "closed" && (
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {cycle.protectionArmedAt ? (
+                    <Badge variant="outline" className="text-[9px] font-mono text-emerald-400 border-emerald-400/40 bg-emerald-400/5 gap-0.5">
+                      🛡️ Protección ARMADA
+                      {cycle.protectionStopPrice && <span className="text-muted-foreground ml-1">stop ${fmtPrice(cycle.protectionStopPrice)}</span>}
+                    </Badge>
+                  ) : pnlPct >= 0 ? (
+                    <Badge variant="outline" className="text-[9px] font-mono text-muted-foreground border-border/30 gap-0.5">
+                      🛡️ Protección pendiente
+                    </Badge>
+                  ) : null}
+                  {cycle.status === "trailing_active" ? (
+                    <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/40 bg-amber-400/5 gap-0.5">
+                      🎯 Trailing ACTIVO
+                      {cycle.trailingPct && <span className="text-muted-foreground ml-1">margen {parseFloat(String(cycle.trailingPct)).toFixed(2)}%</span>}
+                      {cycle.highestPriceAfterTp && <span className="text-muted-foreground ml-1">máx ${fmtPrice(cycle.highestPriceAfterTp)}</span>}
+                    </Badge>
+                  ) : cycle.protectionArmedAt ? (
+                    <Badge variant="outline" className="text-[9px] font-mono text-muted-foreground border-border/30 gap-0.5">
+                      🎯 Trailing pendiente
+                    </Badge>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">
@@ -1755,13 +1783,25 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
 // ════════════════════════════════════════════════════════════════════
 
 function HistoryTab() {
-  const { data: orders, isLoading } = useIdcaOrders({ limit: 100 });
+  const { data: closedCycles, isLoading: cyclesLoading } = useIdcaClosedCycles(50);
+  const { data: orders, isLoading: ordersLoading } = useIdcaOrders({ limit: 100 });
+  const [viewMode, setViewMode] = useState<"cycles" | "orders">("cycles");
+
+  const isLoading = viewMode === "cycles" ? cyclesLoading : ordersLoading;
 
   if (isLoading) return <div className="text-center py-8 text-muted-foreground">Cargando historial...</div>;
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <Button size="sm" variant={viewMode === "cycles" ? "default" : "outline"} className="text-xs h-7 gap-1" onClick={() => setViewMode("cycles")}>
+            <ListOrdered className="h-3 w-3" /> Ciclos
+          </Button>
+          <Button size="sm" variant={viewMode === "orders" ? "default" : "outline"} className="text-xs h-7 gap-1" onClick={() => setViewMode("orders")}>
+            <Activity className="h-3 w-3" /> Órdenes
+          </Button>
+        </div>
         <Button size="sm" variant="outline" className="text-xs h-7" asChild>
           <a href="/api/institutional-dca/export/orders" download>
             <Download className="h-3 w-3 mr-1" /> CSV
@@ -1769,50 +1809,297 @@ function HistoryTab() {
         </Button>
       </div>
 
-      {(!orders || orders.length === 0) ? (
-        <Card className="border-border/50">
-          <CardContent className="p-8 text-center text-muted-foreground">
-            <p className="text-sm">No hay órdenes registradas</p>
-          </CardContent>
-        </Card>
+      {viewMode === "cycles" ? (
+        <HistoryCyclesView cycles={closedCycles || []} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs font-mono">
-            <thead>
-              <tr className="border-b border-border/50 text-muted-foreground">
-                <th className="p-2 text-left">Fecha</th>
-                <th className="p-2 text-left">Par</th>
-                <th className="p-2 text-left">Tipo</th>
-                <th className="p-2 text-left">Lado</th>
-                <th className="p-2 text-right">Precio</th>
-                <th className="p-2 text-right">Cantidad</th>
-                <th className="p-2 text-right">Valor</th>
-                <th className="p-2 text-right">Fees</th>
-                <th className="p-2 text-left">Motivo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} className="border-b border-border/30 hover:bg-muted/20">
-                  <td className="p-2">{fmtDate(order.executedAt)}</td>
-                  <td className="p-2">{order.pair}</td>
-                  <td className="p-2">
-                    <Badge variant="outline" className="text-[10px]">{translateOrderType(order.orderType)}</Badge>
-                  </td>
-                  <td className={cn("p-2", order.side === "buy" ? "text-green-400" : "text-red-400")}>
-                    {order.side === "buy" ? "COMPRA" : "VENTA"}
-                  </td>
-                  <td className="p-2 text-right">{fmtPrice(order.price)}</td>
-                  <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
-                  <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
-                  <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
-                  <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <HistoryOrdersView orders={orders || []} />
+      )}
+    </div>
+  );
+}
+
+function HistoryCyclesView({ cycles }: { cycles: any[] }) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  if (cycles.length === 0) {
+    return (
+      <Card className="border-border/50">
+        <CardContent className="p-8 text-center text-muted-foreground">
+          <p className="text-sm">No hay ciclos cerrados</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Aggregate stats
+  const totalPnl = cycles.reduce((s, c) => {
+    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
+    const real = parseFloat(String(c.realizedPnlUsd || "0"));
+    return s + (real - cap);
+  }, 0);
+  const wins = cycles.filter(c => {
+    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
+    const real = parseFloat(String(c.realizedPnlUsd || "0"));
+    return (real - cap) > 1;
+  }).length;
+  const losses = cycles.filter(c => {
+    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
+    const real = parseFloat(String(c.realizedPnlUsd || "0"));
+    return (real - cap) < -1;
+  }).length;
+  const neutral = cycles.length - wins - losses;
+
+  return (
+    <div className="space-y-3">
+      {/* Aggregate bar */}
+      <div className="flex flex-wrap gap-3 text-xs font-mono">
+        <Badge variant="outline" className="text-[10px]">{cycles.length} ciclos cerrados</Badge>
+        <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">✅ {wins} wins</Badge>
+        <Badge variant="outline" className="text-[10px] text-red-400 border-red-400/30">🔴 {losses} losses</Badge>
+        <Badge variant="outline" className="text-[10px] text-muted-foreground">⚖️ {neutral} neutral</Badge>
+        <Badge variant="outline" className={cn("text-[10px] font-bold", totalPnl >= 0 ? "text-green-400 border-green-400/30" : "text-red-400 border-red-400/30")}>
+          PnL Total: {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+        </Badge>
+      </div>
+
+      {/* Cycle cards */}
+      {cycles.map((cycle) => {
+        const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
+        const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
+        const pnlUsd = real - cap;
+        const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
+        const isProfit = pnlUsd > 1;
+        const isLoss = pnlUsd < -1;
+        const resultIcon = isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
+        const resultColor = isProfit ? "text-green-400" : isLoss ? "text-red-400" : "text-muted-foreground";
+        const borderColor = isProfit ? "border-l-green-500" : isLoss ? "border-l-red-500" : "border-l-slate-500";
+        const isExpanded = expandedId === cycle.id;
+
+        // Duration
+        let durationStr = "—";
+        if (cycle.closedAt && cycle.startedAt) {
+          const ms = new Date(cycle.closedAt).getTime() - new Date(cycle.startedAt).getTime();
+          const h = Math.floor(ms / 3600000);
+          const m = Math.floor((ms % 3600000) / 60000);
+          durationStr = h > 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}h ${m}m`;
+        }
+
+        const closeReasonLabel: Record<string, string> = {
+          trailing_exit: "Trailing stop",
+          breakeven_exit: "Break-even",
+          emergency_close: "Emergencia",
+          max_duration: "Duración máxima",
+          manual_close: "Cierre manual",
+        };
+
+        return (
+          <Card key={cycle.id} className={cn("border-border/50 border-l-2", borderColor)}>
+            <CardContent className="p-0">
+              <div
+                className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/20 transition-colors"
+                onClick={() => setExpandedId(isExpanded ? null : cycle.id)}
+              >
+                <div className="flex items-center gap-3 flex-1">
+                  <span className="text-lg">{resultIcon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-mono font-bold">{cycle.pair}</span>
+                      <Badge variant="outline" className={cn("text-[10px] font-mono", MODE_COLORS[cycle.mode])}>
+                        {cycle.mode?.toUpperCase()}
+                      </Badge>
+                      {cycle.cycleType === "plus" && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-purple-400 border-purple-400/50">PLUS</Badge>
+                      )}
+                      {cycle.isImported && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-cyan-400 border-cyan-400/50">IMPORTADO</Badge>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {fmtDate(cycle.startedAt)} → {fmtDate(cycle.closedAt)} • {durationStr} • {cycle.buyCount} compra{cycle.buyCount !== 1 ? "s" : ""}
+                      {cycle.closeReason && ` • ${closeReasonLabel[cycle.closeReason] || cycle.closeReason}`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="text-right">
+                    <div className={cn("text-sm font-mono font-bold", resultColor)}>
+                      {pnlUsd >= 0 ? "+" : ""}${pnlUsd.toFixed(2)}
+                    </div>
+                    <div className={cn("text-[10px] font-mono", resultColor)}>
+                      {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                    </div>
+                  </div>
+                  {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                </div>
+              </div>
+
+              {isExpanded && <HistoryCycleDetail cycleId={cycle.id} cycle={cycle} />}
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any }) {
+  const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(cycleId);
+  const { data: events, isLoading: eventsLoading } = useIdcaCycleEvents(cycleId);
+
+  const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const pnlUsd = real - cap;
+  const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
+  const totalFees = (orders || []).reduce((s: number, o: any) => s + parseFloat(String(o.feesUsd || "0")), 0);
+
+  return (
+    <div className="border-t border-border/30 p-3 space-y-3 bg-muted/5">
+      {/* PnL Breakdown */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs font-mono">
+        <div className="bg-background/50 rounded p-2 border border-border/30">
+          <div className="text-[10px] text-muted-foreground">Capital invertido</div>
+          <div className="font-bold">{fmtUsd(cap)}</div>
+        </div>
+        <div className="bg-background/50 rounded p-2 border border-border/30">
+          <div className="text-[10px] text-muted-foreground">Realizado bruto</div>
+          <div className="font-bold">{fmtUsd(real)}</div>
+        </div>
+        <div className="bg-background/50 rounded p-2 border border-border/30">
+          <div className="text-[10px] text-muted-foreground">Fees totales</div>
+          <div className="font-bold text-yellow-400">-{fmtUsd(totalFees)}</div>
+        </div>
+        <div className="bg-background/50 rounded p-2 border border-border/30">
+          <div className="text-[10px] text-muted-foreground">PnL neto</div>
+          <div className={cn("font-bold", pnlUsd >= 0 ? "text-green-400" : "text-red-400")}>
+            {pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)}
+          </div>
+        </div>
+        <div className="bg-background/50 rounded p-2 border border-border/30">
+          <div className="text-[10px] text-muted-foreground">PnL %</div>
+          <div className={cn("font-bold", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
+            {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+
+      {/* Timeline */}
+      {!eventsLoading && events && events.length > 0 && (
+        <div>
+          <div className="text-[10px] font-mono text-muted-foreground mb-1.5 flex items-center gap-1">
+            <Clock className="h-3 w-3" /> TIMELINE DEL CICLO
+          </div>
+          <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
+            {events.filter((ev: any) => ev.eventType !== "cycle_management").map((ev: any) => {
+              const evTitle = (ev as any).humanTitle || EVENT_TITLE_ES[ev.eventType] || ev.eventType.replace(/_/g, " ");
+              return (
+                <div key={ev.id} className="flex items-start gap-2 text-[10px] font-mono py-0.5">
+                  <span className="text-muted-foreground shrink-0 w-[100px]">{fmtDate(ev.createdAt)}</span>
+                  <span className={cn("shrink-0 w-1.5 h-1.5 rounded-full mt-1",
+                    ev.severity === "warn" ? "bg-yellow-400" : ev.severity === "error" ? "bg-red-400" : "bg-blue-400"
+                  )} />
+                  <span className="text-foreground">{evTitle}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
+
+      {/* Orders table */}
+      {ordersLoading ? (
+        <div className="text-center py-4 text-muted-foreground text-xs">Cargando órdenes...</div>
+      ) : orders && orders.length > 0 ? (
+        <div>
+          <div className="text-[10px] font-mono text-muted-foreground mb-1.5 flex items-center gap-1">
+            <ListOrdered className="h-3 w-3" /> ÓRDENES ({orders.length})
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-border/50 text-[10px] text-muted-foreground">
+                  <th className="p-1.5 text-left">Fecha</th>
+                  <th className="p-1.5 text-left">Tipo</th>
+                  <th className="p-1.5 text-left">Lado</th>
+                  <th className="p-1.5 text-right">Precio</th>
+                  <th className="p-1.5 text-right">Cantidad</th>
+                  <th className="p-1.5 text-right">Valor</th>
+                  <th className="p-1.5 text-right">Fees</th>
+                  <th className="p-1.5 text-left">Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order: any) => (
+                  <tr key={order.id} className="border-b border-border/20 hover:bg-muted/20">
+                    <td className="p-1.5 text-[10px]">{fmtDate(order.executedAt)}</td>
+                    <td className="p-1.5">
+                      <Badge variant="outline" className="text-[9px]">{translateOrderType(order.orderType)}</Badge>
+                    </td>
+                    <td className={cn("p-1.5", order.side === "buy" ? "text-green-400" : "text-red-400")}>
+                      {order.side === "buy" ? "COMPRA" : "VENTA"}
+                    </td>
+                    <td className="p-1.5 text-right">${fmtPrice(order.price)}</td>
+                    <td className="p-1.5 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
+                    <td className="p-1.5 text-right">{fmtUsd(order.netValueUsd)}</td>
+                    <td className="p-1.5 text-right text-yellow-400">{fmtUsd(order.feesUsd)}</td>
+                    <td className="p-1.5 text-muted-foreground truncate max-w-[200px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HistoryOrdersView({ orders }: { orders: any[] }) {
+  if (orders.length === 0) {
+    return (
+      <Card className="border-border/50">
+        <CardContent className="p-8 text-center text-muted-foreground">
+          <p className="text-sm">No hay órdenes registradas</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs font-mono">
+        <thead>
+          <tr className="border-b border-border/50 text-muted-foreground">
+            <th className="p-2 text-left">Fecha</th>
+            <th className="p-2 text-left">Par</th>
+            <th className="p-2 text-left">Tipo</th>
+            <th className="p-2 text-left">Lado</th>
+            <th className="p-2 text-right">Precio</th>
+            <th className="p-2 text-right">Cantidad</th>
+            <th className="p-2 text-right">Valor</th>
+            <th className="p-2 text-right">Fees</th>
+            <th className="p-2 text-left">Motivo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order: any) => (
+            <tr key={order.id} className="border-b border-border/30 hover:bg-muted/20">
+              <td className="p-2">{fmtDate(order.executedAt)}</td>
+              <td className="p-2">{order.pair}</td>
+              <td className="p-2">
+                <Badge variant="outline" className="text-[10px]">{translateOrderType(order.orderType)}</Badge>
+              </td>
+              <td className={cn("p-2", order.side === "buy" ? "text-green-400" : "text-red-400")}>
+                {order.side === "buy" ? "COMPRA" : "VENTA"}
+              </td>
+              <td className="p-2 text-right">{fmtPrice(order.price)}</td>
+              <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
+              <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
+              <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
+              <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1946,6 +2233,8 @@ const EVENT_TITLE_ES: Record<string, string> = {
   cycle_started: "🟢 Ciclo de compra iniciado",
   base_buy_executed: "💰 Compra inicial ejecutada",
   safety_buy_executed: "💰 Compra adicional (safety buy)",
+  protection_armed: "🛡️ Protección armada (break-even)",
+  trailing_activated: "🎯 Trailing activado",
   tp_armed: "🎯 Toma de ganancias activada",
   trailing_exit: "✅ Cierre por trailing stop",
   breakeven_exit: "🛡️ Cierre por protección de capital",
@@ -1955,6 +2244,10 @@ const EVENT_TITLE_ES: Record<string, string> = {
   smart_adjustment_applied: "🧠 Ajuste inteligente aplicado",
   partial_sell_executed: "📤 Venta parcial ejecutada",
   config_changed: "⚙️ Configuración modificada",
+  imported_position_created: "📥 Posición importada",
+  imported_position_closed: "📤 Posición importada cerrada",
+  plus_cycle_activated: "⚡ Ciclo Plus activado",
+  plus_cycle_closed: "⚡ Ciclo Plus cerrado",
 };
 
 const BLOCK_REASON_ES: Record<string, string> = {

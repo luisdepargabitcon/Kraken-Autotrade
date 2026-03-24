@@ -56,6 +56,19 @@ export interface FormatContext {
   exchangeSource?: string;
   estimatedFeePct?: number;
   estimatedFeeUsd?: number;
+  // Rich context for Telegram
+  maxBuyCount?: number;
+  nextBuyPrice?: number;
+  nextBuyLevelPct?: number;
+  protectionActivationPct?: number;
+  trailingActivationPct?: number;
+  trailingMarginPct?: number;
+  totalCapitalReserved?: number;
+  totalFeesUsd?: number;
+  protectionArmed?: boolean;
+  trailingActive?: boolean;
+  stopPrice?: number;
+  prevAvgEntry?: number;
 }
 
 // ─── Core Formatter ─────────────────────────────────────────────────
@@ -258,119 +271,355 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
 // ─── Telegram Formatter ─────────────────────────────────────────────
 
 export function formatTelegramMessage(ctx: FormatContext): string {
-  const { humanTitle, humanMessage, technicalSummary } = formatIdcaMessage(ctx);
-  const entry = getCatalogEntry(ctx.reasonCode || ctx.eventType);
-  const simPrefix = ctx.mode === "simulation" ? "[SIMULACIÓN] " : "";
-
-  let msg = `${simPrefix}${entry.emoji} <b>${escapeHtml(humanTitle)} — IDCA</b>\n\n`;
-  msg += `${escapeHtml(humanMessage)}\n\n`;
-
-  // Structured data block
-  const lines: string[] = [];
-  if (ctx.pair) lines.push(`<b>Par:</b> ${escapeHtml(ctx.pair)}`);
-  if (ctx.mode) lines.push(`<b>Modo:</b> ${ctx.mode.toUpperCase()}`);
+  const sim = ctx.mode === "simulation";
+  const modeTag = sim ? "🧪 SIM" : "🟢 LIVE";
+  const pair = ctx.pair || "—";
 
   switch (ctx.eventType) {
+
+    // ═══ CYCLE STARTED / BASE BUY ═══
     case "cycle_started":
-    case "base_buy_executed":
-      if (ctx.price != null) lines.push(`<b>Precio:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.quantity != null) lines.push(`<b>Cantidad:</b> ${ctx.quantity.toFixed(6)}`);
-      if (ctx.buyCount != null) lines.push(`<b>Compra:</b> #${ctx.buyCount}`);
-      if (ctx.dipPct != null) lines.push(`<b>Dip detectado:</b> ${ctx.dipPct.toFixed(2)}%`);
-      if (ctx.marketScore != null) lines.push(`<b>Score:</b> ${ctx.marketScore}`);
-      if (ctx.capitalUsed != null) lines.push(`<b>Capital usado:</b> $${ctx.capitalUsed.toFixed(2)}`);
-      if (ctx.sizeProfile) lines.push(`<b>Perfil tamaño:</b> ${ctx.sizeProfile}`);
-      break;
-
-    case "safety_buy_executed":
-      if (ctx.price != null) lines.push(`<b>Precio:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.quantity != null) lines.push(`<b>Cantidad:</b> ${ctx.quantity.toFixed(6)}`);
-      if (ctx.buyCount != null) lines.push(`<b>Compra:</b> #${ctx.buyCount}`);
-      if (ctx.avgEntry != null) lines.push(`<b>Precio medio nuevo:</b> ${fmtNum(ctx.avgEntry)}`);
-      if (ctx.capitalUsed != null) lines.push(`<b>Capital usado:</b> $${ctx.capitalUsed.toFixed(2)}`);
-      break;
-
-    case "tp_armed":
-      if (ctx.avgEntry != null) lines.push(`<b>Precio medio:</b> ${fmtNum(ctx.avgEntry)}`);
-      if (ctx.price != null) lines.push(`<b>Precio actual:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.pnlPct != null) lines.push(`<b>PnL:</b> ${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
-      if (ctx.partialPct != null) lines.push(`<b>Venta parcial:</b> ${ctx.partialPct.toFixed(0)}%`);
-      if (ctx.trailingPct != null) lines.push(`<b>Trailing:</b> ${ctx.trailingPct.toFixed(2)}%`);
-      break;
-
-    case "trailing_exit":
-      if (ctx.price != null) lines.push(`<b>Precio cierre:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.pnlPct != null) lines.push(`<b>PnL final:</b> ${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
-      if (ctx.pnlUsd != null) lines.push(`<b>Resultado:</b> $${ctx.pnlUsd.toFixed(2)}`);
-      if (ctx.buyCount != null) lines.push(`<b>Compras del ciclo:</b> ${ctx.buyCount}`);
-      if (ctx.durationStr) lines.push(`<b>Duración:</b> ${ctx.durationStr}`);
-      lines.push(`<b>Motivo:</b> trailing_exit`);
-      break;
-
-    case "breakeven_exit":
-      if (ctx.price != null) lines.push(`<b>Precio cierre:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.buyCount != null) lines.push(`<b>Compras:</b> ${ctx.buyCount}`);
-      lines.push(`<b>Motivo:</b> breakeven_exit`);
-      break;
-
-    case "emergency_close_all":
-      if (ctx.closedCount != null) lines.push(`<b>Ciclos cerrados:</b> ${ctx.closedCount}`);
-      lines.push(`<b>Trigger:</b> ${ctx.triggerSource || "manual"}`);
-      lines.push(`<b>Timestamp:</b> ${new Date().toISOString()}`);
-      break;
-
-    case "entry_check_blocked":
-    case "buy_blocked":
-      if (ctx.dipPct != null) lines.push(`<b>Dip:</b> ${ctx.dipPct.toFixed(2)}%`);
-      if (ctx.marketScore != null) lines.push(`<b>Score:</b> ${ctx.marketScore}`);
-      if (ctx.reasonCode) lines.push(`<b>Motivo técnico:</b> ${ctx.reasonCode}`);
-      if (ctx.blockReasons) {
-        lines.push(`<b>Bloqueos:</b> ${ctx.blockReasons.map(r => r.code).join(", ")}`);
+    case "base_buy_executed": {
+      const lines = [
+        `🚀 <b>IDCA — Nuevo ciclo iniciado</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+        `💵 Precio: <b>$${fmtNum(ctx.price || 0)}</b>`,
+      ];
+      if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
+      if (ctx.dipPct != null) lines.push(`📉 Dip detectado: <code>-${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.marketScore != null) lines.push(`🧠 Score mercado: <code>${ctx.marketScore}</code>`);
+      if (ctx.capitalUsed != null && ctx.totalCapitalReserved) {
+        lines.push(`💰 Capital: <code>$${fmtNum(ctx.capitalUsed)}</code> de <code>$${fmtNum(ctx.totalCapitalReserved)}</code>`);
+      } else if (ctx.capitalUsed != null) {
+        lines.push(`💰 Capital usado: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
       }
-      break;
+      if (ctx.sizeProfile) lines.push(`📐 Perfil: <code>${ctx.sizeProfile}</code>`);
 
-    case "smart_adjustment_applied":
-      if (ctx.field) lines.push(`<b>Cambio:</b> ${ctx.field} ${ctx.oldVal} → ${ctx.newVal}`);
-      if (ctx.reason) lines.push(`<b>Motivo:</b> ${escapeHtml(ctx.reason)}`);
-      break;
+      // Cycle roadmap
+      lines.push(``, `📍 <b>Hoja de ruta:</b>`);
+      if (ctx.maxBuyCount != null) lines.push(`• Compras disponibles: ${ctx.maxBuyCount}`);
+      if (ctx.nextBuyPrice) lines.push(`• Próxima compra: <code>$${fmtNum(ctx.nextBuyPrice)}</code>${ctx.nextBuyLevelPct ? ` (-${ctx.nextBuyLevelPct.toFixed(1)}%)` : ""}`);
+      if (ctx.protectionActivationPct != null) lines.push(`• 🛡 Protección arma a: <code>+${ctx.protectionActivationPct.toFixed(1)}%</code>`);
+      if (ctx.trailingActivationPct != null) lines.push(`• 🎯 Trailing activa a: <code>+${ctx.trailingActivationPct.toFixed(1)}%</code>`);
 
-    case "module_max_drawdown_reached":
-      if (ctx.drawdownPct != null) lines.push(`<b>Drawdown actual:</b> -${ctx.drawdownPct.toFixed(2)}%`);
-      if (ctx.maxDrawdownPct != null) lines.push(`<b>Límite configurado:</b> -${ctx.maxDrawdownPct.toFixed(2)}%`);
-      lines.push(`<b>Acción:</b> Módulo pausado, nuevas compras bloqueadas`);
-      break;
+      lines.push(``, `💡 El sistema detectó una caída válida y abrió posición.`);
+      return lines.join("\n");
+    }
 
-    case "imported_position_created":
-      if (ctx.isManualCycle) lines.push(`<b>Tipo:</b> CICLO MANUAL`);
-      if (ctx.exchangeSource) lines.push(`<b>Exchange:</b> ${escapeHtml(ctx.exchangeSource)}`);
-      if (ctx.price != null) lines.push(`<b>Precio medio:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.quantity != null) lines.push(`<b>Cantidad:</b> ${ctx.quantity.toFixed(6)}`);
-      if (ctx.capitalUsed != null) lines.push(`<b>Capital base:</b> $${ctx.capitalUsed.toFixed(2)}`);
-      if (ctx.estimatedFeePct != null) lines.push(`<b>Fee estimada:</b> ${ctx.estimatedFeePct}%`);
-      if (ctx.estimatedFeeUsd != null) lines.push(`<b>Fee estimada USD:</b> $${ctx.estimatedFeeUsd.toFixed(2)}`);
-      if (ctx.soloSalida != null) lines.push(`<b>Solo salida:</b> ${ctx.soloSalida ? "Sí" : "No"}`);
-      if (ctx.sourceType) lines.push(`<b>Origen:</b> ${ctx.sourceType}`);
-      break;
+    // ═══ SAFETY BUY ═══
+    case "safety_buy_executed": {
+      const remaining = (ctx.maxBuyCount != null && ctx.buyCount != null) ? ctx.maxBuyCount - ctx.buyCount : null;
+      const avgImproved = (ctx.prevAvgEntry && ctx.avgEntry && ctx.prevAvgEntry > ctx.avgEntry);
+      const improvePct = avgImproved ? ((ctx.prevAvgEntry! - ctx.avgEntry!) / ctx.prevAvgEntry! * 100) : 0;
 
-    case "imported_position_closed":
-      if (ctx.price != null) lines.push(`<b>Precio cierre:</b> ${fmtNum(ctx.price)}`);
-      if (ctx.pnlPct != null) lines.push(`<b>PnL final:</b> ${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
-      if (ctx.realizedPnl != null) lines.push(`<b>Resultado:</b> $${ctx.realizedPnl.toFixed(2)}`);
-      if (ctx.durationStr) lines.push(`<b>Duración:</b> ${ctx.durationStr}`);
-      if (ctx.closeReason) lines.push(`<b>Motivo:</b> ${escapeHtml(ctx.closeReason)}`);
-      break;
+      const lines = [
+        `📦 <b>IDCA — Compra adicional #${ctx.buyCount || "?"}</b>${ctx.maxBuyCount ? ` de ${ctx.maxBuyCount}` : ""}`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+        `💵 Precio: <b>$${fmtNum(ctx.price || 0)}</b>`,
+      ];
+      if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
+      if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <b>$${fmtNum(ctx.avgEntry)}</b>${avgImproved ? ` (mejoró -${improvePct.toFixed(1)}%)` : ""}`);
+      if (ctx.capitalUsed != null && ctx.totalCapitalReserved) {
+        lines.push(`💰 Capital: <code>$${fmtNum(ctx.capitalUsed)}</code> de <code>$${fmtNum(ctx.totalCapitalReserved)}</code>`);
+      } else if (ctx.capitalUsed != null) {
+        lines.push(`💰 Capital acumulado: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
+      }
 
-    default:
-      // Fallback: show tech summary as detail
-      if (technicalSummary) lines.push(`<b>Detalle:</b> ${escapeHtml(technicalSummary)}`);
-      break;
+      // Cycle status
+      lines.push(``, `📍 <b>Estado del ciclo:</b>`);
+      if (remaining != null) {
+        lines.push(`• Compras: ${ctx.buyCount} de ${ctx.maxBuyCount}${remaining === 0 ? " ⚠️ <b>última compra</b>" : ` (quedan ${remaining})`}`);
+      }
+      if (ctx.nextBuyPrice && remaining && remaining > 0) {
+        lines.push(`• Próxima compra: <code>$${fmtNum(ctx.nextBuyPrice)}</code>${ctx.nextBuyLevelPct ? ` (-${ctx.nextBuyLevelPct.toFixed(1)}%)` : ""}`);
+      }
+      if (ctx.protectionArmed) {
+        lines.push(`• 🛡 Protección: <b>ARMADA</b>`);
+      } else if (ctx.protectionActivationPct != null && ctx.avgEntry) {
+        const protPrice = ctx.avgEntry * (1 + ctx.protectionActivationPct / 100);
+        lines.push(`• 🛡 Protección arma a: <code>$${fmtNum(protPrice)}</code> (+${ctx.protectionActivationPct.toFixed(1)}%)`);
+      }
+      if (ctx.trailingActivationPct != null && ctx.avgEntry) {
+        const trailPrice = ctx.avgEntry * (1 + ctx.trailingActivationPct / 100);
+        lines.push(`• 🎯 Trailing activa a: <code>$${fmtNum(trailPrice)}</code> (+${ctx.trailingActivationPct.toFixed(1)}%)`);
+      }
+
+      // Smart comment
+      const comments: string[] = [];
+      if (avgImproved && improvePct > 1) comments.push(`Esta compra bajó el promedio un ${improvePct.toFixed(1)}%, mejorando la posición.`);
+      if (remaining === 0) comments.push(`Ya no quedan compras disponibles. El ciclo espera recuperación.`);
+      if (remaining != null && remaining === 1) comments.push(`Queda una sola compra más disponible.`);
+      if (comments.length > 0) lines.push(``, `💡 ${comments.join(" ")}`);
+
+      return lines.join("\n");
+    }
+
+    // ═══ PROTECTION ARMED ═══
+    case "protection_armed": {
+      const lines = [
+        `🛡️ <b>IDCA — Protección armada</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+        `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
+        `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
+        `📍 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `🔒 Stop protección: <code>$${fmtNum(ctx.stopPrice || ctx.avgEntry || 0)}</code>`,
+      ];
+      if (ctx.trailingActivationPct != null && ctx.avgEntry) {
+        const trailPrice = ctx.avgEntry * (1 + ctx.trailingActivationPct / 100);
+        lines.push(``, `📍 <b>Siguiente paso:</b>`);
+        lines.push(`• 🎯 Trailing activa a: <code>$${fmtNum(trailPrice)}</code> (+${ctx.trailingActivationPct.toFixed(1)}%)`);
+      }
+      lines.push(``, `💡 El ciclo está protegido. Si el precio cae al stop, se cierra en break-even. Si sigue subiendo, se activará el trailing.`);
+      return lines.join("\n");
+    }
+
+    // ═══ TRAILING ACTIVATED ═══
+    case "trailing_activated": {
+      const lines = [
+        `🎯 <b>IDCA — Trailing activado</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+        `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
+        `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
+        `📍 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `📐 Margen trailing: <code>${(ctx.trailingPct || ctx.trailingMarginPct || 0).toFixed(2)}%</code>`,
+      ];
+      lines.push(``, `💡 Dejando correr beneficios. El sistema seguirá el precio y cerrará cuando retroceda el margen configurado.`);
+      return lines.join("\n");
+    }
+
+    // ═══ TP ARMED (legacy partial sell) ═══
+    case "tp_armed": {
+      const lines = [
+        `🎯 <b>IDCA — Take Profit alcanzado</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
+      if (ctx.price != null) lines.push(`📍 Precio actual: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.pnlPct != null) lines.push(`📈 PnL: <code>${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%</code>`);
+      if (ctx.partialPct != null) lines.push(`📤 Venta parcial: <code>${ctx.partialPct.toFixed(0)}%</code>`);
+      if (ctx.trailingPct != null) lines.push(`📐 Trailing: <code>${ctx.trailingPct.toFixed(2)}%</code>`);
+      lines.push(``, `💡 Se vendió una parte y el sistema vigila el resto con trailing stop.`);
+      return lines.join("\n");
+    }
+
+    // ═══ TRAILING EXIT ═══
+    case "trailing_exit": {
+      const pnlUsd = ctx.pnlUsd || 0;
+      const pnlPct = ctx.pnlPct || 0;
+      const isProfit = pnlUsd > 1;
+      const isLoss = pnlUsd < -1;
+      const icon = isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
+      const resultLabel = isProfit ? "con beneficio" : isLoss ? "con pérdida" : "en break-even";
+
+      const lines = [
+        `${icon} <b>IDCA — Ciclo cerrado ${resultLabel}</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
+      if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
+
+      lines.push(``, `📈 <b>Resultado:</b>`);
+      if (ctx.totalFeesUsd != null && ctx.totalFeesUsd > 0) {
+        const gross = pnlUsd + ctx.totalFeesUsd;
+        lines.push(`• Bruto: <code>${gross >= 0 ? "+" : ""}$${fmtNum(gross)}</code>`);
+        lines.push(`• Fees: <code>-$${fmtNum(ctx.totalFeesUsd)}</code>`);
+      }
+      lines.push(`• Neto: <b>${pnlUsd >= 0 ? "+" : ""}$${fmtNum(pnlUsd)}</b> (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)`);
+
+      lines.push(``, `📋 <b>Resumen:</b>`);
+      if (ctx.buyCount != null) lines.push(`• Compras: ${ctx.buyCount}`);
+      if (ctx.durationStr) lines.push(`• Duración: ${ctx.durationStr}`);
+      lines.push(`• Motivo: trailing stop activado`);
+
+      // Smart comment
+      if (isProfit && pnlPct > 3) {
+        lines.push(``, `💡 Excelente captura de beneficio. El trailing protegió la ganancia correctamente.`);
+      } else if (isProfit) {
+        lines.push(``, `💡 Beneficio asegurado. El trailing cerró al detectar retroceso.`);
+      } else if (isLoss) {
+        lines.push(``, `💡 El trailing cerró con pérdida. La protección no alcanzó a cubrir la caída.`);
+      } else {
+        lines.push(``, `💡 Cierre neutro. El capital se recuperó pero sin beneficio significativo.`);
+      }
+      return lines.join("\n");
+    }
+
+    // ═══ BREAKEVEN EXIT ═══
+    case "breakeven_exit": {
+      const lines = [
+        `🛡️ <b>IDCA — Ciclo cerrado en break-even</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
+      if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
+
+      if (ctx.pnlUsd != null || ctx.totalFeesUsd != null) {
+        lines.push(``, `📈 <b>Resultado:</b>`);
+        if (ctx.pnlUsd != null) lines.push(`• PnL neto: <code>~$${fmtNum(ctx.pnlUsd || 0)}</code> (break-even)`);
+        if (ctx.totalFeesUsd != null && ctx.totalFeesUsd > 0) lines.push(`• Fees: <code>-$${fmtNum(ctx.totalFeesUsd)}</code>`);
+      }
+
+      lines.push(``, `📋 <b>Resumen:</b>`);
+      if (ctx.buyCount != null) lines.push(`• Compras: ${ctx.buyCount}`);
+      if (ctx.durationStr) lines.push(`• Duración: ${ctx.durationStr}`);
+      lines.push(`• Motivo: protección activada (stop en break-even)`);
+      lines.push(``, `💡 El capital fue protegido. El precio cayó al stop de break-even tras armar la protección.`);
+      return lines.join("\n");
+    }
+
+    // ═══ EMERGENCY CLOSE ═══
+    case "emergency_close_all": {
+      const lines = [
+        `🚨 <b>IDCA — Cierre de emergencia</b>`,
+        ``,
+        `[${modeTag}]`,
+      ];
+      if (ctx.closedCount != null) lines.push(`⚠️ Ciclos cerrados: <b>${ctx.closedCount}</b>`);
+      lines.push(`🔒 Trigger: ${ctx.triggerSource || "manual"}`);
+      lines.push(`⏱ ${new Date().toISOString()}`);
+      lines.push(``, `💡 Se ordenó cierre inmediato de todos los ciclos activos.`);
+      return lines.join("\n");
+    }
+
+    // ═══ BUY BLOCKED ═══
+    case "entry_check_blocked":
+    case "buy_blocked": {
+      const entry = getCatalogEntry(ctx.reasonCode || ctx.eventType);
+      const lines = [
+        `⛔ <b>IDCA — Compra bloqueada</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.blockReasons && ctx.blockReasons.length > 0) {
+        lines.push(``, `🚫 <b>Motivos:</b>`);
+        for (const r of ctx.blockReasons) {
+          const be = getCatalogEntry(r.code);
+          lines.push(`• ${be.emoji} ${be.humanTitle}`);
+        }
+      } else if (ctx.reasonCode) {
+        lines.push(`🚫 Motivo: ${entry.humanTitle}`);
+      }
+      if (ctx.dipPct != null) lines.push(`📉 Dip: <code>${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.pnlPct != null) lines.push(`📊 PnL: <code>${ctx.pnlPct.toFixed(2)}%</code>`);
+      if (ctx.buyCount != null) lines.push(`📦 Compras actuales: ${ctx.buyCount}`);
+      return lines.join("\n");
+    }
+
+    // ═══ SMART ADJUSTMENT ═══
+    case "smart_adjustment_applied": {
+      const lines = [
+        `🧠 <b>IDCA — Ajuste inteligente</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.field) lines.push(`🔧 Cambio: <code>${ctx.field}</code> ${ctx.oldVal} → <b>${ctx.newVal}</b>`);
+      if (ctx.reason) lines.push(`📝 Motivo: ${escapeHtml(ctx.reason)}`);
+      lines.push(``, `💡 El sistema ajustó un parámetro basándose en las condiciones actuales.`);
+      return lines.join("\n");
+    }
+
+    // ═══ MODULE DRAWDOWN ═══
+    case "module_max_drawdown_reached": {
+      const lines = [
+        `🔴 <b>IDCA — Drawdown máximo alcanzado</b>`,
+        ``,
+        `[${modeTag}]`,
+      ];
+      if (ctx.drawdownPct != null) lines.push(`📉 Drawdown actual: <code>-${ctx.drawdownPct.toFixed(2)}%</code>`);
+      if (ctx.maxDrawdownPct != null) lines.push(`⛔ Límite: <code>-${ctx.maxDrawdownPct.toFixed(2)}%</code>`);
+      lines.push(``, `⚠️ <b>Módulo pausado.</b> Nuevas compras bloqueadas hasta que el drawdown se reduzca.`);
+      return lines.join("\n");
+    }
+
+    // ═══ IMPORTED POSITION ═══
+    case "imported_position_created": {
+      const lines = [
+        `📥 <b>IDCA — Posición importada</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.isManualCycle) lines.push(`🏷 Tipo: <b>CICLO MANUAL</b>`);
+      if (ctx.exchangeSource) lines.push(`🏦 Exchange: <code>${escapeHtml(ctx.exchangeSource)}</code>`);
+      if (ctx.price != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.quantity != null) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code>`);
+      if (ctx.capitalUsed != null) lines.push(`💵 Capital base: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
+      if (ctx.estimatedFeePct != null) lines.push(`💸 Fee estimada: <code>${ctx.estimatedFeePct}%</code>`);
+      if (ctx.soloSalida != null) lines.push(`🔒 Solo salida: <b>${ctx.soloSalida ? "Sí" : "No"}</b>`);
+      lines.push(``, `💡 El IDCA gestionará esta posición desde ahora.`);
+      return lines.join("\n");
+    }
+
+    // ═══ IMPORTED CLOSED ═══
+    case "imported_position_closed": {
+      const pnl = ctx.realizedPnl || 0;
+      const pnlPctVal = ctx.pnlPct || 0;
+      const icon = pnl > 1 ? "✅" : pnl < -1 ? "🔴" : "⚖️";
+      const label = pnl > 1 ? "con beneficio" : pnl < -1 ? "con pérdida" : "en break-even";
+
+      const lines = [
+        `${icon} <b>IDCA — Posición importada cerrada ${label}</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      lines.push(``, `📈 <b>Resultado:</b>`);
+      lines.push(`• PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b> (${pnlPctVal >= 0 ? "+" : ""}${pnlPctVal.toFixed(2)}%)`);
+      if (ctx.durationStr) lines.push(`• Duración: ${ctx.durationStr}`);
+      if (ctx.closeReason) lines.push(`• Motivo: ${escapeHtml(ctx.closeReason)}`);
+      return lines.join("\n");
+    }
+
+    // ═══ PLUS CYCLE ═══
+    case "plus_cycle_activated": {
+      const lines = [
+        `⚡ <b>IDCA — Ciclo Plus activado</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.price != null) lines.push(`💵 Precio: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.quantity != null) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code>`);
+      if (ctx.dipPct != null) lines.push(`📉 Dip desde main: <code>-${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.parentCycleId != null) lines.push(`🔗 Ciclo padre: <code>#${ctx.parentCycleId}</code>`);
+      if (ctx.tpPct != null) lines.push(`🎯 TP: <code>${ctx.tpPct.toFixed(1)}%</code>`);
+      lines.push(``, `💡 Ciclo táctico Plus iniciado: el principal agotó entradas y el precio siguió bajando.`);
+      return lines.join("\n");
+    }
+
+    case "plus_cycle_closed": {
+      const pnl = ctx.realizedPnl || 0;
+      const icon = pnl > 0 ? "✅" : pnl < -1 ? "🔴" : "⚖️";
+      const lines = [
+        `${icon} <b>IDCA — Ciclo Plus cerrado</b>`,
+        ``,
+        `📦 <code>${pair}</code>  [${modeTag}]`,
+      ];
+      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.realizedPnl != null) lines.push(`📈 PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b>`);
+      if (ctx.closeReason) lines.push(`📝 Motivo: ${escapeHtml(ctx.closeReason)}`);
+      if (ctx.parentCycleId != null) lines.push(`🔗 Parent: <code>#${ctx.parentCycleId}</code>`);
+      return lines.join("\n");
+    }
+
+    // ═══ FALLBACK ═══
+    default: {
+      const { humanTitle, humanMessage, technicalSummary } = formatIdcaMessage(ctx);
+      const entry = getCatalogEntry(ctx.reasonCode || ctx.eventType);
+      let msg = `${entry.emoji} <b>${escapeHtml(humanTitle)} — IDCA</b>\n\n`;
+      if (ctx.pair) msg += `📦 <code>${pair}</code>  [${modeTag}]\n`;
+      msg += `\n${escapeHtml(humanMessage)}`;
+      if (technicalSummary) msg += `\n\n<code>${escapeHtml(technicalSummary)}</code>`;
+      return msg;
+    }
   }
-
-  if (lines.length > 0) {
-    msg += lines.join("\n");
-  }
-
-  return msg;
 }
 
 // ─── Monitor Line Formatter ─────────────────────────────────────────
