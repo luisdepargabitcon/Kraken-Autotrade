@@ -1153,9 +1153,9 @@ function ConfigTab() {
                 onChange={(v) => saveRecovery({ recoveryTrailingPctEth: v })}
                 desc="Trailing tight del recovery ETH para proteger beneficios rápidamente." />
               <ColorSlider label="Duración máxima" color="cyan" unit=" h"
-                value={recovery.maxRecoveryDurationHours ?? 168} min={24} max={720} step={24}
+                value={recovery.maxRecoveryDurationHours ?? 168} min={0} max={35040} step={24}
                 onChange={(v) => saveRecovery({ maxRecoveryDurationHours: v })}
-                desc="Horas máximas que puede estar abierto un ciclo de recovery antes de cerrarse automáticamente." />
+                desc={recovery.maxRecoveryDurationHours === 0 ? "Sin límite de duración (desactivado)." : `Horas máximas que puede estar abierto un ciclo de recovery. 0 = sin límite. (${Math.floor((recovery.maxRecoveryDurationHours ?? 168) / 24)}d / ${((recovery.maxRecoveryDurationHours ?? 168) / 720).toFixed(1)} meses)`} />
             </div>
 
             <div className="border-t border-border/30 pt-4 space-y-3">

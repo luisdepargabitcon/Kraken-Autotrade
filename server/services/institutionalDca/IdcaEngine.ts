@@ -2544,8 +2544,8 @@ async function manageRecoveryCycle(
     }
   }
 
-  // 3) Max duration check
-  if (recoveryCycle.startedAt) {
+  // 3) Max duration check (0 = disabled / no limit)
+  if (rcfg.maxRecoveryDurationHours > 0 && recoveryCycle.startedAt) {
     const ageMs = Date.now() - new Date(recoveryCycle.startedAt).getTime();
     const maxMs = rcfg.maxRecoveryDurationHours * 3600000;
     if (ageMs > maxMs) {
