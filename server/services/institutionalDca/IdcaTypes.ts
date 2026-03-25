@@ -117,7 +117,7 @@ export const SIZE_PROFILES: Record<IdcaSizeProfile, number[]> = {
   defensive: [15, 20, 30, 35],
 };
 
-export type IdcaCycleType = "main" | "plus";
+export type IdcaCycleType = "main" | "plus" | "recovery";
 
 export interface DynamicTpConfig {
   baseTpPctBtc: number;
@@ -182,6 +182,31 @@ export interface PlusConfig {
   baseTpPctEth: number;
   trailingPctBtc: number;
   trailingPctEth: number;
+}
+
+// ─── Recovery Config ─────────────────────────────────────────────
+
+export interface RecoveryConfig {
+  enabled: boolean;
+  activationDrawdownPct: number;           // min drawdown on main to trigger (default 25)
+  maxRecoveryCyclesPerMain: number;        // default 1
+  maxTotalCyclesPerPair: number;           // main + plus + recovery (default 3)
+  maxPairExposurePct: number;              // % of module capital (default 40)
+  capitalAllocationPct: number;            // % of module capital for recovery (default 10)
+  maxRecoveryCapitalUsd: number;           // absolute cap (default 500)
+  cooldownMinutesAfterMainBuy: number;     // wait after last main buy (default 120)
+  cooldownMinutesBetweenRecovery: number;  // between recovery cycles (default 360)
+  minMarketScoreForRecovery: number;       // minimum score 0-100 (default 40)
+  requireReboundConfirmation: boolean;     // default true
+  recoveryTpPctBtc: number;               // conservative TP (default 2.5)
+  recoveryTpPctEth: number;               // conservative TP (default 3.0)
+  maxRecoveryEntries: number;              // base + safety (default 2)
+  recoveryEntryDipSteps: number[];         // default [2.0, 4.0]
+  recoveryTrailingPctBtc: number;          // tight trailing (default 0.8)
+  recoveryTrailingPctEth: number;          // tight trailing (default 1.0)
+  autoCloseIfMainClosed: boolean;          // default true
+  autoCloseIfMainRecovers: boolean;        // close if main goes positive (default false)
+  maxRecoveryDurationHours: number;        // max lifespan (default 168 = 7d)
 }
 
 // ─── Import Position ──────────────────────────────────────────────

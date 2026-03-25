@@ -349,6 +349,43 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     emoji: "🟠",
     defaultSeverity: "warn",
   },
+
+  // ── Recovery Cycle Events ─────────────────────────────
+
+  recovery_cycle_eligible: {
+    humanTitle: "Ciclo de recuperación habilitado",
+    humanTemplate: "El ciclo principal de {pair} alcanzó un drawdown profundo que supera el umbral de activación. El bot queda habilitado para abrir un ciclo de recuperación adicional cuando se confirme un rebote.",
+    emoji: "🟡",
+    defaultSeverity: "warn",
+  },
+
+  recovery_cycle_started: {
+    humanTitle: "Ciclo de recuperación abierto",
+    humanTemplate: "Se abrió un ciclo de recuperación para {pair}. El ciclo principal tiene un drawdown profundo y el bot detectó un rebote favorable. Se invirtió capital reducido con un TP conservador para capturar una recuperación parcial.",
+    emoji: "⚡",
+    defaultSeverity: "info",
+  },
+
+  recovery_cycle_blocked: {
+    humanTitle: "Ciclo de recuperación bloqueado",
+    humanTemplate: "El ciclo principal de {pair} cumple las condiciones de drawdown, pero el ciclo de recuperación fue bloqueado por restricciones de seguridad. El bot seguirá vigilando para futuros intentos.",
+    emoji: "🛡️",
+    defaultSeverity: "warn",
+  },
+
+  recovery_cycle_closed: {
+    humanTitle: "Ciclo de recuperación cerrado",
+    humanTemplate: "El ciclo de recuperación de {pair} se cerró y el capital se ha liberado. El resultado y el motivo de cierre se detallan en los datos del evento.",
+    emoji: "📊",
+    defaultSeverity: "info",
+  },
+
+  recovery_cycle_risk_warning: {
+    humanTitle: "Alerta de riesgo: exposición elevada",
+    humanTemplate: "Con el ciclo de recuperación activo, la exposición total en {pair} se acerca al límite configurado. El bot no abrirá más ciclos para este par hasta que la exposición se reduzca.",
+    emoji: "⚠️",
+    defaultSeverity: "warn",
+  },
 };
 
 // ─── Lookup Helpers ─────────────────────────────────────────────────

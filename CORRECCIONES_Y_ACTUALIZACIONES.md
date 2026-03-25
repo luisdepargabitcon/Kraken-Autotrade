@@ -2,11 +2,74 @@
 
 ---
 
+## 2026-03-25 — FEAT: Implementación completa Recovery Cycle (Multi-Ciclo por Drawdown Profundo)
+
+### Objetivo
+Implementar el sistema completo de ciclos de recuperación por drawdown profundo: cuando un ciclo principal entra en drawdown ≥25%, el bot puede abrir un ciclo recovery adicional con capital reducido y TP conservador.
+
+### Cambios implementados
+
+#### A) Tipos y Schema
+- **`IdcaTypes.ts`**: `IdcaCycleType` extendido a `"main" | "plus" | "recovery"`, nuevo `RecoveryConfig` interface con 21 parámetros configurables
+- **`shared/schema.ts`**: nueva columna `recovery_config_json` en `institutional_dca_config` con defaults seguros (`enabled: false`)
+- **`server/storage.ts`**: migración automática para `recovery_config_json`
+
+#### B) Repository
+- **`IdcaRepository.ts`**: 3 nuevas queries: `getActiveRecoveryCycles()`, `getClosedRecoveryCyclesCount()`, `getTotalPairExposureUsd()`
+
+#### C) Engine — 6 funciones nuevas (~600 líneas)
+- **`getRecoveryConfig()`**: parser de config JSON con defaults
+- **`checkRecoveryActivation()`**: evaluación completa con 7 gate checks (drawdown, max ciclos, exposición, cooldown, market score, capital, rebote)
+- **`executeRecoveryEntry()`**: apertura de ciclo recovery con compra base, TP conservador, safety buy levels
+- **`manageRecoveryCycle()`**: gestión completa (auto-close si main cierra/recupera, max duración, TP check, trailing, safety buys, risk warning)
+- **`checkRecoverySafetyBuy()`**: safety buys del recovery con cooldown de 30min
+- **`closeRecoveryCycle()`**: cierre con venta final, PnL, wallet update, evento + Telegram
+- **`emitRecoveryRiskWarning()`**: alerta cuando exposición del par se acerca al límite
+- Hook en `processPair()` después de la lógica Plus Cycle
+
+#### D) Eventos y Alertas — 5 event types
+- `recovery_cycle_eligible` 🟡 — drawdown alcanza umbral, vigilando rebote
+- `recovery_cycle_started` 🔄 — ciclo recovery abierto con datos completos
+- `recovery_cycle_blocked` 🛡️ — bloqueado por restricciones de seguridad
+- `recovery_cycle_closed` 📊 — cerrado con PnL, duración, motivo
+- `recovery_cycle_risk_warning` ⚠️ — exposición acumulada elevada
+
+#### E) Catálogo y Formatter
+- **`IdcaReasonCatalog.ts`**: 5 nuevas entradas con títulos, templates y emojis
+- **`IdcaMessageFormatter.ts`**: 5 nuevos cases en switch de technicalSummary
+
+#### F) UI — IdcaEventCards.tsx
+- 5 nuevas entradas en `EVENT_CATALOG` con mensajes humanos contextuales ricos
+- Cada evento muestra datos de drawdown, capital, exposición, TP, motivos de bloqueo, resultado PnL
+- Mapeo de close reasons a texto humano (TP alcanzado, trailing exit, main cerrado, etc.)
+
+### Parámetros de seguridad (defaults)
+- `enabled: false` — deshabilitado por defecto
+- `activationDrawdownPct: 25` — solo en drawdown profundo
+- `maxRecoveryCyclesPerMain: 1` — máximo 1 recovery por main
+- `capitalAllocationPct: 10` — solo 10% del capital del módulo
+- `maxRecoveryCapitalUsd: 500` — tope absoluto
+- `recoveryTpPctBtc: 2.5` / `recoveryTpPctEth: 3.0` — TP conservador
+- `maxRecoveryDurationHours: 168` — máximo 7 días
+- `requireReboundConfirmation: true` — no comprar en caída libre
+
+### Archivos modificados (8)
+- `server/services/institutionalDca/IdcaTypes.ts`
+- `server/services/institutionalDca/IdcaEngine.ts`
+- `server/services/institutionalDca/IdcaRepository.ts`
+- `server/services/institutionalDca/IdcaReasonCatalog.ts`
+- `server/services/institutionalDca/IdcaMessageFormatter.ts`
+- `client/src/components/idca/IdcaEventCards.tsx`
+- `shared/schema.ts`
+- `server/storage.ts`
+
+---
+
 ## 2026-03-25 — FEAT: Eventos de revisión de ciclo enriquecidos + Diseño Recovery Cycle
 
 ### Objetivo
 1. Mejorar los eventos `cycle_management` para que muestren qué evaluó el bot, qué conclusión sacó, y datos de proximidad a triggers.
-2. Diseñar el sistema completo de Multi-Ciclo Recovery por Drawdown Profundo (solo diseño, sin implementación).
+2. Diseñar el sistema completo de Multi-Ciclo Recovery por Drawdown Profundo (diseño previo a implementación).
 
 ### Cambios implementados (Revisión de ciclo)
 

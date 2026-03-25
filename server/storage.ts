@@ -1891,6 +1891,9 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_cycles', column: 'base_price_meta_json', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_meta_json JSONB' },
         { table: 'institutional_dca_cycles', column: 'entry_dip_pct', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS entry_dip_pct DECIMAL(10,4)' },
 
+        // institutional_dca_config — recovery cycle config
+        { table: 'institutional_dca_config', column: 'recovery_config_json', sql: `ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS recovery_config_json JSONB NOT NULL DEFAULT '{"enabled":false,"activationDrawdownPct":25,"maxRecoveryCyclesPerMain":1,"maxTotalCyclesPerPair":3,"maxPairExposurePct":40,"capitalAllocationPct":10,"maxRecoveryCapitalUsd":500,"cooldownMinutesAfterMainBuy":120,"cooldownMinutesBetweenRecovery":360,"minMarketScoreForRecovery":40,"requireReboundConfirmation":true,"recoveryTpPctBtc":2.5,"recoveryTpPctEth":3.0,"maxRecoveryEntries":2,"recoveryEntryDipSteps":[2.0,4.0],"recoveryTrailingPctBtc":0.8,"recoveryTrailingPctEth":1.0,"autoCloseIfMainClosed":true,"autoCloseIfMainRecovers":false,"maxRecoveryDurationHours":168}'::jsonb` },
+
         // institutional_dca_asset_configs — IDCA exit slider config
         { table: 'institutional_dca_asset_configs', column: 'protection_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS protection_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 1.00' },
         { table: 'institutional_dca_asset_configs', column: 'trailing_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 3.50' },

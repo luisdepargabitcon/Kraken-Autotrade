@@ -255,6 +255,43 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.durationStr) techParts.push(`Duración=${ctx.durationStr}`);
       break;
 
+    case "recovery_cycle_eligible":
+      if (ctx.drawdownPct != null) techParts.push(`DD=${ctx.drawdownPct.toFixed(1)}%`);
+      if (ctx.capitalUsed != null) techParts.push(`RecoveryCapital=$${ctx.capitalUsed.toFixed(0)}`);
+      if (ctx.pnlPct != null) techParts.push(`MainPnL=${ctx.pnlPct.toFixed(2)}%`);
+      if (ctx.parentCycleId != null) techParts.push(`Main=#${ctx.parentCycleId}`);
+      break;
+
+    case "recovery_cycle_started":
+      if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
+      if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
+      if (ctx.tpPct != null) techParts.push(`TP=${ctx.tpPct.toFixed(1)}%`);
+      if (ctx.drawdownPct != null) techParts.push(`MainDD=${ctx.drawdownPct.toFixed(1)}%`);
+      if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
+      if (ctx.parentCycleId != null) techParts.push(`Main=#${ctx.parentCycleId}`);
+      break;
+
+    case "recovery_cycle_blocked":
+      if (ctx.drawdownPct != null) techParts.push(`DD=${ctx.drawdownPct.toFixed(1)}%`);
+      if (ctx.parentCycleId != null) techParts.push(`Main=#${ctx.parentCycleId}`);
+      if (ctx.reason) techParts.push(`Motivo=${ctx.reason}`);
+      break;
+
+    case "recovery_cycle_closed":
+      if (ctx.pnlPct != null) techParts.push(`PnL=${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`);
+      if (ctx.pnlUsd != null) techParts.push(`PnL$=${ctx.pnlUsd >= 0 ? "+" : ""}${ctx.pnlUsd.toFixed(2)}`);
+      if (ctx.closeReason) techParts.push(`Motivo=${ctx.closeReason}`);
+      if (ctx.durationStr) techParts.push(`Duración=${ctx.durationStr}`);
+      if (ctx.buyCount != null) techParts.push(`Compras=${ctx.buyCount}`);
+      if (ctx.parentCycleId != null) techParts.push(`Main=#${ctx.parentCycleId}`);
+      break;
+
+    case "recovery_cycle_risk_warning":
+      if (ctx.capitalUsed != null) techParts.push(`Exposición=$${ctx.capitalUsed.toFixed(0)}`);
+      if (ctx.parentCycleId != null) techParts.push(`Main=#${ctx.parentCycleId}`);
+      if (ctx.reason) techParts.push(`${ctx.reason}`);
+      break;
+
     default:
       // Include any payload keys as tech details
       if (ctx.payload) {

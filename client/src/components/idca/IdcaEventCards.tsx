@@ -308,6 +308,104 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
     getActionText: () => "Ciclo Plus finalizado.",
   },
 
+  // ── RECOVERY CYCLES ────────────────────────────────
+  recovery_cycle_eligible: {
+    icon: "🟡",
+    title: "Ciclo de recuperación habilitado",
+    category: "warning",
+    getHumanSummary: (_ev, p) => {
+      const parts = ["El ciclo principal alcanzó un drawdown profundo."];
+      if (p.drawdownPct != null) parts.push(`Drawdown actual: -${fN(p.drawdownPct)}%.`);
+      if (p.activationDrawdownPct != null) parts.push(`Umbral de activación: -${fN(p.activationDrawdownPct)}%.`);
+      parts.push("El bot queda habilitado para abrir un ciclo de recuperación cuando se confirme un rebote.");
+      return parts.join(" ");
+    },
+    getActionText: (_ev, p) =>
+      p.recoveryCapital
+        ? `Vigilando rebote. Capital asignado: ${fUsd(p.recoveryCapital)}.`
+        : "Vigilando rebote para abrir ciclo recovery.",
+  },
+
+  recovery_cycle_started: {
+    icon: "🔄",
+    title: "Ciclo de recuperación abierto",
+    category: "positive",
+    getHumanSummary: (_ev, p) => {
+      const parts = ["Se abrió un ciclo de recuperación."];
+      if (p.mainDrawdown != null || p.drawdownPct != null) {
+        const dd = p.mainDrawdown ?? p.drawdownPct;
+        parts.push(`El ciclo principal tiene un drawdown de -${fN(dd)}%.`);
+      }
+      parts.push("Se invirtió capital reducido con un TP conservador para capturar una recuperación parcial.");
+      return parts.join(" ");
+    },
+    getActionText: (_ev, p) => {
+      const parts: string[] = [];
+      if (p.quantity && p.price) parts.push(`Compra: ${fN(p.quantity, 6)} @ ${fUsd(p.price)}`);
+      if (p.tpPct) parts.push(`TP objetivo: +${fN(p.tpPct)}%`);
+      return parts.length > 0 ? parts.join(". ") + "." : "Recovery cycle abierto.";
+    },
+  },
+
+  recovery_cycle_blocked: {
+    icon: "🛡️",
+    title: "Ciclo de recuperación bloqueado",
+    category: "warning",
+    getHumanSummary: (ev, p) => {
+      const msg = ev.message || "";
+      const parts = ["El ciclo principal cumple las condiciones de drawdown, pero el recovery fue bloqueado."];
+      if (p.blockReasons && Array.isArray(p.blockReasons)) {
+        parts.push(`Motivos: ${p.blockReasons.join("; ")}.`);
+      } else if (msg.includes("blocked:")) {
+        parts.push(msg.replace("Recovery blocked: ", "Motivos: ") + ".");
+      }
+      parts.push("El bot seguirá vigilando para futuros intentos.");
+      return parts.join(" ");
+    },
+    getActionText: () => "Sin acción. Esperando que se resuelvan las restricciones.",
+  },
+
+  recovery_cycle_closed: {
+    icon: "📊",
+    title: "Ciclo de recuperación cerrado",
+    category: "info",
+    getHumanSummary: (_ev, p) => {
+      const parts = ["El ciclo de recuperación se cerró."];
+      if (p.pnlPct != null) parts.push(`Resultado: ${p.pnlPct >= 0 ? "+" : ""}${fN(p.pnlPct)}%.`);
+      if (p.pnlUsd != null) parts.push(`(${p.pnlUsd >= 0 ? "+" : ""}${fUsd(Math.abs(p.pnlUsd))})`);
+      if (p.closeReason) {
+        const reasons: Record<string, string> = {
+          tp_reached: "TP alcanzado",
+          trailing_exit: "Salida por trailing",
+          main_cycle_closed: "Ciclo principal cerrado",
+          main_recovered: "Ciclo principal se recuperó",
+          max_duration_exceeded: "Duración máxima superada",
+        };
+        parts.push(`Motivo: ${reasons[p.closeReason] || p.closeReason}.`);
+      }
+      if (p.durationStr) parts.push(`Duración: ${p.durationStr}.`);
+      return parts.join(" ");
+    },
+    getActionText: (_ev, p) =>
+      p.netValue ? `Capital liberado: ${fUsd(p.netValue)}.` : "Capital liberado.",
+  },
+
+  recovery_cycle_risk_warning: {
+    icon: "⚠️",
+    title: "Alerta de riesgo: exposición elevada",
+    category: "warning",
+    getHumanSummary: (_ev, p) => {
+      const parts = ["Con el ciclo de recuperación activo, la exposición total se acerca al límite."];
+      if (p.pairExposure != null && p.pairExposurePct != null) {
+        parts.push(`Exposición del par: ${fUsd(p.pairExposure)} (${fN(p.pairExposurePct)}%).`);
+      }
+      if (p.maxPairExposurePct != null) parts.push(`Límite: ${fN(p.maxPairExposurePct)}%.`);
+      parts.push("No se abrirán más ciclos hasta reducir la exposición.");
+      return parts.join(" ");
+    },
+    getActionText: () => "Sin acción. Monitoreo activo de exposición.",
+  },
+
   // ── WARNING (amarillo) ──────────────────────────────
   entry_check_blocked: {
     icon: "⛔",

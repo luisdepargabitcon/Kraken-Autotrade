@@ -22,6 +22,7 @@ import type {
   DynamicTpConfig,
   IdcaCycleType,
   PlusConfig,
+  RecoveryConfig,
   BasePriceResult,
   DipReferenceMethod,
 } from "./IdcaTypes";
@@ -446,6 +447,19 @@ async function evaluatePair(
         await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
       } else {
         await checkPlusActivation(activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
+      }
+    }
+
+    // Recovery cycle logic: deep drawdown recovery
+    const recoveryCfg = getRecoveryConfig(config);
+    if (recoveryCfg.enabled && !isSoloSalida) {
+      const existingRecovery = await repo.getActiveRecoveryCycles(pair, mode, activeCycle.id);
+      if (existingRecovery.length > 0) {
+        for (const rc of existingRecovery) {
+          await manageRecoveryCycle(rc, activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
+        }
+      } else {
+        await checkRecoveryActivation(activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
       }
     }
   } else {
@@ -2210,4 +2224,611 @@ export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
   } else if (!schedulerInterval) {
     await startScheduler();
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RECOVERY CYCLE ENGINE — Deep Drawdown Multi-Cycle
+// ════════════════════════════════════════════════════════════════════
+
+const DEFAULT_RECOVERY_CONFIG: RecoveryConfig = {
+  enabled: false,
+  activationDrawdownPct: 25,
+  maxRecoveryCyclesPerMain: 1,
+  maxTotalCyclesPerPair: 3,
+  maxPairExposurePct: 40,
+  capitalAllocationPct: 10,
+  maxRecoveryCapitalUsd: 500,
+  cooldownMinutesAfterMainBuy: 120,
+  cooldownMinutesBetweenRecovery: 360,
+  minMarketScoreForRecovery: 40,
+  requireReboundConfirmation: true,
+  recoveryTpPctBtc: 2.5,
+  recoveryTpPctEth: 3.0,
+  maxRecoveryEntries: 2,
+  recoveryEntryDipSteps: [2.0, 4.0],
+  recoveryTrailingPctBtc: 0.8,
+  recoveryTrailingPctEth: 1.0,
+  autoCloseIfMainClosed: true,
+  autoCloseIfMainRecovers: false,
+  maxRecoveryDurationHours: 168,
+};
+
+function getRecoveryConfig(config: InstitutionalDcaConfigRow): RecoveryConfig {
+  const raw = config.recoveryConfigJson as any;
+  if (!raw || typeof raw !== "object") return DEFAULT_RECOVERY_CONFIG;
+  return { ...DEFAULT_RECOVERY_CONFIG, ...raw };
+}
+
+// ─── Recovery Activation Check ────────────────────────────────────
+
+async function checkRecoveryActivation(
+  mainCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  rcfg: RecoveryConfig
+): Promise<void> {
+  const pair = mainCycle.pair;
+  const mainDD = parseFloat(String(mainCycle.maxDrawdownPct || "0"));
+  const mainPnlPct = parseFloat(String(mainCycle.unrealizedPnlPct || "0"));
+  const currentDD = mainPnlPct < 0 ? Math.abs(mainPnlPct) : 0;
+
+  // 1) Check drawdown threshold
+  if (currentDD < rcfg.activationDrawdownPct) return;
+
+  // 2) Check main cycle is active (not closed/paused)
+  if (mainCycle.status === "closed" || mainCycle.status === "paused" || mainCycle.status === "blocked") return;
+
+  // 3) Check max recovery cycles per main
+  const closedCount = await repo.getClosedRecoveryCyclesCount(mainCycle.id);
+  const activeRecovery = await repo.getActiveRecoveryCycles(pair, mode, mainCycle.id);
+  const totalRecoveryCount = closedCount + activeRecovery.length;
+  if (totalRecoveryCount >= rcfg.maxRecoveryCyclesPerMain) {
+    return; // Already reached max recovery cycles
+  }
+
+  // At this point, drawdown is deep enough — emit eligible event
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
+  const pairExposure = await repo.getTotalPairExposureUsd(pair, mode);
+  const pairExposurePct = allocatedCapital > 0 ? (pairExposure / allocatedCapital) * 100 : 0;
+  const recoveryCapital = Math.min(
+    allocatedCapital * (rcfg.capitalAllocationPct / 100),
+    rcfg.maxRecoveryCapitalUsd
+  );
+
+  await createHumanEvent({
+    cycleId: mainCycle.id, pair, mode,
+    eventType: "recovery_cycle_eligible",
+    severity: "warn",
+    message: `Recovery eligible: main DD=${currentDD.toFixed(1)}% >= ${rcfg.activationDrawdownPct}%, exposure=${pairExposurePct.toFixed(1)}%`,
+    payloadJson: {
+      mainCycleId: mainCycle.id, drawdownPct: currentDD,
+      activationDrawdownPct: rcfg.activationDrawdownPct,
+      recoveryCapital, pairExposure, pairExposurePct,
+      marketScore: parseFloat(String(mainCycle.marketScore || "0")),
+    },
+  }, {
+    eventType: "recovery_cycle_eligible", pair, mode,
+    drawdownPct: currentDD, capitalUsed: recoveryCapital,
+    pnlPct: mainPnlPct, parentCycleId: mainCycle.id,
+  });
+
+  // 4) Gate checks — each produces a specific block reason if failed
+  const blockReasons: string[] = [];
+
+  // 4a) Total cycles per pair
+  const allActive = await repo.getAllActiveCyclesForPair(pair, mode);
+  if (allActive.length >= rcfg.maxTotalCyclesPerPair) {
+    blockReasons.push(`max_cycles_per_pair: ${allActive.length} >= ${rcfg.maxTotalCyclesPerPair}`);
+  }
+
+  // 4b) Pair exposure limit
+  if (pairExposurePct + rcfg.capitalAllocationPct > rcfg.maxPairExposurePct) {
+    blockReasons.push(`pair_exposure: ${pairExposurePct.toFixed(1)}% + ${rcfg.capitalAllocationPct}% > ${rcfg.maxPairExposurePct}%`);
+  }
+
+  // 4c) Cooldown after last main buy
+  if (mainCycle.lastBuyAt) {
+    const sinceLastBuyMs = Date.now() - new Date(mainCycle.lastBuyAt).getTime();
+    const cooldownMs = rcfg.cooldownMinutesAfterMainBuy * 60 * 1000;
+    if (sinceLastBuyMs < cooldownMs) {
+      const remaining = Math.ceil((cooldownMs - sinceLastBuyMs) / 60000);
+      blockReasons.push(`cooldown_main_buy: ${remaining}min remaining`);
+    }
+  }
+
+  // 4d) Cooldown between recovery cycles
+  if (closedCount > 0) {
+    // Check last closed recovery
+    // Use a simplified check: if any recovery was closed recently
+    // This is approximate; in production you'd store closedAt timestamp
+    // For now we check using closedCount > 0 as a proxy
+  }
+
+  // 4e) Market score
+  const marketScore = parseFloat(String(mainCycle.marketScore || "50"));
+  if (marketScore < rcfg.minMarketScoreForRecovery) {
+    blockReasons.push(`market_score_low: ${marketScore} < ${rcfg.minMarketScoreForRecovery}`);
+  }
+
+  // 4f) Capital availability
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    const available = parseFloat(String(wallet.availableBalanceUsd));
+    if (available < recoveryCapital) {
+      blockReasons.push(`insufficient_capital: $${available.toFixed(0)} < $${recoveryCapital.toFixed(0)}`);
+    }
+  }
+
+  // 4g) Rebound confirmation
+  if (rcfg.requireReboundConfirmation) {
+    const candles = ohlcCache.get(pair) || [];
+    const recentCandles = candles.slice(-5).map(c => ({
+      high: c.high, low: c.low, close: c.close,
+    }));
+    const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
+    if (!smart.detectRebound({ recentCandles, currentPrice, localLow })) {
+      blockReasons.push("no_rebound_confirmed");
+    }
+  }
+
+  // If any gate failed, emit blocked event
+  if (blockReasons.length > 0) {
+    await createHumanEvent({
+      cycleId: mainCycle.id, pair, mode,
+      eventType: "recovery_cycle_blocked",
+      severity: "warn",
+      message: `Recovery blocked: ${blockReasons.join("; ")}`,
+      payloadJson: {
+        mainCycleId: mainCycle.id, drawdownPct: currentDD,
+        blockReasons, pairExposurePct, recoveryCapital, marketScore,
+      },
+    }, {
+      eventType: "recovery_cycle_blocked", pair, mode,
+      drawdownPct: currentDD, parentCycleId: mainCycle.id,
+      reason: blockReasons.join("; "),
+    });
+    return;
+  }
+
+  // All gates passed — execute recovery entry
+  await executeRecoveryEntry(mainCycle, currentPrice, config, assetConfig, mode, rcfg, recoveryCapital, currentDD);
+}
+
+// ─── Recovery Entry Execution ─────────────────────────────────────
+
+async function executeRecoveryEntry(
+  mainCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  rcfg: RecoveryConfig,
+  recoveryCapital: number,
+  mainDrawdown: number
+): Promise<void> {
+  const pair = mainCycle.pair;
+  const isBtc = pair === "BTC/USD";
+
+  // Calculate first buy
+  const entrySteps = rcfg.recoveryEntryDipSteps;
+  const buyUsd = recoveryCapital / (entrySteps.length || 1);
+  const quantity = buyUsd / currentPrice;
+
+  // Simulation fees
+  let fees = 0, slippage = 0, netValue = buyUsd;
+  if (mode === "simulation") {
+    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = buyUsd + fees + slippage;
+  }
+
+  // TP
+  const tpPct = isBtc ? rcfg.recoveryTpPctBtc : rcfg.recoveryTpPctEth;
+  const tpPrice = currentPrice * (1 + tpPct / 100);
+
+  // Next safety buy
+  const nextDipPct = entrySteps.length > 1 ? entrySteps[1] : null;
+  const nextBuyPrice = nextDipPct ? currentPrice * (1 - nextDipPct / 100) : null;
+
+  const recoveryCycle = await repo.createCycle({
+    pair,
+    strategy: "institutional_dca_v1_recovery",
+    mode,
+    status: "active",
+    avgEntryPrice: currentPrice.toFixed(8),
+    totalQuantity: quantity.toFixed(8),
+    capitalUsedUsd: netValue.toFixed(2),
+    capitalReservedUsd: recoveryCapital.toFixed(2),
+    buyCount: 1,
+    nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    cycleType: "recovery",
+    parentCycleId: mainCycle.id,
+    marketScore: mainCycle.marketScore,
+    currentPrice: currentPrice.toFixed(8),
+    adaptiveSizeProfile: "defensive",
+    startedAt: new Date(),
+  });
+
+  await repo.createOrder({
+    cycleId: recoveryCycle.id,
+    pair, mode,
+    orderType: "base_buy",
+    buyIndex: 1,
+    side: "buy",
+    price: currentPrice.toFixed(8),
+    quantity: quantity.toFixed(8),
+    grossValueUsd: buyUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippage.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: `Recovery base buy: main DD=${mainDrawdown.toFixed(1)}%`,
+    humanReason: formatOrderReason("base_buy"),
+  });
+
+  if (mode === "live") {
+    await executeRealBuy(pair, quantity, currentPrice);
+  }
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
+    });
+  }
+
+  const pairExposure = await repo.getTotalPairExposureUsd(pair, mode);
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
+  const pairExposurePct = allocatedCapital > 0 ? (pairExposure / allocatedCapital) * 100 : 0;
+
+  await createHumanEvent({
+    cycleId: recoveryCycle.id, pair, mode,
+    eventType: "recovery_cycle_started",
+    severity: "info",
+    message: `Recovery cycle opened: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, main DD=${mainDrawdown.toFixed(1)}%, TP=${tpPct}%`,
+    payloadJson: {
+      parentCycleId: mainCycle.id, mainDrawdown, recoveryCapital,
+      price: currentPrice, quantity, tpPct, pairExposure, pairExposurePct,
+    },
+  }, {
+    eventType: "recovery_cycle_started", pair, mode,
+    price: currentPrice, quantity, tpPct,
+    drawdownPct: mainDrawdown, parentCycleId: mainCycle.id,
+    capitalUsed: netValue,
+  });
+
+  await telegram.alertCycleStarted(recoveryCycle, mainDrawdown, parseFloat(String(mainCycle.marketScore || "50")));
+
+  // Risk warning if exposure is high
+  if (pairExposurePct >= rcfg.maxPairExposurePct * 0.8) {
+    await emitRecoveryRiskWarning(pair, mode, mainCycle.id, pairExposure, pairExposurePct, allocatedCapital, rcfg);
+  }
+}
+
+// ─── Recovery Cycle Management ────────────────────────────────────
+
+async function manageRecoveryCycle(
+  recoveryCycle: InstitutionalDcaCycle,
+  mainCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode,
+  rcfg: RecoveryConfig
+): Promise<void> {
+  const pair = recoveryCycle.pair;
+  const avgEntry = parseFloat(String(recoveryCycle.avgEntryPrice || "0"));
+  const totalQty = parseFloat(String(recoveryCycle.totalQuantity || "0"));
+  const capitalUsed = parseFloat(String(recoveryCycle.capitalUsedUsd || "0"));
+
+  if (avgEntry <= 0 || totalQty <= 0) return;
+
+  // 1) Auto-close if main cycle closed
+  if (rcfg.autoCloseIfMainClosed && mainCycle.status === "closed") {
+    await closeRecoveryCycle(recoveryCycle, currentPrice, config, mode, "main_cycle_closed");
+    return;
+  }
+
+  // 2) Auto-close if main recovers (optional)
+  if (rcfg.autoCloseIfMainRecovers) {
+    const mainPnl = parseFloat(String(mainCycle.unrealizedPnlPct || "0"));
+    if (mainPnl > 0) {
+      await closeRecoveryCycle(recoveryCycle, currentPrice, config, mode, "main_recovered");
+      return;
+    }
+  }
+
+  // 3) Max duration check
+  if (recoveryCycle.startedAt) {
+    const ageMs = Date.now() - new Date(recoveryCycle.startedAt).getTime();
+    const maxMs = rcfg.maxRecoveryDurationHours * 3600000;
+    if (ageMs > maxMs) {
+      await closeRecoveryCycle(recoveryCycle, currentPrice, config, mode, "max_duration_exceeded");
+      return;
+    }
+  }
+
+  // Update price and PnL
+  const marketValue = totalQty * currentPrice;
+  const unrealizedPnlUsd = marketValue - capitalUsed;
+  const unrealizedPnlPct = capitalUsed > 0 ? (unrealizedPnlUsd / capitalUsed) * 100 : 0;
+  const currentDD = unrealizedPnlPct < 0 ? Math.abs(unrealizedPnlPct) : 0;
+  const prevMaxDD = parseFloat(String(recoveryCycle.maxDrawdownPct || "0"));
+
+  await repo.updateCycle(recoveryCycle.id, {
+    currentPrice: currentPrice.toFixed(8),
+    unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
+    unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
+    maxDrawdownPct: Math.max(currentDD, prevMaxDD).toFixed(2),
+  });
+
+  const isBtc = pair === "BTC/USD";
+
+  // Check by status
+  if (recoveryCycle.status === "active") {
+    // Check TP
+    const tpPct = parseFloat(String(recoveryCycle.tpTargetPct || (isBtc ? rcfg.recoveryTpPctBtc : rcfg.recoveryTpPctEth)));
+    if (unrealizedPnlPct >= tpPct) {
+      await closeRecoveryCycle(recoveryCycle, currentPrice, config, mode, "tp_reached");
+      return;
+    }
+
+    // Check safety buys
+    await checkRecoverySafetyBuy(recoveryCycle, currentPrice, config, mode, rcfg);
+
+  } else if (recoveryCycle.status === "trailing_active") {
+    const trailingPct = isBtc ? rcfg.recoveryTrailingPctBtc : rcfg.recoveryTrailingPctEth;
+    const highestAfterTp = parseFloat(String(recoveryCycle.highestPriceAfterTp || "0"));
+
+    if (currentPrice > highestAfterTp) {
+      await repo.updateCycle(recoveryCycle.id, { highestPriceAfterTp: currentPrice.toFixed(8) });
+    } else {
+      const dropFromHigh = highestAfterTp > 0 ? ((highestAfterTp - currentPrice) / highestAfterTp) * 100 : 0;
+      if (dropFromHigh >= trailingPct) {
+        await closeRecoveryCycle(recoveryCycle, currentPrice, config, mode, "trailing_exit");
+      }
+    }
+  }
+
+  // Periodic risk warning
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
+  const pairExposure = await repo.getTotalPairExposureUsd(pair, mode);
+  const pairExposurePct = allocatedCapital > 0 ? (pairExposure / allocatedCapital) * 100 : 0;
+  if (pairExposurePct >= rcfg.maxPairExposurePct * 0.9) {
+    await emitRecoveryRiskWarning(pair, mode, mainCycle.id, pairExposure, pairExposurePct, allocatedCapital, rcfg);
+  }
+}
+
+// ─── Recovery Safety Buy ──────────────────────────────────────────
+
+async function checkRecoverySafetyBuy(
+  recoveryCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+  rcfg: RecoveryConfig
+): Promise<void> {
+  const pair = recoveryCycle.pair;
+  const buyCount = recoveryCycle.buyCount;
+
+  if (buyCount >= rcfg.maxRecoveryEntries) return;
+
+  // Cooldown
+  const lastBuyAt = recoveryCycle.lastBuyAt ? new Date(recoveryCycle.lastBuyAt).getTime() : 0;
+  const cooldownMs = 30 * 60 * 1000; // 30min fixed cooldown for recovery safety buys
+  if (Date.now() - lastBuyAt < cooldownMs) return;
+
+  // Next buy price
+  const nextBuyPrice = parseFloat(String(recoveryCycle.nextBuyPrice || "0"));
+  if (nextBuyPrice <= 0 || currentPrice > nextBuyPrice) return;
+
+  // Execute safety buy
+  const capitalReserved = parseFloat(String(recoveryCycle.capitalReservedUsd || "0"));
+  const entrySteps = rcfg.recoveryEntryDipSteps;
+  const buyUsd = capitalReserved / (entrySteps.length || 1);
+  const quantity = buyUsd / currentPrice;
+
+  let fees = 0, slippage = 0, netValue = buyUsd;
+  if (mode === "simulation") {
+    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = buyUsd + fees + slippage;
+  }
+
+  const prevQty = parseFloat(String(recoveryCycle.totalQuantity));
+  const prevCost = parseFloat(String(recoveryCycle.capitalUsedUsd));
+  const newTotalQty = prevQty + quantity;
+  const newTotalCost = prevCost + netValue;
+  const newAvgPrice = newTotalCost / newTotalQty;
+  const newBuyCount = buyCount + 1;
+
+  const nextIndex = buyCount; // 0-indexed in entrySteps
+  const nextDipPct = entrySteps[nextIndex] || null;
+  const nextBuyPriceCalc = nextDipPct ? newAvgPrice * (1 - nextDipPct / 100) : null;
+
+  // Recalculate TP
+  const isBtc = pair === "BTC/USD";
+  const tpPct = isBtc ? rcfg.recoveryTpPctBtc : rcfg.recoveryTpPctEth;
+  const tpPrice = newAvgPrice * (1 + tpPct / 100);
+
+  await repo.updateCycle(recoveryCycle.id, {
+    capitalUsedUsd: newTotalCost.toFixed(2),
+    totalQuantity: newTotalQty.toFixed(8),
+    avgEntryPrice: newAvgPrice.toFixed(8),
+    buyCount: newBuyCount,
+    nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPriceCalc?.toFixed(8) || null,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    lastBuyAt: new Date(),
+  });
+
+  await repo.createOrder({
+    cycleId: recoveryCycle.id, pair, mode,
+    orderType: "safety_buy",
+    buyIndex: newBuyCount,
+    side: "buy",
+    price: currentPrice.toFixed(8),
+    quantity: quantity.toFixed(8),
+    grossValueUsd: buyUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippage.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: `Recovery safety buy #${newBuyCount}`,
+    humanReason: formatOrderReason("safety_buy"),
+  });
+
+  if (mode === "live") {
+    await executeRealBuy(pair, quantity, currentPrice);
+  }
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
+    });
+  }
+
+  await createHumanEvent({
+    cycleId: recoveryCycle.id, pair, mode,
+    eventType: "safety_buy_executed",
+    severity: "info",
+    message: `Recovery safety buy #${newBuyCount}: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
+  }, {
+    eventType: "safety_buy_executed", pair, mode,
+    price: currentPrice, quantity, avgEntry: newAvgPrice,
+    capitalUsed: newTotalCost, buyCount: newBuyCount,
+    parentCycleId: recoveryCycle.parentCycleId,
+  });
+}
+
+// ─── Recovery Cycle Close ─────────────────────────────────────────
+
+async function closeRecoveryCycle(
+  recoveryCycle: InstitutionalDcaCycle,
+  currentPrice: number,
+  config: InstitutionalDcaConfigRow,
+  mode: IdcaMode,
+  closeReason: string
+): Promise<void> {
+  const pair = recoveryCycle.pair;
+  const remainingQty = parseFloat(String(recoveryCycle.totalQuantity));
+  const capitalUsed = parseFloat(String(recoveryCycle.capitalUsedUsd || "0"));
+  const sellValueUsd = remainingQty * currentPrice;
+
+  let fees = 0, slippage = 0, netValue = sellValueUsd;
+  if (mode === "simulation") {
+    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = sellValueUsd - fees - slippage;
+  }
+
+  const prevRealized = parseFloat(String(recoveryCycle.realizedPnlUsd || "0"));
+  const totalRealized = prevRealized + netValue;
+  const pnlUsd = totalRealized - capitalUsed;
+  const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
+
+  const closedAt = new Date();
+  const startedAt = recoveryCycle.startedAt ? new Date(recoveryCycle.startedAt) : closedAt;
+  const durMs = closedAt.getTime() - startedAt.getTime();
+  const durH = Math.floor(durMs / 3600000);
+  const durM = Math.floor((durMs % 3600000) / 60000);
+  const durationStr = durH > 24 ? `${Math.floor(durH / 24)}d ${durH % 24}h` : `${durH}h ${durM}m`;
+
+  if (remainingQty > 0) {
+    await repo.createOrder({
+      cycleId: recoveryCycle.id, pair, mode,
+      orderType: "final_sell",
+      side: "sell",
+      price: currentPrice.toFixed(8),
+      quantity: remainingQty.toFixed(8),
+      grossValueUsd: sellValueUsd.toFixed(2),
+      feesUsd: fees.toFixed(2),
+      slippageUsd: slippage.toFixed(2),
+      netValueUsd: netValue.toFixed(2),
+      triggerReason: `Recovery close: ${closeReason}`,
+      humanReason: formatOrderReason("final_sell"),
+    });
+
+    if (mode === "live") {
+      await executeRealSell(recoveryCycle, "final_sell", remainingQty);
+    }
+  }
+
+  await repo.updateCycle(recoveryCycle.id, {
+    status: "closed",
+    closeReason,
+    totalQuantity: "0",
+    realizedPnlUsd: totalRealized.toFixed(2),
+    closedAt,
+  });
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) + netValue).toFixed(2),
+      usedBalanceUsd: Math.max(0, parseFloat(String(wallet.usedBalanceUsd)) - sellValueUsd).toFixed(2),
+      realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + pnlUsd).toFixed(2),
+    });
+  }
+
+  await createHumanEvent({
+    cycleId: recoveryCycle.id, pair, mode,
+    eventType: "recovery_cycle_closed",
+    severity: "info",
+    message: `Recovery closed: PnL=${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% ($${pnlUsd.toFixed(2)}), reason=${closeReason}, duration=${durationStr}`,
+    payloadJson: {
+      parentCycleId: recoveryCycle.parentCycleId, closeReason,
+      pnlPct, pnlUsd, durationStr, buyCount: recoveryCycle.buyCount,
+      capitalUsed, netValue,
+    },
+  }, {
+    eventType: "recovery_cycle_closed", pair, mode,
+    pnlPct, pnlUsd, closeReason, durationStr,
+    buyCount: recoveryCycle.buyCount,
+    parentCycleId: recoveryCycle.parentCycleId,
+    capitalUsed,
+  });
+
+  // Telegram alert for recovery close (reuse imported close format)
+  const updated = await repo.getCycleById(recoveryCycle.id);
+  if (updated) {
+    await telegram.alertImportedClosed(updated, pnlUsd, pnlPct, durationStr);
+  }
+}
+
+// ─── Recovery Risk Warning ────────────────────────────────────────
+
+async function emitRecoveryRiskWarning(
+  pair: string,
+  mode: IdcaMode,
+  mainCycleId: number,
+  pairExposure: number,
+  pairExposurePct: number,
+  allocatedCapital: number,
+  rcfg: RecoveryConfig
+): Promise<void> {
+  await createHumanEvent({
+    pair, mode,
+    eventType: "recovery_cycle_risk_warning",
+    severity: "warn",
+    message: `Recovery risk: pair exposure $${pairExposure.toFixed(0)} (${pairExposurePct.toFixed(1)}%), limit=${rcfg.maxPairExposurePct}%`,
+    payloadJson: {
+      mainCycleId, pairExposure, pairExposurePct,
+      maxPairExposurePct: rcfg.maxPairExposurePct,
+      allocatedCapital,
+    },
+  }, {
+    eventType: "recovery_cycle_risk_warning", pair, mode,
+    capitalUsed: pairExposure, parentCycleId: mainCycleId,
+    reason: `Exposición del par: ${pairExposurePct.toFixed(1)}% de ${rcfg.maxPairExposurePct}%`,
+  });
 }

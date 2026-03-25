@@ -173,6 +173,58 @@ export async function getClosedPlusCyclesCount(
   return rows.length;
 }
 
+export async function getActiveRecoveryCycles(
+  pair: string,
+  mode: string,
+  parentCycleId: number
+): Promise<InstitutionalDcaCycle[]> {
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.cycleType, "recovery"),
+        eq(institutionalDcaCycles.parentCycleId, parentCycleId),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+}
+
+export async function getClosedRecoveryCyclesCount(
+  parentCycleId: number
+): Promise<number> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.cycleType, "recovery"),
+        eq(institutionalDcaCycles.parentCycleId, parentCycleId),
+        eq(institutionalDcaCycles.status, "closed")
+      )
+    );
+  return rows.length;
+}
+
+export async function getTotalPairExposureUsd(
+  pair: string,
+  mode: string
+): Promise<number> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+  return rows.reduce((sum, c) => sum + parseFloat(String(c.capitalUsedUsd || "0")), 0);
+}
+
 export async function getAllActiveCyclesForPair(pair: string, mode: string): Promise<InstitutionalDcaCycle[]> {
   return db
     .select()

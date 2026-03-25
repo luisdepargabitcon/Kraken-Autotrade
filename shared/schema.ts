@@ -970,6 +970,17 @@ export const institutionalDcaConfig = pgTable("institutional_dca_config", {
     entrySizingMode: "fixed", baseTpPctBtc: 4.0, baseTpPctEth: 4.5,
     trailingPctBtc: 1.0, trailingPctEth: 1.2,
   }),
+  recoveryConfigJson: jsonb("recovery_config_json").notNull().default({
+    enabled: false, activationDrawdownPct: 25, maxRecoveryCyclesPerMain: 1,
+    maxTotalCyclesPerPair: 3, maxPairExposurePct: 40, capitalAllocationPct: 10,
+    maxRecoveryCapitalUsd: 500, cooldownMinutesAfterMainBuy: 120,
+    cooldownMinutesBetweenRecovery: 360, minMarketScoreForRecovery: 40,
+    requireReboundConfirmation: true, recoveryTpPctBtc: 2.5, recoveryTpPctEth: 3.0,
+    maxRecoveryEntries: 2, recoveryEntryDipSteps: [2.0, 4.0],
+    recoveryTrailingPctBtc: 0.8, recoveryTrailingPctEth: 1.0,
+    autoCloseIfMainClosed: true, autoCloseIfMainRecovers: false,
+    maxRecoveryDurationHours: 168,
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
