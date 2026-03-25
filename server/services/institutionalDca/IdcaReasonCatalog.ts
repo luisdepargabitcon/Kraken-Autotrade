@@ -252,9 +252,16 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
 
   // ═══ BLOQUEO ESPECÍFICO (reason_codes) ═══
 
+  insufficient_base_price_data: {
+    humanTitle: "Datos de precio base insuficientes",
+    humanTemplate: "No se compró {pair} porque no hay suficientes datos de mercado (velas) para calcular una referencia de precio fiable. El sistema bloquea la entrada hasta disponer de datos suficientes.",
+    emoji: "⚠️",
+    defaultSeverity: "warn",
+  },
+
   insufficient_dip: {
     humanTitle: "Caída insuficiente",
-    humanTemplate: "No se compró {pair} porque el precio no ha caído lo suficiente desde su máximo reciente. Se requiere una caída mayor para activar la compra.",
+    humanTemplate: "No se compró {pair} porque el precio no ha caído lo suficiente desde el precio base de referencia. Se requiere una caída mayor para activar la compra.",
     emoji: "🟡",
     defaultSeverity: "info",
   },

@@ -22,7 +22,10 @@ import type {
   DynamicTpConfig,
   IdcaCycleType,
   PlusConfig,
+  BasePriceResult,
+  DipReferenceMethod,
 } from "./IdcaTypes";
+import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 
 const TAG = "[IDCA]";
@@ -68,7 +71,7 @@ let tickCount = 0;
 
 // Cache for market data
 const priceCache = new Map<string, number>();
-const ohlcCache = new Map<string, smart.OhlcCandle[]>();
+const ohlcCache = new Map<string, TimestampedCandle[]>();
 
 // ─── Human Event Helper ───────────────────────────────────────────
 
@@ -412,13 +415,15 @@ async function checkEntry(
         eventType: "entry_check_blocked",
         severity: "info",
         message: check.blockReasons.map(r => r.code).join(", "),
-        payloadJson: { blockReasons: check.blockReasons },
+        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice },
       }, {
         eventType: "entry_check_blocked",
         reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
         pair, mode,
         blockReasons: check.blockReasons,
-        dipPct: check.dipPct,
+        entryDipPct: check.entryDipPct,
+        entryBasePrice: check.basePrice?.price,
+        entryBasePriceType: check.basePrice?.type,
         marketScore: check.marketScore,
         sizeProfile: check.sizeProfile,
       });
@@ -427,15 +432,16 @@ async function checkEntry(
   }
 
   // Entry allowed — create cycle and execute base buy
-  console.log(`${TAG}[ENTRY_CHECK] ${pair}: Entry allowed, score=${check.marketScore}, dip=${check.dipPct?.toFixed(2)}%`);
+  const bp = check.basePrice!;
+  console.log(`${TAG}[ENTRY_CHECK] ${pair}: Entry allowed | BasePrice=$${bp.price.toFixed(2)} | BaseType=${bp.type} | Window=${config.localHighLookbackMinutes}min | EntryDip=${check.entryDipPct?.toFixed(2)}% | Score=${check.marketScore}`);
 
   await createHumanEvent({
     pair, mode,
     eventType: "entry_check_passed",
     severity: "info",
-    message: `Entry check passed: score=${check.marketScore}, dip=${check.dipPct?.toFixed(2)}%`,
-    payloadJson: { marketScore: check.marketScore, dipPct: check.dipPct, sizeProfile: check.sizeProfile },
-  }, { eventType: "entry_check_passed", pair, mode, dipPct: check.dipPct, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
+    message: `Entry check passed: BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
+    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp },
+  }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
 
   // Calculate capital for this cycle
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
@@ -521,6 +527,13 @@ async function checkEntry(
     lastBuyAt: new Date(),
     tpBreakdownJson: tpBreakdown,
     cycleType: "main",
+    // Persisted entry base price — deterministic, auditable
+    basePrice: bp.price.toFixed(8),
+    basePriceType: bp.type,
+    basePriceWindowMinutes: bp.windowMinutes,
+    basePriceTimestamp: bp.timestamp,
+    basePriceMetaJson: bp.meta || null,
+    entryDipPct: (check.entryDipPct || 0).toFixed(4),
   });
 
   // Create order record
@@ -537,7 +550,7 @@ async function checkEntry(
     feesUsd: fees.toFixed(2),
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
-    triggerReason: `Entry dip ${check.dipPct?.toFixed(2)}%, score=${check.marketScore}`,
+    triggerReason: `Entry dip ${check.entryDipPct?.toFixed(2)}% from base $${bp.price.toFixed(2)} (${bp.type}), score=${check.marketScore}`,
     humanReason: formatOrderReason("base_buy"),
   });
 
@@ -560,7 +573,8 @@ async function checkEntry(
   const baseFmtCtx: FormatContext = {
     eventType: "cycle_started", pair, mode,
     price: currentPrice, quantity, capitalUsed: netValue,
-    dipPct: check.dipPct, marketScore: check.marketScore,
+    entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type,
+    marketScore: check.marketScore,
     buyCount: 1, sizeProfile: check.sizeProfile,
   };
 
@@ -568,8 +582,8 @@ async function checkEntry(
     cycleId: cycle.id, pair, mode,
     eventType: "cycle_started",
     severity: "info",
-    message: `Cycle started: baseBuy=${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
-    payloadJson: { price: currentPrice, quantity, capital: netValue, sizeProfile: check.sizeProfile },
+    message: `Cycle started: baseBuy=${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)} | BasePrice=$${bp.price.toFixed(2)} (${bp.type}) | EntryDip=${check.entryDipPct?.toFixed(2)}%`,
+    payloadJson: { price: currentPrice, quantity, capital: netValue, sizeProfile: check.sizeProfile, basePrice: bp },
   }, baseFmtCtx);
 
   await createHumanEvent({
@@ -579,7 +593,7 @@ async function checkEntry(
     message: `Base buy #1: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
   }, { ...baseFmtCtx, eventType: "base_buy_executed" });
 
-  await telegram.alertCycleStarted(cycle, check.dipPct || 0, check.marketScore || 0);
+  await telegram.alertCycleStarted(cycle, check.entryDipPct || 0, check.marketScore || 0);
   await telegram.alertBuyExecuted(cycle, order, "base_buy");
 }
 
@@ -759,12 +773,6 @@ async function handleActiveState(
   // 4. Check safety buy levels — skip if imported + soloSalida
   if (!(cycle.isImported && cycle.soloSalida)) {
     await checkSafetyBuy(cycle, currentPrice, config, assetConfig, mode);
-  }
-
-  // 5. Update recent high
-  const currentHigh = priceCache.get(`${pair}_recent_high`) || 0;
-  if (currentPrice > currentHigh) {
-    priceCache.set(`${pair}_recent_high`, currentPrice);
   }
 }
 
@@ -1268,22 +1276,42 @@ async function performEntryCheck(
     }
   }
 
-  // Calculate dip from local high
-  const localHigh = await getLocalHigh(pair, config.localHighLookbackMinutes);
-  const dipPct = localHigh > 0 ? ((localHigh - currentPrice) / localHigh) * 100 : 0;
+  // Calculate base price using deterministic method
+  const dipRefMethod = (assetConfig.dipReference || "hybrid") as DipReferenceMethod;
+  const candles = ohlcCache.get(pair) || [];
+  const basePriceResult = smart.computeBasePrice({
+    candles,
+    lookbackMinutes: config.localHighLookbackMinutes,
+    method: dipRefMethod,
+    currentPrice,
+  });
+
+  if (!basePriceResult.isReliable) {
+    blocks.push({ code: "insufficient_base_price_data", message: basePriceResult.reason, timestamp: now });
+  }
+
+  const entryDipPct = basePriceResult.price > 0
+    ? ((basePriceResult.price - currentPrice) / basePriceResult.price) * 100
+    : 0;
   const minDip = parseFloat(String(assetConfig.minDipPct));
 
-  if (dipPct < minDip) {
-    blocks.push({ code: "insufficient_dip", message: `Dip ${dipPct.toFixed(2)}% < min ${minDip}%`, timestamp: now });
+  if (basePriceResult.isReliable && entryDipPct < minDip) {
+    blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip}% (BasePrice=$${basePriceResult.price.toFixed(2)}, Type=${basePriceResult.type})`, timestamp: now });
   }
 
   // BTC gate for ETH
   if (pair === "ETH/USD" && config.btcMarketGateForEthEnabled) {
     const btcPrice = await getCurrentPrice("BTC/USD");
-    const btcHigh = await getLocalHigh("BTC/USD", config.localHighLookbackMinutes);
-    const btcDip = btcHigh > 0 ? ((btcHigh - btcPrice) / btcHigh) * 100 : 0;
+    const btcCandles = ohlcCache.get("BTC/USD") || [];
+    const btcBasePrice = smart.computeBasePrice({
+      candles: btcCandles,
+      lookbackMinutes: config.localHighLookbackMinutes,
+      method: dipRefMethod,
+      currentPrice: btcPrice,
+    });
+    const btcDip = btcBasePrice.price > 0 ? ((btcBasePrice.price - btcPrice) / btcBasePrice.price) * 100 : 0;
     if (btcDip > 10) {
-      blocks.push({ code: "btc_breakdown_blocks_eth", message: `BTC dip ${btcDip.toFixed(1)}% > 10%`, pair: "BTC/USD", timestamp: now });
+      blocks.push({ code: "btc_breakdown_blocks_eth", message: `BTC dip ${btcDip.toFixed(1)}% > 10% (base=$${btcBasePrice.price.toFixed(2)})`, pair: "BTC/USD", timestamp: now });
     }
   }
 
@@ -1293,23 +1321,26 @@ async function performEntryCheck(
   let sizeProfile: IdcaSizeProfile = "balanced";
 
   if (config.smartModeEnabled) {
-    const candles = ohlcCache.get(pair) || [];
-    if (candles.length >= 20) {
-      const closes = candles.map(c => c.close);
+    const scoreCandles = ohlcCache.get(pair) || [];
+    if (scoreCandles.length >= 20) {
+      const closes = scoreCandles.map(c => c.close);
       const ema20 = smart.computeEMA(closes, 20);
       const ema50 = smart.computeEMA(closes, Math.min(50, closes.length));
       const rsi = smart.computeRSI(closes);
-      const atrPct = smart.computeATRPct(candles);
+      const atrPct = smart.computeATRPct(scoreCandles);
       volatilityScore = atrPct;
 
       const weights = (config.marketScoreWeightsJson || {}) as smart.MarketScoreInput & Record<string, number>;
 
+      // Use basePriceResult as the reference high for score computation
+      const scoreLocalHigh = basePriceResult.price > 0 ? basePriceResult.price : Math.max(...closes.slice(-60));
+
       // Get BTC score for ETH
       let btcScore: number | undefined;
       if (pair === "ETH/USD") {
-        const btcCandles = ohlcCache.get("BTC/USD") || [];
-        if (btcCandles.length >= 20) {
-          const btcCloses = btcCandles.map(c => c.close);
+        const btcScoreCandles = ohlcCache.get("BTC/USD") || [];
+        if (btcScoreCandles.length >= 20) {
+          const btcCloses = btcScoreCandles.map(c => c.close);
           const btcEma20 = smart.computeEMA(btcCloses, 20);
           const btcRsi = smart.computeRSI(btcCloses);
           btcScore = smart.computeMarketScore({
@@ -1333,9 +1364,9 @@ async function performEntryCheck(
         prevEma20: ema20[Math.max(0, ema20.length - 2)],
         prevEma50: ema50[Math.max(0, ema50.length - 2)],
         rsi,
-        currentVolume: 1, // Simplified — would use actual volume
+        currentVolume: 1,
         avgVolume: 1,
-        localHigh,
+        localHigh: scoreLocalHigh,
         btcScore,
       }, config.marketScoreWeightsJson as any);
 
@@ -1351,9 +1382,9 @@ async function performEntryCheck(
 
   // Rebound confirmation
   let reboundConfirmed = true;
-  if (assetConfig.requireReboundConfirmation && dipPct >= minDip) {
-    const candles = ohlcCache.get(pair) || [];
-    const recentCandles = candles.slice(-5);
+  if (assetConfig.requireReboundConfirmation && entryDipPct >= minDip) {
+    const reboundCandles = ohlcCache.get(pair) || [];
+    const recentCandles = reboundCandles.slice(-5);
     const localLow = recentCandles.length > 0
       ? Math.min(...recentCandles.map(c => c.low))
       : currentPrice;
@@ -1369,7 +1400,8 @@ async function performEntryCheck(
     marketScore,
     volatilityScore,
     sizeProfile,
-    dipPct,
+    entryDipPct,
+    basePrice: basePriceResult,
     reboundConfirmed,
   };
 }
@@ -1447,19 +1479,6 @@ async function getCurrentPrice(pair: string): Promise<number> {
   return priceCache.get(pair) || 0;
 }
 
-async function getLocalHigh(pair: string, lookbackMinutes: number): Promise<number> {
-  const candles = ohlcCache.get(pair) || [];
-  if (candles.length === 0) return 0;
-
-  const cutoff = Date.now() - lookbackMinutes * 60 * 1000;
-  // Use all cached candles as approximation
-  let high = 0;
-  for (const c of candles) {
-    if (c.high > high) high = c.high;
-  }
-  return high;
-}
-
 function getVolatility(pair: string): number {
   const candles = ohlcCache.get(pair) || [];
   if (candles.length < 5) return 2.0; // Default
@@ -1475,10 +1494,11 @@ async function updateOhlcvCache(): Promise<void> {
       // Get 1h candles for analysis (last 100)
       const candles = await (dataExchange as any).getOHLC?.(pair, 60);
       if (candles && Array.isArray(candles) && candles.length > 0) {
-        const mapped: smart.OhlcCandle[] = candles.map((c: any) => ({
+        const mapped: TimestampedCandle[] = candles.map((c: any) => ({
           high: parseFloat(String(c.high || c[2] || 0)),
           low: parseFloat(String(c.low || c[3] || 0)),
           close: parseFloat(String(c.close || c[4] || 0)),
+          time: c.time ? new Date(c.time).getTime() : (c[0] ? c[0] * 1000 : Date.now()),
         }));
         ohlcCache.set(pair, mapped);
 
@@ -1727,7 +1747,7 @@ async function checkPlusActivation(
     payloadJson: { parentCycleId: mainCycle.id, dipFromLastBuy, plusCapital, tpPct },
   }, {
     eventType: "plus_cycle_activated", pair, mode,
-    price: currentPrice, quantity, dipPct: dipFromLastBuy,
+    price: currentPrice, quantity, entryDipPct: dipFromLastBuy,
     parentCycleId: mainCycle.id, tpPct,
   });
 

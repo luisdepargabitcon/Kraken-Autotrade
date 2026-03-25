@@ -78,6 +78,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -1503,6 +1504,8 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
               <div className="text-[10px] text-muted-foreground mt-1">
                 Inicio: {fmtDate(cycle.startedAt)} | Compras: {cycle.buyCount} | Score: {cycle.marketScore || "—"}
                 {cycle.tpTargetPct && ` | TP: ${parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%`}
+                {cycle.basePrice && ` | Base: $${fmtPrice(cycle.basePrice)} (${cycle.basePriceType || "—"})`}
+                {cycle.entryDipPct && ` | EntryDip: ${parseFloat(String(cycle.entryDipPct)).toFixed(2)}%`}
                 {cycle.parentCycleId && ` | Parent: #${cycle.parentCycleId}`}
                 {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
                 {cycle.isImported && cycle.sourceType && ` | Origen: ${cycle.sourceType}`}
@@ -1917,6 +1920,8 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
                     <div className="text-[10px] text-muted-foreground mt-0.5">
                       {fmtDate(cycle.startedAt)} → {fmtDate(cycle.closedAt)} • {durationStr} • {cycle.buyCount} compra{cycle.buyCount !== 1 ? "s" : ""}
                       {cycle.closeReason && ` • ${closeReasonLabel[cycle.closeReason] || cycle.closeReason}`}
+                      {cycle.basePrice && ` • Base: $${fmtPrice(cycle.basePrice)} (${cycle.basePriceType || "—"})`}
+                      {cycle.entryDipPct && ` • EntryDip: ${parseFloat(String(cycle.entryDipPct)).toFixed(2)}%`}
                     </div>
                   </div>
                 </div>
@@ -1990,7 +1995,7 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
           </div>
           <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
             {events.filter((ev: any) => ev.eventType !== "cycle_management").map((ev: any) => {
-              const evTitle = (ev as any).humanTitle || EVENT_TITLE_ES[ev.eventType] || ev.eventType.replace(/_/g, " ");
+              const evTitle = (ev as any).humanTitle || EVENT_TYPE_LABELS[ev.eventType] || ev.eventType.replace(/_/g, " ");
               return (
                 <div key={ev.id} className="flex items-start gap-2 text-[10px] font-mono py-0.5">
                   <span className="text-muted-foreground shrink-0 w-[100px]">{fmtDate(ev.createdAt)}</span>
@@ -2187,22 +2192,28 @@ function SimulationTab() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// EVENTS TAB
+// EVENTS TAB — Sistema visual moderno con doble capa
 // ════════════════════════════════════════════════════════════════════
 
-const SEVERITY_COLOR: Record<string, string> = {
-  info: "text-blue-400",
-  warn: "text-yellow-400",
-  error: "text-red-400",
-  critical: "text-red-500 font-bold",
+const ORDER_TYPE_ES: Record<string, string> = {
+  base_buy: "Compra inicial",
+  safety_buy: "Compra adicional",
+  partial_sell: "Venta parcial (TP)",
+  final_sell: "Venta final (trailing)",
+  breakeven_sell: "Venta de protección",
+  emergency_sell: "Venta de emergencia",
 };
 
-const SEVERITY_BG: Record<string, string> = {
-  info: "bg-blue-500/10 border-blue-500/20",
-  warn: "bg-yellow-500/10 border-yellow-500/20",
-  error: "bg-red-500/10 border-red-500/20",
-  critical: "bg-red-500/20 border-red-500/30",
-};
+function translateOrderReason(order: any): string {
+  if (order.humanReason) return order.humanReason;
+  const ot = order.orderType;
+  if (ORDER_TYPE_ES[ot]) return ORDER_TYPE_ES[ot] + (order.triggerReason ? ` — ${order.triggerReason}` : "");
+  return order.triggerReason || "—";
+}
+
+function translateOrderType(ot: string): string {
+  return ORDER_TYPE_ES[ot] || ot.replace(/_/g, " ");
+}
 
 function EventsTab() {
   const [subTab, setSubTab] = useState<"live" | "events">("live");
@@ -2216,7 +2227,7 @@ function EventsTab() {
         </Button>
         <Button size="sm" variant={subTab === "events" ? "default" : "outline"}
           className="text-xs gap-1" onClick={() => setSubTab("events")}>
-          <Terminal className="h-3 w-3" /> Log de Eventos
+          <Terminal className="h-3 w-3" /> Historial de Eventos
         </Button>
       </div>
       {subTab === "live" ? <LiveMonitorPanel /> : <EventsLogPanel />}
@@ -2224,160 +2235,13 @@ function EventsTab() {
   );
 }
 
-// ─── TRADUCCIONES ESPAÑOLAS (fallback client-side) ─────────────────
-
-const EVENT_TITLE_ES: Record<string, string> = {
-  entry_check_passed: "✅ Evaluación de entrada aprobada",
-  entry_check_blocked: "🚫 Evaluación de entrada rechazada",
-  buy_blocked: "🟠 Compra bloqueada",
-  cycle_started: "🟢 Ciclo de compra iniciado",
-  base_buy_executed: "💰 Compra inicial ejecutada",
-  safety_buy_executed: "💰 Compra adicional (safety buy)",
-  protection_armed: "🛡️ Protección armada (break-even)",
-  trailing_activated: "🎯 Trailing activado",
-  tp_armed: "🎯 Toma de ganancias activada",
-  trailing_exit: "✅ Cierre por trailing stop",
-  breakeven_exit: "🛡️ Cierre por protección de capital",
-  emergency_close_all: "🚨 Cierre de emergencia total",
-  mode_transition: "🔄 Cambio de modo del módulo",
-  module_max_drawdown_reached: "⛔ Drawdown máximo del módulo alcanzado",
-  smart_adjustment_applied: "🧠 Ajuste inteligente aplicado",
-  partial_sell_executed: "📤 Venta parcial ejecutada",
-  config_changed: "⚙️ Configuración modificada",
-  imported_position_created: "📥 Posición importada",
-  imported_position_closed: "📤 Posición importada cerrada",
-  plus_cycle_activated: "⚡ Ciclo Plus activado",
-  plus_cycle_closed: "⚡ Ciclo Plus cerrado",
-};
-
-const BLOCK_REASON_ES: Record<string, string> = {
-  no_rebound_confirmed: "Esperando confirmación de rebote",
-  insufficient_dip: "Caída insuficiente",
-  market_score_too_low: "Score de mercado demasiado bajo",
-  module_exposure_max_reached: "Exposición máxima del módulo alcanzada",
-  asset_exposure_max_reached: "Exposición máxima del activo alcanzada",
-  cycle_already_active: "Ya existe un ciclo activo para este par",
-  pair_not_allowed: "Par no permitido",
-  insufficient_simulation_balance: "Saldo de simulación insuficiente",
-  btc_breakdown_blocks_eth: "Caída de BTC bloquea entrada en ETH",
-  breakdown_detected: "Ruptura de estructura detectada",
-  spread_too_high: "Spread demasiado alto",
-  sell_pressure_too_high: "Presión de venta elevada",
-  combined_exposure_exceeded: "Exposición combinada excedida",
-};
-
-const ORDER_TYPE_ES: Record<string, string> = {
-  base_buy: "Compra inicial",
-  safety_buy: "Compra adicional",
-  partial_sell: "Venta parcial (TP)",
-  final_sell: "Venta final (trailing)",
-  breakeven_sell: "Venta de protección",
-  emergency_sell: "Venta de emergencia",
-};
-
-function translateEventTitle(ev: any): string {
-  if (ev.humanTitle) return ev.humanTitle;
-  return EVENT_TITLE_ES[ev.eventType] || ev.eventType.replace(/_/g, " ");
-}
-
-function translateMessage(ev: any): string {
-  if (ev.technicalSummary) return ev.technicalSummary;
-  const msg = ev.message || "";
-  if (ev.eventType === "entry_check_blocked" || ev.eventType === "buy_blocked") {
-    const code = msg.trim();
-    if (BLOCK_REASON_ES[code]) return BLOCK_REASON_ES[code];
-  }
-  return formatMessageES(ev);
-}
-
-function formatMessageES(ev: any): string {
-  const msg = ev.message || "";
-  const pair = ev.pair || "";
-  const mode = ev.mode === "simulation" ? "SIM" : ev.mode === "live" ? "LIVE" : (ev.mode || "").toUpperCase();
-
-  if (ev.eventType === "base_buy_executed" || ev.eventType === "safety_buy_executed") {
-    const match = msg.match(/(?:Base|Safety) buy #(\d+):\s*([\d.]+)\s*@\s*([\d.]+)/i);
-    if (match) return `${pair} | Compra #${match[1]}: ${match[2]} @ $${parseFloat(match[3]).toLocaleString("es-ES", {minimumFractionDigits:2})} [${mode}]`;
-  }
-  if (ev.eventType === "cycle_started") {
-    const match = msg.match(/seedQty=([\d.]+)\s*@\s*([\d.]+)/i);
-    if (match) return `${pair} | Nuevo ciclo: ${match[1]} @ $${parseFloat(match[2]).toLocaleString("es-ES", {minimumFractionDigits:2})} [${mode}]`;
-  }
-  if (ev.eventType === "entry_check_passed") {
-    const match = msg.match(/score=(\d+),?\s*dip=([\d.]+)/i);
-    if (match) return `${pair} | Score=${match[1]}, Caída=${match[2]}% — Entrada aprobada [${mode}]`;
-  }
-  if (ev.eventType === "tp_armed") {
-    return `${pair} | ${msg.replace("TP armed:", "TP activado:").replace("sold", "vendido").replace("trailing", "trailing").replace("on remaining", "restante")} [${mode}]`;
-  }
-  if (ev.eventType === "trailing_exit") {
-    return `${pair} | ${msg.replace("Trailing exit:", "Cierre trailing:").replace("sold", "vendido").replace("realized", "realizado")} [${mode}]`;
-  }
-  if (ev.eventType === "breakeven_exit") {
-    return `${pair} | ${msg.replace("Breakeven exit:", "Cierre protección:")} [${mode}]`;
-  }
-  if (ev.eventType === "mode_transition") {
-    return msg.replace("Mode changed:", "Modo cambiado:");
-  }
-  if (ev.eventType === "emergency_close_all") {
-    return msg.replace("Emergency close:", "Cierre emergencia:");
-  }
-  return msg;
-}
-
-function translateOrderReason(order: any): string {
-  if (order.humanReason) return order.humanReason;
-  const ot = order.orderType;
-  if (ORDER_TYPE_ES[ot]) return ORDER_TYPE_ES[ot] + (order.triggerReason ? ` — ${order.triggerReason}` : "");
-  return order.triggerReason || "—";
-}
-
-function translateOrderType(ot: string): string {
-  return ORDER_TYPE_ES[ot] || ot.replace(/_/g, " ");
-}
-
-// ─── LIVE MONITOR PANEL ────────────────────────────────────────────
+// ─── LIVE MONITOR PANEL (nuevo: tarjetas visuales) ─────────────────
 
 function LiveMonitorPanel() {
   const { data: health } = useIdcaHealth();
   const { data: events } = useIdcaEvents({ limit: 30 });
   const { data: config } = useIdcaConfig();
   const { data: controls } = useIdcaControls();
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [events, autoScroll]);
-
-  const liveLines = (events || []).map((ev) => {
-    const ts = fmtDate(ev.createdAt);
-    const sev = ev.severity.toUpperCase().padEnd(8);
-    const pair = (ev.pair || "SYS").padEnd(8);
-    const title = translateEventTitle(ev);
-    const detail = translateMessage(ev);
-    return `[${ts}] ${sev} ${pair}| ${title} | ${detail}`;
-  });
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(liveLines.join("\n")).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [liveLines]);
-
-  const handleDownload = useCallback(() => {
-    const blob = new Blob([liveLines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `idca_live_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.log`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [liveLines]);
 
   return (
     <div className="space-y-3">
@@ -2399,58 +2263,25 @@ function LiveMonitorPanel() {
         </CardContent>
       </Card>
 
-      {/* Live Console */}
+      {/* Live Event Cards */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-mono flex items-center gap-2">
-              <Radio className="h-4 w-4 text-green-500 animate-pulse" /> CONSOLA EN TIEMPO REAL
-              <Badge variant="outline" className="text-[10px] ml-2">{liveLines.length} líneas</Badge>
+              <Radio className="h-4 w-4 text-green-500 animate-pulse" /> ACTIVIDAD EN TIEMPO REAL
+              <Badge variant="outline" className="text-[10px] ml-2">{(events || []).length} eventos</Badge>
             </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={() => setAutoScroll(!autoScroll)}>
-                {autoScroll ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                {autoScroll ? "Pausar scroll" : "Auto-scroll"}
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleCopy}>
-                {copied ? <ClipboardCheck className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
-                {copied ? "Copiado" : "Copiar"}
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleDownload}>
-                <Download className="h-3 w-3" /> Descargar .log
-              </Button>
-            </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="bg-black/80 rounded-b-lg border-t border-border/30 font-mono text-[11px] leading-relaxed overflow-auto max-h-[500px] p-3">
-            {liveLines.length === 0 ? (
-              <div className="text-muted-foreground text-center py-8">Sin actividad reciente. El scheduler genera eventos al ejecutar ticks.</div>
-            ) : (
-              liveLines.map((line, i) => {
-                const ev = (events || [])[i];
-                const sev = ev?.severity || "info";
-                return (
-                  <div key={ev?.id || i} className={cn(
-                    "py-0.5 px-1 rounded-sm hover:bg-white/5 whitespace-pre",
-                    sev === "critical" && "bg-red-500/10",
-                    sev === "error" && "bg-red-500/5",
-                    sev === "warn" && "bg-yellow-500/5",
-                  )}>
-                    <span className={SEVERITY_COLOR[sev]}>{line}</span>
-                  </div>
-                );
-              })
-            )}
-            <div ref={logEndRef} />
-          </div>
+        <CardContent className="pt-0">
+          <IdcaLiveEventsFeed events={events || []} />
         </CardContent>
       </Card>
     </div>
   );
 }
 
-// ─── EVENTS LOG PANEL ──────────────────────────────────────────────
+// ─── EVENTS LOG PANEL (nuevo: tarjetas con filtros) ────────────────
 
 function EventsLogPanel() {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
@@ -2459,34 +2290,44 @@ function EventsLogPanel() {
   const [copied, setCopied] = useState(false);
   const { data: events, isLoading } = useIdcaEvents({ limit: 200 });
 
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-
   const filtered = (events || []).filter((ev) => {
     if (severityFilter !== "all" && ev.severity !== severityFilter) return false;
-    if (typeFilter && !ev.eventType.includes(typeFilter)) return false;
+    if (typeFilter && ev.eventType !== typeFilter) return false;
     if (searchText) {
       const q = searchText.toLowerCase();
-      const title = translateEventTitle(ev).toLowerCase();
-      const detail = translateMessage(ev).toLowerCase();
-      const hMsg = ((ev as any).humanMessage || "").toLowerCase();
-      if (!title.includes(q) && !detail.includes(q) && !ev.eventType.toLowerCase().includes(q) && !hMsg.includes(q)) return false;
+      const searchable = [
+        ev.eventType, ev.pair, ev.message, ev.mode,
+        (ev as any).humanTitle, (ev as any).humanMessage,
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!searchable.includes(q)) return false;
     }
     return true;
   });
 
-  const toCSV = useCallback(() => {
-    const header = "id,timestamp,severity,type,pair,mode,humanTitle,humanMessage,technicalSummary,message\n";
-    const rows = filtered.map(ev => {
-      const ht = ((ev as any).humanTitle || "").replace(/"/g, '""');
-      const hm = ((ev as any).humanMessage || "").replace(/"/g, '""');
-      const ts = ((ev as any).technicalSummary || "").replace(/"/g, '""');
-      return `${ev.id},${ev.createdAt},${ev.severity},${ev.eventType},${ev.pair || ""},${ev.mode || ""},"${ht}","${hm}","${ts}","${(ev.message || "").replace(/"/g, '""')}"`;
-    }).join("\n");
-    return header + rows;
+  const uniqueTypes = [...new Set((events || []).map(e => e.eventType))].sort();
+
+  const handleDownloadCSV = useCallback(() => {
+    const header = "id,timestamp,severity,type,pair,mode,message\n";
+    const rows = filtered.map(ev =>
+      `${ev.id},${ev.createdAt},${ev.severity},${ev.eventType},${ev.pair || ""},${ev.mode || ""},"${(ev.message || "").replace(/"/g, '""')}"`
+    ).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }, [filtered]);
 
-  const toJSON = useCallback(() => {
-    return JSON.stringify(filtered, null, 2);
+  const handleDownloadJSON = useCallback(() => {
+    const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }, [filtered]);
 
   const handleCopy = useCallback(() => {
@@ -2498,28 +2339,6 @@ function EventsLogPanel() {
       setTimeout(() => setCopied(false), 2000);
     });
   }, [filtered]);
-
-  const handleDownloadCSV = useCallback(() => {
-    const blob = new Blob([toCSV()], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [toCSV]);
-
-  const handleDownloadJSON = useCallback(() => {
-    const blob = new Blob([toJSON()], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `idca_events_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [toJSON]);
-
-  const uniqueTypes = [...new Set((events || []).map(e => e.eventType))].sort();
 
   if (isLoading) return <div className="text-center py-8 text-muted-foreground">Cargando eventos...</div>;
 
@@ -2534,22 +2353,24 @@ function EventsLogPanel() {
               <select className="bg-background border border-border rounded px-2 py-1 text-xs"
                 value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
                 <option value="all">Todas severidades</option>
-                <option value="info">Info</option>
-                <option value="warn">Warning</option>
-                <option value="error">Error</option>
-                <option value="critical">Critical</option>
+                <option value="info">ℹ️ Info</option>
+                <option value="warn">⚠️ Warning</option>
+                <option value="error">🔴 Error</option>
+                <option value="critical">🚨 Critical</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5">
               <select className="bg-background border border-border rounded px-2 py-1 text-xs"
                 value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                 <option value="">Todos los tipos</option>
-                {uniqueTypes.map(t => <option key={t} value={t}>{EVENT_TITLE_ES[t]?.replace(/^[^\s]+\s/, "") || t.replace(/_/g, " ")}</option>)}
+                {uniqueTypes.map(t => (
+                  <option key={t} value={t}>{EVENT_TYPE_LABELS[t] || t.replace(/_/g, " ")}</option>
+                ))}
               </select>
             </div>
             <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
               <Search className="h-3.5 w-3.5 text-muted-foreground" />
-              <Input className="h-7 text-xs" placeholder="Buscar en mensajes..." value={searchText}
+              <Input className="h-7 text-xs" placeholder="Buscar en eventos..." value={searchText}
                 onChange={(e) => setSearchText(e.target.value)} />
             </div>
             <Badge variant="outline" className="text-[10px]">{filtered.length} / {(events || []).length}</Badge>
@@ -2569,68 +2390,8 @@ function EventsLogPanel() {
         </CardContent>
       </Card>
 
-      {/* Events Table */}
-      {filtered.length === 0 ? (
-        <Card className="border-border/50">
-          <CardContent className="p-8 text-center text-muted-foreground">
-            <p className="text-sm">No hay eventos que coincidan con los filtros</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="border-border/50">
-          <CardContent className="p-0">
-            <div className="overflow-auto max-h-[600px]">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-background border-b border-border/50">
-                  <tr className="text-muted-foreground text-[10px]">
-                    <th className="text-left p-2 w-[50px]">Sev</th>
-                    <th className="text-left p-2 w-[110px]">Fecha</th>
-                    <th className="text-left p-2 w-[60px]">Par</th>
-                    <th className="text-left p-2 w-[200px]">Motivo</th>
-                    <th className="text-left p-2">Detalle técnico</th>
-                    <th className="text-left p-2 w-[130px]">Tipo interno</th>
-                    <th className="text-left p-2 w-[35px]">ID</th>
-                  </tr>
-                </thead>
-                <tbody className="font-mono">
-                  {filtered.map((ev) => {
-                    const humanTitle = translateEventTitle(ev);
-                    const humanMsg = (ev as any).humanMessage || "";
-                    const techSummary = translateMessage(ev);
-                    const isExpanded = expandedId === ev.id;
-                    return (
-                      <React.Fragment key={ev.id}>
-                        <tr
-                          className={cn("border-b border-border/20 hover:bg-muted/20 cursor-pointer", SEVERITY_BG[ev.severity])}
-                          onClick={() => setExpandedId(isExpanded ? null : ev.id)}
-                        >
-                          <td className={cn("p-2 text-[10px] font-bold", SEVERITY_COLOR[ev.severity])}>{ev.severity.toUpperCase()}</td>
-                          <td className="p-2 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(ev.createdAt)}</td>
-                          <td className="p-2 text-[10px]">{ev.pair || "—"}</td>
-                          <td className="p-2 text-[11px] font-semibold">{humanTitle}</td>
-                          <td className="p-2 text-[10px] text-muted-foreground max-w-[350px] truncate" title={techSummary}>{techSummary}</td>
-                          <td className="p-2"><Badge variant="outline" className="text-[9px]">{ev.eventType}</Badge></td>
-                          <td className="p-2 text-[10px] text-muted-foreground">#{ev.id}</td>
-                        </tr>
-                        {isExpanded && humanMsg && (
-                          <tr className="bg-muted/10">
-                            <td colSpan={7} className="p-3 text-[11px] text-muted-foreground leading-relaxed">
-                              <div className="pl-4 border-l-2 border-blue-500/30">
-                                <span className="font-semibold text-foreground">Explicación: </span>{humanMsg}
-                                {techSummary && <div className="mt-1 text-[10px] font-mono opacity-70">Técnico: {techSummary}</div>}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Events Cards */}
+      <IdcaEventsList events={filtered} maxHeight="700px" />
     </div>
   );
 }

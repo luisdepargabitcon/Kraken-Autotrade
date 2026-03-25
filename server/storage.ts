@@ -1883,6 +1883,14 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_cycles', column: 'protection_armed_at', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS protection_armed_at TIMESTAMP' },
         { table: 'institutional_dca_cycles', column: 'protection_stop_price', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS protection_stop_price DECIMAL(18,8)' },
 
+        // institutional_dca_cycles — entry base price (deterministic, auditable)
+        { table: 'institutional_dca_cycles', column: 'base_price', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price DECIMAL(18,8)' },
+        { table: 'institutional_dca_cycles', column: 'base_price_type', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_type TEXT' },
+        { table: 'institutional_dca_cycles', column: 'base_price_window_minutes', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_window_minutes INTEGER' },
+        { table: 'institutional_dca_cycles', column: 'base_price_timestamp', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_timestamp TIMESTAMP' },
+        { table: 'institutional_dca_cycles', column: 'base_price_meta_json', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_meta_json JSONB' },
+        { table: 'institutional_dca_cycles', column: 'entry_dip_pct', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS entry_dip_pct DECIMAL(10,4)' },
+
         // institutional_dca_asset_configs — IDCA exit slider config
         { table: 'institutional_dca_asset_configs', column: 'protection_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS protection_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 1.00' },
         { table: 'institutional_dca_asset_configs', column: 'trailing_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 3.50' },

@@ -9,6 +9,8 @@ import type {
   IdcaPairEvaluation,
   DynamicTpInput,
   TpBreakdown,
+  BasePriceResult,
+  DipReferenceMethod,
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
 
@@ -412,6 +414,155 @@ export function detectRebound(input: ReboundInput): boolean {
   }
 
   return false;
+}
+
+// ─── Base Price Computation (deterministic entry reference) ────────
+
+export interface TimestampedCandle extends OhlcCandle {
+  time: number; // epoch ms
+}
+
+export interface ComputeBasePriceInput {
+  candles: TimestampedCandle[];
+  lookbackMinutes: number;
+  method: DipReferenceMethod;
+  currentPrice: number;
+  pivotN?: number; // candles each side for pivot confirmation, default 3
+}
+
+export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult {
+  const { candles, lookbackMinutes, method, currentPrice, pivotN = 3 } = input;
+  const now = Date.now();
+  const cutoff = now - lookbackMinutes * 60 * 1000;
+
+  // Filter candles within the lookback window
+  const windowCandles = candles.filter(c => c.time >= cutoff);
+
+  // Not enough data → unreliable
+  const MIN_CANDLES = 7; // need at least 7 candles (pivotN*2+1) for swing detection
+  if (windowCandles.length < MIN_CANDLES) {
+    return {
+      price: 0,
+      type: "cycle_start_price",
+      windowMinutes: lookbackMinutes,
+      timestamp: new Date(now),
+      isReliable: false,
+      reason: `Insufficient candles: ${windowCandles.length}/${MIN_CANDLES} in ${lookbackMinutes}min window`,
+      meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+    };
+  }
+
+  const highs = windowCandles.map(c => c.high);
+  const maxAbsolute = Math.max(...highs);
+
+  // Step 1: Detect pivot highs (swing_high method or hybrid first pass)
+  if (method === "swing_high" || method === "hybrid") {
+    const pivotResult = detectPivotHighs(windowCandles, pivotN);
+    if (pivotResult.pivots.length > 0) {
+      // Use the highest confirmed pivot
+      const best = pivotResult.pivots.reduce((a, b) => a.price > b.price ? a : b);
+      return {
+        price: best.price,
+        type: "swing_high_1h",
+        windowMinutes: lookbackMinutes,
+        timestamp: new Date(best.time),
+        isReliable: true,
+        reason: `Swing high confirmed (N=${pivotN}): ${pivotResult.pivots.length} pivots found, best=$${best.price.toFixed(2)}`,
+        meta: {
+          candleCount: windowCandles.length,
+          swingHighsFound: pivotResult.pivots.length,
+          maxAbsolute,
+          filteredWindow: lookbackMinutes,
+        },
+      };
+    }
+
+    // If swing_high only and no pivots found → unreliable
+    if (method === "swing_high") {
+      return {
+        price: 0,
+        type: "swing_high_1h",
+        windowMinutes: lookbackMinutes,
+        timestamp: new Date(now),
+        isReliable: false,
+        reason: `No confirmed swing highs (N=${pivotN}) in ${windowCandles.length} candles`,
+        meta: { candleCount: windowCandles.length, swingHighsFound: 0, maxAbsolute },
+      };
+    }
+  }
+
+  // Step 2: P95 of highs (window_high method or hybrid fallback)
+  if (method === "window_high" || method === "hybrid") {
+    const sorted = [...highs].sort((a, b) => a - b);
+    const p95Index = Math.floor(sorted.length * 0.95);
+    const p95Value = sorted[Math.min(p95Index, sorted.length - 1)];
+
+    // Find the candle closest to the P95 value for timestamp
+    const p95Candle = windowCandles.reduce((best, c) =>
+      Math.abs(c.high - p95Value) < Math.abs(best.high - p95Value) ? c : best
+    );
+
+    return {
+      price: p95Value,
+      type: "window_high_p95",
+      windowMinutes: lookbackMinutes,
+      timestamp: new Date(p95Candle.time),
+      isReliable: true,
+      reason: `P95 of ${windowCandles.length} candle highs in ${lookbackMinutes}min window (max=$${maxAbsolute.toFixed(2)}, p95=$${p95Value.toFixed(2)})`,
+      meta: {
+        candleCount: windowCandles.length,
+        swingHighsFound: 0,
+        p95Value,
+        maxAbsolute,
+        filteredWindow: lookbackMinutes,
+      },
+    };
+  }
+
+  // Method "ema" — reserved for future, block for now
+  return {
+    price: 0,
+    type: "cycle_start_price",
+    windowMinutes: lookbackMinutes,
+    timestamp: new Date(now),
+    isReliable: false,
+    reason: `Method '${method}' not yet implemented`,
+    meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+  };
+}
+
+interface PivotPoint {
+  price: number;
+  time: number;
+  index: number;
+}
+
+interface PivotResult {
+  pivots: PivotPoint[];
+}
+
+function detectPivotHighs(candles: TimestampedCandle[], n: number): PivotResult {
+  const pivots: PivotPoint[] = [];
+  // A candle at index i is a pivot high if its high is >= all highs in [i-n, i+n]
+  for (let i = n; i < candles.length - n; i++) {
+    const candidateHigh = candles[i].high;
+    let isPivot = true;
+    for (let j = i - n; j <= i + n; j++) {
+      if (j === i) continue;
+      if (candles[j].high > candidateHigh) {
+        isPivot = false;
+        break;
+      }
+    }
+    if (isPivot) {
+      pivots.push({
+        price: candidateHigh,
+        time: candles[i].time,
+        index: i,
+      });
+    }
+  }
+  return { pivots };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

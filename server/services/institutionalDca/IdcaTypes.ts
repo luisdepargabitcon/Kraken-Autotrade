@@ -7,6 +7,24 @@ export type IdcaCycleStatus = "idle" | "waiting_entry" | "active" | "tp_armed" |
 export type IdcaOrderType = "base_buy" | "safety_buy" | "partial_sell" | "final_sell" | "breakeven_sell" | "emergency_sell";
 export type IdcaSizeProfile = "aggressive_quality" | "balanced" | "defensive";
 export type IdcaReinvestMode = "none" | "profits_only" | "full";
+export type DipReferenceMethod = "hybrid" | "swing_high" | "window_high" | "ema";
+export type BasePriceType = "swing_high_1h" | "window_high_p95" | "cycle_start_price";
+
+export interface BasePriceResult {
+  price: number;
+  type: BasePriceType;
+  windowMinutes: number;
+  timestamp: Date;
+  isReliable: boolean;
+  reason: string;
+  meta?: {
+    candleCount: number;
+    swingHighsFound: number;
+    p95Value?: number;
+    maxAbsolute?: number;
+    filteredWindow?: number;
+  };
+}
 
 export interface SafetyOrderLevel {
   dipPct: number;
@@ -64,6 +82,7 @@ export const IDCA_BLOCK_CODES = [
   "market_score_too_low",
   "institutional_dca_toggle_off",
   "global_trading_pause",
+  "insufficient_base_price_data",
 ] as const;
 
 export type IdcaBlockCode = typeof IDCA_BLOCK_CODES[number];
@@ -74,15 +93,17 @@ export interface IdcaEntryCheckResult {
   marketScore?: number;
   volatilityScore?: number;
   sizeProfile?: IdcaSizeProfile;
-  dipPct?: number;
+  entryDipPct?: number;
+  basePrice?: BasePriceResult;
   reboundConfirmed?: boolean;
 }
 
 export interface IdcaPairEvaluation {
   pair: string;
   currentPrice: number;
-  localHigh: number;
-  dipFromHigh: number;
+  basePrice: number;
+  basePriceType: BasePriceType;
+  entryDipPct: number;
   marketScore: number;
   volatilityScore: number;
   regime: string;

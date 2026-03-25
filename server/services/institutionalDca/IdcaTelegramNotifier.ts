@@ -56,7 +56,7 @@ async function send(chatId: string, message: string, threadId?: string): Promise
 
 // ─── Public Alert Functions ────────────────────────────────────────
 
-export async function alertCycleStarted(cycle: InstitutionalDcaCycle, dipPct: number, score: number): Promise<void> {
+export async function alertCycleStarted(cycle: InstitutionalDcaCycle, entryDipPct: number, score: number): Promise<void> {
   const { chatId, enabled } = await canSend("cycle_started");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
@@ -71,7 +71,9 @@ export async function alertCycleStarted(cycle: InstitutionalDcaCycle, dipPct: nu
     quantity: parseFloat(String(cycle.totalQuantity || "0")),
     capitalUsed: parseFloat(String(cycle.capitalUsedUsd || "0")),
     totalCapitalReserved: parseFloat(String(cycle.capitalReservedUsd || "0")),
-    dipPct,
+    entryDipPct,
+    entryBasePrice: parseFloat(String(cycle.basePrice || "0")) || undefined,
+    entryBasePriceType: cycle.basePriceType || undefined,
     marketScore: score,
     buyCount: 1,
     maxBuyCount: maxSafety + 1,

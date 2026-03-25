@@ -23,7 +23,9 @@ export interface FormatContext {
   price?: number;
   quantity?: number;
   avgEntry?: number;
-  dipPct?: number;
+  entryDipPct?: number;
+  entryBasePrice?: number;
+  entryBasePriceType?: string;
   marketScore?: number;
   pnlPct?: number;
   pnlUsd?: number;
@@ -115,7 +117,9 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
   switch (ctx.eventType) {
     case "entry_check_passed":
     case "entry_check_blocked":
-      if (ctx.dipPct != null) techParts.push(`Dip=${ctx.dipPct.toFixed(2)}%`);
+      if (ctx.entryBasePrice != null) techParts.push(`BasePrice=${fmtNum(ctx.entryBasePrice)}`);
+      if (ctx.entryBasePriceType) techParts.push(`BaseType=${ctx.entryBasePriceType}`);
+      if (ctx.entryDipPct != null) techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
       if (ctx.sizeProfile) techParts.push(`Perfil=${ctx.sizeProfile}`);
       if (ctx.blockReasons) {
@@ -128,7 +132,9 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
       if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
       if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
-      if (ctx.dipPct != null) techParts.push(`Dip=${ctx.dipPct.toFixed(2)}%`);
+      if (ctx.entryBasePrice != null) techParts.push(`BasePrice=${fmtNum(ctx.entryBasePrice)}`);
+      if (ctx.entryBasePriceType) techParts.push(`BaseType=${ctx.entryBasePriceType}`);
+      if (ctx.entryDipPct != null) techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
       if (ctx.buyCount != null) techParts.push(`Compra=#${ctx.buyCount}`);
       if (ctx.sizeProfile) techParts.push(`Perfil=${ctx.sizeProfile}`);
@@ -209,7 +215,7 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
     case "plus_cycle_activated":
       if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
       if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
-      if (ctx.dipPct != null) techParts.push(`DipDesdeMain=${ctx.dipPct.toFixed(2)}%`);
+      if (ctx.entryDipPct != null) techParts.push(`DipDesdeMain=${ctx.entryDipPct.toFixed(2)}%`);
       if (ctx.parentCycleId != null) techParts.push(`Parent=#${ctx.parentCycleId}`);
       if (ctx.tpPct != null) techParts.push(`TP=${ctx.tpPct.toFixed(1)}%`);
       break;
@@ -287,7 +293,11 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `💵 Precio: <b>$${fmtNum(ctx.price || 0)}</b>`,
       ];
       if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
-      if (ctx.dipPct != null) lines.push(`📉 Dip detectado: <code>-${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.entryDipPct != null && ctx.entryBasePrice != null) {
+        lines.push(`📉 Dip detectado: <code>-${ctx.entryDipPct.toFixed(2)}%</code> desde base <code>$${fmtNum(ctx.entryBasePrice)}</code> (${ctx.entryBasePriceType || "hybrid"})`);
+      } else if (ctx.entryDipPct != null) {
+        lines.push(`📉 Dip detectado: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
+      }
       if (ctx.marketScore != null) lines.push(`🧠 Score mercado: <code>${ctx.marketScore}</code>`);
       if (ctx.capitalUsed != null && ctx.totalCapitalReserved) {
         lines.push(`💰 Capital: <code>$${fmtNum(ctx.capitalUsed)}</code> de <code>$${fmtNum(ctx.totalCapitalReserved)}</code>`);
@@ -508,7 +518,11 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       } else if (ctx.reasonCode) {
         lines.push(`🚫 Motivo: ${entry.humanTitle}`);
       }
-      if (ctx.dipPct != null) lines.push(`📉 Dip: <code>${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.entryDipPct != null && ctx.entryBasePrice != null) {
+        lines.push(`📉 Dip: <code>${ctx.entryDipPct.toFixed(2)}%</code> desde base <code>$${fmtNum(ctx.entryBasePrice)}</code>`);
+      } else if (ctx.entryDipPct != null) {
+        lines.push(`📉 Dip: <code>${ctx.entryDipPct.toFixed(2)}%</code>`);
+      }
       if (ctx.pnlPct != null) lines.push(`📊 PnL: <code>${ctx.pnlPct.toFixed(2)}%</code>`);
       if (ctx.buyCount != null) lines.push(`📦 Compras actuales: ${ctx.buyCount}`);
       return lines.join("\n");
@@ -587,7 +601,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       ];
       if (ctx.price != null) lines.push(`💵 Precio: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.quantity != null) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code>`);
-      if (ctx.dipPct != null) lines.push(`📉 Dip desde main: <code>-${ctx.dipPct.toFixed(2)}%</code>`);
+      if (ctx.entryDipPct != null) lines.push(`📉 Dip desde main: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
       if (ctx.parentCycleId != null) lines.push(`🔗 Ciclo padre: <code>#${ctx.parentCycleId}</code>`);
       if (ctx.tpPct != null) lines.push(`🎯 TP: <code>${ctx.tpPct.toFixed(1)}%</code>`);
       lines.push(``, `💡 Ciclo táctico Plus iniciado: el principal agotó entradas y el precio siguió bajando.`);

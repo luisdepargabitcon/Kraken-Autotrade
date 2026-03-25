@@ -983,7 +983,7 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   pair: text("pair").notNull().unique(),
   enabled: boolean("enabled").notNull().default(true),
   minDipPct: decimal("min_dip_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
-  dipReference: text("dip_reference").notNull().default("local_high"),
+  dipReference: text("dip_reference").notNull().default("hybrid"), // hybrid | swing_high | window_high | ema (reserved)
   requireReboundConfirmation: boolean("require_rebound_confirmation").notNull().default(true),
   trailingBuyEnabled: boolean("trailing_buy_enabled").notNull().default(true),
   safetyOrdersJson: jsonb("safety_orders_json").notNull().default([
@@ -1061,6 +1061,13 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   estimatedFeeUsd: decimal("estimated_fee_usd", { precision: 18, scale: 2 }),
   feesOverrideManual: boolean("fees_override_manual").notNull().default(false),
   importWarningAcknowledged: boolean("import_warning_acknowledged").notNull().default(false),
+  // Entry base price — deterministic, persisted, auditable
+  basePrice: decimal("base_price", { precision: 18, scale: 8 }),
+  basePriceType: text("base_price_type"), // swing_high_1h | window_high_p95 | cycle_start_price
+  basePriceWindowMinutes: integer("base_price_window_minutes"),
+  basePriceTimestamp: timestamp("base_price_timestamp"),
+  basePriceMetaJson: jsonb("base_price_meta_json"),
+  entryDipPct: decimal("entry_dip_pct", { precision: 10, scale: 4 }),
   // Protection & trailing state
   protectionArmedAt: timestamp("protection_armed_at"),
   protectionStopPrice: decimal("protection_stop_price", { precision: 18, scale: 8 }),
