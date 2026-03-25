@@ -118,6 +118,53 @@ const BLOCK_REASON_LABELS: Record<string, string> = {
 };
 
 const EVENT_CATALOG: Record<string, EventVisual> = {
+  // ── REVISIÓN DE CICLO (azul/info) ──────────────────
+  cycle_management: {
+    icon: "🔵",
+    title: "Ciclo bajo seguimiento",
+    category: "info",
+    getHumanSummary: (ev, p) => {
+      const conclusion = ev.message || p.reason || "";
+      if (conclusion && !conclusion.startsWith("Gestión ciclo")) return conclusion;
+
+      const parts: string[] = [];
+      parts.push("El bot revisó el ciclo activo.");
+
+      if (p.pnlPct != null) {
+        if (p.pnlPct < -10) parts.push(`La posición está en drawdown profundo (${fN(p.pnlPct)}%).`);
+        else if (p.pnlPct < -5) parts.push(`La posición está en zona negativa (${fN(p.pnlPct)}%).`);
+        else if (p.pnlPct < 0) parts.push(`La posición está ligeramente en negativo (${fN(p.pnlPct)}%).`);
+        else if (p.pnlPct < 1) parts.push(`La posición está cerca del break-even (${p.pnlPct >= 0 ? "+" : ""}${fN(p.pnlPct)}%).`);
+        else parts.push(`La posición está en positivo (+${fN(p.pnlPct)}%).`);
+      }
+
+      // Nearest trigger info
+      const nearest = p.nearestTrigger;
+      const dist = p.nearestTriggerDist;
+      if (nearest && dist != null) {
+        if (nearest === "safety_buy") {
+          if (dist < 1) parts.push("Muy cerca del próximo safety buy.");
+          else if (dist < 3) parts.push(`A ${fN(dist)}% del próximo safety buy.`);
+        } else if (nearest === "tp") {
+          if (dist < 1) parts.push("Muy cerca de toma de ganancias.");
+          else if (dist < 3) parts.push(`A ${fN(dist)}% de la toma de ganancias.`);
+        } else if (nearest === "protection_stop") {
+          if (dist < 1) parts.push("Muy cerca del stop de protección.");
+          else if (dist < 3) parts.push(`A ${fN(dist)}% del stop de protección.`);
+        }
+      }
+
+      if (p.isProtectionArmed) parts.push("La protección de capital está activa.");
+
+      if (!p.actionTaken) parts.push("Sin acción en este tick.");
+      return parts.join(" ");
+    },
+    getActionText: (_ev, p) => {
+      if (p.actionTaken) return "Se ejecutó una acción (compra, venta o cambio de estado).";
+      return "Sin acción. El bot sigue vigilando la posición.";
+    },
+  },
+
   // ── POSITIVOS (verde) ──────────────────────────────
   cycle_started: {
     icon: "🟢",
@@ -606,6 +653,25 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   color={parsed.pnlUsd >= 0 ? "text-emerald-400" : "text-red-400"} />
               )}
               {parsed.buyCount != null && <DataPill label="Compras" value={`${parsed.buyCount}`} />}
+              {parsed.maxDD != null && parsed.maxDD > 0 && (
+                <DataPill label="Max Drawdown" value={`-${fN(parsed.maxDD)}%`} color="text-red-400" />
+              )}
+              {parsed.distToNextSafety != null && (
+                <DataPill label="Dist. Safety Buy" value={`${fN(parsed.distToNextSafety)}%`}
+                  color={parsed.distToNextSafety < 1 ? "text-amber-400" : "text-muted-foreground"} />
+              )}
+              {parsed.distToTp != null && (
+                <DataPill label="Dist. TP" value={`${fN(parsed.distToTp)}%`}
+                  color={parsed.distToTp < 1 ? "text-emerald-400" : "text-muted-foreground"} />
+              )}
+              {parsed.distToProtectionStop != null && (
+                <DataPill label="Dist. Protección" value={`${fN(parsed.distToProtectionStop)}%`}
+                  color={parsed.distToProtectionStop < 1 ? "text-amber-400" : "text-muted-foreground"} />
+              )}
+              {parsed.distToTrailingActivation != null && (
+                <DataPill label="Dist. Trailing" value={`${fN(parsed.distToTrailingActivation)}%`}
+                  color={parsed.distToTrailingActivation < 1.5 ? "text-emerald-400" : "text-muted-foreground"} />
+              )}
               {parsed.tpPct != null && <DataPill label="TP" value={`+${fN(parsed.tpPct, 1)}%`} color="text-emerald-400" />}
               {parsed.parentCycleId != null && <DataPill label="Ciclo padre" value={`#${parsed.parentCycleId}`} />}
             </div>

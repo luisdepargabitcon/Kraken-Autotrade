@@ -30,6 +30,71 @@ import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 
 const TAG = "[IDCA]";
 
+// ─── Cycle Review Diagnosis ───────────────────────────────────────
+// Captures what the bot evaluated and concluded during cycle management
+
+interface CycleReviewDiagnosis {
+  conclusion: string;        // Short human-readable conclusion
+  actionTaken: boolean;      // Whether an action was taken (buy, sell, state change)
+  checkedProtection: boolean;
+  checkedTrailing: boolean;
+  checkedSafetyBuy: boolean;
+  checkedExit: boolean;
+  isProtectionArmed: boolean;
+  distToNextSafety: number | null;   // % distance to next safety buy trigger
+  distToTp: number | null;           // % distance to TP target
+  distToProtectionStop: number | null; // % distance to protection stop
+  distToTrailingActivation: number | null; // % distance to trailing activation
+  nearestTrigger: string | null;     // Which trigger is closest
+  nearestTriggerDist: number | null;  // Distance to nearest trigger in %
+}
+
+function buildReviewConclusion(d: CycleReviewDiagnosis, pnlPct: number, maxDD: number, status: string): string {
+  if (d.actionTaken) return "Acción ejecutada en este tick";
+
+  // Trailing state
+  if (status === "trailing_active") {
+    if (d.distToProtectionStop != null && d.distToProtectionStop < 1) {
+      return "Trailing activo: precio cerca del stop de protección";
+    }
+    return "Trailing activo: el precio sigue subiendo, sin cierre";
+  }
+
+  const parts: string[] = [];
+
+  // Protection context
+  if (d.isProtectionArmed) {
+    parts.push("protección activa");
+  } else if (d.distToTrailingActivation != null && d.distToTrailingActivation < 1.5) {
+    parts.push("cerca de activar trailing");
+  }
+
+  // Nearest trigger
+  if (d.nearestTrigger && d.nearestTriggerDist != null) {
+    if (d.nearestTriggerDist < 1.0) {
+      if (d.nearestTrigger === "safety_buy") parts.push("muy cerca del próximo safety buy");
+      else if (d.nearestTrigger === "tp") parts.push("muy cerca de toma de ganancias");
+      else if (d.nearestTrigger === "protection_stop") parts.push("muy cerca del stop de protección");
+    } else if (d.nearestTriggerDist < 3.0) {
+      if (d.nearestTrigger === "safety_buy") parts.push("acercándose al próximo safety buy");
+      else if (d.nearestTrigger === "tp") parts.push("acercándose a toma de ganancias");
+    }
+  }
+
+  // PnL context
+  if (pnlPct < -10) parts.push("drawdown profundo");
+  else if (pnlPct < -5) parts.push("en zona negativa");
+  else if (pnlPct < 0) parts.push("ligeramente negativo");
+  else if (pnlPct > 0 && pnlPct < 1) parts.push("cerca del break-even");
+
+  if (parts.length === 0) {
+    if (pnlPct >= 0) return "Ciclo revisado: en espera, sin acción";
+    return "Ciclo revisado: sin trigger alcanzado, esperando";
+  }
+
+  return `Ciclo revisado: ${parts.join(", ")}`;
+}
+
 const DEFAULT_DYNAMIC_TP_CONFIG: DynamicTpConfig = {
   baseTpPctBtc: 4.0, baseTpPctEth: 5.0,
   reductionPerExtraBuyMain: 0.3, reductionPerExtraBuyPlus: 0.2,
@@ -630,27 +695,52 @@ async function manageCycle(
     maxDrawdownPct: maxDD.toFixed(2),
   });
 
-  // Log cycle management activity for UI visibility (rich context)
-  await createHumanEvent({
-    cycleId: cycle.id, pair, mode,
-    eventType: "cycle_management",
-    severity: "debug",
-    message: `Gestión ciclo: PnL=${unrealizedPnlPct >= 0 ? "+" : ""}${unrealizedPnlPct.toFixed(2)}% ($${unrealizedPnlUsd.toFixed(2)}), Precio=${currentPrice.toFixed(2)}, MaxDD=${maxDD.toFixed(2)}%, Estado=${cycle.status}`,
-    payloadJson: { price: currentPrice, avgEntry: avgEntry, pnlPct: unrealizedPnlPct, pnlUsd: unrealizedPnlUsd, maxDD, status: cycle.status, buyCount: cycle.buyCount, totalQty, capitalUsed },
-  }, {
-    eventType: "cycle_management", pair, mode,
-    price: currentPrice,
-    avgEntry,
-    pnlPct: unrealizedPnlPct,
-    pnlUsd: unrealizedPnlUsd,
-    drawdownPct: maxDD,
-    quantity: totalQty,
-    capitalUsed,
-    buyCount: cycle.buyCount || 0,
-    reason: cycle.status,
-  });
+  // Compute distances for diagnosis BEFORE branching
+  const tpTargetPrice = parseFloat(String(cycle.tpTargetPrice || "0"));
+  const nextBuyPrice = parseFloat(String(cycle.nextBuyPrice || "0"));
+  const protectionStopPriceVal = parseFloat(String(cycle.protectionStopPrice || "0"));
+  const trailingActivationPct = parseFloat(String(assetConfig.trailingActivationPct ?? "3.50"));
+
+  const distToTp = tpTargetPrice > 0 && currentPrice > 0
+    ? ((tpTargetPrice - currentPrice) / currentPrice) * 100 : null;
+  const distToNextSafety = nextBuyPrice > 0 && currentPrice > 0
+    ? ((currentPrice - nextBuyPrice) / currentPrice) * 100 : null;
+  const distToProtectionStop = protectionStopPriceVal > 0 && currentPrice > 0
+    ? ((currentPrice - protectionStopPriceVal) / currentPrice) * 100 : null;
+  const distToTrailingActivation = trailingActivationPct > 0
+    ? trailingActivationPct - unrealizedPnlPct : null;
+
+  // Build base diagnosis
+  const diagnosis: CycleReviewDiagnosis = {
+    conclusion: "",
+    actionTaken: false,
+    checkedProtection: cycle.status === "active",
+    checkedTrailing: cycle.status === "active" || cycle.status === "trailing_active",
+    checkedSafetyBuy: cycle.status === "active",
+    checkedExit: cycle.status === "trailing_active",
+    isProtectionArmed: !!cycle.protectionArmedAt,
+    distToNextSafety,
+    distToTp,
+    distToProtectionStop,
+    distToTrailingActivation: cycle.status === "active" ? distToTrailingActivation : null,
+    nearestTrigger: null,
+    nearestTriggerDist: null,
+  };
+
+  // Find nearest trigger
+  const triggers: { name: string; dist: number }[] = [];
+  if (distToNextSafety != null && distToNextSafety >= 0) triggers.push({ name: "safety_buy", dist: distToNextSafety });
+  if (distToTp != null && distToTp >= 0) triggers.push({ name: "tp", dist: distToTp });
+  if (distToProtectionStop != null && distToProtectionStop >= 0) triggers.push({ name: "protection_stop", dist: distToProtectionStop });
+  if (triggers.length > 0) {
+    triggers.sort((a, b) => a.dist - b.dist);
+    diagnosis.nearestTrigger = triggers[0].name;
+    diagnosis.nearestTriggerDist = triggers[0].dist;
+  }
 
   // Branch by cycle status
+  const prevBuyCount = cycle.buyCount;
+  const prevStatus = cycle.status;
   switch (cycle.status) {
     case "active":
       await handleActiveState(cycle, currentPrice, unrealizedPnlPct, config, assetConfig, mode);
@@ -663,9 +753,50 @@ async function manageCycle(
       break;
     case "paused":
     case "blocked":
-      // Just update price, don't act
       break;
   }
+
+  // Detect if an action was taken by re-checking cycle state
+  const updatedCycleCheck = await repo.getCycleById(cycle.id);
+  if (updatedCycleCheck) {
+    if (updatedCycleCheck.status !== prevStatus || updatedCycleCheck.buyCount !== prevBuyCount) {
+      diagnosis.actionTaken = true;
+    }
+  }
+
+  // Build conclusion
+  diagnosis.conclusion = buildReviewConclusion(diagnosis, unrealizedPnlPct, maxDD, prevStatus);
+
+  // Log enriched cycle management event (AFTER evaluation)
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
+    eventType: "cycle_management",
+    severity: "debug",
+    message: diagnosis.conclusion,
+    payloadJson: {
+      price: currentPrice, avgEntry, pnlPct: unrealizedPnlPct, pnlUsd: unrealizedPnlUsd,
+      maxDD, status: prevStatus, buyCount: cycle.buyCount, totalQty, capitalUsed,
+      distToNextSafety: distToNextSafety != null ? +distToNextSafety.toFixed(2) : null,
+      distToTp: distToTp != null ? +distToTp.toFixed(2) : null,
+      distToProtectionStop: distToProtectionStop != null ? +distToProtectionStop.toFixed(2) : null,
+      distToTrailingActivation: distToTrailingActivation != null ? +distToTrailingActivation.toFixed(2) : null,
+      nearestTrigger: diagnosis.nearestTrigger,
+      nearestTriggerDist: diagnosis.nearestTriggerDist != null ? +diagnosis.nearestTriggerDist.toFixed(2) : null,
+      isProtectionArmed: diagnosis.isProtectionArmed,
+      actionTaken: diagnosis.actionTaken,
+    },
+  }, {
+    eventType: "cycle_management", pair, mode,
+    price: currentPrice,
+    avgEntry,
+    pnlPct: unrealizedPnlPct,
+    pnlUsd: unrealizedPnlUsd,
+    drawdownPct: maxDD,
+    quantity: totalQty,
+    capitalUsed,
+    buyCount: cycle.buyCount || 0,
+    reason: diagnosis.conclusion,
+  });
 }
 
 // ─── TP Armed State: transition to trailing ────────────────────────

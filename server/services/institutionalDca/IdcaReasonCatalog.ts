@@ -209,9 +209,9 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
   },
 
   cycle_management: {
-    humanTitle: "Gestión de ciclo activo",
-    humanTemplate: "Se revisó el ciclo activo de {pair}. El sistema evaluó precio actual, PnL, drawdown y decidió si procede venta parcial, safety buy o espera. El ciclo sigue bajo vigilancia automática.",
-    emoji: "🔄",
+    humanTitle: "Ciclo bajo seguimiento",
+    humanTemplate: "El bot revisó el ciclo activo de {pair}. Evaluó protección, safety buy, trailing y condiciones de salida. Conclusión: el ciclo sigue bajo vigilancia automática sin acción inmediata.",
+    emoji: "�",
     defaultSeverity: "info",
   },
 
