@@ -2,6 +2,68 @@
 
 ---
 
+## 2026-03-25 — FEAT: Eventos de revisión de ciclo enriquecidos + Diseño Recovery Cycle
+
+### Objetivo
+1. Mejorar los eventos `cycle_management` para que muestren qué evaluó el bot, qué conclusión sacó, y datos de proximidad a triggers.
+2. Diseñar el sistema completo de Multi-Ciclo Recovery por Drawdown Profundo (solo diseño, sin implementación).
+
+### Cambios implementados (Revisión de ciclo)
+
+#### A) IdcaEngine.ts — CycleReviewDiagnosis
+- **Nuevo tipo `CycleReviewDiagnosis`**: captura qué revisó el bot (protección, trailing, safety buy, salida), si tomó acción, distancias a triggers, trigger más cercano.
+- **`buildReviewConclusion()`**: genera conclusiones contextuales humanas:
+  - "Ciclo revisado: muy cerca del próximo safety buy"
+  - "Ciclo revisado: protección activa, drawdown profundo"
+  - "Trailing activo: precio cerca del stop de protección"
+  - "Ciclo revisado: en espera, sin acción"
+- **Evento emitido DESPUÉS de evaluación** (antes se emitía antes): ahora incluye `actionTaken` real comparando estado pre/post.
+- **Payload enriquecido**: `distToNextSafety`, `distToTp`, `distToProtectionStop`, `distToTrailingActivation`, `nearestTrigger`, `nearestTriggerDist`, `isProtectionArmed`, `actionTaken`.
+
+#### B) IdcaEventCards.tsx — cycle_management visual
+- Nuevo entry en catálogo visual con icono 🔵, categoría info.
+- `getHumanSummary`: genera texto contextual dinámico basado en PnL, proximidad a triggers, protección.
+- **DataPills nuevas** en vista expandida: Dist. Safety Buy, Dist. TP, Dist. Protección, Dist. Trailing, Max Drawdown — con colores semánticos (ámbar si < 1%, verde si cerca de TP).
+
+#### C) IdcaReasonCatalog.ts
+- Actualizado `cycle_management`: título "Ciclo bajo seguimiento", template mejorado.
+
+### Diseño Recovery Cycle (solo propuesta)
+- Documento completo en `docs/IDCA_RECOVERY_CYCLE_DESIGN.md`
+- Incluye: propuesta funcional, `RecoveryConfig` (20+ parámetros), riesgos y mitigaciones, arquitectura backend, 5 event types con mensajes humanos, alertas Telegram con formato visual, cambios UI, distinción visual main/plus/recovery, recomendación final.
+- **5 alertas específicas**: `recovery_cycle_eligible`, `recovery_cycle_started`, `recovery_cycle_blocked`, `recovery_cycle_closed`, `recovery_cycle_risk_warning`.
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — CycleReviewDiagnosis + evento enriquecido
+- `client/src/components/idca/IdcaEventCards.tsx` — cycle_management entry + DataPills de distancias
+- `server/services/institutionalDca/IdcaReasonCatalog.ts` — catalog actualizado
+
+### Archivos creados
+- `docs/IDCA_RECOVERY_CYCLE_DESIGN.md` — diseño completo de recovery cycle
+
+### Commits
+- `8a3d36c` — feat(idca): enriched cycle review events with diagnosis context
+
+---
+
+## 2026-03-25 — FEAT: Rediseño UX completo de Eventos IDCA (tarjetas con doble capa)
+
+### Objetivo
+Reemplazar la tabla plana de eventos por un sistema visual moderno de tarjetas con doble capa: humana (siempre visible) + técnica (expandible).
+
+### Cambios implementados
+- **Nuevo componente `IdcaEventCards.tsx`** (~530 líneas) con catálogo de 18 event types
+- Cada evento: icono, color semántico, título humano, resumen en lenguaje natural, pills de datos clave
+- Vista expandida: acción del bot, grid de datos clave, detalle técnico colapsable con JSON copiable
+- Colores: verde (positivo), rojo (negativo), ámbar (warning), azul (info), gris (sistema)
+- Reemplazados `EventsLogPanel` + `LiveMonitorPanel` antiguos
+- Filtros preservados: severidad, tipo, búsqueda, exportación CSV/JSON
+
+### Commit
+- `51e167d` — feat(idca): redesign events UI — modern card-based system with dual layer
+
+---
+
 ## 2026-03-26 — FEAT: IDCA Visibilidad y Seguimiento (Telegram + UI)
 
 ### Objetivo
