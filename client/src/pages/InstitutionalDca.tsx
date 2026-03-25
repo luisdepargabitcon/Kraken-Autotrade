@@ -510,8 +510,10 @@ function ConfigTab() {
   const eth = assetConfigs?.find((a) => a.pair.includes("ETH"));
   const dtp = config.dynamicTpConfigJson || {};
   const plus = config.plusConfigJson || {};
+  const recovery = config.recoveryConfigJson || {};
   const saveDtp = (patch: Record<string, any>) => updateConfig.mutate({ dynamicTpConfigJson: { ...dtp, ...patch } });
   const savePlus = (patch: Record<string, any>) => updateConfig.mutate({ plusConfigJson: { ...plus, ...patch } });
+  const saveRecovery = (patch: Record<string, any>) => updateConfig.mutate({ recoveryConfigJson: { ...recovery, ...patch } });
 
   return (
     <div className="space-y-6">
@@ -1071,6 +1073,104 @@ function ConfigTab() {
             </div>
           )}
         </div>
+      </ConfigBlock>
+
+      {/* ════ BLOQUE 5 — CICLO DE RECUPERACIÓN (RECOVERY) ════ */}
+      <ConfigBlock icon={ShieldAlert} title="Ciclo de Recuperación (Recovery)"
+        desc="Cuando un ciclo principal tiene un drawdown muy profundo, el sistema puede abrir un ciclo adicional con capital reducido y TP conservador para capturar una recuperación parcial.">
+
+        <ToggleField label="Recovery habilitado" checked={recovery.enabled ?? false}
+          onChange={(v) => saveRecovery({ enabled: v })}
+          desc="Permite al sistema abrir ciclos de recuperación cuando el main entra en drawdown profundo." />
+
+        {(recovery.enabled ?? false) && (
+          <div className="mt-5 space-y-6 animate-in fade-in slide-in-from-top-2">
+
+            <p className="text-xs font-semibold text-muted-foreground">Activación</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              <ColorSlider label="Drawdown mínimo para activar" color="red"
+                value={recovery.activationDrawdownPct ?? 25} min={10} max={50} step={1}
+                onChange={(v) => saveRecovery({ activationDrawdownPct: v })}
+                desc="El ciclo principal debe tener al menos esta caída para que se active el recovery." />
+              <ColorSlider label="Score mínimo de mercado" color="cyan" unit=""
+                value={recovery.minMarketScoreForRecovery ?? 40} min={0} max={80} step={5}
+                onChange={(v) => saveRecovery({ minMarketScoreForRecovery: v })}
+                desc="Score mínimo (0-100) que debe tener el mercado para abrir un recovery." />
+              <ColorSlider label="Cooldown tras compra main" color="cyan" unit=" min"
+                value={recovery.cooldownMinutesAfterMainBuy ?? 120} min={30} max={720} step={30}
+                onChange={(v) => saveRecovery({ cooldownMinutesAfterMainBuy: v })}
+                desc="Minutos a esperar tras la última compra del ciclo principal antes de abrir recovery." />
+              <ColorSlider label="Cooldown entre recovery" color="cyan" unit=" min"
+                value={recovery.cooldownMinutesBetweenRecovery ?? 360} min={60} max={1440} step={30}
+                onChange={(v) => saveRecovery({ cooldownMinutesBetweenRecovery: v })}
+                desc="Minutos mínimos entre ciclos de recovery consecutivos." />
+            </div>
+
+            <p className="text-xs font-semibold text-muted-foreground">Capital y Límites</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              <ColorSlider label="Capital recovery" color="amber"
+                value={recovery.capitalAllocationPct ?? 10} min={1} max={30} step={1}
+                onChange={(v) => saveRecovery({ capitalAllocationPct: v })}
+                desc="Porcentaje del capital del módulo asignado a cada ciclo de recovery." />
+              <ColorSlider label="Tope absoluto capital" color="red" unit=" USD"
+                value={recovery.maxRecoveryCapitalUsd ?? 500} min={50} max={2000} step={50}
+                onChange={(v) => saveRecovery({ maxRecoveryCapitalUsd: v })}
+                desc="Capital máximo absoluto por ciclo de recovery, sin importar el porcentaje." />
+              <ColorSlider label="Max recovery por main" color="amber" unit=""
+                value={recovery.maxRecoveryCyclesPerMain ?? 1} min={1} max={3} step={1}
+                onChange={(v) => saveRecovery({ maxRecoveryCyclesPerMain: v })}
+                desc="Cuántos ciclos de recovery se permiten por cada ciclo principal." />
+              <ColorSlider label="Max ciclos totales por par" color="amber" unit=""
+                value={recovery.maxTotalCyclesPerPair ?? 3} min={2} max={5} step={1}
+                onChange={(v) => saveRecovery({ maxTotalCyclesPerPair: v })}
+                desc="Límite total de ciclos activos simultáneos (main + plus + recovery) por par." />
+              <ColorSlider label="Max exposición del par" color="red"
+                value={recovery.maxPairExposurePct ?? 40} min={10} max={80} step={5}
+                onChange={(v) => saveRecovery({ maxPairExposurePct: v })}
+                desc="Exposición máxima combinada permitida en un par como % del capital del módulo." />
+              <ColorSlider label="Max entradas recovery" color="amber" unit=""
+                value={recovery.maxRecoveryEntries ?? 2} min={1} max={4} step={1}
+                onChange={(v) => saveRecovery({ maxRecoveryEntries: v })}
+                desc="Número máximo de entradas (base + safety) dentro de un ciclo recovery." />
+            </div>
+
+            <p className="text-xs font-semibold text-muted-foreground">Salida del Recovery</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              <ColorSlider label="TP Recovery BTC" color="green"
+                value={recovery.recoveryTpPctBtc ?? 2.5} min={0.5} max={8} step={0.1}
+                onChange={(v) => saveRecovery({ recoveryTpPctBtc: v })}
+                desc="Objetivo de beneficio conservador del recovery para BTC." />
+              <ColorSlider label="TP Recovery ETH" color="green"
+                value={recovery.recoveryTpPctEth ?? 3.0} min={0.5} max={8} step={0.1}
+                onChange={(v) => saveRecovery({ recoveryTpPctEth: v })}
+                desc="Objetivo de beneficio conservador del recovery para ETH." />
+              <ColorSlider label="Trailing Recovery BTC" color="green"
+                value={recovery.recoveryTrailingPctBtc ?? 0.8} min={0.3} max={3} step={0.1}
+                onChange={(v) => saveRecovery({ recoveryTrailingPctBtc: v })}
+                desc="Trailing tight del recovery BTC para proteger beneficios rápidamente." />
+              <ColorSlider label="Trailing Recovery ETH" color="green"
+                value={recovery.recoveryTrailingPctEth ?? 1.0} min={0.3} max={3} step={0.1}
+                onChange={(v) => saveRecovery({ recoveryTrailingPctEth: v })}
+                desc="Trailing tight del recovery ETH para proteger beneficios rápidamente." />
+              <ColorSlider label="Duración máxima" color="cyan" unit=" h"
+                value={recovery.maxRecoveryDurationHours ?? 168} min={24} max={720} step={24}
+                onChange={(v) => saveRecovery({ maxRecoveryDurationHours: v })}
+                desc="Horas máximas que puede estar abierto un ciclo de recovery antes de cerrarse automáticamente." />
+            </div>
+
+            <div className="border-t border-border/30 pt-4 space-y-3">
+              <ToggleField label="Confirmar rebote" checked={recovery.requireReboundConfirmation ?? true}
+                onChange={(v) => saveRecovery({ requireReboundConfirmation: v })}
+                desc="Exige una señal de rebote antes de abrir el recovery. Evita comprar en plena caída." />
+              <ToggleField label="Auto cerrar si main cierra" checked={recovery.autoCloseIfMainClosed ?? true}
+                onChange={(v) => saveRecovery({ autoCloseIfMainClosed: v })}
+                desc="Cierra el recovery automáticamente si el ciclo principal se cierra." />
+              <ToggleField label="Auto cerrar si main se recupera" checked={recovery.autoCloseIfMainRecovers ?? false}
+                onChange={(v) => saveRecovery({ autoCloseIfMainRecovers: v })}
+                desc="Cierra el recovery si el ciclo principal vuelve a PnL positivo." />
+            </div>
+          </div>
+        )}
       </ConfigBlock>
     </div>
   );
