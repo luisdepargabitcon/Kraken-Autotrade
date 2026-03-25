@@ -1601,7 +1601,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   </Badge>
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground mt-1">
+              <div className="text-[11px] text-amber-400/80 font-mono mt-1">
                 Inicio: {fmtDate(cycle.startedAt)} | Compras: {cycle.buyCount} | Score: {cycle.marketScore || "—"}
                 {cycle.tpTargetPct && ` | TP: ${parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%`}
                 {cycle.basePrice && ` | Base: $${fmtPrice(cycle.basePrice)} (${cycle.basePriceType || "—"})`}
@@ -1783,7 +1783,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                           <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
                           <td className="p-2 text-right text-muted-foreground">{fmtUsd(order.feesUsd)}</td>
                           <td className="p-2 text-right text-muted-foreground">{slip > 0 ? fmtUsd(slip) : "—"}</td>
-                          <td className="p-2 text-[10px] text-muted-foreground max-w-[200px] truncate" title={order.triggerReason || ""}>
+                          <td className="p-2 text-[10px] text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>
                             {translateOrderReason(order)}
                           </td>
                         </tr>
@@ -2146,7 +2146,7 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
                     <td className="p-1.5 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
                     <td className="p-1.5 text-right">{fmtUsd(order.netValueUsd)}</td>
                     <td className="p-1.5 text-right text-yellow-400">{fmtUsd(order.feesUsd)}</td>
-                    <td className="p-1.5 text-muted-foreground truncate max-w-[200px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+                    <td className="p-1.5 text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2200,7 +2200,7 @@ function HistoryOrdersView({ orders }: { orders: any[] }) {
               <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
               <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
               <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
-              <td className="p-2 text-muted-foreground truncate max-w-[250px]" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+              <td className="p-2 text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
             </tr>
           ))}
         </tbody>
