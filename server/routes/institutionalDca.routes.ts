@@ -59,10 +59,11 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
 
   app.patch(`${PREFIX}/config`, async (req, res) => {
     try {
-      // Handle mode transition separately
-      if (req.body.mode && req.body.mode !== (await repo.getIdcaConfig()).mode) {
-        await engine.handleModeTransition(req.body.mode);
-        delete req.body.mode; // Already handled
+      // Handle mode transition separately - preserve mode for saving
+      const newMode = req.body.mode;
+      if (newMode && newMode !== (await repo.getIdcaConfig()).mode) {
+        await engine.handleModeTransition(newMode);
+        // Mode is NOT deleted - it will be saved by updateIdcaConfig below
       }
       
       const updated = await repo.updateIdcaConfig(req.body);
