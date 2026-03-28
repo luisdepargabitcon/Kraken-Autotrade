@@ -38,6 +38,8 @@ import {
   useExchangeFeePresets,
   useDeleteManualCycle,
   useEditImportedCycle,
+  useDeleteOrder,
+  useDeleteAllOrders,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -286,11 +288,30 @@ function ControlsBar() {
 // ════════════════════════════════════════════════════════════════════
 
 function SummaryTab() {
-  const { data: summary, isLoading } = useIdcaSummary();
+  const { data: summary, isLoading, error } = useIdcaSummary();
   const { data: config } = useIdcaConfig();
 
-  if (isLoading || !summary) {
+  if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando resumen...</div>;
+  }
+
+  if (error) {
+    return (
+      <Card className="border-red-500/30 bg-red-500/5">
+        <CardContent className="p-8 text-center">
+          <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+          <p className="text-sm text-red-400">Error cargando resumen</p>
+          <p className="text-xs text-muted-foreground mt-2">{error.message}</p>
+          <p className="text-[10px] text-muted-foreground mt-4">
+            Posible causa: columnas de base de datos faltantes. Ejecuta la migración SQL.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!summary) {
+    return <div className="text-center py-8 text-muted-foreground">No hay datos de resumen</div>;
   }
 
   const pnlColor = summary.unrealizedPnlUsd >= 0 ? "text-green-400" : "text-red-400";
@@ -1210,10 +1231,10 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
   const displayCapital = capitalUsedUsd || computedCapital;
   const presets = presetsData?.presets || {};
 
-  // Recalculate fee USD when capital or feePct changes
-  const computedFeeUsd = displayCapital && feePct
+  // Recalculate fee USD when capital or feePct changes (only if not manually edited)
+  const computedFeeUsd = displayCapital && feePct && !feeManuallyEdited
     ? (parseFloat(displayCapital) * parseFloat(feePct) / 100).toFixed(2)
-    : "";
+    : feeUsd || ""
 
   // Apply exchange preset
   const applyExchangePreset = (key: string) => {
@@ -1376,7 +1397,7 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
                       className="h-7 text-xs font-mono" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[10px] font-mono text-muted-foreground">FEE USD {!feeUsd && computedFeeUsd ? `(auto: $${computedFeeUsd})` : ""}</Label>
+                    <Label className="text-[10px] font-mono text-muted-foreground">FEE USD {(!feeUsd && computedFeeUsd) ? `(auto: $${computedFeeUsd})` : ""}</Label>
                     <Input type="number" step="0.01" min="0" value={feeUsd} placeholder={computedFeeUsd || "—"}
                       onChange={(e) => { setFeeUsd(e.target.value); setFeeManuallyEdited(true); }}
                       className="h-7 text-xs font-mono" />
@@ -2234,6 +2255,11 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
 }
 
 function HistoryOrdersView({ orders }: { orders: any[] }) {
+  const deleteOrder = useDeleteOrder();
+  const deleteAllOrders = useDeleteAllOrders();
+  const { toast } = useToast();
+  const [selectedMode, setSelectedMode] = useState<string>("");
+
   if (orders.length === 0) {
     return (
       <Card className="border-border/50">
@@ -2244,42 +2270,99 @@ function HistoryOrdersView({ orders }: { orders: any[] }) {
     );
   }
 
+  const handleDeleteOrder = (orderId: number) => {
+    if (!confirm(`¿Eliminar orden #${orderId}?`)) return;
+    deleteOrder.mutate(orderId, {
+      onSuccess: () => toast({ title: "Orden eliminada", description: `Orden #${orderId} eliminada correctamente` }),
+      onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    });
+  };
+
+  const handleDeleteAll = () => {
+    const modeText = selectedMode || "todas las órdenes";
+    if (!confirm(`¿Eliminar ${modeText}? Esta acción no se puede deshacer.`)) return;
+    deleteAllOrders.mutate({ mode: selectedMode || undefined }, {
+      onSuccess: (data) => toast({ title: "Órdenes eliminadas", description: `${data.deletedCount} órdenes eliminadas` }),
+      onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+    });
+  };
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="border-b border-border/50 text-muted-foreground">
-            <th className="p-2 text-left">Fecha</th>
-            <th className="p-2 text-left">Par</th>
-            <th className="p-2 text-left">Tipo</th>
-            <th className="p-2 text-left">Lado</th>
-            <th className="p-2 text-right">Precio</th>
-            <th className="p-2 text-right">Cantidad</th>
-            <th className="p-2 text-right">Valor</th>
-            <th className="p-2 text-right">Fees</th>
-            <th className="p-2 text-left">Motivo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order: any) => (
-            <tr key={order.id} className="border-b border-border/30 hover:bg-muted/20">
-              <td className="p-2">{fmtDate(order.executedAt)}</td>
-              <td className="p-2">{order.pair}</td>
-              <td className="p-2">
-                <Badge variant="outline" className="text-[10px]">{translateOrderType(order.orderType)}</Badge>
-              </td>
-              <td className={cn("p-2", order.side === "buy" ? "text-green-400" : "text-red-400")}>
-                {order.side === "buy" ? "COMPRA" : "VENTA"}
-              </td>
-              <td className="p-2 text-right">{fmtPrice(order.price)}</td>
-              <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
-              <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
-              <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
-              <td className="p-2 text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+    <div className="space-y-3">
+      {/* Bulk delete controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <select
+            className="bg-background border border-border rounded px-2 py-1 text-xs"
+            value={selectedMode}
+            onChange={(e) => setSelectedMode(e.target.value)}
+          >
+            <option value="">Todas las órdenes</option>
+            <option value="simulation">Solo simulación</option>
+            <option value="live">Solo live</option>
+          </select>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="text-xs h-7"
+            onClick={handleDeleteAll}
+            disabled={deleteAllOrders.isPending}
+          >
+            <Trash2 className="h-3 w-3 mr-1" />
+            {deleteAllOrders.isPending ? "Eliminando..." : "Eliminar todas"}
+          </Button>
+        </div>
+        <Badge variant="outline" className="text-[10px]">{orders.length} órdenes</Badge>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="border-b border-border/50 text-muted-foreground">
+              <th className="p-2 text-left">Fecha</th>
+              <th className="p-2 text-left">Par</th>
+              <th className="p-2 text-left">Tipo</th>
+              <th className="p-2 text-left">Lado</th>
+              <th className="p-2 text-right">Precio</th>
+              <th className="p-2 text-right">Cantidad</th>
+              <th className="p-2 text-right">Valor</th>
+              <th className="p-2 text-right">Fees</th>
+              <th className="p-2 text-left">Motivo</th>
+              <th className="p-2 text-center">Acción</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {orders.map((order: any) => (
+              <tr key={order.id} className="border-b border-border/30 hover:bg-muted/20">
+                <td className="p-2">{fmtDate(order.executedAt)}</td>
+                <td className="p-2">{order.pair}</td>
+                <td className="p-2">
+                  <Badge variant="outline" className="text-[10px]">{translateOrderType(order.orderType)}</Badge>
+                </td>
+                <td className={cn("p-2", order.side === "buy" ? "text-green-400" : "text-red-400")}>
+                  {order.side === "buy" ? "COMPRA" : "VENTA"}
+                </td>
+                <td className="p-2 text-right">{fmtPrice(order.price)}</td>
+                <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
+                <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
+                <td className="p-2 text-right">{fmtUsd(order.feesUsd)}</td>
+                <td className="p-2 text-muted-foreground min-w-[200px] whitespace-normal" title={order.triggerReason || ""}>{translateOrderReason(order)}</td>
+                <td className="p-2 text-center">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    onClick={() => handleDeleteOrder(order.id)}
+                    disabled={deleteOrder.isPending}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
