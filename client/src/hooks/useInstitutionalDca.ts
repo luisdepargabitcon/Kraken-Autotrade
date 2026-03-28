@@ -393,9 +393,18 @@ export function useEmergencyCloseAll() {
 
 export function useResetSimulationWallet() {
   const qc = useQueryClient();
-  return useMutation({
+  return useMutation<{
+    wallet: IdcaSimulationWallet;
+    cyclesClosed: number;
+    ordersDeleted: number;
+    eventsDeleted: number;
+  }, Error, number | undefined>({
     mutationFn: async (initialBalance?: number) => {
       const res = await apiRequest("POST", `${PREFIX}/simulation/reset`, { initialBalance });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to reset simulation");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -504,6 +513,45 @@ export function useDeleteManualCycle() {
   return useMutation({
     mutationFn: async (cycleId: number) => {
       const res = await apiRequest("DELETE", `${PREFIX}/cycles/${cycleId}/manual`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
+// ─── Delete Orders ─────────────────────────────────────────────────
+
+export function useDeleteOrder() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; deleted: boolean; orderId: number }, Error, number>({
+    mutationFn: async (orderId: number) => {
+      const res = await apiRequest("DELETE", `${PREFIX}/orders/${orderId}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to delete order");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca", "orders"] });
+    },
+  });
+}
+
+export function useDeleteAllOrders() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; deletedCount: number; mode?: string; cycleId?: number }, Error, { mode?: string; cycleId?: number }>({
+    mutationFn: async ({ mode, cycleId }: { mode?: string; cycleId?: number } = {}) => {
+      const params = new URLSearchParams();
+      if (mode) params.set("mode", mode);
+      if (cycleId) params.set("cycleId", String(cycleId));
+      const res = await apiRequest("DELETE", `${PREFIX}/orders?${params}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to delete orders");
+      }
       return res.json();
     },
     onSuccess: () => {

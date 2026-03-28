@@ -545,12 +545,44 @@ export async function updateSimulationWallet(
   return updated;
 }
 
-export async function resetSimulationWallet(
+export async function resetSimulation(
   initialBalance?: number
-): Promise<InstitutionalDcaSimulationWalletRow> {
+): Promise<{ wallet: InstitutionalDcaSimulationWalletRow; cyclesClosed: number; ordersDeleted: number; eventsDeleted: number }> {
   const config = await getIdcaConfig();
   const balance = initialBalance || parseFloat(String(config.simulationInitialBalanceUsd));
-  return updateSimulationWallet({
+
+  // 1. Get all simulation cycles to count and delete their orders/events
+  const simulationCycles = await getAllActiveCycles('simulation');
+  const simulationClosedCycles = await getCycles({ mode: 'simulation', status: 'closed', limit: 10000 });
+  const allSimulationCycleIds = [
+    ...simulationCycles.map(c => c.id),
+    ...simulationClosedCycles.map(c => c.id)
+  ];
+
+  // 2. Delete all orders for simulation cycles
+  let ordersDeleted = 0;
+  for (const cycleId of allSimulationCycleIds) {
+    const deletedOrders = await db
+      .delete(institutionalDcaOrders)
+      .where(eq(institutionalDcaOrders.cycleId, cycleId))
+      .returning();
+    ordersDeleted += deletedOrders.length;
+  }
+
+  // 3. Delete all events for simulation mode
+  const deletedEvents = await db
+    .delete(institutionalDcaEvents)
+    .where(eq(institutionalDcaEvents.mode, 'simulation'))
+    .returning();
+  const eventsDeleted = deletedEvents.length;
+
+  // 4. Delete all simulation cycles (both active and closed)
+  await db
+    .delete(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.mode, 'simulation'));
+
+  // 5. Reset wallet
+  const wallet = await updateSimulationWallet({
     initialBalanceUsd: balance.toFixed(2),
     availableBalanceUsd: balance.toFixed(2),
     usedBalanceUsd: "0",
@@ -561,6 +593,45 @@ export async function resetSimulationWallet(
     totalOrdersSimulated: 0,
     lastResetAt: new Date(),
   });
+
+  return {
+    wallet,
+    cyclesClosed: allSimulationCycleIds.length,
+    ordersDeleted,
+    eventsDeleted
+  };
+}
+
+// ─── Order Deletion ────────────────────────────────────────────────
+
+export async function deleteOrder(orderId: number): Promise<boolean> {
+  const result = await db
+    .delete(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.id, orderId))
+    .returning();
+  return result.length > 0;
+}
+
+export async function deleteOrdersByCycle(cycleId: number): Promise<number> {
+  const result = await db
+    .delete(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.cycleId, cycleId))
+    .returning();
+  return result.length;
+}
+
+export async function deleteAllOrders(mode?: string): Promise<number> {
+  if (mode) {
+    const result = await db
+      .delete(institutionalDcaOrders)
+      .where(eq(institutionalDcaOrders.mode, mode))
+      .returning();
+    return result.length;
+  }
+  const result = await db
+    .delete(institutionalDcaOrders)
+    .returning();
+  return result.length;
 }
 
 // ─── OHLCV Cache ───────────────────────────────────────────────────

@@ -177,6 +177,44 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  app.delete(`${PREFIX}/orders/:id`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const deleted = await repo.deleteOrder(id);
+      if (!deleted) return res.status(404).json({ error: "Orden no encontrada" });
+
+      res.json({ success: true, deleted: true, orderId: id });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete(`${PREFIX}/orders`, async (req, res) => {
+    try {
+      const { mode, cycleId } = req.query;
+
+      let deletedCount = 0;
+      if (cycleId) {
+        deletedCount = await repo.deleteOrdersByCycle(parseInt(cycleId as string));
+      } else {
+        deletedCount = await repo.deleteAllOrders(mode as string | undefined);
+      }
+
+      await repo.createEvent({
+        mode: mode as string || "all",
+        eventType: "orders_bulk_deleted",
+        severity: "warn",
+        message: `${deletedCount} órdenes eliminadas${mode ? ` en modo ${mode}` : ""}${cycleId ? ` para ciclo ${cycleId}` : ""}`,
+      });
+
+      res.json({ success: true, deletedCount, mode, cycleId });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Events ────────────────────────────────────────────────────
 
   app.get(`${PREFIX}/events`, async (req, res) => {
@@ -208,26 +246,16 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
   app.post(`${PREFIX}/simulation/reset`, async (req, res) => {
     try {
       const { initialBalance } = req.body;
-      const wallet = await repo.resetSimulationWallet(initialBalance);
-      
-      // Close all simulation cycles
-      const prices: Record<string, number> = {};
-      for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
-        try {
-          // Use cached price from engine
-          prices[pair] = 0; // Will be updated by engine
-        } catch { /* ignore */ }
-      }
-      await repo.closeCyclesBulk("simulation", "wallet_reset", prices);
+      const result = await repo.resetSimulation(initialBalance);
 
       await repo.createEvent({
         mode: "simulation",
-        eventType: "simulation_wallet_reset",
+        eventType: "simulation_reset",
         severity: "info",
-        message: `Simulation wallet reset to $${(initialBalance || 10000).toFixed(2)}`,
+        message: `Simulation reset: ${result.cyclesClosed} cycles, ${result.ordersDeleted} orders, ${result.eventsDeleted} events deleted. Wallet reset to $${(initialBalance || 10000).toFixed(2)}`,
       });
 
-      res.json(wallet);
+      res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
