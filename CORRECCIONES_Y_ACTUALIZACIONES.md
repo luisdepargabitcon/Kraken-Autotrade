@@ -2,6 +2,37 @@
 
 ----
 
+## 2026-03-28 — FIX: Arreglos IDCA - Resumen, Importación, Botones Borrar (WINDSURF FIX v2)
+
+### Problemas reportados y solucionados
+
+1. **Pestaña resumen no carga - queda en loading**
+   - Causa: Error de base de datos (columnas faltantes) no se mostraba correctamente
+   - Solución: SummaryTab ahora captura y muestra el error con mensaje claro
+   - Si el error persiste tras aplicar migración SQL, muestra indicador visual
+
+2. **Formulario importación borra el importe al actualizar**
+   - Causa: El cálculo automático de fee sobreescribía el valor manual
+   - Solución: 
+     - Fee USD solo se recalcula automáticamente si NO fue editado manualmente
+     - Capital usado ya no se sobreescribe al cambiar otros campos
+
+3. **Botones borrar órdenes en la UI no estaban implementados**
+   - Solución: Implementados en HistoryTab → vista Órdenes
+   - Botón individual con icono 🗑️ por cada orden (con confirmación)
+   - Botón "Eliminar todas" con selector de modo:
+     - Todas las órdenes
+     - Solo modo simulation
+     - Solo modo live
+
+### Archivos modificados
+- `client/src/pages/InstitutionalDca.tsx`
+- `client/src/hooks/useInstitutionalDca.ts` (hooks useDeleteOrder, useDeleteAllOrders ya existían)
+
+### Commit: `6dc0b70`
+
+----
+
 ## 2026-03-28 — FIX: Reparación Completa IDCA - Migración, Simulación, Órdenes (WINDSURF FIX)
 
 ### Problemas reportados y solucionados
