@@ -2227,6 +2227,136 @@ export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// REHYDRATE IMPORTED CYCLE — Full management activation
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * When an imported cycle switches from soloSalida=true to soloSalida=false,
+ * this function recomputes all derived operational fields so it behaves
+ * identically to a normal cycle: safety buy levels, dynamic TP, trailing,
+ * capital reserved, base price reference, etc.
+ */
+export async function rehydrateImportedCycle(cycleId: number): Promise<import("@shared/schema").InstitutionalDcaCycle> {
+  const cycle = await repo.getCycleById(cycleId);
+  if (!cycle) throw new Error(`Cycle ${cycleId} not found`);
+  if (cycle.status === "closed") throw new Error("Cannot rehydrate a closed cycle");
+
+  const pair = cycle.pair;
+  const mode = cycle.mode as IdcaMode;
+  const config = await repo.getIdcaConfig();
+  const assetConfig = await repo.getAssetConfig(pair);
+  if (!assetConfig) throw new Error(`No asset config for ${pair}`);
+
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const buyCount = cycle.buyCount || 1;
+  const currentPrice = await getCurrentPrice(pair) || avgEntry;
+  const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+
+  // ── 1. Safety buy levels ──────────────────────────────────
+  const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+  const safetyIndex = buyCount - 1; // 0-indexed: buyCount=1 means base buy done, next is index 0
+  const nextSafety = safetyOrders[safetyIndex];
+  const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
+  const nextBuyPrice = nextLevelPct ? avgEntry * (1 - nextLevelPct / 100) : null;
+
+  // ── 2. Capital reserved (budget for safety buys) ──────────
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));
+  const maxAssetPct = parseFloat(String(config.maxAssetExposurePct || "25"));
+  const assetBudget = allocatedCapital * (maxAssetPct / 100);
+  // Reserve at least the current capital + room for safety buys
+  const capitalReserved = Math.max(capitalUsed, assetBudget);
+
+  // ── 3. Dynamic TP ─────────────────────────────────────────
+  let tpPct: number;
+  let tpBreakdown: any = null;
+  const cycleType = (cycle.cycleType as IdcaCycleType) || "main";
+
+  if (config.adaptiveTpEnabled) {
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
+      pair,
+      cycleType,
+      buyCount,
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
+      volatilityPct: getVolatility(pair),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
+    });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdown = breakdown;
+  } else {
+    tpPct = parseFloat(String(assetConfig.takeProfitPct));
+  }
+
+  const tpPrice = avgEntry * (1 + tpPct / 100);
+
+  // ── 4. Dynamic trailing ───────────────────────────────────
+  let trailingPct = parseFloat(String(assetConfig.trailingPct));
+  if (config.volatilityTrailingEnabled) {
+    trailingPct = smart.computeDynamicTrailing({
+      atrPct: getVolatility(pair),
+      baseTrailingPct: trailingPct,
+      minTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.minTrailingPctBtc : config.minTrailingPctEth)),
+      maxTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.maxTrailingPctBtc : config.maxTrailingPctEth)),
+    });
+  }
+
+  // ── 5. Base price reference ───────────────────────────────
+  // For imported cycles, the base price is the avgEntryPrice at import time
+  const basePrice = cycle.basePrice || avgEntry.toFixed(8);
+  const basePriceType = cycle.basePriceType || "imported_avg";
+
+  // ── 6. Persist all derived fields ─────────────────────────
+  const patch: Record<string, any> = {
+    nextBuyLevelPct: nextLevelPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    tpBreakdownJson: tpBreakdown,
+    trailingPct: trailingPct.toFixed(2),
+    capitalReservedUsd: capitalReserved.toFixed(2),
+    currentPrice: currentPrice.toFixed(8),
+    basePrice,
+    basePriceType,
+  };
+
+  // Update PnL while we're at it
+  const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
+  if (totalQty > 0 && currentPrice > 0) {
+    const mv = totalQty * currentPrice;
+    const pnlUsd = mv - capitalUsed;
+    const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
+    patch.unrealizedPnlUsd = pnlUsd.toFixed(2);
+    patch.unrealizedPnlPct = pnlPct.toFixed(4);
+  }
+
+  const updated = await repo.updateCycle(cycleId, patch);
+
+  // Log the rehydration event
+  await createHumanEvent({
+    cycleId, pair, mode,
+    eventType: "imported_position_created",
+    severity: "info",
+    message: `Ciclo importado rehidratado → Gestión completa. TP=${tpPct.toFixed(1)}%, NextBuy=${nextBuyPrice ? `$${nextBuyPrice.toFixed(2)}` : "N/A"}, Trailing=${trailingPct.toFixed(2)}%`,
+    payloadJson: {
+      rehydratedAt: new Date().toISOString(),
+      tpPct, tpPrice, trailingPct,
+      nextBuyPrice, nextLevelPct,
+      capitalReserved, basePrice, basePriceType,
+      dynamicTpEnabled: config.adaptiveTpEnabled,
+    },
+  }, {
+    eventType: "imported_position_created", pair, mode,
+    price: currentPrice, avgEntry,
+    tpPct, capitalUsed: capitalReserved,
+  });
+
+  console.log(`${TAG} Rehydrated imported cycle #${cycleId} (${pair}): TP=${tpPct.toFixed(1)}%, nextBuy=${nextBuyPrice?.toFixed(2) || "none"}, trailing=${trailingPct.toFixed(2)}%`);
+
+  return updated;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // RECOVERY CYCLE ENGINE — Deep Drawdown Multi-Cycle
 // ════════════════════════════════════════════════════════════════════
 

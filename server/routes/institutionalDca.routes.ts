@@ -325,7 +325,17 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const soloSalida = req.body.soloSalida;
       if (typeof soloSalida !== "boolean") return res.status(400).json({ error: "soloSalida debe ser booleano" });
 
-      const updated = await repo.updateCycle(id, { soloSalida });
+      // First update the flag
+      await repo.updateCycle(id, { soloSalida });
+
+      // When switching to gestión completa, rehydrate all derived fields
+      // so the cycle behaves identically to a normal cycle
+      if (!soloSalida) {
+        const rehydrated = await engine.rehydrateImportedCycle(id);
+        return res.json(rehydrated);
+      }
+
+      const updated = await repo.getCycleById(id);
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

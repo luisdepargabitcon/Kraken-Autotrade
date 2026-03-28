@@ -1575,6 +1575,9 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {cycle.cycleType === "plus" && (
                   <Badge variant="outline" className="text-[10px] font-mono text-purple-400 border-purple-400/50">PLUS</Badge>
                 )}
+                {cycle.cycleType === "recovery" && (
+                  <Badge variant="outline" className="text-[10px] font-mono text-orange-400 border-orange-400/50 bg-orange-400/5">RECOVERY</Badge>
+                )}
                 {cycle.isImported && (
                   <Badge variant="outline" className="text-[10px] font-mono text-cyan-400 border-cyan-400/50 bg-cyan-400/5">
                     <Upload className="h-2.5 w-2.5 mr-0.5" /> IMPORTADO
@@ -1620,15 +1623,20 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   <span className="text-[10px] font-mono text-muted-foreground">
                     Avg: <span className="text-slate-300">${fmtPrice(cycle.avgEntryPrice)}</span>
                   </span>
-                  {cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 && (
+                  {cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
                       <span className="text-[10px] font-mono text-muted-foreground">
                         🎯 Venta TP: <span className="text-green-400 font-semibold">${fmtPrice(cycle.tpTargetPrice)}</span>
                       </span>
                     </>
-                  )}
-                  {cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 && (
+                  ) : !(cycle.isImported && cycle.soloSalida) ? (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-yellow-400/60">🎯 TP: pendiente de cálculo</span>
+                    </>
+                  ) : null}
+                  {cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
                       <span className="text-[10px] font-mono text-muted-foreground">
@@ -1636,7 +1644,17 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                         {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
                       </span>
                     </>
-                  )}
+                  ) : cycle.isImported && cycle.soloSalida ? (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: solo salida</span>
+                    </>
+                  ) : !(cycle.isImported && cycle.soloSalida) && cycle.buyCount >= 1 ? (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: {cycle.nextBuyPrice ? `$${fmtPrice(cycle.nextBuyPrice)}` : "sin niveles disponibles"}</span>
+                    </>
+                  ) : null}
                 </div>
               )}
               {/* Protection / Trailing status badges */}
