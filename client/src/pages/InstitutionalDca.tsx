@@ -37,6 +37,7 @@ import {
   useToggleSoloSalida,
   useExchangeFeePresets,
   useDeleteManualCycle,
+  useEditImportedCycle,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -76,9 +77,11 @@ import {
   Upload,
   ArrowRightLeft,
   Trash2,
+  Edit3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
+import { EditImportedCycleModal } from "@/components/idca/EditImportedCycleModal";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -1545,14 +1548,17 @@ function CyclesTab() {
 function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
   const deleteManualCycle = useDeleteManualCycle();
+  const editImportedCycle = useEditImportedCycle();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   const canDelete = (cycle.isImported || cycle.sourceType === 'manual') && cycle.status !== 'closed';
+  const canEdit = (cycle.isImported || cycle.sourceType === 'manual' || cycle.isManualCycle) && cycle.status !== 'closed';
 
   return (
     <Card className={cn("border-border/50", cycle.isImported && "border-l-2 border-l-cyan-500")}>
@@ -1724,6 +1730,18 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                         }}
                       />
                     </div>
+                    {canEdit && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10"
+                        onClick={() => setShowEditModal(true)}
+                        disabled={editImportedCycle.isPending}
+                      >
+                        <Edit3 className="h-3.5 w-3.5 mr-1" />
+                        <span className="text-[10px]">Editar</span>
+                      </Button>
+                    )}
                     {canDelete && (
                       <Button
                         variant="ghost"
@@ -1833,6 +1851,35 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
           </div>
         )}
       </CardContent>
+
+      {/* Edit Imported Cycle Modal */}
+      <EditImportedCycleModal
+        cycle={showEditModal ? cycle : null}
+        open={showEditModal}
+        onOpenChange={setShowEditModal}
+        onSave={(cycleId, payload) => {
+          editImportedCycle.mutate(
+            { cycleId, payload },
+            {
+              onSuccess: (data) => {
+                setShowEditModal(false);
+                toast({
+                  title: "Ciclo actualizado",
+                  description: `Ciclo #${cycleId} editado correctamente. Caso: ${data.activityCheck.case === "A_no_activity" ? "A (sin actividad)" : "B (con actividad)"}`,
+                });
+              },
+              onError: (err: any) => {
+                toast({
+                  title: "Error al editar",
+                  description: err.message,
+                  variant: "destructive",
+                });
+              },
+            }
+          );
+        }}
+        isPending={editImportedCycle.isPending}
+      />
 
       {/* Delete Manual Cycle Confirmation Modal */}
       {showDeleteConfirm && (

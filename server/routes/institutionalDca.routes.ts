@@ -506,5 +506,67 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Edit Imported Cycle ─────────────────────────────────────────
+
+  app.patch(`${PREFIX}/cycles/:id/edit-imported`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const {
+        avgEntryPrice, quantity, capitalUsedUsd, exchangeSource,
+        startedAt, soloSalida, notes, feesPaidUsd, estimatedFeePct,
+        editReason, editAcknowledged,
+      } = req.body;
+
+      // Validation
+      if (!editReason || typeof editReason !== "string" || editReason.trim().length < 3) {
+        return res.status(400).json({ error: "editReason es obligatorio (mínimo 3 caracteres)" });
+      }
+      if (editAcknowledged !== true) {
+        return res.status(400).json({
+          error: "Debes confirmar editAcknowledged=true para proceder con la edición",
+          message: "Esta operación modifica el ciclo permanentemente y quedará auditada."
+        });
+      }
+
+      const result = await engine.editImportedCycle(id, {
+        avgEntryPrice: avgEntryPrice !== undefined ? parseFloat(avgEntryPrice) : undefined,
+        quantity: quantity !== undefined ? parseFloat(quantity) : undefined,
+        capitalUsedUsd: capitalUsedUsd !== undefined ? parseFloat(capitalUsedUsd) : undefined,
+        exchangeSource,
+        startedAt,
+        soloSalida: soloSalida !== undefined ? Boolean(soloSalida) : undefined,
+        notes,
+        feesPaidUsd: feesPaidUsd !== undefined ? parseFloat(feesPaidUsd) : undefined,
+        estimatedFeePct: estimatedFeePct !== undefined ? parseFloat(estimatedFeePct) : undefined,
+        editReason: editReason.trim(),
+        editAcknowledged: true,
+      });
+
+      res.json({
+        success: true,
+        cycle: result.cycle,
+        activityCheck: {
+          case: result.activityCheck.case,
+          buyCount: result.activityCheck.buyCount,
+          safetyBuys: result.activityCheck.safetyBuys,
+          postImportSells: result.activityCheck.postImportSells,
+          warnings: result.activityCheck.warnings,
+        },
+        editHistory: {
+          editedAt: result.editHistory.editedAt,
+          reason: result.editHistory.reason,
+          case: result.editHistory.case,
+          changes: result.editHistory.changes,
+          derivedImpact: result.editHistory.derivedImpact,
+        },
+      });
+    } catch (e: any) {
+      console.error('[IDCA] editImportedCycle error:', e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   console.log(`[IDCA] Routes registered under ${PREFIX}/*`);
 }

@@ -550,3 +550,55 @@ export function useIdcaCycleOrders(cycleId: number | null) {
     staleTime: 30000,
   });
 }
+
+// ─── Edit Imported Cycle ──────────────────────────────────────────
+
+export interface EditImportedCyclePayload {
+  avgEntryPrice?: number | string;
+  quantity?: number | string;
+  capitalUsedUsd?: number | string;
+  exchangeSource?: string;
+  startedAt?: string;
+  soloSalida?: boolean;
+  notes?: string;
+  feesPaidUsd?: number | string;
+  estimatedFeePct?: number | string;
+  editReason: string;
+  editAcknowledged: boolean;
+}
+
+export interface EditImportedCycleResult {
+  success: boolean;
+  cycle: IdcaCycle;
+  activityCheck: {
+    case: "A_no_activity" | "B_with_activity";
+    buyCount: number;
+    safetyBuys: number;
+    postImportSells: number;
+    warnings: string[];
+  };
+  editHistory: {
+    editedAt: string;
+    reason: string;
+    case: string;
+    changes: Record<string, { old: string | number | null; new: string | number | null }>;
+    derivedImpact: Record<string, { old: string | number | null; new: string | number | null }>;
+  };
+}
+
+export function useEditImportedCycle() {
+  const qc = useQueryClient();
+  return useMutation<EditImportedCycleResult, Error, { cycleId: number; payload: EditImportedCyclePayload }>({
+    mutationFn: async ({ cycleId, payload }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/cycles/${cycleId}/edit-imported`, payload);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to edit imported cycle");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}

@@ -232,3 +232,45 @@ export interface ImportPositionRequest {
   feesOverrideManual?: boolean;
   warningAcknowledged?: boolean; // user confirmed coexistence warning
 }
+
+// ─── Edit Imported Cycle ──────────────────────────────────────────
+
+export interface EditImportedCycleRequest {
+  avgEntryPrice?: number;      // Precio medio corregido
+  quantity?: number;           // Cantidad corregida
+  capitalUsedUsd?: number;     // Capital/coste total (opcional, calculable)
+  exchangeSource?: string;     // revolut_x | kraken | other
+  startedAt?: string;          // ISO date - fecha de apertura real
+  soloSalida?: boolean;        // Cambio modo gestión
+  notes?: string;              // Notas actualizadas
+  feesPaidUsd?: number;        // Fees reales pagados
+  estimatedFeePct?: number;    // % fee estimado
+
+  // Metadatos de auditoría obligatorios
+  editReason: string;          // "Error al introducir precio", etc.
+  editAcknowledged: boolean;   // Confirmación de consecuencias
+}
+
+export interface EditHistoryEntry {
+  editedAt: string;              // ISO timestamp
+  editedBy: string;              // user_manual o api_key
+  reason: string;                // Motivo de la edición
+  case: "A_no_activity" | "B_with_activity"; // Caso A o B
+  changes: Record<string, { old: string | number | null; new: string | number | null }>;
+  derivedImpact: Record<string, { old: string | number | null; new: string | number | null }>;
+  activityAtEdit: {
+    buyCount: number;
+    hasPostImportSells: boolean;
+    status: string;
+  };
+}
+
+export interface PostImportActivityCheck {
+  hasActivity: boolean;
+  buyCount: number;
+  postImportSells: number;
+  safetyBuys: number;
+  currentStatus: string;
+  case: "A_no_activity" | "B_with_activity";
+  warnings: string[];
+}

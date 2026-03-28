@@ -2357,6 +2357,289 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
 }
 
 // ════════════════════════════════════════════════════════════════════
+// EDIT IMPORTED CYCLE — Manual correction with full recalculation
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Edit an imported/manual cycle with full recalculation of derived fields.
+ * Validates activity status (Case A vs B) and maintains complete audit trail.
+ */
+export async function editImportedCycle(
+  cycleId: number,
+  req: import("./IdcaTypes").EditImportedCycleRequest
+): Promise<{
+  cycle: import("@shared/schema").InstitutionalDcaCycle;
+  activityCheck: import("./IdcaTypes").PostImportActivityCheck;
+  editHistory: import("./IdcaTypes").EditHistoryEntry;
+}> {
+  const cycle = await repo.getCycleById(cycleId);
+  if (!cycle) throw new Error(`Cycle ${cycleId} not found`);
+  if (cycle.status === "closed") throw new Error("Cannot edit a closed cycle");
+
+  // Verify it's an imported or manual cycle
+  const isImportable = cycle.isImported === true || cycle.sourceType === "manual" || cycle.isManualCycle === true;
+  if (!isImportable) {
+    throw new Error("Only imported or manual cycles can be edited");
+  }
+
+  const pair = cycle.pair;
+  const mode = cycle.mode as IdcaMode;
+
+  // ── 1. Detect post-import activity ──────────────────────────
+  const activityCheck = await repo.detectPostImportActivity(cycle);
+
+  // ── 2. Validate fields based on case ────────────────────────
+  if (activityCheck.case === "B_with_activity") {
+    // Case B: Block critical field edits if there's post-import activity
+    const blockedFields: string[] = [];
+    if (req.avgEntryPrice !== undefined && req.avgEntryPrice !== parseFloat(String(cycle.avgEntryPrice))) {
+      blockedFields.push("avgEntryPrice");
+    }
+    if (req.quantity !== undefined && req.quantity !== parseFloat(String(cycle.totalQuantity))) {
+      blockedFields.push("quantity");
+    }
+
+    if (blockedFields.length > 0) {
+      throw new Error(
+        `Caso B - Edición limitada: Este ciclo tiene actividad automática posterior ` +
+        `(${activityCheck.safetyBuys} compras de seguridad, ${activityCheck.postImportSells} ventas). ` +
+        `Los campos [${blockedFields.join(", ")}] no pueden editarse porque distorsionarían ` +
+        `el histórico. Campos permitidos: exchangeSource, startedAt, soloSalida, notes, fees.`
+      );
+    }
+  }
+
+  // ── 3. Build change tracking ────────────────────────────────
+  const oldAvgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const oldQty = parseFloat(String(cycle.totalQuantity || "0"));
+  const oldCapitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+
+  const changes: Record<string, { old: string | number | null; new: string | number | null }> = {};
+
+  // ── 4. Compute new values ───────────────────────────────────
+  const newAvgEntry = req.avgEntryPrice !== undefined ? req.avgEntryPrice : oldAvgEntry;
+  const newQty = req.quantity !== undefined ? req.quantity : oldQty;
+
+  // Capital used: use provided or auto-calculate
+  let newCapitalUsed: number;
+  if (req.capitalUsedUsd !== undefined) {
+    newCapitalUsed = req.capitalUsedUsd;
+  } else if (req.avgEntryPrice !== undefined || req.quantity !== undefined) {
+    newCapitalUsed = newQty * newAvgEntry;
+  } else {
+    newCapitalUsed = oldCapitalUsed;
+  }
+
+  // Track changes
+  if (req.avgEntryPrice !== undefined && req.avgEntryPrice !== oldAvgEntry) {
+    changes.avgEntryPrice = { old: oldAvgEntry, new: req.avgEntryPrice };
+  }
+  if (req.quantity !== undefined && req.quantity !== oldQty) {
+    changes.quantity = { old: oldQty, new: req.quantity };
+  }
+  if (newCapitalUsed !== oldCapitalUsed) {
+    changes.capitalUsedUsd = { old: oldCapitalUsed, new: newCapitalUsed };
+  }
+  if (req.exchangeSource !== undefined && req.exchangeSource !== cycle.exchangeSource) {
+    changes.exchangeSource = { old: cycle.exchangeSource, new: req.exchangeSource };
+  }
+  if (req.startedAt !== undefined) {
+    const oldStarted = cycle.startedAt ? new Date(cycle.startedAt).toISOString() : null;
+    if (req.startedAt !== oldStarted) {
+      changes.startedAt = { old: oldStarted, new: req.startedAt };
+    }
+  }
+  if (req.soloSalida !== undefined && req.soloSalida !== cycle.soloSalida) {
+    changes.soloSalida = { old: String(cycle.soloSalida), new: String(req.soloSalida) };
+  }
+  if (req.notes !== undefined && req.notes !== cycle.importNotes) {
+    changes.importNotes = { old: cycle.importNotes, new: req.notes };
+  }
+  if (req.estimatedFeePct !== undefined) {
+    const oldFeePct = parseFloat(String(cycle.estimatedFeePct || "0"));
+    if (req.estimatedFeePct !== oldFeePct) {
+      changes.estimatedFeePct = { old: oldFeePct, new: req.estimatedFeePct };
+    }
+  }
+
+  // ── 5. Recalculate ALL derived fields ───────────────────────
+  const config = await repo.getIdcaConfig();
+  const assetConfig = await repo.getAssetConfig(pair);
+  if (!assetConfig) throw new Error(`No asset config for ${pair}`);
+
+  const currentPrice = await getCurrentPrice(pair) || newAvgEntry;
+  const buyCount = cycle.buyCount || 1;
+
+  // Safety buy levels
+  const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+  const safetyIndex = buyCount - 1;
+  const nextSafety = safetyOrders[safetyIndex];
+  const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
+  const nextBuyPrice = nextLevelPct ? newAvgEntry * (1 - nextLevelPct / 100) : null;
+
+  // Capital reserved
+  const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));
+  const maxAssetPct = parseFloat(String(config.maxAssetExposurePct || "25"));
+  const assetBudget = allocatedCapital * (maxAssetPct / 100);
+  const capitalReserved = Math.max(newCapitalUsed, assetBudget);
+
+  // Dynamic TP
+  let tpPct: number;
+  let tpBreakdown: any = null;
+  const cycleType = (cycle.cycleType as import("./IdcaTypes").IdcaCycleType) || "main";
+
+  if (config.adaptiveTpEnabled) {
+    const dtpConfig = getDynamicTpConfig(config);
+    const breakdown = smart.computeDynamicTakeProfit({
+      pair,
+      cycleType,
+      buyCount,
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
+      volatilityPct: getVolatility(pair),
+      reboundStrength: getReboundStrength(pair),
+      config: dtpConfig,
+    });
+    tpPct = breakdown.finalTpPct;
+    tpBreakdown = breakdown;
+  } else {
+    tpPct = parseFloat(String(assetConfig.takeProfitPct));
+  }
+  const tpPrice = newAvgEntry * (1 + tpPct / 100);
+
+  // Dynamic trailing
+  let trailingPct = parseFloat(String(assetConfig.trailingPct));
+  if (config.volatilityTrailingEnabled) {
+    trailingPct = smart.computeDynamicTrailing({
+      atrPct: getVolatility(pair),
+      baseTrailingPct: trailingPct,
+      minTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.minTrailingPctBtc : config.minTrailingPctEth)),
+      maxTrailingPct: parseFloat(String(pair === "BTC/USD" ? config.maxTrailingPctBtc : config.maxTrailingPctEth)),
+    });
+  }
+
+  // Protection stop price (if armed)
+  let protectionStopPrice: string | null = cycle.protectionStopPrice;
+  if (cycle.protectionArmedAt && newAvgEntry !== oldAvgEntry) {
+    // Re-arm protection at new break-even
+    protectionStopPrice = newAvgEntry.toFixed(8);
+  }
+
+  // PnL recalculation
+  const marketValue = newQty * currentPrice;
+  const unrealizedPnlUsd = marketValue - newCapitalUsed;
+  const unrealizedPnlPct = newCapitalUsed > 0 ? (unrealizedPnlUsd / newCapitalUsed) * 100 : 0;
+
+  // Track derived impact
+  const oldTpPrice = parseFloat(String(cycle.tpTargetPrice || "0"));
+  const oldNextBuy = parseFloat(String(cycle.nextBuyPrice || "0"));
+  const oldProtection = parseFloat(String(cycle.protectionStopPrice || "0"));
+  const oldPnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
+
+  const derivedImpact: Record<string, { old: string | number | null; new: string | number | null }> = {};
+  if (tpPrice !== oldTpPrice) {
+    derivedImpact.tpTargetPrice = { old: oldTpPrice, new: tpPrice };
+  }
+  if (nextBuyPrice !== oldNextBuy) {
+    derivedImpact.nextBuyPrice = { old: oldNextBuy, new: nextBuyPrice };
+  }
+  if (parseFloat(protectionStopPrice || "0") !== oldProtection) {
+    derivedImpact.protectionStopPrice = { old: oldProtection, new: parseFloat(protectionStopPrice || "0") };
+  }
+  if (unrealizedPnlPct !== oldPnlPct) {
+    derivedImpact.unrealizedPnlPct = { old: oldPnlPct, new: unrealizedPnlPct };
+  }
+
+  // ── 6. Build patch ──────────────────────────────────────────
+  const patch: Record<string, any> = {
+    avgEntryPrice: newAvgEntry.toFixed(8),
+    totalQuantity: newQty.toFixed(8),
+    capitalUsedUsd: newCapitalUsed.toFixed(2),
+    capitalReservedUsd: capitalReserved.toFixed(2),
+    currentPrice: currentPrice.toFixed(8),
+    nextBuyLevelPct: nextLevelPct?.toFixed(2) || null,
+    nextBuyPrice: nextBuyPrice?.toFixed(8) || null,
+    tpTargetPct: tpPct.toFixed(2),
+    tpTargetPrice: tpPrice.toFixed(8),
+    tpBreakdownJson: tpBreakdown,
+    trailingPct: trailingPct.toFixed(2),
+    unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
+    unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
+  };
+
+  if (protectionStopPrice !== null) {
+    patch.protectionStopPrice = protectionStopPrice;
+  }
+  if (req.exchangeSource !== undefined) {
+    patch.exchangeSource = req.exchangeSource;
+  }
+  if (req.startedAt !== undefined) {
+    patch.startedAt = new Date(req.startedAt);
+  }
+  if (req.soloSalida !== undefined) {
+    patch.soloSalida = req.soloSalida;
+  }
+  if (req.notes !== undefined) {
+    patch.importNotes = req.notes;
+  }
+  if (req.estimatedFeePct !== undefined) {
+    patch.estimatedFeePct = req.estimatedFeePct.toFixed(4);
+    // Recalculate fee USD
+    patch.estimatedFeeUsd = (newCapitalUsed * req.estimatedFeePct / 100).toFixed(2);
+  }
+  if (req.feesPaidUsd !== undefined) {
+    // Store actual fees paid in import snapshot
+    const snapshot = (cycle.importSnapshotJson as any) || {};
+    snapshot.feesPaidUsdOverride = req.feesPaidUsd;
+    patch.importSnapshotJson = snapshot;
+  }
+
+  // ── 7. Build edit history entry ────────────────────────────
+  const editHistory: import("./IdcaTypes").EditHistoryEntry = {
+    editedAt: new Date().toISOString(),
+    editedBy: "user_manual",
+    reason: req.editReason,
+    case: activityCheck.case,
+    changes,
+    derivedImpact,
+    activityAtEdit: {
+      buyCount: activityCheck.buyCount,
+      hasPostImportSells: activityCheck.postImportSells > 0,
+      status: activityCheck.currentStatus,
+    },
+  };
+
+  // ── 8. Persist with audit ───────────────────────────────────
+  const updated = await repo.updateCycleWithEditAudit(cycleId, patch, editHistory);
+
+  // ── 9. Log event ───────────────────────────────────────────
+  const changeList = Object.keys(changes).join(", ");
+  const derivedList = Object.keys(derivedImpact).join(", ");
+
+  await createHumanEvent({
+    cycleId, pair, mode,
+    eventType: "imported_cycle_edited",
+    severity: activityCheck.case === "B_with_activity" ? "warn" : "info",
+    message: `Ciclo importado editado manualmente [${activityCheck.case}]. Cambios: ${changeList}. Impacto derivado: ${derivedList}`,
+    payloadJson: {
+      editHistory,
+      activityCheck,
+      oldAvgEntry, newAvgEntry,
+      oldQty, newQty,
+      oldCapitalUsed, newCapitalUsed,
+    },
+  }, {
+    eventType: "imported_cycle_edited", pair, mode,
+    price: currentPrice, avgEntry: newAvgEntry,
+    capitalUsed: newCapitalUsed,
+    reason: req.editReason,
+  });
+
+  console.log(`${TAG} Edited imported cycle #${cycleId} (${pair}): ${activityCheck.case}, changes=[${changeList}], derived=[${derivedList}]`);
+
+  return { cycle: updated, activityCheck, editHistory };
+}
+
+// ════════════════════════════════════════════════════════════════════
 // RECOVERY CYCLE ENGINE — Deep Drawdown Multi-Cycle
 // ════════════════════════════════════════════════════════════════════
 

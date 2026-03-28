@@ -708,3 +708,90 @@ export async function getModuleSummary(mode: string) {
     cycles: activeCycles,
   };
 }
+
+// ─── Edit Imported Cycle ───────────────────────────────────────────
+
+export async function detectPostImportActivity(
+  cycle: InstitutionalDcaCycle
+): Promise<import("./IdcaTypes").PostImportActivityCheck> {
+  const cycleId = cycle.id;
+  const importedAt = cycle.importedAt ? new Date(cycle.importedAt).getTime() : 0;
+  const buyCount = cycle.buyCount || 1;
+
+  // Get all orders for this cycle
+  const orders = await db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.cycleId, cycleId));
+
+  // Count post-import sell orders
+  const postImportSells = orders.filter(o => {
+    if (o.side !== 'sell') return false;
+    const orderTime = o.executedAt ? new Date(o.executedAt).getTime() : 0;
+    return importedAt > 0 && orderTime > importedAt;
+  });
+
+  // Count safety buys (buyCount > 1 indicates automatic activity)
+  const safetyBuys = Math.max(0, buyCount - 1);
+
+  // Determine case
+  const hasActivity = buyCount > 1 || postImportSells.length > 0;
+  const caseType: "A_no_activity" | "B_with_activity" = hasActivity ? "B_with_activity" : "A_no_activity";
+
+  const warnings: string[] = [];
+  if (buyCount > 1) {
+    warnings.push(`El ciclo tiene ${safetyBuys} compra(s) de seguridad automática(s) ejecutada(s).`);
+  }
+  if (postImportSells.length > 0) {
+    warnings.push(`El ciclo tiene ${postImportSells.length} venta(s) ejecutada(s) post-importación.`);
+  }
+  if (cycle.status === 'trailing_active' || cycle.status === 'tp_armed') {
+    warnings.push(`El ciclo está en estado avanzado: ${cycle.status}.`);
+  }
+
+  return {
+    hasActivity,
+    buyCount,
+    postImportSells: postImportSells.length,
+    safetyBuys,
+    currentStatus: cycle.status,
+    case: caseType,
+    warnings,
+  };
+}
+
+export async function updateCycleWithEditAudit(
+  cycleId: number,
+  patch: Record<string, any>,
+  editHistoryEntry: import("./IdcaTypes").EditHistoryEntry
+): Promise<InstitutionalDcaCycle> {
+  // First, get current cycle to retrieve existing edit history
+  const [currentCycle] = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, cycleId))
+    .limit(1);
+
+  if (!currentCycle) {
+    throw new Error(`Cycle ${cycleId} not found`);
+  }
+
+  // Build new edit history
+  const existingHistory = (currentCycle.editHistoryJson as import("./IdcaTypes").EditHistoryEntry[]) || [];
+  const newHistory = [...existingHistory, editHistoryEntry];
+
+  // Update cycle with patch + audit fields
+  const [updated] = await db
+    .update(institutionalDcaCycles)
+    .set({
+      ...patch,
+      lastManualEditAt: new Date(),
+      lastManualEditReason: editHistoryEntry.reason,
+      editHistoryJson: newHistory,
+      updatedAt: new Date(),
+    })
+    .where(eq(institutionalDcaCycles.id, cycleId))
+    .returning();
+
+  return updated;
+}

@@ -1082,6 +1082,10 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   // Protection & trailing state
   protectionArmedAt: timestamp("protection_armed_at"),
   protectionStopPrice: decimal("protection_stop_price", { precision: 18, scale: 8 }),
+  // Manual edit audit trail
+  lastManualEditAt: timestamp("last_manual_edit_at"),
+  lastManualEditReason: text("last_manual_edit_reason"),
+  editHistoryJson: jsonb("edit_history_json").default([]),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
