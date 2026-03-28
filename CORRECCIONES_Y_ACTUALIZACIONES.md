@@ -1,5 +1,43 @@
 # 📝 BITÁCORA TÉCNICA - KRAKEN AUTOTRADE
 
+----
+
+## 2026-03-28 — FIX: Reparación Completa IDCA - Migración, Simulación, Órdenes (WINDSURF FIX)
+
+### Problemas reportados y solucionados
+
+1. **Error: columna "last_manual_edit_at" does not exist**
+   - Creada migración SQL: `migrations/add_idca_audit_columns.sql`
+   - Columnas añadidas: `last_manual_edit_at`, `last_manual_edit_reason`, `edit_history_json`, `skipped_safety_levels`, `skipped_levels_detail`
+   - Ejecutar en VPS: `docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /app/migrations/add_idca_audit_columns.sql`
+
+2. **Reset simulación no borra posiciones ni historial**
+   - Nueva función `resetSimulation()` en `IdcaRepository.ts`
+   - Ahora borra: ciclos de simulación, órdenes asociadas, eventos del modo simulación
+   - Retorna estadísticas detalladas: cyclesClosed, ordersDeleted, eventsDeleted
+
+3. **Botones para borrar órdenes en historial**
+   - Nuevos endpoints:
+     - `DELETE /orders/:id` - Borrar orden individual
+     - `DELETE /orders?mode=&cycleId=` - Borrar en masa
+   - Nuevas funciones en repositorio: `deleteOrder`, `deleteOrdersByCycle`, `deleteAllOrders`
+   - Nuevos hooks React: `useDeleteOrder`, `useDeleteAllOrders`
+
+4. **No carga resumen / No deja cambiar a modo simulación**
+   - Verificados endpoints y hooks tras correcciones
+   - Si persiste, requiere aplicar migración SQL primero
+
+### Archivos modificados
+- `migrations/add_idca_audit_columns.sql` (nuevo)
+- `server/services/institutionalDca/IdcaRepository.ts`
+- `server/routes/institutionalDca.routes.ts`
+- `client/src/hooks/useInstitutionalDca.ts`
+
+### Commit: `cf6fac4`
+
+----
+
+
 ---
 
 ## 2026-03-25 — FEAT: Implementación completa Recovery Cycle (Multi-Ciclo por Drawdown Profundo)
