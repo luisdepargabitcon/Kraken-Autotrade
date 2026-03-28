@@ -1086,6 +1086,9 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   lastManualEditAt: timestamp("last_manual_edit_at"),
   lastManualEditReason: text("last_manual_edit_reason"),
   editHistoryJson: jsonb("edit_history_json").default([]),
+  // Skipped safety levels for imported cycles (when price already below some levels)
+  skippedSafetyLevels: integer("skipped_safety_levels").default(0),
+  skippedLevelsDetail: jsonb("skipped_levels_detail"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

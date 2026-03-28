@@ -1619,7 +1619,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
                 {cycle.isImported && cycle.sourceType && ` | Origen: ${cycle.sourceType}`}
               </div>
-              {/* Price targets bar */}
+              {/* Price targets bar with skipped levels indicator */}
               {cycle.status !== "closed" && (
                 <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                   <span className="text-[10px] font-mono text-muted-foreground">
@@ -1649,6 +1649,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                         🛒 Próx. compra: <span className="text-blue-400 font-semibold">${fmtPrice(cycle.nextBuyPrice)}</span>
                         {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
                       </span>
+                      {cycle.skippedSafetyLevels > 0 && (
+                        <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
+                          ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}
+                        </Badge>
+                      )}
                     </>
                   ) : cycle.isImported && cycle.soloSalida ? (
                     <>
@@ -1659,6 +1664,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
                       <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: {cycle.nextBuyPrice ? `$${fmtPrice(cycle.nextBuyPrice)}` : "sin niveles disponibles"}</span>
+                      {cycle.skippedSafetyLevels > 0 && (
+                        <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
+                          ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}
+                        </Badge>
+                      )}
                     </>
                   ) : null}
                 </div>

@@ -2175,6 +2175,72 @@ function parseSafetyOrders(json: unknown): SafetyOrderLevel[] {
   return [];
 }
 
+/**
+ * Calculate effective safety level considering current price vs avgEntry.
+ * When importing a position, if currentPrice is below avgEntry, some safety levels
+ * may already be "passed" (price is already below those trigger points).
+ * This function finds the first valid safety level below current price.
+ */
+function calculateEffectiveSafetyLevel(
+  safetyOrders: SafetyOrderLevel[],
+  avgEntry: number,
+  currentPrice: number,
+  baseBuyCount: number
+): {
+  effectiveIndex: number;
+  nextLevelPct: number | null;
+  nextBuyPrice: number | null;
+  skippedLevels: number;
+  skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[];
+} {
+  // Start from the level after base buy (index = baseBuyCount - 1)
+  let startIndex = Math.max(0, baseBuyCount - 1);
+  let effectiveIndex = startIndex;
+  let skippedLevels = 0;
+  const skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] = [];
+
+  // Scan through safety orders to find first valid level
+  for (let i = startIndex; i < safetyOrders.length; i++) {
+    const level = safetyOrders[i];
+    const triggerPrice = avgEntry * (1 - level.dipPct / 100);
+
+    // If current price is already below this trigger, it's "passed"
+    if (currentPrice < triggerPrice) {
+      skippedLevels++;
+      skippedLevelsDetail.push({
+        level: i + 1, // 1-indexed for display
+        dipPct: level.dipPct,
+        triggerPrice,
+      });
+      effectiveIndex = i + 1; // Move to next level
+    } else {
+      // Found first valid level
+      break;
+    }
+  }
+
+  // Check if we have a valid level
+  if (effectiveIndex < safetyOrders.length) {
+    const effectiveLevel = safetyOrders[effectiveIndex];
+    return {
+      effectiveIndex,
+      nextLevelPct: effectiveLevel.dipPct,
+      nextBuyPrice: avgEntry * (1 - effectiveLevel.dipPct / 100),
+      skippedLevels,
+      skippedLevelsDetail,
+    };
+  }
+
+  // All levels passed - no more safety buys available
+  return {
+    effectiveIndex: safetyOrders.length,
+    nextLevelPct: null,
+    nextBuyPrice: null,
+    skippedLevels,
+    skippedLevelsDetail,
+  };
+}
+
 // ─── Mode Transition ───────────────────────────────────────────────
 
 export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
@@ -2253,11 +2319,19 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
 
   // ── 1. Safety buy levels ──────────────────────────────────
+  // Use effective safety level calculation for imported cycles
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const safetyIndex = buyCount - 1; // 0-indexed: buyCount=1 means base buy done, next is index 0
-  const nextSafety = safetyOrders[safetyIndex];
-  const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
-  const nextBuyPrice = nextLevelPct ? avgEntry * (1 - nextLevelPct / 100) : null;
+  const effectiveSafety = calculateEffectiveSafetyLevel(
+    safetyOrders,
+    avgEntry,
+    currentPrice,
+    buyCount
+  );
+
+  const nextLevelPct = effectiveSafety.nextLevelPct;
+  const nextBuyPrice = effectiveSafety.nextBuyPrice;
+  const skippedSafetyLevels = effectiveSafety.skippedLevels;
+  const skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
 
   // ── 2. Capital reserved (budget for safety buys) ──────────
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));
@@ -2318,6 +2392,8 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
     currentPrice: currentPrice.toFixed(8),
     basePrice,
     basePriceType,
+    skippedSafetyLevels,  // Store count of skipped levels
+    skippedLevelsDetail: skippedSafetyLevels > 0 ? skippedLevelsDetail : null,  // Store detail for UI
   };
 
   // Update PnL while we're at it
@@ -2333,16 +2409,22 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
   const updated = await repo.updateCycle(cycleId, patch);
 
   // Log the rehydration event
+  const skippedMsg = skippedSafetyLevels > 0
+    ? ` (${skippedSafetyLevels} niveles de seguridad ya superados: ${skippedLevelsDetail.map(s => `-${s.dipPct}%`).join(', ')})`
+    : '';
+
   await createHumanEvent({
     cycleId, pair, mode,
     eventType: "imported_position_created",
     severity: "info",
-    message: `Ciclo importado rehidratado → Gestión completa. TP=${tpPct.toFixed(1)}%, NextBuy=${nextBuyPrice ? `$${nextBuyPrice.toFixed(2)}` : "N/A"}, Trailing=${trailingPct.toFixed(2)}%`,
+    message: `Ciclo importado rehidratado → Gestión completa. TP=${tpPct.toFixed(1)}%, NextBuy=${nextBuyPrice ? `$${nextBuyPrice.toFixed(2)}` : "N/A"}${skippedMsg}, Trailing=${trailingPct.toFixed(2)}%`,
     payloadJson: {
       rehydratedAt: new Date().toISOString(),
       tpPct, tpPrice, trailingPct,
       nextBuyPrice, nextLevelPct,
       capitalReserved, basePrice, basePriceType,
+      skippedSafetyLevels,
+      skippedLevelsDetail,
       dynamicTpEnabled: config.adaptiveTpEnabled,
     },
   }, {
@@ -2351,7 +2433,7 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
     tpPct, capitalUsed: capitalReserved,
   });
 
-  console.log(`${TAG} Rehydrated imported cycle #${cycleId} (${pair}): TP=${tpPct.toFixed(1)}%, nextBuy=${nextBuyPrice?.toFixed(2) || "none"}, trailing=${trailingPct.toFixed(2)}%`);
+  console.log(`${TAG} Rehydrated imported cycle #${cycleId} (${pair}): TP=${tpPct.toFixed(1)}%, nextBuy=${nextBuyPrice?.toFixed(2) || "none"}${skippedMsg}, trailing=${trailingPct.toFixed(2)}%`);
 
   return updated;
 }
@@ -2470,12 +2552,19 @@ export async function editImportedCycle(
   const currentPrice = await getCurrentPrice(pair) || newAvgEntry;
   const buyCount = cycle.buyCount || 1;
 
-  // Safety buy levels
+  // Safety buy levels - use effective calculation for imported cycles
   const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const safetyIndex = buyCount - 1;
-  const nextSafety = safetyOrders[safetyIndex];
-  const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
-  const nextBuyPrice = nextLevelPct ? newAvgEntry * (1 - nextLevelPct / 100) : null;
+  const effectiveSafety = calculateEffectiveSafetyLevel(
+    safetyOrders,
+    newAvgEntry,
+    currentPrice,
+    buyCount
+  );
+
+  const nextLevelPct = effectiveSafety.nextLevelPct;
+  const nextBuyPrice = effectiveSafety.nextBuyPrice;
+  const skippedSafetyLevels = effectiveSafety.skippedLevels;
+  const skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
 
   // Capital reserved
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));
@@ -2564,6 +2653,8 @@ export async function editImportedCycle(
     trailingPct: trailingPct.toFixed(2),
     unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
     unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
+    skippedSafetyLevels,  // Store count of skipped levels
+    skippedLevelsDetail: skippedSafetyLevels > 0 ? skippedLevelsDetail : null,  // Store detail for UI
   };
 
   if (protectionStopPrice !== null) {

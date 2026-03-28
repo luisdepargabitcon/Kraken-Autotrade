@@ -123,6 +123,8 @@ export interface IdcaCycle {
   estimatedFeeUsd: string | null;
   feesOverrideManual: boolean;
   importWarningAcknowledged: boolean;
+  skippedSafetyLevels: number;
+  skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];
