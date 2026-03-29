@@ -2,6 +2,49 @@
 
 ----
 
+## 2026-03-29 — FEAT: Pestañas Dry Run en Terminal (posiciones + historial simulados)
+
+### Problema
+En modo Dry Run el bot generaba señales y enviaba alertas Telegram, pero las posiciones simuladas **no se persistían en la BD** y por tanto **no aparecían en la UI**. El usuario no podía ver qué operaciones se estaban simulando.
+
+### Solución
+
+**1. Nueva tabla `dry_run_trades` (`shared/schema.ts` + migración SQL):**
+- Campos: `sim_txid`, `pair`, `type`, `price`, `amount`, `total_usd`, `reason`, `status` (open/closed)
+- Para ventas: `entry_sim_txid`, `entry_price`, `realized_pnl_usd`, `realized_pnl_pct`, `closed_at`
+- Meta: `strategy_id`, `regime`, `confidence`, `created_at`
+- Índices: `status`, `pair`, `created_at DESC`
+
+**2. Persistencia en `executeTrade` (`server/services/tradingEngine.ts`):**
+- BUY dry run → inserta registro con `status: "open"`
+- SELL dry run → busca el BUY abierto más antiguo (FIFO), calcula P&L, inserta SELL como "closed" y cierra el BUY correspondiente
+- Bloque try/catch para que un error de BD no bloquee el flujo de simulación
+
+**3. Endpoints API (`server/routes/dryrun.routes.ts`):**
+- `GET /api/dryrun/positions` — Posiciones abiertas (BUYs con status "open")
+- `GET /api/dryrun/history` — Historial de ventas simuladas (con paginación)
+- `GET /api/dryrun/summary` — Resumen agregado (P&L, win rate, W/L)
+- `DELETE /api/dryrun/clear` — Limpiar todos los trades dry run (reset)
+
+**4. UI — 2 pestañas nuevas en Terminal (`client/src/pages/Terminal.tsx`):**
+- **DRY RUN**: Posiciones abiertas simuladas con tabla (par, precio, cantidad, total USD, estrategia, razón, fecha). Panel de resumen con P&L realizado, trades cerrados, win rate, W/L. Botones Actualizar y Limpiar.
+- **HIST. DRY**: Historial de ventas simuladas con tabla (par, entrada, salida, cantidad, P&L USD, P&L %, razón, fecha). Paginación incluida.
+- Esquema de colores **amber** para distinguir visualmente del modo LIVE (cyan).
+
+### Archivos Creados
+- `db/migrations/024_create_dry_run_trades.sql`
+- `server/routes/dryrun.routes.ts`
+
+### Archivos Modificados
+- `shared/schema.ts` — tabla `dryRunTrades`, tipos `DryRunTrade`, `InsertDryRunTrade`
+- `server/services/tradingEngine.ts` — persistencia de dry run trades en `executeTrade`
+- `server/routes.ts` — registro de `dryrun.routes.ts`
+- `client/src/pages/Terminal.tsx` — 2 pestañas nuevas + queries + interfaces
+
+### Build: 0 errores TypeScript
+
+---
+
 ## 2026-03-29 — FIX: Errores TypeScript IdcaCycle + Migración SQL completa (WINDSURF FIX)
 
 ### Problemas detectados y solucionados

@@ -863,6 +863,12 @@ export async function registerRoutes(
   const { registerTestRoutes } = await import('./routes/test.routes');
   registerTestRoutes(app, routerDeps);
 
+  // ============================================================
+  // DRY RUN ENDPOINTS (paper trading positions & history)
+  // ============================================================
+  const { registerDryRunRoutes } = await import('./routes/dryrun.routes');
+  registerDryRunRoutes(app, routerDeps);
+
   // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
   // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.
 

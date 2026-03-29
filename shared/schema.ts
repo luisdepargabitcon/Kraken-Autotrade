@@ -416,6 +416,30 @@ export const fiscoSyncResultSchema = z.object({
 
 export type FiscoSyncResult = z.infer<typeof fiscoSyncResultSchema>;
 
+// Dry Run trades - simulated positions for paper trading
+export const dryRunTrades = pgTable("dry_run_trades", {
+  id: serial("id").primaryKey(),
+  simTxid: text("sim_txid").notNull().unique(),
+  pair: text("pair").notNull(),
+  type: text("type").notNull(), // buy | sell
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  totalUsd: decimal("total_usd", { precision: 18, scale: 2 }).notNull(),
+  reason: text("reason"),
+  status: text("status").notNull().default("open"), // open | closed
+  // For sells: link to original buy
+  entrySimTxid: text("entry_sim_txid"),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }),
+  realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 2 }),
+  realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
+  closedAt: timestamp("closed_at"),
+  // Strategy meta
+  strategyId: text("strategy_id"),
+  regime: text("regime"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const botEvents = pgTable("bot_events", {
   id: serial("id").primaryKey(),
   timestamp: timestamp("timestamp").notNull().defaultNow(),
@@ -634,6 +658,7 @@ export const telegramChatInsertSchema = createInsertSchema(telegramChats).omit({
 export type HybridReentryWatch = typeof hybridReentryWatches.$inferSelect;
 export type InsertHybridReentryWatch = typeof hybridReentryWatches.$inferInsert;
 
+export const insertDryRunTradeSchema = createInsertSchema(dryRunTrades).omit({ id: true, createdAt: true });
 export const insertBotEventSchema = createInsertSchema(botEvents).omit({ id: true, timestamp: true });
 export const insertOpenPositionSchema = createInsertSchema(openPositions).omit({ id: true, openedAt: true, updatedAt: true });
 export const insertAiTradeSampleSchema = createInsertSchema(aiTradeSamples).omit({ id: true, createdAt: true });
@@ -651,6 +676,8 @@ export type Notification = typeof notifications.$inferSelect;
 export type MarketData = typeof marketData.$inferSelect;
 export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
+export type DryRunTrade = typeof dryRunTrades.$inferSelect;
+export type InsertDryRunTrade = z.infer<typeof insertDryRunTradeSchema>;
 export type BotEvent = typeof botEvents.$inferSelect;
 export type OpenPosition = typeof openPositions.$inferSelect;
 export type TradeFill = typeof tradeFills.$inferSelect;

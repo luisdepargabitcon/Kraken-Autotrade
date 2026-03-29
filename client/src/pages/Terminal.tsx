@@ -126,6 +126,44 @@ interface ClosedTradesResponse {
   offset: number;
 }
 
+interface DryRunTrade {
+  id: number;
+  simTxid: string;
+  pair: string;
+  type: string;
+  price: string;
+  amount: string;
+  totalUsd: string;
+  reason: string | null;
+  status: string;
+  entrySimTxid: string | null;
+  entryPrice: string | null;
+  realizedPnlUsd: string | null;
+  realizedPnlPct: string | null;
+  closedAt: string | null;
+  strategyId: string | null;
+  regime: string | null;
+  confidence: string | null;
+  createdAt: string;
+}
+
+interface DryRunSummary {
+  openCount: number;
+  totalOpenValue: number;
+  closedCount: number;
+  realizedPnl: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+}
+
+interface DryRunHistoryResponse {
+  trades: DryRunTrade[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export default function Terminal() {
   const [limit, setLimit] = useState(10);
   const [offset, setOffset] = useState(0);
@@ -255,6 +293,57 @@ export default function Terminal() {
       const res = await fetch(`/api/trades/closed?${params}`);
       if (!res.ok) throw new Error("Failed to fetch closed trades");
       return res.json();
+    },
+  });
+
+  // Dry Run queries
+  const [dryRunOffset, setDryRunOffset] = useState(0);
+  const [dryRunLimit] = useState(20);
+
+  const { data: dryRunPositions, isLoading: loadingDryRun, refetch: refetchDryRun, isFetching: fetchingDryRun } = useQuery<DryRunTrade[]>({
+    queryKey: ["dryRunPositions"],
+    queryFn: async () => {
+      const res = await fetch("/api/dryrun/positions");
+      if (!res.ok) throw new Error("Failed to fetch dry run positions");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const { data: dryRunHistory, refetch: refetchDryRunHistory, isFetching: fetchingDryRunHistory } = useQuery<DryRunHistoryResponse>({
+    queryKey: ["dryRunHistory", dryRunLimit, dryRunOffset],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: dryRunLimit.toString(), offset: dryRunOffset.toString() });
+      const res = await fetch(`/api/dryrun/history?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch dry run history");
+      return res.json();
+    },
+  });
+
+  const { data: dryRunSummary } = useQuery<DryRunSummary>({
+    queryKey: ["dryRunSummary"],
+    queryFn: async () => {
+      const res = await fetch("/api/dryrun/summary");
+      if (!res.ok) throw new Error("Failed to fetch dry run summary");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const clearDryRunMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/dryrun/clear", { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to clear dry run trades");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Dry Run limpiado", description: "Todas las posiciones simuladas eliminadas" });
+      queryClient.invalidateQueries({ queryKey: ["dryRunPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["dryRunHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["dryRunSummary"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -792,6 +881,22 @@ export default function Terminal() {
                 >
                   <Activity className="h-3.5 w-3.5 mr-1.5" />
                   HISTORIAL
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="dryrun" 
+                  className="font-mono text-xs data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-400"
+                  data-testid="tab-dryrun"
+                >
+                  <Zap className="h-3.5 w-3.5 mr-1.5" />
+                  DRY RUN
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="dryrun-history" 
+                  className="font-mono text-xs data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-400"
+                  data-testid="tab-dryrun-history"
+                >
+                  <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                  HIST. DRY
                 </TabsTrigger>
               </TabsList>
 
@@ -1391,6 +1496,277 @@ export default function Terminal() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* ==================== DRY RUN POSITIONS ==================== */}
+            <TabsContent value="dryrun" className="mt-0">
+              <Card className="bg-card/40 border-amber-500/30 backdrop-blur-sm">
+                <CardHeader className="py-3 px-4 border-b border-amber-500/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-amber-400" />
+                      <CardTitle className="text-sm font-mono text-amber-400">
+                        POSICIONES DRY RUN
+                      </CardTitle>
+                      <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-300">
+                        SIMULADO
+                      </Badge>
+                      {dryRunSummary && (
+                        <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-300 ml-1">
+                          {dryRunSummary.openCount} abiertas · ${dryRunSummary.totalOpenValue.toFixed(2)} invertido
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => refetchDryRun()}
+                        disabled={fetchingDryRun}
+                        className="font-mono text-xs border-amber-500/30 hover:border-amber-500/50 hover:text-amber-400"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${fetchingDryRun ? 'animate-spin' : ''}`} />
+                        ACTUALIZAR
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => clearDryRunMutation.mutate()}
+                        disabled={clearDryRunMutation.isPending}
+                        className="font-mono text-xs border-red-500/30 hover:border-red-500/50 hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                        LIMPIAR
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {dryRunSummary && dryRunSummary.closedCount > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-amber-500/10 bg-amber-500/5">
+                      <div className="text-center">
+                        <p className="text-[10px] font-mono text-muted-foreground">P&L REALIZADO</p>
+                        <p className={`font-mono text-sm font-bold ${dryRunSummary.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {dryRunSummary.realizedPnl >= 0 ? '+' : ''}${dryRunSummary.realizedPnl.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-mono text-muted-foreground">TRADES CERRADOS</p>
+                        <p className="font-mono text-sm font-bold text-amber-400">{dryRunSummary.closedCount}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-mono text-muted-foreground">WIN RATE</p>
+                        <p className={`font-mono text-sm font-bold ${dryRunSummary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                          {dryRunSummary.winRate.toFixed(1)}%
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-mono text-muted-foreground">W / L</p>
+                        <p className="font-mono text-sm">
+                          <span className="text-green-400">{dryRunSummary.wins}</span>
+                          <span className="text-muted-foreground"> / </span>
+                          <span className="text-red-400">{dryRunSummary.losses}</span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingDryRun ? (
+                    <div className="flex items-center justify-center py-16">
+                      <Loader2 className="h-6 w-6 animate-spin text-amber-400" />
+                    </div>
+                  ) : dryRunPositions && dryRunPositions.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-amber-500/10">
+                            <th className="text-left text-[10px] font-mono text-muted-foreground p-3">PAR</th>
+                            <th className="text-right text-[10px] font-mono text-muted-foreground p-3">PRECIO</th>
+                            <th className="text-right text-[10px] font-mono text-muted-foreground p-3">CANTIDAD</th>
+                            <th className="text-right text-[10px] font-mono text-muted-foreground p-3">TOTAL USD</th>
+                            <th className="text-left text-[10px] font-mono text-muted-foreground p-3">ESTRATEGIA</th>
+                            <th className="text-left text-[10px] font-mono text-muted-foreground p-3">RAZÓN</th>
+                            <th className="text-left text-[10px] font-mono text-muted-foreground p-3">FECHA</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dryRunPositions.map((pos) => (
+                            <tr key={pos.id} className="border-b border-border/10 hover:bg-amber-500/5 transition-colors">
+                              <td className="p-3">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-[10px] border-green-500/50 text-green-400">BUY</Badge>
+                                  <span className="font-mono text-xs font-medium">{pos.pair}</span>
+                                </div>
+                              </td>
+                              <td className="text-right p-3 font-mono text-xs">${parseFloat(pos.price).toFixed(2)}</td>
+                              <td className="text-right p-3 font-mono text-xs">{parseFloat(pos.amount).toFixed(6)}</td>
+                              <td className="text-right p-3 font-mono text-xs font-medium">${parseFloat(pos.totalUsd).toFixed(2)}</td>
+                              <td className="p-3">
+                                {pos.strategyId && (
+                                  <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground">
+                                    {pos.strategyId}
+                                  </Badge>
+                                )}
+                                {pos.regime && (
+                                  <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground ml-1">
+                                    {pos.regime}
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="p-3 text-xs text-muted-foreground max-w-[150px] truncate" title={pos.reason || ''}>
+                                {pos.reason || '-'}
+                              </td>
+                              <td className="p-3 text-xs text-muted-foreground font-mono">
+                                {new Date(pos.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-center py-16">
+                      <div className="h-16 w-16 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center mb-4">
+                        <Zap className="h-8 w-8 text-amber-400/50" />
+                      </div>
+                      <p className="font-mono text-muted-foreground text-sm">NO HAY POSICIONES DRY RUN</p>
+                      <p className="text-xs text-muted-foreground mt-1">Activa el modo Dry Run para ver las operaciones simuladas aquí</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ==================== DRY RUN HISTORY ==================== */}
+            <TabsContent value="dryrun-history" className="mt-0">
+              <Card className="bg-card/40 border-amber-500/30 backdrop-blur-sm">
+                <CardHeader className="py-3 px-4 border-b border-amber-500/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-amber-400" />
+                      <CardTitle className="text-sm font-mono text-amber-400">
+                        HISTORIAL DRY RUN
+                      </CardTitle>
+                      <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-300">
+                        SIMULADO
+                      </Badge>
+                      {dryRunHistory && (
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          {dryRunHistory.total} ventas simuladas
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => refetchDryRunHistory()}
+                      disabled={fetchingDryRunHistory}
+                      className="font-mono text-xs border-amber-500/30 hover:border-amber-500/50 hover:text-amber-400"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${fetchingDryRunHistory ? 'animate-spin' : ''}`} />
+                      ACTUALIZAR
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {dryRunHistory && dryRunHistory.trades.length > 0 ? (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="border-b border-amber-500/10">
+                              <th className="text-left text-[10px] font-mono text-muted-foreground p-3">PAR</th>
+                              <th className="text-right text-[10px] font-mono text-muted-foreground p-3">ENTRADA</th>
+                              <th className="text-right text-[10px] font-mono text-muted-foreground p-3">SALIDA</th>
+                              <th className="text-right text-[10px] font-mono text-muted-foreground p-3">CANTIDAD</th>
+                              <th className="text-right text-[10px] font-mono text-muted-foreground p-3">P&L USD</th>
+                              <th className="text-right text-[10px] font-mono text-muted-foreground p-3">P&L %</th>
+                              <th className="text-left text-[10px] font-mono text-muted-foreground p-3">RAZÓN</th>
+                              <th className="text-left text-[10px] font-mono text-muted-foreground p-3">FECHA</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dryRunHistory.trades.map((trade) => {
+                              const pnl = parseFloat(trade.realizedPnlUsd || "0");
+                              const pnlPct = parseFloat(trade.realizedPnlPct || "0");
+                              const isProfit = pnl > 0;
+                              return (
+                                <tr key={trade.id} className="border-b border-border/10 hover:bg-amber-500/5 transition-colors">
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-400">SELL</Badge>
+                                      <span className="font-mono text-xs font-medium">{trade.pair}</span>
+                                    </div>
+                                  </td>
+                                  <td className="text-right p-3 font-mono text-xs">
+                                    ${trade.entryPrice ? parseFloat(trade.entryPrice).toFixed(2) : '-'}
+                                  </td>
+                                  <td className="text-right p-3 font-mono text-xs">${parseFloat(trade.price).toFixed(2)}</td>
+                                  <td className="text-right p-3 font-mono text-xs">{parseFloat(trade.amount).toFixed(6)}</td>
+                                  <td className={`text-right p-3 font-mono text-xs font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                    {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                                  </td>
+                                  <td className={`text-right p-3 font-mono text-xs ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                    {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                                  </td>
+                                  <td className="p-3 text-xs text-muted-foreground max-w-[120px] truncate" title={trade.reason || ''}>
+                                    {trade.reason || '-'}
+                                  </td>
+                                  <td className="p-3 text-xs text-muted-foreground font-mono">
+                                    {trade.closedAt
+                                      ? new Date(trade.closedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                      : new Date(trade.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {dryRunHistory.total > dryRunLimit && (
+                        <div className="flex items-center justify-between p-4 border-t border-amber-500/10">
+                          <span className="text-xs font-mono text-muted-foreground">
+                            {dryRunOffset + 1}-{Math.min(dryRunOffset + dryRunLimit, dryRunHistory.total)} de {dryRunHistory.total}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setDryRunOffset(Math.max(0, dryRunOffset - dryRunLimit))}
+                              disabled={dryRunOffset === 0}
+                              className="h-7 px-2 font-mono text-xs border-amber-500/30"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </Button>
+                            <span className="text-xs font-mono text-muted-foreground px-2">
+                              {Math.floor(dryRunOffset / dryRunLimit) + 1}/{Math.ceil(dryRunHistory.total / dryRunLimit)}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setDryRunOffset(dryRunOffset + dryRunLimit)}
+                              disabled={dryRunOffset + dryRunLimit >= dryRunHistory.total}
+                              className="h-7 px-2 font-mono text-xs border-amber-500/30"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-16">
+                      <div className="h-16 w-16 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center mb-4">
+                        <BarChart3 className="h-8 w-8 text-amber-400/50" />
+                      </div>
+                      <p className="font-mono text-muted-foreground text-sm">NO HAY HISTORIAL DRY RUN</p>
+                      <p className="text-xs text-muted-foreground mt-1">Las ventas simuladas aparecerán aquí cuando el bot cierre posiciones en modo Dry Run</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
           </Tabs>
         </main>
       </div>

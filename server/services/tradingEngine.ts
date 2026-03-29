@@ -7,7 +7,9 @@ import { aiService, AiFeatures } from "./aiService";
 import { environment } from "./environment";
 import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
-import { type InsertTrade, type Trade } from "@shared/schema";
+import { type InsertTrade, type Trade, dryRunTrades } from "@shared/schema";
+import { db } from "../db";
+import { eq, and, desc } from "drizzle-orm";
 import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
@@ -5685,6 +5687,67 @@ El bot ha pausado las operaciones de COMPRA.
           reason,
           ...(executionMeta || {}),
         });
+
+        // Persistir dry run trade en BD para visualización en UI
+        try {
+          if (type === "buy") {
+            await db.insert(dryRunTrades).values({
+              simTxid,
+              pair,
+              type: "buy",
+              price: price.toFixed(8),
+              amount: volumeNum.toFixed(8),
+              totalUsd: totalUSD.toFixed(2),
+              reason,
+              status: "open",
+              strategyId: strategyMeta?.strategyId || null,
+              regime: strategyMeta?.regime || null,
+              confidence: strategyMeta?.confidence != null ? String(strategyMeta.confidence) : null,
+            });
+            log(`${envPrefixLog} DRY_RUN BUY persistido: ${simTxid}`, "trading");
+          } else {
+            // SELL: find oldest open dry run buy for this pair and close it
+            const openBuys = await db.select().from(dryRunTrades)
+              .where(and(eq(dryRunTrades.pair, pair), eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
+              .orderBy(dryRunTrades.createdAt)
+              .limit(1);
+            
+            const matchedBuy = openBuys[0];
+            const entryPriceNum = matchedBuy ? parseFloat(matchedBuy.price) : (sellContext?.entryPrice || price);
+            const pnlUsd = (price - entryPriceNum) * volumeNum;
+            const pnlPct = entryPriceNum > 0 ? ((price - entryPriceNum) / entryPriceNum) * 100 : 0;
+
+            // Insert the sell record
+            await db.insert(dryRunTrades).values({
+              simTxid,
+              pair,
+              type: "sell",
+              price: price.toFixed(8),
+              amount: volumeNum.toFixed(8),
+              totalUsd: totalUSD.toFixed(2),
+              reason,
+              status: "closed",
+              entrySimTxid: matchedBuy?.simTxid || null,
+              entryPrice: entryPriceNum.toFixed(8),
+              realizedPnlUsd: pnlUsd.toFixed(2),
+              realizedPnlPct: pnlPct.toFixed(4),
+              closedAt: new Date(),
+              strategyId: strategyMeta?.strategyId || null,
+              regime: strategyMeta?.regime || null,
+              confidence: strategyMeta?.confidence != null ? String(strategyMeta.confidence) : null,
+            });
+
+            // Close the matched buy
+            if (matchedBuy) {
+              await db.update(dryRunTrades)
+                .set({ status: "closed", closedAt: new Date(), realizedPnlUsd: pnlUsd.toFixed(2), realizedPnlPct: pnlPct.toFixed(4) })
+                .where(eq(dryRunTrades.id, matchedBuy.id));
+            }
+            log(`${envPrefixLog} DRY_RUN SELL persistido: ${simTxid} (matched buy: ${matchedBuy?.simTxid || 'none'})`, "trading");
+          }
+        } catch (dbErr: any) {
+          log(`${envPrefixLog} Error persistiendo dry run trade: ${dbErr?.message || dbErr}`, "trading");
+        }
         
         // Enviar Telegram de simulación con prefijo correcto
         if (this.telegramService.isInitialized()) {
