@@ -948,6 +948,13 @@ async function runMigration() {
     const idcaDynTpPath = path.resolve(process.cwd(), "db", "migrations", "021_idca_dynamic_tp.sql");
     await tryExecuteFile(db, idcaDynTpPath, "idca_dynamic_tp");
 
+    // ============================================================
+    // DRY RUN TRADES TABLE (024) — paper trading positions
+    // ============================================================
+    console.log("[migrate] Ensuring dry_run_trades table exists...");
+    const dryRunTradesSqlPath = path.resolve(process.cwd(), "db", "migrations", "024_create_dry_run_trades.sql");
+    await tryExecuteFile(db, dryRunTradesSqlPath, "dry_run_trades");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
