@@ -16,26 +16,24 @@
      - `protectionArmedAt`, `protectionStopPrice`
      - `lastManualEditAt`, `lastManualEditReason`, `editHistoryJson`
 
-2. **Migración SQL incompleta — solo cubría 5 columnas**
-   - La migración anterior solo añadía columnas de auditoría
-   - Ahora cubre TODAS las columnas potencialmente faltantes:
-     - Import & Manual Cycle fields (13 columnas)
-     - Entry base price (6 columnas)
-     - Protection & trailing state (2 columnas)
-     - Cycle type & plus cycles (3 columnas)
-     - Manual edit audit trail (3 columnas)
-     - Skipped safety levels (2 columnas)
-     - TP breakdown JSON (1 columna)
-   - Usa `IF NOT EXISTS` → seguro ejecutar múltiples veces
+2. **Migración SQL automática — columnas faltantes añadidas al auto-migrador**
+   - Las 6 columnas nuevas faltaban en `storage.ts` → `runSchemaMigration()`:
+     - `last_manual_edit_at`, `last_manual_edit_reason`, `edit_history_json`
+     - `skipped_safety_levels`, `skipped_levels_detail`
+     - `tp_breakdown_json`
+   - Ahora se crean automáticamente al arrancar la app (no requiere SQL manual)
+   - El sistema existente en `routes.ts` llama `runSchemaMigration()` al startup
 
 ### Archivos modificados
 - `client/src/hooks/useInstitutionalDca.ts` — interfaz `IdcaCycle` ampliada
-- `migrations/add_idca_audit_columns.sql` — migración comprehensiva
+- `server/storage.ts` — 6 columnas IDCA añadidas al auto-migrador
+- `migrations/add_idca_audit_columns.sql` — migración comprehensiva (backup manual)
 
-### Post-deploy: Ejecutar migración en VPS
+### Deploy: Solo hacer deploy, la migración es automática
 ```bash
-docker cp /opt/krakenbot-staging/migrations/add_idca_audit_columns.sql krakenbot-staging-db:/tmp/
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /tmp/add_idca_audit_columns.sql
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
 ```
 
 ----

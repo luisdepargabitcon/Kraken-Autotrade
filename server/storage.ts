@@ -1891,6 +1891,18 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_cycles', column: 'base_price_meta_json', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS base_price_meta_json JSONB' },
         { table: 'institutional_dca_cycles', column: 'entry_dip_pct', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS entry_dip_pct DECIMAL(10,4)' },
 
+        // institutional_dca_cycles — manual edit audit trail
+        { table: 'institutional_dca_cycles', column: 'last_manual_edit_at', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS last_manual_edit_at TIMESTAMP' },
+        { table: 'institutional_dca_cycles', column: 'last_manual_edit_reason', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS last_manual_edit_reason TEXT' },
+        { table: 'institutional_dca_cycles', column: 'edit_history_json', sql: "ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS edit_history_json JSONB DEFAULT '[]'::jsonb" },
+
+        // institutional_dca_cycles — skipped safety levels (imported cycles)
+        { table: 'institutional_dca_cycles', column: 'skipped_safety_levels', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS skipped_safety_levels INTEGER DEFAULT 0' },
+        { table: 'institutional_dca_cycles', column: 'skipped_levels_detail', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS skipped_levels_detail JSONB' },
+
+        // institutional_dca_cycles — tp breakdown
+        { table: 'institutional_dca_cycles', column: 'tp_breakdown_json', sql: 'ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS tp_breakdown_json JSONB' },
+
         // institutional_dca_config — recovery cycle config
         { table: 'institutional_dca_config', column: 'recovery_config_json', sql: `ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS recovery_config_json JSONB NOT NULL DEFAULT '{"enabled":false,"activationDrawdownPct":25,"maxRecoveryCyclesPerMain":1,"maxTotalCyclesPerPair":3,"maxPairExposurePct":40,"capitalAllocationPct":10,"maxRecoveryCapitalUsd":500,"cooldownMinutesAfterMainBuy":120,"cooldownMinutesBetweenRecovery":360,"minMarketScoreForRecovery":40,"requireReboundConfirmation":true,"recoveryTpPctBtc":2.5,"recoveryTpPctEth":3.0,"maxRecoveryEntries":2,"recoveryEntryDipSteps":[2.0,4.0],"recoveryTrailingPctBtc":0.8,"recoveryTrailingPctEth":1.0,"autoCloseIfMainClosed":true,"autoCloseIfMainRecovers":false,"maxRecoveryDurationHours":168}'::jsonb` },
 
