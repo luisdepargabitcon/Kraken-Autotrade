@@ -347,6 +347,23 @@ export default function Terminal() {
     },
   });
 
+  const backfillDryRunMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/dryrun/backfill", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to backfill dry run trades");
+      return res.json();
+    },
+    onSuccess: (data: { totalEvents: number; imported: number; skipped: number }) => {
+      toast({ title: "Backfill completado", description: `${data.imported} trades recuperados de ${data.totalEvents} eventos (${data.skipped} omitidos)` });
+      queryClient.invalidateQueries({ queryKey: ["dryRunPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["dryRunHistory"] });
+      queryClient.invalidateQueries({ queryKey: ["dryRunSummary"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleSyncFromKraken = async () => {
     setSyncing(true);
     try {
@@ -1526,6 +1543,16 @@ export default function Terminal() {
                       >
                         <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${fetchingDryRun ? 'animate-spin' : ''}`} />
                         ACTUALIZAR
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => backfillDryRunMutation.mutate()}
+                        disabled={backfillDryRunMutation.isPending}
+                        className="font-mono text-xs border-cyan-500/30 hover:border-cyan-500/50 hover:text-cyan-400"
+                      >
+                        <Download className="h-3.5 w-3.5 mr-1.5" />
+                        {backfillDryRunMutation.isPending ? 'RECUPERANDO...' : 'RECUPERAR'}
                       </Button>
                       <Button
                         variant="outline"

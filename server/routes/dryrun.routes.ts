@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { RegisterRoutes } from "./types";
 import { db } from "../db";
-import { dryRunTrades } from "@shared/schema";
+import { dryRunTrades, botEvents } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
@@ -89,6 +89,107 @@ export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
     } catch (error: any) {
       console.error("[dryrun] Error clearing trades:", error?.message);
       res.status(500).json({ error: "Failed to clear dry run trades" });
+    }
+  });
+
+  // POST /api/dryrun/backfill - Recover historical dry run trades from bot_events
+  app.post("/api/dryrun/backfill", async (_req, res) => {
+    try {
+      // Find all DRY_RUN_TRADE events from bot_events
+      const events = await db.select().from(botEvents)
+        .where(eq(botEvents.type, "DRY_RUN_TRADE"))
+        .orderBy(botEvents.timestamp);
+
+      let imported = 0;
+      let skipped = 0;
+
+      for (const event of events) {
+        try {
+          const meta = event.meta ? JSON.parse(event.meta) : null;
+          if (!meta || !meta.pair || !meta.type || !meta.simTxid) {
+            skipped++;
+            continue;
+          }
+
+          // Check if already exists
+          const existing = await db.select({ id: dryRunTrades.id }).from(dryRunTrades)
+            .where(eq(dryRunTrades.simTxid, meta.simTxid))
+            .limit(1);
+
+          if (existing.length > 0) {
+            skipped++;
+            continue;
+          }
+
+          const price = parseFloat(meta.price || "0");
+          const volume = parseFloat(meta.volume || meta.amount || "0");
+          const totalUsd = parseFloat(meta.totalUsd || String(price * volume));
+
+          if (meta.type === "buy") {
+            await db.insert(dryRunTrades).values({
+              simTxid: meta.simTxid,
+              pair: meta.pair,
+              type: "buy",
+              price: price.toFixed(8),
+              amount: volume.toFixed(8),
+              totalUsd: totalUsd.toFixed(2),
+              reason: meta.reason || null,
+              status: "open",
+              strategyId: meta.strategyId || null,
+              regime: meta.regime || null,
+              confidence: meta.confidence != null ? String(meta.confidence) : null,
+              createdAt: event.timestamp,
+            });
+            imported++;
+          } else if (meta.type === "sell") {
+            // Find matching open buy for this pair (FIFO)
+            const openBuys = await db.select().from(dryRunTrades)
+              .where(and(eq(dryRunTrades.pair, meta.pair), eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
+              .orderBy(dryRunTrades.createdAt)
+              .limit(1);
+
+            const matchedBuy = openBuys[0];
+            const entryPriceNum = matchedBuy ? parseFloat(matchedBuy.price) : price;
+            const pnlUsd = (price - entryPriceNum) * volume;
+            const pnlPct = entryPriceNum > 0 ? ((price - entryPriceNum) / entryPriceNum) * 100 : 0;
+
+            await db.insert(dryRunTrades).values({
+              simTxid: meta.simTxid,
+              pair: meta.pair,
+              type: "sell",
+              price: price.toFixed(8),
+              amount: volume.toFixed(8),
+              totalUsd: totalUsd.toFixed(2),
+              reason: meta.reason || null,
+              status: "closed",
+              entrySimTxid: matchedBuy?.simTxid || null,
+              entryPrice: entryPriceNum.toFixed(8),
+              realizedPnlUsd: pnlUsd.toFixed(2),
+              realizedPnlPct: pnlPct.toFixed(4),
+              closedAt: event.timestamp,
+              strategyId: meta.strategyId || null,
+              regime: meta.regime || null,
+              confidence: meta.confidence != null ? String(meta.confidence) : null,
+              createdAt: event.timestamp,
+            });
+
+            if (matchedBuy) {
+              await db.update(dryRunTrades)
+                .set({ status: "closed", closedAt: event.timestamp, realizedPnlUsd: pnlUsd.toFixed(2), realizedPnlPct: pnlPct.toFixed(4) })
+                .where(eq(dryRunTrades.id, matchedBuy.id));
+            }
+            imported++;
+          }
+        } catch (e: any) {
+          console.error("[dryrun] Backfill event error:", e?.message);
+          skipped++;
+        }
+      }
+
+      res.json({ success: true, totalEvents: events.length, imported, skipped });
+    } catch (error: any) {
+      console.error("[dryrun] Error backfilling:", error?.message);
+      res.status(500).json({ error: "Failed to backfill dry run trades" });
     }
   });
 };
