@@ -2,6 +2,44 @@
 
 ----
 
+## 2026-03-29 — FIX: Errores TypeScript IdcaCycle + Migración SQL completa (WINDSURF FIX)
+
+### Problemas detectados y solucionados
+
+1. **Errores TypeScript: propiedades faltantes en tipo `IdcaCycle`**
+   - `EditImportedCycleModal.tsx` fallaba con 5 errores TS:
+     - `protectionArmedAt` no existe en tipo `IdcaCycle`
+     - `editHistoryJson` no existe en tipo `IdcaCycle` (4 usos)
+   - Causa: Se añadieron columnas al esquema DB pero no se actualizó la interfaz TypeScript del cliente
+   - Solución: Añadidas 8 propiedades faltantes a `IdcaCycle`:
+     - `basePrice`, `basePriceType`, `entryDipPct`
+     - `protectionArmedAt`, `protectionStopPrice`
+     - `lastManualEditAt`, `lastManualEditReason`, `editHistoryJson`
+
+2. **Migración SQL incompleta — solo cubría 5 columnas**
+   - La migración anterior solo añadía columnas de auditoría
+   - Ahora cubre TODAS las columnas potencialmente faltantes:
+     - Import & Manual Cycle fields (13 columnas)
+     - Entry base price (6 columnas)
+     - Protection & trailing state (2 columnas)
+     - Cycle type & plus cycles (3 columnas)
+     - Manual edit audit trail (3 columnas)
+     - Skipped safety levels (2 columnas)
+     - TP breakdown JSON (1 columna)
+   - Usa `IF NOT EXISTS` → seguro ejecutar múltiples veces
+
+### Archivos modificados
+- `client/src/hooks/useInstitutionalDca.ts` — interfaz `IdcaCycle` ampliada
+- `migrations/add_idca_audit_columns.sql` — migración comprehensiva
+
+### Post-deploy: Ejecutar migración en VPS
+```bash
+docker cp /opt/krakenbot-staging/migrations/add_idca_audit_columns.sql krakenbot-staging-db:/tmp/
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -f /tmp/add_idca_audit_columns.sql
+```
+
+----
+
 ## 2026-03-28 — FIX: Arreglos IDCA - Resumen, Importación, Botones Borrar (WINDSURF FIX v2)
 
 ### Problemas reportados y solucionados

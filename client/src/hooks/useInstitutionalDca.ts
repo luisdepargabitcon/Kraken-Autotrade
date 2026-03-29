@@ -125,6 +125,14 @@ export interface IdcaCycle {
   importWarningAcknowledged: boolean;
   skippedSafetyLevels: number;
   skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null;
+  basePrice: string | null;
+  basePriceType: string | null;
+  entryDipPct: string | null;
+  protectionArmedAt: string | null;
+  protectionStopPrice: string | null;
+  lastManualEditAt: string | null;
+  lastManualEditReason: string | null;
+  editHistoryJson: any;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];
