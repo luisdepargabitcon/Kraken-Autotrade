@@ -93,36 +93,76 @@ export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
   });
 
   // POST /api/dryrun/backfill - Recover historical dry run trades from bot_events
-  app.post("/api/dryrun/backfill", async (_req, res) => {
+  app.post("/api/dryrun/backfill", async (req, res) => {
     try {
-      // Find all DRY_RUN_TRADE events from bot_events
+      // Defensive filters: only recent events (last 30 days by default)
+      const daysBack = parseInt(req.body?.daysBack as string) || 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      // Find all DRY_RUN_TRADE events from bot_events (recent only)
       const events = await db.select().from(botEvents)
-        .where(eq(botEvents.type, "DRY_RUN_TRADE"))
+        .where(and(
+          eq(botEvents.type, "DRY_RUN_TRADE"),
+          sql`${botEvents.timestamp} >= ${cutoffDate}`
+        ))
         .orderBy(botEvents.timestamp);
 
       let imported = 0;
       let skipped = 0;
+      const skipReasons: Record<string, number> = {
+        duplicate: 0,
+        missingData: 0,
+        invalidPrice: 0,
+        invalidVolume: 0,
+        invalidPair: 0,
+      };
 
       for (const event of events) {
         try {
           const meta = event.meta ? JSON.parse(event.meta) : null;
+          
+          // Defensive validation: require all critical fields
           if (!meta || !meta.pair || !meta.type || !meta.simTxid) {
             skipped++;
+            skipReasons.missingData++;
             continue;
           }
 
-          // Check if already exists
+          // Validate pair format (must be XXX/YYY)
+          if (!meta.pair.includes('/')) {
+            skipped++;
+            skipReasons.invalidPair++;
+            continue;
+          }
+
+          // Check if already exists (idempotency)
           const existing = await db.select({ id: dryRunTrades.id }).from(dryRunTrades)
             .where(eq(dryRunTrades.simTxid, meta.simTxid))
             .limit(1);
 
           if (existing.length > 0) {
             skipped++;
+            skipReasons.duplicate++;
             continue;
           }
 
           const price = parseFloat(meta.price || "0");
           const volume = parseFloat(meta.volume || meta.amount || "0");
+          
+          // Defensive validation: reject invalid numbers
+          if (price <= 0 || isNaN(price)) {
+            skipped++;
+            skipReasons.invalidPrice++;
+            continue;
+          }
+          
+          if (volume <= 0 || isNaN(volume)) {
+            skipped++;
+            skipReasons.invalidVolume++;
+            continue;
+          }
+          
           const totalUsd = parseFloat(meta.totalUsd || String(price * volume));
 
           if (meta.type === "buy") {
@@ -186,7 +226,15 @@ export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
         }
       }
 
-      res.json({ success: true, totalEvents: events.length, imported, skipped });
+      res.json({ 
+        success: true, 
+        totalEvents: events.length, 
+        imported, 
+        skipped,
+        skipReasons,
+        daysBack,
+        cutoffDate: cutoffDate.toISOString()
+      });
     } catch (error: any) {
       console.error("[dryrun] Error backfilling:", error?.message);
       res.status(500).json({ error: "Failed to backfill dry run trades" });

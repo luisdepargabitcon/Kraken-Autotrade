@@ -349,12 +349,37 @@ export default function Terminal() {
 
   const backfillDryRunMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/dryrun/backfill", { method: "POST" });
+      const res = await fetch("/api/dryrun/backfill", { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ daysBack: 30 })
+      });
       if (!res.ok) throw new Error("Failed to backfill dry run trades");
       return res.json();
     },
-    onSuccess: (data: { totalEvents: number; imported: number; skipped: number }) => {
-      toast({ title: "Backfill completado", description: `${data.imported} trades recuperados de ${data.totalEvents} eventos (${data.skipped} omitidos)` });
+    onSuccess: (data: { 
+      totalEvents: number; 
+      imported: number; 
+      skipped: number;
+      skipReasons?: Record<string, number>;
+      daysBack?: number;
+    }) => {
+      const reasons = data.skipReasons 
+        ? Object.entries(data.skipReasons)
+            .filter(([_, count]) => count > 0)
+            .map(([reason, count]) => `${reason}: ${count}`)
+            .join(", ")
+        : "";
+      
+      const description = reasons 
+        ? `${data.imported} trades recuperados de ${data.totalEvents} eventos (últimos ${data.daysBack || 30} días). Omitidos: ${data.skipped} (${reasons})`
+        : `${data.imported} trades recuperados de ${data.totalEvents} eventos (${data.skipped} omitidos)`;
+      
+      toast({ 
+        title: "Backfill completado", 
+        description,
+        duration: 8000
+      });
       queryClient.invalidateQueries({ queryKey: ["dryRunPositions"] });
       queryClient.invalidateQueries({ queryKey: ["dryRunHistory"] });
       queryClient.invalidateQueries({ queryKey: ["dryRunSummary"] });
