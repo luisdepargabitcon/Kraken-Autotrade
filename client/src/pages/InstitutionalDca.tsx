@@ -1688,7 +1688,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   ) : cycle.buyCount >= 1 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground/50">🛒 Próx. compra: pendiente de cálculo</span>
+                      {cycle.skippedSafetyLevels > 0 ? (
+                        <span className="text-[10px] font-mono text-orange-400/70">🛒 Sin más niveles disponibles</span>
+                      ) : (
+                        <span className="text-[10px] font-mono text-muted-foreground/50">🛒 Próx. compra: pendiente de cálculo</span>
+                      )}
                       {cycle.skippedSafetyLevels > 0 && (
                         <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
                           ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}

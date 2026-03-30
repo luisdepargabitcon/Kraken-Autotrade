@@ -2,6 +2,27 @@
 
 ----
 
+## 2026-03-30b — FIX: nextBuyPrice no calculado para ciclos importados con gestión completa
+
+### Problema
+Los ciclos importados directamente con `soloSalida=false` mostraban "pendiente de cálculo" para la próxima compra porque `importPosition()` nunca calculaba `nextBuyPrice` ni `skippedSafetyLevels`. Tampoco se recalculaba para ciclos en estado `PAUSED`.
+
+### Causa raíz
+1. `importPosition()` creaba el ciclo sin `nextBuyPrice` (null) aunque `soloSalida=false`
+2. `rehydrateImportedCycle` solo se llamaba al hacer toggle de `soloSalida=true → false`, no al importar directamente con `soloSalida=false`
+3. Para ciclos en estado `paused`/`blocked`, `manageCycle` no ejecutaba ninguna lógica → nextBuyPrice seguía null para siempre
+
+### Solución
+1. **`importPosition()`**: calcula `nextBuyPrice`, `skippedSafetyLevels` y `skippedLevelsDetail` usando `calculateEffectiveSafetyLevel` antes de crear el ciclo → los campos se guardan correctos desde el primer tick
+2. **`manageCycle()` (self-heal)**: bloque post-switch que recalcula `nextBuyPrice` en CADA TICK para cualquier ciclo importado no-soloSalida con `nextBuyPrice=null`, incluidos `paused`/`blocked` → ciclos existentes se autocorrigen al hacer deploy
+3. **UI**: distingue entre "🛒 Sin más niveles disponibles" (`skippedSafetyLevels > 0` + `nextBuyPrice=null`) y "pendiente de cálculo" (`skippedSafetyLevels = 0`)
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — importPosition + manageCycle self-heal
+- `client/src/pages/InstitutionalDca.tsx` — mensaje UI mejorado
+
+----
+
 ## 2026-03-30 — FIX: Filtro ciclos activos + niveles compra + eliminar ciclos (WINDSURF FIX)
 
 ### Problemas reportados y solucionados

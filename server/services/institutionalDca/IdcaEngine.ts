@@ -200,6 +200,27 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
   const estimatedFeeUsd = req.estimatedFeeUsd ?? Math.round((capitalUsed * estimatedFeePct / 100) * 100) / 100;
   const feesOverride = req.feesOverrideManual ?? false;
 
+  // For gestión completa (soloSalida=false), calculate safety buy levels upfront
+  let importNextBuyLevelPct: string | null = null;
+  let importNextBuyPrice: string | null = null;
+  let importSkippedSafetyLevels = 0;
+  let importSkippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null = null;
+
+  if (!req.soloSalida && assetConfig) {
+    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+    const effectiveSafety = calculateEffectiveSafetyLevel(
+      safetyOrders,
+      req.avgEntryPrice,
+      currentPrice || req.avgEntryPrice,
+      1 // buyCount=1 for imported positions (counts as base buy)
+    );
+    importNextBuyLevelPct = effectiveSafety.nextLevelPct?.toFixed(2) || null;
+    importNextBuyPrice = effectiveSafety.nextBuyPrice?.toFixed(8) || null;
+    importSkippedSafetyLevels = effectiveSafety.skippedLevels;
+    importSkippedLevelsDetail = effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null;
+    console.log(`${TAG}[IMPORT] ${req.pair}: nextBuy=${importNextBuyPrice ? `$${parseFloat(importNextBuyPrice).toFixed(2)}` : "none"}, skipped=${importSkippedSafetyLevels}`);
+  }
+
   const snapshot = {
     importedAt: new Date().toISOString(),
     originalQty: req.quantity,
@@ -249,6 +270,11 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
     feesOverrideManual: feesOverride,
     importWarningAcknowledged: hasActive && isManual,
     startedAt: req.openedAt ? new Date(req.openedAt) : new Date(),
+    // Safety buy levels for gestión completa (calculated above)
+    nextBuyLevelPct: importNextBuyLevelPct,
+    nextBuyPrice: importNextBuyPrice,
+    skippedSafetyLevels: importSkippedSafetyLevels,
+    skippedLevelsDetail: importSkippedLevelsDetail,
   });
 
   const manualTag = isManual ? " [CICLO MANUAL]" : "";
@@ -768,6 +794,36 @@ async function manageCycle(
     case "paused":
     case "blocked":
       break;
+  }
+
+  // For imported gestión-completa cycles with missing nextBuyPrice, recalculate on every tick.
+  // This self-heals existing cycles regardless of status (active, paused, blocked, tp_armed).
+  if (cycle.isImported && !cycle.soloSalida) {
+    const storedNext = parseFloat(String(cycle.nextBuyPrice || "0"));
+    if (storedNext <= 0) {
+      const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+      const effectiveSafety = calculateEffectiveSafetyLevel(
+        safetyOrders,
+        avgEntry,
+        currentPrice,
+        cycle.buyCount || 1
+      );
+      if (effectiveSafety.nextBuyPrice && effectiveSafety.nextBuyPrice > 0) {
+        await repo.updateCycle(cycle.id, {
+          nextBuyLevelPct: effectiveSafety.nextLevelPct?.toFixed(2) || null,
+          nextBuyPrice: effectiveSafety.nextBuyPrice.toFixed(8),
+          skippedSafetyLevels: effectiveSafety.skippedLevels,
+          skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
+        });
+        console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${effectiveSafety.nextBuyPrice.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
+      } else if (effectiveSafety.skippedLevels !== (cycle.skippedSafetyLevels ?? 0)) {
+        // Update skipped count even if no valid next level
+        await repo.updateCycle(cycle.id, {
+          skippedSafetyLevels: effectiveSafety.skippedLevels,
+          skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
+        });
+      }
+    }
   }
 
   // Detect if an action was taken by re-checking cycle state
