@@ -298,7 +298,12 @@ export async function getCycles(options: {
   const conditions = [];
   if (options.mode) conditions.push(eq(institutionalDcaCycles.mode, options.mode));
   if (options.pair) conditions.push(eq(institutionalDcaCycles.pair, options.pair));
-  if (options.status) conditions.push(eq(institutionalDcaCycles.status, options.status));
+  if (options.status === "active") {
+    // "active" filter = all non-closed statuses (active, tp_armed, trailing_active, waiting_entry, idle, paused, blocked)
+    conditions.push(ne(institutionalDcaCycles.status, "closed"));
+  } else if (options.status) {
+    conditions.push(eq(institutionalDcaCycles.status, options.status));
+  }
   if (conditions.length > 0) query = query.where(and(...conditions)) as any;
   query = query.orderBy(desc(institutionalDcaCycles.startedAt)) as any;
   if (options.limit) query = query.limit(options.limit) as any;
@@ -398,6 +403,54 @@ export async function deleteManualCycle(cycleId: number): Promise<{
   return {
     deleted: true,
     archived: false,
+    reason: 'HARD_DELETED',
+    ordersDeleted: deletedOrders.length,
+    eventsDeleted: deletedEvents.length,
+    cycle,
+  };
+}
+
+/**
+ * Elimina cualquier ciclo de forma forzada (hard delete).
+ * Borra ciclo + órdenes + eventos asociados.
+ * Funciona para ciclos de cualquier modo (simulation, live) y tipo.
+ */
+export async function deleteCycleForce(cycleId: number): Promise<{
+  deleted: boolean;
+  reason: string;
+  ordersDeleted: number;
+  eventsDeleted: number;
+  cycle: InstitutionalDcaCycle | null;
+}> {
+  const [cycle] = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, cycleId))
+    .limit(1);
+
+  if (!cycle) {
+    return { deleted: false, reason: 'CYCLE_NOT_FOUND', ordersDeleted: 0, eventsDeleted: 0, cycle: null };
+  }
+
+  // Delete events first (FK dependency)
+  const deletedEvents = await db
+    .delete(institutionalDcaEvents)
+    .where(eq(institutionalDcaEvents.cycleId, cycleId))
+    .returning();
+
+  // Delete orders
+  const deletedOrders = await db
+    .delete(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.cycleId, cycleId))
+    .returning();
+
+  // Delete the cycle itself
+  await db
+    .delete(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, cycleId));
+
+  return {
+    deleted: true,
     reason: 'HARD_DELETED',
     ordersDeleted: deletedOrders.length,
     eventsDeleted: deletedEvents.length,

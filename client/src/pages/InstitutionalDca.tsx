@@ -37,6 +37,7 @@ import {
   useToggleSoloSalida,
   useExchangeFeePresets,
   useDeleteManualCycle,
+  useDeleteCycleForce,
   useEditImportedCycle,
   useDeleteOrder,
   useDeleteAllOrders,
@@ -1569,16 +1570,19 @@ function CyclesTab() {
 function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showForceDeleteConfirm, setShowForceDeleteConfirm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
   const deleteManualCycle = useDeleteManualCycle();
+  const deleteCycleForce = useDeleteCycleForce();
   const editImportedCycle = useEditImportedCycle();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
-  const canDelete = (cycle.isImported || cycle.sourceType === 'manual') && cycle.status !== 'closed';
+  const isManualOrImported = cycle.isImported || cycle.sourceType === 'manual';
+  const canSoftDelete = isManualOrImported && cycle.status !== 'closed';
   const canEdit = (cycle.isImported || cycle.sourceType === 'manual' || cycle.isManualCycle) && cycle.status !== 'closed';
 
   return (
@@ -1663,7 +1667,12 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                       <span className="text-[10px] font-mono text-yellow-400/60">🎯 TP: pendiente de cálculo</span>
                     </>
                   ) : null}
-                  {cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
+                  {cycle.soloSalida ? (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: solo salida</span>
+                    </>
+                  ) : cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
                       <span className="text-[10px] font-mono text-muted-foreground">
@@ -1676,15 +1685,10 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                         </Badge>
                       )}
                     </>
-                  ) : cycle.isImported && cycle.soloSalida ? (
+                  ) : cycle.buyCount >= 1 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: solo salida</span>
-                    </>
-                  ) : !(cycle.isImported && cycle.soloSalida) && cycle.buyCount >= 1 ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: {cycle.nextBuyPrice ? `$${fmtPrice(cycle.nextBuyPrice)}` : "sin niveles disponibles"}</span>
+                      <span className="text-[10px] font-mono text-muted-foreground/50">🛒 Próx. compra: pendiente de cálculo</span>
                       {cycle.skippedSafetyLevels > 0 && (
                         <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
                           ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}
@@ -1773,7 +1777,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                         <span className="text-[10px]">Editar</span>
                       </Button>
                     )}
-                    {canDelete && (
+                    {canSoftDelete && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1879,6 +1883,19 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 </table>
               </div>
             )}
+            {/* Action bar — available for ALL cycles */}
+            <div className="px-9 py-2 border-t border-border/20 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 text-[10px]"
+                onClick={() => setShowForceDeleteConfirm(true)}
+                disabled={deleteCycleForce.isPending}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Eliminar ciclo
+              </Button>
+            </div>
           </div>
         )}
       </CardContent>
@@ -1967,6 +1984,69 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Eliminando...</>
                 ) : (
                   <><Trash2 className="h-3 w-3 mr-1" /> Eliminar ciclo</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Force Delete Any Cycle Confirmation Modal */}
+      {showForceDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowForceDeleteConfirm(false)}>
+          <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-full bg-red-500/10">
+                <Trash2 className="h-5 w-5 text-red-400" />
+              </div>
+              <h3 className="text-lg font-semibold">Eliminar ciclo completo</h3>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="text-sm text-muted-foreground space-y-1">
+                <div><strong>Par:</strong> {cycle.pair}</div>
+                <div><strong>Modo:</strong> <span className={cycle.mode === "live" ? "text-green-400" : "text-yellow-400"}>{cycle.mode?.toUpperCase()}</span></div>
+                <div><strong>Estado:</strong> {cycle.status}</div>
+                <div><strong>Capital:</strong> {fmtUsd(cycle.capitalUsedUsd)}</div>
+                <div><strong>Compras:</strong> {cycle.buyCount}</div>
+                <div><strong>Inicio:</strong> {fmtDate(cycle.startedAt)}</div>
+              </div>
+
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
+                <strong>⚠️ ELIMINACIÓN PERMANENTE:</strong> Se borrará el ciclo, todas sus órdenes y todos sus eventos de la base de datos. Esta acción NO se puede deshacer.
+                {cycle.mode === "live" && (
+                  <p className="mt-1 text-red-400 font-semibold">Este es un ciclo LIVE. Si tiene posición real abierta en el exchange, deberás cerrarla manualmente.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" size="sm" onClick={() => setShowForceDeleteConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={deleteCycleForce.isPending}
+                onClick={() => {
+                  deleteCycleForce.mutate(cycle.id, {
+                    onSuccess: (data) => {
+                      setShowForceDeleteConfirm(false);
+                      toast({
+                        title: "Ciclo eliminado",
+                        description: `Ciclo #${cycle.id} (${cycle.pair}) eliminado. Órdenes: ${data.ordersDeleted}, Eventos: ${data.eventsDeleted}`,
+                      });
+                    },
+                    onError: (err: any) => {
+                      toast({ title: "Error", description: err.message || "Error al eliminar ciclo", variant: "destructive" });
+                    },
+                  });
+                }}
+              >
+                {deleteCycleForce.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Eliminando...</>
+                ) : (
+                  <><Trash2 className="h-3 w-3 mr-1" /> Eliminar permanentemente</>
                 )}
               </Button>
             </div>

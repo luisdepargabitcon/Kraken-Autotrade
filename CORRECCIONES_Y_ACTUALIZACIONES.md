@@ -2,6 +2,37 @@
 
 ----
 
+## 2026-03-30 — FIX: Filtro ciclos activos + niveles compra + eliminar ciclos (WINDSURF FIX)
+
+### Problemas reportados y solucionados
+
+1. **BTC no aparece en filtro "Activos" modo LIVE**
+   - Causa: `getCycles` usaba `eq(status, "active")` (match exacto). Los ciclos BTC con status `tp_armed`, `trailing_active`, etc. no coincidían
+   - Solución: Cuando `status === "active"`, ahora filtra por `status != 'closed'` (todos los no-cerrados)
+   - Archivo: `server/services/institutionalDca/IdcaRepository.ts`
+
+2. **ETH importada mostraba "sin niveles disponibles"**
+   - Causa: La lógica UI no priorizaba la condición `soloSalida` correctamente. Para ciclos con `soloSalida=true`, el flujo caía en la rama genérica mostrando "sin niveles"
+   - Solución: Reordenada la lógica: primero comprueba `soloSalida` → luego `nextBuyPrice` → luego "pendiente de cálculo"
+   - Archivo: `client/src/pages/InstitutionalDca.tsx`
+
+3. **Eliminar ciclos manualmente (simulation + live)**
+   - Nueva función `deleteCycleForce()` en repositorio — borra ciclo + órdenes + eventos
+   - Nuevo endpoint `DELETE /api/institutional-dca/cycles/:id/force`
+   - Nuevo hook `useDeleteCycleForce()` en frontend
+   - Botón "Eliminar ciclo" visible en TODOS los ciclos al expandir (no solo importados)
+   - Modal de confirmación con detalle del ciclo y aviso de permanencia
+   - Para ciclos LIVE, aviso extra sobre cerrar posición real en exchange
+   - Registro de evento `cycle_force_deleted` + notificación Telegram
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaRepository.ts` — filtro active + deleteCycleForce
+- `server/routes/institutionalDca.routes.ts` — endpoint DELETE force
+- `client/src/hooks/useInstitutionalDca.ts` — hook useDeleteCycleForce
+- `client/src/pages/InstitutionalDca.tsx` — UI filtro + niveles + botón eliminar
+
+----
+
 ## 2026-03-29 — FEAT: Pestañas Dry Run en Terminal (posiciones + historial simulados)
 
 ### Problema

@@ -371,6 +371,72 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Delete Any Cycle (force) ───────────────────────────────────
+
+  app.delete(`${PREFIX}/cycles/:id/force`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const result = await repo.deleteCycleForce(id);
+
+      if (!result.cycle && result.reason === 'CYCLE_NOT_FOUND') {
+        return res.status(404).json({ error: "Ciclo no encontrado", reason: result.reason });
+      }
+
+      // Log event for traceability
+      try {
+        await repo.createEvent({
+          pair: result.cycle?.pair || 'unknown',
+          mode: result.cycle?.mode || 'unknown',
+          eventType: 'cycle_force_deleted',
+          severity: 'warn',
+          message: `Ciclo #${id} (${result.cycle?.pair}) eliminado manualmente. Orders: ${result.ordersDeleted}, Events: ${result.eventsDeleted}`,
+          payloadJson: {
+            action: 'force_delete',
+            cycleId: id,
+            pair: result.cycle?.pair,
+            mode: result.cycle?.mode,
+            status: result.cycle?.status,
+            isImported: result.cycle?.isImported,
+            ordersDeleted: result.ordersDeleted,
+            eventsDeleted: result.eventsDeleted,
+            deletedBy: 'user',
+          },
+        });
+      } catch (evtErr: any) {
+        console.error('[IDCA] Failed to create force-delete event:', evtErr.message);
+      }
+
+      // Telegram notification
+      try {
+        await telegram.sendRawMessage(
+          `🗑️ *Ciclo eliminado (force)*\n` +
+          `Par: ${result.cycle?.pair}\n` +
+          `Modo: ${result.cycle?.mode}\n` +
+          `Estado: ${result.cycle?.status}\n` +
+          `CycleId: ${id}\n` +
+          `Órdenes eliminadas: ${result.ordersDeleted}\n` +
+          `Eventos eliminados: ${result.eventsDeleted}`
+        );
+      } catch { /* ignore telegram errors */ }
+
+      res.json({
+        success: true,
+        deleted: result.deleted,
+        reason: result.reason,
+        ordersDeleted: result.ordersDeleted,
+        eventsDeleted: result.eventsDeleted,
+        cycleId: id,
+        pair: result.cycle?.pair,
+        mode: result.cycle?.mode,
+      });
+    } catch (e: any) {
+      console.error('[IDCA] deleteCycleForce error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Delete Manual Cycle ─────────────────────────────────────────
 
   app.delete(`${PREFIX}/cycles/:id/manual`, async (req, res) => {

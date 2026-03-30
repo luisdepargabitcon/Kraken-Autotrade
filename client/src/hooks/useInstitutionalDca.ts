@@ -529,6 +529,32 @@ export function useDeleteManualCycle() {
   });
 }
 
+export function useDeleteCycleForce() {
+  const qc = useQueryClient();
+  return useMutation<{
+    success: boolean;
+    deleted: boolean;
+    reason: string;
+    ordersDeleted: number;
+    eventsDeleted: number;
+    cycleId: number;
+    pair?: string;
+    mode?: string;
+  }, Error, number>({
+    mutationFn: async (cycleId: number) => {
+      const res = await apiRequest("DELETE", `${PREFIX}/cycles/${cycleId}/force`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to delete cycle");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 // ─── Delete Orders ─────────────────────────────────────────────────
 
 export function useDeleteOrder() {
