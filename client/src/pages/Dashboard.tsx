@@ -175,42 +175,50 @@ export default function Dashboard() {
           </div>
         )}
         
-        <main className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 max-w-[1600px] mx-auto w-full">
-          
-          <div className="col-span-1 lg:col-span-12 grid grid-cols-2 min-[500px]:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
-            <AssetCard 
-              symbol="USD" 
-              name="Balance Total" 
-              balance={usdData.balance} 
-              value={data?.exchangeConnected ? getTotalBalance() : "--"} 
-              change={0} 
+        <main className="flex-1 p-4 md:p-6 space-y-4 md:space-y-5 max-w-[1600px] mx-auto w-full">
+
+          {/* ── Fila 1: Asset cards ── */}
+          <div className="grid grid-cols-2 min-[500px]:grid-cols-3 lg:grid-cols-6 gap-3">
+            <AssetCard
+              symbol="USD"
+              name="Balance Total"
+              balance={usdData.balance}
+              value={data?.exchangeConnected ? getTotalBalance() : "--"}
+              change={0}
             />
             {cryptoAssets.map((asset) => (
-              <AssetCard 
+              <AssetCard
                 key={asset.symbol}
-                symbol={asset.symbol} 
-                name={asset.name} 
-                balance={data?.exchangeConnected ? asset.balance : "--"} 
-                value={data?.exchangeConnected ? asset.value : "--"} 
-                change={asset.change} 
+                symbol={asset.symbol}
+                name={asset.name}
+                balance={data?.exchangeConnected ? asset.balance : "--"}
+                value={data?.exchangeConnected ? asset.value : "--"}
+                change={asset.change}
               />
             ))}
           </div>
 
-          <div className="col-span-1 lg:col-span-9 h-[280px] sm:h-[350px] md:h-[400px] lg:h-[500px]">
-            <ChartWidget />
-          </div>
-          <div className="col-span-1 lg:col-span-3 space-y-3 md:space-y-4 lg:space-y-4">
-            <BotControl />
-            <LivePricesWidget />
+          {/* ── Fila 2: Gráficas iguales lado a lado ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5">
+            <div className="h-[320px] sm:h-[380px] lg:h-[420px]">
+              <ChartWidget />
+            </div>
+            <div className="h-[320px] sm:h-[380px] lg:h-[420px]">
+              <IdcaPnlWidget />
+            </div>
           </div>
 
-          <div className="col-span-1 lg:col-span-7">
-            <ActivePositionsWidget />
-          </div>
-          
-          <div className="col-span-1 lg:col-span-5">
-            <IdcaPnlWidget />
+          {/* ── Fila 3: Control + Precios + Posiciones ── */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+            <div>
+              <BotControl />
+            </div>
+            <div>
+              <LivePricesWidget />
+            </div>
+            <div className="md:col-span-1">
+              <ActivePositionsWidget />
+            </div>
           </div>
 
         </main>

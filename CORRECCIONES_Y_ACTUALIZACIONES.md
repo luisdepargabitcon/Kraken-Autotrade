@@ -2,6 +2,34 @@
 
 ----
 
+## 2026-04-07 — FIX: Panel Dashboard — Layout ordenado + Control del Sistema operable
+
+### Problemas resueltos
+1. Gráficas de distinto tamaño y layout desorganizado
+2. "Control del Sistema" solo mostraba info (badges) sin controles operables
+
+### Cambios implementados
+
+**`client/src/pages/Dashboard.tsx`**:
+- Nuevo layout en 3 filas ordenadas:
+  - **Fila 1**: Asset cards (full width, 6 columnas responsive)
+  - **Fila 2**: `ChartWidget` + `IdcaPnlWidget` en grid `lg:grid-cols-2` — **igual tamaño, lado a lado**
+  - **Fila 3**: `BotControl` | `LivePricesWidget` | `ActivePositionsWidget` — 3 columnas iguales
+
+**`client/src/components/dashboard/BotControl.tsx`** — Reescrito completamente:
+- ✅ **Botón INICIAR/DETENER BOT** — llama `POST /api/config { isActive }` con loading state
+- ✅ **Toggle LIVE / 🧪 SIM** — llama `POST /api/config { dryRunMode }` con loading state
+- ✅ **Selector de Estrategia** — dropdown desplegable (Momentum, Reversión Media, Scalping, Grid)
+- ✅ **Selector de Riesgo** — botones BAJO / MEDIO / ALTO con colores activos
+- ✅ **Info Exchange** — muestra Kraken / Revolut X
+- ✅ **Link a Configuración Avanzada** → `/strategies`
+- Todos los controles usan `useMutation` de TanStack Query con invalidación automática
+
+**`client/src/components/dashboard/ChartWidget.tsx`**:
+- Eliminado `col-span-2` — ya no necesario con el nuevo layout de columna individual
+
+----
+
 ## 2026-04-07 — FIX: DRY_RUN Auto-limpieza al arrancar + Reset API + Estado Alertas
 
 ### Cambios implementados

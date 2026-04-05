@@ -71,7 +71,7 @@ export function ChartWidget() {
   const isUnrealizedPositive = (portfolio?.unrealizedPnlUsd ?? 0) >= 0;
 
   return (
-    <Card className="col-span-2 glass-panel border-border/50 h-full flex flex-col">
+    <Card className="glass-panel border-border/50 h-full flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle
           className="text-sm font-medium font-mono tracking-wider text-muted-foreground cursor-pointer hover:text-primary transition-colors"
