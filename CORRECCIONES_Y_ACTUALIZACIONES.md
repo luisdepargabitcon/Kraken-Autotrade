@@ -2,6 +2,113 @@
 
 ----
 
+## 2026-04-05 — REFACTOR: Dry Run Mode + Dashboard Moderno (8 Fases)
+
+### Resumen ejecutivo
+Refactorización completa del sistema en 8 fases autónomas: auditoría de arquitectura, corrección DRY RUN, limpieza backfill, nuevo dashboard operativo, controles unificados, UX moderna, validación TypeScript y cleanup final.
+
+### FASE 1 — Auditoría de Arquitectura
+- Mapeadas todas las tablas: `bot_config`, `open_positions`, `trades`, `dry_run_trades`, `bot_events`, `institutional_dca_*`
+- Identificadas inconsistencias:
+  - DRY RUN no visible en posiciones activas ni dashboard
+  - Backfill sin filtros traía 65 operaciones inconsistentes
+  - Dashboard con TradeLog/EventsPanel de baja utilidad operativa
+  - BotControl solo lectura sin indicador DRY RUN
+- Generado `FASE1_AUDITORIA_ARQUITECTURA.md` con mapa completo
+
+### FASE 2 — Corrección DRY RUN
+- Verificado aislamiento FIFO: `fifoMatcher.ts` no accede a `dry_run_trades` ✅
+- Verificado P&L DRY RUN: FIFO correcto con match BUY/SELL ✅
+- No se requirieron cambios en lógica de trading
+
+### FASE 3 — Backfill Defensivo (botón RECUPERAR)
+**Archivo:** `server/routes/dryrun.routes.ts`
+- Filtro temporal: solo últimos 30 días (parámetro `daysBack` configurable)
+- Validaciones obligatorias: `pair`, `type`, `simTxid` presentes
+- Validación de formato de pair (debe contener `/`)
+- Validación `price > 0` y `volume > 0` (no NaN)
+- Idempotencia: detecta duplicados por `simTxid`
+- Response incluye `skipReasons` detallados: `{duplicate, missingData, invalidPrice, invalidVolume, invalidPair}`
+
+**Archivo:** `client/src/pages/Terminal.tsx`
+- Toast informativo con skip reasons y ventana temporal
+- Duración 8 segundos para leer detalles
+
+### FASE 4 — Dashboard Moderno
+**Nuevo endpoint:** `GET /api/institutional-dca/performance`
+- Curva P&L acumulado IDCA desde ciclos cerrados
+- Summary: totalPnlUsd, unrealizedPnlUsd, winRate, activeCycles, wins, losses
+
+**Nuevos componentes:**
+- `client/src/components/dashboard/ActivePositionsWidget.tsx`
+  - Posiciones abiertas del bot con P&L no realizado calculado en tiempo real
+  - Indicadores SmartGuard (SG, TRAIL, BE)
+  - Navegación directa al Terminal
+  - Estado vacío con botón "Ir a Terminal"
+  - Refresh cada 20s
+- `client/src/components/dashboard/IdcaPnlWidget.tsx`
+  - Gráfica AreaChart (recharts) del P&L acumulado IDCA
+  - KPIs: realizado, no realizado, win rate, ciclos
+  - Navegación a `/institutional-dca`
+  - Estado vacío bien diseñado
+  - Refresh cada 30s
+- `client/src/components/dashboard/LivePricesWidget.tsx`
+  - Precios en tiempo real para pares activos
+  - Indicadores de tendencia (TrendingUp/Down/Minus)
+  - Indicador "LIVE" con pulso cuando exchange conectado
+  - Timestamp de última actualización
+  - Refresh cada 15s
+
+**Modificado:** `client/src/components/dashboard/ChartWidget.tsx`
+- Botón "Ver →" navega a Terminal
+- Título clickeable
+
+**Modificado:** `client/src/pages/Dashboard.tsx`
+- Eliminados: `TradeLog`, `EventsPanel`
+- Añadidos: `ActivePositionsWidget`, `IdcaPnlWidget`, `LivePricesWidget`
+- Nuevo layout: ChartWidget(9) + [BotControl + LivePrices](3) | ActivePositions(7) + IdcaPnlWidget(5)
+
+### FASE 5 — Control de Sistema Unificado
+**Modificado:** `client/src/components/dashboard/BotControl.tsx`
+- Badge "DRY RUN" en header cuando modo activo
+- Banner de alerta ámbar cuando DRY RUN está activo con explicación clara
+- Fila "Modo Bot" que muestra DRY RUN / LIVE
+- Botón "Configurar / Cambiar Modo" navega a `/strategies`
+- Imports añadidos: `Button`, `FlaskConical`, `Settings`, `Link`
+
+### FASE 6 — UX Moderna
+- Todos los nuevos widgets con estados vacíos bien diseñados
+- Loaders con spinner centrado
+- Navegación consistente (Ver →) en todos los widgets
+- Badges informativos (modo, estado, conteo)
+- Colores semánticos: verde=live/positivo, ámbar=dry-run/simulación, azul=IDCA
+
+### FASE 7 — Validación TypeScript
+- `npx tsc --noEmit` → ✅ Sin errores en todos los pasos
+
+### Commits generados
+```
+990383f feat(fase2): backfill defensivo dry run - filtros temporales, validacion robusta, skip reasons detallados
+782c1bb feat(fase3-6): dashboard moderno - ActivePositions, IdcaPnlWidget, LivePrices, BotControl DryRun, IDCA performance endpoint
+```
+
+### Archivos modificados (total)
+- `server/routes/dryrun.routes.ts` — backfill defensivo
+- `server/routes/institutionalDca.routes.ts` — endpoint /performance
+- `client/src/pages/Terminal.tsx` — toast backfill mejorado
+- `client/src/pages/Dashboard.tsx` — layout nuevo
+- `client/src/components/dashboard/BotControl.tsx` — DRY RUN visible + operativo
+- `client/src/components/dashboard/ChartWidget.tsx` — navegación
+- `client/src/components/dashboard/ActivePositionsWidget.tsx` — NUEVO
+- `client/src/components/dashboard/IdcaPnlWidget.tsx` — NUEVO
+- `client/src/components/dashboard/LivePricesWidget.tsx` — NUEVO
+
+### Documentación generada
+- `FASE1_AUDITORIA_ARQUITECTURA.md`
+- `FASE2_CORRECCION_DRY_RUN.md`
+
+----
+
 ## 2026-03-30b — FIX: nextBuyPrice no calculado para ciclos importados con gestión completa
 
 ### Problema
