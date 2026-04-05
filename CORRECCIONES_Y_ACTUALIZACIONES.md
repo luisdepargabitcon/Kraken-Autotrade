@@ -2,6 +2,39 @@
 
 ----
 
+## 2026-04-07 — FIX: DRY_RUN Auto-limpieza al arrancar + Reset API + Estado Alertas
+
+### Cambios implementados
+
+**`server/services/tradingEngine.ts`**:
+- `loadDryRunPositionsFromDB()`: **borrado de toda la tabla `dry_run_trades` al arrancar** — cada deploy/restart comienza con simulación limpia (0 posiciones, 0 historial)
+- Eliminado el código muerto del loop de reconstrucción de posiciones (ya no tiene sentido si siempre empezamos desde cero)
+- `resetDryRunPositions()` (nuevo método público): limpia el mapa en memoria `openPositions` en dry run — llamado desde la API de reset
+- Eliminado import `lt` de drizzle-orm (ya no se usa)
+
+**`server/routes/dryrun.routes.ts`**:
+- `DELETE /api/dryrun/clear`: ahora también llama `tradingEngine.resetDryRunPositions()` además de borrar la BD, garantizando limpieza completa (BD + memoria)
+- Renombrado `_deps` → `deps` para acceder al engine
+
+**`script/clear-dryrun.ts`** (nuevo): script de utilidad standalone para limpiar `dry_run_trades` directamente vía `npx tsx script/clear-dryrun.ts`
+
+### Estado de alertas Telegram en dry run (verificado ✅)
+- `tradingEngine.ts` DRY_RUN BUY/SELL: envía `🧪 Trade Simulado [DRY_RUN]` — activo
+- `exitManager.ts` time-stop: envía `🧪 [SIM]` prefix — activo
+- `exitManager.ts` SL/TP/trailing (`sendSgEventAlert`): envía `🧪 [SIM]` prefix — activo
+- **Sin doble-alerta incorrecta**: ExitManager notifica el MOTIVO de salida, tradingEngine notifica la EJECUCIÓN — mensajes complementarios
+
+### Flujo al arrancar en dry run
+```
+Bot arranca → loadOpenPositionsFromDB() → detecta dryRunMode
+  → loadDryRunPositionsFromDB()
+    → DELETE FROM dry_run_trades (limpieza total)
+    → openPositions.clear()
+    → Log: "Listo para iniciar simulación desde cero"
+```
+
+----
+
 ## 2026-04-07 — FIX: DRY_RUN SELL "matched buy: none" — Matching por lotId en vez de FIFO
 
 ### Problema raíz

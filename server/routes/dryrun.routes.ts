@@ -4,7 +4,7 @@ import { db } from "../db";
 import { dryRunTrades, botEvents } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 
-export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
+export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
   // GET /api/dryrun/positions - Open dry run positions (status = 'open')
   app.get("/api/dryrun/positions", async (_req, res) => {
@@ -81,11 +81,16 @@ export const registerDryRunRoutes: RegisterRoutes = (app, _deps) => {
     }
   });
 
-  // DELETE /api/dryrun/clear - Clear all dry run trades (reset)
+  // DELETE /api/dryrun/clear - Clear all dry run trades (reset DB + in-memory positions)
   app.delete("/api/dryrun/clear", async (_req, res) => {
     try {
-      const result = await db.delete(dryRunTrades);
-      res.json({ success: true, message: "All dry run trades cleared" });
+      await db.delete(dryRunTrades);
+      // Also clear in-memory positions so ExitManager doesn't try to sell ghost positions
+      const engine = deps.getTradingEngine();
+      if (engine) {
+        engine.resetDryRunPositions();
+      }
+      res.json({ success: true, message: "All dry run trades cleared (DB + memory)" });
     } catch (error: any) {
       console.error("[dryrun] Error clearing trades:", error?.message);
       res.status(500).json({ error: "Failed to clear dry run trades" });
