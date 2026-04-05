@@ -142,6 +142,9 @@ export interface IExitManagerHost {
 
   // ATR% for dynamic trailing distance (cached from last analysis cycle)
   getATRPercent(pair: string): number;
+
+  // Dry run mode flag — used by ExitManager to prefix alerts with [SIM]
+  isDryRunMode(): boolean;
 }
 
 // ====================================================================
@@ -532,7 +535,8 @@ export class ExitManager {
 
         if (this.host.getTelegramService().isInitialized()) {
           const priceChange = ((currentPrice - entryPrice) / entryPrice) * 100;
-          await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          const simPfx = this.host.isDryRunMode() ? "🧪 <b>[SIM]</b>\n" : "";
+          await this.host.getTelegramService().sendAlertWithSubtype(`${simPfx}🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Time-Stop Expirado (DESACTIVADO)</b>
 
@@ -579,7 +583,8 @@ export class ExitManager {
 
     // Send Telegram alert
     if (telegramAlertEnabled && this.host.getTelegramService().isInitialized()) {
-      await this.host.getTelegramService().sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+      const simPfxClose = this.host.isDryRunMode() ? "🧪 <b>[SIM]</b>\n" : "";
+      await this.host.getTelegramService().sendAlertWithSubtype(`${simPfxClose}🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Time-Stop EXPIRADO — Cierre Automático</b>
 
@@ -799,7 +804,8 @@ export class ExitManager {
     }
 
     try {
-      await telegram.sendAlertWithSubtype(naturalMessage, "trades", subtype);
+      const simPfxSg = this.host.isDryRunMode() ? "🧪 <b>[SIM]</b>\n" : "";
+      await telegram.sendAlertWithSubtype(simPfxSg + naturalMessage, "trades", subtype);
       log(`[POSITION_ALERT] SENT: ${eventType} ${pair} subtype=${subtype}`, "trading");
     } catch (tgErr: any) {
       log(`[POSITION_ALERT] SEND_FAILED: ${eventType} ${pair} — clearing throttle for retry: ${tgErr.message}`, "trading");

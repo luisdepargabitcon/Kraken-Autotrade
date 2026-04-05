@@ -807,6 +807,7 @@ export class TradingEngine {
       getATRPercent: (pair: string) => {
         return this.atrPercentCache.get(pair) ?? 0;
       },
+      isDryRunMode: () => this.dryRunMode,
     };
   }
 
@@ -2219,6 +2220,10 @@ El motor de trading ha sido desactivado.
 
   private async loadOpenPositionsFromDB() {
     try {
+      if (this.dryRunMode) {
+        await this.loadDryRunPositionsFromDB();
+        return;
+      }
       const positions = await storage.getOpenPositions();
       const currentConfig = await storage.getBotConfig();
       this.openPositions.clear();
@@ -2344,7 +2349,86 @@ ${positionsList}
     }
   }
 
+  private async loadDryRunPositionsFromDB() {
+    const openBuys = await db
+      .select()
+      .from(dryRunTrades)
+      .where(and(eq(dryRunTrades.type, "buy"), eq(dryRunTrades.status, "open")));
+
+    this.openPositions.clear();
+
+    if (openBuys.length === 0) {
+      log("[DRY_RUN] No hay posiciones DRY_RUN abiertas para recuperar", "trading");
+      return;
+    }
+
+    const currentConfig = await storage.getBotConfig();
+    const entryMode = "SMART_GUARD";
+
+    for (const trade of openBuys) {
+      const configSnapshot: ConfigSnapshot = {
+        stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+        takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+        trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+        trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+        positionMode: entryMode,
+      };
+      if (currentConfig) {
+        const sgP = this.getSmartGuardParams(trade.pair, currentConfig);
+        configSnapshot.sgMinEntryUsd = sgP.sgMinEntryUsd;
+        configSnapshot.sgAllowUnderMin = sgP.sgAllowUnderMin;
+        configSnapshot.sgBeAtPct = sgP.sgBeAtPct;
+        configSnapshot.sgFeeCushionPct = sgP.sgFeeCushionPct;
+        configSnapshot.sgFeeCushionAuto = sgP.sgFeeCushionAuto;
+        configSnapshot.sgTrailStartPct = sgP.sgTrailStartPct;
+        configSnapshot.sgTrailDistancePct = sgP.sgTrailDistancePct;
+        configSnapshot.sgTrailStepPct = sgP.sgTrailStepPct;
+        configSnapshot.sgTpFixedEnabled = sgP.sgTpFixedEnabled;
+        configSnapshot.sgTpFixedPct = sgP.sgTpFixedPct;
+        configSnapshot.sgScaleOutEnabled = sgP.sgScaleOutEnabled;
+        configSnapshot.sgScaleOutPct = sgP.sgScaleOutPct;
+        configSnapshot.sgMinPartUsd = sgP.sgMinPartUsd;
+        configSnapshot.sgScaleOutThreshold = sgP.sgScaleOutThreshold;
+      }
+      const priceNum = parseFloat(trade.price);
+      const amountNum = parseFloat(trade.amount);
+      const position: OpenPosition = {
+        lotId: trade.simTxid,
+        pair: trade.pair,
+        amount: amountNum,
+        entryPrice: priceNum,
+        entryFee: amountNum * priceNum * (getTakerFeePct() / 100),
+        highestPrice: priceNum,
+        openedAt: trade.createdAt ? new Date(trade.createdAt as any).getTime() : Date.now(),
+        entryStrategyId: trade.strategyId || "momentum_cycle",
+        entrySignalTf: "cycle",
+        signalConfidence: trade.confidence ? parseFloat(trade.confidence) : undefined,
+        signalReason: trade.reason || undefined,
+        entryMode,
+        configSnapshot,
+        sgBreakEvenActivated: false,
+        sgTrailingActivated: false,
+        sgScaleOutDone: false,
+      };
+      this.openPositions.set(trade.simTxid, position);
+      log(`[DRY_RUN] Posición recuperada: ${trade.pair} (${trade.simTxid}) — ${amountNum.toFixed(8)} @ $${priceNum.toFixed(2)}`, "trading");
+    }
+
+    log(`[DRY_RUN] ${openBuys.length} posición(es) DRY_RUN cargadas desde BD`, "trading");
+
+    if (this.telegramService.isInitialized()) {
+      const list = openBuys.map(t =>
+        `   🧪 ${t.pair}: <code>${parseFloat(t.amount).toFixed(8)} @ $${parseFloat(t.price).toFixed(2)}</code>`
+      ).join("\n");
+      await this.telegramService.sendAlertWithSubtype(
+        `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n🧪 <b>[SIM] Posiciones DRY_RUN Restauradas</b>\n\n${list}\n━━━━━━━━━━━━━━━━━━━`,
+        "balance", "balance_exposure"
+      );
+    }
+  }
+
   private async savePositionToDB(pair: string, position: OpenPosition) {
+    if (this.dryRunMode) return;
     try {
       await storage.saveOpenPositionByLotId({
         lotId: position.lotId,
@@ -2427,6 +2511,7 @@ ${positionsList}
   }
 
   private async deletePositionFromDBByLotId(lotId: string) {
+    if (this.dryRunMode) return;
     try {
       await storage.deleteOpenPositionByLotId(lotId);
     } catch (error: any) {
@@ -2435,6 +2520,7 @@ ${positionsList}
   }
 
   private async updatePositionHighestPriceByLotId(lotId: string, highestPrice: number) {
+    if (this.dryRunMode) return;
     try {
       await storage.updateOpenPositionByLotId(lotId, {
         highestPrice: highestPrice.toString(),
@@ -5705,6 +5791,59 @@ El bot ha pausado las operaciones de COMPRA.
               confidence: strategyMeta?.confidence != null ? String(strategyMeta.confidence) : null,
             });
             log(`${envPrefixLog} DRY_RUN BUY persistido: ${simTxid}`, "trading");
+
+            // === CRÍTICO: Añadir al mapa openPositions para que la lógica de salida evalúe esta posición ===
+            // Sin esto, TP/Trailing/SL/Time-Stop nunca disparan → compras infinitas sin ventas
+            try {
+              const drCfg = await storage.getBotConfig();
+              const drMode = drCfg?.positionMode || "SMART_GUARD";
+              const drSnapshot: ConfigSnapshot = {
+                stopLossPercent: parseFloat(drCfg?.stopLossPercent?.toString() || "5"),
+                takeProfitPercent: parseFloat(drCfg?.takeProfitPercent?.toString() || "7"),
+                trailingStopEnabled: drCfg?.trailingStopEnabled ?? false,
+                trailingStopPercent: parseFloat(drCfg?.trailingStopPercent?.toString() || "2"),
+                positionMode: drMode,
+              };
+              if (drMode === "SMART_GUARD" && drCfg) {
+                const sgP = this.getSmartGuardParams(pair, drCfg);
+                drSnapshot.sgMinEntryUsd = sgP.sgMinEntryUsd;
+                drSnapshot.sgAllowUnderMin = sgP.sgAllowUnderMin;
+                drSnapshot.sgBeAtPct = sgP.sgBeAtPct;
+                drSnapshot.sgFeeCushionPct = sgP.sgFeeCushionPct;
+                drSnapshot.sgFeeCushionAuto = sgP.sgFeeCushionAuto;
+                drSnapshot.sgTrailStartPct = sgP.sgTrailStartPct;
+                drSnapshot.sgTrailDistancePct = sgP.sgTrailDistancePct;
+                drSnapshot.sgTrailStepPct = sgP.sgTrailStepPct;
+                drSnapshot.sgTpFixedEnabled = sgP.sgTpFixedEnabled;
+                drSnapshot.sgTpFixedPct = sgP.sgTpFixedPct;
+                drSnapshot.sgScaleOutEnabled = sgP.sgScaleOutEnabled;
+                drSnapshot.sgScaleOutPct = sgP.sgScaleOutPct;
+                drSnapshot.sgMinPartUsd = sgP.sgMinPartUsd;
+                drSnapshot.sgScaleOutThreshold = sgP.sgScaleOutThreshold;
+              }
+              const dryPos: OpenPosition = {
+                lotId: simTxid,
+                pair,
+                amount: volumeNum,
+                entryPrice: price,
+                entryFee: volumeNum * price * (getTakerFeePct() / 100),
+                highestPrice: price,
+                openedAt: Date.now(),
+                entryStrategyId: strategyMeta?.strategyId || "momentum_cycle",
+                entrySignalTf: strategyMeta?.timeframe || "cycle",
+                signalConfidence: strategyMeta?.confidence,
+                signalReason: reason,
+                entryMode: drMode,
+                configSnapshot: drSnapshot,
+                sgBreakEvenActivated: false,
+                sgTrailingActivated: false,
+                sgScaleOutDone: false,
+              };
+              this.openPositions.set(simTxid, dryPos);
+              log(`${envPrefixLog} Posición DRY_RUN añadida al tracker: ${simTxid} (${pair} ${volumeNum.toFixed(8)} @ $${price.toFixed(2)})`, "trading");
+            } catch (posErr: any) {
+              log(`${envPrefixLog} Error añadiendo posición DRY_RUN al tracker: ${posErr?.message}`, "trading");
+            }
           } else {
             // SELL: find oldest open dry run buy for this pair and close it
             const openBuys = await db.select().from(dryRunTrades)

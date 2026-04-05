@@ -2,6 +2,85 @@
 
 ----
 
+## 2026-04-06 — REFACTOR: Modo DRY RUN — Comportamiento Idéntico al Modo Real
+
+### Problema raíz identificado
+El modo Dry Run tenía **4 fallos críticos** que causaban comportamiento completamente diferente al modo real:
+
+1. **Compras infinitas sin ventas**: `executeTrade()` en DRY_RUN retornaba `true` inmediatamente tras persistir el buy en BD, sin añadir la posición al mapa `openPositions`. Como toda la lógica de salida (TP, trailing stop, SL, time-stop) itera sobre `this.openPositions`, **nunca encontraba posiciones que cerrar** → acumulación infinita de compras simuladas sin ventas.
+
+2. **Posiciones perdidas al reiniciar**: `loadOpenPositionsFromDB()` solo cargaba desde la tabla `open_positions` (posiciones reales). En modo dry run, los buys están en `dry_run_trades`. Al reiniciar el bot, el mapa `openPositions` quedaba vacío → el ExitManager nunca evaluaba las posiciones abiertas.
+
+3. **Contaminación de tabla `open_positions`**: `savePositionToDB()`, `updatePositionHighestPriceByLotId()` y `deletePositionFromDBByLotId()` escribían en tablas reales aunque estuviéramos en simulación → podía crear entradas fantasma en `open_positions`.
+
+4. **Alertas Telegram sin prefijo [SIM]**: Las alertas de ExitManager (Break-even activado, Trailing activado, Time-Stop) no distinguían entre modo real y simulación → si se enviaban, no se identificaban como simuladas.
+
+### Solución implementada
+
+#### `server/services/tradingEngine.ts`
+
+**`executeTrade()` — sección DRY_RUN BUY (línea ~5793)**
+- Tras persistir el buy en `dry_run_trades`, ahora construye un `OpenPosition` completo con `configSnapshot` de la config actual (incluye todos los parámetros SMART_GUARD: BE, trailing, TP fijo, scale-out).
+- Añade la posición al mapa `this.openPositions` con `lotId = simTxid`.
+- El ExitManager ya puede evaluar esta posición en cada ciclo → TP, trailing stop, SL y time-stop se disparan normalmente.
+
+**Nuevo método `loadDryRunPositionsFromDB()`**
+- En modo dry run, en lugar de cargar `open_positions`, carga los registros `dry_run_trades` con `type="buy"` y `status="open"`.
+- Reconstruye el `configSnapshot` con los parámetros actuales de la config (SMART_GUARD).
+- Envía alerta Telegram `[SIM] Posiciones DRY_RUN Restauradas` al iniciar.
+
+**`loadOpenPositionsFromDB()`**
+- Si `this.dryRunMode`, delega a `loadDryRunPositionsFromDB()` y retorna sin cargar posiciones reales.
+
+**`savePositionToDB()` / `deletePositionFromDBByLotId()` / `updatePositionHighestPriceByLotId()`**
+- Añadido `if (this.dryRunMode) return;` al inicio de los tres métodos.
+- Las posiciones dry run son **solo en memoria** — no contaminan la tabla `open_positions`.
+
+**`createExitHost()`**
+- Añadido `isDryRunMode: () => this.dryRunMode` al objeto host expuesto al ExitManager.
+
+#### `server/services/exitManager.ts`
+
+**`IExitManagerHost` interface**
+- Añadido `isDryRunMode(): boolean` al interfaz.
+
+**`sendSgEventAlert()`** (Break-even, Trailing activado/actualizado, Scale-out)
+- Prepend `🧪 <b>[SIM]</b>\n` a todos los mensajes Telegram cuando `this.host.isDryRunMode()`.
+
+**`checkTimeStop()`** (ambas ramas: expirado-desactivado y expirado-cerrar)
+- Prepend `🧪 <b>[SIM]</b>\n` a los mensajes Telegram de time-stop en modo dry run.
+
+### Flujo corregido en DRY RUN
+
+```
+BUY signal → executeTrade(DRY_RUN BUY)
+  ├── Persiste en dry_run_trades (status="open")
+  ├── Crea OpenPosition(lotId=simTxid) con configSnapshot SMART_GUARD
+  ├── Añade a this.openPositions[simTxid]
+  └── Envía Telegram: 🧪 [DRY_RUN] Trade Simulado - COMPRA
+
+Cada ciclo → ExitManager.checkStopLossTakeProfit()
+  └── Itera this.openPositions → encuentra posición dry run
+      ├── checkSmartGuardExit() evalúa TP/BE/trailing/SL
+      └── Si trigger → safeSell() → executeTrade(DRY_RUN SELL)
+            ├── Persiste sell en dry_run_trades (status="closed")
+            ├── Marca buy original como "closed" con P&L calculado
+            ├── Envía Telegram: 🧪 [DRY_RUN] Trade Simulado - VENTA
+            └── safeSell elimina posición de this.openPositions
+
+Al reiniciar → loadDryRunPositionsFromDB()
+  └── Carga open dry_run_trades como posiciones en memoria
+```
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — 6 cambios
+- `server/services/exitManager.ts` — 4 cambios
+
+### Compilación
+TypeScript compila sin errores.
+
+----
+
 ## 2026-04-05 — FIX: IDCA Posiciones Importadas Independientes del Motor Autónomo
 
 ### Problema
