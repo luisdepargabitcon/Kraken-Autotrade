@@ -9,7 +9,7 @@ import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
 import { type InsertTrade, type Trade, dryRunTrades } from "@shared/schema";
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, lt } from "drizzle-orm";
 import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
@@ -2350,21 +2350,85 @@ ${positionsList}
   }
 
   private async loadDryRunPositionsFromDB() {
-    // On every startup/deploy: wipe ALL dry_run_trades for a clean simulation start
+    // Expire stale open buys older than 7 days to avoid mass-exit cascade on startup
     try {
-      const deleted = await db.delete(dryRunTrades).returning({ id: dryRunTrades.id });
-      if (deleted.length > 0) {
-        log(`[DRY_RUN] Inicio limpio: ${deleted.length} registro(s) de dry_run_trades eliminados al arrancar`, "trading");
-      } else {
-        log("[DRY_RUN] Inicio limpio: tabla dry_run_trades ya estaba vacía", "trading");
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const expired = await db.update(dryRunTrades)
+        .set({ status: "closed", closedAt: new Date(), reason: "Posición expirada al arrancar (>7 días)" })
+        .where(and(eq(dryRunTrades.type, "buy"), eq(dryRunTrades.status, "open"), lt(dryRunTrades.createdAt, sevenDaysAgo)))
+        .returning({ id: dryRunTrades.id });
+      if (expired.length > 0) {
+        log(`[DRY_RUN] ${expired.length} posición(es) DRY_RUN expiradas al arrancar (>7 días)`, "trading");
       }
-    } catch (clearErr: any) {
-      log(`[DRY_RUN] Error limpiando tabla al arrancar: ${clearErr?.message}`, "trading");
+    } catch (expErr: any) {
+      log(`[DRY_RUN] Error expirando posiciones antiguas: ${expErr?.message}`, "trading");
     }
 
-    // After clearing, nothing to load — start fresh
+    const openBuys = await db
+      .select()
+      .from(dryRunTrades)
+      .where(and(eq(dryRunTrades.type, "buy"), eq(dryRunTrades.status, "open")));
+
     this.openPositions.clear();
-    log("[DRY_RUN] Listo para iniciar simulación desde cero", "trading");
+
+    if (openBuys.length === 0) {
+      log("[DRY_RUN] No hay posiciones DRY_RUN abiertas para recuperar", "trading");
+      return;
+    }
+
+    const currentConfig = await storage.getBotConfig();
+    const entryMode = "SMART_GUARD";
+
+    for (const trade of openBuys) {
+      const configSnapshot: ConfigSnapshot = {
+        stopLossPercent: parseFloat(currentConfig?.stopLossPercent?.toString() || "5"),
+        takeProfitPercent: parseFloat(currentConfig?.takeProfitPercent?.toString() || "7"),
+        trailingStopEnabled: currentConfig?.trailingStopEnabled ?? false,
+        trailingStopPercent: parseFloat(currentConfig?.trailingStopPercent?.toString() || "2"),
+        positionMode: entryMode,
+      };
+      if (currentConfig) {
+        const sgP = this.getSmartGuardParams(trade.pair, currentConfig);
+        configSnapshot.sgMinEntryUsd = sgP.sgMinEntryUsd;
+        configSnapshot.sgAllowUnderMin = sgP.sgAllowUnderMin;
+        configSnapshot.sgBeAtPct = sgP.sgBeAtPct;
+        configSnapshot.sgFeeCushionPct = sgP.sgFeeCushionPct;
+        configSnapshot.sgFeeCushionAuto = sgP.sgFeeCushionAuto;
+        configSnapshot.sgTrailStartPct = sgP.sgTrailStartPct;
+        configSnapshot.sgTrailDistancePct = sgP.sgTrailDistancePct;
+        configSnapshot.sgTrailStepPct = sgP.sgTrailStepPct;
+        configSnapshot.sgTpFixedEnabled = sgP.sgTpFixedEnabled;
+        configSnapshot.sgTpFixedPct = sgP.sgTpFixedPct;
+        configSnapshot.sgScaleOutEnabled = sgP.sgScaleOutEnabled;
+        configSnapshot.sgScaleOutPct = sgP.sgScaleOutPct;
+        configSnapshot.sgMinPartUsd = sgP.sgMinPartUsd;
+        configSnapshot.sgScaleOutThreshold = sgP.sgScaleOutThreshold;
+      }
+      const priceNum = parseFloat(trade.price);
+      const amountNum = parseFloat(trade.amount);
+      const position: OpenPosition = {
+        lotId: trade.simTxid,
+        pair: trade.pair,
+        amount: amountNum,
+        entryPrice: priceNum,
+        entryFee: amountNum * priceNum * (getTakerFeePct() / 100),
+        highestPrice: priceNum,
+        openedAt: trade.createdAt ? new Date(trade.createdAt as any).getTime() : Date.now(),
+        entryStrategyId: trade.strategyId || "momentum_cycle",
+        entrySignalTf: "cycle",
+        signalConfidence: trade.confidence ? parseFloat(trade.confidence) : undefined,
+        signalReason: trade.reason || undefined,
+        entryMode,
+        configSnapshot,
+        sgBreakEvenActivated: false,
+        sgTrailingActivated: false,
+        sgScaleOutDone: false,
+      };
+      this.openPositions.set(trade.simTxid, position);
+      log(`[DRY_RUN] Posición recuperada: ${trade.pair} (${trade.simTxid}) — ${amountNum.toFixed(8)} @ $${priceNum.toFixed(2)}`, "trading");
+    }
+
+    log(`[DRY_RUN] ${openBuys.length} posición(es) DRY_RUN cargadas desde BD`, "trading");
   }
 
   /** Reset all in-memory DRY_RUN positions (called after DB clear from API) */
