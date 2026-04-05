@@ -2,6 +2,50 @@
 
 ----
 
+## 2026-04-05 — FIX: IDCA Posiciones Importadas Independientes del Motor Autónomo
+
+### Problema
+Las posiciones importadas manualmente en IDCA interferían con la lógica autónoma del bot de tres formas:
+
+1. **Bloqueo de nuevas entradas**: `getActiveCycle(pair, mode)` retornaba ciclos importados (tienen `cycleType="main"`) → el bot nunca abría ciclos autónomos mientras hubiera un importado activo.
+2. **Inflado de exposición de módulo**: `getAllActiveCycles(mode)` incluía el capital importado → podía superar `maxModuleExposurePct` antes de que el bot desplegara nada.
+3. **Inflado de exposición por par**: `getTotalPairExposureUsd` y conteo de ciclos en Plus/Recovery incluían importados → bloqueaba activación de Plus y Recovery cycles.
+
+### Solución
+Separación completa de los flujos: importados se gestionan de forma independiente y **no cuentan** para las decisiones autónomas del bot.
+
+### Archivos modificados
+
+#### `server/services/institutionalDca/IdcaRepository.ts`
+Añadidas 6 nuevas funciones bot-only (excluyen `isImported=true`):
+- `getActiveBotCycle(pair, mode)` — ciclo principal del bot sin importados
+- `getActiveImportedCycles(pair, mode)` — solo ciclos importados activos
+- `getAllActiveBotCycles(mode)` — todos los ciclos bot activos (exposición módulo)
+- `getAllActiveBotCyclesForPair(pair, mode)` — ciclos bot por par (conteo recovery)
+- `getTotalBotPairExposureUsd(pair, mode)` — exposición por par sin importados
+- `hasActiveBotCycleForPair(pair, mode)` — check de subciclos huérfanos bot
+
+#### `server/services/institutionalDca/IdcaEngine.ts`
+5 cambios en el motor:
+- `evaluatePair`: Separado en dos flujos independientes. Importados se gestionan en loop propio; bot usa `getActiveBotCycle` sin importar si hay posiciones importadas activas.
+- `performEntryCheck`: Usa `getActiveBotCycle` + `getAllActiveBotCycles` para checks de exposición.
+- `checkPlusActivation`: Usa `getAllActiveBotCycles` para exposición de par.
+- `checkRecoveryActivation`: Usa `getTotalBotPairExposureUsd` + `getAllActiveBotCyclesForPair`.
+
+### Comportamiento resultante
+| Aspecto | Antes | Después |
+|---------|-------|---------|
+| Bot abre ciclo si hay importado activo | ❌ Bloqueado | ✅ Independiente |
+| Capital importado vs límite módulo | ❌ Cuenta | ✅ No cuenta |
+| Capital importado vs exposición par | ❌ Cuenta | ✅ No cuenta |
+| Gestión de importados (TP, safety buys) | ✅ Funciona | ✅ Sigue funcionando |
+| PnL/precio de importados actualizado | ✅ Funciona | ✅ Sigue funcionando |
+
+### Migraciones
+Ninguna. Solo usa columna `is_imported` existente (schema + migrate.ts sin cambios).
+
+----
+
 ## 2026-04-05 — REFACTOR: Dry Run Mode + Dashboard Moderno (8 Fases)
 
 ### Resumen ejecutivo

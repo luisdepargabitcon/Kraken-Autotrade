@@ -256,6 +256,108 @@ export async function getAllActiveCycles(mode?: string): Promise<InstitutionalDc
     .where(ne(institutionalDcaCycles.status, "closed"));
 }
 
+// ─── Bot-only queries (exclude imported positions) ─────────────────
+// Imported cycles are independent: they don't block autonomous entries
+// and their capital doesn't count against the bot's allocated budget.
+
+export async function getActiveBotCycle(
+  pair: string,
+  mode: string
+): Promise<InstitutionalDcaCycle | undefined> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.cycleType, "main"),
+        eq(institutionalDcaCycles.isImported, false),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .limit(1);
+  return rows[0];
+}
+
+export async function getActiveImportedCycles(
+  pair: string,
+  mode: string
+): Promise<InstitutionalDcaCycle[]> {
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.isImported, true),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+}
+
+export async function getAllActiveBotCycles(mode: string): Promise<InstitutionalDcaCycle[]> {
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.isImported, false),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+}
+
+export async function getAllActiveBotCyclesForPair(
+  pair: string,
+  mode: string
+): Promise<InstitutionalDcaCycle[]> {
+  return db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.isImported, false),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+}
+
+export async function getTotalBotPairExposureUsd(pair: string, mode: string): Promise<number> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.isImported, false),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    );
+  return rows.reduce((sum, c) => sum + parseFloat(String(c.capitalUsedUsd || "0")), 0);
+}
+
+export async function hasActiveBotCycleForPair(pair: string, mode: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: institutionalDcaCycles.id })
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.mode, mode),
+        eq(institutionalDcaCycles.isImported, false),
+        ne(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function createCycle(
   data: InsertInstitutionalDcaCycle
 ): Promise<InstitutionalDcaCycle> {

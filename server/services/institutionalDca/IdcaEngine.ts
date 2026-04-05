@@ -457,17 +457,43 @@ async function evaluatePair(
     });
   }
 
-  // Check for existing active main cycle
-  const activeCycle = await repo.getActiveCycle(pair, mode);
+  // ── Manage imported cycles independently (do not interfere with autonomous logic) ──
+  const importedCycles = await repo.getActiveImportedCycles(pair, mode);
+  for (const ic of importedCycles) {
+    await manageCycle(ic, currentPrice, config, assetConfig, mode);
+    if (!ic.soloSalida) {
+      const plusCfgImp = getPlusConfig(config);
+      if (plusCfgImp.enabled) {
+        const existingPlus = await repo.getActivePlusCycle(pair, mode, ic.id);
+        if (existingPlus) {
+          await managePlusCycle(existingPlus, ic, currentPrice, config, assetConfig, mode, plusCfgImp);
+        } else {
+          await checkPlusActivation(ic, currentPrice, config, assetConfig, mode, plusCfgImp);
+        }
+      }
+      const recoveryCfgImp = getRecoveryConfig(config);
+      if (recoveryCfgImp.enabled) {
+        const existingRecovery = await repo.getActiveRecoveryCycles(pair, mode, ic.id);
+        if (existingRecovery.length > 0) {
+          for (const rc of existingRecovery) {
+            await manageRecoveryCycle(rc, ic, currentPrice, config, assetConfig, mode, recoveryCfgImp);
+          }
+        } else {
+          await checkRecoveryActivation(ic, currentPrice, config, assetConfig, mode, recoveryCfgImp);
+        }
+      }
+    }
+  }
+
+  // ── Autonomous bot cycle flow (independent of imported positions) ──
+  const activeCycle = await repo.getActiveBotCycle(pair, mode);
 
   if (activeCycle) {
-    // Manage existing main cycle (full logic: safety buys, TP, trailing, etc.)
+    // Manage existing autonomous main cycle
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
 
-    // Plus cycle logic: skip if imported + soloSalida
-    const isSoloSalida = activeCycle.isImported && activeCycle.soloSalida;
     const plusConfig = getPlusConfig(config);
-    if (plusConfig.enabled && !isSoloSalida) {
+    if (plusConfig.enabled) {
       const existingPlus = await repo.getActivePlusCycle(pair, mode, activeCycle.id);
       if (existingPlus) {
         await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
@@ -476,9 +502,8 @@ async function evaluatePair(
       }
     }
 
-    // Recovery cycle logic: deep drawdown recovery
     const recoveryCfg = getRecoveryConfig(config);
-    if (recoveryCfg.enabled && !isSoloSalida) {
+    if (recoveryCfg.enabled) {
       const existingRecovery = await repo.getActiveRecoveryCycles(pair, mode, activeCycle.id);
       if (existingRecovery.length > 0) {
         for (const rc of existingRecovery) {
@@ -489,10 +514,10 @@ async function evaluatePair(
       }
     }
   } else {
-    // Check if there's an imported cycle (non-main cycleType) still active for this pair
-    const hasAny = await repo.hasActiveCycleForPair(pair, mode);
+    // Check for orphaned bot subcycles (plus/recovery without a main)
+    const hasAny = await repo.hasActiveBotCycleForPair(pair, mode);
     if (!hasAny) {
-      // Look for new entry
+      // No bot cycle active — look for new autonomous entry
       await checkEntry(pair, currentPrice, config, assetConfig, mode);
     }
   }
@@ -1450,15 +1475,15 @@ async function performEntryCheck(
     return { allowed: false, blockReasons: blocks };
   }
 
-  // Check no existing active cycle
-  const existing = await repo.getActiveCycle(pair, mode);
+  // Check no existing autonomous bot cycle
+  const existing = await repo.getActiveBotCycle(pair, mode);
   if (existing) {
     return { allowed: false, blockReasons: [{ code: "cycle_already_active", message: "Active cycle exists", timestamp: now }] };
   }
 
-  // Check exposure
+  // Check exposure (bot-managed cycles only; imported positions are independent)
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
-  const allCycles = await repo.getAllActiveCycles(mode);
+  const allCycles = await repo.getAllActiveBotCycles(mode);
   let totalUsed = 0;
   for (const c of allCycles) {
     totalUsed += parseFloat(String(c.capitalUsedUsd || "0"));
@@ -1830,10 +1855,10 @@ async function checkPlusActivation(
     if (strength === "none") return;
   }
 
-  // 5) Exposure check
+  // 5) Exposure check (bot-managed cycles only)
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
   const plusCapital = allocatedCapital * (plusCfg.capitalAllocationPct / 100);
-  const allActive = await repo.getAllActiveCycles(mode);
+  const allActive = await repo.getAllActiveBotCycles(mode);
   const pairExposure = allActive
     .filter(c => c.pair === pair)
     .reduce((sum, c) => sum + parseFloat(String(c.capitalUsedUsd || "0")), 0);
@@ -2850,7 +2875,7 @@ async function checkRecoveryActivation(
 
   // At this point, drawdown is deep enough — emit eligible event
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
-  const pairExposure = await repo.getTotalPairExposureUsd(pair, mode);
+  const pairExposure = await repo.getTotalBotPairExposureUsd(pair, mode);
   const pairExposurePct = allocatedCapital > 0 ? (pairExposure / allocatedCapital) * 100 : 0;
   const recoveryCapital = Math.min(
     allocatedCapital * (rcfg.capitalAllocationPct / 100),
@@ -2877,8 +2902,8 @@ async function checkRecoveryActivation(
   // 4) Gate checks — each produces a specific block reason if failed
   const blockReasons: string[] = [];
 
-  // 4a) Total cycles per pair
-  const allActive = await repo.getAllActiveCyclesForPair(pair, mode);
+  // 4a) Total cycles per pair (bot-managed only; imported are independent)
+  const allActive = await repo.getAllActiveBotCyclesForPair(pair, mode);
   if (allActive.length >= rcfg.maxTotalCyclesPerPair) {
     blockReasons.push(`max_cycles_per_pair: ${allActive.length} >= ${rcfg.maxTotalCyclesPerPair}`);
   }
