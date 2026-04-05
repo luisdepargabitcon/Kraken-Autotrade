@@ -9,7 +9,7 @@ import { fifoMatcher } from "./fifoMatcher";
 import { toConfidencePct, toConfidenceUnit } from "../utils/confidence";
 import { type InsertTrade, type Trade, dryRunTrades } from "@shared/schema";
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, lt } from "drizzle-orm";
 import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService } from "./exchanges/IExchangeService";
@@ -2350,6 +2350,20 @@ ${positionsList}
   }
 
   private async loadDryRunPositionsFromDB() {
+    // Expire stale open buys older than 7 days to avoid mass-exit cascade on startup
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const expired = await db.update(dryRunTrades)
+        .set({ status: "closed", closedAt: new Date(), reason: "Posición expirada al arrancar (>7 días)" })
+        .where(and(eq(dryRunTrades.type, "buy"), eq(dryRunTrades.status, "open"), lt(dryRunTrades.createdAt, sevenDaysAgo)))
+        .returning({ id: dryRunTrades.id });
+      if (expired.length > 0) {
+        log(`[DRY_RUN] ${expired.length} posición(es) DRY_RUN expiradas al arrancar (>7 días)`, "trading");
+      }
+    } catch (expErr: any) {
+      log(`[DRY_RUN] Error expirando posiciones antiguas: ${expErr?.message}`, "trading");
+    }
+
     const openBuys = await db
       .select()
       .from(dryRunTrades)
@@ -5680,7 +5694,7 @@ El bot ha pausado las operaciones de COMPRA.
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
     strategyMeta?: { strategyId: string; timeframe: string; confidence: number; regime?: string; regimeReason?: string; routerStrategy?: string },
     executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; sgMinEntryUsd: number; sgAllowUnderMin_DEPRECATED: boolean; dryRun: boolean; env?: string; floorUsd?: number; availableAfterCushion?: number; sgReasonCode?: SmartGuardReasonCode; minOrderUsd?: number; allowUnderMin?: boolean },
-    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null } // For sells: pass entry price and optional fee/amounts for accurate P&L tracking
+    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null; lotId?: string } // For sells: pass entry price and optional fee/amounts for accurate P&L tracking
   ): Promise<boolean> {
     try {
       // === VALIDACIÓN: Bloquear pares no-USD ===
@@ -5845,12 +5859,22 @@ El bot ha pausado las operaciones de COMPRA.
               log(`${envPrefixLog} Error añadiendo posición DRY_RUN al tracker: ${posErr?.message}`, "trading");
             }
           } else {
-            // SELL: find oldest open dry run buy for this pair and close it
-            const openBuys = await db.select().from(dryRunTrades)
-              .where(and(eq(dryRunTrades.pair, pair), eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
-              .orderBy(dryRunTrades.createdAt)
-              .limit(1);
-            
+            // SELL: match by lotId from sellContext (exact match), fallback to FIFO if not found
+            const sellLotId = sellContext?.lotId;
+            let matchedBuyArr: any[] = [];
+            if (sellLotId) {
+              matchedBuyArr = await db.select().from(dryRunTrades)
+                .where(and(eq(dryRunTrades.simTxid, sellLotId), eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
+                .limit(1);
+            }
+            if (matchedBuyArr.length === 0) {
+              // Fallback FIFO (orphan sell without matching lotId)
+              matchedBuyArr = await db.select().from(dryRunTrades)
+                .where(and(eq(dryRunTrades.pair, pair), eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
+                .orderBy(dryRunTrades.createdAt)
+                .limit(1);
+            }
+            const openBuys = matchedBuyArr;
             const matchedBuy = openBuys[0];
             const entryPriceNum = matchedBuy ? parseFloat(matchedBuy.price) : (sellContext?.entryPrice || price);
             const pnlUsd = (price - entryPriceNum) * volumeNum;

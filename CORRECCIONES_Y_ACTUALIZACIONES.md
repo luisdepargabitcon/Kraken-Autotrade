@@ -2,6 +2,36 @@
 
 ----
 
+## 2026-04-07 — FIX: DRY_RUN SELL "matched buy: none" — Matching por lotId en vez de FIFO
+
+### Problema raíz
+Al activar el DRY_RUN, ExitManager evaluaba **todas las posiciones simultáneamente** al arrancar. Cuando 133 posiciones disparaban `safeSell` de forma concurrente, el path DRY_RUN SELL buscaba el buy más antiguo por par (FIFO) en vez de buscar el buy específico de esa posición (`lotId`). Resultado: múltiples sells competían para cerrar el mismo buy → colisión de DB → el buy quedaba ya cerrado para la mayoría de sells → `matched buy: none`.
+
+### Causa secundaria
+`loadDryRunPositionsFromDB()` cargaba **todas** las posiciones históricas abiertas (incluso de meses atrás), lo que causaba una avalancha masiva de exits al arrancar.
+
+### Cambios implementados
+
+**`server/services/tradingEngine.ts`**:
+- Añadido `lotId?` al tipo de `sellContext` en `executeTrade()`
+- Importado `lt` de drizzle-orm para comparación de fechas
+- DRY_RUN SELL: busca primero por `simTxid = sellContext.lotId` (match exacto). Solo si no encuentra, hace fallback FIFO (sells huérfanos)
+- `loadDryRunPositionsFromDB()`: expira automáticamente posiciones DRY_RUN con `status=open` de más de 7 días al arrancar, evitando la cascada masiva de exits
+
+**`server/services/exitManager.ts`**:
+- `safeSell()`: inyecta `lotId` en `enrichedSellContext` antes de llamar a `executeTrade()`, garantizando que el SELL siempre lleva el identificador de la posición exacta a cerrar
+
+### Flujo corregido
+```
+ExitManager.safeSell(lotId=DRY-123, pair=ETH/USD)
+  → enrichedSellContext = { ...sellContext, lotId: "DRY-123" }
+  → executeTrade(sell, ETH/USD, ..., { lotId: "DRY-123" })
+    → busca dry_run_trades WHERE simTxid="DRY-123" AND status="open"
+    → encuentra el buy exacto → cierra → log: "matched buy: DRY-123"
+```
+
+----
+
 ## 2026-04-06 — REFACTOR: Modo DRY RUN — Comportamiento Idéntico al Modo Real
 
 ### Problema raíz identificado

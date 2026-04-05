@@ -315,10 +315,11 @@ export class ExitManager {
         log(`[SAFE_SELL] Capped sell amount from ${sellAmount.toFixed(8)} to ${cappedSellAmount.toFixed(8)} (lot limit) for ${pair} ${lotId.substring(0, 12)}`, "trading");
       }
 
-      // 5. Execute trade
+      // 5. Execute trade (inject lotId so DRY_RUN SELL can match the exact buy record)
+      const enrichedSellContext = sellContext ? { ...sellContext, lotId } : { entryPrice: 0, lotId };
       const success = await this.host.executeTrade(
         pair, "sell", cappedSellAmount.toFixed(8), currentPrice,
-        sellReason, undefined, undefined, undefined, sellContext
+        sellReason, undefined, undefined, undefined, enrichedSellContext
       );
 
       if (success) {
