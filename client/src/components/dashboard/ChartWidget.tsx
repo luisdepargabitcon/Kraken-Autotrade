@@ -3,6 +3,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, TrendingUp, TrendingDown, Target, Activity, DollarSign, Eye, Wallet } from "lucide-react";
+import { useLocation } from "wouter";
 
 interface PortfolioSummary {
   realizedPnlUsd: number;
@@ -32,6 +33,7 @@ interface PerformanceData {
 }
 
 export function ChartWidget() {
+  const [, navigate] = useLocation();
   const { data, isLoading, refetch, isFetching } = useQuery<PerformanceData>({
     queryKey: ["performance"],
     queryFn: async () => {
@@ -71,19 +73,33 @@ export function ChartWidget() {
   return (
     <Card className="col-span-2 glass-panel border-border/50 h-full flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium font-mono tracking-wider text-muted-foreground">
+        <CardTitle
+          className="text-sm font-medium font-mono tracking-wider text-muted-foreground cursor-pointer hover:text-primary transition-colors"
+          onClick={() => navigate("/terminal")}
+          title="Ver historial en Terminal"
+        >
           RENDIMIENTO DEL PORTAFOLIO
         </CardTitle>
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={() => { refetch(); refetchPortfolio(); }}
-          disabled={isFetching}
-          className="h-8 px-2"
-          data-testid="btn-refresh-chart"
-        >
-          <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs font-mono text-muted-foreground hover:text-primary"
+            onClick={() => navigate("/terminal")}
+          >
+            Ver →
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => { refetch(); refetchPortfolio(); }}
+            disabled={isFetching}
+            className="h-8 px-2"
+            data-testid="btn-refresh-chart"
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </CardHeader>
       
       {(portfolio || summary) && (

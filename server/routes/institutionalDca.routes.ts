@@ -663,5 +663,63 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── IDCA P&L Performance Curve ────────────────────────────────
+  app.get(`${PREFIX}/performance`, async (req, res) => {
+    try {
+      const mode = (req.query.mode as string) || undefined;
+      const closed = await repo.getCycles({
+        status: "closed",
+        mode,
+        limit: 2000,
+        offset: 0,
+      });
+
+      // Sort by closedAt ascending
+      const sorted = closed
+        .filter(c => c.closedAt && c.realizedPnlUsd != null)
+        .sort((a, b) => new Date(a.closedAt!).getTime() - new Date(b.closedAt!).getTime());
+
+      let cumPnl = 0;
+      let wins = 0;
+      let losses = 0;
+      const curve: { time: string; pnl: number; cumPnl: number; pair: string }[] = [];
+
+      for (const c of sorted) {
+        const pnl = parseFloat(String(c.realizedPnlUsd));
+        if (!isFinite(pnl)) continue;
+        cumPnl += pnl;
+        if (pnl > 0) wins++; else if (pnl < 0) losses++;
+        curve.push({
+          time: new Date(c.closedAt!).toISOString(),
+          pnl: parseFloat(pnl.toFixed(2)),
+          cumPnl: parseFloat(cumPnl.toFixed(2)),
+          pair: c.pair,
+        });
+      }
+
+      const totalCycles = wins + losses;
+      const winRate = totalCycles > 0 ? (wins / totalCycles) * 100 : 0;
+
+      // Active cycles summary
+      const active = await repo.getAllActiveCycles(mode);
+      const unrealizedPnl = active.reduce((sum, c) => sum + parseFloat(String(c.unrealizedPnlUsd || "0")), 0);
+
+      res.json({
+        curve,
+        summary: {
+          totalPnlUsd: parseFloat(cumPnl.toFixed(2)),
+          unrealizedPnlUsd: parseFloat(unrealizedPnl.toFixed(2)),
+          winRate: parseFloat(winRate.toFixed(1)),
+          totalCycles,
+          activeCycles: active.length,
+          wins,
+          losses,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   console.log(`[IDCA] Routes registered under ${PREFIX}/*`);
 }

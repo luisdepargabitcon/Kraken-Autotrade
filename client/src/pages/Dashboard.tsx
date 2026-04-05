@@ -2,10 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Ticker } from "@/components/dashboard/Ticker";
 import { AssetCard } from "@/components/dashboard/AssetCard";
-import { TradeLog } from "@/components/dashboard/TradeLog";
 import { ChartWidget } from "@/components/dashboard/ChartWidget";
 import { BotControl } from "@/components/dashboard/BotControl";
-import { EventsPanel } from "@/components/dashboard/EventsPanel";
+import { IdcaPnlWidget } from "@/components/dashboard/IdcaPnlWidget";
+import { ActivePositionsWidget } from "@/components/dashboard/ActivePositionsWidget";
+import { LivePricesWidget } from "@/components/dashboard/LivePricesWidget";
 import { EnvironmentBadge } from "@/components/dashboard/EnvironmentBadge";
 import { AlertCircle } from "lucide-react";
 import { Link } from "wouter";
@@ -199,26 +200,17 @@ export default function Dashboard() {
           <div className="col-span-1 lg:col-span-9 h-[280px] sm:h-[350px] md:h-[400px] lg:h-[500px]">
             <ChartWidget />
           </div>
-          <div className="col-span-1 lg:col-span-3 space-y-3 md:space-y-4 lg:space-y-6">
+          <div className="col-span-1 lg:col-span-3 space-y-3 md:space-y-4 lg:space-y-4">
             <BotControl />
-            <div className="glass-panel p-3 md:p-4 rounded-lg border border-border/50">
-               <h3 className="text-xs font-mono text-muted-foreground mb-3">PARES ACTIVOS</h3>
-               <div className="flex flex-wrap gap-2">
-                 {(data?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"]).map(pair => (
-                   <span key={pair} className="px-2 py-1 bg-primary/10 text-primary border border-primary/20 rounded text-xs font-mono">
-                     {pair}
-                   </span>
-                 ))}
-               </div>
-            </div>
+            <LivePricesWidget />
           </div>
 
-          <div className="col-span-1 lg:col-span-6">
-            <TradeLog />
+          <div className="col-span-1 lg:col-span-7">
+            <ActivePositionsWidget />
           </div>
           
-          <div className="col-span-1 lg:col-span-6">
-            <EventsPanel />
+          <div className="col-span-1 lg:col-span-5">
+            <IdcaPnlWidget />
           </div>
 
         </main>
