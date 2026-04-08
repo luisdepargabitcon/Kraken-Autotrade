@@ -1,12 +1,20 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Brain, Zap, Activity, Bell, Shield, TrendingDown, BarChart3, Clock, AlertTriangle, Loader2 } from "lucide-react";
+import { Brain, Zap, Activity, Bell, Shield, TrendingDown, BarChart3, Clock, AlertTriangle, Loader2, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import {
+  deriveSmartExitConfigFromMasterSlider,
+  getSliderLabel,
+  getSliderColorClass,
+} from "@/lib/smartExitSlider";
 
 interface SmartExitConfig {
   enabled: boolean;
@@ -41,6 +49,9 @@ interface SmartExitConfig {
     minScoreToNotify: number;
     oneAlertPerEvent: boolean;
   };
+  masterSliderValue?: number;
+  masterMode?: "auto" | "custom";
+  manualOverrides?: Record<string, boolean>;
 }
 
 const DEFAULT_CONFIG: SmartExitConfig = {
@@ -76,6 +87,9 @@ const DEFAULT_CONFIG: SmartExitConfig = {
     minScoreToNotify: 3,
     oneAlertPerEvent: true,
   },
+  masterSliderValue: 50,
+  masterMode: "auto",
+  manualOverrides: {},
 };
 
 const SIGNAL_DEFS = [
@@ -110,8 +124,15 @@ export function SmartExitTab() {
         regimeThresholds: { ...DEFAULT_CONFIG.regimeThresholds, ...raw.regimeThresholds },
         signals: { ...DEFAULT_CONFIG.signals, ...raw.signals },
         notifications: { ...DEFAULT_CONFIG.notifications, ...raw.notifications },
+        manualOverrides: raw.manualOverrides ?? {},
       }
     : DEFAULT_CONFIG;
+
+  const masterSliderValue = config.masterSliderValue ?? 50;
+  const masterMode = config.masterMode ?? "auto";
+  const manualOverrides = config.manualOverrides ?? {};
+
+  const [sliderLocal, setSliderLocal] = useState<number>(masterSliderValue);
 
   const updateMutation = useMutation({
     mutationFn: async (updates: Partial<SmartExitConfig>) => {
@@ -131,10 +152,49 @@ export function SmartExitTab() {
     onError: () => toast.error("Error al actualizar Smart Exit"),
   });
 
-  const toggleSignal = (key: keyof SmartExitConfig["signals"]) => {
+  /** Guarda un campo manualmente y lo marca como override */
+  const manualUpdate = (updates: Partial<SmartExitConfig>, overrideKey: string) => {
     updateMutation.mutate({
-      signals: { ...config.signals, [key]: !config.signals[key] },
+      ...updates,
+      masterMode: "custom",
+      manualOverrides: { ...manualOverrides, [overrideKey]: true },
     });
+  };
+
+  /** Commit del slider maestro: deriva config y guarda (modo auto) */
+  const handleSliderCommit = (value: number) => {
+    const derived = deriveSmartExitConfigFromMasterSlider(value, config, manualOverrides);
+    updateMutation.mutate({
+      ...derived,
+      masterSliderValue: value,
+      masterMode: "auto",
+      manualOverrides,
+    });
+  };
+
+  /** Borra todos los overrides y re-aplica el slider al estado completo */
+  const resetToAuto = () => {
+    const derived = deriveSmartExitConfigFromMasterSlider(masterSliderValue, {}, {});
+    updateMutation.mutate({
+      ...derived,
+      masterSliderValue,
+      masterMode: "auto",
+      manualOverrides: {},
+    });
+    toast.info("Configuración restaurada al slider automático");
+  };
+
+  /** Indicador visual de override manual */
+  const OverrideDot = ({ field }: { field: string }) =>
+    manualOverrides[field] ? (
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-orange-400 ml-1" title="Ajuste manual activo" />
+    ) : null;
+
+  const toggleSignal = (key: keyof SmartExitConfig["signals"]) => {
+    manualUpdate(
+      { signals: { ...config.signals, [key]: !config.signals[key] } },
+      `signals.${key}`
+    );
   };
 
   const toggleNotification = (key: keyof SmartExitConfig["notifications"]) => {
@@ -194,6 +254,96 @@ export function SmartExitTab() {
 
       {config.enabled && (
         <>
+          {/* ── SLIDER MAESTRO ── */}
+          <Card className="glass-panel border-primary/30">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-primary/15">
+                    <SlidersHorizontal className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-sm">Control Maestro de Salida</CardTitle>
+                    <CardDescription className="text-xs">
+                      Controla toda la configuración con un solo slider
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {masterMode === "custom" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5 border-orange-500/40 text-orange-400 hover:border-orange-500/70"
+                      onClick={resetToAuto}
+                      disabled={updateMutation.isPending}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Volver a automático
+                    </Button>
+                  )}
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "font-mono text-[10px] border",
+                      masterMode === "auto"
+                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/40"
+                        : "text-orange-400 bg-orange-500/10 border-orange-500/40"
+                    )}
+                  >
+                    {masterMode === "auto" ? "Automático" : "Personalizado"}
+                  </Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono text-muted-foreground">MENOS SALIDAS</span>
+                  <span className={cn("text-sm font-mono font-bold", getSliderColorClass(sliderLocal))}>
+                    {getSliderLabel(sliderLocal)}
+                  </span>
+                  <span className="text-[11px] font-mono text-muted-foreground">MÁS SALIDAS</span>
+                </div>
+                <Slider
+                  value={[sliderLocal]}
+                  min={0}
+                  max={100}
+                  step={1}
+                  onValueChange={([v]) => setSliderLocal(v)}
+                  onValueCommit={([v]) => handleSliderCommit(v)}
+                  className="cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground/50 font-mono px-0.5">
+                  <span>0</span>
+                  <span>25</span>
+                  <span>50</span>
+                  <span>75</span>
+                  <span>100</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-muted/10 border border-border/30 space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Menos salidas</strong> — el bot aguanta más antes de vender.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Más salidas</strong> — el bot vende antes y reacciona más rápido.
+                </p>
+              </div>
+
+              {masterMode === "custom" && Object.keys(manualOverrides).filter(k => manualOverrides[k]).length > 0 && (
+                <div className="flex items-start gap-2 p-2 rounded-lg border border-orange-500/20 bg-orange-500/5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-orange-400 shrink-0 mt-1" />
+                  <p className="text-[11px] text-orange-400 leading-relaxed">
+                    {Object.keys(manualOverrides).filter(k => manualOverrides[k]).length} parámetro(s) con ajuste manual.
+                    El slider no los modifica. Usa <strong>"Volver a automático"</strong> para resetear todo.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Score & Confirmation Settings */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card className="glass-panel border-border/50">
@@ -206,7 +356,7 @@ export function SmartExitTab() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Umbral base de salida</Label>
+                    <Label className="text-xs flex items-center">Umbral base de salida<OverrideDot field="exitScoreThresholdBase" /></Label>
                     <span className="text-xs font-mono text-amber-400">{config.exitScoreThresholdBase}</span>
                   </div>
                   <Slider
@@ -214,14 +364,14 @@ export function SmartExitTab() {
                     min={1}
                     max={10}
                     step={1}
-                    onValueChange={([v]) => updateMutation.mutate({ exitScoreThresholdBase: v })}
+                    onValueChange={([v]) => manualUpdate({ exitScoreThresholdBase: v }, "exitScoreThresholdBase")}
                   />
                   <p className="text-[10px] text-muted-foreground">Score mínimo para considerar salida</p>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Ciclos de confirmación</Label>
+                    <Label className="text-xs flex items-center">Ciclos de confirmación<OverrideDot field="confirmationCycles" /></Label>
                     <span className="text-xs font-mono text-amber-400">{config.confirmationCycles}</span>
                   </div>
                   <Slider
@@ -229,14 +379,14 @@ export function SmartExitTab() {
                     min={1}
                     max={10}
                     step={1}
-                    onValueChange={([v]) => updateMutation.mutate({ confirmationCycles: v })}
+                    onValueChange={([v]) => manualUpdate({ confirmationCycles: v }, "confirmationCycles")}
                   />
                   <p className="text-[10px] text-muted-foreground">Ciclos consecutivos sobre umbral antes de ejecutar</p>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Penalización en pérdida</Label>
+                    <Label className="text-xs flex items-center">Penalización en pérdida<OverrideDot field="extraLossThresholdPenalty" /></Label>
                     <span className="text-xs font-mono text-amber-400">+{config.extraLossThresholdPenalty}</span>
                   </div>
                   <Slider
@@ -244,7 +394,7 @@ export function SmartExitTab() {
                     min={0}
                     max={5}
                     step={1}
-                    onValueChange={([v]) => updateMutation.mutate({ extraLossThresholdPenalty: v })}
+                    onValueChange={([v]) => manualUpdate({ extraLossThresholdPenalty: v }, "extraLossThresholdPenalty")}
                   />
                   <p className="text-[10px] text-muted-foreground">Se suma al umbral si PnL es negativo (requiere más señales para cerrar en pérdida)</p>
                 </div>
@@ -272,7 +422,7 @@ export function SmartExitTab() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">Edad mínima posición</Label>
+                    <Label className="text-xs flex items-center">Edad mínima posición<OverrideDot field="minPositionAgeSec" /></Label>
                     <span className="text-xs font-mono text-amber-400">
                       {config.minPositionAgeSec >= 60
                         ? `${Math.floor(config.minPositionAgeSec / 60)}min${config.minPositionAgeSec % 60 > 0 ? ` ${config.minPositionAgeSec % 60}s` : ''}`
@@ -284,7 +434,7 @@ export function SmartExitTab() {
                     min={0}
                     max={1800}
                     step={30}
-                    onValueChange={([v]) => updateMutation.mutate({ minPositionAgeSec: v })}
+                    onValueChange={([v]) => manualUpdate({ minPositionAgeSec: v }, "minPositionAgeSec")}
                   />
                   <p className="text-xs text-muted-foreground">Smart Exit no evalúa hasta que la posición tenga esta antigüedad (máx 30min)</p>
                 </div>
@@ -314,7 +464,7 @@ export function SmartExitTab() {
                   return (
                     <div key={regime} className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <Label className={`text-xs ${colors[regime]}`}>{labels[regime]}</Label>
+                        <Label className={`text-xs flex items-center ${colors[regime]}`}>{labels[regime]}<OverrideDot field="regimeThresholds" /></Label>
                         <span className="text-xs font-mono text-muted-foreground">{config.regimeThresholds[regime]}</span>
                       </div>
                       <Slider
@@ -323,9 +473,10 @@ export function SmartExitTab() {
                         max={10}
                         step={1}
                         onValueChange={([v]) =>
-                          updateMutation.mutate({
-                            regimeThresholds: { ...config.regimeThresholds, [regime]: v },
-                          })
+                          manualUpdate(
+                            { regimeThresholds: { ...config.regimeThresholds, [regime]: v } },
+                            "regimeThresholds"
+                          )
                         }
                       />
                       <p className="text-[10px] text-muted-foreground">{descs[regime]}</p>
@@ -377,7 +528,7 @@ export function SmartExitTab() {
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <sig.icon className={`h-4 w-4 flex-shrink-0 ${config.signals[sig.key] ? "text-cyan-500" : "text-muted-foreground"}`} />
                       <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">{sig.label}</div>
+                        <div className="text-xs font-medium truncate flex items-center gap-1">{sig.label}<OverrideDot field={`signals.${sig.key}`} /></div>
                         <div className="text-[10px] text-muted-foreground truncate">{sig.desc}</div>
                       </div>
                     </div>

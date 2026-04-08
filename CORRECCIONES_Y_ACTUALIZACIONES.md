@@ -2,6 +2,46 @@
 
 ----
 
+## 2026-04-08 — FEAT: Slider Maestro Smart Exit (0–100)
+
+### Objetivo
+Permitir controlar todo el comportamiento de Smart Exit con un solo slider, sin necesidad de ajustar parámetros técnicos uno a uno.
+
+### Archivos creados/modificados
+
+**`client/src/lib/smartExitSlider.ts`** — NUEVO (función pura):
+- `deriveSmartExitConfigFromMasterSlider(value, currentConfig, manualOverrides)`: calcula toda la config desde un valor 0–100
+- `getSliderLabel(v)`: etiqueta descriptiva (Muy pocas salidas … Muchas salidas)
+- `getSliderColorClass(v)`: clase de color Tailwind según nivel
+- `getSliderTrackClass(v)`: color de barra según nivel
+
+**`client/src/components/strategies/SmartExitTab.tsx`** — MODIFICADO:
+- **Slider Maestro** insertado al principio de la sección habilitada
+  - `onValueChange` → actualiza visual local sin API
+  - `onValueCommit` → llama `handleSliderCommit` y guarda en API
+- **Sistema de overrides manuales**:
+  - Cada campo controlado usa `manualUpdate(updates, overrideKey)` → guarda + marca override
+  - Badge `Automático` (verde) / `Personalizado` (naranja)
+  - Botón `"Volver a automático"` → limpia todos los overrides y re-aplica slider
+  - `OverrideDot` — punto naranja junto a cada campo con ajuste manual
+- **Señales**: `toggleSignal` pasa a través de `manualUpdate` con key `signals.${key}`
+- **Persistencia**: `masterSliderValue`, `masterMode`, `manualOverrides` guardados en `smartExitConfig`
+
+### Lógica de derivación (v=0 = MENOS SALIDAS, v=100 = MÁS SALIDAS)
+| Parámetro | v=0 (MENOS) | v=100 (MÁS) |
+|---|---|---|
+| exitScoreThresholdBase | 10 | 4 |
+| confirmationCycles | 10 | 3 |
+| extraLossThresholdPenalty | 3 | 0 |
+| minPositionAgeSec | 1800 (30m) | 900 (15m) |
+| regimeThresholds.TREND | 10 | 4 |
+| regimeThresholds.CHOP | 9 | 4 |
+| regimeThresholds.VOLATILE | 10 | 5 |
+| señales ruidosas (volumeDrop, stagnation, orderbook) | OFF | ON |
+| exchangeFlows | OFF siempre | OFF siempre |
+
+----
+
 ## 2026-04-07 — FIX: Panel Dashboard — Layout ordenado + Control del Sistema operable
 
 ### Problemas resueltos
