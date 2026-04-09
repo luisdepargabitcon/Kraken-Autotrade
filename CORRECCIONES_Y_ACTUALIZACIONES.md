@@ -363,6 +363,33 @@ Refactorización completa del sistema en 8 fases autónomas: auditoría de arqui
 
 ----
 
+## 2026-04-09 — FEAT: Cierre manual de posición + P&L en USD en ciclos IDCA
+
+### Nuevas funcionalidades
+
+1. **Botón "Cerrar posición"** en la barra de acciones de cada ciclo abierto (importado o del bot)
+   - Disponible para cualquier ciclo con `status !== "closed"`
+   - Modal de confirmación muestra: par, modo, cantidad, precio avg entrada, precio actual y P&L no realizado con % + USD
+   - Aviso diferenciado LIVE (naranja) vs Simulación (amarillo)
+   - En modo LIVE: envía orden de venta real al exchange
+   - En modo Simulación: actualiza wallet simulado
+
+2. **P&L en USD** junto con el porcentaje en la cabecera de cada ciclo
+   - Formato: `+2.35% (+$47.22)` para ciclos abiertos
+   - Campo "Realizado" separado cuando hay PnL ya materializado
+
+### Backend (6 archivos)
+- `IdcaTypes.ts`: nuevo orden type `manual_sell`
+- `IdcaMessageFormatter.ts`: texto para `manual_sell`
+- `IdcaEngine.ts`: función exportada `manualCloseCycle()` — crea orden `manual_sell`, cierra ciclo, actualiza wallet sim, crea evento, envía Telegram
+- `institutionalDca.routes.ts`: endpoint `POST /cycles/:id/close-manual`
+
+### Frontend (2 archivos)
+- `useInstitutionalDca.ts`: hook `useManualCloseCycle` + interfaz `ManualCloseCycleResult`
+- `InstitutionalDca.tsx`: botón, modal, estado, P&L USD
+
+----
+
 ## 2026-03-30b — FIX: nextBuyPrice no calculado para ciclos importados con gestión completa
 
 ### Problema

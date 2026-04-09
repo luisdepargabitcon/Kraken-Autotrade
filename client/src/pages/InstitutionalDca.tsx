@@ -38,6 +38,7 @@ import {
   useExchangeFeePresets,
   useDeleteManualCycle,
   useDeleteCycleForce,
+  useManualCloseCycle,
   useEditImportedCycle,
   useDeleteOrder,
   useDeleteAllOrders,
@@ -81,6 +82,7 @@ import {
   ArrowRightLeft,
   Trash2,
   Edit3,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
@@ -1571,14 +1573,17 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showForceDeleteConfirm, setShowForceDeleteConfirm] = useState(false);
+  const [showManualCloseConfirm, setShowManualCloseConfirm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
   const deleteManualCycle = useDeleteManualCycle();
   const deleteCycleForce = useDeleteCycleForce();
+  const manualCloseCycle = useManualCloseCycle();
   const editImportedCycle = useEditImportedCycle();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
+  const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   const isManualOrImported = cycle.isImported || cycle.sourceType === 'manual';
@@ -1733,8 +1738,14 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
           <div className="text-right">
             <div className="text-sm font-mono">{fmtUsd(cycle.capitalUsedUsd)}</div>
             <div className={cn("text-xs font-mono", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
-              {fmtPct(cycle.unrealizedPnlPct)} | Real: {fmtUsd(realizedPnl)}
+              {fmtPct(cycle.unrealizedPnlPct)}
+              {cycle.status !== "closed" && <span className="text-[10px] opacity-80"> ({pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)})</span>}
             </div>
+            {realizedPnl !== 0 && (
+              <div className={cn("text-[10px] font-mono", realizedPnl >= 0 ? "text-green-300" : "text-red-300")}>
+                Realizado: {fmtUsd(realizedPnl)}
+              </div>
+            )}
             <div className="text-[10px] text-muted-foreground">
               Avg: {fmtPrice(cycle.avgEntryPrice)} → {fmtPrice(cycle.currentPrice)}
             </div>
@@ -1888,7 +1899,21 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
               </div>
             )}
             {/* Action bar — available for ALL cycles */}
-            <div className="px-9 py-2 border-t border-border/20 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+            <div className="px-9 py-2 border-t border-border/20 flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                {cycle.status !== "closed" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-3 text-orange-400 hover:text-orange-300 hover:bg-orange-500/10 text-[10px] border border-orange-400/30"
+                    onClick={() => setShowManualCloseConfirm(true)}
+                    disabled={manualCloseCycle.isPending}
+                  >
+                    <XCircle className="h-3 w-3 mr-1" />
+                    Cerrar posición
+                  </Button>
+                )}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -2051,6 +2076,79 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Eliminando...</>
                 ) : (
                   <><Trash2 className="h-3 w-3 mr-1" /> Eliminar permanentemente</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Close Cycle Confirmation Modal */}
+      {showManualCloseConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowManualCloseConfirm(false)}>
+          <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-full bg-orange-500/10">
+                <XCircle className="h-5 w-5 text-orange-400" />
+              </div>
+              <h3 className="text-lg font-semibold">Cerrar posición manualmente</h3>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="text-sm text-muted-foreground space-y-1">
+                <div><strong>Par:</strong> {cycle.pair}</div>
+                <div><strong>Modo:</strong> <span className={cycle.mode === "live" ? "text-green-400" : "text-yellow-400"}>{cycle.mode?.toUpperCase()}</span></div>
+                <div><strong>Cantidad:</strong> {parseFloat(String(cycle.totalQuantity || "0")).toFixed(6)}</div>
+                <div><strong>Precio avg entrada:</strong> {fmtUsd(cycle.avgEntryPrice)}</div>
+                <div><strong>Precio actual:</strong> {fmtUsd(cycle.currentPrice)}</div>
+                <div>
+                  <strong>P&amp;L no realizado:</strong>{" "}
+                  <span className={pnlPct >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
+                    {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}% ({pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)})
+                  </span>
+                </div>
+              </div>
+
+              <div className={`p-3 rounded text-xs ${cycle.mode === "live"
+                ? "bg-orange-500/10 border border-orange-500/30 text-orange-300"
+                : "bg-yellow-500/10 border border-yellow-500/30 text-yellow-300"}`}>
+                {cycle.mode === "live" ? (
+                  <><strong>⚠️ CICLO LIVE:</strong> Se enviará una orden de venta real al exchange al precio de mercado actual. Asegúrate de que tienes fondos suficientes y el precio es aceptable.</>
+                ) : (
+                  <><strong>ℹ️ Modo simulación:</strong> Se registrará la venta al precio actual de mercado y se actualizará el wallet simulado.</>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" size="sm" onClick={() => setShowManualCloseConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-orange-500 hover:bg-orange-600 text-white"
+                disabled={manualCloseCycle.isPending}
+                onClick={() => {
+                  manualCloseCycle.mutate(cycle.id, {
+                    onSuccess: (data) => {
+                      setShowManualCloseConfirm(false);
+                      const sign = data.realizedPnlUsd >= 0 ? "+" : "";
+                      toast({
+                        title: "Posición cerrada",
+                        description: `${cycle.pair} vendido @ $${data.sellPrice.toFixed(2)} | PnL: ${sign}$${data.realizedPnlUsd.toFixed(2)} (${sign}${data.realizedPnlPct.toFixed(2)}%)`,
+                      });
+                    },
+                    onError: (err: any) => {
+                      toast({ title: "Error al cerrar", description: err.message || "Error desconocido", variant: "destructive" });
+                    },
+                  });
+                }}
+              >
+                {manualCloseCycle.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Cerrando...</>
+                ) : (
+                  <><XCircle className="h-3 w-3 mr-1" /> Confirmar cierre</>
                 )}
               </Button>
             </div>

@@ -3390,6 +3390,138 @@ async function closeRecoveryCycle(
   }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// MANUAL CLOSE — User-initiated sell from the UI
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Closes any non-closed cycle immediately with a market sell.
+ * Works for simulation (wallet update) and live (real exchange order).
+ * Returns the closed cycle and realized PnL summary.
+ */
+export async function manualCloseCycle(cycleId: number): Promise<{
+  cycle: import("@shared/schema").InstitutionalDcaCycle;
+  sellPrice: number;
+  quantity: number;
+  grossValueUsd: number;
+  netValueUsd: number;
+  realizedPnlUsd: number;
+  realizedPnlPct: number;
+}> {
+  const cycle = await repo.getCycleById(cycleId);
+  if (!cycle) throw new Error(`Ciclo #${cycleId} no encontrado`);
+  if (cycle.status === "closed") throw new Error("El ciclo ya está cerrado");
+
+  const pair = cycle.pair;
+  const mode = cycle.mode as IdcaMode;
+  const config = await repo.getIdcaConfig();
+
+  const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
+  if (totalQty <= 0) throw new Error("El ciclo no tiene cantidad disponible para vender");
+
+  const currentPrice = await getCurrentPrice(pair);
+  if (!currentPrice || currentPrice <= 0) throw new Error(`No se pudo obtener precio actual para ${pair}`);
+
+  const sellValueUsd = totalQty * currentPrice;
+  const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+
+  let fees = 0, slippage = 0, netValue = sellValueUsd;
+  if (mode === "simulation") {
+    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    netValue = sellValueUsd - fees - slippage;
+  }
+
+  const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const totalRealized = prevRealized + netValue;
+  const realizedPnlUsd = totalRealized - capitalUsed;
+  const realizedPnlPct = capitalUsed > 0 ? (realizedPnlUsd / capitalUsed) * 100 : 0;
+
+  const closedAt = new Date();
+
+  await repo.createOrder({
+    cycleId: cycle.id, pair, mode,
+    orderType: "manual_sell",
+    buyIndex: null,
+    side: "sell",
+    price: currentPrice.toFixed(8),
+    quantity: totalQty.toFixed(8),
+    grossValueUsd: sellValueUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippage.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: "manual_close_by_user",
+    humanReason: formatOrderReason("manual_sell"),
+  });
+
+  if (mode === "live") {
+    await executeRealSell(cycle, "manual_sell", totalQty);
+  }
+
+  await repo.updateCycle(cycle.id, {
+    status: "closed",
+    closeReason: "manual_close",
+    totalQuantity: "0",
+    realizedPnlUsd: totalRealized.toFixed(2),
+    unrealizedPnlUsd: "0",
+    unrealizedPnlPct: "0",
+    currentPrice: currentPrice.toFixed(8),
+    closedAt,
+  });
+
+  if (mode === "simulation") {
+    const wallet = await repo.getSimulationWallet();
+    await repo.updateSimulationWallet({
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) + netValue).toFixed(2),
+      usedBalanceUsd: Math.max(0, parseFloat(String(wallet.usedBalanceUsd)) - sellValueUsd).toFixed(2),
+      realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + realizedPnlUsd).toFixed(2),
+    });
+  }
+
+  await createHumanEvent({
+    cycleId: cycle.id, pair, mode,
+    eventType: "manual_close",
+    severity: "info",
+    message: `Cierre manual: vendido ${totalQty.toFixed(6)} @ ${currentPrice.toFixed(2)}, PnL=${realizedPnlUsd >= 0 ? "+" : ""}$${realizedPnlUsd.toFixed(2)} (${realizedPnlPct >= 0 ? "+" : ""}${realizedPnlPct.toFixed(2)}%)`,
+    payloadJson: {
+      sellPrice: currentPrice, quantity: totalQty,
+      grossValueUsd: sellValueUsd, netValueUsd: netValue,
+      fees, slippage, realizedPnlUsd, realizedPnlPct, capitalUsed,
+    },
+  }, {
+    eventType: "manual_close", pair, mode,
+    price: currentPrice, quantity: totalQty,
+    pnlUsd: realizedPnlUsd, pnlPct: realizedPnlPct,
+    capitalUsed,
+  });
+
+  const pnlSign = realizedPnlUsd >= 0 ? "+" : "";
+  try {
+    await telegram.sendRawMessage(
+      `🔴 *Cierre manual de posición*\n` +
+      `Par: ${pair}\n` +
+      `Modo: ${mode.toUpperCase()}\n` +
+      `CycleId: #${cycle.id}\n` +
+      `Precio venta: $${currentPrice.toFixed(2)}\n` +
+      `Cantidad: ${totalQty.toFixed(6)}\n` +
+      `Valor bruto: $${sellValueUsd.toFixed(2)}\n` +
+      `PnL realizado: ${pnlSign}$${realizedPnlUsd.toFixed(2)} (${pnlSign}${realizedPnlPct.toFixed(2)}%)\n` +
+      `Iniciado por: usuario`
+    );
+  } catch { /* ignore telegram errors */ }
+
+  const closedCycle = await repo.getCycleById(cycle.id);
+  return {
+    cycle: closedCycle!,
+    sellPrice: currentPrice,
+    quantity: totalQty,
+    grossValueUsd: sellValueUsd,
+    netValueUsd: netValue,
+    realizedPnlUsd,
+    realizedPnlPct,
+  };
+}
+
 // ─── Recovery Risk Warning ────────────────────────────────────────
 
 async function emitRecoveryRiskWarning(

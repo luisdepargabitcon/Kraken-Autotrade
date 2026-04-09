@@ -555,6 +555,38 @@ export function useDeleteCycleForce() {
   });
 }
 
+// ─── Manual Close Cycle ────────────────────────────────────────────
+
+export interface ManualCloseCycleResult {
+  success: boolean;
+  cycleId: number;
+  pair: string;
+  mode: string;
+  sellPrice: number;
+  quantity: number;
+  grossValueUsd: number;
+  netValueUsd: number;
+  realizedPnlUsd: number;
+  realizedPnlPct: number;
+}
+
+export function useManualCloseCycle() {
+  const qc = useQueryClient();
+  return useMutation<ManualCloseCycleResult, Error, number>({
+    mutationFn: async (cycleId: number) => {
+      const res = await apiRequest("POST", `${PREFIX}/cycles/${cycleId}/close-manual`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to close cycle");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 // ─── Delete Orders ─────────────────────────────────────────────────
 
 export function useDeleteOrder() {

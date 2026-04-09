@@ -371,6 +371,34 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Manual Close Cycle (sell position) ────────────────────────
+
+  app.post(`${PREFIX}/cycles/:id/close-manual`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const result = await engine.manualCloseCycle(id);
+
+      res.json({
+        success: true,
+        cycleId: id,
+        pair: result.cycle.pair,
+        mode: result.cycle.mode,
+        sellPrice: result.sellPrice,
+        quantity: result.quantity,
+        grossValueUsd: result.grossValueUsd,
+        netValueUsd: result.netValueUsd,
+        realizedPnlUsd: result.realizedPnlUsd,
+        realizedPnlPct: result.realizedPnlPct,
+        cycle: result.cycle,
+      });
+    } catch (e: any) {
+      console.error('[IDCA] manualCloseCycle error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Delete Any Cycle (force) ───────────────────────────────────
 
   app.delete(`${PREFIX}/cycles/:id/force`, async (req, res) => {

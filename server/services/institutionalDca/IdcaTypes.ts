@@ -4,7 +4,7 @@
 
 export type IdcaMode = "disabled" | "simulation" | "live";
 export type IdcaCycleStatus = "idle" | "waiting_entry" | "active" | "tp_armed" | "trailing_active" | "paused" | "blocked" | "closed";
-export type IdcaOrderType = "base_buy" | "safety_buy" | "partial_sell" | "final_sell" | "breakeven_sell" | "emergency_sell";
+export type IdcaOrderType = "base_buy" | "safety_buy" | "partial_sell" | "final_sell" | "breakeven_sell" | "emergency_sell" | "manual_sell";
 export type IdcaSizeProfile = "aggressive_quality" | "balanced" | "defensive";
 export type IdcaReinvestMode = "none" | "profits_only" | "full";
 export type DipReferenceMethod = "hybrid" | "swing_high" | "window_high" | "ema";

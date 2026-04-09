@@ -704,6 +704,8 @@ export function formatOrderReason(orderType: string, triggerReason?: string, pai
       return "Se cerró la posición en punto de equilibrio para proteger el capital y evitar pérdidas.";
     case "emergency_sell":
       return "Se ejecutó venta de emergencia por cierre forzado de todos los ciclos del módulo.";
+    case "manual_sell":
+      return "El usuario cerró manualmente la posición desde el panel de control.";
     default:
       return triggerReason || orderType.replace(/_/g, " ");
   }
