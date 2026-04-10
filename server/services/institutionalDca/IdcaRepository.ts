@@ -681,7 +681,7 @@ export async function getEventsCount(options: Omit<Parameters<typeof getEvents>[
   if (conditions.length > 0) query = query.where(and(...conditions)) as any;
   
   const result = await query;
-  return result[0]?.count || 0;
+  return Number(result[0]?.count) || 0;
 }
 
 export async function purgeOldEvents(retentionDays: number, batchSize: number = 500): Promise<number> {
