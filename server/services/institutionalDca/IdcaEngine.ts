@@ -932,6 +932,17 @@ async function handleActiveState(
   const isProtectionArmed = !!cycle.protectionArmedAt;
   const protectionStopPrice = parseFloat(String(cycle.protectionStopPrice || "0"));
 
+  // ─── EXIT DIAGNOSTIC TRACE ────────────────────────────────────
+  const trailingActivationPrice = avgEntry > 0 ? avgEntry * (1 + trailingActivationPct / 100) : 0;
+  const distToTrailing = trailingActivationPct - pnlPct;
+  console.log(
+    `${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | status=active | price=$${currentPrice.toFixed(2)}` +
+    ` | avg=$${avgEntry.toFixed(2)} | pnl=${pnlPct.toFixed(3)}%` +
+    ` | protectionArmed=${isProtectionArmed} | protectionActivation=${protectionActivationPct}%` +
+    ` | trailingActivation=${trailingActivationPct}% (at $${trailingActivationPrice.toFixed(2)})` +
+    ` | distToTrailing=${distToTrailing.toFixed(3)}% | trailingMargin=${trailingMarginPct}%`
+  );
+
   // 1. ARM PROTECTION (break-even as safety net, NOT an exit)
   if (!isProtectionArmed && pnlPct >= protectionActivationPct && avgEntry > 0) {
     const stopPrice = avgEntry; // break-even = avg entry price
@@ -956,6 +967,11 @@ async function handleActiveState(
 
   // 2. ACTIVATE TRAILING (no partial sell — just start tracking highest price)
   const effectiveProtectionArmed = isProtectionArmed || pnlPct >= protectionActivationPct;
+  if (!effectiveProtectionArmed) {
+    console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing_blocked: protection not yet armed (pnl=${pnlPct.toFixed(3)}% < ${protectionActivationPct}%)`);
+  } else if (pnlPct < trailingActivationPct) {
+    console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing_blocked: pnl=${pnlPct.toFixed(3)}% < trailingActivation=${trailingActivationPct}% (need +${distToTrailing.toFixed(3)}% more)`);
+  }
   if (effectiveProtectionArmed && pnlPct >= trailingActivationPct) {
     // Compute trailing pct — use slider value, optionally adapt with ATR
     let effectiveTrailingPct = trailingMarginPct;
@@ -1288,19 +1304,32 @@ async function handleTrailingState(
   const highestPrice = parseFloat(String(cycle.highestPriceAfterTp || currentPrice));
   const trailingPct = parseFloat(String(cycle.trailingPct || assetConfig.trailingPct));
 
+  // ─── TRAILING DIAGNOSTIC TRACE ────────────────────────────────
+  const dropFromHigh = highestPrice > 0 ? ((highestPrice - currentPrice) / highestPrice) * 100 : 0;
+  const stopPrice = highestPrice * (1 - trailingPct / 100);
+  console.log(
+    `${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | status=trailing_active | price=$${currentPrice.toFixed(2)}` +
+    ` | highest=$${highestPrice.toFixed(2)} | drop=${dropFromHigh.toFixed(3)}%` +
+    ` | trailingPct=${trailingPct}% | trailingStop=$${stopPrice.toFixed(2)}` +
+    ` | needDrop=${Math.max(0, trailingPct - dropFromHigh).toFixed(3)}% more`
+  );
+
   // Update highest price
   if (currentPrice > highestPrice) {
     await repo.updateCycle(cycle.id, {
       highestPriceAfterTp: currentPrice.toFixed(8),
     });
+    console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing: new high=$${currentPrice.toFixed(2)} — rising, no exit`);
     return; // Price still rising
   }
 
   // Check trailing stop trigger
-  const dropFromHigh = ((highestPrice - currentPrice) / highestPrice) * 100;
   if (dropFromHigh >= trailingPct) {
+    console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing_EXIT: drop=${dropFromHigh.toFixed(3)}% >= ${trailingPct}% → SELLING at $${currentPrice.toFixed(2)}`);
     // Trailing exit — sell remaining
     await executeTrailingExit(cycle, currentPrice, config, mode);
+  } else {
+    console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing: drop=${dropFromHigh.toFixed(3)}% < ${trailingPct}% — holding`);
   }
 }
 
@@ -1338,7 +1367,22 @@ async function executeTrailingExit(
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "final_sell", remainingQty);
+    try {
+      await executeRealSell(cycle, "final_sell", remainingQty);
+    } catch (sellErr: any) {
+      console.error(`${TAG}[EXIT] Live sell FAILED for #${cycle.id} ${pair} — cycle NOT closed in DB. Error: ${sellErr.message}`);
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "critical_error",
+        severity: "critical",
+        message: `Venta live FALLIDA: ${sellErr.message} — ciclo NO cerrado, posición ABIERTA en exchange`,
+        payloadJson: { error: sellErr.message, price: currentPrice, qty: remainingQty },
+      }, { eventType: "critical_error", pair, mode, price: currentPrice });
+      await telegram.sendRawMessage(
+        `🚨 <b>[IDCA][LIVE] VENTA FALLIDA</b>\n\nPar: <b>${pair}</b> #${cycle.id}\nError: <code>${sellErr.message}</code>\nPrecio: $${currentPrice.toFixed(2)}\nCantidad: ${remainingQty.toFixed(6)}\n\n⚠️ Ciclo NO cerrado en DB. Revisar posición en exchange manualmente.`
+      );
+      return; // Abort — do NOT close cycle in DB
+    }
   }
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
@@ -1422,7 +1466,22 @@ async function executeBreakevenExit(
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "breakeven_sell", totalQty);
+    try {
+      await executeRealSell(cycle, "breakeven_sell", totalQty);
+    } catch (sellErr: any) {
+      console.error(`${TAG}[BREAKEVEN] Live sell FAILED for #${cycle.id} ${pair} — cycle NOT closed. Error: ${sellErr.message}`);
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "critical_error",
+        severity: "critical",
+        message: `Venta breakeven live FALLIDA: ${sellErr.message} — ciclo NO cerrado`,
+        payloadJson: { error: sellErr.message, price: currentPrice, qty: totalQty },
+      }, { eventType: "critical_error", pair, mode, price: currentPrice });
+      await telegram.sendRawMessage(
+        `🚨 <b>[IDCA][LIVE] BREAKEVEN SELL FALLIDA</b>\n\nPar: <b>${pair}</b> #${cycle.id}\nError: <code>${sellErr.message}</code>`
+      );
+      return;
+    }
   }
 
   await repo.updateCycle(cycle.id, {
@@ -1756,14 +1815,25 @@ async function executeRealBuy(pair: string, quantity: number, price: number): Pr
   try {
     const tradingExchange = ExchangeFactory.getTradingExchange();
     if (!tradingExchange.isInitialized()) {
-      console.error(`${TAG}[LIVE] Trading exchange not initialized for buy`);
+      console.error(`${TAG}[LIVE][BUY] Trading exchange not initialized — order NOT sent for ${pair}`);
       return;
     }
-    console.log(`${TAG}[LIVE][BUY] ${pair} qty=${quantity.toFixed(8)} @ ~${price.toFixed(2)}`);
-    // In a real implementation, this would call tradingExchange.createOrder()
-    // For safety, we log but don't execute yet until live mode is thoroughly tested
+    console.log(`${TAG}[LIVE][BUY] Placing order: ${pair} qty=${quantity.toFixed(8)} @ ~${price.toFixed(2)}`);
+    const result = await tradingExchange.placeOrder({
+      pair,
+      type: "buy",
+      ordertype: "market",
+      volume: quantity.toFixed(8),
+    });
+    if (result.success) {
+      console.log(`${TAG}[LIVE][BUY] Order accepted: ${pair} orderId=${result.orderId || result.txid || "(pending)"}`);
+    } else {
+      console.error(`${TAG}[LIVE][BUY] Order FAILED: ${pair} error=${result.error}`);
+      throw new Error(`Live buy order failed: ${result.error}`);
+    }
   } catch (e: any) {
-    console.error(`${TAG}[LIVE][BUY] Error:`, e.message);
+    console.error(`${TAG}[LIVE][BUY] Error placing order for ${pair}:`, e.message);
+    throw e;
   }
 }
 
@@ -1771,13 +1841,25 @@ async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, 
   try {
     const tradingExchange = ExchangeFactory.getTradingExchange();
     if (!tradingExchange.isInitialized()) {
-      console.error(`${TAG}[LIVE] Trading exchange not initialized for sell`);
-      return;
+      console.error(`${TAG}[LIVE][SELL] Trading exchange not initialized — order NOT sent for ${cycle.pair}`);
+      throw new Error(`Live sell blocked: exchange not initialized (pair=${cycle.pair} type=${orderType})`);
     }
-    console.log(`${TAG}[LIVE][SELL] ${cycle.pair} type=${orderType} qty=${quantity.toFixed(8)}`);
-    // Same safety as buy — log but wait for live validation
+    console.log(`${TAG}[LIVE][SELL] Placing order: ${cycle.pair} type=${orderType} qty=${quantity.toFixed(8)}`);
+    const result = await tradingExchange.placeOrder({
+      pair: cycle.pair,
+      type: "sell",
+      ordertype: "market",
+      volume: quantity.toFixed(8),
+    });
+    if (result.success) {
+      console.log(`${TAG}[LIVE][SELL] Order accepted: ${cycle.pair} type=${orderType} orderId=${result.orderId || result.txid || "(pending)"}`);
+    } else {
+      console.error(`${TAG}[LIVE][SELL] Order FAILED: ${cycle.pair} type=${orderType} error=${result.error}`);
+      throw new Error(`Live sell order failed: ${result.error}`);
+    }
   } catch (e: any) {
-    console.error(`${TAG}[LIVE][SELL] Error:`, e.message);
+    console.error(`${TAG}[LIVE][SELL] Error placing order for ${cycle.pair}:`, e.message);
+    throw e;
   }
 }
 

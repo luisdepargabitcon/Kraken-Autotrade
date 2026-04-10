@@ -430,6 +430,25 @@ export function useIdcaTelegramTest() {
   });
 }
 
+export function useIdcaTelegramStatus() {
+  return useQuery({
+    queryKey: [PREFIX, "telegram", "status"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${PREFIX}/telegram/status`);
+      return res.json() as Promise<{
+        enabled: boolean;
+        chatIdConfigured: boolean;
+        serviceInitialized: boolean;
+        mode: string;
+        cooldownSeconds: number;
+        simulationAlertsEnabled: boolean;
+        toggles: Record<string, boolean>;
+      }>;
+    },
+    refetchInterval: 30000,
+  });
+}
+
 // ─── Import Position ──────────────────────────────────────────────
 
 export interface ImportableStatus {

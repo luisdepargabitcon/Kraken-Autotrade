@@ -29,6 +29,7 @@ import {
   useEmergencyCloseAll,
   useResetSimulationWallet,
   useIdcaTelegramTest,
+  useIdcaTelegramStatus,
   useIdcaCycleOrders,
   useIdcaClosedCycles,
   useIdcaCycleEvents,
@@ -1659,11 +1660,21 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   <span className="text-[10px] font-mono text-muted-foreground">
                     Avg: <span className="text-slate-300">${fmtPrice(cycle.avgEntryPrice)}</span>
                   </span>
-                  {cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 ? (
+                  {/* Exit trigger display — trailing stop (actual) or TP reference */}
+                  {cycle.status === "trailing_active" && cycle.highestPriceAfterTp && cycle.trailingPct ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        🎯 Venta TP: <span className="text-green-400 font-semibold">${fmtPrice(cycle.tpTargetPrice)}</span>
+                      <span className="text-[10px] font-mono text-muted-foreground" title="Precio al que el trailing stop dispara la venta automática">
+                        ⏹ Stop trailing: <span className="text-orange-400 font-semibold">${fmtPrice((parseFloat(String(cycle.highestPriceAfterTp)) * (1 - parseFloat(String(cycle.trailingPct)) / 100)).toFixed(2))}</span>
+                        <span className="text-muted-foreground/50"> (máx ${fmtPrice(cycle.highestPriceAfterTp)})</span>
+                      </span>
+                    </>
+                  ) : cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 ? (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">|</span>
+                      <span className="text-[10px] font-mono text-muted-foreground" title="Precio objetivo de referencia (TP). La salida real ocurre vía trailing stop, no directamente a este precio.">
+                        🎯 Obj TP: <span className="text-green-400/80 font-semibold">${fmtPrice(cycle.tpTargetPrice)}</span>
+                        <span className="text-muted-foreground/40"> (ref)</span>
                       </span>
                     </>
                   ) : !(cycle.isImported && cycle.soloSalida) ? (
@@ -2844,6 +2855,7 @@ function TelegramTab() {
   const { data: config } = useIdcaConfig();
   const updateConfig = useUpdateIdcaConfig();
   const testTelegram = useIdcaTelegramTest();
+  const { data: telegramStatus, refetch: refetchStatus } = useIdcaTelegramStatus();
   const { toast } = useToast();
 
   if (!config) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
@@ -2879,15 +2891,33 @@ function TelegramTab() {
             <ConfigField label="Cooldown (seg)" value={String(config.telegramCooldownSeconds)}
               onChange={(v) => updateConfig.mutate({ telegramCooldownSeconds: parseInt(v) })} type="number" />
           </div>
-          <Button size="sm" variant="outline" className="text-xs"
-            onClick={() => testTelegram.mutate(undefined, {
-              onSuccess: (data: any) => toast({
-                title: data.success ? "Test OK" : "Test Fallido",
-                description: data.success ? "Mensaje de prueba enviado" : "Error enviando mensaje",
-              }),
-            })}>
-            <Send className="h-3 w-3 mr-1" /> Enviar Test
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" className="text-xs"
+              onClick={() => testTelegram.mutate(undefined, {
+                onSuccess: (data: any) => { refetchStatus(); toast({ title: data.success ? "Test OK ✅" : "Test Fallido ❌", description: data.message || data.error || "Revisar logs", variant: data.success ? "default" : "destructive" }); },
+                onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+              })}>
+              <Send className="h-3 w-3 mr-1" /> Enviar Test
+            </Button>
+            {telegramStatus && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.enabled ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
+                  {telegramStatus.enabled ? '✓ Habilitado' : '✗ Deshabilitado'}
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.chatIdConfigured ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
+                  {telegramStatus.chatIdConfigured ? '✓ Chat ID OK' : '✗ Sin Chat ID'}
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.serviceInitialized ? 'bg-green-500/15 text-green-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                  {telegramStatus.serviceInitialized ? '✓ Servicio activo' : '⚠ Servicio no init'}
+                </span>
+                {config.mode === 'simulation' && (
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.simulationAlertsEnabled ? 'bg-blue-500/15 text-blue-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                    {telegramStatus.simulationAlertsEnabled ? '✓ Sim. alertas ON' : '⚠ Sim. alertas OFF'}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 

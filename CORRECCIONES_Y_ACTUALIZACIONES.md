@@ -2,6 +2,71 @@
 
 ----
 
+## 2026-04-10 — AUDIT+FIX: IDCA Exit Flow & Telegram (FASE 1 + FASE 2)
+
+### Problemas detectados (evidencia completa)
+
+#### FASE 1 — Flujo de salida IDCA
+
+**BUG CRÍTICO #1: `tpTargetPrice` decorativo — nunca dispara venta**
+- La UI mostraba "🎯 Venta TP: $72,946" pero el engine NUNCA compara `currentPrice >= tpTargetPrice`
+- `armTakeProfit()` definida pero jamás llamada (código muerto)
+- El flujo real: `active` → trailing activa cuando pnlPct >= `trailingActivationPct` (3.5%) → `trailing_active` → venta cuando caída desde pico >= `trailingPct` (1.5%)
+
+**BUG CRÍTICO #2: `executeRealSell` y `executeRealBuy` eran stubs sin lógica**
+- En modo LIVE, solo hacían `console.log` y NO enviaban órdenes al exchange
+- El ciclo se cerraba en DB aunque nunca se enviaba orden real → desincronización DB/exchange
+
+**BUG CRÍTICO #3: Sin logs de evaluación de salida**
+- Imposible diagnosticar por qué no se ejecutó una salida: no había trace de las evaluaciones
+
+#### FASE 2 — Telegram IDCA
+
+**BUG CRÍTICO #4: `telegram_enabled` por defecto = FALSE**
+- El IDCA tiene su propio flag Telegram (independiente del bot principal), en false por defecto
+- Resultado: 0 alertas enviadas silenciosamente
+
+**BUG CRÍTICO #5: `canSend()` fallaba sin ningún log**
+- Si Telegram estaba deshabilitado, no había traza ni mensaje de por qué
+
+### Correcciones aplicadas
+
+#### `IdcaEngine.ts`
+- `handleActiveState`: añadido trace `[EXIT_EVAL]` en cada tick mostrando pnlPct, distancia al trailing, estado protección
+- `handleTrailingState`: añadido trace `[EXIT_EVAL]` mostrando drop%, trailing stop price, `trailing_EXIT` al disparar
+- `executeRealSell`: implementado con `tradingExchange.placeOrder()` real + error handling que propaga la excepción
+- `executeRealBuy`: implementado con `tradingExchange.placeOrder()` real
+- `executeTrailingExit`: si sell live falla → crea evento critical_error + envía Telegram + retorna SIN cerrar ciclo en DB
+- `executeBreakevenExit`: mismo patrón de protección contra fallo de sell
+
+#### `IdcaTelegramNotifier.ts`
+- `canSend()`: añadidos logs `[IDCA][TELEGRAM][BLOCKED]` con razón (disabled, no_chat_id, toggle_disabled, simulation_disabled, cooldown)
+- `getTelegramStatus()`: nuevo export con estado completo (enabled, chatIdConfigured, serviceInitialized, simulationAlertsEnabled, toggles)
+
+#### `institutionalDca.routes.ts`
+- `GET /telegram/status`: nuevo endpoint que devuelve diagnóstico completo de Telegram IDCA
+- `POST /telegram/test`: con validación previa de cada prerequisito (enabled, chatId, service) con mensajes de error específicos
+
+#### `InstitutionalDca.tsx` (UI)
+- "Venta TP" → "Obj TP (ref)" con tooltip explicando que NO es el precio de venta real
+- Para ciclos `trailing_active`: muestra "⏹ Stop trailing: $XX,XXX" (precio real de disparo) y pico máximo
+- `TelegramTab`: panel de diagnóstico en tiempo real (enabled ✓/✗, Chat ID ✓/✗, Servicio ✓/✗, Sim. alertas)
+
+#### `useInstitutionalDca.ts`
+- `useIdcaTelegramStatus`: nuevo hook con polling cada 30s
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts`
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts`
+- `server/routes/institutionalDca.routes.ts`
+- `client/src/pages/InstitutionalDca.tsx`
+- `client/src/hooks/useInstitutionalDca.ts`
+
+### Pendiente (FASE 3)
+- Mejorar historial de eventos IDCA: 7 días, filtros, purga automática
+
+----
+
 ## 2026-04-08 — FEAT: Slider Maestro Smart Exit (0–100)
 
 ### Objetivo

@@ -371,6 +371,39 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Telegram Status & Test ────────────────────────────────────
+
+  app.get(`${PREFIX}/telegram/status`, async (_req, res) => {
+    try {
+      const status = await telegram.getTelegramStatus();
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post(`${PREFIX}/telegram/test`, async (_req, res) => {
+    try {
+      const status = await telegram.getTelegramStatus();
+      if (!status.enabled) {
+        return res.status(400).json({ error: "Telegram IDCA no está habilitado (telegram_enabled=false en config IDCA)" });
+      }
+      if (!status.chatIdConfigured) {
+        return res.status(400).json({ error: "No hay telegram_chat_id configurado en config IDCA" });
+      }
+      if (!status.serviceInitialized) {
+        return res.status(400).json({ error: "El servicio Telegram global no está inicializado (falta token/chatId global)" });
+      }
+      const sent = await telegram.sendTestMessage();
+      if (!sent) {
+        return res.status(500).json({ error: "Mensaje de prueba enviado pero falló (revisar logs)" });
+      }
+      res.json({ success: true, message: "Mensaje de prueba enviado correctamente" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Manual Close Cycle (sell position) ────────────────────────
 
   app.post(`${PREFIX}/cycles/:id/close-manual`, async (req, res) => {

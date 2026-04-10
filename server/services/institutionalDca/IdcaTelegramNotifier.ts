@@ -13,7 +13,12 @@ const lastAlertTimes = new Map<string, number>();
 
 async function canSend(alertType: string): Promise<{ chatId: string; enabled: boolean }> {
   const config = await repo.getIdcaConfig();
-  if (!config.telegramEnabled || !config.telegramChatId) {
+  if (!config.telegramEnabled) {
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=telegram_disabled (set telegram_enabled=true in IDCA config)`);
+    return { chatId: "", enabled: false };
+  }
+  if (!config.telegramChatId) {
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=no_chat_id (configure telegram_chat_id in IDCA config)`);
     return { chatId: "", enabled: false };
   }
 
@@ -21,24 +26,50 @@ async function canSend(alertType: string): Promise<{ chatId: string; enabled: bo
 
   // Check if this alert type is enabled
   if (alertType in toggles && !(toggles as any)[alertType]) {
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=toggle_disabled`);
     return { chatId: config.telegramChatId, enabled: false };
   }
 
   // Simulation check
   if (config.mode === "simulation" && !toggles.simulation_alerts_enabled) {
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=simulation_alerts_disabled`);
     return { chatId: config.telegramChatId, enabled: false };
   }
 
   // Cooldown check
-  const cooldown = config.telegramCooldownSeconds * 1000;
+  const cooldown = (config.telegramCooldownSeconds || 30) * 1000;
   const now = Date.now();
   const lastTime = lastAlertTimes.get(alertType) || 0;
   if (now - lastTime < cooldown && alertType !== "critical_error") {
+    const remainingSec = Math.ceil((cooldown - (now - lastTime)) / 1000);
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=cooldown remainingSec=${remainingSec}`);
     return { chatId: config.telegramChatId, enabled: false };
   }
 
   lastAlertTimes.set(alertType, now);
   return { chatId: config.telegramChatId, enabled: true };
+}
+
+export async function getTelegramStatus(): Promise<{
+  enabled: boolean;
+  chatIdConfigured: boolean;
+  serviceInitialized: boolean;
+  mode: string;
+  cooldownSeconds: number;
+  simulationAlertsEnabled: boolean;
+  toggles: Record<string, boolean>;
+}> {
+  const config = await repo.getIdcaConfig();
+  const toggles = (config.telegramAlertTogglesJson || {}) as any;
+  return {
+    enabled: !!config.telegramEnabled,
+    chatIdConfigured: !!config.telegramChatId,
+    serviceInitialized: telegramService.isInitialized(),
+    mode: config.mode,
+    cooldownSeconds: config.telegramCooldownSeconds || 30,
+    simulationAlertsEnabled: !!(toggles.simulation_alerts_enabled),
+    toggles: toggles as Record<string, boolean>,
+  };
 }
 
 async function send(chatId: string, message: string, threadId?: string): Promise<boolean> {
