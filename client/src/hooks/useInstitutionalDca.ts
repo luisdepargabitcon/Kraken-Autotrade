@@ -714,6 +714,23 @@ export function useDeleteAllOrders() {
   });
 }
 
+export function useSetCycleStatus() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; cycle: any }, Error, { cycleId: number; status: 'active' | 'paused' | 'blocked' }>({
+    mutationFn: async ({ cycleId, status }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/cycles/${cycleId}/status`, { status });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to set cycle status");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 export function useIdcaClosedCycles(limit: number = 50) {
   return useQuery<IdcaCycle[]>({
     queryKey: ["idca", "cycles", "closed", limit],

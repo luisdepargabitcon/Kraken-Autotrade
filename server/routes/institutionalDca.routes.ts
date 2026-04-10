@@ -722,6 +722,44 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Set Cycle Status (activate/pause) ─────────────────────────
+
+  app.patch(`${PREFIX}/cycles/:id/status`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const { status } = req.body;
+      const allowed = ["active", "paused", "blocked"];
+      if (!allowed.includes(status)) {
+        return res.status(400).json({ error: `status debe ser uno de: ${allowed.join(", ")}` });
+      }
+
+      const cycle = await repo.getCycleById(id);
+      if (!cycle) return res.status(404).json({ error: "Ciclo no encontrado" });
+      if (cycle.status === "closed") {
+        return res.status(400).json({ error: "No se puede cambiar el estado de un ciclo cerrado" });
+      }
+
+      await repo.updateCycle(id, { status });
+
+      await repo.createEvent({
+        cycleId: id,
+        pair: cycle.pair,
+        mode: cycle.mode,
+        eventType: "cycle_management",
+        severity: "info",
+        message: `Estado cambiado manualmente: ${cycle.status} → ${status}`,
+        payloadJson: { previousStatus: cycle.status, newStatus: status },
+      });
+
+      const updated = await repo.getCycleById(id);
+      res.json({ success: true, cycle: updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Edit Imported Cycle ─────────────────────────────────────────
 
   app.patch(`${PREFIX}/cycles/:id/edit-imported`, async (req, res) => {

@@ -46,6 +46,7 @@ import {
   useEditImportedCycle,
   useDeleteOrder,
   useDeleteAllOrders,
+  useSetCycleStatus,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -1585,6 +1586,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const deleteCycleForce = useDeleteCycleForce();
   const manualCloseCycle = useManualCloseCycle();
   const editImportedCycle = useEditImportedCycle();
+  const setCycleStatus = useSetCycleStatus();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
@@ -1724,6 +1726,18 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
               {/* Protection / Trailing status badges */}
               {cycle.status !== "closed" && (
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {/* PAUSED WARNING — engine skips this cycle completely */}
+                  {cycle.status === "paused" && (
+                    <Badge variant="outline" className="text-[9px] font-mono text-yellow-400 border-yellow-400/60 bg-yellow-400/10 gap-0.5">
+                      ⚠️ PAUSADO — el motor NO gestiona este ciclo
+                    </Badge>
+                  )}
+                  {/* BLOCKED WARNING */}
+                  {cycle.status === "blocked" && (
+                    <Badge variant="outline" className="text-[9px] font-mono text-red-400 border-red-400/60 bg-red-400/10 gap-0.5">
+                      🚫 BLOQUEADO — el motor NO gestiona este ciclo
+                    </Badge>
+                  )}
                   {cycle.protectionArmedAt ? (
                     <Badge variant="outline" className="text-[9px] font-mono text-emerald-400 border-emerald-400/40 bg-emerald-400/5 gap-0.5">
                       🛡️ Protección ARMADA
@@ -1734,13 +1748,19 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                       🛡️ Protección pendiente
                     </Badge>
                   ) : null}
-                  {cycle.status === "trailing_active" ? (
-                    <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/40 bg-amber-400/5 gap-0.5">
-                      🎯 Trailing ACTIVO
-                      {cycle.trailingPct && <span className="text-muted-foreground ml-1">margen {parseFloat(String(cycle.trailingPct)).toFixed(2)}%</span>}
-                      {cycle.highestPriceAfterTp && <span className="text-muted-foreground ml-1">máx ${fmtPrice(cycle.highestPriceAfterTp)}</span>}
-                    </Badge>
-                  ) : cycle.protectionArmedAt ? (
+                  {cycle.status === "trailing_active" ? (() => {
+                    const highest = parseFloat(String(cycle.highestPriceAfterTp || 0));
+                    const tPct = parseFloat(String(cycle.trailingPct || 0));
+                    const stopPrice = highest > 0 && tPct > 0 ? highest * (1 - tPct / 100) : 0;
+                    return (
+                      <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/40 bg-amber-400/5 gap-0.5">
+                        🎯 Trailing ACTIVO
+                        {tPct > 0 && <span className="text-muted-foreground ml-1">margen {tPct.toFixed(2)}%</span>}
+                        {highest > 0 && <span className="text-muted-foreground ml-1">máx ${fmtPrice(highest)}</span>}
+                        {stopPrice > 0 && <span className="text-orange-400 ml-1">⬇ stop ${fmtPrice(stopPrice)}</span>}
+                      </Badge>
+                    );
+                  })() : cycle.protectionArmedAt ? (
                     <Badge variant="outline" className="text-[9px] font-mono text-muted-foreground border-border/30 gap-0.5">
                       🎯 Trailing pendiente
                     </Badge>
@@ -1915,6 +1935,37 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
             {/* Action bar — available for ALL cycles */}
             <div className="px-9 py-2 border-t border-border/20 flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center gap-2">
+                {/* ACTIVATE button for paused/blocked cycles */}
+                {(cycle.status === "paused" || cycle.status === "blocked") && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-3 text-green-400 hover:text-green-300 hover:bg-green-500/10 text-[10px] border border-green-400/50"
+                    onClick={() => setCycleStatus.mutate({ cycleId: cycle.id, status: "active" }, {
+                      onSuccess: () => toast({ title: "Ciclo activado", description: `${cycle.pair} #${cycle.id} ahora será gestionado por el motor` }),
+                      onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+                    })}
+                    disabled={setCycleStatus.isPending}
+                  >
+                    <Activity className="h-3 w-3 mr-1" />
+                    {setCycleStatus.isPending ? "Activando..." : "Activar ciclo"}
+                  </Button>
+                )}
+                {/* PAUSE button for active cycles */}
+                {(cycle.status === "active" || cycle.status === "trailing_active" || cycle.status === "tp_armed") && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-3 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10 text-[10px] border border-yellow-400/30"
+                    onClick={() => setCycleStatus.mutate({ cycleId: cycle.id, status: "paused" }, {
+                      onSuccess: () => toast({ title: "Ciclo pausado", description: `${cycle.pair} #${cycle.id} pausado — el motor no lo gestionará hasta reactivarlo` }),
+                      onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+                    })}
+                    disabled={setCycleStatus.isPending}
+                  >
+                    ⏸ Pausar ciclo
+                  </Button>
+                )}
                 {cycle.status !== "closed" && (
                   <Button
                     variant="ghost"
