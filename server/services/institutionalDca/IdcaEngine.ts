@@ -929,12 +929,26 @@ async function handleActiveState(
   const trailingActivationPct = parseFloat(String(assetConfig.trailingActivationPct ?? "3.50"));
   const trailingMarginPct = parseFloat(String(assetConfig.trailingMarginPct ?? "1.50"));
 
+  // Guard: bePercent must be a valid positive number
+  const isBePercentValid = !isNaN(protectionActivationPct) && protectionActivationPct > 0;
+  const isTrailPercentValid = !isNaN(trailingActivationPct) && trailingActivationPct > 0;
+
   const isProtectionArmed = !!cycle.protectionArmedAt;
   const protectionStopPrice = parseFloat(String(cycle.protectionStopPrice || "0"));
 
-  // ─── EXIT DIAGNOSTIC TRACE ────────────────────────────────────
+  // ─── STRUCTURED BE & TRAIL EVAL LOG ──────────────────────────
+  const beTriggerPrice = avgEntry > 0 && isBePercentValid ? avgEntry * (1 + protectionActivationPct / 100) : 0;
   const trailingActivationPrice = avgEntry > 0 ? avgEntry * (1 + trailingActivationPct / 100) : 0;
   const distToTrailing = trailingActivationPct - pnlPct;
+  const willArmBe = !isProtectionArmed && isBePercentValid && pnlPct >= protectionActivationPct && avgEntry > 0;
+  console.log(
+    `${TAG}[BE_EVAL] #${cycle.id} ${pair}` +
+    ` | price=$${currentPrice.toFixed(2)} | avg=$${avgEntry.toFixed(2)}` +
+    ` | bePercent=${protectionActivationPct}% (valid=${isBePercentValid})` +
+    ` | beTriggerPrice=$${beTriggerPrice.toFixed(2)}` +
+    ` | pnlPct=${pnlPct.toFixed(3)}% | beArmed_before=${isProtectionArmed}` +
+    ` | willArm=${willArmBe}`
+  );
   console.log(
     `${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | status=active | price=$${currentPrice.toFixed(2)}` +
     ` | avg=$${avgEntry.toFixed(2)} | pnl=${pnlPct.toFixed(3)}%` +
@@ -942,9 +956,13 @@ async function handleActiveState(
     ` | trailingActivation=${trailingActivationPct}% (at $${trailingActivationPrice.toFixed(2)})` +
     ` | distToTrailing=${distToTrailing.toFixed(3)}% | trailingMargin=${trailingMarginPct}%`
   );
+  if (!isBePercentValid) {
+    console.warn(`${TAG}[BE_EVAL] #${cycle.id} ${pair} | BLOCKED: protectionActivationPct=${protectionActivationPct} is invalid (<=0 or NaN) — BE will NEVER arm. Check assetConfig.`);
+  }
 
   // 1. ARM PROTECTION (break-even as safety net, NOT an exit)
-  if (!isProtectionArmed && pnlPct >= protectionActivationPct && avgEntry > 0) {
+  // GUARD: skip if bePercent is invalid (0, NaN, negative) — prevents arming at avg with no threshold
+  if (!isProtectionArmed && isBePercentValid && pnlPct >= protectionActivationPct && avgEntry > 0) {
     const stopPrice = avgEntry; // break-even = avg entry price
     await repo.updateCycle(cycle.id, {
       protectionArmedAt: new Date(),
@@ -966,7 +984,8 @@ async function handleActiveState(
   }
 
   // 2. ACTIVATE TRAILING (no partial sell — just start tracking highest price)
-  const effectiveProtectionArmed = isProtectionArmed || pnlPct >= protectionActivationPct;
+  // GUARD: only count pnlPct toward protection if bePercent is valid
+  const effectiveProtectionArmed = isProtectionArmed || (isBePercentValid && pnlPct >= protectionActivationPct);
   if (!effectiveProtectionArmed) {
     console.log(`${TAG}[EXIT_EVAL] #${cycle.id} ${pair} | trailing_blocked: protection not yet armed (pnl=${pnlPct.toFixed(3)}% < ${protectionActivationPct}%)`);
   } else if (pnlPct < trailingActivationPct) {

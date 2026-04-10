@@ -1603,10 +1603,12 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
   const currentPrice = parseFloat(String(cycle.currentPrice || "0"));
 
+  // Use real DB state for BE (not frontend fallback)
   const beArmed = !!cycle.protectionArmedAt;
   const beStopPrice = parseFloat(String(cycle.protectionStopPrice || "0"));
-  const beProgress = beArmed ? 100 : Math.min(100, Math.max(0, beActPct > 0 ? (pnlPct / beActPct) * 100 : 0));
-  const beRemaining = beArmed ? 0 : Math.max(0, beActPct - pnlPct);
+  // If BE is armed, show 100%. If not armed, show progress based on real config (or 0 if no config)
+  const beProgress = beArmed ? 100 : (assetCfg ? Math.min(100, Math.max(0, beActPct > 0 ? (pnlPct / beActPct) * 100 : 0)) : 0);
+  const beRemaining = beArmed ? 0 : (assetCfg ? Math.max(0, beActPct - pnlPct) : 0);
 
   const trailActive = cycle.status === "trailing_active";
   const highestPrice = parseFloat(String(cycle.highestPriceAfterTp || "0"));
@@ -1769,6 +1771,12 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   {cycle.status === "blocked" && (
                     <Badge variant="outline" className="text-[9px] font-mono text-red-400 border-red-400/60 bg-red-400/10 gap-0.5">
                       🚫 BLOQUEADO — el motor NO gestiona este ciclo
+                    </Badge>
+                  )}
+                  {/* CONFIG MISMATCH WARNING */}
+                  {!assetCfg && cycle.status !== "closed" && (
+                    <Badge variant="outline" className="text-[9px] font-mono text-orange-400 border-orange-400/60 bg-orange-400/10 gap-0.5" title={`No se encontró configuración para el par "${cycle.pair}". Revisa si el par en la base de datos coincide con la configuración (ej. BTC/USD vs BTC/USDE).`}>
+                      ⚠️ Configuración de activo no encontrada
                     </Badge>
                   )}
                   {cycle.protectionArmedAt ? (
