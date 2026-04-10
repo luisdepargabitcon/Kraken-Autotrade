@@ -842,8 +842,12 @@ export function IdcaEventsList({ events, maxHeight = "700px" }: IdcaEventsListPr
     );
   }
 
+  const style = maxHeight === "none"
+    ? { overflow: 'visible' as const }
+    : { maxHeight, overflowY: 'auto' as const };
+
   return (
-    <div className="space-y-2 overflow-auto" style={{ maxHeight }}>
+    <div className="space-y-2" style={style}>
       {events.map((ev) => (
         <IdcaEventCard
           key={ev.id}

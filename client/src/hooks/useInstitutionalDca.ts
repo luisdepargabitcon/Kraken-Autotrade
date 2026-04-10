@@ -337,7 +337,8 @@ export function useIdcaEvents(filters?: {
       if (!res.ok) throw new Error("Failed to fetch IDCA events");
       return res.json();
     },
-    refetchInterval: 15000,
+    staleTime: 30000,
+    refetchInterval: 60000,
   });
 }
 
