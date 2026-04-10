@@ -218,6 +218,14 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
 
   // ─── Events ────────────────────────────────────────────────────
 
+  function parseQueryDate(raw: string | undefined): Date | undefined {
+    if (!raw) return undefined;
+    // URL query string decodes '+' as ' ' — restore it for timezone offsets
+    const fixed = raw.replace(/ /g, '+');
+    const d = new Date(fixed);
+    return isNaN(d.getTime()) ? undefined : d;
+  }
+
   app.get(`${PREFIX}/events`, async (req, res) => {
     try {
       const { 
@@ -231,8 +239,8 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         mode: mode as string,
         pair: pair as string,
         severity: severity as string,
-        dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
-        dateTo: dateTo ? new Date(dateTo as string) : undefined,
+        dateFrom: parseQueryDate(dateFrom as string),
+        dateTo: parseQueryDate(dateTo as string),
         limit: limit ? parseInt(limit as string) : 100,
         offset: offset ? parseInt(offset as string) : 0,
         orderBy: (orderBy as 'createdAt' | 'severity') || 'createdAt',
@@ -255,8 +263,8 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         mode: mode as string,
         pair: pair as string,
         severity: severity as string,
-        dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
-        dateTo: dateTo ? new Date(dateTo as string) : undefined,
+        dateFrom: parseQueryDate(dateFrom as string),
+        dateTo: parseQueryDate(dateTo as string),
       });
       
       res.json({ count });
