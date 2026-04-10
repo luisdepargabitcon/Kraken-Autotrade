@@ -1587,10 +1587,43 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const manualCloseCycle = useManualCloseCycle();
   const editImportedCycle = useEditImportedCycle();
   const setCycleStatus = useSetCycleStatus();
+  const { data: assetConfigs } = useIdcaAssetConfigs();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
+
+  // ─── Exit strategy calculations ──────────────────────────────
+  const assetCfg = assetConfigs?.find((a: any) => a.pair === cycle.pair);
+  const beActPct   = parseFloat(String(assetCfg?.protectionActivationPct ?? "1.00"));
+  const trailActPct = parseFloat(String(assetCfg?.trailingActivationPct ?? "3.50"));
+  const trailMarginPct = parseFloat(String(cycle.trailingPct || assetCfg?.trailingMarginPct || "1.50"));
+  const tpPct = parseFloat(String(cycle.tpPct || "0"));
+  const tpTargetPrice = parseFloat(String(cycle.tpTargetPrice || "0"));
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const currentPrice = parseFloat(String(cycle.currentPrice || "0"));
+
+  const beArmed = !!cycle.protectionArmedAt;
+  const beStopPrice = parseFloat(String(cycle.protectionStopPrice || "0"));
+  const beProgress = beArmed ? 100 : Math.min(100, Math.max(0, beActPct > 0 ? (pnlPct / beActPct) * 100 : 0));
+  const beRemaining = beArmed ? 0 : Math.max(0, beActPct - pnlPct);
+
+  const trailActive = cycle.status === "trailing_active";
+  const highestPrice = parseFloat(String(cycle.highestPriceAfterTp || "0"));
+  const trailStopPrice = trailActive && highestPrice > 0 ? highestPrice * (1 - trailMarginPct / 100) : 0;
+  const dropFromHigh = trailActive && highestPrice > 0 ? ((highestPrice - currentPrice) / highestPrice) * 100 : 0;
+  const dropNeeded = trailActive ? Math.max(0, trailMarginPct - dropFromHigh) : 0;
+  const trailProgress = trailActive ? 100 : Math.min(100, Math.max(0, trailActPct > 0 ? (pnlPct / trailActPct) * 100 : 0));
+  const trailRemaining = trailActive ? 0 : Math.max(0, trailActPct - pnlPct);
+
+  const tpReached = tpPct > 0 && pnlPct >= tpPct;
+  const tpProgress = tpPct > 0 ? Math.min(110, Math.max(0, (pnlPct / tpPct) * 100)) : 0;
+  const tpRemaining = tpPct > 0 ? Math.max(0, tpPct - pnlPct) : 0;
+
+  const durationMs = cycle.startedAt ? (Date.now() - new Date(cycle.startedAt).getTime()) : 0;
+  const durationDays = durationMs / 86400000;
+  const durationStr = durationDays >= 1 ? `${Math.floor(durationDays)}d ${Math.floor((durationDays % 1) * 24)}h`
+    : `${Math.floor(durationMs / 3600000)}h ${Math.floor((durationMs % 3600000) / 60000)}m`;
 
   const isManualOrImported = cycle.isImported || cycle.sourceType === 'manual';
   const canSoftDelete = isManualOrImported && cycle.status !== 'closed';
@@ -1767,6 +1800,46 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   ) : null}
                 </div>
               )}
+              {/* Compact 3-bar progress strip — always visible for non-closed cycles */}
+              {cycle.status !== "closed" && (tpPct > 0 || beActPct > 0) && (
+                <div className="flex items-center gap-3 mt-2">
+                  {/* BE bar */}
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="text-[8px] text-muted-foreground shrink-0">🛡️BE</span>
+                    <div className="w-16 h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                      <div className={cn("h-full rounded-full transition-all", beArmed ? "bg-emerald-500" : "bg-blue-400/60")}
+                        style={{ width: `${beProgress}%` }} />
+                    </div>
+                    <span className={cn("text-[8px] font-mono shrink-0", beArmed ? "text-emerald-400" : "text-muted-foreground")}>
+                      {beArmed ? "✓" : `${beProgress.toFixed(0)}%`}
+                    </span>
+                  </div>
+                  {/* Trailing bar */}
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="text-[8px] text-muted-foreground shrink-0">🎯Trail</span>
+                    <div className="w-16 h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                      <div className={cn("h-full rounded-full transition-all", trailActive ? "bg-amber-400" : "bg-cyan-400/60")}
+                        style={{ width: `${trailProgress}%` }} />
+                    </div>
+                    <span className={cn("text-[8px] font-mono shrink-0", trailActive ? "text-amber-400" : "text-muted-foreground")}>
+                      {trailActive ? "✓" : `${trailProgress.toFixed(0)}%`}
+                    </span>
+                  </div>
+                  {/* TP bar */}
+                  {tpPct > 0 && (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-[8px] text-muted-foreground shrink-0">🏆TP</span>
+                      <div className="w-16 h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                        <div className={cn("h-full rounded-full transition-all", tpReached ? "bg-green-500" : "bg-green-400/40")}
+                          style={{ width: `${Math.min(100, tpProgress)}%` }} />
+                      </div>
+                      <span className={cn("text-[8px] font-mono shrink-0", tpReached ? "text-green-400" : "text-muted-foreground")}>
+                        {tpReached ? "✓" : `${Math.min(100, tpProgress).toFixed(0)}%`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">
@@ -1847,6 +1920,113 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 )}
               </div>
             )}
+            {/* ─── Protection & Exit Strategy Panel ─────────────────────── */}
+            {cycle.status !== "closed" && (
+              <div className="px-9 py-3 border-b border-border/20 bg-muted/5 space-y-3">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Estado de Protección y Salida</div>
+
+                {/* Break-Even Protection */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">🛡️ Break-Even <span className="text-muted-foreground/60">(activa a +{beActPct.toFixed(1)}%)</span></span>
+                    <span className={cn("text-xs font-mono", beArmed ? "text-emerald-400" : "text-muted-foreground")}>
+                      {beArmed
+                        ? `✓ ARMADO${beStopPrice > 0 ? ` · stop $${fmtPrice(beStopPrice)}` : ""}`
+                        : `falta +${beRemaining.toFixed(2)}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full transition-all duration-500", beArmed ? "bg-emerald-500" : "bg-blue-500/50")}
+                      style={{ width: `${beProgress}%` }} />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    PnL actual: <span className={pnlPct >= 0 ? "text-green-400" : "text-red-400"}>{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</span>
+                    {beArmed && beStopPrice > 0 && <span className="ml-2 text-emerald-400/70">· Stop = precio medio entrada (break-even)</span>}
+                  </div>
+                </div>
+
+                {/* Trailing Stop */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">🎯 Trailing Stop <span className="text-muted-foreground/60">(activa a +{trailActPct.toFixed(1)}% · margen {trailMarginPct.toFixed(1)}%)</span></span>
+                    <span className={cn("text-xs font-mono", trailActive ? "text-amber-400" : "text-muted-foreground")}>
+                      {trailActive
+                        ? `✓ ACTIVO · stop $${fmtPrice(trailStopPrice)}`
+                        : `falta +${trailRemaining.toFixed(2)}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full transition-all duration-500", trailActive ? "bg-amber-400" : "bg-cyan-500/40")}
+                      style={{ width: `${trailProgress}%` }} />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-3">
+                    <span>PnL: <span className={pnlPct >= 0 ? "text-green-400" : "text-red-400"}>{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</span></span>
+                    {trailActive && highestPrice > 0 && <span className="text-amber-400/70">· máx ${fmtPrice(highestPrice)}</span>}
+                    {trailActive && trailStopPrice > 0 && <span className="text-orange-400">· stop ${fmtPrice(trailStopPrice)}</span>}
+                    {trailActive && <span className="text-cyan-400/70">· retroceso para cierre: {dropNeeded.toFixed(2)}% más</span>}
+                  </div>
+                </div>
+
+                {/* TP Target */}
+                {tpPct > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">🏆 Objetivo TP <span className="text-muted-foreground/60">(+{tpPct.toFixed(1)}%{tpTargetPrice > 0 ? ` · $${fmtPrice(tpTargetPrice)}` : ""})</span></span>
+                      <span className={cn("text-xs font-mono", tpReached ? "text-green-400" : "text-muted-foreground")}>
+                        {tpReached ? `✓ SUPERADO (+${pnlPct.toFixed(2)}%)` : `falta +${tpRemaining.toFixed(2)}%`}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                      <div className={cn("h-full rounded-full transition-all duration-500", tpReached ? "bg-green-500" : "bg-green-500/30")}
+                        style={{ width: `${Math.min(100, tpProgress)}%` }} />
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {avgEntry > 0 && tpTargetPrice > 0 && <span>Entrada $<span className="font-mono">{fmtPrice(avgEntry)}</span> → TP $<span className="font-mono text-green-400/70">{fmtPrice(tpTargetPrice)}</span></span>}
+                      {tpReached && cycle.status === "paused" && <span className="ml-2 text-yellow-400">⚠️ Ciclo pausado — motor no ejecutará salida</span>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Duration */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">⏱️ Duración</span>
+                    <span className="text-xs font-mono text-muted-foreground">{durationStr}</span>
+                  </div>
+                  <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-slate-500/40 rounded-full transition-all"
+                      style={{ width: `${Math.min(100, (durationDays / 30) * 100)}%` }} />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Inicio: {cycle.startedAt ? new Date(cycle.startedAt).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+                    {durationDays > 0 && <span className="ml-2 opacity-60">· {Math.floor(durationDays)}d {Math.floor((durationDays % 1) * 24)}h abierto</span>}
+                  </div>
+                </div>
+
+                {/* Summary row */}
+                <div className="grid grid-cols-4 gap-2 pt-1 border-t border-border/20">
+                  <div className="text-center">
+                    <div className="text-[9px] text-muted-foreground uppercase">Entrada</div>
+                    <div className="text-[10px] font-mono">${fmtPrice(avgEntry)}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[9px] text-muted-foreground uppercase">Actual</div>
+                    <div className="text-[10px] font-mono">${fmtPrice(currentPrice)}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[9px] text-muted-foreground uppercase">PnL</div>
+                    <div className={cn("text-[10px] font-mono", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
+                      {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[9px] text-muted-foreground uppercase">Capital</div>
+                    <div className="text-[10px] font-mono">{fmtUsd(cycle.capitalUsedUsd)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {cycle.tpBreakdownJson && (
               <div className="px-9 py-2 border-b border-border/20">
                 <div className="text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
