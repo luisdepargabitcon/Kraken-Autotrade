@@ -220,14 +220,66 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
 
   app.get(`${PREFIX}/events`, async (req, res) => {
     try {
-      const { cycleId, eventType, limit, offset } = req.query;
+      const { 
+        cycleId, eventType, mode, pair, severity, 
+        dateFrom, dateTo, limit, offset, orderBy, orderDirection 
+      } = req.query;
+      
       const events = await repo.getEvents({
         cycleId: cycleId ? parseInt(cycleId as string) : undefined,
         eventType: eventType as string,
+        mode: mode as string,
+        pair: pair as string,
+        severity: severity as string,
+        dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
+        dateTo: dateTo ? new Date(dateTo as string) : undefined,
         limit: limit ? parseInt(limit as string) : 100,
         offset: offset ? parseInt(offset as string) : 0,
+        orderBy: (orderBy as 'createdAt' | 'severity') || 'createdAt',
+        orderDirection: (orderDirection as 'asc' | 'desc') || 'desc',
       });
+      
       res.json(events);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get(`${PREFIX}/events/count`, async (req, res) => {
+    try {
+      const { cycleId, eventType, mode, pair, severity, dateFrom, dateTo } = req.query;
+      
+      const count = await repo.getEventsCount({
+        cycleId: cycleId ? parseInt(cycleId as string) : undefined,
+        eventType: eventType as string,
+        mode: mode as string,
+        pair: pair as string,
+        severity: severity as string,
+        dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
+        dateTo: dateTo ? new Date(dateTo as string) : undefined,
+      });
+      
+      res.json({ count });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post(`${PREFIX}/events/purge`, async (req, res) => {
+    try {
+      const { retentionDays = 7, batchSize = 500 } = req.body;
+      if (typeof retentionDays !== 'number' || retentionDays < 1) {
+        return res.status(400).json({ error: 'retentionDays must be a positive number' });
+      }
+      
+      const deletedCount = await repo.purgeOldEvents(retentionDays, batchSize);
+      
+      res.json({ 
+        success: true, 
+        deletedCount, 
+        retentionDays,
+        message: `Purged ${deletedCount} IDCA events older than ${retentionDays} days`
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -781,6 +833,19 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ─── Event Purge Scheduler ─────────────────────────────────────
+  // Auto-purge events older than 7 days every 6 hours
+  setInterval(async () => {
+    try {
+      const deleted = await repo.purgeOldEvents(7, 1000);
+      if (deleted > 0) {
+        console.log(`[IDCA][PURGE] Auto-purged ${deleted} events older than 7 days`);
+      }
+    } catch (e: any) {
+      console.error('[IDCA][PURGE] Auto-purge failed:', e.message);
+    }
+  }, 6 * 60 * 60 * 1000); // 6 hours
 
   console.log(`[IDCA] Routes registered under ${PREFIX}/*`);
 }

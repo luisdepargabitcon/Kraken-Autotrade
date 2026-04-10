@@ -62,6 +62,40 @@
 - `client/src/pages/InstitutionalDca.tsx`
 - `client/src/hooks/useInstitutionalDca.ts`
 
+----
+
+## 2026-04-10b — FEAT: IDCA Historial Eventos (FASE 3)
+
+### Mejoras aplicadas
+
+#### Backend — `IdcaRepository.ts`
+- `getEvents()`: nuevos filtros `mode`, `pair`, `severity`, `dateFrom`, `dateTo`, `orderBy`, `orderDirection`
+- `getEventsCount()`: nuevo endpoint para total de eventos con los mismos filtros
+- `purgeOldEvents()`: reescrito con borrado por lotes via subquery de IDs (evita lock en tabla grande)
+- Import `asc` añadido
+
+#### Backend — `institutionalDca.routes.ts`
+- `GET /events`: ahora acepta todos los filtros nuevos
+- `GET /events/count`: nuevo endpoint de conteo
+- `POST /events/purge`: nuevo endpoint manual de purga con validación
+- Auto-purge programado cada 6h eliminando eventos >7 días (solo tabla IDCA)
+
+#### Frontend — `useInstitutionalDca.ts`
+- `useIdcaEvents()`: acepta todos los filtros nuevos
+- `useIdcaEventsCount()`: nuevo hook
+- `useIdcaEventsPurge()`: nuevo mutation hook
+
+#### Frontend — `InstitutionalDca.tsx`
+- `EventsLogPanel`: barra de filtros completa
+  - Rango temporal: 24h / 3d / 7d / custom (con pickers de fecha)
+  - Filtro por severidad, modo (live/sim), par, tipo de evento
+  - Ordenación: más recientes, más antiguos, críticos primero, info primero
+  - Contador `X / total_real` (del conteo backend)
+  - Selector de límite: 100 / 500 / 1k / 2k
+  - Botón purga manual con modal de confirmación
+  - Altura lista: 800px
+  - Imports: `Select*` de shadcn/ui añadidos
+
 ### Pendiente (FASE 3)
 - Mejorar historial de eventos IDCA: 7 días, filtros, purga automática
 

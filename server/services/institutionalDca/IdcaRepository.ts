@@ -3,7 +3,7 @@
  * Completely isolated from the main bot's storage.
  */
 import { db } from "../../db";
-import { eq, desc, and, sql, lt, ne, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, sql, lt, ne, inArray } from "drizzle-orm";
 import {
   tradingEngineControls,
   institutionalDcaConfig,
@@ -632,26 +632,84 @@ export async function createEvent(
 export async function getEvents(options: {
   cycleId?: number;
   eventType?: string;
+  mode?: string;
+  pair?: string;
+  severity?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
   limit?: number;
   offset?: number;
+  orderBy?: 'createdAt' | 'severity';
+  orderDirection?: 'asc' | 'desc';
 }): Promise<InstitutionalDcaEvent[]> {
   let query = db.select().from(institutionalDcaEvents);
   const conditions = [];
+  
   if (options.cycleId) conditions.push(eq(institutionalDcaEvents.cycleId, options.cycleId));
   if (options.eventType) conditions.push(eq(institutionalDcaEvents.eventType, options.eventType));
+  if (options.mode) conditions.push(eq(institutionalDcaEvents.mode, options.mode));
+  if (options.pair) conditions.push(eq(institutionalDcaEvents.pair, options.pair));
+  if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
+  if (options.dateFrom) conditions.push(sql`${institutionalDcaEvents.createdAt} >= ${options.dateFrom}`);
+  if (options.dateTo) conditions.push(sql`${institutionalDcaEvents.createdAt} <= ${options.dateTo}`);
+  
   if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  query = query.orderBy(desc(institutionalDcaEvents.createdAt)) as any;
+  
+  // Ordenación flexible
+  const orderField = options.orderBy === 'severity' ? institutionalDcaEvents.severity : institutionalDcaEvents.createdAt;
+  const orderDir = options.orderDirection === 'asc' ? asc : desc;
+  query = query.orderBy(orderDir(orderField)) as any;
+  
   if (options.limit) query = query.limit(options.limit) as any;
   if (options.offset) query = (query as any).offset(options.offset);
+  
   return query;
 }
 
-export async function purgeOldEvents(retentionDays: number): Promise<number> {
+export async function getEventsCount(options: Omit<Parameters<typeof getEvents>[0], 'limit' | 'offset' | 'orderBy' | 'orderDirection'>): Promise<number> {
+  let query = db.select({ count: sql<number>`count(*)` }).from(institutionalDcaEvents);
+  const conditions = [];
+  
+  if (options.cycleId) conditions.push(eq(institutionalDcaEvents.cycleId, options.cycleId));
+  if (options.eventType) conditions.push(eq(institutionalDcaEvents.eventType, options.eventType));
+  if (options.mode) conditions.push(eq(institutionalDcaEvents.mode, options.mode));
+  if (options.pair) conditions.push(eq(institutionalDcaEvents.pair, options.pair));
+  if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
+  if (options.dateFrom) conditions.push(sql`${institutionalDcaEvents.createdAt} >= ${options.dateFrom}`);
+  if (options.dateTo) conditions.push(sql`${institutionalDcaEvents.createdAt} <= ${options.dateTo}`);
+  
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  
+  const result = await query;
+  return result[0]?.count || 0;
+}
+
+export async function purgeOldEvents(retentionDays: number, batchSize: number = 500): Promise<number> {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-  const result = await db
-    .delete(institutionalDcaEvents)
-    .where(lt(institutionalDcaEvents.createdAt, cutoff));
-  return (result as any).rowCount || 0;
+  let totalDeleted = 0;
+
+  // Borrado por lotes via subquery de IDs para evitar locks largos
+  while (true) {
+    const toDelete = await db
+      .select({ id: institutionalDcaEvents.id })
+      .from(institutionalDcaEvents)
+      .where(lt(institutionalDcaEvents.createdAt, cutoff))
+      .limit(batchSize);
+
+    if (toDelete.length === 0) break;
+
+    const ids = toDelete.map(r => r.id);
+    const result = await db
+      .delete(institutionalDcaEvents)
+      .where(inArray(institutionalDcaEvents.id, ids));
+
+    const deletedCount = (result as any).rowCount || ids.length;
+    totalDeleted += deletedCount;
+
+    if (toDelete.length < batchSize) break;
+  }
+
+  return totalDeleted;
 }
 
 // ─── Backtests ─────────────────────────────────────────────────────

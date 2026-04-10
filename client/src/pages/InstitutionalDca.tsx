@@ -12,6 +12,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   useIdcaControls,
@@ -30,6 +31,8 @@ import {
   useResetSimulationWallet,
   useIdcaTelegramTest,
   useIdcaTelegramStatus,
+  useIdcaEventsCount,
+  useIdcaEventsPurge,
   useIdcaCycleOrders,
   useIdcaClosedCycles,
   useIdcaCycleEvents,
@@ -56,7 +59,6 @@ import {
   Clock,
   Copy,
   Download,
-  Filter,
   Heart,
   LayoutDashboard,
   ListOrdered,
@@ -84,6 +86,7 @@ import {
   Trash2,
   Edit3,
   XCircle,
+  Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
@@ -2732,30 +2735,63 @@ function LiveMonitorPanel() {
   );
 }
 
-// ─── EVENTS LOG PANEL (nuevo: tarjetas con filtros) ────────────────
 
 function EventsLogPanel() {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState<string>("");
+  const [pairFilter, setPairFilter] = useState<string>("");
+  const [dateRange, setDateRange] = useState<"24h" | "3d" | "7d" | "custom">("7d");
+  const [dateFrom, setDateFrom] = useState<Date | null>(null);
+  const [dateTo, setDateTo] = useState<Date | null>(null);
   const [searchText, setSearchText] = useState("");
   const [copied, setCopied] = useState(false);
-  const { data: events, isLoading } = useIdcaEvents({ limit: 200 });
+  const [orderBy, setOrderBy] = useState<'createdAt' | 'severity'>('createdAt');
+  const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('desc');
+  const [limit, setLimit] = useState(500);
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+  
+  const { data: events, isLoading } = useIdcaEvents({
+    severity: severityFilter === "all" ? undefined : severityFilter,
+    eventType: typeFilter || undefined,
+    mode: modeFilter || undefined,
+    pair: pairFilter || undefined,
+    dateFrom: dateRange === "custom" && dateFrom ? dateFrom : getDateFromRange(dateRange),
+    dateTo: dateRange === "custom" && dateTo ? dateTo : undefined,
+    orderBy,
+    orderDirection: orderDir,
+    limit,
+  });
+  
+  const { data: countData } = useIdcaEventsCount({
+    severity: severityFilter === "all" ? undefined : severityFilter,
+    eventType: typeFilter || undefined,
+    mode: modeFilter || undefined,
+    pair: pairFilter || undefined,
+    dateFrom: dateRange === "custom" && dateFrom ? dateFrom : getDateFromRange(dateRange),
+    dateTo: dateRange === "custom" && dateTo ? dateTo : undefined,
+  });
+  
+  const purgeEvents = useIdcaEventsPurge();
+  const { toast } = useToast();
 
   const filtered = (events || []).filter((ev) => {
-    if (severityFilter !== "all" && ev.severity !== severityFilter) return false;
-    if (typeFilter && ev.eventType !== typeFilter) return false;
     if (searchText) {
-      const q = searchText.toLowerCase();
-      const searchable = [
-        ev.eventType, ev.pair, ev.message, ev.mode,
-        (ev as any).humanTitle, (ev as any).humanMessage,
-      ].filter(Boolean).join(" ").toLowerCase();
-      if (!searchable.includes(q)) return false;
+      const text = `${ev.message} ${ev.pair} ${ev.eventType}`.toLowerCase();
+      if (!text.includes(searchText.toLowerCase())) return false;
     }
     return true;
   });
 
   const uniqueTypes = [...new Set((events || []).map(e => e.eventType))].sort();
+  const uniquePairs = [...new Set((events || []).map(e => e.pair).filter(Boolean))].sort();
+  
+  function getDateFromRange(range: "24h" | "3d" | "7d" | "custom"): Date | undefined {
+    if (range === "custom") return undefined;
+    const now = new Date();
+    const hours = range === "24h" ? 24 : range === "3d" ? 72 : 168;
+    return new Date(now.getTime() - hours * 60 * 60 * 1000);
+  }
 
   const handleDownloadCSV = useCallback(() => {
     const header = "id,timestamp,severity,type,pair,mode,message\n";
@@ -2801,30 +2837,102 @@ function EventsLogPanel() {
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
               <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-              <select className="bg-background border border-border rounded px-2 py-1 text-xs"
-                value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
-                <option value="all">Todas severidades</option>
-                <option value="info">ℹ️ Info</option>
-                <option value="warn">⚠️ Warning</option>
-                <option value="error">🔴 Error</option>
-                <option value="critical">🚨 Critical</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <select className="bg-background border border-border rounded px-2 py-1 text-xs"
-                value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                <option value="">Todos los tipos</option>
-                {uniqueTypes.map(t => (
-                  <option key={t} value={t}>{EVENT_TYPE_LABELS[t] || t.replace(/_/g, " ")}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
-              <Search className="h-3.5 w-3.5 text-muted-foreground" />
-              <Input className="h-7 text-xs" placeholder="Buscar en eventos..." value={searchText}
+              <Select value={dateRange} onValueChange={(v: any) => setDateRange(v)}>
+                <SelectTrigger className="h-7 text-xs w-16">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="24h">24h</SelectItem>
+                  <SelectItem value="3d">3d</SelectItem>
+                  <SelectItem value="7d">7d</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+              {dateRange === "custom" && (
+                <div className="flex gap-1">
+                  <Input type="date" className="h-7 text-xs w-28" value={dateFrom?.toISOString().slice(0, 10) ?? ""}
+                    onChange={(e) => setDateFrom(e.target.value ? new Date(e.target.value) : undefined as any)} />
+                  <Input type="date" className="h-7 text-xs w-28" value={dateTo?.toISOString().slice(0, 10) ?? ""}
+                    onChange={(e) => setDateTo(e.target.value ? new Date(e.target.value) : undefined as any)} />
+                </div>
+              )}
+              <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                <SelectTrigger className="h-7 text-xs w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todo</SelectItem>
+                  <SelectItem value="critical">Crítico</SelectItem>
+                  <SelectItem value="warn">Advert</SelectItem>
+                  <SelectItem value="info">Info</SelectItem>
+                  <SelectItem value="debug">Debug</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={modeFilter} onValueChange={setModeFilter}>
+                <SelectTrigger className="h-7 text-xs w-20">
+                  <SelectValue placeholder="Modo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="simulation">Sim</SelectItem>
+                  <SelectItem value="live">Live</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={pairFilter} onValueChange={setPairFilter}>
+                <SelectTrigger className="h-7 text-xs w-20">
+                  <SelectValue placeholder="Par" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos</SelectItem>
+                  {uniquePairs.map(p => <SelectItem key={p as string} value={p as string}>{p as string}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="h-7 text-xs w-32">
+                  <SelectValue placeholder="Tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos</SelectItem>
+                  {uniqueTypes.map(t => <SelectItem key={t} value={t}>{t.replace(/_/g, " ")}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={`${orderBy}-${orderDir}`} onValueChange={(v) => {
+                const [field, dir] = v.split('-');
+                setOrderBy(field as 'createdAt' | 'severity');
+                setOrderDir(dir as 'asc' | 'desc');
+              }}>
+                <SelectTrigger className="h-7 text-xs w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="createdAt-desc">Más recientes</SelectItem>
+                  <SelectItem value="createdAt-asc">Más antiguos</SelectItem>
+                  <SelectItem value="severity-desc">Críticos primero</SelectItem>
+                  <SelectItem value="severity-asc">Info primero</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input className="h-7 text-xs w-32" placeholder="Buscar..." value={searchText}
                 onChange={(e) => setSearchText(e.target.value)} />
             </div>
-            <Badge variant="outline" className="text-[10px]">{filtered.length} / {(events || []).length}</Badge>
+            <div className="flex items-center gap-2 ml-auto">
+              <Badge variant="outline" className="text-[10px]">
+                {filtered.length} / {countData?.count || 0}
+              </Badge>
+              <Select value={String(limit)} onValueChange={(v) => setLimit(parseInt(v))}>
+                <SelectTrigger className="h-7 text-xs w-16">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="500">500</SelectItem>
+                  <SelectItem value="1000">1k</SelectItem>
+                  <SelectItem value="2000">2k</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => setShowPurgeConfirm(true)}>
+                <Trash2 className="h-3 w-3 mr-1" /> Purgar
+              </Button>
+            </div>
             <div className="flex gap-1 ml-auto">
               <Button size="sm" variant="ghost" className="h-7 text-[10px] gap-1" onClick={handleCopy}>
                 {copied ? <ClipboardCheck className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
@@ -2842,7 +2950,37 @@ function EventsLogPanel() {
       </Card>
 
       {/* Events Cards */}
-      <IdcaEventsList events={filtered} maxHeight="700px" />
+      <IdcaEventsList events={filtered} maxHeight="800px" />
+      
+      {/* Purge Confirmation Modal */}
+      {showPurgeConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-96 p-4">
+            <h3 className="text-sm font-bold mb-2">Purgar Eventos Antiguos</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              ¿Eliminar eventos IDCA de más de 7 días? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => setShowPurgeConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => {
+                purgeEvents.mutate({ retentionDays: 7 }, {
+                  onSuccess: (data) => {
+                    toast({ title: "Purga completada", description: data.message });
+                    setShowPurgeConfirm(false);
+                  },
+                  onError: (e: any) => {
+                    toast({ title: "Error", description: e.message, variant: "destructive" });
+                  }
+                });
+              }} disabled={purgeEvents.isPending}>
+                {purgeEvents.isPending ? "Purgando..." : "Purgar 7 días"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

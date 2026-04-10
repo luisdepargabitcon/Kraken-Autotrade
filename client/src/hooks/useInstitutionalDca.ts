@@ -304,19 +304,87 @@ export function useIdcaOrders(filters?: { mode?: string; pair?: string; limit?: 
   });
 }
 
-export function useIdcaEvents(filters?: { cycleId?: number; eventType?: string; limit?: number }) {
+export function useIdcaEvents(filters?: {
+  cycleId?: number;
+  eventType?: string;
+  mode?: string;
+  pair?: string;
+  severity?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  limit?: number;
+  offset?: number;
+  orderBy?: 'createdAt' | 'severity';
+  orderDirection?: 'asc' | 'desc';
+}) {
   return useQuery<IdcaEvent[]>({
     queryKey: ["idca", "events", filters],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filters?.cycleId) params.set("cycleId", String(filters.cycleId));
       if (filters?.eventType) params.set("eventType", filters.eventType);
-      if (filters?.limit) params.set("limit", String(filters.limit || 100));
+      if (filters?.mode) params.set("mode", filters.mode);
+      if (filters?.pair) params.set("pair", filters.pair);
+      if (filters?.severity) params.set("severity", filters.severity);
+      if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
+      if (filters?.dateTo) params.set("dateTo", filters.dateTo.toISOString());
+      if (filters?.limit) params.set("limit", String(filters.limit));
+      if (filters?.offset) params.set("offset", String(filters.offset));
+      if (filters?.orderBy) params.set("orderBy", filters.orderBy);
+      if (filters?.orderDirection) params.set("orderDirection", filters.orderDirection);
+      
       const res = await fetch(`${PREFIX}/events?${params}`);
       if (!res.ok) throw new Error("Failed to fetch IDCA events");
       return res.json();
     },
     refetchInterval: 15000,
+  });
+}
+
+export function useIdcaEventsCount(filters?: {
+  cycleId?: number;
+  eventType?: string;
+  mode?: string;
+  pair?: string;
+  severity?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+}) {
+  return useQuery<{ count: number }>({
+    queryKey: ["idca", "events", "count", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters?.cycleId) params.set("cycleId", String(filters.cycleId));
+      if (filters?.eventType) params.set("eventType", filters.eventType);
+      if (filters?.mode) params.set("mode", filters.mode);
+      if (filters?.pair) params.set("pair", filters.pair);
+      if (filters?.severity) params.set("severity", filters.severity);
+      if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
+      if (filters?.dateTo) params.set("dateTo", filters.dateTo.toISOString());
+      
+      const res = await fetch(`${PREFIX}/events/count?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch IDCA events count");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+}
+
+export function useIdcaEventsPurge() {
+  const qc = useQueryClient();
+  return useMutation<
+    { success: boolean; deletedCount: number; retentionDays: number; message: string },
+    Error,
+    { retentionDays?: number; batchSize?: number }
+  >({
+    mutationFn: async (options = {}) => {
+      const res = await apiRequest("POST", `${PREFIX}/events/purge`, options);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca", "events"] });
+      qc.invalidateQueries({ queryKey: ["idca", "events", "count"] });
+    },
   });
 }
 
