@@ -714,11 +714,21 @@ export async function registerRoutes(
     }
   });
 
+  // Dashboard response cache: avoids hammering Kraken API on every page load
+  let _dashboardCache: { data: any; ts: number } | null = null;
+  const DASHBOARD_CACHE_TTL_MS = 10_000; // 10 seconds
+
   app.get("/api/dashboard", async (req, res) => {
+    // Serve from cache if fresh (unless force=1 is passed)
+    if (_dashboardCache && Date.now() - _dashboardCache.ts < DASHBOARD_CACHE_TTL_MS && req.query.force !== '1') {
+      return res.json(_dashboardCache.data);
+    }
     try {
-      const apiConfig = await storage.getApiConfig();
-      const botConfig = await storage.getBotConfig();
-      const trades = await storage.getTrades(10);
+      const [apiConfig, botConfig, trades] = await Promise.all([
+        storage.getApiConfig(),
+        storage.getBotConfig(),
+        storage.getTrades(10),
+      ]);
       
       let balances: Record<string, number> = {};
       let prices: Record<string, { price: string; change: string }> = {};
@@ -763,18 +773,19 @@ export async function registerRoutes(
         }
       }
       
-      // Get prices from DATA exchange (Kraken for OHLC data)
-      // Uses exchange's getTicker which handles pair format internally
+      // Get prices from DATA exchange — parallel calls, much faster than sequential
       if (dataExchange.isInitialized()) {
         try {
-          for (const pair of activePairs) {
-            try {
-              const ticker = await dataExchange.getTicker(pair);
-              prices[pair] = { price: ticker.last.toString(), change: "0" };
-            } catch (e) {
-              // Silently skip pairs that fail (e.g., TON may not exist on some exchanges)
-            }
-          }
+          await Promise.all(
+            activePairs.map(async (pair) => {
+              try {
+                const ticker = await dataExchange.getTicker(pair);
+                prices[pair] = { price: ticker.last.toString(), change: "0" };
+              } catch {
+                // Silently skip pairs that fail (e.g., TON may not exist on some exchanges)
+              }
+            })
+          );
         } catch (e) {
           console.error('[dashboard] Error fetching data exchange prices:', e);
         }
@@ -783,7 +794,7 @@ export async function registerRoutes(
       // Determine connection status based on trading exchange
       const exchangeConnected = tradingExchange.isInitialized();
       
-      res.json({
+      const responseData = {
         exchangeConnected,
         tradingExchange: tradingExchangeType,
         dataExchange: ExchangeFactory.getDataExchangeType(),
@@ -797,7 +808,9 @@ export async function registerRoutes(
         balances,
         prices,
         recentTrades: trades,
-      });
+      };
+      _dashboardCache = { data: responseData, ts: Date.now() };
+      res.json(responseData);
     } catch (error) {
       res.status(500).json({ error: "Failed to get dashboard data" });
     }
