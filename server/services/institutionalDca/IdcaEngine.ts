@@ -24,6 +24,7 @@ import type {
   PlusConfig,
   RecoveryConfig,
   BasePriceResult,
+  BasePriceType,
   DipReferenceMethod,
 } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
@@ -538,7 +539,8 @@ async function checkEntry(
     for (const reason of check.blockReasons) {
       console.log(`${TAG}[ENTRY_BLOCKED] ${pair}: ${reason.code} - ${reason.message}`);
     }
-    if (check.blockReasons.length > 0) {
+    // Suppress event for data_not_ready (fires every tick on cold start, not useful)
+    if (check.blockReasons.length > 0 && check.blockReasons[0]?.code !== "data_not_ready") {
       await createHumanEvent({
         pair,
         mode,
@@ -1580,9 +1582,27 @@ async function performEntryCheck(
     }
   }
 
+  // Cold-start guard: if OHLCV cache is empty, block immediately with data_not_ready
+  const cacheCandles = ohlcCache.get(pair) || [];
+  if (cacheCandles.length === 0) {
+    const dataNotReadyMsg = `Sistema inicializando datos OHLCV para ${pair}. Esperando primera carga de velas.`;
+    console.warn(`${TAG}[OHLCV] ${pair}: caché vacío — data_not_ready (exchange no inicializado o primera carga pendiente)`);
+    blocks.push({ code: "data_not_ready", message: dataNotReadyMsg, timestamp: now });
+    return {
+      allowed: false,
+      blockReasons: blocks,
+      marketScore: 0,
+      volatilityScore: 0,
+      sizeProfile: "balanced" as IdcaSizeProfile,
+      entryDipPct: 0,
+      basePrice: { price: 0, type: "cycle_start_price" as BasePriceType, windowMinutes: 0, timestamp: new Date(), isReliable: false, reason: dataNotReadyMsg, meta: { candleCount: 0, swingHighsFound: 0 } },
+      reboundConfirmed: false,
+    };
+  }
+
   // Calculate base price using deterministic method
   const dipRefMethod = (assetConfig.dipReference || "hybrid") as DipReferenceMethod;
-  const candles = ohlcCache.get(pair) || [];
+  const candles = cacheCandles;
   const basePriceResult = smart.computeBasePrice({
     candles,
     lookbackMinutes: config.localHighLookbackMinutes,
@@ -1798,21 +1818,28 @@ async function updateOhlcvCache(): Promise<void> {
       // Get 1h candles for analysis (last 100)
       const candles = await (dataExchange as any).getOHLC?.(pair, 60);
       if (candles && Array.isArray(candles) && candles.length > 0) {
+        // NOTE: Kraken OHLC returns time as Unix SECONDS — multiply by 1000 for ms
         const mapped: TimestampedCandle[] = candles.map((c: any) => ({
           high: parseFloat(String(c.high || c[2] || 0)),
           low: parseFloat(String(c.low || c[3] || 0)),
           close: parseFloat(String(c.close || c[4] || 0)),
-          time: c.time ? new Date(c.time).getTime() : (c[0] ? c[0] * 1000 : Date.now()),
+          time: c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
         }));
         ohlcCache.set(pair, mapped);
+        console.log(
+          `${TAG}[OHLCV] ${pair}: ${mapped.length} candles fetched` +
+          ` | first=${new Date(mapped[0].time).toISOString().slice(0, 16)}` +
+          ` | last=${new Date(mapped[mapped.length - 1].time).toISOString().slice(0, 16)}` +
+          ` | source=${ExchangeFactory.getDataExchangeType()}`
+        );
 
-        // Store in DB cache
+        // Store in DB cache (c.time is Unix seconds from Kraken)
         for (const c of candles.slice(-10)) {
           try {
             await repo.upsertOhlcv({
               pair,
               timeframe: "1h",
-              ts: new Date(c.time || c[0] * 1000 || Date.now()),
+              ts: new Date(c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now())),
               open: String(c.open || c[1] || 0),
               high: String(c.high || c[2] || 0),
               low: String(c.low || c[3] || 0),

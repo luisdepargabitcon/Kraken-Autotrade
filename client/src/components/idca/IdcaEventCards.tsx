@@ -61,9 +61,12 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.price) result.price = parseFloat(String(p.price));
   if (p.quantity) result.quantity = parseFloat(String(p.quantity));
   if (p.capital) result.capital = parseFloat(String(p.capital));
-  if (p.basePrice?.price) {
+  // Fix: price can be 0 (falsy) — check for object type explicitly
+  if (p.basePrice && typeof p.basePrice === 'object' && 'price' in p.basePrice) {
     result.basePrice = parseFloat(String(p.basePrice.price));
     result.basePriceType = p.basePrice.type;
+  } else if (typeof p.basePrice === 'number') {
+    result.basePrice = p.basePrice;
   }
   if (p.entryDipPct) result.entryDipPct = parseFloat(String(p.entryDipPct));
   if (p.marketScore) result.marketScore = parseFloat(String(p.marketScore));
@@ -101,8 +104,9 @@ const fUsd = (v: number | undefined): string =>
   v != null ? `$${fN(v)}` : "—";
 
 const BLOCK_REASON_LABELS: Record<string, string> = {
+  data_not_ready: "Sistema inicializando datos de mercado",
   no_rebound_confirmed: "Esperando confirmación de rebote",
-  insufficient_base_price_data: "Datos de precio base insuficientes",
+  insufficient_base_price_data: "Datos de velas insuficientes para calcular referencia",
   insufficient_dip: "Caída insuficiente para entrar",
   market_score_too_low: "Condiciones de mercado desfavorables",
   module_exposure_max_reached: "Exposición máxima del módulo alcanzada",
@@ -412,18 +416,30 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
     title: "Entrada bloqueada",
     category: "warning",
     getHumanSummary: (ev, p) => {
-      const msg = ev.message || "";
-      const reasons: string[] = [];
-      // Try to extract block reasons from message
-      for (const [code, label] of Object.entries(BLOCK_REASON_LABELS)) {
-        if (msg.includes(code)) reasons.push(label);
+      const blockReasons: any[] = ev.payloadJson?.blockReasons || [];
+      const codes = blockReasons.map((r: any) => r?.code || r).filter(Boolean);
+      const isDataIssue = codes.some((c: string) => c === "data_not_ready" || c === "insufficient_base_price_data");
+      const meta = ev.payloadJson?.basePrice?.meta;
+
+      // Caso 1: problema de datos — diferenciar de condiciones de mercado
+      if (isDataIssue) {
+        if (meta?.candleCount != null) {
+          return `No se compró porque el sistema aún no dispone de suficientes velas (${meta.candleCount}/7) para calcular una referencia de precio fiable. El sistema seguirá reintentando automáticamente.`;
+        }
+        return "No se compró porque el sistema aún no dispone de suficientes datos de mercado para calcular una referencia fiable. El sistema seguirá reintentando automáticamente.";
       }
-      if (reasons.length > 0) {
-        return `El bot evaluó una posible entrada pero la rechazó: ${reasons.join("; ")}.`;
+
+      // Caso 2: condiciones de mercado
+      const marketCodes = codes.filter((c: string) => c !== "data_not_ready" && c !== "insufficient_base_price_data");
+      if (marketCodes.length > 0) {
+        const labels = marketCodes.map((c: string) => BLOCK_REASON_LABELS[c] || c);
+        if (p.entryDipPct != null && p.basePrice != null && p.basePrice > 0) {
+          return `No se compró: ${labels.join("; ")}. Caída actual: ${fN(p.entryDipPct)}% desde ${fUsd(p.basePrice)}.`;
+        }
+        return `No se compró: ${labels.join("; ")}.`;
       }
-      if (p.entryDipPct != null && p.basePrice) {
-        return `El bot evaluó la entrada pero las condiciones no se cumplen. Caída actual: ${fN(p.entryDipPct)}% desde ${fUsd(p.basePrice)}.`;
-      }
+
+      // Fallback
       return "El bot evaluó la entrada pero no se cumplen todas las condiciones necesarias para comprar.";
     },
     getActionText: () => "Sin acción. El bot seguirá vigilando.",
@@ -735,7 +751,11 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               {event.mode && <DataPill label="Modo" value={event.mode === "simulation" ? "Simulación" : "Real"} />}
               {parsed.price != null && <DataPill label="Precio" value={fUsd(parsed.price)} />}
               {parsed.avgEntry != null && <DataPill label="Precio medio" value={fUsd(parsed.avgEntry)} />}
-              {parsed.basePrice != null && <DataPill label="Precio base" value={fUsd(parsed.basePrice)} />}
+              {parsed.basePrice != null && parsed.basePrice > 0 && <DataPill label="Precio base" value={fUsd(parsed.basePrice)} />}
+              {(parsed.basePrice == null || parsed.basePrice === 0) && event.payloadJson?.basePrice?.meta?.candleCount != null && (
+                <DataPill label="Velas OHLCV" value={`${event.payloadJson.basePrice.meta.candleCount}/7`}
+                  color={event.payloadJson.basePrice.meta.candleCount < 7 ? "text-amber-400" : "text-emerald-400"} />
+              )}
               {parsed.basePriceType && <DataPill label="Tipo base" value={parsed.basePriceType} />}
               {parsed.entryDipPct != null && <DataPill label="Caída entrada" value={`-${fN(parsed.entryDipPct)}%`} color="text-amber-400" />}
               {parsed.quantity != null && <DataPill label="Cantidad" value={fN(parsed.quantity, 6)} />}
