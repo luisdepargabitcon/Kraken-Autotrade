@@ -446,6 +446,7 @@ const MIN_OUTLIER_FLOOR = 0.05;       // 5% minimum regardless of ATR
 const MIN_CANDLES = 7;
 
 function computeP95(values: number[]): number {
+  if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.floor(sorted.length * 0.95);
   return sorted[Math.min(idx, sorted.length - 1)];

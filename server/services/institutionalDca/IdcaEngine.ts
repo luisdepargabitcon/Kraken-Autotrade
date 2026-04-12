@@ -1634,14 +1634,6 @@ async function performEntryCheck(
     blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip}% (BasePrice=$${basePriceResult.price.toFixed(2)}, Type=${basePriceResult.type})`, timestamp: now });
   }
 
-  // Entry decision log (emitted after all blocks are assessed)
-  logEntryDecision(
-    pair,
-    blocks.length === 0 ? "allowed" : "blocked",
-    blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
-    entryDipPct, minDip, basePriceResult, currentPrice
-  );
-
   // BTC gate for ETH
   if (pair === "ETH/USD" && config.btcMarketGateForEthEnabled) {
     const btcPrice = await getCurrentPrice("BTC/USD");
@@ -1736,6 +1728,14 @@ async function performEntryCheck(
       blocks.push({ code: "no_rebound_confirmed", message: "Waiting for rebound confirmation", timestamp: now });
     }
   }
+
+  // Entry decision log — emitido con todos los bloques evaluados
+  logEntryDecision(
+    pair,
+    blocks.length === 0 ? "allowed" : "blocked",
+    blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
+    entryDipPct, minDip, basePriceResult, currentPrice
+  );
 
   return {
     allowed: blocks.length === 0,
@@ -1949,7 +1949,6 @@ async function updateOhlcvCache(): Promise<void> {
           // Compute and cache macro context
           const nowMs = Date.now();
           const allHourly = ohlcCache.get(pair) || [];
-          const allCandles = [...mappedDaily, ...allHourly]; // use daily for long buckets
 
           const ctx90d  = computeBucketContext(mappedDaily, nowMs, 90  * 24 * 60, "90d");
           const ctx180d = computeBucketContext(mappedDaily, nowMs, 180 * 24 * 60, "180d");
@@ -1958,8 +1957,9 @@ async function updateOhlcvCache(): Promise<void> {
 
           // Structural: 2-year high/low from daily data
           const validDaily = mappedDaily.filter(c => c.high > 0 && c.low > 0);
-          const high2yCandle = validDaily.reduce((m, c) => c.high > m.high ? c : m, validDaily[0]);
-          const low2yCandle  = validDaily.reduce((m, c) => c.low  < m.low  ? c : m, validDaily[0]);
+          // Guard: if validDaily is empty skip structural computation
+          const high2yCandle = validDaily.length > 0 ? validDaily.reduce((m, c) => c.high > m.high ? c : m) : undefined;
+          const low2yCandle  = validDaily.length > 0 ? validDaily.reduce((m, c) => c.low  < m.low  ? c : m) : undefined;
           const yearCutoff   = nowMs - 365 * 24 * 60 * 60 * 1000;
           const yearCandles  = validDaily.filter(c => c.time >= yearCutoff);
           const yearHigh = yearCandles.length > 0 ? Math.max(...yearCandles.map(c => c.high)) : undefined;
