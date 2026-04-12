@@ -1601,7 +1601,15 @@ async function performEntryCheck(
   }
 
   // Calculate base price using deterministic method
-  const dipRefMethod = (assetConfig.dipReference || "hybrid") as DipReferenceMethod;
+  // Normalize dipReference: fallback to 'hybrid' for unknown/legacy values (e.g. 'local_high', 'ema')
+  const VALID_DIP_METHODS: DipReferenceMethod[] = ["hybrid", "swing_high", "window_high"];
+  const rawMethod = assetConfig.dipReference || "hybrid";
+  const dipRefMethod: DipReferenceMethod = VALID_DIP_METHODS.includes(rawMethod as DipReferenceMethod)
+    ? (rawMethod as DipReferenceMethod)
+    : "hybrid";
+  if (!VALID_DIP_METHODS.includes(rawMethod as DipReferenceMethod)) {
+    console.warn(`${TAG}[OHLCV] ${pair}: dipReference='${rawMethod}' no reconocido — usando 'hybrid' como fallback`);
+  }
   const candles = cacheCandles;
   const basePriceResult = smart.computeBasePrice({
     candles,

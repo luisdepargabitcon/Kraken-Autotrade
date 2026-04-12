@@ -519,15 +519,22 @@ export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult 
     };
   }
 
-  // Method "ema" — reserved for future, block for now
+  // Unknown/unimplemented method: fall back to P95 window_high (same as hybrid fallback)
+  // This handles legacy DB values like 'local_high', 'ema', etc.
+  const sorted = [...highs].sort((a, b) => a - b);
+  const p95Index = Math.floor(sorted.length * 0.95);
+  const p95Value = sorted[Math.min(p95Index, sorted.length - 1)];
+  const p95Candle = windowCandles.reduce((best, c) =>
+    Math.abs(c.high - p95Value) < Math.abs(best.high - p95Value) ? c : best
+  );
   return {
-    price: 0,
-    type: "cycle_start_price",
+    price: p95Value,
+    type: "window_high_p95",
     windowMinutes: lookbackMinutes,
-    timestamp: new Date(now),
-    isReliable: false,
-    reason: `Method '${method}' not yet implemented`,
-    meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+    timestamp: new Date(p95Candle.time),
+    isReliable: true,
+    reason: `P95 fallback (method '${method}' unknown): ${windowCandles.length} candles, p95=$${p95Value.toFixed(2)}`,
+    meta: { candleCount: windowCandles.length, swingHighsFound: 0, p95Value, maxAbsolute, filteredWindow: lookbackMinutes },
   };
 }
 
