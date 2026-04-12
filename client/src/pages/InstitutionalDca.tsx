@@ -3000,9 +3000,10 @@ function EventsLogPanel() {
     return new Date(now.getTime() - hours * 60 * 60 * 1000);
   }
 
-  // "no-debug" = exclude debug events (send no severity filter but exclude debug on server)
-  // We handle this by sending severity=undefined but filtering client-side for debug
-  const backendSeverity = severityFilter === "all" || severityFilter === "no-debug" ? undefined : severityFilter;
+  // "no-debug" → pass to server which filters WHERE severity != 'debug'
+  // "all"      → send undefined (no filter)
+  // other      → exact match filter
+  const backendSeverity = severityFilter === "all" ? undefined : severityFilter;
   const effectiveDateFrom = dateRange === "custom" ? dateFrom : getDateFromRange(dateRange);
 
   const { data: events, isLoading, isFetching } = useIdcaEvents({

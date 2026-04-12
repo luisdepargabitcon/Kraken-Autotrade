@@ -756,40 +756,33 @@ export async function registerRoutes(
         return symbol;
       };
       
-      // Get balances from TRADING exchange (Revolut X or Kraken)
-      if (tradingExchange.isInitialized()) {
-        try {
-          const rawBalances = await tradingExchange.getBalance();
-          // Normalize and filter to only include assets the bot uses
-          for (const [asset, amount] of Object.entries(rawBalances)) {
-            const normalizedSymbol = normalizeSymbol(asset, tradingExchangeType);
-            if (activeAssets.has(normalizedSymbol)) {
-              // Aggregate balances for same asset (e.g., XBT + XBT.S)
-              balances[normalizedSymbol] = (balances[normalizedSymbol] || 0) + amount;
-            }
-          }
-        } catch (e) {
-          console.error('[dashboard] Error fetching trading exchange balances:', e);
-        }
-      }
-      
-      // Get prices from DATA exchange — parallel calls, much faster than sequential
-      if (dataExchange.isInitialized()) {
-        try {
-          await Promise.all(
-            activePairs.map(async (pair) => {
-              try {
-                const ticker = await dataExchange.getTicker(pair);
-                prices[pair] = { price: ticker.last.toString(), change: "0" };
-              } catch {
-                // Silently skip pairs that fail (e.g., TON may not exist on some exchanges)
-              }
-            })
-          );
-        } catch (e) {
-          console.error('[dashboard] Error fetching data exchange prices:', e);
-        }
-      }
+      // Get balances + prices in parallel — max performance
+      await Promise.all([
+        // Balances from TRADING exchange
+        tradingExchange.isInitialized()
+          ? tradingExchange.getBalance()
+              .then(rawBalances => {
+                for (const [asset, amount] of Object.entries(rawBalances)) {
+                  const normalizedSymbol = normalizeSymbol(asset, tradingExchangeType);
+                  if (activeAssets.has(normalizedSymbol)) {
+                    balances[normalizedSymbol] = (balances[normalizedSymbol] || 0) + amount;
+                  }
+                }
+              })
+              .catch(e => console.error('[dashboard] Error fetching trading exchange balances:', e))
+          : Promise.resolve(),
+        // Prices from DATA exchange (parallel per pair)
+        dataExchange.isInitialized()
+          ? Promise.all(
+              activePairs.map(async (pair) => {
+                try {
+                  const ticker = await dataExchange.getTicker(pair);
+                  prices[pair] = { price: ticker.last.toString(), change: "0" };
+                } catch { /* skip pairs that fail */ }
+              })
+            ).catch(e => console.error('[dashboard] Error fetching data exchange prices:', e))
+          : Promise.resolve(),
+      ]);
       
       // Determine connection status based on trading exchange
       const exchangeConnected = tradingExchange.isInitialized();

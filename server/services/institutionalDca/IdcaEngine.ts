@@ -145,6 +145,8 @@ const ohlcDailyCache = new Map<string, TimestampedCandle[]>();  // 1d candles fo
 const macroContextCache = new Map<string, IdcaMacroContext>();  // computed macro context per pair
 const lastDailyFetchMs = new Map<string, number>();             // throttle: max 1 daily fetch per 6h per pair
 const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
+const lastEntryEventMs = new Map<string, number>();             // throttle: max 1 entry_evaluated DB event per 5min per pair
+const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
 
 // ─── Human Event Helper ───────────────────────────────────────────
 
@@ -1733,7 +1735,7 @@ async function performEntryCheck(
 
   // Entry decision log — emitido con todos los bloques evaluados
   logEntryDecision(
-    pair,
+    pair, mode,
     blocks.length === 0 ? "allowed" : "blocked",
     blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
     entryDipPct, minDip, basePriceResult, currentPrice
@@ -1856,7 +1858,7 @@ function logBasePriceDebug(pair: string, currentPrice: number, base: BasePriceRe
   );
 }
 
-function logEntryDecision(pair: string, action: "allowed" | "blocked", reason: string, dip: number, minDip: number, base: BasePriceResult, currentPrice: number): void {
+function logEntryDecision(pair: string, mode: string, action: "allowed" | "blocked", reason: string, dip: number, minDip: number, base: BasePriceResult, currentPrice: number): void {
   console.log(
     `${TAG}[IDCA_ENTRY_DECISION]` +
     ` pair=${pair}` +
@@ -1867,6 +1869,22 @@ function logEntryDecision(pair: string, action: "allowed" | "blocked", reason: s
     ` base_price=${base.price.toFixed(2)}` +
     ` current_price=${currentPrice.toFixed(2)}`
   );
+  // Persist to DB (always for "allowed"; throttled 5min for "blocked" to avoid DB spam)
+  const now = Date.now();
+  const last = lastEntryEventMs.get(pair) ?? 0;
+  if (action === "allowed" || now - last >= ENTRY_EVENT_THROTTLE_MS) {
+    lastEntryEventMs.set(pair, now);
+    repo.createEvent({
+      pair,
+      mode,
+      eventType: "entry_evaluated",
+      severity: action === "allowed" ? "info" : "debug",
+      message: action === "allowed"
+        ? `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`
+        : `[${pair}] Entrada bloqueada (${reason}) — caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}%`,
+      payloadJson: { action, reason, dip, minDip, basePrice: base.price, currentPrice, baseMethod: base.meta?.selectedMethod ?? base.type },
+    }).catch(() => {}); // fire-and-forget
+  }
 }
 
 // Helper: compute P95 of an array of numbers

@@ -655,7 +655,8 @@ export async function getEvents(options: {
   if (options.eventType) conditions.push(eq(institutionalDcaEvents.eventType, options.eventType));
   if (options.mode) conditions.push(eq(institutionalDcaEvents.mode, options.mode));
   if (options.pair) conditions.push(eq(institutionalDcaEvents.pair, options.pair));
-  if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
+  if (options.severity === 'no-debug') conditions.push(ne(institutionalDcaEvents.severity, 'debug'));
+  else if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
   if (options.dateFrom) conditions.push(sql`${institutionalDcaEvents.createdAt} >= ${options.dateFrom}`);
   if (options.dateTo) conditions.push(sql`${institutionalDcaEvents.createdAt} <= ${options.dateTo}`);
   
@@ -680,7 +681,8 @@ export async function getEventsCount(options: Omit<Parameters<typeof getEvents>[
   if (options.eventType) conditions.push(eq(institutionalDcaEvents.eventType, options.eventType));
   if (options.mode) conditions.push(eq(institutionalDcaEvents.mode, options.mode));
   if (options.pair) conditions.push(eq(institutionalDcaEvents.pair, options.pair));
-  if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
+  if (options.severity === 'no-debug') conditions.push(ne(institutionalDcaEvents.severity, 'debug'));
+  else if (options.severity) conditions.push(eq(institutionalDcaEvents.severity, options.severity));
   if (options.dateFrom) conditions.push(sql`${institutionalDcaEvents.createdAt} >= ${options.dateFrom}`);
   if (options.dateTo) conditions.push(sql`${institutionalDcaEvents.createdAt} <= ${options.dateTo}`);
   
