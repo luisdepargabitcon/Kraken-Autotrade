@@ -470,6 +470,20 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
     getActionText: () => "Sin acción. El bot seguirá vigilando.",
   },
 
+  entry_evaluated: {
+    icon: "📊",
+    title: "Evaluación de entrada",
+    category: "info",
+    getHumanSummary: (ev, p) => {
+      if (p.action === "allowed") {
+        return `Entrada PERMITIDA para ${ev.pair || "?"}: caída ${fN(p.dip)}% ≥ mínimo ${fN(p.minDip)}%. Base: ${fUsd(p.basePrice)}.`;
+      }
+      return `Entrada bloqueada para ${ev.pair || "?"}: caída ${fN(p.dip)}% vs mínimo ${fN(p.minDip)}%. Motivo: ${p.reason || "condiciones insuficientes"}.`;
+    },
+    getActionText: (_ev, p) =>
+      p.action === "allowed" ? "Entrada autorizada — siguiente paso: ejecución de compra." : "Sin acción. El bot sigue vigilando.",
+  },
+
   buy_blocked: {
     icon: "🟠",
     title: "Compra bloqueada",

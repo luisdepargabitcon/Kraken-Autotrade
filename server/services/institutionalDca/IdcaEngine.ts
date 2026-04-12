@@ -1883,7 +1883,11 @@ function logEntryDecision(pair: string, mode: string, action: "allowed" | "block
         ? `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`
         : `[${pair}] Entrada bloqueada (${reason}) — caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}%`,
       payloadJson: { action, reason, dip, minDip, basePrice: base.price, currentPrice, baseMethod: base.meta?.selectedMethod ?? base.type },
-    }).catch(() => {}); // fire-and-forget
+    }).then(() => {
+      console.log(`${TAG}[ENTRY_EVENT] Persisted entry_evaluated pair=${pair} mode=${mode} action=${action}`);
+    }).catch(e => {
+      console.error(`${TAG}[ENTRY_EVENT] FAILED to persist entry_evaluated pair=${pair}: ${e?.message}`);
+    });
   }
 }
 

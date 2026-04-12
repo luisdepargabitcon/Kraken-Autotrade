@@ -714,12 +714,19 @@ export async function registerRoutes(
     }
   });
 
-  // Dashboard response cache: avoids hammering Kraken API on every page load
+  // ── Dashboard caches ──────────────────────────────────────────────
+  // 1. Full response cache (10s) — avoids re-fetching on rapid reloads
+  // 2. Ticker price cache (15s) — avoids entering KrakenRateLimiter queue
+  //    The rate limiter is FIFO concurrency=1 with 500ms spacing;
+  //    if IDCA/trading engine calls are queued, dashboard tickers wait 5-30s.
   let _dashboardCache: { data: any; ts: number } | null = null;
-  const DASHBOARD_CACHE_TTL_MS = 10_000; // 10 seconds
+  const DASHBOARD_CACHE_TTL_MS = 10_000;
+  const _tickerPriceCache = new Map<string, { price: string; ts: number }>();
+  const TICKER_CACHE_TTL = 15_000; // 15 seconds
+  const DASHBOARD_EXCHANGE_TIMEOUT = 5_000; // 5s hard timeout for exchange calls
 
   app.get("/api/dashboard", async (req, res) => {
-    // Serve from cache if fresh (unless force=1 is passed)
+    // 1. Serve full response cache if fresh
     if (_dashboardCache && Date.now() - _dashboardCache.ts < DASHBOARD_CACHE_TTL_MS && req.query.force !== '1') {
       return res.json(_dashboardCache.data);
     }
@@ -733,65 +740,76 @@ export async function registerRoutes(
       let balances: Record<string, number> = {};
       let prices: Record<string, { price: string; change: string }> = {};
       
-      // Get trading exchange info
       const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
       const tradingExchange = ExchangeFactory.getTradingExchange();
       const dataExchange = ExchangeFactory.getDataExchange();
       
-      // Get active pairs from bot config - only show assets the bot uses
       const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
-      const activeAssets = new Set<string>(["USD"]); // Always include USD
+      const activeAssets = new Set<string>(["USD"]);
       for (const pair of activePairs) {
         const [base] = pair.split("/");
         activeAssets.add(base);
       }
       
-      // Normalize exchange symbols to generic symbols using centralized krakenService method
-      // For Revolut X, symbols are already generic (BTC, ETH, etc.)
       const normalizeSymbol = (symbol: string, exchangeType: string): string => {
         if (exchangeType === 'kraken') {
           return krakenService.normalizeAsset(symbol);
         }
-        // Revolut X and others use generic symbols, just return as-is
         return symbol;
       };
       
-      // Get balances + prices in parallel — max performance
-      await Promise.all([
-        // Balances from TRADING exchange
-        tradingExchange.isInitialized()
-          ? tradingExchange.getBalance()
-              .then(rawBalances => {
-                for (const [asset, amount] of Object.entries(rawBalances)) {
-                  const normalizedSymbol = normalizeSymbol(asset, tradingExchangeType);
-                  if (activeAssets.has(normalizedSymbol)) {
-                    balances[normalizedSymbol] = (balances[normalizedSymbol] || 0) + amount;
+      // 2. Pre-fill prices from ticker cache (instant, no API calls)
+      const now = Date.now();
+      const stalePairs: string[] = [];
+      for (const pair of activePairs) {
+        const cached = _tickerPriceCache.get(pair);
+        if (cached && now - cached.ts < TICKER_CACHE_TTL) {
+          prices[pair] = { price: cached.price, change: "0" };
+        } else {
+          stalePairs.push(pair);
+        }
+      }
+      
+      // 3. Fetch balance + stale tickers in parallel, with hard 5s timeout
+      //    If exchange calls hang (rate limiter queue), we return partial data.
+      await Promise.race([
+        Promise.all([
+          // Balance (already cached 5s by BalanceCache)
+          tradingExchange.isInitialized()
+            ? tradingExchange.getBalance()
+                .then(rawBalances => {
+                  for (const [asset, amount] of Object.entries(rawBalances)) {
+                    const sym = normalizeSymbol(asset, tradingExchangeType);
+                    if (activeAssets.has(sym)) {
+                      balances[sym] = (balances[sym] || 0) + amount;
+                    }
                   }
-                }
-              })
-              .catch(e => console.error('[dashboard] Error fetching trading exchange balances:', e))
-          : Promise.resolve(),
-        // Prices from DATA exchange (parallel per pair)
-        dataExchange.isInitialized()
-          ? Promise.all(
-              activePairs.map(async (pair) => {
-                try {
-                  const ticker = await dataExchange.getTicker(pair);
-                  prices[pair] = { price: ticker.last.toString(), change: "0" };
-                } catch { /* skip pairs that fail */ }
-              })
-            ).catch(e => console.error('[dashboard] Error fetching data exchange prices:', e))
-          : Promise.resolve(),
+                })
+                .catch(e => console.error('[dashboard] Balance error:', e?.message))
+            : Promise.resolve(),
+          // Only fetch tickers for pairs NOT in cache
+          ...stalePairs.map(pair =>
+            dataExchange.isInitialized()
+              ? dataExchange.getTicker(pair)
+                  .then(ticker => {
+                    const p = ticker.last.toString();
+                    prices[pair] = { price: p, change: "0" };
+                    _tickerPriceCache.set(pair, { price: p, ts: Date.now() });
+                  })
+                  .catch(() => { /* skip pair */ })
+              : Promise.resolve()
+          ),
+        ]),
+        // Hard timeout: resolve (don't reject) so we return partial data
+        new Promise<void>(resolve => setTimeout(resolve, DASHBOARD_EXCHANGE_TIMEOUT)),
       ]);
       
-      // Determine connection status based on trading exchange
       const exchangeConnected = tradingExchange.isInitialized();
       
       const responseData = {
         exchangeConnected,
         tradingExchange: tradingExchangeType,
         dataExchange: ExchangeFactory.getDataExchangeType(),
-        // Legacy fields for backward compatibility
         krakenConnected: krakenService.isInitialized(),
         telegramConnected: apiConfig?.telegramConnected || false,
         botActive: botConfig?.isActive || false,
@@ -805,6 +823,7 @@ export async function registerRoutes(
       _dashboardCache = { data: responseData, ts: Date.now() };
       res.json(responseData);
     } catch (error) {
+      console.error('[dashboard] Fatal error:', error);
       res.status(500).json({ error: "Failed to get dashboard data" });
     }
   });
