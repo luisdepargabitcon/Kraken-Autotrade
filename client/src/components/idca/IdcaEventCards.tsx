@@ -39,6 +39,28 @@ interface ParsedPayload {
   pnlUsd?: number;
   basePrice?: number;
   basePriceType?: string;
+  basePriceMeta?: {
+    selectedMethod?: string;
+    selectedReason?: string;
+    selectedAnchorPrice?: number;
+    selectedAnchorTime?: string;
+    drawdownPctFromAnchor?: number;
+    outlierRejected?: boolean;
+    outlierRejectedValue?: number;
+    atrPct?: number;
+    candidates?: {
+      swingHigh24h?: number;
+      p95_24h?: number;
+      windowHigh24h?: number;
+      p95_7d?: number;
+      p95_30d?: number;
+    };
+    capsApplied?: {
+      cappedBy7d?: boolean;
+      cappedBy30d?: boolean;
+      originalBase?: number;
+    };
+  };
   entryDipPct?: number;
   marketScore?: number;
   sizeProfile?: string;
@@ -65,6 +87,9 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.basePrice && typeof p.basePrice === 'object' && 'price' in p.basePrice) {
     result.basePrice = parseFloat(String(p.basePrice.price));
     result.basePriceType = p.basePrice.type;
+    if (p.basePrice.meta && typeof p.basePrice.meta === 'object') {
+      result.basePriceMeta = p.basePrice.meta;
+    }
   } else if (typeof p.basePrice === 'number') {
     result.basePrice = p.basePrice;
   }
@@ -794,6 +819,52 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               {parsed.parentCycleId != null && <DataPill label="Ciclo padre" value={`#${parsed.parentCycleId}`} />}
             </div>
           </div>
+
+          {/* B2. Cálculo de base — solo si hay meta híbrido */}
+          {parsed.basePriceMeta && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">Cálculo de base (Hybrid V2.1)</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-2 p-3 rounded-md bg-white/[0.02] border border-white/5">
+                {parsed.basePriceMeta.selectedAnchorPrice != null && (
+                  <DataPill label="Ancla" value={fUsd(parsed.basePriceMeta.selectedAnchorPrice)} color="text-sky-400" />
+                )}
+                {parsed.basePriceMeta.drawdownPctFromAnchor != null && (
+                  <DataPill label="Caída desde ancla" value={`-${fN(parsed.basePriceMeta.drawdownPctFromAnchor)}%`}
+                    color={parsed.basePriceMeta.drawdownPctFromAnchor > 0 ? "text-amber-400" : "text-muted-foreground"} />
+                )}
+                {parsed.basePriceMeta.selectedMethod && (
+                  <DataPill label="Método" value={parsed.basePriceMeta.selectedMethod} />
+                )}
+                {parsed.basePriceMeta.atrPct != null && (
+                  <DataPill label="ATR%" value={`${fN(parsed.basePriceMeta.atrPct)}%`} />
+                )}
+                {parsed.basePriceMeta.candidates?.p95_24h != null && (
+                  <DataPill label="P95 24h" value={fUsd(parsed.basePriceMeta.candidates.p95_24h)} color="text-violet-400" />
+                )}
+                {parsed.basePriceMeta.candidates?.p95_7d != null && (
+                  <DataPill label="P95 7d" value={fUsd(parsed.basePriceMeta.candidates.p95_7d)} color="text-violet-300" />
+                )}
+                {parsed.basePriceMeta.candidates?.p95_30d != null && (
+                  <DataPill label="P95 30d" value={fUsd(parsed.basePriceMeta.candidates.p95_30d)} color="text-violet-200" />
+                )}
+                {parsed.basePriceMeta.candidates?.swingHigh24h != null && (
+                  <DataPill label="Swing 24h" value={fUsd(parsed.basePriceMeta.candidates.swingHigh24h)} />
+                )}
+                {parsed.basePriceMeta.outlierRejected && (
+                  <DataPill label="Outlier rechazado" value={fUsd(parsed.basePriceMeta.outlierRejectedValue)} color="text-orange-400" />
+                )}
+                {parsed.basePriceMeta.capsApplied?.cappedBy7d && (
+                  <DataPill label="Cap aplicado" value="7d" color="text-amber-300" />
+                )}
+                {parsed.basePriceMeta.capsApplied?.cappedBy30d && (
+                  <DataPill label="Cap aplicado" value="30d" color="text-amber-300" />
+                )}
+              </div>
+              {parsed.basePriceMeta.selectedReason && (
+                <p className="mt-1.5 text-[10px] text-muted-foreground/60 italic px-1">{parsed.basePriceMeta.selectedReason}</p>
+              )}
+            </div>
+          )}
 
           {/* C. Detalle técnico (colapsable) */}
           <div>

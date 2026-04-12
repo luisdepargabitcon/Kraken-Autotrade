@@ -2,6 +2,52 @@
 
 ----
 
+## 2026-04-12 — REFACTOR: IDCA dipReference — Fase 2–8 completas
+
+### Objetivo
+Refactorización y hardening completo del campo `dipReference` del módulo IDCA:
+eliminar valores legacy, añadir contrato de tipos estricto, implementar Hybrid V2.1
+con contexto multi-timeframe, persistencia en BD y trazabilidad en UI.
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `db/migrations/025_idca_price_context.sql` | **NUEVO** — Migra `local_high`/`ema` → `hybrid`; cambia DEFAULT; añade CHECK constraint; crea `idca_price_context_snapshots` y `idca_price_context_static` |
+| `shared/schema.ts` | Añade definiciones Drizzle de las 2 tablas nuevas + types |
+| `server/services/institutionalDca/IdcaTypes.ts` | Elimina `ema` de `DipReferenceMethod`; añade `VALID_DIP_REFERENCE_METHODS`, `isValidDipReferenceMethod()`, `normalizeDipReferenceMethod()`; enriquece `BasePriceResult.meta`; añade `IdcaBucketContext` e `IdcaMacroContext` |
+| `server/services/institutionalDca/IdcaSmartLayer.ts` | **Hybrid V2.1**: algoritmo multi-timeframe (24h+7d+30d), outlier guard ATR-dinámico, selección swing/P95 con tolerancia 12%, caps 7d/30d, meta enriquecido |
+| `server/services/institutionalDca/IdcaEngine.ts` | `normalizeDipReferenceMethod` centralizada; `ohlcDailyCache`+`macroContextCache`; fetch candles diarias; `computeBucketContext`; upsert snapshots/static a BD; `logBasePriceDebug` y `logEntryDecision`; exporta `getMacroContext()` |
+| `server/services/institutionalDca/IdcaRepository.ts` | Añade `upsertPriceContextSnapshot`, `getLatestPriceContextSnapshots`, `purgeOldPriceContextSnapshots`, `upsertPriceContextStatic`, `getPriceContextStatic` |
+| `server/services/LogRetentionScheduler.ts` | Purge automático de `idca_price_context_snapshots` (retención 365 días) |
+| `server/routes/institutionalDca.routes.ts` | Endpoints `GET /price-context/:pair` y `GET /price-context` |
+| `client/src/components/idca/IdcaEventCards.tsx` | Sección "Cálculo de base (Hybrid V2.1)" con ancla, drawdown, candidatos P95, outlier, caps |
+| `server/services/__tests__/idcaSmartLayer.test.ts` | **NUEVO** — 20+ tests para normalización, Hybrid V2.1, outlier guard, caps, edge cases |
+
+### Algoritmo Hybrid V2.1
+
+```
+Inputs: candles 1h (hasta 30d), currentPrice, pivotN=3
+1. Filtrar ventanas: 24h, 7d, 30d
+2. ATR-pct sobre 24h → outlierThreshold = max(5%, atrPct×1.5)
+3. Candidatos 24h: swingHigh (detectPivotHighs), P95, windowHigh
+4. Outlier guard: si windowHigh > P95×(1+threshold) → rechazado
+5. Selección: si swingHigh <= P95×1.12 → usar swing; si no → usar P95
+6. Cap 7d: si base24h > p95_7d×1.10 → cap
+7. Cap 30d: si base capped > p95_30d×1.20 → cap
+8. Output: BasePriceResult con type="hybrid_v2" y meta enriquecido
+```
+
+### Logs estructurados añadidos
+- `[IDCA][IDCA_BASE_PRICE]` — emitido en cada tick con precio base, ancla, ATR, caps, método
+- `[IDCA][IDCA_ENTRY_DECISION]` — emitido por cada evaluación de entrada con resultado y razón
+
+### Contexto macro (por actualizarse 1×/día con candles diarias)
+- Tablas BD: `idca_price_context_snapshots` (buckets 7d/30d/90d/180d) y `idca_price_context_static` (high_2y, low_2y, yearHigh, yearLow, etc.)
+- Limpieza automática: retención 365 días vía `LogRetentionScheduler`
+
+----
+
 ## 2026-04-10 — AUDIT+FIX: IDCA Exit Flow & Telegram (FASE 1 + FASE 2)
 
 ### Problemas detectados (evidencia completa)

@@ -430,112 +430,249 @@ export interface ComputeBasePriceInput {
   pivotN?: number; // candles each side for pivot confirmation, default 3
 }
 
-export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult {
-  const { candles, lookbackMinutes, method, currentPrice, pivotN = 3 } = input;
-  const now = Date.now();
-  const cutoff = now - lookbackMinutes * 60 * 1000;
+// ─── Hybrid V2.1 algorithm constants ─────────────────────────────────────
+// SWING_ALIGNMENT_TOL: if swingHigh > p95 * (1 + tol), swing is "inflated" → use p95 instead
+const SWING_ALIGNMENT_TOL = 0.12;     // 12%
+// CAP_7D_TOL: if base24h > p95_7d * (1 + tol), cap base to p95_7d
+const CAP_7D_TOL = 0.10;              // 10%
+// CAP_30D_TOL: if base24h > p95_30d * (1 + tol), cap base to p95_30d
+const CAP_30D_TOL = 0.20;             // 20%
+// OUTLIER_ATR_FACTOR: outlierThreshold = max(MIN_OUTLIER_FLOOR, atrFraction * factor)
+// e.g. ATR=3% → threshold = max(5%, 3%×1.5=4.5%) = 5%
+// e.g. ATR=8% → threshold = max(5%, 8%×1.5=12%) = 12%
+const OUTLIER_ATR_FACTOR = 1.5;
+const MIN_OUTLIER_FLOOR = 0.05;       // 5% minimum regardless of ATR
+// Minimum candles required for a reliable base
+const MIN_CANDLES = 7;
 
-  // Filter candles within the lookback window
-  const windowCandles = candles.filter(c => c.time >= cutoff);
+function computeP95(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.floor(sorted.length * 0.95);
+  return sorted[Math.min(idx, sorted.length - 1)];
+}
 
-  // Not enough data → unreliable
-  const MIN_CANDLES = 7; // need at least 7 candles (pivotN*2+1) for swing detection
-  if (windowCandles.length < MIN_CANDLES) {
+function filterWindow(candles: TimestampedCandle[], nowMs: number, minutes: number): TimestampedCandle[] {
+  return candles.filter(c => c.time >= nowMs - minutes * 60 * 1000);
+}
+
+/**
+ * Hybrid V2.1 — multi-timeframe base price for dip-buying IDCA.
+ *
+ * Algorithm:
+ * 1. Compute candidates in 24h window: swingHigh, P95, windowHigh
+ * 2. ATR-based outlier guard: reject windowHigh if too far above P95
+ * 3. Selection: prefer swingHigh if aligned with P95 (within 12%), else use P95
+ * 4. 7d validation cap: if selected base > p95_7d × 1.10, cap to p95_7d
+ * 5. 30d context cap: if selected base > p95_30d × 1.20, cap to p95_30d
+ */
+function computeHybridV2(
+  candles: TimestampedCandle[],
+  currentPrice: number,
+  pivotN: number,
+  nowMs: number,
+): BasePriceResult {
+  const candles24h = filterWindow(candles, nowMs, 1440);    // 24h = 1440 min
+  const candles7d  = filterWindow(candles, nowMs, 10080);   // 7d  = 7×24×60
+  const candles30d = filterWindow(candles, nowMs, 43200);   // 30d = 30×24×60
+
+  if (candles24h.length < MIN_CANDLES) {
     return {
       price: 0,
       type: "cycle_start_price",
-      windowMinutes: lookbackMinutes,
-      timestamp: new Date(now),
+      windowMinutes: 1440,
+      timestamp: new Date(nowMs),
       isReliable: false,
-      reason: `Insufficient candles: ${windowCandles.length}/${MIN_CANDLES} in ${lookbackMinutes}min window`,
-      meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+      reason: `Hybrid V2.1: insufficient 24h candles ${candles24h.length}/${MIN_CANDLES}`,
+      meta: { candleCount: candles24h.length, swingHighsFound: 0 },
     };
   }
 
-  const highs = windowCandles.map(c => c.high);
-  const maxAbsolute = Math.max(...highs);
+  // ── ATR for dynamic outlier threshold ────────────────────────────────
+  const atrPct = computeATRPct(candles24h, Math.min(14, candles24h.length - 1));
+  const outlierThreshold = Math.max(MIN_OUTLIER_FLOOR, (atrPct / 100) * OUTLIER_ATR_FACTOR);
 
-  // Step 1: Detect pivot highs (swing_high method or hybrid first pass)
-  if (method === "swing_high" || method === "hybrid") {
-    const pivotResult = detectPivotHighs(windowCandles, pivotN);
-    if (pivotResult.pivots.length > 0) {
-      // Use the highest confirmed pivot
-      const best = pivotResult.pivots.reduce((a, b) => a.price > b.price ? a : b);
-      return {
-        price: best.price,
-        type: "swing_high_1h",
-        windowMinutes: lookbackMinutes,
-        timestamp: new Date(best.time),
-        isReliable: true,
-        reason: `Swing high confirmed (N=${pivotN}): ${pivotResult.pivots.length} pivots found, best=$${best.price.toFixed(2)}`,
-        meta: {
-          candleCount: windowCandles.length,
-          swingHighsFound: pivotResult.pivots.length,
-          maxAbsolute,
-          filteredWindow: lookbackMinutes,
-        },
-      };
-    }
+  // ── Candidates 24h ───────────────────────────────────────────────────
+  const highs24h = candles24h.map(c => c.high);
+  const windowHigh24h = Math.max(...highs24h);
+  const p95_24h = computeP95(highs24h);
 
-    // If swing_high only and no pivots found → unreliable
-    if (method === "swing_high") {
-      return {
-        price: 0,
-        type: "swing_high_1h",
-        windowMinutes: lookbackMinutes,
-        timestamp: new Date(now),
-        isReliable: false,
-        reason: `No confirmed swing highs (N=${pivotN}) in ${windowCandles.length} candles`,
-        meta: { candleCount: windowCandles.length, swingHighsFound: 0, maxAbsolute },
-      };
+  // Swing high candidate
+  const pivotResult = detectPivotHighs(candles24h, pivotN);
+  const swingHighCandidate = pivotResult.pivots.length > 0
+    ? pivotResult.pivots.reduce((a, b) => a.price > b.price ? a : b)
+    : null;
+
+  // Outlier guard: reject windowHigh if it's too far above P95
+  const outlierRejected = windowHigh24h > p95_24h * (1 + outlierThreshold);
+
+  // ── 7d and 30d P95 ───────────────────────────────────────────────────
+  const p95_7d  = candles7d.length  >= MIN_CANDLES ? computeP95(candles7d.map(c => c.high))  : undefined;
+  const p95_30d = candles30d.length >= MIN_CANDLES ? computeP95(candles30d.map(c => c.high)) : undefined;
+
+  // ── Selection logic ───────────────────────────────────────────────────
+  let selectedPrice: number;
+  let selectedMethod: string;
+  let selectedReason: string;
+  let anchorTime: Date;
+
+  if (swingHighCandidate !== null) {
+    const swingInflated = swingHighCandidate.price > p95_24h * (1 + SWING_ALIGNMENT_TOL);
+    if (!swingInflated) {
+      selectedPrice = swingHighCandidate.price;
+      selectedMethod = "swing_high_24h";
+      selectedReason = `Hybrid V2.1 seleccionó swing high 24h alineado con P95 24h (swing=$${swingHighCandidate.price.toFixed(2)}, p95=$${p95_24h.toFixed(2)}).`;
+      anchorTime = new Date(swingHighCandidate.time);
+    } else {
+      selectedPrice = p95_24h;
+      selectedMethod = "p95_24h";
+      selectedReason = `Hybrid V2.1 descartó swing inflado ($${swingHighCandidate.price.toFixed(2)} > p95×${(1+SWING_ALIGNMENT_TOL).toFixed(2)}) y usó P95 24h ($${p95_24h.toFixed(2)}).`;
+      const p95Candle = candles24h.reduce((b, c) => Math.abs(c.high - p95_24h) < Math.abs(b.high - p95_24h) ? c : b);
+      anchorTime = new Date(p95Candle.time);
     }
+  } else {
+    selectedPrice = p95_24h;
+    selectedMethod = "p95_24h";
+    selectedReason = `Hybrid V2.1 usó P95 24h ($${p95_24h.toFixed(2)}) por ausencia de swing highs fiables.`;
+    const p95Candle = candles24h.reduce((b, c) => Math.abs(c.high - p95_24h) < Math.abs(b.high - p95_24h) ? c : b);
+    anchorTime = new Date(p95Candle.time);
   }
 
-  // Step 2: P95 of highs (window_high method or hybrid fallback)
-  if (method === "window_high" || method === "hybrid") {
-    const sorted = [...highs].sort((a, b) => a - b);
-    const p95Index = Math.floor(sorted.length * 0.95);
-    const p95Value = sorted[Math.min(p95Index, sorted.length - 1)];
+  // ── Apply caps from 7d and 30d ────────────────────────────────────────
+  const caps: { cappedBy7d?: boolean; cappedBy30d?: boolean; originalBase?: number } = {};
+  const originalBase = selectedPrice;
 
-    // Find the candle closest to the P95 value for timestamp
+  if (p95_7d !== undefined && selectedPrice > p95_7d * (1 + CAP_7D_TOL)) {
+    caps.cappedBy7d = true;
+    caps.originalBase = originalBase;
+    selectedPrice = p95_7d;
+    selectedMethod = "p95_7d_capped";
+    selectedReason = `Base 24h ($${originalBase.toFixed(2)}) capada por contexto 7d (p95_7d=$${p95_7d.toFixed(2)}).`;
+    const p95Candle7d = candles7d.reduce((b, c) => Math.abs(c.high - p95_7d) < Math.abs(b.high - p95_7d) ? c : b);
+    anchorTime = new Date(p95Candle7d.time);
+  }
+
+  if (p95_30d !== undefined && selectedPrice > p95_30d * (1 + CAP_30D_TOL)) {
+    caps.cappedBy30d = true;
+    if (caps.originalBase === undefined) caps.originalBase = originalBase;
+    selectedPrice = p95_30d;
+    selectedMethod = "p95_30d_capped";
+    selectedReason = `Base capada por contexto 30d (p95_30d=$${p95_30d.toFixed(2)}).`;
+    const p95Candle30d = candles30d.reduce((b, c) => Math.abs(c.high - p95_30d) < Math.abs(b.high - p95_30d) ? c : b);
+    anchorTime = new Date(p95Candle30d.time);
+  }
+
+  const drawdownPctFromAnchor = selectedPrice > 0
+    ? ((selectedPrice - currentPrice) / selectedPrice) * 100
+    : 0;
+
+  return {
+    price: selectedPrice,
+    type: "hybrid_v2",
+    windowMinutes: 1440,
+    timestamp: anchorTime!,
+    isReliable: true,
+    reason: selectedReason,
+    meta: {
+      candleCount: candles24h.length,
+      candleCount7d: candles7d.length,
+      candleCount30d: candles30d.length,
+      swingHighsFound: pivotResult.pivots.length,
+      candidates: {
+        swingHigh24h: swingHighCandidate?.price,
+        p95_24h,
+        windowHigh24h,
+        p95_7d,
+        p95_30d,
+      },
+      selectedMethod,
+      selectedReason,
+      selectedAnchorPrice: selectedPrice,
+      selectedAnchorTime: anchorTime!,
+      drawdownPctFromAnchor,
+      outlierRejected,
+      outlierRejectedValue: outlierRejected ? windowHigh24h : undefined,
+      capsApplied: Object.keys(caps).length > 0 ? caps : undefined,
+      atrPct,
+      // Legacy compat
+      p95Value: p95_24h,
+      maxAbsolute: windowHigh24h,
+      filteredWindow: 1440,
+    },
+  };
+}
+
+export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult {
+  const { candles, lookbackMinutes, method, currentPrice, pivotN = 3 } = input;
+  const now = Date.now();
+
+  // ── Hybrid V2.1 — primary method ──────────────────────────────────────
+  if (method === "hybrid") {
+    return computeHybridV2(candles, currentPrice, pivotN, now);
+  }
+
+  // ── swing_high — pure pivot detection ─────────────────────────────────
+  if (method === "swing_high") {
+    const cutoff = now - lookbackMinutes * 60 * 1000;
+    const windowCandles = candles.filter(c => c.time >= cutoff);
+    const highs = windowCandles.map(c => c.high);
+    const maxAbsolute = windowCandles.length > 0 ? Math.max(...highs) : 0;
+
+    if (windowCandles.length < MIN_CANDLES) {
+      return {
+        price: 0, type: "cycle_start_price", windowMinutes: lookbackMinutes,
+        timestamp: new Date(now), isReliable: false,
+        reason: `Insufficient candles: ${windowCandles.length}/${MIN_CANDLES} in ${lookbackMinutes}min window`,
+        meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+      };
+    }
+    const pivotResult = detectPivotHighs(windowCandles, pivotN);
+    if (pivotResult.pivots.length > 0) {
+      const best = pivotResult.pivots.reduce((a, b) => a.price > b.price ? a : b);
+      return {
+        price: best.price, type: "swing_high_1h", windowMinutes: lookbackMinutes,
+        timestamp: new Date(best.time), isReliable: true,
+        reason: `Swing high confirmed (N=${pivotN}): ${pivotResult.pivots.length} pivots, best=$${best.price.toFixed(2)}`,
+        meta: { candleCount: windowCandles.length, swingHighsFound: pivotResult.pivots.length, maxAbsolute, filteredWindow: lookbackMinutes },
+      };
+    }
+    return {
+      price: 0, type: "swing_high_1h", windowMinutes: lookbackMinutes,
+      timestamp: new Date(now), isReliable: false,
+      reason: `No confirmed swing highs (N=${pivotN}) in ${windowCandles.length} candles`,
+      meta: { candleCount: windowCandles.length, swingHighsFound: 0, maxAbsolute },
+    };
+  }
+
+  // ── window_high — P95 of window ───────────────────────────────────────
+  if (method === "window_high") {
+    const cutoff = now - lookbackMinutes * 60 * 1000;
+    const windowCandles = candles.filter(c => c.time >= cutoff);
+    const highs = windowCandles.map(c => c.high);
+    const maxAbsolute = windowCandles.length > 0 ? Math.max(...highs) : 0;
+
+    if (windowCandles.length < MIN_CANDLES) {
+      return {
+        price: 0, type: "cycle_start_price", windowMinutes: lookbackMinutes,
+        timestamp: new Date(now), isReliable: false,
+        reason: `Insufficient candles: ${windowCandles.length}/${MIN_CANDLES} in ${lookbackMinutes}min window`,
+        meta: { candleCount: windowCandles.length, swingHighsFound: 0 },
+      };
+    }
+    const p95Value = computeP95(highs);
     const p95Candle = windowCandles.reduce((best, c) =>
       Math.abs(c.high - p95Value) < Math.abs(best.high - p95Value) ? c : best
     );
-
     return {
-      price: p95Value,
-      type: "window_high_p95",
-      windowMinutes: lookbackMinutes,
-      timestamp: new Date(p95Candle.time),
-      isReliable: true,
+      price: p95Value, type: "window_high_p95", windowMinutes: lookbackMinutes,
+      timestamp: new Date(p95Candle.time), isReliable: true,
       reason: `P95 of ${windowCandles.length} candle highs in ${lookbackMinutes}min window (max=$${maxAbsolute.toFixed(2)}, p95=$${p95Value.toFixed(2)})`,
-      meta: {
-        candleCount: windowCandles.length,
-        swingHighsFound: 0,
-        p95Value,
-        maxAbsolute,
-        filteredWindow: lookbackMinutes,
-      },
+      meta: { candleCount: windowCandles.length, swingHighsFound: 0, p95Value, maxAbsolute, filteredWindow: lookbackMinutes },
     };
   }
 
-  // Unknown/unimplemented method: fall back to P95 window_high (same as hybrid fallback)
-  // This handles legacy DB values like 'local_high', 'ema', etc.
-  const sorted = [...highs].sort((a, b) => a - b);
-  const p95Index = Math.floor(sorted.length * 0.95);
-  const p95Value = sorted[Math.min(p95Index, sorted.length - 1)];
-  const p95Candle = windowCandles.reduce((best, c) =>
-    Math.abs(c.high - p95Value) < Math.abs(best.high - p95Value) ? c : best
-  );
-  return {
-    price: p95Value,
-    type: "window_high_p95",
-    windowMinutes: lookbackMinutes,
-    timestamp: new Date(p95Candle.time),
-    isReliable: true,
-    reason: `P95 fallback (method '${method}' unknown): ${windowCandles.length} candles, p95=$${p95Value.toFixed(2)}`,
-    meta: { candleCount: windowCandles.length, swingHighsFound: 0, p95Value, maxAbsolute, filteredWindow: lookbackMinutes },
-  };
+  // ── Unknown method — always falls back to Hybrid V2.1 ─────────────────
+  // Handles any legacy value that escaped normalization
+  return computeHybridV2(candles, currentPrice, pivotN, now);
 }
 
 interface PivotPoint {

@@ -880,6 +880,37 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Price Context (debug/UI) ──────────────────────────────────
+
+  app.get(`${PREFIX}/price-context/:pair`, async (req, res) => {
+    try {
+      const pair = decodeURIComponent(req.params.pair);
+      const [snapshots, staticData, liveContext] = await Promise.all([
+        repo.getLatestPriceContextSnapshots(pair),
+        repo.getPriceContextStatic(pair),
+        Promise.resolve(engine.getMacroContext(pair)),
+      ]);
+      res.json({ pair, snapshots, staticData, liveContext: liveContext ?? null });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get(`${PREFIX}/price-context`, async (_req, res) => {
+    try {
+      const results = await Promise.all(
+        INSTITUTIONAL_DCA_ALLOWED_PAIRS.map(async (pair) => ({
+          pair,
+          staticData: await repo.getPriceContextStatic(pair),
+          liveContext: engine.getMacroContext(pair) ?? null,
+        }))
+      );
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Event Purge Scheduler ─────────────────────────────────────
   // Auto-purge events older than 7 days every 6 hours
   setInterval(async () => {

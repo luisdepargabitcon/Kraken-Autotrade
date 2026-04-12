@@ -14,6 +14,12 @@ import {
   institutionalDcaBacktests,
   institutionalDcaSimulationWallet,
   institutionalDcaOhlcvCache,
+  idcaPriceContextSnapshots,
+  idcaPriceContextStatic,
+  type IdcaPriceContextSnapshotRow,
+  type InsertIdcaPriceContextSnapshot,
+  type IdcaPriceContextStaticRow,
+  type InsertIdcaPriceContextStatic,
   type TradingEngineControls,
   type InsertTradingEngineControls,
   type InstitutionalDcaConfigRow,
@@ -1078,4 +1084,86 @@ export async function updateCycleWithEditAudit(
     .returning();
 
   return updated;
+}
+
+// ─── IDCA Price Context ────────────────────────────────────────────────
+
+export async function upsertPriceContextSnapshot(
+  data: Omit<InsertIdcaPriceContextSnapshot, "id" | "createdAt">
+): Promise<void> {
+  await db
+    .insert(idcaPriceContextSnapshots)
+    .values(data as InsertIdcaPriceContextSnapshot)
+    .onConflictDoUpdate({
+      target: [idcaPriceContextSnapshots.pair, idcaPriceContextSnapshots.bucket, idcaPriceContextSnapshots.snapshotDate],
+      set: {
+        highMax:              data.highMax,
+        lowMin:               data.lowMin,
+        p95High:              data.p95High,
+        avgClose:             data.avgClose,
+        drawdownFromHighPct:  data.drawdownFromHighPct,
+        rangePosition:        data.rangePosition,
+        source:               data.source ?? "scheduled",
+      },
+    });
+}
+
+export async function getLatestPriceContextSnapshots(
+  pair: string
+): Promise<IdcaPriceContextSnapshotRow[]> {
+  return db
+    .select()
+    .from(idcaPriceContextSnapshots)
+    .where(eq(idcaPriceContextSnapshots.pair, pair))
+    .orderBy(desc(idcaPriceContextSnapshots.snapshotDate))
+    .limit(20);
+}
+
+export async function purgeOldPriceContextSnapshots(
+  retentionDays = 365
+): Promise<number> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - retentionDays);
+  const deleted = await db
+    .delete(idcaPriceContextSnapshots)
+    .where(sql`${idcaPriceContextSnapshots.createdAt} < ${cutoff}`)
+    .returning();
+  return deleted.length;
+}
+
+export async function upsertPriceContextStatic(
+  data: Omit<InsertIdcaPriceContextStatic, "id" | "updatedAt">
+): Promise<void> {
+  await db
+    .insert(idcaPriceContextStatic)
+    .values({ ...data, updatedAt: new Date() } as InsertIdcaPriceContextStatic)
+    .onConflictDoUpdate({
+      target: [idcaPriceContextStatic.pair],
+      set: {
+        high2y:               data.high2y,
+        high2yTime:           data.high2yTime,
+        low2y:                data.low2y,
+        low2yTime:            data.low2yTime,
+        yearHigh:             data.yearHigh,
+        yearLow:              data.yearLow,
+        lastP95_90d:          data.lastP95_90d,
+        lastP95_180d:         data.lastP95_180d,
+        lastDrawdown90dPct:   data.lastDrawdown90dPct,
+        lastDrawdown180dPct:  data.lastDrawdown180dPct,
+        lastRangePosition90d: data.lastRangePosition90d,
+        lastRangePosition180d: data.lastRangePosition180d,
+        updatedAt:            new Date(),
+      },
+    });
+}
+
+export async function getPriceContextStatic(
+  pair: string
+): Promise<IdcaPriceContextStaticRow | undefined> {
+  const rows = await db
+    .select()
+    .from(idcaPriceContextStatic)
+    .where(eq(idcaPriceContextStatic.pair, pair))
+    .limit(1);
+  return rows[0];
 }

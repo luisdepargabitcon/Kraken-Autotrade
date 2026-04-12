@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb, unique, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tradingConfigSchema, configChangeSchema, type TradingConfig, type ConfigChange } from "./config-schema";
@@ -1224,3 +1224,47 @@ export const institutionalDcaOhlcvCache = pgTable("institutional_dca_ohlcv_cache
 
 export type InstitutionalDcaOhlcvCacheRow = typeof institutionalDcaOhlcvCache.$inferSelect;
 export type InsertInstitutionalDcaOhlcvCache = typeof institutionalDcaOhlcvCache.$inferInsert;
+
+// 10.10 IDCA Price Context Snapshots — daily per pair+bucket, max 2920 rows
+export const idcaPriceContextSnapshots = pgTable("idca_price_context_snapshots", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull(),
+  bucket: text("bucket").notNull(),               // '7d' | '30d' | '90d' | '180d'
+  snapshotDate: date("snapshot_date").notNull(),  // 1 row per pair+bucket+day
+  highMax: decimal("high_max", { precision: 18, scale: 8 }),
+  lowMin: decimal("low_min", { precision: 18, scale: 8 }),
+  p95High: decimal("p95_high", { precision: 18, scale: 8 }),
+  avgClose: decimal("avg_close", { precision: 18, scale: 8 }),
+  drawdownFromHighPct: decimal("drawdown_from_high_pct", { precision: 8, scale: 4 }),
+  rangePosition: decimal("range_position", { precision: 8, scale: 4 }),
+  source: text("source").notNull().default("scheduled"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  pairBucketDateUnique: unique().on(table.pair, table.bucket, table.snapshotDate),
+}));
+
+export type IdcaPriceContextSnapshotRow = typeof idcaPriceContextSnapshots.$inferSelect;
+export type InsertIdcaPriceContextSnapshot = typeof idcaPriceContextSnapshots.$inferInsert;
+
+// 10.11 IDCA Price Context Static — one permanent row per pair
+// high_2y = max from ~720 daily Kraken candles (~2 years). Not true ATH.
+export const idcaPriceContextStatic = pgTable("idca_price_context_static", {
+  id: serial("id").primaryKey(),
+  pair: text("pair").notNull().unique(),
+  high2y: decimal("high_2y", { precision: 18, scale: 8 }),
+  high2yTime: timestamp("high_2y_time"),
+  low2y: decimal("low_2y", { precision: 18, scale: 8 }),
+  low2yTime: timestamp("low_2y_time"),
+  yearHigh: decimal("year_high", { precision: 18, scale: 8 }),
+  yearLow: decimal("year_low", { precision: 18, scale: 8 }),
+  lastP95_90d: decimal("last_p95_90d", { precision: 18, scale: 8 }),
+  lastP95_180d: decimal("last_p95_180d", { precision: 18, scale: 8 }),
+  lastDrawdown90dPct: decimal("last_drawdown_90d_pct", { precision: 8, scale: 4 }),
+  lastDrawdown180dPct: decimal("last_drawdown_180d_pct", { precision: 8, scale: 4 }),
+  lastRangePosition90d: decimal("last_range_position_90d", { precision: 8, scale: 4 }),
+  lastRangePosition180d: decimal("last_range_position_180d", { precision: 8, scale: 4 }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type IdcaPriceContextStaticRow = typeof idcaPriceContextStatic.$inferSelect;
+export type InsertIdcaPriceContextStatic = typeof idcaPriceContextStatic.$inferInsert;

@@ -1,6 +1,7 @@
 import { storage } from '../storage';
 import { serverLogsService } from './serverLogsService';
 import { botLogger } from './botLogger';
+import * as idcaRepo from './institutionalDca/IdcaRepository';
 
 const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MIN_HOURS_BETWEEN_PURGES = 23;
@@ -38,21 +39,22 @@ class LogRetentionScheduler {
     console.log('[LogRetentionScheduler] Shutdown.');
   }
 
-  async runPurge(): Promise<{ logsDeleted: number; eventsDeleted: number }> {
+  async runPurge(): Promise<{ logsDeleted: number; eventsDeleted: number; snapshotsDeleted: number }> {
     if (this.isRunning) {
       console.log('[LogRetentionScheduler] Purge already in progress, skipping.');
-      return { logsDeleted: 0, eventsDeleted: 0 };
+      return { logsDeleted: 0, eventsDeleted: 0, snapshotsDeleted: 0 };
     }
 
     this.isRunning = true;
     let logsDeleted = 0;
     let eventsDeleted = 0;
+    let snapshotsDeleted = 0;
 
     try {
       const config = await storage.getBotConfig();
       if (!config) {
         console.warn('[LogRetentionScheduler] No bot config found, skipping purge.');
-        return { logsDeleted: 0, eventsDeleted: 0 };
+        return { logsDeleted: 0, eventsDeleted: 0, snapshotsDeleted: 0 };
       }
 
       // Purge server_logs
@@ -81,10 +83,20 @@ class LogRetentionScheduler {
         console.log('[LogRetentionScheduler] bot_events retention disabled, skipping.');
       }
 
-      return { logsDeleted, eventsDeleted };
+      // Purge idca_price_context_snapshots (365-day retention)
+      try {
+        snapshotsDeleted = await idcaRepo.purgeOldPriceContextSnapshots(365);
+        if (snapshotsDeleted > 0) {
+          console.log(`[LogRetentionScheduler] idca_price_context_snapshots purge: -${snapshotsDeleted} rows (retention: 365d)`);
+        }
+      } catch (e: any) {
+        console.warn('[LogRetentionScheduler] Snapshot purge failed (non-critical):', e?.message);
+      }
+
+      return { logsDeleted, eventsDeleted, snapshotsDeleted };
     } catch (e: any) {
       console.error('[LogRetentionScheduler] runPurge error:', e?.message);
-      return { logsDeleted, eventsDeleted };
+      return { logsDeleted, eventsDeleted, snapshotsDeleted };
     } finally {
       this.isRunning = false;
     }

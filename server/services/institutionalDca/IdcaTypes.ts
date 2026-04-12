@@ -7,8 +7,25 @@ export type IdcaCycleStatus = "idle" | "waiting_entry" | "active" | "tp_armed" |
 export type IdcaOrderType = "base_buy" | "safety_buy" | "partial_sell" | "final_sell" | "breakeven_sell" | "emergency_sell" | "manual_sell";
 export type IdcaSizeProfile = "aggressive_quality" | "balanced" | "defensive";
 export type IdcaReinvestMode = "none" | "profits_only" | "full";
-export type DipReferenceMethod = "hybrid" | "swing_high" | "window_high" | "ema";
-export type BasePriceType = "swing_high_1h" | "window_high_p95" | "cycle_start_price";
+export type DipReferenceMethod = "hybrid" | "swing_high" | "window_high";
+export type BasePriceType = "swing_high_1h" | "window_high_p95" | "hybrid_v2" | "cycle_start_price";
+
+// ─── Single source of truth for valid dip reference methods ───────────
+export const VALID_DIP_REFERENCE_METHODS: readonly DipReferenceMethod[] = ["hybrid", "swing_high", "window_high"] as const;
+
+export function isValidDipReferenceMethod(value: unknown): value is DipReferenceMethod {
+  return typeof value === "string" && (VALID_DIP_REFERENCE_METHODS as readonly string[]).includes(value);
+}
+
+export function normalizeDipReferenceMethod(
+  value: unknown,
+  context?: { pair?: string; origin?: string }
+): DipReferenceMethod {
+  if (isValidDipReferenceMethod(value)) return value;
+  const ctx = context ? ` [pair=${context.pair ?? "?"}, origin=${context.origin ?? "?"}]` : "";
+  console.warn(`[IDCA][DIP_REF] Invalid dipReference='${value}' — falling back to 'hybrid'${ctx}`);
+  return "hybrid";
+}
 
 export interface BasePriceResult {
   price: number;
@@ -18,12 +35,66 @@ export interface BasePriceResult {
   isReliable: boolean;
   reason: string;
   meta?: {
-    candleCount: number;
+    // Core counts
+    candleCount: number;       // candles in primary (24h) window
+    candleCount7d?: number;
+    candleCount30d?: number;
     swingHighsFound: number;
+    // Candidates computed
+    candidates?: {
+      swingHigh24h?: number;
+      p95_24h?: number;
+      windowHigh24h?: number;
+      p95_7d?: number;
+      p95_30d?: number;
+    };
+    // Decision
+    selectedMethod?: string;   // 'swing_high_24h' | 'p95_24h' | 'p95_7d' | ...
+    selectedReason?: string;
+    selectedAnchorPrice?: number;
+    selectedAnchorTime?: Date;
+    drawdownPctFromAnchor?: number;
+    // Outlier guard
+    outlierRejected?: boolean;
+    outlierRejectedValue?: number;
+    // Caps applied
+    capsApplied?: {
+      cappedBy7d?: boolean;
+      cappedBy30d?: boolean;
+      originalBase?: number;
+    };
+    // Volatility context
+    atrPct?: number;
+    // Legacy fields (kept for backward compat)
     p95Value?: number;
     maxAbsolute?: number;
     filteredWindow?: number;
   };
+}
+
+// ─── IDCA Price Context (macro / multi-timeframe) ─────────────────────
+export interface IdcaBucketContext {
+  bucket: "7d" | "30d" | "90d" | "180d";
+  highMax: number;
+  lowMin: number;
+  p95High: number;
+  avgClose: number;
+  drawdownFromHighPct: number;
+  rangePosition: number;   // 0=at low, 1=at high
+  candleCount: number;
+}
+
+export interface IdcaMacroContext {
+  pair: string;
+  computedAt: Date;
+  buckets: Partial<Record<"7d" | "30d" | "90d" | "180d", IdcaBucketContext>>;
+  // Structural (from daily cache, ~2 years)
+  high2y?: number;
+  high2yTime?: Date;
+  low2y?: number;
+  low2yTime?: Date;
+  yearHigh?: number;
+  yearLow?: number;
 }
 
 export interface SafetyOrderLevel {

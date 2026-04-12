@@ -26,7 +26,9 @@ import type {
   BasePriceResult,
   BasePriceType,
   DipReferenceMethod,
+  IdcaMacroContext,
 } from "./IdcaTypes";
+import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 
@@ -139,6 +141,8 @@ let tickCount = 0;
 // Cache for market data
 const priceCache = new Map<string, number>();
 const ohlcCache = new Map<string, TimestampedCandle[]>();
+const ohlcDailyCache = new Map<string, TimestampedCandle[]>();  // 1d candles for macro context (90d/180d)
+const macroContextCache = new Map<string, IdcaMacroContext>();  // computed macro context per pair
 
 // ─── Human Event Helper ───────────────────────────────────────────
 
@@ -322,6 +326,10 @@ export function stopScheduler(): void {
   }
   isRunning = false;
   console.log(`${TAG} Scheduler stopped`);
+}
+
+export function getMacroContext(pair: string): IdcaMacroContext | undefined {
+  return macroContextCache.get(pair);
 }
 
 export async function emergencyCloseAll(): Promise<number> {
@@ -1601,15 +1609,7 @@ async function performEntryCheck(
   }
 
   // Calculate base price using deterministic method
-  // Normalize dipReference: fallback to 'hybrid' for unknown/legacy values (e.g. 'local_high', 'ema')
-  const VALID_DIP_METHODS: DipReferenceMethod[] = ["hybrid", "swing_high", "window_high"];
-  const rawMethod = assetConfig.dipReference || "hybrid";
-  const dipRefMethod: DipReferenceMethod = VALID_DIP_METHODS.includes(rawMethod as DipReferenceMethod)
-    ? (rawMethod as DipReferenceMethod)
-    : "hybrid";
-  if (!VALID_DIP_METHODS.includes(rawMethod as DipReferenceMethod)) {
-    console.warn(`${TAG}[OHLCV] ${pair}: dipReference='${rawMethod}' no reconocido — usando 'hybrid' como fallback`);
-  }
+  const dipRefMethod = normalizeDipReferenceMethod(assetConfig.dipReference || "hybrid", { pair, origin: "assetConfig.dipReference" });
   const candles = cacheCandles;
   const basePriceResult = smart.computeBasePrice({
     candles,
@@ -1617,6 +1617,9 @@ async function performEntryCheck(
     method: dipRefMethod,
     currentPrice,
   });
+
+  // Structured log — always emitted for trazabilidad
+  logBasePriceDebug(pair, currentPrice, basePriceResult);
 
   if (!basePriceResult.isReliable) {
     blocks.push({ code: "insufficient_base_price_data", message: basePriceResult.reason, timestamp: now });
@@ -1630,6 +1633,14 @@ async function performEntryCheck(
   if (basePriceResult.isReliable && entryDipPct < minDip) {
     blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip}% (BasePrice=$${basePriceResult.price.toFixed(2)}, Type=${basePriceResult.type})`, timestamp: now });
   }
+
+  // Entry decision log (emitted after all blocks are assessed)
+  logEntryDecision(
+    pair,
+    blocks.length === 0 ? "allowed" : "blocked",
+    blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
+    entryDipPct, minDip, basePriceResult, currentPrice
+  );
 
   // BTC gate for ETH
   if (pair === "ETH/USD" && config.btcMarketGateForEthEnabled) {
@@ -1817,45 +1828,192 @@ function getVolatility(pair: string): number {
   return smart.computeATRPct(candles);
 }
 
+// ─── Structured logs for basePrice trazabilidad ──────────────────────
+
+function logBasePriceDebug(pair: string, currentPrice: number, base: BasePriceResult): void {
+  const m = base.meta;
+  console.log(
+    `${TAG}[IDCA_BASE_PRICE]` +
+    ` pair=${pair}` +
+    ` current_price=${currentPrice.toFixed(2)}` +
+    ` base_price=${base.price.toFixed(2)}` +
+    ` anchor_price=${(m?.selectedAnchorPrice ?? base.price).toFixed(2)}` +
+    ` anchor_time=${m?.selectedAnchorTime ? new Date(m.selectedAnchorTime).toISOString().slice(0, 16) : "n/a"}` +
+    ` drawdown_pct=${(m?.drawdownPctFromAnchor ?? 0).toFixed(2)}%` +
+    ` selected_method=${m?.selectedMethod ?? base.type}` +
+    ` selected_reason="${m?.selectedReason ?? base.reason}"` +
+    ` p95_24h=${m?.candidates?.p95_24h?.toFixed(2) ?? "n/a"}` +
+    ` p95_7d=${m?.candidates?.p95_7d?.toFixed(2) ?? "n/a"}` +
+    ` p95_30d=${m?.candidates?.p95_30d?.toFixed(2) ?? "n/a"}` +
+    ` window_high_24h=${m?.candidates?.windowHigh24h?.toFixed(2) ?? "n/a"}` +
+    ` outlier_rejected=${m?.outlierRejected ?? false}` +
+    ` atr_pct=${m?.atrPct?.toFixed(2) ?? "n/a"}%` +
+    ` cap_7d_applied=${m?.capsApplied?.cappedBy7d ?? false}` +
+    ` cap_30d_applied=${m?.capsApplied?.cappedBy30d ?? false}` +
+    ` is_reliable=${base.isReliable}`
+  );
+}
+
+function logEntryDecision(pair: string, action: "allowed" | "blocked", reason: string, dip: number, minDip: number, base: BasePriceResult, currentPrice: number): void {
+  console.log(
+    `${TAG}[IDCA_ENTRY_DECISION]` +
+    ` pair=${pair}` +
+    ` action=${action}` +
+    ` reason="${reason}"` +
+    ` drawdown_pct=${dip.toFixed(2)}%` +
+    ` required_drop=${minDip.toFixed(2)}%` +
+    ` base_price=${base.price.toFixed(2)}` +
+    ` current_price=${currentPrice.toFixed(2)}`
+  );
+}
+
+// Helper: compute P95 of an array of numbers
+function computeP95Local(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.floor(sorted.length * 0.95);
+  return sorted[Math.min(idx, sorted.length - 1)];
+}
+
+// Helper: map raw Kraken OHLC response to TimestampedCandle
+function mapKrakenCandles(candles: any[]): TimestampedCandle[] {
+  return candles.map((c: any) => ({
+    high:  parseFloat(String(c.high  || c[2] || 0)),
+    low:   parseFloat(String(c.low   || c[3] || 0)),
+    close: parseFloat(String(c.close || c[4] || 0)),
+    time:  c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
+  }));
+}
+
+// Helper: compute bucket context metrics from a candle slice
+function computeBucketContext(
+  candles: TimestampedCandle[],
+  nowMs: number,
+  bucketMinutes: number,
+  bucketLabel: "7d" | "30d" | "90d" | "180d"
+): import("./IdcaTypes").IdcaBucketContext | undefined {
+  const slice = candles.filter(c => c.time >= nowMs - bucketMinutes * 60 * 1000);
+  if (slice.length < 2) return undefined;
+  const highs  = slice.map(c => c.high);
+  const lows   = slice.map(c => c.low);
+  const closes = slice.map(c => c.close);
+  const highMax  = Math.max(...highs);
+  const lowMin   = Math.min(...lows);
+  const p95High  = computeP95Local(highs);
+  const avgClose = closes.reduce((a, b) => a + b, 0) / closes.length;
+  const lastClose = closes[closes.length - 1];
+  const drawdownFromHighPct = highMax > 0 ? ((highMax - lastClose) / highMax) * 100 : 0;
+  const rangePosition = highMax > lowMin ? (lastClose - lowMin) / (highMax - lowMin) : 0.5;
+  return { bucket: bucketLabel, highMax, lowMin, p95High, avgClose, drawdownFromHighPct, rangePosition, candleCount: slice.length };
+}
+
 async function updateOhlcvCache(): Promise<void> {
   for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
     try {
       const dataExchange = ExchangeFactory.getDataExchange();
       if (!dataExchange.isInitialized()) continue;
 
-      // Get 1h candles for analysis (last 100)
-      const candles = await (dataExchange as any).getOHLC?.(pair, 60);
-      if (candles && Array.isArray(candles) && candles.length > 0) {
-        // NOTE: Kraken OHLC returns time as Unix SECONDS — multiply by 1000 for ms
-        const mapped: TimestampedCandle[] = candles.map((c: any) => ({
-          high: parseFloat(String(c.high || c[2] || 0)),
-          low: parseFloat(String(c.low || c[3] || 0)),
-          close: parseFloat(String(c.close || c[4] || 0)),
-          time: c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
-        }));
-        ohlcCache.set(pair, mapped);
+      // ── 1h candles (24h / 7d / 30d analysis) ───────────────────────
+      const candles1h = await (dataExchange as any).getOHLC?.(pair, 60);
+      if (candles1h && Array.isArray(candles1h) && candles1h.length > 0) {
+        const mapped1h = mapKrakenCandles(candles1h);
+        ohlcCache.set(pair, mapped1h);
         console.log(
-          `${TAG}[OHLCV] ${pair}: ${mapped.length} candles fetched` +
-          ` | first=${new Date(mapped[0].time).toISOString().slice(0, 16)}` +
-          ` | last=${new Date(mapped[mapped.length - 1].time).toISOString().slice(0, 16)}` +
+          `${TAG}[OHLCV] ${pair}: ${mapped1h.length} 1h candles` +
+          ` | first=${new Date(mapped1h[0].time).toISOString().slice(0, 16)}` +
+          ` | last=${new Date(mapped1h[mapped1h.length - 1].time).toISOString().slice(0, 16)}` +
           ` | source=${ExchangeFactory.getDataExchangeType()}`
         );
-
-        // Store in DB cache (c.time is Unix seconds from Kraken)
-        for (const c of candles.slice(-10)) {
+        // Store last 10 in DB cache
+        for (const c of candles1h.slice(-10)) {
           try {
             await repo.upsertOhlcv({
-              pair,
-              timeframe: "1h",
+              pair, timeframe: "1h",
               ts: new Date(c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now())),
-              open: String(c.open || c[1] || 0),
-              high: String(c.high || c[2] || 0),
-              low: String(c.low || c[3] || 0),
-              close: String(c.close || c[4] || 0),
+              open: String(c.open || c[1] || 0), high: String(c.high || c[2] || 0),
+              low:  String(c.low  || c[3] || 0), close: String(c.close || c[4] || 0),
               volume: String(c.volume || c[5] || 0),
             });
           } catch { /* ignore duplicate */ }
         }
+      }
+
+      // ── Daily candles (90d / 180d / 2y structural context) ──────────
+      try {
+        const candlesDaily = await (dataExchange as any).getOHLC?.(pair, 1440);
+        if (candlesDaily && Array.isArray(candlesDaily) && candlesDaily.length > 0) {
+          const mappedDaily = mapKrakenCandles(candlesDaily);
+          ohlcDailyCache.set(pair, mappedDaily);
+          console.log(`${TAG}[OHLCV] ${pair}: ${mappedDaily.length} daily candles | source=${ExchangeFactory.getDataExchangeType()}`);
+
+          // Compute and cache macro context
+          const nowMs = Date.now();
+          const allHourly = ohlcCache.get(pair) || [];
+          const allCandles = [...mappedDaily, ...allHourly]; // use daily for long buckets
+
+          const ctx90d  = computeBucketContext(mappedDaily, nowMs, 90  * 24 * 60, "90d");
+          const ctx180d = computeBucketContext(mappedDaily, nowMs, 180 * 24 * 60, "180d");
+          const ctx7d   = computeBucketContext(allHourly,  nowMs, 7   * 24 * 60, "7d");
+          const ctx30d  = computeBucketContext(allHourly,  nowMs, 30  * 24 * 60, "30d");
+
+          // Structural: 2-year high/low from daily data
+          const validDaily = mappedDaily.filter(c => c.high > 0 && c.low > 0);
+          const high2yCandle = validDaily.reduce((m, c) => c.high > m.high ? c : m, validDaily[0]);
+          const low2yCandle  = validDaily.reduce((m, c) => c.low  < m.low  ? c : m, validDaily[0]);
+          const yearCutoff   = nowMs - 365 * 24 * 60 * 60 * 1000;
+          const yearCandles  = validDaily.filter(c => c.time >= yearCutoff);
+          const yearHigh = yearCandles.length > 0 ? Math.max(...yearCandles.map(c => c.high)) : undefined;
+          const yearLow  = yearCandles.length > 0 ? Math.min(...yearCandles.map(c => c.low))  : undefined;
+
+          const macro: IdcaMacroContext = {
+            pair, computedAt: new Date(nowMs),
+            buckets: {
+              ...(ctx7d   ? { "7d":   ctx7d   } : {}),
+              ...(ctx30d  ? { "30d":  ctx30d  } : {}),
+              ...(ctx90d  ? { "90d":  ctx90d  } : {}),
+              ...(ctx180d ? { "180d": ctx180d } : {}),
+            },
+            high2y: high2yCandle?.high, high2yTime: high2yCandle ? new Date(high2yCandle.time) : undefined,
+            low2y:  low2yCandle?.low,   low2yTime:  low2yCandle  ? new Date(low2yCandle.time)  : undefined,
+            yearHigh, yearLow,
+          };
+          macroContextCache.set(pair, macro);
+
+          // Upsert snapshots to DB (daily, idempotent via UNIQUE constraint)
+          const today = new Date().toISOString().slice(0, 10);
+          for (const [bucket, ctx] of Object.entries(macro.buckets) as [string, import("./IdcaTypes").IdcaBucketContext][]) {
+            try {
+              await repo.upsertPriceContextSnapshot({
+                pair, bucket, snapshotDate: today,
+                highMax: ctx.highMax.toFixed(8), lowMin: ctx.lowMin.toFixed(8),
+                p95High: ctx.p95High.toFixed(8), avgClose: ctx.avgClose.toFixed(8),
+                drawdownFromHighPct: ctx.drawdownFromHighPct.toFixed(4),
+                rangePosition: ctx.rangePosition.toFixed(4), source: "scheduled",
+              });
+            } catch { /* ignore constraint errors */ }
+          }
+
+          // Upsert static structural data
+          try {
+            await repo.upsertPriceContextStatic({
+              pair,
+              high2y:    macro.high2y?.toFixed(8),
+              high2yTime: macro.high2yTime,
+              low2y:     macro.low2y?.toFixed(8),
+              low2yTime:  macro.low2yTime,
+              yearHigh:  macro.yearHigh?.toFixed(8),
+              yearLow:   macro.yearLow?.toFixed(8),
+              lastP95_90d:  ctx90d?.p95High.toFixed(8),
+              lastP95_180d: ctx180d?.p95High.toFixed(8),
+              lastDrawdown90dPct:  ctx90d?.drawdownFromHighPct.toFixed(4),
+              lastDrawdown180dPct: ctx180d?.drawdownFromHighPct.toFixed(4),
+              lastRangePosition90d:  ctx90d?.rangePosition.toFixed(4),
+              lastRangePosition180d: ctx180d?.rangePosition.toFixed(4),
+            });
+          } catch { /* ignore */ }
+        }
+      } catch (e: any) {
+        console.warn(`${TAG}[OHLCV] ${pair}: daily candle fetch failed — ${e.message} (non-critical)`);
       }
     } catch (e: any) {
       console.error(`${TAG}[OHLCV] Error updating ${pair}:`, e.message);
