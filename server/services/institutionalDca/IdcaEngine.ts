@@ -143,6 +143,8 @@ const priceCache = new Map<string, number>();
 const ohlcCache = new Map<string, TimestampedCandle[]>();
 const ohlcDailyCache = new Map<string, TimestampedCandle[]>();  // 1d candles for macro context (90d/180d)
 const macroContextCache = new Map<string, IdcaMacroContext>();  // computed macro context per pair
+const lastDailyFetchMs = new Map<string, number>();             // throttle: max 1 daily fetch per 6h per pair
+const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
 
 // ─── Human Event Helper ───────────────────────────────────────────
 
@@ -1938,7 +1940,11 @@ async function updateOhlcvCache(): Promise<void> {
         }
       }
 
-      // ── Daily candles (90d / 180d / 2y structural context) ──────────
+      // ── Daily candles (90d / 180d / 2y structural context) — throttled to 1×/6h ──
+      const lastDaily = lastDailyFetchMs.get(pair) ?? 0;
+      if (Date.now() - lastDaily < DAILY_FETCH_INTERVAL_MS) {
+        // Skip — recent daily data still valid
+      } else
       try {
         const candlesDaily = await (dataExchange as any).getOHLC?.(pair, 1440);
         if (candlesDaily && Array.isArray(candlesDaily) && candlesDaily.length > 0) {
@@ -2012,6 +2018,8 @@ async function updateOhlcvCache(): Promise<void> {
             });
           } catch { /* ignore */ }
         }
+        // Mark fetch time so throttle prevents re-fetch for 6h
+        lastDailyFetchMs.set(pair, Date.now());
       } catch (e: any) {
         console.warn(`${TAG}[OHLCV] ${pair}: daily candle fetch failed — ${e.message} (non-critical)`);
       }

@@ -968,10 +968,10 @@ export function IdcaLiveEventsFeed({ events }: { events: any[] }) {
     );
   }
 
-  // Show last 30 as compact cards
+  // Show last 50 as compact cards
   return (
-    <div className="space-y-1.5 max-h-[500px] overflow-auto">
-      {events.slice(0, 30).map((ev) => (
+    <div className="space-y-1.5 max-h-[75vh] overflow-auto">
+      {events.slice(0, 50).map((ev) => (
         <IdcaEventCard
           key={ev.id}
           event={ev}

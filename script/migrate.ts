@@ -955,6 +955,15 @@ async function runMigration() {
     const dryRunTradesSqlPath = path.resolve(process.cwd(), "db", "migrations", "024_create_dry_run_trades.sql");
     await tryExecuteFile(db, dryRunTradesSqlPath, "dry_run_trades");
 
+    // ============================================================
+    // IDCA PRICE CONTEXT TABLES (025) — dip reference refactor
+    // Normalizes legacy dipReference values, adds CHECK constraint,
+    // and creates idca_price_context_snapshots + idca_price_context_static
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA price context tables exist...");
+    const idcaPriceContextSqlPath = path.resolve(process.cwd(), "db", "migrations", "025_idca_price_context.sql");
+    await tryExecuteFile(db, idcaPriceContextSqlPath, "idca_price_context");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

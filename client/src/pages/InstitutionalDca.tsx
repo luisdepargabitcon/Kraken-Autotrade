@@ -2932,7 +2932,8 @@ function EventsTab() {
 
 function LiveMonitorPanel() {
   const { data: health } = useIdcaHealth();
-  const { data: events } = useIdcaEvents({ limit: 30 });
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const { data: events } = useIdcaEvents({ limit: 50, dateFrom: todayStart });
   const { data: config } = useIdcaConfig();
   const { data: controls } = useIdcaControls();
 
@@ -2979,8 +2980,8 @@ const PAGE_SIZE = 50;
 
 function EventsLogPanel() {
   const [severityFilter, setSeverityFilter] = useState<string>("no-debug");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [modeFilter, setModeFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [modeFilter, setModeFilter] = useState<string>("all");
   const [pairFilter, setPairFilter] = useState<string>("");
   const [dateRange, setDateRange] = useState<"24h" | "3d" | "7d" | "custom">("3d");
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
@@ -3006,8 +3007,8 @@ function EventsLogPanel() {
 
   const { data: events, isLoading, isFetching } = useIdcaEvents({
     severity: backendSeverity,
-    eventType: typeFilter || undefined,
-    mode: modeFilter || undefined,
+    eventType: typeFilter === "all" ? undefined : typeFilter,
+    mode: modeFilter === "all" ? undefined : modeFilter,
     pair: pairFilter || undefined,
     dateFrom: effectiveDateFrom,
     dateTo: dateRange === "custom" ? dateTo : undefined,
@@ -3019,8 +3020,8 @@ function EventsLogPanel() {
 
   const { data: countData } = useIdcaEventsCount({
     severity: backendSeverity,
-    eventType: typeFilter || undefined,
-    mode: modeFilter || undefined,
+    eventType: typeFilter === "all" ? undefined : typeFilter,
+    mode: modeFilter === "all" ? undefined : modeFilter,
     pair: pairFilter || undefined,
     dateFrom: effectiveDateFrom,
     dateTo: dateRange === "custom" ? dateTo : undefined,
@@ -3114,7 +3115,7 @@ function EventsLogPanel() {
             <Select value={modeFilter} onValueChange={(v) => { setModeFilter(v); resetPage(); }}>
               <SelectTrigger className="h-6 text-[11px] w-16"><SelectValue placeholder="Modo" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Modo</SelectItem>
+                <SelectItem value="all">Modo</SelectItem>
                 <SelectItem value="simulation">Sim</SelectItem>
                 <SelectItem value="live">Live</SelectItem>
               </SelectContent>
@@ -3124,7 +3125,7 @@ function EventsLogPanel() {
             <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); resetPage(); }}>
               <SelectTrigger className="h-6 text-[11px] w-36"><SelectValue placeholder="Tipo evento" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos los tipos</SelectItem>
+                <SelectItem value="all">Todos los tipos</SelectItem>
                 {Object.entries(EVENT_TYPE_LABELS).map(([k, v]) => (
                   <SelectItem key={k} value={k}>{v as string}</SelectItem>
                 ))}
