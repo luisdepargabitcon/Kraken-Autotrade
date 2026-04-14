@@ -2,7 +2,7 @@
  * Institutional DCA Module — Main page with sub-tabs.
  * Completely independent from the main bot UI.
  */
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -2993,18 +2993,18 @@ function EventsLogPanel() {
   const [page, setPage] = useState(0);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
 
-  function getDateFromRange(range: "24h" | "3d" | "7d" | "custom"): Date | undefined {
-    if (range === "custom") return undefined;
-    const now = new Date();
-    const hours = range === "24h" ? 24 : range === "3d" ? 72 : 168;
-    return new Date(now.getTime() - hours * 60 * 60 * 1000);
-  }
+  // Memoize effectiveDateFrom so React Query key stays stable across renders.
+  // Without this, new Date() on every render creates a new queryKey → cache miss → 0 data.
+  const effectiveDateFrom = useMemo(() => {
+    if (dateRange === "custom") return dateFrom;
+    const hours = dateRange === "24h" ? 24 : dateRange === "3d" ? 72 : 168;
+    return new Date(Date.now() - hours * 60 * 60 * 1000);
+  }, [dateRange, dateFrom]);
 
   // "no-debug" → pass to server which filters WHERE severity != 'debug'
   // "all"      → send undefined (no filter)
   // other      → exact match filter
   const backendSeverity = severityFilter === "all" ? undefined : severityFilter;
-  const effectiveDateFrom = dateRange === "custom" ? dateFrom : getDateFromRange(dateRange);
 
   const { data: events, isLoading, isFetching } = useIdcaEvents({
     severity: backendSeverity,
@@ -3037,8 +3037,9 @@ function EventsLogPanel() {
   const totalCount = countData?.count || 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
+  // Only apply client-side text search filter.
+  // Severity/mode/type/date filters are handled server-side — no double filtering.
   const filtered = (events || []).filter((ev) => {
-    if (severityFilter === "no-debug" && ev.severity === "debug") return false;
     if (searchText) {
       const text = `${ev.message} ${ev.pair} ${ev.eventType}`.toLowerCase();
       if (!text.includes(searchText.toLowerCase())) return false;

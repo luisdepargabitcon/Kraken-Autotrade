@@ -6,6 +6,13 @@ import { apiRequest } from "@/lib/queryClient";
 
 const PREFIX = "/api/institutional-dca";
 
+/** Truncate a Date to second precision → stable string for React Query keys.
+ *  Without this, Date.now() changes by ms on every render, creating new
+ *  query keys each time and preventing React Query from caching results. */
+function truncDateToSec(d: Date): string {
+  return new Date(Math.floor(d.getTime() / 1000) * 1000).toISOString();
+}
+
 // ─── Types ─────────────────────────────────────────────────────────
 
 export interface IdcaControls {
@@ -317,8 +324,15 @@ export function useIdcaEvents(filters?: {
   orderBy?: 'createdAt' | 'severity';
   orderDirection?: 'asc' | 'desc';
 }) {
+  // Stable query key: convert Date objects to second-precision ISO strings
+  // so the key doesn't change on every render (Date.now() changes by ms).
+  const stableKey = {
+    ...filters,
+    dateFrom: filters?.dateFrom ? truncDateToSec(filters.dateFrom) : undefined,
+    dateTo: filters?.dateTo ? truncDateToSec(filters.dateTo) : undefined,
+  };
   return useQuery<IdcaEvent[]>({
-    queryKey: ["idca", "events", filters],
+    queryKey: ["idca", "events", stableKey],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filters?.cycleId) params.set("cycleId", String(filters.cycleId));
@@ -351,8 +365,13 @@ export function useIdcaEventsCount(filters?: {
   dateFrom?: Date;
   dateTo?: Date;
 }) {
+  const stableKey = {
+    ...filters,
+    dateFrom: filters?.dateFrom ? truncDateToSec(filters.dateFrom) : undefined,
+    dateTo: filters?.dateTo ? truncDateToSec(filters.dateTo) : undefined,
+  };
   return useQuery<{ count: number }>({
-    queryKey: ["idca", "events", "count", filters],
+    queryKey: ["idca", "events", "count", stableKey],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filters?.cycleId) params.set("cycleId", String(filters.cycleId));

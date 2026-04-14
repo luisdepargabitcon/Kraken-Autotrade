@@ -2,6 +2,33 @@
 
 ----
 
+## 2026-04-14 — FIX: Historial eventos vacío — Query Key Instability (FRONTEND)
+
+### Problema
+La UI mostraba 0 eventos pese a que el backend respondía correctamente con 50 eventos.
+El CSV exportado contenía solo la cabecera sin datos.
+
+### Causa raíz
+**React Query key instability**: `effectiveDateFrom` se recalculaba con `new Date()` en cada render
+del componente. Como el `queryKey` incluía el objeto `filters` con un `Date` que cambiaba por
+milisegundos, React Query trataba cada render como una **query completamente nueva** (sin cache).
+El ciclo era: render → nuevo queryKey → fetch inicia → data=undefined → render → nuevo queryKey → ...
+
+### Solución
+1. **`truncDateToSec()`** — Nueva función utilitaria que trunca Dates a precisión de segundo para el queryKey
+2. **`useMemo(effectiveDateFrom, [dateRange, dateFrom])`** — La fecha solo se recalcula cuando el rango cambia
+3. **Eliminación de doble filtrado** — El backend ya filtra por severity; el frontend re-filtraba innecesariamente
+4. **CSV usa misma fuente** — El export CSV ya usaba `filtered` que dependía de `events`, así que el fix del queryKey también arregla el CSV
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `client/src/hooks/useInstitutionalDca.ts` | `truncDateToSec()` + stable queryKey en `useIdcaEvents` y `useIdcaEventsCount` |
+| `client/src/pages/InstitutionalDca.tsx` | `useMemo` para `effectiveDateFrom` + eliminación doble filtrado severity |
+
+----
+
 ## 2026-04-14 — FIX: Dashboard lento + Historial de eventos vacío
 
 ### Problema 1: Dashboard colgado (~5s en primera carga)
