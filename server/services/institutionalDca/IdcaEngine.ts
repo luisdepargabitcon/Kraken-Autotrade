@@ -877,10 +877,12 @@ async function manageCycle(
   diagnosis.conclusion = buildReviewConclusion(diagnosis, unrealizedPnlPct, maxDD, prevStatus);
 
   // Log enriched cycle management event (AFTER evaluation)
+  // severity: 'info' when an action was taken (visible with "Sin debug" filter),
+  //           'debug' for routine checks (hidden by default)
   await createHumanEvent({
     cycleId: cycle.id, pair, mode,
     eventType: "cycle_management",
-    severity: "debug",
+    severity: diagnosis.actionTaken ? "info" : "debug",
     message: diagnosis.conclusion,
     payloadJson: {
       price: currentPrice, avgEntry, pnlPct: unrealizedPnlPct, pnlUsd: unrealizedPnlUsd,
@@ -1878,7 +1880,7 @@ function logEntryDecision(pair: string, mode: string, action: "allowed" | "block
       pair,
       mode,
       eventType: "entry_evaluated",
-      severity: action === "allowed" ? "info" : "debug",
+      severity: "info",
       message: action === "allowed"
         ? `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`
         : `[${pair}] Entrada bloqueada (${reason}) — caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}%`,

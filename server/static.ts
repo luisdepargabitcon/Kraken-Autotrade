@@ -13,11 +13,13 @@ export function serveStatic(app: Express) {
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
+  // IMPORTANT: app.use("*") sets req.path to "/" in Express 4 — use req.originalUrl
   app.use("*", (req, res, next) => {
-    if (req.path.startsWith("/api")) {
+    const url = req.originalUrl || req.path;
+    if (url.startsWith("/api")) {
       return res.status(404).json({
         error: "NOT_FOUND",
-        path: req.path,
+        path: url,
       });
     }
 

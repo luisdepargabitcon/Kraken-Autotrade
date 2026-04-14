@@ -714,116 +714,138 @@ export async function registerRoutes(
     }
   });
 
-  // ── Dashboard caches ──────────────────────────────────────────────
-  // 1. Full response cache (10s) — avoids re-fetching on rapid reloads
-  // 2. Ticker price cache (15s) — avoids entering KrakenRateLimiter queue
-  //    The rate limiter is FIFO concurrency=1 with 500ms spacing;
-  //    if IDCA/trading engine calls are queued, dashboard tickers wait 5-30s.
+  // ── Dashboard — Stale-While-Revalidate ──────────────────────────
+  //
+  // The KrakenRateLimiter is FIFO concurrency=1 with 500ms spacing.
+  // When IDCA/trading engine calls are queued, dashboard tickers wait 5-30s.
+  //
+  // Strategy:
+  //   - First load (cold): block up to 3s, return partial data on timeout
+  //   - Subsequent loads: return cached data INSTANTLY, refresh in background
+  //   - Ticker prices are cached separately (30s) to avoid rate limiter queue
+  //
   let _dashboardCache: { data: any; ts: number } | null = null;
-  const DASHBOARD_CACHE_TTL_MS = 10_000;
+  const DASHBOARD_FRESH_MS  = 10_000;   // serve without background refresh
+  const DASHBOARD_MAX_AGE   = 120_000;  // force foreground refresh
+  const DASHBOARD_COLD_TIMEOUT = 3_000; // max wait on first load
   const _tickerPriceCache = new Map<string, { price: string; ts: number }>();
-  const TICKER_CACHE_TTL = 15_000; // 15 seconds
-  const DASHBOARD_EXCHANGE_TIMEOUT = 5_000; // 5s hard timeout for exchange calls
+  const TICKER_CACHE_TTL  = 30_000;     // 30 seconds
+  let _dashboardRefreshing = false;
+
+  async function refreshDashboardData(): Promise<any> {
+    const [apiConfig, botConfig, trades] = await Promise.all([
+      storage.getApiConfig(),
+      storage.getBotConfig(),
+      storage.getTrades(10),
+    ]);
+
+    let balances: Record<string, number> = {};
+    let prices: Record<string, { price: string; change: string }> = {};
+
+    const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
+    const tradingExchange = ExchangeFactory.getTradingExchange();
+    const dataExchange = ExchangeFactory.getDataExchange();
+
+    const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
+    const activeAssets = new Set<string>(["USD"]);
+    for (const pair of activePairs) {
+      const [base] = pair.split("/");
+      activeAssets.add(base);
+    }
+
+    const normalizeSymbol = (symbol: string, exchangeType: string): string => {
+      if (exchangeType === 'kraken') return krakenService.normalizeAsset(symbol);
+      return symbol;
+    };
+
+    // Pre-fill from ticker cache (instant)
+    const now = Date.now();
+    const stalePairs: string[] = [];
+    for (const pair of activePairs) {
+      const cached = _tickerPriceCache.get(pair);
+      if (cached && now - cached.ts < TICKER_CACHE_TTL) {
+        prices[pair] = { price: cached.price, change: "0" };
+      } else {
+        stalePairs.push(pair);
+      }
+    }
+
+    // Fetch balance + stale tickers with hard 3s timeout
+    await Promise.race([
+      Promise.all([
+        tradingExchange.isInitialized()
+          ? tradingExchange.getBalance()
+              .then(raw => {
+                for (const [asset, amount] of Object.entries(raw)) {
+                  const sym = normalizeSymbol(asset, tradingExchangeType);
+                  if (activeAssets.has(sym)) balances[sym] = (balances[sym] || 0) + amount;
+                }
+              })
+              .catch(e => console.error('[dashboard] Balance error:', e?.message))
+          : Promise.resolve(),
+        ...stalePairs.map(pair =>
+          dataExchange.isInitialized()
+            ? dataExchange.getTicker(pair)
+                .then(ticker => {
+                  const p = ticker.last.toString();
+                  prices[pair] = { price: p, change: "0" };
+                  _tickerPriceCache.set(pair, { price: p, ts: Date.now() });
+                })
+                .catch(() => { /* skip pair */ })
+            : Promise.resolve()
+        ),
+      ]),
+      new Promise<void>(r => setTimeout(r, DASHBOARD_COLD_TIMEOUT)),
+    ]);
+
+    const exchangeConnected = tradingExchange.isInitialized();
+    const responseData = {
+      exchangeConnected,
+      tradingExchange: tradingExchangeType,
+      dataExchange: ExchangeFactory.getDataExchangeType(),
+      krakenConnected: krakenService.isInitialized(),
+      telegramConnected: apiConfig?.telegramConnected || false,
+      botActive: botConfig?.isActive || false,
+      strategy: botConfig?.strategy || "momentum",
+      activePairs,
+      activeAssets: Array.from(activeAssets),
+      balances,
+      prices,
+      recentTrades: trades,
+    };
+    _dashboardCache = { data: responseData, ts: Date.now() };
+    return responseData;
+  }
 
   app.get("/api/dashboard", async (req, res) => {
-    // 1. Serve full response cache if fresh
-    if (_dashboardCache && Date.now() - _dashboardCache.ts < DASHBOARD_CACHE_TTL_MS && req.query.force !== '1') {
+    const force = req.query.force === '1';
+    const age = _dashboardCache ? Date.now() - _dashboardCache.ts : Infinity;
+
+    // 1. Fresh cache → serve instantly
+    if (!force && _dashboardCache && age < DASHBOARD_FRESH_MS) {
       return res.json(_dashboardCache.data);
     }
+
+    // 2. Stale cache exists → serve stale, trigger background refresh
+    if (!force && _dashboardCache && age < DASHBOARD_MAX_AGE) {
+      res.json(_dashboardCache.data);
+      if (!_dashboardRefreshing) {
+        _dashboardRefreshing = true;
+        refreshDashboardData()
+          .catch(e => console.error('[dashboard] bg refresh error:', e?.message))
+          .finally(() => { _dashboardRefreshing = false; });
+      }
+      return;
+    }
+
+    // 3. No cache or too old → foreground refresh (first load)
     try {
-      const [apiConfig, botConfig, trades] = await Promise.all([
-        storage.getApiConfig(),
-        storage.getBotConfig(),
-        storage.getTrades(10),
-      ]);
-      
-      let balances: Record<string, number> = {};
-      let prices: Record<string, { price: string; change: string }> = {};
-      
-      const tradingExchangeType = ExchangeFactory.getTradingExchangeType();
-      const tradingExchange = ExchangeFactory.getTradingExchange();
-      const dataExchange = ExchangeFactory.getDataExchange();
-      
-      const activePairs = botConfig?.activePairs || ["BTC/USD", "ETH/USD", "SOL/USD"];
-      const activeAssets = new Set<string>(["USD"]);
-      for (const pair of activePairs) {
-        const [base] = pair.split("/");
-        activeAssets.add(base);
-      }
-      
-      const normalizeSymbol = (symbol: string, exchangeType: string): string => {
-        if (exchangeType === 'kraken') {
-          return krakenService.normalizeAsset(symbol);
-        }
-        return symbol;
-      };
-      
-      // 2. Pre-fill prices from ticker cache (instant, no API calls)
-      const now = Date.now();
-      const stalePairs: string[] = [];
-      for (const pair of activePairs) {
-        const cached = _tickerPriceCache.get(pair);
-        if (cached && now - cached.ts < TICKER_CACHE_TTL) {
-          prices[pair] = { price: cached.price, change: "0" };
-        } else {
-          stalePairs.push(pair);
-        }
-      }
-      
-      // 3. Fetch balance + stale tickers in parallel, with hard 5s timeout
-      //    If exchange calls hang (rate limiter queue), we return partial data.
-      await Promise.race([
-        Promise.all([
-          // Balance (already cached 5s by BalanceCache)
-          tradingExchange.isInitialized()
-            ? tradingExchange.getBalance()
-                .then(rawBalances => {
-                  for (const [asset, amount] of Object.entries(rawBalances)) {
-                    const sym = normalizeSymbol(asset, tradingExchangeType);
-                    if (activeAssets.has(sym)) {
-                      balances[sym] = (balances[sym] || 0) + amount;
-                    }
-                  }
-                })
-                .catch(e => console.error('[dashboard] Balance error:', e?.message))
-            : Promise.resolve(),
-          // Only fetch tickers for pairs NOT in cache
-          ...stalePairs.map(pair =>
-            dataExchange.isInitialized()
-              ? dataExchange.getTicker(pair)
-                  .then(ticker => {
-                    const p = ticker.last.toString();
-                    prices[pair] = { price: p, change: "0" };
-                    _tickerPriceCache.set(pair, { price: p, ts: Date.now() });
-                  })
-                  .catch(() => { /* skip pair */ })
-              : Promise.resolve()
-          ),
-        ]),
-        // Hard timeout: resolve (don't reject) so we return partial data
-        new Promise<void>(resolve => setTimeout(resolve, DASHBOARD_EXCHANGE_TIMEOUT)),
-      ]);
-      
-      const exchangeConnected = tradingExchange.isInitialized();
-      
-      const responseData = {
-        exchangeConnected,
-        tradingExchange: tradingExchangeType,
-        dataExchange: ExchangeFactory.getDataExchangeType(),
-        krakenConnected: krakenService.isInitialized(),
-        telegramConnected: apiConfig?.telegramConnected || false,
-        botActive: botConfig?.isActive || false,
-        strategy: botConfig?.strategy || "momentum",
-        activePairs,
-        activeAssets: Array.from(activeAssets),
-        balances,
-        prices,
-        recentTrades: trades,
-      };
-      _dashboardCache = { data: responseData, ts: Date.now() };
-      res.json(responseData);
+      const data = await refreshDashboardData();
+      res.json(data);
     } catch (error) {
       console.error('[dashboard] Fatal error:', error);
+      // If we have ANY stale data, return it instead of 500
+      if (_dashboardCache) return res.json(_dashboardCache.data);
       res.status(500).json({ error: "Failed to get dashboard data" });
     }
   });

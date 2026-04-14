@@ -226,6 +226,24 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     return isNaN(d.getTime()) ? undefined : d;
   }
 
+  // Diagnostic endpoint — NO filters, for curl verification
+  app.get(`${PREFIX}/events/debug`, async (_req, res) => {
+    try {
+      const total = await repo.getEventsCount({});
+      const latest = await repo.getEvents({ limit: 5, orderBy: 'createdAt', orderDirection: 'desc' });
+      res.json({
+        totalEvents: total,
+        latestEvents: latest.map(e => ({
+          id: e.id, eventType: e.eventType, severity: e.severity,
+          pair: e.pair, mode: e.mode, createdAt: e.createdAt,
+          message: (e.message || '').slice(0, 120),
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get(`${PREFIX}/events`, async (req, res) => {
     try {
       const { 
@@ -233,7 +251,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         dateFrom, dateTo, limit, offset, orderBy, orderDirection 
       } = req.query;
       
-      const events = await repo.getEvents({
+      const filters = {
         cycleId: cycleId ? parseInt(cycleId as string) : undefined,
         eventType: eventType as string,
         mode: mode as string,
@@ -245,10 +263,14 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         offset: offset ? parseInt(offset as string) : 0,
         orderBy: (orderBy as 'createdAt' | 'severity') || 'createdAt',
         orderDirection: (orderDirection as 'asc' | 'desc') || 'desc',
-      });
+      };
+      
+      const events = await repo.getEvents(filters);
+      console.log(`[IDCA][EVENTS_API] count=${events.length} severity=${severity || '-'} mode=${mode || '-'} type=${eventType || '-'} dateFrom=${dateFrom || '-'}`);
       
       res.json(events);
     } catch (e: any) {
+      console.error(`[IDCA][EVENTS_API] ERROR: ${e.message}`);
       res.status(500).json({ error: e.message });
     }
   });

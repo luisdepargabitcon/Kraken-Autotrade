@@ -2,6 +2,42 @@
 
 ----
 
+## 2026-04-14 — FIX: Dashboard lento + Historial de eventos vacío
+
+### Problema 1: Dashboard colgado (~5s en primera carga)
+**Causa raíz**: `KrakenRateLimiter` es cola FIFO concurrencia=1 con 500ms entre llamadas. TODAS las llamadas a Kraken (IDCA OHLC, trading, dashboard tickers) comparten la misma cola. Cuando IDCA scheduler está activo, las llamadas de dashboard se encolan detrás → 5-30s de espera.
+
+**Solución**: Patrón **stale-while-revalidate** en `/api/dashboard`:
+- Primera carga: bloquea máx 3s, devuelve datos parciales si timeout
+- Cargas posteriores: devuelve cache stale instantáneamente + refresca en background
+- Cache de tickers (30s TTL) independiente para evitar entrar en cola del rate limiter
+- Nunca devuelve 500 si hay cache stale disponible
+
+### Problema 2: Historial de eventos muestra 0 eventos
+**Causa raíz** (múltiple):
+1. **`static.ts` bug**: `app.use("*")` en Express 4 establece `req.path = "/"` siempre. La guarda `req.path.startsWith("/api")` NUNCA se activaba → rutas API no registradas devolvían HTML en vez de 404 JSON.
+2. **Severidad incorrecta**: `cycle_management` tenía severity `"debug"` siempre. Con filtro "Sin debug" activo (default) → 0 eventos visibles cuando hay ciclos activos.
+3. **entry_evaluated bloqueado** tenía severity `"debug"` → también invisible con "Sin debug".
+
+**Solución**:
+- `static.ts`: usar `req.originalUrl` en vez de `req.path`
+- `cycle_management`: severity `"info"` cuando `actionTaken=true`, `"debug"` solo en chequeos rutinarios
+- `entry_evaluated`: severity siempre `"info"` (throttle 5min ya limita spam)
+- Endpoint diagnóstico: `GET /api/institutional-dca/events/debug` (sin filtros, para curl)
+- Logging: `[IDCA][EVENTS_API] count=... filters=...` en cada consulta
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `server/static.ts` | Fix `req.path` → `req.originalUrl` en catch-all SPA |
+| `server/routes.ts` | Dashboard stale-while-revalidate + ticker cache 30s |
+| `server/routes/institutionalDca.routes.ts` | Endpoint debug + logging en eventos API |
+| `server/services/institutionalDca/IdcaEngine.ts` | Severidad condicional cycle_management + entry_evaluated siempre info |
+| `client/src/components/idca/IdcaEventCards.tsx` | Catálogo visual para `entry_evaluated` |
+
+----
+
 ## 2026-04-12 — REFACTOR: IDCA dipReference — Fase 2–8 completas
 
 ### Objetivo
