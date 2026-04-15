@@ -73,6 +73,117 @@ export interface FormatContext {
   prevAvgEntry?: number;
 }
 
+// ─── Multi-block composition (entry_check_blocked) ──────────────────
+
+const BLOCK_PRIORITY: Record<string, number> = {
+  insufficient_dip: 1,
+  market_score_too_low: 2,
+  no_rebound_confirmed: 3,
+  btc_breakdown_blocks_eth: 4,
+  module_exposure_max_reached: 5,
+  insufficient_simulation_balance: 6,
+  insufficient_base_price_data: 7,
+  data_not_ready: 8,
+  cycle_already_active: 9,
+  pair_not_allowed: 10,
+};
+
+const BLOCK_SHORT_NAMES: Record<string, string> = {
+  insufficient_dip: "caída insuficiente",
+  market_score_too_low: "score bajo",
+  no_rebound_confirmed: "falta rebote confirmado",
+  btc_breakdown_blocks_eth: "caída de BTC",
+  module_exposure_max_reached: "exposición máxima del módulo",
+  insufficient_simulation_balance: "saldo de simulación insuficiente",
+  insufficient_base_price_data: "datos de precio insuficientes",
+  data_not_ready: "datos no disponibles",
+  cycle_already_active: "ciclo ya activo",
+  pair_not_allowed: "par no permitido",
+};
+
+function extractDipInfo(msg: string): { dip?: string; min?: string } {
+  const dip = msg.match(/EntryDip\s*([\d.-]+)%/)?.[1];
+  const min = msg.match(/min\s*([\d.-]+)%/)?.[1];
+  return { dip, min };
+}
+
+function extractScoreInfo(msg: string): { score?: string; minScore?: string } {
+  const score = msg.match(/Score\s*(\d+)/)?.[1];
+  const minScore = msg.match(/<\s*(\d+)/)?.[1];
+  return { score, minScore };
+}
+
+function composeBlockedEntryHuman(
+  reasons: Array<{ code: string; message: string }>,
+  pair: string
+): { humanTitle: string; humanMessage: string } {
+  // Sort by priority (lower number = more important)
+  const sorted = [...reasons].sort(
+    (a, b) => (BLOCK_PRIORITY[a.code] ?? 99) - (BLOCK_PRIORITY[b.code] ?? 99)
+  );
+
+  const n = sorted.length;
+  const primary = sorted[0];
+  const secondary = sorted[1];
+
+  // ── CASO 1: un único bloqueo ─────────────────────────────────────
+  if (n === 1) {
+    const entry = getCatalogEntry(primary.code);
+    return {
+      humanTitle: entry.humanTitle,
+      humanMessage: entry.humanTemplate.replace(/\{pair\}/g, pair),
+    };
+  }
+
+  // ── CASO 2: dos bloqueos — mensaje compuesto con datos extraídos ─
+  if (n === 2) {
+    const name1 = BLOCK_SHORT_NAMES[primary.code] ?? primary.code.replace(/_/g, " ");
+    const name2 = BLOCK_SHORT_NAMES[secondary.code] ?? secondary.code.replace(/_/g, " ");
+    const humanTitle = `Entrada bloqueada por ${name1} y ${name2}`;
+
+    // Build enriched message fragment for each block
+    const parts: string[] = [];
+
+    for (const r of [primary, secondary]) {
+      if (r.code === "insufficient_dip") {
+        const { dip, min } = extractDipInfo(r.message);
+        if (dip != null && min != null) {
+          parts.push(`la caída fue del ${dip}% (mínimo ${min}%)`);
+        } else {
+          parts.push("la caída desde el precio base fue insuficiente");
+        }
+      } else if (r.code === "market_score_too_low") {
+        const { score, minScore } = extractScoreInfo(r.message);
+        if (score != null && minScore != null) {
+          parts.push(`el market score fue ${score} (mínimo ${minScore})`);
+        } else {
+          parts.push("el score de mercado fue demasiado bajo");
+        }
+      } else if (r.code === "no_rebound_confirmed") {
+        parts.push("no se confirmó rebote técnico");
+      } else if (r.code === "btc_breakdown_blocks_eth") {
+        parts.push("BTC está en caída fuerte");
+      } else {
+        parts.push(BLOCK_SHORT_NAMES[r.code] ?? r.code.replace(/_/g, " "));
+      }
+    }
+
+    const humanMessage = `No se compró ${pair} porque ${parts.join(" y además ")}.`;
+    return { humanTitle, humanMessage };
+  }
+
+  // ── CASO 3+: tres o más bloqueos — resumen compacto ─────────────
+  const name1 = BLOCK_SHORT_NAMES[primary.code] ?? primary.code.replace(/_/g, " ");
+  const name2 = secondary ? (BLOCK_SHORT_NAMES[secondary.code] ?? secondary.code.replace(/_/g, " ")) : undefined;
+
+  const humanTitle = "Entrada bloqueada por varios filtros";
+  const humanMessage = name2
+    ? `No se compró ${pair} por ${name1}, ${name2} y otros filtros adicionales.`
+    : `No se compró ${pair} por ${name1} y otros filtros adicionales.`;
+
+  return { humanTitle, humanMessage };
+}
+
 // ─── Core Formatter ─────────────────────────────────────────────────
 
 export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
@@ -80,23 +191,27 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
   const pair = ctx.pair || "—";
   const mode = ctx.mode?.toUpperCase() || "—";
 
-  // Build humanTitle
+  // Build humanTitle / humanMessage
   let humanTitle = entry.humanTitle;
+  let humanMessage = entry.humanTemplate.replace(/\{pair\}/g, pair);
 
-  // Build humanMessage from template
-  let humanMessage = entry.humanTemplate
-    .replace(/\{pair\}/g, pair);
+  // entry_check_blocked: compose multi-block human text
+  if (ctx.eventType === "entry_check_blocked" && ctx.blockReasons && ctx.blockReasons.length > 0) {
+    const composed = composeBlockedEntryHuman(ctx.blockReasons, pair);
+    humanTitle = composed.humanTitle;
+    humanMessage = composed.humanMessage;
+  }
 
-  // Handle block details
-  if (ctx.blockReasons && ctx.blockReasons.length > 0) {
-    const blockSummaries = ctx.blockReasons.map(r => getBlockReasonSummary(r.code, ctx.pair));
-    const blockDetail = blockSummaries.join(", ");
-    humanMessage = humanMessage.replace(/\{blockDetail\}/g, blockDetail);
-  } else if (ctx.reasonCode && ctx.eventType === "entry_check_blocked") {
-    const blockDetail = getBlockReasonSummary(ctx.reasonCode, ctx.pair);
-    humanMessage = humanMessage.replace(/\{blockDetail\}/g, blockDetail);
-  } else {
-    humanMessage = humanMessage.replace(/\{blockDetail\}/g, "no se cumplieron las condiciones necesarias");
+  // Handle block details placeholder (buy_blocked and other events that use {blockDetail})
+  if (humanMessage.includes("{blockDetail}")) {
+    if (ctx.blockReasons && ctx.blockReasons.length > 0) {
+      const blockSummaries = ctx.blockReasons.map(r => getBlockReasonSummary(r.code, ctx.pair));
+      humanMessage = humanMessage.replace(/\{blockDetail\}/g, blockSummaries.join(", "));
+    } else if (ctx.reasonCode) {
+      humanMessage = humanMessage.replace(/\{blockDetail\}/g, getBlockReasonSummary(ctx.reasonCode, ctx.pair));
+    } else {
+      humanMessage = humanMessage.replace(/\{blockDetail\}/g, "no se cumplieron las condiciones necesarias");
+    }
   }
 
   // Handle close detail

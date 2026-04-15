@@ -38,8 +38,8 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
   },
 
   entry_check_blocked: {
-    humanTitle: "Evaluación de entrada rechazada",
-    humanTemplate: "Se evaluó {pair} pero no se cumplieron todas las condiciones para comprar. {blockDetail}",
+    humanTitle: "Entrada bloqueada",
+    humanTemplate: "No se compró {pair} porque no se cumplieron las condiciones de entrada. Ver detalles en los bloqueos activos.",
     emoji: "🟠",
     defaultSeverity: "info",
   },

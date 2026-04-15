@@ -2,6 +2,46 @@
 
 ----
 
+## 2026-04-16 — FEAT: Composición inteligente de humanTitle/humanMessage en entry_check_blocked
+
+### Problema
+Cuando una entrada IDCA se bloqueaba por múltiples razones (ej: `insufficient_dip` + `market_score_too_low`), el mensaje visible al usuario solo reflejaba la primera razón. El usuario no sabía que también bloqueó el score, o cuál fue la caída real vs la mínima.
+
+### Solución — Helper `composeBlockedEntryHuman` en `IdcaMessageFormatter.ts`
+
+**CASO 1 — 1 bloqueo:**
+- Título: texto del catálogo (e.g., "Caída insuficiente")
+- Mensaje: template individual del catálogo
+
+**CASO 2 — 2 bloqueos:**
+- Título: `"Entrada bloqueada por caída insuficiente y score bajo"`
+- Mensaje con datos numéricos extraídos del `blockReason.message`:
+  > "No se compró ETH/USD porque la caída fue del 2.59% (mínimo 5%) y además el market score fue 44 (mínimo 50)."
+
+**CASO 3+ — 3 o más bloqueos:**
+- Título: `"Entrada bloqueada por varios filtros"`
+- Mensaje compacto con los 2 principales + "y otros filtros adicionales"
+  > "No se compró ETH/USD por caída insuficiente, score bajo y otros filtros adicionales."
+
+### Lógica implementada
+- Prioridad de bloqueos (1=más importante): `insufficient_dip` → `market_score_too_low` → `no_rebound_confirmed` → `btc_breakdown_blocks_eth` → ...
+- Extractores numéricos: `extractDipInfo` (parsea "EntryDip 2.59% < min 5%"), `extractScoreInfo` (parsea "Score 44 < 50")
+- Nombres cortos por código para títulos compuestos (`BLOCK_SHORT_NAMES`)
+
+### Archivos modificados
+| Archivo | Cambio |
+|---|---|
+| `server/services/institutionalDca/IdcaMessageFormatter.ts` | Añadidos `BLOCK_PRIORITY`, `BLOCK_SHORT_NAMES`, `extractDipInfo`, `extractScoreInfo`, `composeBlockedEntryHuman`; `formatIdcaMessage` usa el helper para `entry_check_blocked` |
+| `server/services/institutionalDca/IdcaReasonCatalog.ts` | `entry_check_blocked.humanTemplate` actualizado a fallback limpio (sin `{blockDetail}`) |
+
+### Garantías
+- Payload `blockReasons` intacto — cero cambios en payload/eventos
+- `technicalSummary` no modificado
+- Otros event types (`buy_blocked`, `cycle_closed`, etc.) sin cambios
+- TypeScript: `exit 0`, 0 errores
+
+----
+
 ## 2026-04-16 — FIX CRÍTICO: NORMAL DRY RUN — ráfagas de órdenes + spam Telegram
 
 ### Scope
