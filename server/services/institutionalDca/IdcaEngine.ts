@@ -202,7 +202,7 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
   const assetConfig = await repo.getAssetConfig(pair);
   const tpPct = assetConfig ? parseFloat(String(assetConfig.takeProfitPct)) : 4.0;
   const tpPrice = req.avgEntryPrice * (1 + tpPct / 100);
-  const trailingPct = assetConfig ? parseFloat(String(assetConfig.trailingPct)) : 1.2;
+  const trailingPct = assetConfig ? parseFloat(String(assetConfig.trailingMarginPct)) : 1.5;
 
   const exchangeSource = req.exchangeSource || "revolut_x";
   const estimatedFeePct = req.estimatedFeePct ?? 0.09;
@@ -624,8 +624,8 @@ async function checkEntry(
 
   const tpPrice = currentPrice * (1 + tpPct / 100);
 
-  // Compute trailing
-  let trailingPct = parseFloat(String(assetConfig.trailingPct));
+  // Compute trailing — trailingMarginPct is the single source of truth (UI slider)
+  let trailingPct = parseFloat(String(assetConfig.trailingMarginPct));
   if (config.volatilityTrailingEnabled) {
     trailingPct = smart.computeDynamicTrailing({
       atrPct: getVolatility(pair),
@@ -1229,6 +1229,10 @@ async function checkSafetyBuy(
 }
 
 // ─── Take Profit Arm ───────────────────────────────────────────────
+// LEGACY: This function performs a partial sell + transition to trailing_active.
+// It is NOT called from the main cycle flow (handleActiveState transitions
+// directly to trailing_active without partial sell). Retained for potential
+// future use or manual invocation. Consumes config.partialTpMinPct/MaxPct.
 
 async function armTakeProfit(
   cycle: InstitutionalDcaCycle,
@@ -1279,8 +1283,8 @@ async function armTakeProfit(
 
   const remainingQty = totalQty - partialQty;
 
-  // Get trailing pct
-  let trailingPct = parseFloat(String(cycle.trailingPct || assetConfig.trailingPct));
+  // Get trailing pct — prefer cycle-stored value, fallback to trailingMarginPct (UI slider)
+  let trailingPct = parseFloat(String(cycle.trailingPct || assetConfig.trailingMarginPct));
   if (config.volatilityTrailingEnabled) {
     trailingPct = smart.computeDynamicTrailing({
       atrPct: getVolatility(pair),
@@ -1337,7 +1341,7 @@ async function handleTrailingState(
 ): Promise<void> {
   const pair = cycle.pair;
   const highestPrice = parseFloat(String(cycle.highestPriceAfterTp || currentPrice));
-  const trailingPct = parseFloat(String(cycle.trailingPct || assetConfig.trailingPct));
+  const trailingPct = parseFloat(String(cycle.trailingPct || assetConfig.trailingMarginPct));
 
   // ─── TRAILING DIAGNOSTIC TRACE ────────────────────────────────
   const dropFromHigh = highestPrice > 0 ? ((highestPrice - currentPrice) / highestPrice) * 100 : 0;
@@ -1622,6 +1626,7 @@ async function performEntryCheck(
     lookbackMinutes: config.localHighLookbackMinutes,
     method: dipRefMethod,
     currentPrice,
+    pair,
   });
 
   // Structured log — always emitted for trazabilidad
@@ -1649,6 +1654,7 @@ async function performEntryCheck(
       lookbackMinutes: config.localHighLookbackMinutes,
       method: dipRefMethod,
       currentPrice: btcPrice,
+      pair: "BTC/USD",
     });
     const btcDip = btcBasePrice.price > 0 ? ((btcBasePrice.price - btcPrice) / btcBasePrice.price) * 100 : 0;
     if (btcDip > 10) {
@@ -2771,8 +2777,8 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
 
   const tpPrice = avgEntry * (1 + tpPct / 100);
 
-  // ── 4. Dynamic trailing ───────────────────────────────────
-  let trailingPct = parseFloat(String(assetConfig.trailingPct));
+  // ── 4. Dynamic trailing — trailingMarginPct is the single source of truth (UI slider)
+  let trailingPct = parseFloat(String(assetConfig.trailingMarginPct));
   if (config.volatilityTrailingEnabled) {
     trailingPct = smart.computeDynamicTrailing({
       atrPct: getVolatility(pair),
@@ -3002,8 +3008,8 @@ export async function editImportedCycle(
   }
   const tpPrice = newAvgEntry * (1 + tpPct / 100);
 
-  // Dynamic trailing
-  let trailingPct = parseFloat(String(assetConfig.trailingPct));
+  // Dynamic trailing — trailingMarginPct is the single source of truth (UI slider)
+  let trailingPct = parseFloat(String(assetConfig.trailingMarginPct));
   if (config.volatilityTrailingEnabled) {
     trailingPct = smart.computeDynamicTrailing({
       atrPct: getVolatility(pair),

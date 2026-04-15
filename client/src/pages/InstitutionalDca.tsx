@@ -585,21 +585,10 @@ function ConfigTab() {
             value={parseFloat(config.maxModuleDrawdownPct)} min={5} max={50} step={1}
             onChange={(v) => updateConfig.mutate({ maxModuleDrawdownPct: String(v) })}
             desc="Pérdida máxima tolerada antes de frenar nuevas compras." />
-          <ColorSlider label="Max BTC combinado" color="red"
-            value={parseFloat(config.maxCombinedBtcExposurePct)} min={5} max={80} step={5}
-            onChange={(v) => updateConfig.mutate({ maxCombinedBtcExposurePct: String(v) })}
-            desc="Límite total de exposición en BTC sumando este módulo y el bot principal." />
-          <ColorSlider label="Max ETH combinado" color="red"
-            value={parseFloat(config.maxCombinedEthExposurePct)} min={5} max={80} step={5}
-            onChange={(v) => updateConfig.mutate({ maxCombinedEthExposurePct: String(v) })}
-            desc="Límite total de exposición en ETH sumando este módulo y el bot principal." />
+          {/* maxCombinedBtcExposurePct / maxCombinedEthExposurePct — removed: not consumed by engine (legacy/decorative) */}
         </div>
 
-        <div className="border-t border-border/30 pt-4">
-          <ToggleField label="Proteger principal" checked={config.protectPrincipal}
-            onChange={(v) => updateConfig.mutate({ protectPrincipal: v })}
-            desc="Evita que el sistema arriesgue el capital base más allá de lo permitido." />
-        </div>
+        {/* protectPrincipal — removed: not consumed by engine (legacy/decorative) */}
       </ConfigBlock>
 
       {/* ════ BLOQUE 2 — CUÁNDO COMPRAR ════ */}
@@ -635,15 +624,7 @@ function ConfigTab() {
               onChange={(v) => updateAsset.mutate({ pair: eth.pair, requireReboundConfirmation: v })}
               desc="Obliga al sistema a esperar una pequeña señal de rebote en ETH antes de entrar." />
           )}
-          <ToggleField label="Bloquear en Breakdown" checked={config.blockOnBreakdown}
-            onChange={(v) => updateConfig.mutate({ blockOnBreakdown: v })}
-            desc="Impide comprar si el mercado muestra una estructura claramente bajista." />
-          <ToggleField label="Bloquear Spread alto" checked={config.blockOnHighSpread}
-            onChange={(v) => updateConfig.mutate({ blockOnHighSpread: v })}
-            desc="Evita comprar si la diferencia entre compra y venta es demasiado grande." />
-          <ToggleField label="Bloquear presión de venta" checked={config.blockOnSellPressure}
-            onChange={(v) => updateConfig.mutate({ blockOnSellPressure: v })}
-            desc="Evita comprar si se detecta exceso de presión vendedora." />
+          {/* blockOnBreakdown, blockOnHighSpread, blockOnSellPressure — removed: not consumed by engine (legacy/decorative) */}
           <ToggleField label="BTC Gate para ETH" checked={config.btcMarketGateForEthEnabled}
             onChange={(v) => updateConfig.mutate({ btcMarketGateForEthEnabled: v })}
             desc="Impide comprar ETH si BTC está débil o deteriorado." />
