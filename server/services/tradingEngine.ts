@@ -915,6 +915,41 @@ export class TradingEngine {
     return count;
   }
 
+  /**
+   * Fuente de verdad de slots ocupados por par — paridad LIVE vs DRY_RUN.
+   * LIVE:    openPositionsTable + orderIntentsTable (BD real)
+   * DRY_RUN: openPositions Map en memoria (posiciones simuladas; ejecución instantánea)
+   * La lógica de decisión (comparar con maxLotsForMode) usa este valor en ambos modos.
+   */
+  private async getOccupiedLotsForGate(exchange: string, pair: string): Promise<{
+    occupiedSlots: { openPositions: number; pendingFillPositions: number; pendingIntents: number; acceptedIntents: number; total: number };
+    currentOpenLots: number;
+  }> {
+    if (this.dryRunMode) {
+      const dryLots = this.countLotsForPair(pair);
+      return {
+        occupiedSlots: { openPositions: dryLots, pendingFillPositions: 0, pendingIntents: 0, acceptedIntents: 0, total: dryLots },
+        currentOpenLots: dryLots,
+      };
+    }
+    const occupiedSlots = await storage.countOccupiedSlotsForPair(exchange, pair);
+    return { occupiedSlots, currentOpenLots: occupiedSlots.total };
+  }
+
+  /**
+   * Último tiempo de entrada por par — paridad LIVE vs DRY_RUN.
+   * LIVE:    orderIntentsTable (BD real — intent creado antes de enviar la orden)
+   * DRY_RUN: lastTradeTime Map en memoria (actualizado en if(success) post-executeTrade)
+   * Equivalente semántico porque en DRY_RUN la ejecución es instantánea (sin latencia de exchange).
+   */
+  private async getLastEntryTimeForGate(exchange: string, pair: string): Promise<Date | null> {
+    if (this.dryRunMode) {
+      const lastTs = this.lastTradeTime.get(pair);
+      return lastTs ? new Date(lastTs) : null;
+    }
+    return storage.getLastOrderTimeForPair(exchange, pair);
+  }
+
   private async emitOrderTrackingAlert(
     alertType: "TRADE_PERSIST_FAIL" | "POSITION_APPLY_FAIL" | "ORDER_FILLED_BUT_UNTRACKED",
     context: { pair: string; tradeId: string; exchange: string; type: string; error?: string }
@@ -3301,29 +3336,13 @@ El bot ha pausado las operaciones de COMPRA.
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
         
-        // ROBUST GATE: Query DB for LIVE; use in-memory for DRY_RUN
-        // DRY_RUN positions are in dryRunTrades table, NOT in openPositionsTable/orderIntentsTable
-        let occupiedSlots: { openPositions: number; pendingFillPositions: number; pendingIntents: number; acceptedIntents: number; total: number };
-        let currentOpenLots: number;
-        if (this.dryRunMode) {
-          const dryLots = this.countLotsForPair(pair);
-          occupiedSlots = { openPositions: dryLots, pendingFillPositions: 0, pendingIntents: 0, acceptedIntents: 0, total: dryLots };
-          currentOpenLots = dryLots;
-        } else {
-          occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGate, pair);
-          currentOpenLots = occupiedSlots.total;
-        }
+        // ROBUST GATE: fuente de verdad de slots — paridad LIVE (BD) vs DRY_RUN (memoria)
+        const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGate, pair);
         
         // Anti-burst cooldown: minimum 120s between entries per pair
-        // DRY_RUN: use in-memory lastTradeTime (orderIntentsTable is LIVE-only)
+        // Paridad LIVE (orderIntentsTable) vs DRY_RUN (lastTradeTime en memoria)
         const sgMinSecondsBetweenEntries = 120;
-        let lastOrderTime: Date | null = null;
-        if (this.dryRunMode) {
-          const lastTs = this.lastTradeTime.get(pair);
-          if (lastTs) lastOrderTime = new Date(lastTs);
-        } else {
-          lastOrderTime = await storage.getLastOrderTimeForPair(exchangeForGate, pair);
-        }
+        const lastOrderTime = await this.getLastEntryTimeForGate(exchangeForGate, pair);
         if (lastOrderTime) {
           const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
@@ -4478,28 +4497,13 @@ El bot ha pausado las operaciones de COMPRA.
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
         
-        // ROBUST GATE: Query DB for LIVE; use in-memory for DRY_RUN (same fix as cycle mode)
-        let occupiedSlots: { openPositions: number; pendingFillPositions: number; pendingIntents: number; acceptedIntents: number; total: number };
-        let currentOpenLots: number;
-        if (this.dryRunMode) {
-          const dryLots = this.countLotsForPair(pair);
-          occupiedSlots = { openPositions: dryLots, pendingFillPositions: 0, pendingIntents: 0, acceptedIntents: 0, total: dryLots };
-          currentOpenLots = dryLots;
-        } else {
-          occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGateCandles, pair);
-          currentOpenLots = occupiedSlots.total;
-        }
+        // ROBUST GATE: fuente de verdad de slots — paridad LIVE (BD) vs DRY_RUN (memoria)
+        const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGateCandles, pair);
         
         // Anti-burst cooldown: minimum 120s between entries per pair
-        // DRY_RUN: use in-memory lastTradeTime (orderIntentsTable is LIVE-only)
+        // Paridad LIVE (orderIntentsTable) vs DRY_RUN (lastTradeTime en memoria)
         const sgMinSecondsBetweenEntriesCandles = 120;
-        let lastOrderTimeCandles: Date | null = null;
-        if (this.dryRunMode) {
-          const lastTs = this.lastTradeTime.get(pair);
-          if (lastTs) lastOrderTimeCandles = new Date(lastTs);
-        } else {
-          lastOrderTimeCandles = await storage.getLastOrderTimeForPair(exchangeForGateCandles, pair);
-        }
+        const lastOrderTimeCandles = await this.getLastEntryTimeForGate(exchangeForGateCandles, pair);
         if (lastOrderTimeCandles) {
           const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
