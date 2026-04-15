@@ -448,6 +448,8 @@ export class TradingEngine {
   private pairCooldowns: Map<string, number> = new Map();
   private lastExposureAlert: Map<string, number> = new Map();
   private stopLossCooldowns: Map<string, number> = new Map();
+  // Throttle Telegram DRY_RUN: key="pair:type" → last sent timestamp (evitar spam)
+  private dryRunTelegramThrottle: Map<string, number> = new Map();
   
   // Track PENDING_FILL exposure to prevent over-allocation
   // Key: lotId, Value: { pair, expectedUsd }
@@ -3299,13 +3301,29 @@ El bot ha pausado las operaciones de COMPRA.
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
         
-        // ROBUST GATE: Query DB for all occupied slots (OPEN + PENDING_FILL + pending intents)
-        const occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGate, pair);
-        const currentOpenLots = occupiedSlots.total;
+        // ROBUST GATE: Query DB for LIVE; use in-memory for DRY_RUN
+        // DRY_RUN positions are in dryRunTrades table, NOT in openPositionsTable/orderIntentsTable
+        let occupiedSlots: { openPositions: number; pendingFillPositions: number; pendingIntents: number; acceptedIntents: number; total: number };
+        let currentOpenLots: number;
+        if (this.dryRunMode) {
+          const dryLots = this.countLotsForPair(pair);
+          occupiedSlots = { openPositions: dryLots, pendingFillPositions: 0, pendingIntents: 0, acceptedIntents: 0, total: dryLots };
+          currentOpenLots = dryLots;
+        } else {
+          occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGate, pair);
+          currentOpenLots = occupiedSlots.total;
+        }
         
         // Anti-burst cooldown: minimum 120s between entries per pair
+        // DRY_RUN: use in-memory lastTradeTime (orderIntentsTable is LIVE-only)
         const sgMinSecondsBetweenEntries = 120;
-        const lastOrderTime = await storage.getLastOrderTimeForPair(exchangeForGate, pair);
+        let lastOrderTime: Date | null = null;
+        if (this.dryRunMode) {
+          const lastTs = this.lastTradeTime.get(pair);
+          if (lastTs) lastOrderTime = new Date(lastTs);
+        } else {
+          lastOrderTime = await storage.getLastOrderTimeForPair(exchangeForGate, pair);
+        }
         if (lastOrderTime) {
           const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
@@ -4460,13 +4478,28 @@ El bot ha pausado las operaciones de COMPRA.
         // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
         const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
         
-        // ROBUST GATE: Query DB for all occupied slots (OPEN + PENDING_FILL + pending intents)
-        const occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGateCandles, pair);
-        const currentOpenLots = occupiedSlots.total;
+        // ROBUST GATE: Query DB for LIVE; use in-memory for DRY_RUN (same fix as cycle mode)
+        let occupiedSlots: { openPositions: number; pendingFillPositions: number; pendingIntents: number; acceptedIntents: number; total: number };
+        let currentOpenLots: number;
+        if (this.dryRunMode) {
+          const dryLots = this.countLotsForPair(pair);
+          occupiedSlots = { openPositions: dryLots, pendingFillPositions: 0, pendingIntents: 0, acceptedIntents: 0, total: dryLots };
+          currentOpenLots = dryLots;
+        } else {
+          occupiedSlots = await storage.countOccupiedSlotsForPair(exchangeForGateCandles, pair);
+          currentOpenLots = occupiedSlots.total;
+        }
         
         // Anti-burst cooldown: minimum 120s between entries per pair
+        // DRY_RUN: use in-memory lastTradeTime (orderIntentsTable is LIVE-only)
         const sgMinSecondsBetweenEntriesCandles = 120;
-        const lastOrderTimeCandles = await storage.getLastOrderTimeForPair(exchangeForGateCandles, pair);
+        let lastOrderTimeCandles: Date | null = null;
+        if (this.dryRunMode) {
+          const lastTs = this.lastTradeTime.get(pair);
+          if (lastTs) lastOrderTimeCandles = new Date(lastTs);
+        } else {
+          lastOrderTimeCandles = await storage.getLastOrderTimeForPair(exchangeForGateCandles, pair);
+        }
         if (lastOrderTimeCandles) {
           const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
           if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
@@ -5910,13 +5943,17 @@ El bot ha pausado las operaciones de COMPRA.
           log(`${envPrefixLog} Error persistiendo dry run trade: ${dbErr?.message || dbErr}`, "trading");
         }
         
-        // Enviar Telegram de simulación con prefijo correcto
+        // Enviar Telegram de simulación — throttle: max 1 mensaje por par+tipo cada 15 min (evitar spam DRY_RUN)
         if (this.telegramService.isInitialized()) {
-          const emoji = type === "buy" ? "🟢" : "🔴";
-          const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
-          
-          const subtype = type === "buy" ? "trade_buy" : "trade_sell";
-          await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+          const throttleKey = `${pair}:${type}`;
+          const lastSentTs = this.dryRunTelegramThrottle.get(throttleKey) || 0;
+          const DRY_TELEGRAM_THROTTLE_MS = 15 * 60 * 1000;
+          if (Date.now() - lastSentTs >= DRY_TELEGRAM_THROTTLE_MS) {
+            this.dryRunTelegramThrottle.set(throttleKey, Date.now());
+            const emoji = type === "buy" ? "🟢" : "🔴";
+            const tipoLabel = type === "buy" ? "COMPRAR" : "VENDER";
+            const subtype = type === "buy" ? "trade_buy" : "trade_sell";
+            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🧪 <b>Trade Simulado</b> [DRY_RUN]
 
@@ -5928,6 +5965,9 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
 
 ⚠️ Modo simulación - NO se envió orden real
 ━━━━━━━━━━━━━━━━━━━`, "trades", subtype as any);
+          } else {
+            log(`${envPrefixLog} Telegram throttled para ${pair} ${type} (próximo en ${Math.round((DRY_TELEGRAM_THROTTLE_MS - (Date.now() - lastSentTs)) / 1000)}s)`, "trading");
+          }
         }
         
         return true; // Simular éxito para flujo normal

@@ -2,6 +2,64 @@
 
 ----
 
+## 2026-04-16 — FIX CRÍTICO: NORMAL DRY RUN — ráfagas de órdenes + spam Telegram
+
+### Scope
+SOLO modo NORMAL (LIVE y DRY_RUN). IDCA intocable — no se modificó ningún archivo IDCA.
+
+### Problema detectado
+El bot en modo NORMAL DRY_RUN creaba múltiples órdenes BUY para el mismo par en cada tick,
+sin respetar el límite de posición abierta por par. Además, Telegram recibía spam de mensajes
+de simulación en cada tick con señal válida.
+
+### Causa raíz (3 bugs en `server/services/tradingEngine.ts`)
+
+#### BUG #1 — Gate de reentrada ciego en DRY_RUN (ciclo normal, líneas ~3302-3304)
+`countOccupiedSlotsForPair(exchange, pair)` consulta `openPositionsTable` y `orderIntentsTable`
+(tablas LIVE). En DRY_RUN, los trades simulados se almacenan en `dryRunTrades`, NO en esas tablas.
+→ Resultado: `currentOpenLots = 0` siempre → gate `if (currentOpenLots >= maxLotsForMode)` nunca bloqueaba.
+
+#### BUG #2 — Anti-burst cooldown 120s ciego en DRY_RUN (ciclo normal y de velas)
+`getLastOrderTimeForPair(exchange, pair)` consulta `orderIntentsTable` (LIVE) → siempre `null` en DRY_RUN.
+→ Resultado: el cooldown de 120s entre entradas nunca aplicaba en DRY_RUN.
+
+#### BUG #3 — Telegram DRY_RUN sin throttle
+`executeTrade` DRY_RUN enviaba un mensaje de Telegram por cada trade simulado sin límite de frecuencia.
+Con 5 pares activos y ciclo de 60s con señales → posible spam constante de mensajes.
+
+Los mismos bugs #1 y #2 existían también en el ciclo de velas (candle mode, líneas ~4482-4487).
+
+### Solución implementada
+
+#### Fix 1+2 — Gate y anti-burst DRY_RUN (ciclo normal)
+```
+- countOccupiedSlotsForPair → if (dryRunMode) usar this.countLotsForPair(pair) [en memoria]
+- getLastOrderTimeForPair   → if (dryRunMode) usar this.lastTradeTime.get(pair) [en memoria]
+```
+
+#### Fix 3+4 — Gate y anti-burst DRY_RUN (ciclo de velas, candle mode)
+Misma corrección aplicada al bloque equivalente del ciclo de velas.
+
+#### Fix 5 — Throttle Telegram DRY_RUN
+Nuevo campo `dryRunTelegramThrottle: Map<string, number>`. Max 1 mensaje de simulación
+por par+tipo cada 15 minutos. Los mensajes suprimidos generan log interno en lugar de spam Telegram.
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` (único archivo)
+
+### Garantía IDCA
+- `git diff --name-only` confirma: solo `server/services/tradingEngine.ts` modificado.
+- Cero archivos en `server/services/institutionalDca/` tocados.
+- Cero archivos en `server/routes/institutionalDca.routes.ts` tocados.
+
+### Resultado esperado
+- NORMAL DRY_RUN: máximo 1 posición abierta por par (igual que LIVE en modo SINGLE).
+- NORMAL DRY_RUN: cooldown anti-ráfaga de 120s activo entre entradas.
+- NORMAL DRY_RUN: máximo 1 notificación Telegram de simulación por par+tipo cada 15 min.
+- IDCA: sin cambios, sin regresión.
+
+----
+
 ## 2026-04-15 — FEAT: Tolerancias dinámicas ATR-based en Hybrid V2.1 (basePrice)
 
 ### Problema
