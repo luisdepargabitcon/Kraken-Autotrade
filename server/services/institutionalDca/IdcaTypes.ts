@@ -40,16 +40,18 @@ export interface BasePriceResult {
     candleCount7d?: number;
     candleCount30d?: number;
     swingHighsFound: number;
+    swingWindowUsed?: number;  // 1440 | 2880 | 4320 — which window found the swing
     // Candidates computed
     candidates?: {
       swingHigh24h?: number;
+      swingHighExpanded?: number;  // swing found in 48h/72h fallback
       p95_24h?: number;
       windowHigh24h?: number;
       p95_7d?: number;
       p95_30d?: number;
     };
     // Decision
-    selectedMethod?: string;   // 'swing_high_24h' | 'p95_24h' | 'p95_7d' | ...
+    selectedMethod?: string;   // 'swing_high_24h' | 'swing_high_48h' | 'swing_high_72h' | 'p95_24h' | 'p95_7d' | ...
     selectedReason?: string;
     selectedAnchorPrice?: number;
     selectedAnchorTime?: Date;

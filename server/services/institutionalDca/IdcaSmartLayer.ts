@@ -461,10 +461,11 @@ function filterWindow(candles: TimestampedCandle[], nowMs: number, minutes: numb
  *
  * Algorithm:
  * 1. Compute candidates in 24h window: swingHigh, P95, windowHigh
- * 2. ATR-based outlier guard: reject windowHigh if too far above P95
- * 3. Selection: prefer swingHigh if aligned with P95 (within 12%), else use P95
- * 4. 7d validation cap: if selected base > p95_7d × 1.10, cap to p95_7d
- * 5. 30d context cap: if selected base > p95_30d × 1.20, cap to p95_30d
+ * 2. Adaptive swing fallback: if 0 pivots in 24h → try 48h → try 72h
+ * 3. ATR-based outlier guard: reject windowHigh if too far above P95
+ * 4. Selection: prefer swingHigh if aligned with P95 (within 12%), else use P95
+ * 5. 7d validation cap: if selected base > p95_7d × 1.10, cap to p95_7d
+ * 6. 30d context cap: if selected base > p95_30d × 1.20, cap to p95_30d
  */
 function computeHybridV2(
   candles: TimestampedCandle[],
@@ -473,6 +474,8 @@ function computeHybridV2(
   nowMs: number,
 ): BasePriceResult {
   const candles24h = filterWindow(candles, nowMs, 1440);    // 24h = 1440 min
+  const candles48h = filterWindow(candles, nowMs, 2880);    // 48h = 2×24×60
+  const candles72h = filterWindow(candles, nowMs, 4320);    // 72h = 3×24×60
   const candles7d  = filterWindow(candles, nowMs, 10080);   // 7d  = 7×24×60
   const candles30d = filterWindow(candles, nowMs, 43200);   // 30d = 30×24×60
 
@@ -497,11 +500,23 @@ function computeHybridV2(
   const windowHigh24h = Math.max(...highs24h);
   const p95_24h = computeP95(highs24h);
 
-  // Swing high candidate
-  const pivotResult = detectPivotHighs(candles24h, pivotN);
+  // Swing high candidate — adaptive fallback 24h → 48h → 72h
+  let pivotResult = detectPivotHighs(candles24h, pivotN);
+  let swingWindow = 1440;
+
+  if (pivotResult.pivots.length === 0 && candles48h.length >= MIN_CANDLES) {
+    pivotResult = detectPivotHighs(candles48h, pivotN);
+    swingWindow = 2880;
+  }
+  if (pivotResult.pivots.length === 0 && candles72h.length >= MIN_CANDLES) {
+    pivotResult = detectPivotHighs(candles72h, pivotN);
+    swingWindow = 4320;
+  }
+
   const swingHighCandidate = pivotResult.pivots.length > 0
     ? pivotResult.pivots.reduce((a, b) => a.price > b.price ? a : b)
     : null;
+  const swingWindowLabel = swingWindow === 1440 ? "24h" : swingWindow === 2880 ? "48h" : "72h";
 
   // Outlier guard: reject windowHigh if it's too far above P95
   const outlierRejected = windowHigh24h > p95_24h * (1 + outlierThreshold);
@@ -520,20 +535,20 @@ function computeHybridV2(
     const swingInflated = swingHighCandidate.price > p95_24h * (1 + SWING_ALIGNMENT_TOL);
     if (!swingInflated) {
       selectedPrice = swingHighCandidate.price;
-      selectedMethod = "swing_high_24h";
-      selectedReason = `Hybrid V2.1 seleccionó swing high 24h alineado con P95 24h (swing=$${swingHighCandidate.price.toFixed(2)}, p95=$${p95_24h.toFixed(2)}).`;
+      selectedMethod = `swing_high_${swingWindowLabel}`;
+      selectedReason = `Hybrid V2.1 seleccionó swing high ${swingWindowLabel} alineado con P95 24h (swing=$${swingHighCandidate.price.toFixed(2)}, p95=$${p95_24h.toFixed(2)}).`;
       anchorTime = new Date(swingHighCandidate.time);
     } else {
       selectedPrice = p95_24h;
       selectedMethod = "p95_24h";
-      selectedReason = `Hybrid V2.1 descartó swing inflado ($${swingHighCandidate.price.toFixed(2)} > p95×${(1+SWING_ALIGNMENT_TOL).toFixed(2)}) y usó P95 24h ($${p95_24h.toFixed(2)}).`;
+      selectedReason = `Hybrid V2.1 descartó swing ${swingWindowLabel} inflado ($${swingHighCandidate.price.toFixed(2)} > p95×${(1+SWING_ALIGNMENT_TOL).toFixed(2)}) y usó P95 24h ($${p95_24h.toFixed(2)}).`;
       const p95Candle = candles24h.reduce((b, c) => Math.abs(c.high - p95_24h) < Math.abs(b.high - p95_24h) ? c : b);
       anchorTime = new Date(p95Candle.time);
     }
   } else {
     selectedPrice = p95_24h;
     selectedMethod = "p95_24h";
-    selectedReason = `Hybrid V2.1 usó P95 24h ($${p95_24h.toFixed(2)}) por ausencia de swing highs fiables.`;
+    selectedReason = `Hybrid V2.1 usó P95 24h ($${p95_24h.toFixed(2)}) — sin swing highs fiables en 24h/48h/72h.`;
     const p95Candle = candles24h.reduce((b, c) => Math.abs(c.high - p95_24h) < Math.abs(b.high - p95_24h) ? c : b);
     anchorTime = new Date(p95Candle.time);
   }
@@ -578,8 +593,10 @@ function computeHybridV2(
       candleCount7d: candles7d.length,
       candleCount30d: candles30d.length,
       swingHighsFound: pivotResult.pivots.length,
+      swingWindowUsed: swingWindow,
       candidates: {
-        swingHigh24h: swingHighCandidate?.price,
+        swingHigh24h: swingWindow === 1440 ? swingHighCandidate?.price : undefined,
+        swingHighExpanded: swingWindow > 1440 ? swingHighCandidate?.price : undefined,
         p95_24h,
         windowHigh24h,
         p95_7d,

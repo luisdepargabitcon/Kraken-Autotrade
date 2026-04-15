@@ -2,6 +2,37 @@
 
 ----
 
+## 2026-04-14 — FEAT: Swing adaptativo 48h/72h en Hybrid V2.1
+
+### Problema
+Cuando el mercado está lateral/tranquilo (baja volatilidad), la ventana de 24h no genera ningún pivot high confirmado (N=3 candles cada lado). En ese caso, el sistema caía directamente a P95 24h como base price, que es una referencia estadística menos precisa que un swing real.
+
+### Solución — Fallback adaptativo
+Dentro de `computeHybridV2()`, después de buscar pivots en 24h:
+1. Si **0 pivots en 24h** → expandir a **48h** y reintentar `detectPivotHighs()`
+2. Si **0 pivots en 48h** → expandir a **72h** y reintentar
+3. Si **0 pivots en 72h** → P95 24h como antes (último recurso)
+4. Los **caps 7d/30d existentes** actúan como guardrail si el swing expandido es demasiado alto
+
+### Guardrails que protegen contra over-anchor
+- **Cap 7d**: si swing_48h/72h > p95_7d × 1.10 → se capea a p95_7d
+- **Cap 30d**: si base > p95_30d × 1.20 → se capea a p95_30d
+- **Swing alignment**: si swing > p95_24h × 1.12 → se rechaza como inflado
+
+### Trazabilidad en meta
+- `selectedMethod`: `swing_high_24h` / `swing_high_48h` / `swing_high_72h` / `p95_24h`
+- `swingWindowUsed`: 1440 / 2880 / 4320
+- `candidates.swingHighExpanded`: precio del swing encontrado en ventana >24h
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `server/services/institutionalDca/IdcaSmartLayer.ts` | Fallback 24h→48h→72h en `computeHybridV2()` + ventanas 48h/72h |
+| `server/services/institutionalDca/IdcaTypes.ts` | Campos `swingWindowUsed`, `swingHighExpanded` en `BasePriceResult.meta` |
+
+----
+
 ## 2026-04-14 — FIX: Historial eventos vacío — Query Key Instability (FRONTEND)
 
 ### Problema
