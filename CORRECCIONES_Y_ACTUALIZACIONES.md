@@ -2,6 +2,126 @@
 
 ----
 
+## 2026-04-15 — FEAT: Tolerancias dinámicas ATR-based en Hybrid V2.1 (basePrice)
+
+### Problema
+Los tres umbrales fijos del cálculo de base price (`SWING_ALIGNMENT_TOL=12%`, `CAP_7D_TOL=10%`, `CAP_30D_TOL=20%`) no se adaptaban a la volatilidad del mercado ni diferenciaban BTC de ETH:
+- En mercado comprimido (ATR <1.5%), el 12% aceptaba cualquier swing incluyendo wicks
+- En rallies fuertes (ATR >5%), el cap 7d al 10% bloqueaba entradas durante días
+- ETH tiene volatilidad ~1.5× mayor que BTC pero usaba los mismos umbrales
+
+### Solución — Tolerancias dinámicas con clamp por par
+
+**SWING_ALIGNMENT_TOL** → `clamp(ATR% × 3.0, min, max)`
+| Par | Min | Max |
+|---|---|---|
+| BTC | 6% | 18% |
+| ETH | 8% | 25% |
+
+**CAP_7D_TOL** → `clamp(ATR% × 2.5, min, max)`
+| Par | Min | Max |
+|---|---|---|
+| BTC | 6% | 20% |
+| ETH | 8% | 25% |
+
+**CAP_30D_TOL** → Fijo por par (guardrail)
+| Par | Valor |
+|---|---|
+| BTC | 20% |
+| ETH | 25% |
+
+### Helpers implementados
+- `getDynamicSwingAlignmentTol(pair, atrPct)` → tolerancia de alineación swing/P95
+- `getDynamicCap7dTol(pair, atrPct)` → tolerancia del cap semanal
+- `getCap30dTol(pair)` → guardrail mensual por par
+
+### Payload de auditoría
+Nuevo campo `meta.dynamicTols` en `BasePriceResult`:
+```json
+{
+  "pair": "BTC/USD",
+  "swingAlignmentTol": 7.5,
+  "swingAlignmentTolFixedLegacy": 12,
+  "cap7dTol": 6.25,
+  "cap7dTolFixedLegacy": 10,
+  "cap30dTol": 20,
+  "cap30dTolFixedLegacy": 20,
+  "atrPctUsed": 2.5
+}
+```
+
+### Textos de razón actualizados
+- Swing aceptado: incluye distancia% y tolDinámica%
+- Swing descartado: incluye distancia% vs tolDinámica%
+- Cap 7d: incluye exceso%, capDinámico%
+- Cap 30d: incluye exceso%, capPorPar%
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `server/services/institutionalDca/IdcaSmartLayer.ts` | Nuevos helpers dinámicos, `computeHybridV2` recibe `pair`, constantes legacy renombradas, reasons actualizados, `meta.dynamicTols` añadido |
+| `server/services/institutionalDca/IdcaTypes.ts` | `BasePriceResult.meta.dynamicTols` tipo añadido |
+| `server/services/institutionalDca/IdcaEngine.ts` | `pair` pasado a `computeBasePrice()` en ambas llamadas |
+
+### Notas de migración
+- **No requiere migración SQL** — sin campos nuevos en DB
+- **Backward compatible** — `pair` es opcional en `ComputeBasePriceInput` (default `"BTC/USD"`)
+- **Tests existentes** siguen pasando sin cambios (usan default)
+- **Eventos** serializan `meta` como JSON genérico — `dynamicTols` se añade sin romper
+
+### Bugfix incluido
+Corregido bug en reason del cap 30d: usaba `selectedPrice` después de reasignar (mostraba p95_30d en vez del valor pre-cap).
+
+----
+
+## 2026-04-15 — REFACTOR: Saneamiento de coherencia IDCA (UI ↔ Motor)
+
+### Problema
+Auditoría funcional detectó 6 controles visibles en la UI que **no tenían efecto real** en el motor (decorativos/legacy), una incoherencia entre dos campos de trailing (`trailingPct` legacy vs `trailingMarginPct` slider), y una función de partial sell (`armTakeProfit`) que nunca se invoca desde el flujo principal.
+
+### Cambios aplicados
+
+#### Fase 1 — Retirada de controles decorativos de la UI
+Eliminados de `InstitutionalDca.tsx` (ConfigTab):
+- **`blockOnBreakdown`** — toggle sin lógica en el motor
+- **`blockOnHighSpread`** — toggle sin lógica en el motor
+- **`blockOnSellPressure`** — toggle sin lógica en el motor
+- **`protectPrincipal`** — toggle sin implementación
+- **`maxCombinedBtcExposurePct`** — slider sin verificación de exposición combinada
+- **`maxCombinedEthExposurePct`** — slider sin verificación de exposición combinada
+
+Las columnas de schema/DB **permanecen intactas** (0 riesgo de migración).
+
+#### Fase 2 — Unificación del trailing
+- `assetConfig.trailingMarginPct` (slider UI) definido como **única fuente de verdad**
+- Se reemplazaron **6 referencias** a `assetConfig.trailingPct` (legacy) por `assetConfig.trailingMarginPct` en `IdcaEngine.ts`:
+  - Creación de ciclo (checkEntry)
+  - Import de posición (rehydrateImportedCycle)
+  - armTakeProfit (legacy)
+  - handleTrailingState
+  - Recovery entry
+  - Recovery safety buy
+- El campo `cycle.trailingPct` (columna en ciclos) sigue almacenando el trailing calculado para cada ciclo activo — no se toca.
+
+#### Fase 3 — Marcado de armTakeProfit como legacy
+- Añadido comentario explícito documentando que `armTakeProfit()` no se invoca desde `handleActiveState`
+- El flujo real va: `active → trailing_active` directamente (sin partial sell)
+- Los campos `partialTpMinPct`/`partialTpMaxPct` no están expuestos en la UI actual
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `client/src/pages/InstitutionalDca.tsx` | Retirados 6 controles decorativos (3 toggles, 2 sliders, 1 toggle) |
+| `server/services/institutionalDca/IdcaEngine.ts` | 6× `assetConfig.trailingPct` → `assetConfig.trailingMarginPct`, comentario legacy en `armTakeProfit` |
+
+### Notas de migración
+- **No requiere migración SQL** — las columnas de DB permanecen, solo se deja de leer/escribir desde UI
+- **Ciclos existentes**: Si un ciclo ya tiene `cycle.trailingPct` almacenado, seguirá usando ese valor. Solo ciclos nuevos usarán `trailingMarginPct` como base.
+
+----
+
 ## 2026-04-14 — FEAT: Swing adaptativo 48h/72h en Hybrid V2.1
 
 ### Problema

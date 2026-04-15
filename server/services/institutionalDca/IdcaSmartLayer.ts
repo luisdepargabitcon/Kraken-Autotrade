@@ -428,22 +428,38 @@ export interface ComputeBasePriceInput {
   method: DipReferenceMethod;
   currentPrice: number;
   pivotN?: number; // candles each side for pivot confirmation, default 3
+  pair?: string;   // e.g. "BTC/USD" — used for per-pair dynamic tolerances
 }
 
 // ─── Hybrid V2.1 algorithm constants ─────────────────────────────────────
-// SWING_ALIGNMENT_TOL: if swingHigh > p95 * (1 + tol), swing is "inflated" → use p95 instead
-const SWING_ALIGNMENT_TOL = 0.12;     // 12%
-// CAP_7D_TOL: if base24h > p95_7d * (1 + tol), cap base to p95_7d
-const CAP_7D_TOL = 0.10;              // 10%
-// CAP_30D_TOL: if base24h > p95_30d * (1 + tol), cap base to p95_30d
-const CAP_30D_TOL = 0.20;             // 20%
+// Legacy fixed values (kept as reference for payload auditability)
+const SWING_ALIGNMENT_TOL_LEGACY = 0.12;  // 12% — replaced by dynamic
+const CAP_7D_TOL_LEGACY = 0.10;           // 10% — replaced by dynamic
+const CAP_30D_TOL_LEGACY = 0.20;          // 20% — now per-pair
 // OUTLIER_ATR_FACTOR: outlierThreshold = max(MIN_OUTLIER_FLOOR, atrFraction * factor)
-// e.g. ATR=3% → threshold = max(5%, 3%×1.5=4.5%) = 5%
-// e.g. ATR=8% → threshold = max(5%, 8%×1.5=12%) = 12%
 const OUTLIER_ATR_FACTOR = 1.5;
-const MIN_OUTLIER_FLOOR = 0.05;       // 5% minimum regardless of ATR
-// Minimum candles required for a reliable base
+const MIN_OUTLIER_FLOOR = 0.05;           // 5% minimum regardless of ATR
 const MIN_CANDLES = 7;
+
+// ─── Dynamic tolerance helpers ───────────────────────────────────────────
+// Each returns a fraction (e.g. 0.12 = 12%), clamped to safe min/max per pair.
+// atrPct is in percentage units (e.g. 2.5 means 2.5%).
+
+function getDynamicSwingAlignmentTol(pair: string, atrPct: number): number {
+  const raw = (atrPct / 100) * 3.0;
+  const isBtc = pair === "BTC/USD";
+  return clamp(raw, isBtc ? 0.06 : 0.08, isBtc ? 0.18 : 0.25);
+}
+
+function getDynamicCap7dTol(pair: string, atrPct: number): number {
+  const raw = (atrPct / 100) * 2.5;
+  const isBtc = pair === "BTC/USD";
+  return clamp(raw, isBtc ? 0.06 : 0.08, isBtc ? 0.20 : 0.25);
+}
+
+function getCap30dTol(pair: string): number {
+  return pair === "BTC/USD" ? 0.20 : 0.25;
+}
 
 function computeP95(values: number[]): number {
   if (values.length === 0) return 0;
@@ -463,15 +479,16 @@ function filterWindow(candles: TimestampedCandle[], nowMs: number, minutes: numb
  * 1. Compute candidates in 24h window: swingHigh, P95, windowHigh
  * 2. Adaptive swing fallback: if 0 pivots in 24h → try 48h → try 72h
  * 3. ATR-based outlier guard: reject windowHigh if too far above P95
- * 4. Selection: prefer swingHigh if aligned with P95 (within 12%), else use P95
- * 5. 7d validation cap: if selected base > p95_7d × 1.10, cap to p95_7d
- * 6. 30d context cap: if selected base > p95_30d × 1.20, cap to p95_30d
+ * 4. Selection: prefer swingHigh if aligned with P95 (dynamic ATR-based tolerance), else use P95
+ * 5. 7d validation cap: dynamic ATR-based tolerance per pair
+ * 6. 30d context cap: fixed per-pair tolerance (guardrail)
  */
 function computeHybridV2(
   candles: TimestampedCandle[],
   currentPrice: number,
   pivotN: number,
   nowMs: number,
+  pair: string = "BTC/USD",
 ): BasePriceResult {
   const candles24h = filterWindow(candles, nowMs, 1440);    // 24h = 1440 min
   const candles48h = filterWindow(candles, nowMs, 2880);    // 48h = 2×24×60
@@ -525,6 +542,11 @@ function computeHybridV2(
   const p95_7d  = candles7d.length  >= MIN_CANDLES ? computeP95(candles7d.map(c => c.high))  : undefined;
   const p95_30d = candles30d.length >= MIN_CANDLES ? computeP95(candles30d.map(c => c.high)) : undefined;
 
+  // ── Dynamic tolerances ─────────────────────────────────────────────────
+  const swingAlignmentTol = getDynamicSwingAlignmentTol(pair, atrPct);
+  const cap7dTol = getDynamicCap7dTol(pair, atrPct);
+  const cap30dTol = getCap30dTol(pair);
+
   // ── Selection logic ───────────────────────────────────────────────────
   let selectedPrice: number;
   let selectedMethod: string;
@@ -532,16 +554,17 @@ function computeHybridV2(
   let anchorTime: Date;
 
   if (swingHighCandidate !== null) {
-    const swingInflated = swingHighCandidate.price > p95_24h * (1 + SWING_ALIGNMENT_TOL);
+    const swingDistance = p95_24h > 0 ? (swingHighCandidate.price / p95_24h) - 1 : 0;
+    const swingInflated = swingDistance > swingAlignmentTol;
     if (!swingInflated) {
       selectedPrice = swingHighCandidate.price;
       selectedMethod = `swing_high_${swingWindowLabel}`;
-      selectedReason = `Hybrid V2.1 seleccionó swing high ${swingWindowLabel} alineado con P95 24h (swing=$${swingHighCandidate.price.toFixed(2)}, p95=$${p95_24h.toFixed(2)}).`;
+      selectedReason = `Hybrid V2.1 seleccionó swing high ${swingWindowLabel} alineado con P95 24h (swing=$${swingHighCandidate.price.toFixed(2)}, p95=$${p95_24h.toFixed(2)}, distancia=${(swingDistance * 100).toFixed(1)}%, tolDinámica=${(swingAlignmentTol * 100).toFixed(1)}%).`;
       anchorTime = new Date(swingHighCandidate.time);
     } else {
       selectedPrice = p95_24h;
       selectedMethod = "p95_24h";
-      selectedReason = `Hybrid V2.1 descartó swing ${swingWindowLabel} inflado ($${swingHighCandidate.price.toFixed(2)} > p95×${(1+SWING_ALIGNMENT_TOL).toFixed(2)}) y usó P95 24h ($${p95_24h.toFixed(2)}).`;
+      selectedReason = `Hybrid V2.1 descartó swing ${swingWindowLabel} inflado frente a P95 24h (distancia=${(swingDistance * 100).toFixed(1)}% > tolDinámica=${(swingAlignmentTol * 100).toFixed(1)}%) y usó P95 24h ($${p95_24h.toFixed(2)}).`;
       const p95Candle = candles24h.reduce((b, c) => Math.abs(c.high - p95_24h) < Math.abs(b.high - p95_24h) ? c : b);
       anchorTime = new Date(p95Candle.time);
     }
@@ -557,22 +580,25 @@ function computeHybridV2(
   const caps: { cappedBy7d?: boolean; cappedBy30d?: boolean; originalBase?: number } = {};
   const originalBase = selectedPrice;
 
-  if (p95_7d !== undefined && selectedPrice > p95_7d * (1 + CAP_7D_TOL)) {
+  if (p95_7d !== undefined && selectedPrice > p95_7d * (1 + cap7dTol)) {
+    const excessPct = p95_7d > 0 ? ((selectedPrice / p95_7d) - 1) * 100 : 0;
     caps.cappedBy7d = true;
     caps.originalBase = originalBase;
     selectedPrice = p95_7d;
     selectedMethod = "p95_7d_capped";
-    selectedReason = `Base 24h ($${originalBase.toFixed(2)}) capada por contexto 7d (p95_7d=$${p95_7d.toFixed(2)}).`;
+    selectedReason = `Hybrid V2.1 capó la base por contexto 7d (base=$${originalBase.toFixed(2)}, p95_7d=$${p95_7d.toFixed(2)}, exceso=${excessPct.toFixed(1)}%, capDinámico=${(cap7dTol * 100).toFixed(1)}%).`;
     const p95Candle7d = candles7d.reduce((b, c) => Math.abs(c.high - p95_7d) < Math.abs(b.high - p95_7d) ? c : b);
     anchorTime = new Date(p95Candle7d.time);
   }
 
-  if (p95_30d !== undefined && selectedPrice > p95_30d * (1 + CAP_30D_TOL)) {
+  if (p95_30d !== undefined && selectedPrice > p95_30d * (1 + cap30dTol)) {
+    const preBefore30d = selectedPrice;
+    const excessPct30d = p95_30d > 0 ? ((preBefore30d / p95_30d) - 1) * 100 : 0;
     caps.cappedBy30d = true;
     if (caps.originalBase === undefined) caps.originalBase = originalBase;
     selectedPrice = p95_30d;
     selectedMethod = "p95_30d_capped";
-    selectedReason = `Base capada por contexto 30d (p95_30d=$${p95_30d.toFixed(2)}).`;
+    selectedReason = `Hybrid V2.1 capó la base por contexto 30d (base=$${preBefore30d.toFixed(2)}, p95_30d=$${p95_30d.toFixed(2)}, exceso=${excessPct30d.toFixed(1)}%, capPorPar=${(cap30dTol * 100).toFixed(0)}%).`;
     const p95Candle30d = candles30d.reduce((b, c) => Math.abs(c.high - p95_30d) < Math.abs(b.high - p95_30d) ? c : b);
     anchorTime = new Date(p95Candle30d.time);
   }
@@ -611,6 +637,16 @@ function computeHybridV2(
       outlierRejectedValue: outlierRejected ? windowHigh24h : undefined,
       capsApplied: Object.keys(caps).length > 0 ? caps : undefined,
       atrPct,
+      dynamicTols: {
+        pair,
+        swingAlignmentTol: +(swingAlignmentTol * 100).toFixed(2),
+        swingAlignmentTolFixedLegacy: +(SWING_ALIGNMENT_TOL_LEGACY * 100).toFixed(0),
+        cap7dTol: +(cap7dTol * 100).toFixed(2),
+        cap7dTolFixedLegacy: +(CAP_7D_TOL_LEGACY * 100).toFixed(0),
+        cap30dTol: +(cap30dTol * 100).toFixed(0),
+        cap30dTolFixedLegacy: +(CAP_30D_TOL_LEGACY * 100).toFixed(0),
+        atrPctUsed: +atrPct.toFixed(2),
+      },
       // Legacy compat
       p95Value: p95_24h,
       maxAbsolute: windowHigh24h,
@@ -620,12 +656,12 @@ function computeHybridV2(
 }
 
 export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult {
-  const { candles, lookbackMinutes, method, currentPrice, pivotN = 3 } = input;
+  const { candles, lookbackMinutes, method, currentPrice, pivotN = 3, pair = "BTC/USD" } = input;
   const now = Date.now();
 
   // ── Hybrid V2.1 — primary method ──────────────────────────────────────
   if (method === "hybrid") {
-    return computeHybridV2(candles, currentPrice, pivotN, now);
+    return computeHybridV2(candles, currentPrice, pivotN, now, pair);
   }
 
   // ── swing_high — pure pivot detection ─────────────────────────────────
@@ -690,7 +726,7 @@ export function computeBasePrice(input: ComputeBasePriceInput): BasePriceResult 
 
   // ── Unknown method — always falls back to Hybrid V2.1 ─────────────────
   // Handles any legacy value that escaped normalization
-  return computeHybridV2(candles, currentPrice, pivotN, now);
+  return computeHybridV2(candles, currentPrice, pivotN, now, pair);
 }
 
 interface PivotPoint {

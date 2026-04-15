@@ -67,6 +67,17 @@ export interface BasePriceResult {
     };
     // Volatility context
     atrPct?: number;
+    // Dynamic tolerances (Hybrid V2.1 audit trail)
+    dynamicTols?: {
+      pair: string;
+      swingAlignmentTol: number;      // % dynamic value used
+      swingAlignmentTolFixedLegacy: number; // % legacy fixed reference
+      cap7dTol: number;
+      cap7dTolFixedLegacy: number;
+      cap30dTol: number;
+      cap30dTolFixedLegacy: number;
+      atrPctUsed: number;
+    };
     // Legacy fields (kept for backward compat)
     p95Value?: number;
     maxAbsolute?: number;
