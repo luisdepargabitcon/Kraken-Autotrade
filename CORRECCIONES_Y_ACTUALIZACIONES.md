@@ -6,10 +6,24 @@
 
 ### Archivos modificados
 - `server/utils/krakenRateLimiter.ts` — FASE 1+2
-- `server/services/tradingEngine.ts` — FASE 2+3+4+6+7
+- `server/services/tradingEngine.ts` — FASE 2+3+4+6+7 + fleco FASE 7 (lotId en sellContext)
 - `server/services/exitManager.ts` — FASE 6
 - `server/services/botLogger.ts` — EventType extension
 - `client/src/pages/Terminal.tsx` — FASE 8
+
+### Validación técnica
+- `npx tsc --noEmit` ejecutado → **exit code 0, sin errores de compilación**
+- Verificación por auditoría técnica fase a fase con `git diff` y búsquedas en repo
+
+### Riesgos conocidos y límites
+
+**FASE 4 — SELL por señal técnica bajo `marketDataDegraded`**
+En **SMART_GUARD** (modo producción por defecto), las SELLs por señal técnica dentro de `analyzePairAndTradeWithCandles` están unconditionally bloqueadas **antes** del guard de degradado (líneas 4181 y 5263 de `tradingEngine.ts`) porque SMART_GUARD rechaza todos los SELL por señal salvo orphan cleanup. El guard de `marketDataDegraded` es irrelevante en este modo.
+En **SINGLE/DCA**, las SELLs por señal sí podrían quedar bloqueadas cuando `marketDataDegraded=true`. Sin embargo, `exitManager.checkStopLossTakeProfit` siempre ejecuta **antes** del scan loop (línea 2942), por lo que SL/TP proporcionan cobertura de salida. **Impacto: bajo, no aplica en producción SMART_GUARD.**
+
+**FASE 7 — Guard DRY_RUN: hueco en path FIFO cerrado**
+Los dos paths de SELL por señal técnica (`analyzePairAndTrade` línea 4318 y `analyzePairAndTradeWithCandles` línea 5373) construían `sellContext` sin `lotId`. Esto hacía que `sellLotId = undefined` en el path DRY_RUN y el guard `DRY_RUN_DOUBLE_SELL_PREVENTED` nunca disparaba para esas llamadas — el guard era letra muerta para SELLs por señal.
+**Fix aplicado (commit de fleco):** se añadió `lotId: existingPosition.lotId` a ambos `sellContext`. Ahora el guard cubre los tres paths de SELL: safeSell (exitManager), señal no-candles, señal candles.
 
 ---
 

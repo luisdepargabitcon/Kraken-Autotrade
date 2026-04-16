@@ -4316,7 +4316,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason, undefined, undefined, undefined, sellContext);
         if (success) {
@@ -5371,7 +5371,7 @@ El bot ha pausado las operaciones de COMPRA.
         }
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${selectedStrategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
