@@ -183,6 +183,9 @@ export class ExitManager {
   private sellAttempts: Map<string, number[]> = new Map(); // lotId → [timestamps]
   private readonly CIRCUIT_BREAKER_WINDOW_MS = 60_000; // 1 minute window
   private readonly CIRCUIT_BREAKER_MAX_ATTEMPTS = 1; // Max 1 sell attempt per window
+  // FASE 6: Throttle Telegram para alertas de circuit breaker (evitar spam por tick)
+  private cbTelegramThrottle: Map<string, number> = new Map(); // lotId → lastSentMs
+  private readonly CB_TELEGRAM_COOLDOWN_MS = 15 * 60 * 1000; // 15 min entre alertas por lote
 
   private throttleLoaded = false;
 
@@ -283,18 +286,24 @@ export class ExitManager {
       await botLogger.error("CIRCUIT_BREAKER_BLOCKED", `Circuit breaker bloqueó SELL en ${pair}`, {
         pair, lotId, sellReason, sellAmount,
       });
-      // Send critical Telegram alert
+      // FASE 6: Telegram solo una vez cada CB_TELEGRAM_COOLDOWN_MS por lotId
       const telegram = this.host.getTelegramService();
       if (telegram.isInitialized()) {
-        await telegram.sendAlertWithSubtype(
-          `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
-          `🚨 <b>CIRCUIT BREAKER: SELL BLOQUEADO</b>\n\n` +
-          `📦 Par: <code>${pair}</code> | Lot: <code>${lotId.substring(0, 12)}</code>\n` +
-          `⚡ Trigger: <code>${sellReason}</code>\n` +
-          `⚠️ <b>Múltiples intentos de venta detectados en ventana corta</b>\n` +
-          `━━━━━━━━━━━━━━━━━━━`,
-          "errors", "error_api"
-        );
+        const lastCbAlert = this.cbTelegramThrottle.get(lotId) || 0;
+        if (Date.now() - lastCbAlert >= this.CB_TELEGRAM_COOLDOWN_MS) {
+          this.cbTelegramThrottle.set(lotId, Date.now());
+          await telegram.sendAlertWithSubtype(
+            `🤖 <b>KRAKEN BOT</b> 🇪🇸\n━━━━━━━━━━━━━━━━━━━\n` +
+            `🚨 <b>CIRCUIT BREAKER: SELL BLOQUEADO</b>\n\n` +
+            `📦 Par: <code>${pair}</code> | Lot: <code>${lotId.substring(0, 12)}</code>\n` +
+            `⚡ Trigger: <code>${sellReason}</code>\n` +
+            `⚠️ <b>Múltiples intentos de venta detectados en ventana corta</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━`,
+            "errors", "error_api"
+          );
+        } else {
+          log(`[CB_TELEGRAM_SUPPRESSED] lotId=${lotId.substring(0,12)} pair=${pair} — cooldown activo (${Math.round((this.CB_TELEGRAM_COOLDOWN_MS - (Date.now() - lastCbAlert)) / 1000)}s restantes)`, "trading");
+        }
       }
       return false;
     }

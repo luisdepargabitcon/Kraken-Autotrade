@@ -2,6 +2,118 @@
 
 ----
 
+## 2026-04-17 — FIX: Backpressure KrakenRL + Catch-up cap + Timing + Degraded state + Telegram spam + DRY_RUN multi-sell + UI expandable [FASE 1-8]
+
+### Archivos modificados
+- `server/utils/krakenRateLimiter.ts` — FASE 1+2
+- `server/services/tradingEngine.ts` — FASE 2+3+4+6+7
+- `server/services/exitManager.ts` — FASE 6
+- `server/services/botLogger.ts` — EventType extension
+- `client/src/pages/Terminal.tsx` — FASE 8
+
+---
+
+### FASE 1 — KrakenRL backpressure real (`krakenRateLimiter.ts`)
+**Problema:** La cola FIFO no tenía límite. Si Kraken se saturaba y el bot seguía encolando tareas, la memoria crecía indefinidamente y los timeouts se acumulaban.
+
+**Solución:**
+- `KRAKEN_MAX_QUEUE_SIZE` (env, default 60): cuando `queue.length >= maxQueueSize`, `schedule()` rechaza inmediatamente con `errorCode: 'QUEUE_OVERFLOW'` en vez de encolar.
+- Log `[KrakenRL] QUEUE_OVERFLOW` con origen y longitud de cola para diagnóstico.
+
+---
+
+### FASE 2 — Estado MARKET_DATA_DEGRADED con histéresis (`krakenRateLimiter.ts`)
+**Problema:** No había forma de saber externamente si KrakenRL estaba saturado. Los errores de rate-limit se propagaban individualmente sin un estado agregado.
+
+**Solución (`_updateDegradedState()`):**
+- Entrada en degraded: `queue > 30 OR waitedMs > 15s OR consecutiveErrors >= 3`
+- Salida de degraded (histéresis más estricta): `queue <= 8 AND waitedMs <= 3s AND consecutiveErrors === 0`
+- Logs `[MARKET_DATA_DEGRADED_ON]` / `[MARKET_DATA_DEGRADED_OFF]` con métricas
+- `isDegraded(): boolean` y `getState()` expuestos como API pública
+- `consecutiveErrors` se incrementa solo en errores de rate-limit; se resetea en éxito
+
+---
+
+### FASE 2 — Catch-up cap en `shouldPollForNewCandle` (`tradingEngine.ts`)
+**Problema:** Si `lastEvaluatedCandle` quedaba muy atrás (ej: bot parado horas), el loop de catch-up intentaba recuperar velas en cada tick del scan (cada 60s) indefinidamente, saturando la API.
+
+**Solución:**
+- `CATCH_UP_COOLDOWN_MS = 30_000`: máximo 1 poll de catch-up por par cada 30s
+- `CATCH_UP_MAX_LAG_INTERVALS = 4`: si el desfase supera 4 intervalos (ej: 20 min en 5m TF), se emite `[CANDLE_POLL] DESYNC_TOO_LARGE` y se resetea `lastEvaluatedCandle` para sincronizar en el siguiente cierre natural
+- El cooldown se trackea por `catchUpLastFiredMs: Map<string, number>`
+
+---
+
+### FASE 3 — Timing invariant CANDLE_SAME (`tradingEngine.ts`)
+**Problema:** En la rama CANDLE_SAME (API devuelve misma vela), si `nextUnprocessedClose < candle.time` (invariant roto por desync de reloj o lag), el motor podía quedar en un estado inconsistente procesando velas "del pasado".
+
+**Solución:** Guard explícito:
+```
+if (nextUnprocessedClose > 0 && nextUnprocessedClose < candle.time) {
+  log([TIMING_INVARIANT_BROKEN] ...);
+  this.lastEvaluatedCandle.delete(candleKey);
+  this.catchUpLastFiredMs.delete(candleKey);
+  → reset + skip cycle
+}
+```
+
+---
+
+### FASE 4 — MarketDataDegraded con histéresis en scan loop (`tradingEngine.ts`)
+**Problema:** Cuando KrakenRL estaba degradado, el bot continuaba intentando abrir entradas nuevas con datos potencialmente obsoletos.
+
+**Solución:**
+- Al inicio de cada `SCAN_DISPATCH`: consulta `krakenRateLimiter.getState()` y actualiza `this.marketDataDegraded`
+- Histéresis: necesita `MD_DEGRADED_GOOD_STREAK_TO_RECOVER = 3` ticks consecutivos limpios para salir del estado degradado
+- En el path `CANDLE_NEW`: si `marketDataDegraded = true` → bloquea la llamada a `analyzePairAndTradeWithCandles`, emite `[ENTRY_BLOCKED_DEGRADED]`
+- Las salidas (SL/TP/Smart exits) no se ven afectadas (se ejecutan en paso previo al loop)
+
+---
+
+### FASE 6 — Telegram spam dedup: SELL_BLOCKED + circuit breaker (`tradingEngine.ts` + `exitManager.ts`)
+**Problema 1:** `SELL_BLOCKED` (SMART_GUARD) enviaba alerta Telegram en cada tick del scan donde había señal SELL pero modo guard activo → spam cada 60s.
+
+**Solución 1 (`tradingEngine.ts`):**
+- `sellBlockedTelegramThrottle: Map<string, number>` con clave `sell_blocked:{pair}`
+- `SELL_BLOCKED_TELEGRAM_COOLDOWN_MS = 15 min`
+- Log `[TELEGRAM_DEDUP_SUPPRESSED]` cuando en cooldown
+
+**Problema 2:** El circuit breaker de `exitManager.safeSell()` enviaba alerta Telegram en cada intento bloqueado (potencialmente cada 60s por posición).
+
+**Solución 2 (`exitManager.ts`):**
+- `cbTelegramThrottle: Map<string, number>` con clave `lotId`
+- `CB_TELEGRAM_COOLDOWN_MS = 15 min`
+- Log `[CB_TELEGRAM_SUPPRESSED]` con tiempo restante
+
+---
+
+### FASE 7 — DRY_RUN doble-venta prevenida (`tradingEngine.ts`)
+**Problema:** Si el buy de DRY_RUN ya estaba en estado `closed` en la BD pero la posición aún existía en memoria, un segundo intento de SELL insertaría un registro huérfano adicional.
+
+**Solución:** Guard en el path DRY_RUN SELL:
+```typescript
+// Si no hay buy "open" con ese lotId, buscar si ya está "closed"
+if (alreadyClosedArr.length > 0) {
+  log([DRY_RUN_DOUBLE_SELL_PREVENTED] ...);
+  return true; // success → deletePosition limpia memoria, sin insertar SELL duplicado
+}
+```
+- Nuevo `EventType: "DRY_RUN_DOUBLE_SELL_PREVENTED"` en `botLogger.ts`
+
+---
+
+### FASE 8 — UI expandable DRY RUN posiciones e historial (`Terminal.tsx`)
+**Problema:** Las razones de entrada/salida estaban truncadas a 120-150px. No había forma de ver `simTxid`, `entrySimTxid`, `confidence`, `regime` completos para depuración.
+
+**Solución:** Filas expandibles en ambas tablas:
+- Click en cualquier fila despliega/colapsa panel de detalle inline
+- Icono `ChevronDown` rotado 180° cuando expandido
+- Panel de detalle muestra: `SIM TXID`, `BUY TXID` (historial), `ESTRATEGIA`, `RÉGIMEN`, `CONFIANZA`, `RAZÓN COMPLETA`
+- Estado gestionado con `Set<number>` por tabla
+- Compatible con mobile (grid 1col → 2col en sm+)
+
+---
+
 ## 2026-04-16 — FEAT: Composición inteligente de humanTitle/humanMessage en entry_check_blocked
 
 ### Problema

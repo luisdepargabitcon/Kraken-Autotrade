@@ -141,7 +141,9 @@ export type EventType =
   | "CIRCUIT_BREAKER_BLOCKED"
   | "EXIT_LOCK_BLOCKED"
   | "SAFE_SELL_SUCCESS"
-  | "SAFE_SELL_FAILED";
+  | "SAFE_SELL_FAILED"
+  // FASE 7: DRY_RUN doble-venta prevenida
+  | "DRY_RUN_DOUBLE_SELL_PREVENTED";
 
 interface LogMeta {
   [key: string]: any;

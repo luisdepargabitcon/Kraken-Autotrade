@@ -17,6 +17,7 @@ import {
   RefreshCw, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Download, 
   Activity, 
   CandlestickChart,
@@ -299,6 +300,11 @@ export default function Terminal() {
   // Dry Run queries
   const [dryRunOffset, setDryRunOffset] = useState(0);
   const [dryRunLimit] = useState(20);
+  // FASE 8: Expanded rows state for DRY RUN tables
+  const [expandedDryRunPos, setExpandedDryRunPos] = useState<Set<number>>(new Set());
+  const [expandedDryRunHist, setExpandedDryRunHist] = useState<Set<number>>(new Set());
+  const toggleDryRunPosRow = (id: number) => setExpandedDryRunPos(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleDryRunHistRow = (id: number) => setExpandedDryRunHist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
   const { data: dryRunPositions, isLoading: loadingDryRun, refetch: refetchDryRun, isFetching: fetchingDryRun } = useQuery<DryRunTrade[]>({
     queryKey: ["dryRunPositions"],
@@ -1641,37 +1647,79 @@ export default function Terminal() {
                           </tr>
                         </thead>
                         <tbody>
-                          {dryRunPositions.map((pos) => (
-                            <tr key={pos.id} className="border-b border-border/10 hover:bg-amber-500/5 transition-colors">
-                              <td className="p-3">
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline" className="text-[10px] border-green-500/50 text-green-400">BUY</Badge>
-                                  <span className="font-mono text-xs font-medium">{pos.pair}</span>
-                                </div>
-                              </td>
-                              <td className="text-right p-3 font-mono text-xs">${parseFloat(pos.price).toFixed(2)}</td>
-                              <td className="text-right p-3 font-mono text-xs">{parseFloat(pos.amount).toFixed(6)}</td>
-                              <td className="text-right p-3 font-mono text-xs font-medium">${parseFloat(pos.totalUsd).toFixed(2)}</td>
-                              <td className="p-3">
-                                {pos.strategyId && (
-                                  <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground">
-                                    {pos.strategyId}
-                                  </Badge>
+                          {dryRunPositions.map((pos) => {
+                            const isExpanded = expandedDryRunPos.has(pos.id);
+                            return (
+                              <>
+                                <tr
+                                  key={pos.id}
+                                  className="border-b border-border/10 hover:bg-amber-500/5 transition-colors cursor-pointer"
+                                  onClick={() => toggleDryRunPosRow(pos.id)}
+                                >
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-2">
+                                      <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                      <Badge variant="outline" className="text-[10px] border-green-500/50 text-green-400">BUY</Badge>
+                                      <span className="font-mono text-xs font-medium">{pos.pair}</span>
+                                    </div>
+                                  </td>
+                                  <td className="text-right p-3 font-mono text-xs">${parseFloat(pos.price).toFixed(2)}</td>
+                                  <td className="text-right p-3 font-mono text-xs">{parseFloat(pos.amount).toFixed(6)}</td>
+                                  <td className="text-right p-3 font-mono text-xs font-medium">${parseFloat(pos.totalUsd).toFixed(2)}</td>
+                                  <td className="p-3">
+                                    {pos.strategyId && (
+                                      <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground">
+                                        {pos.strategyId}
+                                      </Badge>
+                                    )}
+                                    {pos.regime && (
+                                      <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground ml-1">
+                                        {pos.regime}
+                                      </Badge>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-xs text-muted-foreground max-w-[150px] truncate" title={pos.reason || ''}>
+                                    {pos.reason || '-'}
+                                  </td>
+                                  <td className="p-3 text-xs text-muted-foreground font-mono">
+                                    {new Date(pos.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                  </td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr key={`${pos.id}-detail`} className="bg-amber-500/5 border-b border-amber-500/10">
+                                    <td colSpan={7} className="px-4 py-3">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+                                        <div className="space-y-1">
+                                          <div className="flex gap-2">
+                                            <span className="text-muted-foreground min-w-[90px]">SIM TXID:</span>
+                                            <span className="text-amber-300 break-all">{pos.simTxid}</span>
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <span className="text-muted-foreground min-w-[90px]">ESTRATEGIA:</span>
+                                            <span className="text-foreground">{pos.strategyId || '—'}</span>
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <span className="text-muted-foreground min-w-[90px]">RÉGIMEN:</span>
+                                            <span className="text-foreground">{pos.regime || '—'}</span>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <div className="flex gap-2">
+                                            <span className="text-muted-foreground min-w-[90px]">CONFIANZA:</span>
+                                            <span className="text-foreground">{pos.confidence ? `${(parseFloat(pos.confidence) * 100).toFixed(1)}%` : '—'}</span>
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <span className="text-muted-foreground min-w-[90px]">RAZÓN COMPLETA:</span>
+                                            <span className="text-foreground break-all">{pos.reason || '—'}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
                                 )}
-                                {pos.regime && (
-                                  <Badge variant="outline" className="text-[10px] border-border/50 text-muted-foreground ml-1">
-                                    {pos.regime}
-                                  </Badge>
-                                )}
-                              </td>
-                              <td className="p-3 text-xs text-muted-foreground max-w-[150px] truncate" title={pos.reason || ''}>
-                                {pos.reason || '-'}
-                              </td>
-                              <td className="p-3 text-xs text-muted-foreground font-mono">
-                                {new Date(pos.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                              </td>
-                            </tr>
-                          ))}
+                              </>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1741,34 +1789,78 @@ export default function Terminal() {
                               const pnl = parseFloat(trade.realizedPnlUsd || "0");
                               const pnlPct = parseFloat(trade.realizedPnlPct || "0");
                               const isProfit = pnl > 0;
+                              const isExpHist = expandedDryRunHist.has(trade.id);
                               return (
-                                <tr key={trade.id} className="border-b border-border/10 hover:bg-amber-500/5 transition-colors">
-                                  <td className="p-3">
-                                    <div className="flex items-center gap-2">
-                                      <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-400">SELL</Badge>
-                                      <span className="font-mono text-xs font-medium">{trade.pair}</span>
-                                    </div>
-                                  </td>
-                                  <td className="text-right p-3 font-mono text-xs">
-                                    ${trade.entryPrice ? parseFloat(trade.entryPrice).toFixed(2) : '-'}
-                                  </td>
-                                  <td className="text-right p-3 font-mono text-xs">${parseFloat(trade.price).toFixed(2)}</td>
-                                  <td className="text-right p-3 font-mono text-xs">{parseFloat(trade.amount).toFixed(6)}</td>
-                                  <td className={`text-right p-3 font-mono text-xs font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                    {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-                                  </td>
-                                  <td className={`text-right p-3 font-mono text-xs ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                    {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
-                                  </td>
-                                  <td className="p-3 text-xs text-muted-foreground max-w-[120px] truncate" title={trade.reason || ''}>
-                                    {trade.reason || '-'}
-                                  </td>
-                                  <td className="p-3 text-xs text-muted-foreground font-mono">
-                                    {trade.closedAt
-                                      ? new Date(trade.closedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                                      : new Date(trade.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                                  </td>
-                                </tr>
+                                <>
+                                  <tr
+                                    key={trade.id}
+                                    className="border-b border-border/10 hover:bg-amber-500/5 transition-colors cursor-pointer"
+                                    onClick={() => toggleDryRunHistRow(trade.id)}
+                                  >
+                                    <td className="p-3">
+                                      <div className="flex items-center gap-2">
+                                        <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${isExpHist ? 'rotate-180' : ''}`} />
+                                        <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-400">SELL</Badge>
+                                        <span className="font-mono text-xs font-medium">{trade.pair}</span>
+                                      </div>
+                                    </td>
+                                    <td className="text-right p-3 font-mono text-xs">
+                                      ${trade.entryPrice ? parseFloat(trade.entryPrice).toFixed(2) : '-'}
+                                    </td>
+                                    <td className="text-right p-3 font-mono text-xs">${parseFloat(trade.price).toFixed(2)}</td>
+                                    <td className="text-right p-3 font-mono text-xs">{parseFloat(trade.amount).toFixed(6)}</td>
+                                    <td className={`text-right p-3 font-mono text-xs font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                      {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                                    </td>
+                                    <td className={`text-right p-3 font-mono text-xs ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                      {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                                    </td>
+                                    <td className="p-3 text-xs text-muted-foreground max-w-[120px] truncate" title={trade.reason || ''}>
+                                      {trade.reason || '-'}
+                                    </td>
+                                    <td className="p-3 text-xs text-muted-foreground font-mono">
+                                      {trade.closedAt
+                                        ? new Date(trade.closedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                        : new Date(trade.createdAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                    </td>
+                                  </tr>
+                                  {isExpHist && (
+                                    <tr key={`${trade.id}-detail`} className="bg-amber-500/5 border-b border-amber-500/10">
+                                      <td colSpan={8} className="px-4 py-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+                                          <div className="space-y-1">
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">SELL TXID:</span>
+                                              <span className="text-amber-300 break-all">{trade.simTxid}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">BUY TXID:</span>
+                                              <span className="text-green-400 break-all">{trade.entrySimTxid || '—'}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">ESTRATEGIA:</span>
+                                              <span className="text-foreground">{trade.strategyId || '—'}</span>
+                                            </div>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">RÉGIMEN:</span>
+                                              <span className="text-foreground">{trade.regime || '—'}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">CONFIANZA:</span>
+                                              <span className="text-foreground">{trade.confidence ? `${(parseFloat(trade.confidence) * 100).toFixed(1)}%` : '—'}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[100px]">RAZÓN COMPLETA:</span>
+                                              <span className="text-foreground break-all">{trade.reason || '—'}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </>
                               );
                             })}
                           </tbody>

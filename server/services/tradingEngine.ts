@@ -1,5 +1,6 @@
 ﻿import { KrakenService } from "./kraken";
 import { TelegramService } from "./telegram";
+import { krakenRateLimiter } from "../utils/krakenRateLimiter";
 import { botLogger } from "./botLogger";
 import { storage } from "../storage";
 import { log } from "../utils/logger";
@@ -462,6 +463,17 @@ export class TradingEngine {
   // Backoff por rate-limit en fetch de vela (pair:tf → retry-after timestamp)
   private candleFetchBackoff: Map<string, number> = new Map();
   private readonly CANDLE_FETCH_BACKOFF_MS = 60_000; // 60s backoff tras rate-limit
+  // FASE 2: Catch-up cooldown — evitar polling en cada tick cuando hay desfase
+  private catchUpLastFiredMs: Map<string, number> = new Map();
+  private readonly CATCH_UP_COOLDOWN_MS = 30_000;       // 30s entre catch-up polls por par
+  private readonly CATCH_UP_MAX_LAG_INTERVALS = 4;      // Máx 4 intervalos de desfase → DESYNC_TOO_LARGE
+  // FASE 4: Estado de degradación de market data (bloquea entradas nuevas, no salidas)
+  private marketDataDegraded = false;
+  private marketDataDegradedGoodTicks = 0;
+  private readonly MD_DEGRADED_GOOD_STREAK_TO_RECOVER = 3; // 3 ticks limpios para salir de degraded
+  // FASE 6: Throttle Telegram para SELL_BLOCKED por señal (evitar spam por tick)
+  private sellBlockedTelegramThrottle: Map<string, number> = new Map();
+  private readonly SELL_BLOCKED_TELEGRAM_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
   // Contexto único de decisión de entrada — fuente de verdad para métricas e indicadores
   private lastEntryContext: Map<string, EntryDecisionContext> = new Map();
   
@@ -1596,14 +1608,26 @@ export class TradingEngine {
 
     const intervalSec = this.getTimeframeIntervalMinutes(timeframe) * 60;
     const nowSec = Math.floor(Date.now() / 1000);
-
-    // Cierre de la siguiente vela NO procesada
-    // lastTs = openTime de la última vela procesada (Kraken usa openTime)
-    // nextUnprocessedClose = cuando cierra la SIGUIENTE vela que aún no hemos evaluado
     const nextUnprocessedClose = lastTs + 2 * intervalSec;
 
-    // Catch-up: si estamos pasados de la ventana, hemos perdido un cierre → poll inmediato
+    // FASE 2 — DESYNC_TOO_LARGE: desfase mayor que N intervalos → no intentar catch-up
+    const lagSec = nowSec - nextUnprocessedClose;
+    if (lagSec > this.CATCH_UP_MAX_LAG_INTERVALS * intervalSec) {
+      const lagIntervals = (lagSec / intervalSec).toFixed(1);
+      log(`[CANDLE_POLL] ${pair}/${timeframe} DESYNC_TOO_LARGE: lag=${lagSec}s (${lagIntervals}x interval=${intervalSec}s) > max=${this.CATCH_UP_MAX_LAG_INTERVALS} — resetting state, waiting for next natural close`, "trading");
+      this.lastEvaluatedCandle.delete(key);
+      this.catchUpLastFiredMs.delete(key);
+      return false;
+    }
+
+    // FASE 2 — Catch-up con cooldown: solo 1 poll cada CATCH_UP_COOLDOWN_MS por par
     if (nowSec > nextUnprocessedClose + 10) {
+      const lastCatchUp = this.catchUpLastFiredMs.get(key) || 0;
+      const msSinceLastCatchUp = Date.now() - lastCatchUp;
+      if (msSinceLastCatchUp < this.CATCH_UP_COOLDOWN_MS) {
+        return false; // Cooldown activo, skip
+      }
+      this.catchUpLastFiredMs.set(key, Date.now());
       log(`[CANDLE_POLL] ${pair}/${timeframe} CATCH-UP: missed window, now=${new Date(nowSec * 1000).toISOString().slice(11,19)} expectedClose=${new Date(nextUnprocessedClose * 1000).toISOString().slice(11,19)} lastProcessed=${new Date(lastTs * 1000).toISOString().slice(11,19)} → polling`, "trading");
       return true;
     }
@@ -3007,6 +3031,25 @@ El bot ha pausado las operaciones de COMPRA.
       this.pairDecisionTrace.clear(); // Clear decision traces for new scan
       log(`[SCAN_START] scanId=${this.currentScanId} expectedPairs=[${activePairs.join(",")}]`, "trading");
 
+      // FASE 4 — Actualizar MARKET_DATA_DEGRADED desde estado KrakenRL (con histéresis)
+      {
+        const rlState = krakenRateLimiter.getState();
+        if (!this.marketDataDegraded && rlState.degraded) {
+          this.marketDataDegraded = true;
+          this.marketDataDegradedGoodTicks = 0;
+          log(`[MARKET_DATA_DEGRADED_ON] queue=${rlState.queueLength} waitedMs=${rlState.lastWaitedMs} consecutiveErrors=${rlState.consecutiveErrors} — entradas nuevas bloqueadas`, "trading");
+        } else if (this.marketDataDegraded && !rlState.degraded) {
+          this.marketDataDegradedGoodTicks++;
+          if (this.marketDataDegradedGoodTicks >= this.MD_DEGRADED_GOOD_STREAK_TO_RECOVER) {
+            this.marketDataDegraded = false;
+            this.marketDataDegradedGoodTicks = 0;
+            log(`[MARKET_DATA_DEGRADED_OFF] queue=${rlState.queueLength} waitedMs=${rlState.lastWaitedMs} — entradas nuevas re-habilitadas`, "trading");
+          }
+        } else if (!rlState.degraded) {
+          this.marketDataDegradedGoodTicks = 0; // reset si ya estábamos bien
+        }
+      }
+
       try {
         for (const pair of activePairs) {
           try {
@@ -3133,9 +3176,42 @@ El bot ha pausado las operaciones de COMPRA.
                 // Reset intermediate rate-limiter y diag throttle para nueva vela
                 this.lastIntermediateExecAttempt.delete(pair);
                 this.lastIntermediateDiagLog.delete(pair);
+
+                // FASE 4 — Bloquear entradas nuevas cuando market data está degradado
+                if (this.marketDataDegraded) {
+                  const rlDiag = krakenRateLimiter.getState();
+                  log(`[ENTRY_BLOCKED_DEGRADED] ${pair}/${signalTimeframe} — market data degradado (queue=${rlDiag.queueLength} waitedMs=${rlDiag.lastWaitedMs}) — nueva entrada bloqueada, salidas activas`, "trading");
+                  this.updatePairTrace(pair, {
+                    blockReasonCode: "STALE_CANDLE_BLOCK",
+                    blockDetails: { reason: "MARKET_DATA_DEGRADED", rlQueue: rlDiag.queueLength, rlWaitedMs: rlDiag.lastWaitedMs },
+                    finalSignal: "NONE",
+                    finalReason: "Entrada bloqueada: market data degradado (KrakenRL sobrecargado)",
+                  });
+                  this.lastScanResults.set(pair, {
+                    signal: "NONE",
+                    reason: `Market data degradado — entradas bloqueadas (queue=${rlDiag.queueLength})`,
+                    cooldownSec: this.getCooldownRemainingSec(pair),
+                    exposureAvailable: expDefault.maxAllowed,
+                  });
+                  this.emitPairDecisionTrace(pair);
+                  scannedPairs.push(pair);
+                  continue;
+                }
+
                 await this.analyzePairAndTradeWithCandles(pair, signalTimeframe, candle, riskConfig, balances);
               } else {
                 // API devolvió la misma vela que ya procesamos
+                // FASE 3 — TIMING_INVARIANT: nextUnprocessedClose nunca debe ser < candle.time
+                if (nextUnprocessedClose > 0 && nextUnprocessedClose < candle.time) {
+                  log(`[TIMING_INVARIANT_BROKEN] ${pair}/${signalTimeframe} nextUnprocessedClose=${new Date(nextUnprocessedClose * 1000).toISOString()} < candleTime=${new Date(candle.time * 1000).toISOString()} lastProcessedTs=${new Date(lastProcessedTs * 1000).toISOString()} intervalSec=${intervalSec} — resetting state`, "trading");
+                  this.lastEvaluatedCandle.delete(candleKey);
+                  this.catchUpLastFiredMs.delete(candleKey);
+                  this.initPairTrace(pair, expDefault.maxAllowed, true);
+                  this.lastScanResults.set(pair, { signal: "NONE", reason: "Timing invariant broken — estado reseteado", cooldownSec: this.getCooldownRemainingSec(pair), exposureAvailable: expDefault.maxAllowed });
+                  this.emitPairDecisionTrace(pair);
+                  scannedPairs.push(pair);
+                  continue;
+                }
                 this.initPairTrace(pair, expDefault.maxAllowed, true);
                 this.lastScanResults.set(pair, {
                   signal: "NONE",
@@ -4118,9 +4194,13 @@ El bot ha pausado las operaciones de COMPRA.
           });
           this.emitPairDecisionTrace(pair);
           
-          // Notificar a Telegram
+          // FASE 6: Notificar a Telegram con throttle (15 min por par) para evitar spam por tick
           if (this.telegramService.isInitialized()) {
-            await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+            const sbKey = `sell_blocked:${pair}`;
+            const lastSbAlert = this.sellBlockedTelegramThrottle.get(sbKey) || 0;
+            if (Date.now() - lastSbAlert >= this.SELL_BLOCKED_TELEGRAM_COOLDOWN_MS) {
+              this.sellBlockedTelegramThrottle.set(sbKey, Date.now());
+              await this.telegramService.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
 ━━━━━━━━━━━━━━━━━━━
 🛡️ <b>Señal SELL Bloqueada</b>
 
@@ -4132,6 +4212,9 @@ El bot ha pausado las operaciones de COMPRA.
 
 ℹ️ <i>${signal.reason}</i>
 ━━━━━━━━━━━━━━━━━━━`, "system", "system_bot_paused");
+            } else {
+              log(`[TELEGRAM_DEDUP_SUPPRESSED] SELL_BLOCKED pair=${pair} subtype=sell_blocked (cooldown activo)`, "trading");
+            }
           }
           
           return;
@@ -5911,6 +5994,18 @@ El bot ha pausado las operaciones de COMPRA.
             }
             const openBuys = matchedBuyArr;
             const matchedBuy = openBuys[0];
+
+            // FASE 7 — GUARD: si el buy ya está cerrado (doble sell), bloquear sin insertar
+            if (sellLotId && matchedBuyArr.length === 0) {
+              const alreadyClosedArr = await db.select().from(dryRunTrades)
+                .where(and(eq(dryRunTrades.simTxid, sellLotId), eq(dryRunTrades.status, "closed"), eq(dryRunTrades.type, "buy")))
+                .limit(1);
+              if (alreadyClosedArr.length > 0) {
+                log(`${envPrefixLog} [DRY_RUN_DOUBLE_SELL_PREVENTED] lotId=${sellLotId} already closed in DB — sell aborted`, "trading");
+                await botLogger.warn("DRY_RUN_DOUBLE_SELL_PREVENTED", `Double-sell prevenido en DRY_RUN para ${pair}`, { pair, sellLotId, reason });
+                return true; // success=true para que deletePosition limpie memoria
+              }
+            }
             const entryPriceNum = matchedBuy ? parseFloat(matchedBuy.price) : (sellContext?.entryPrice || price);
             const pnlUsd = (price - entryPriceNum) * volumeNum;
             const pnlPct = entryPriceNum > 0 ? ((price - entryPriceNum) / entryPriceNum) * 100 : 0;
