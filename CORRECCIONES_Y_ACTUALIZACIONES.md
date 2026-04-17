@@ -2,6 +2,34 @@
 
 ----
 
+## 2026-04-17 — UI: Mejora visual eventos IDCA — humanMessage amber + technicalSummary chips + payload colapsable
+
+### Problema
+En el Monitor de Tiempo Real IDCA, los eventos `entry_check_blocked` (y otros con `humanMessage`/`technicalSummary`) tenían mala legibilidad:
+- `humanMessage` enterrado dentro del "Detalle técnico" colapsado
+- `technicalSummary` invisible como texto gris plano
+- Payload JSON dominaba visualmente el evento
+- Sin jerarquía visual clara
+
+### Solución
+
+| Cambio | Detalle |
+|---|---|
+| **humanMessage en ámbar** | Visible siempre (capa humana), `text-amber-300`, `font-semibold`, con borde lateral ámbar para lectura inmediata |
+| **technicalSummary como chips** | Parsed por `|` en chips coloreados (`Par`, `Score`, `EntryDip`, `Bloqueos`, etc.) con colores semánticos |
+| **Payload JSON colapsable** | Separado del "Detalle técnico" con su propio botón "Ver payload JSON" — colapsado por defecto |
+| **Detalle técnico limpio** | Solo muestra ID, tipo, severidad, timestamp, ciclo, mensaje raw — sin duplicar humanMessage/technicalSummary |
+| **Mejor espaciado** | `pb-5 pt-2` en capa expandida, `mt-2.5` entre secciones |
+| **Reutilizable** | Aplica a TODOS los eventos con humanMessage/technicalSummary, no solo entry_check_blocked |
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `client/src/components/idca/IdcaEventCards.tsx` | `parseTechChips()` + `TechChipBadge` + humanMessage amber + payload colapsable |
+
+----
+
 ## 2026-04-17 — FIX: Backpressure KrakenRL + Catch-up cap + Timing + Degraded state + Telegram spam + DRY_RUN multi-sell + UI expandable [FASE 1-8]
 
 ### Archivos modificados

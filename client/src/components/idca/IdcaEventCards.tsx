@@ -667,6 +667,62 @@ function DataPill({ label, value, color }: { label: string; value: string; color
 }
 
 // ════════════════════════════════════════════════════════════════════
+// TECH SUMMARY CHIP PARSER
+// ════════════════════════════════════════════════════════════════════
+
+interface TechChip {
+  label?: string;
+  value: string;
+}
+
+const CHIP_COLORS: Record<string, string> = {
+  "Par": "text-sky-300",
+  "Modo": "text-cyan-300",
+  "BasePrice": "text-violet-300",
+  "BaseType": "text-violet-300",
+  "EntryDip": "text-amber-300",
+  "Score": "text-emerald-300",
+  "Perfil": "text-slate-300",
+  "Bloqueos": "text-red-300",
+  "Precio": "text-sky-300",
+  "PnL": "text-emerald-300",
+  "Compras": "text-slate-300",
+  "Capital": "text-sky-300",
+  "Qty": "text-slate-300",
+  "Avg": "text-violet-300",
+  "TP": "text-emerald-300",
+  "Trailing": "text-amber-300",
+  "Motivo": "text-red-300",
+};
+
+function parseTechChips(summary: string): TechChip[] {
+  return summary
+    .split(/\s*\|\s*/)
+    .filter(Boolean)
+    .map(part => {
+      const eqIdx = part.indexOf('=');
+      if (eqIdx > 0) {
+        return { label: part.slice(0, eqIdx).trim(), value: part.slice(eqIdx + 1).trim() };
+      }
+      const colonIdx = part.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 20) {
+        return { label: part.slice(0, colonIdx).trim(), value: part.slice(colonIdx + 1).trim() };
+      }
+      return { value: part.trim() };
+    });
+}
+
+function TechChipBadge({ chip }: { chip: TechChip }) {
+  const color = chip.label ? (CHIP_COLORS[chip.label] || "text-foreground") : "text-foreground";
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/10 text-[10px] font-mono leading-tight">
+      {chip.label && <span className="text-muted-foreground/60">{chip.label}</span>}
+      <span className={color}>{chip.value}</span>
+    </span>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // SINGLE EVENT CARD — doble capa
 // ════════════════════════════════════════════════════════════════════
 
@@ -678,6 +734,7 @@ interface IdcaEventCardProps {
 
 export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProps) {
   const [techOpen, setTechOpen] = useState(false);
+  const [payloadOpen, setPayloadOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const visual = EVENT_CATALOG[event.eventType] || DEFAULT_VISUAL;
   const parsed = parsePayload(event);
@@ -739,14 +796,23 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
             )}
           </div>
 
-          {/* Row 2: Human summary */}
-          <p className="text-[12px] text-muted-foreground leading-relaxed mt-1.5 max-w-[700px]">
+          {/* Row 2: Human summary (catalog-generated) */}
+          <p className="text-[12px] text-muted-foreground leading-relaxed mt-1.5 max-w-[750px]">
             {humanSummary}
           </p>
 
+          {/* Row 2.5: humanMessage from DB — prominent amber highlight */}
+          {event.humanMessage && event.humanMessage !== humanSummary && (
+            <div className="mt-2.5 border-l-2 border-amber-500/50 pl-3 py-1">
+              <p className="text-[13px] font-semibold text-amber-300 leading-relaxed max-w-[750px]">
+                {event.humanMessage}
+              </p>
+            </div>
+          )}
+
           {/* Row 3: Key data pills (inline, compact) */}
           {!isExpanded && (
-            <div className="flex items-center gap-4 mt-2 flex-wrap">
+            <div className="flex items-center gap-4 mt-2.5 flex-wrap">
               {parsed.price != null && <DataPill label="Precio" value={fUsd(parsed.price)} />}
               {parsed.entryDipPct != null && <DataPill label="Caída" value={`-${fN(parsed.entryDipPct)}%`} color="text-amber-400" />}
               {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}/100`} />}
@@ -771,7 +837,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
 
       {/* ── CAPA EXPANDIDA ───────────────── */}
       {isExpanded && (
-        <div className="px-5 pb-4 pt-1 space-y-4 border-t border-white/5">
+        <div className="px-5 pb-5 pt-2 space-y-4 border-t border-white/5">
 
           {/* A. Acción tomada */}
           <div className="flex items-start gap-2.5 mt-2">
@@ -781,6 +847,18 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               <p className="text-[12px] text-foreground font-medium mt-0.5">{actionText}</p>
             </div>
           </div>
+
+          {/* A2. Technical Summary — parsed as colored chips */}
+          {event.technicalSummary && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">Resumen técnico</span>
+              <div className="flex flex-wrap gap-1.5 mt-2 p-2.5 rounded-md bg-white/[0.02] border border-white/5">
+                {parseTechChips(event.technicalSummary).map((chip, i) => (
+                  <TechChipBadge key={i} chip={chip} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* B. Datos clave — grid */}
           <div>
@@ -903,21 +981,37 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                 <div><span className="text-muted-foreground/50">Severidad:</span> {event.severity}</div>
                 <div><span className="text-muted-foreground/50">Timestamp:</span> {event.createdAt}</div>
                 {event.cycleId && <div><span className="text-muted-foreground/50">Ciclo ID:</span> {event.cycleId}</div>}
-                <div><span className="text-muted-foreground/50">Mensaje raw:</span> {event.message}</div>
-                {event.humanTitle && <div><span className="text-muted-foreground/50">humanTitle:</span> {event.humanTitle}</div>}
-                {event.humanMessage && <div><span className="text-muted-foreground/50">humanMessage:</span> {event.humanMessage}</div>}
-                {event.technicalSummary && <div><span className="text-muted-foreground/50">technicalSummary:</span> {event.technicalSummary}</div>}
-                {event.payloadJson && Object.keys(event.payloadJson).length > 0 && (
-                  <div className="mt-1.5 pt-1.5 border-t border-white/5">
-                    <span className="text-muted-foreground/50">Payload:</span>
-                    <pre className="mt-1 text-[9px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all">
-                      {JSON.stringify(event.payloadJson, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                <div><span className="text-muted-foreground/50">Mensaje raw:</span> <span className="break-all">{event.message}</span></div>
               </div>
             )}
           </div>
+
+          {/* D. Payload JSON (colapsable por separado) */}
+          {event.payloadJson && Object.keys(event.payloadJson).length > 0 && (
+            <div>
+              <button
+                className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground transition-colors font-medium"
+                onClick={(e) => { e.stopPropagation(); setPayloadOpen(!payloadOpen); }}
+              >
+                {payloadOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                Ver payload JSON
+              </button>
+              {payloadOpen && (
+                <div className="mt-2 p-3 rounded-md bg-black/30 border border-white/[0.03] font-mono text-[9px] text-muted-foreground/60 leading-relaxed relative">
+                  <button
+                    className="absolute top-2 right-2 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                    onClick={(e) => { e.stopPropagation(); handleCopyTech(); }}
+                    title="Copiar JSON completo"
+                  >
+                    {copied ? <ClipboardCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all pr-6">
+                    {JSON.stringify(event.payloadJson, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
