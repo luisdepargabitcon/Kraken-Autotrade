@@ -54,6 +54,10 @@ interface AlertPreferences {
   fisco_error_sync?: boolean;
   // Entry intent
   entry_intent?: boolean;
+  // Market Data Degraded
+  system_market_data_degraded_on?: boolean;
+  system_market_data_degraded_off?: boolean;
+  trade_entry_blocked_degraded?: boolean;
 }
 
 interface TelegramChat {
@@ -136,6 +140,7 @@ export default function Notifications() {
         { key: "trade_daily_pnl", label: "Resumen diario P&L", hint: "Resumen de ganancias/pérdidas del día" },
         { key: "trade_spread_rejected", label: "Spread rechazado", hint: "Alerta cuando el spread bloquea una compra" },
         { key: "entry_intent", label: "Intención de entrada", hint: "Alerta cuando se detecta señal pero aún no se ejecuta" },
+        { key: "trade_entry_blocked_degraded", label: "Compra bloqueada (degradado)", hint: "Alerta cuando una compra se bloquea por datos de mercado degradados" },
       ],
     },
     {
@@ -167,6 +172,8 @@ export default function Notifications() {
         { key: "heartbeat_periodic", label: "Heartbeat periódico", hint: "Verificación automática de que el bot está vivo" },
         { key: "system_bot_started", label: "Bot iniciado", hint: "Alerta al arrancar el bot" },
         { key: "system_bot_paused", label: "Bot pausado/detenido", hint: "Alerta al detener el bot" },
+        { key: "system_market_data_degraded_on", label: "Market data degradado (ON)", hint: "Alerta al activarse modo degradado de datos" },
+        { key: "system_market_data_degraded_off", label: "Market data recuperado (OFF)", hint: "Alerta al recuperarse los datos de mercado" },
       ],
     },
     {

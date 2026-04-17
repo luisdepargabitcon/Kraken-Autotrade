@@ -2,6 +2,45 @@
 
 ----
 
+## 2026-04-17 — ALERTAS: Telegram para MARKET_DATA_DEGRADED (ON/OFF + bloqueo compras)
+
+### Problema
+El sistema tenía estado de degradación de market data (MARKET_DATA_DEGRADED) pero no enviaba alertas Telegram cuando:
+- Se activaba el modo degradado
+- Se bloqueaban compras por degradación
+- El sistema recuperaba datos fiables
+
+### Correcciones
+1. **`telegram.ts`**: Añadidos 3 subtipos a `AlertSubtype`:
+   - `system_market_data_degraded_on` — alerta al activarse modo degradado
+   - `system_market_data_degraded_off` — alerta al recuperarse datos
+   - `trade_entry_blocked_degraded` — alerta cuando una compra se bloquea por degradación
+
+2. **`tradingEngine.ts`**:
+   - Añadido `marketDataDegradedSince` para calcular duración degradado
+   - Añadido `entryBlockedDegradedAlertTs` Map con cooldown 10 min por par (dedup)
+   - Transición ON: envía alerta `system_market_data_degraded_on` con métricas (queue, waitedMs, consecutiveErrors)
+   - Transición OFF: envía alerta `system_market_data_degraded_off` con duración degradado
+   - Bloqueo compra: envía alerta `trade_entry_blocked_degraded` con dedup/cooldown por par
+   - Logs: `[TELEGRAM_DEGRADED_ALERT_SENT]` y `[TELEGRAM_DEGRADED_ALERT_SUPPRESSED]`
+
+3. **`Notifications.tsx`**:
+   - Añadidos 3 campos a `AlertPreferences` interface
+   - Añadidos 3 subtipos a `ALERT_SUBTYPES`:
+     - "Market data degradado (ON)" en sección "Informes / Sistema"
+     - "Market data recuperado (OFF)" en sección "Informes / Sistema"
+     - "Compra bloqueada (degradado)" en sección "Trading"
+
+### Caso de salidas bloqueadas por degradación
+**NO APLICA** — La lógica actual bloquea SOLO entradas nuevas cuando `marketDataDegraded=true`. Las salidas (SL/TP/SmartExit/TimeStop) siempre se ejecutan. Esto es intencional y se documenta en los logs: "salidas activas".
+
+### Archivos Modificados
+- `server/services/telegram.ts` — AlertSubtype con 3 subtipos nuevos
+- `server/services/tradingEngine.ts` — Alertas ON/OFF + bloqueo compra con dedup
+- `client/src/pages/Notifications.tsx` — UI de preferencias con 3 toggles nuevos
+
+----
+
 ## 2026-04-17 — UI: Mejora visual eventos IDCA — humanMessage amber + technicalSummary chips + payload colapsable
 
 ### Problema

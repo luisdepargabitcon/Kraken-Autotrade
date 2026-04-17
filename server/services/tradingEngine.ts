@@ -471,6 +471,10 @@ export class TradingEngine {
   private marketDataDegraded = false;
   private marketDataDegradedGoodTicks = 0;
   private readonly MD_DEGRADED_GOOD_STREAK_TO_RECOVER = 3; // 3 ticks limpios para salir de degraded
+  private marketDataDegradedSince: number | null = null; // timestamp para calcular duración degradado
+  // Dedup para alerta de compra bloqueada por degradación (clave: pair, valor: timestamp último envío)
+  private entryBlockedDegradedAlertTs: Map<string, number> = new Map();
+  private readonly ENTRY_BLOCKED_DEGRADED_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown por par
   // FASE 6: Throttle Telegram para SELL_BLOCKED por señal (evitar spam por tick)
   private sellBlockedTelegramThrottle: Map<string, number> = new Map();
   private readonly SELL_BLOCKED_TELEGRAM_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
@@ -3035,15 +3039,67 @@ El bot ha pausado las operaciones de COMPRA.
       {
         const rlState = krakenRateLimiter.getState();
         if (!this.marketDataDegraded && rlState.degraded) {
+          // === TRANSICIÓN: normal → degradado ===
           this.marketDataDegraded = true;
           this.marketDataDegradedGoodTicks = 0;
+          this.marketDataDegradedSince = Date.now();
           log(`[MARKET_DATA_DEGRADED_ON] queue=${rlState.queueLength} waitedMs=${rlState.lastWaitedMs} consecutiveErrors=${rlState.consecutiveErrors} — entradas nuevas bloqueadas`, "trading");
+
+          // Telegram alert: degraded ON (solo por transición, 1 vez)
+          if (this.telegramService.isInitialized()) {
+            const ts = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Madrid' });
+            const msg = `🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🟠 <b>Modo degradado de datos de mercado ACTIVADO</b>
+
+Se activó el modo degradado de datos de mercado. Las nuevas compras quedan bloqueadas hasta que el sistema recupere datos fiables.
+
+📊 <b>Métricas:</b>
+   • Cola pendiente: <code>${rlState.queueLength}</code>
+   • Espera última: <code>${rlState.lastWaitedMs}ms</code>
+   • Errores consecutivos: <code>${rlState.consecutiveErrors}</code>
+
+⏰ <b>Hora:</b> ${ts} (Madrid)
+💡 <i>Las posiciones abiertas siguen gestionándose (SL/TP/SmartExit activos).</i>
+━━━━━━━━━━━━━━━━━━━`;
+            this.telegramService.sendAlertWithSubtype(msg, "system", "system_market_data_degraded_on")
+              .then(() => log(`[TELEGRAM_DEGRADED_ALERT_SENT] system_market_data_degraded_on`, "trading"))
+              .catch((e: any) => log(`[ALERT_ERR] system_market_data_degraded_on: ${e?.message ?? String(e)}`, "trading"));
+          }
+
         } else if (this.marketDataDegraded && !rlState.degraded) {
           this.marketDataDegradedGoodTicks++;
           if (this.marketDataDegradedGoodTicks >= this.MD_DEGRADED_GOOD_STREAK_TO_RECOVER) {
+            // === TRANSICIÓN: degradado → normal ===
+            const degradedDurationSec = this.marketDataDegradedSince
+              ? Math.round((Date.now() - this.marketDataDegradedSince) / 1000) : 0;
+            const degradedDurationMin = Math.round(degradedDurationSec / 60);
             this.marketDataDegraded = false;
             this.marketDataDegradedGoodTicks = 0;
-            log(`[MARKET_DATA_DEGRADED_OFF] queue=${rlState.queueLength} waitedMs=${rlState.lastWaitedMs} — entradas nuevas re-habilitadas`, "trading");
+            this.marketDataDegradedSince = null;
+            this.entryBlockedDegradedAlertTs.clear(); // reset dedup al volver a normal
+            log(`[MARKET_DATA_DEGRADED_OFF] queue=${rlState.queueLength} waitedMs=${rlState.lastWaitedMs} degradedDurationSec=${degradedDurationSec} — entradas nuevas re-habilitadas`, "trading");
+
+            // Telegram alert: degraded OFF (solo por transición, 1 vez)
+            if (this.telegramService.isInitialized()) {
+              const ts = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Madrid' });
+              const msg = `🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🟢 <b>Datos de mercado recuperados — Funcionamiento normal</b>
+
+El sistema recuperó datos de mercado fiables y vuelve a funcionamiento normal. Las nuevas compras están habilitadas de nuevo.
+
+📊 <b>Estado actual:</b>
+   • Cola pendiente: <code>${rlState.queueLength}</code>
+   • Espera última: <code>${rlState.lastWaitedMs}ms</code>
+   • Tiempo degradado: <code>~${degradedDurationMin} min</code>
+
+⏰ <b>Hora:</b> ${ts} (Madrid)
+━━━━━━━━━━━━━━━━━━━`;
+              this.telegramService.sendAlertWithSubtype(msg, "system", "system_market_data_degraded_off")
+                .then(() => log(`[TELEGRAM_DEGRADED_ALERT_SENT] system_market_data_degraded_off`, "trading"))
+                .catch((e: any) => log(`[ALERT_ERR] system_market_data_degraded_off: ${e?.message ?? String(e)}`, "trading"));
+            }
           }
         } else if (!rlState.degraded) {
           this.marketDataDegradedGoodTicks = 0; // reset si ya estábamos bien
@@ -3181,6 +3237,37 @@ El bot ha pausado las operaciones de COMPRA.
                 if (this.marketDataDegraded) {
                   const rlDiag = krakenRateLimiter.getState();
                   log(`[ENTRY_BLOCKED_DEGRADED] ${pair}/${signalTimeframe} — market data degradado (queue=${rlDiag.queueLength} waitedMs=${rlDiag.lastWaitedMs}) — nueva entrada bloqueada, salidas activas`, "trading");
+
+                  // Telegram: alerta de compra bloqueada con dedup por par (cooldown 10 min)
+                  if (this.telegramService.isInitialized()) {
+                    const lastAlert = this.entryBlockedDegradedAlertTs.get(pair) || 0;
+                    const elapsed = Date.now() - lastAlert;
+                    if (elapsed >= this.ENTRY_BLOCKED_DEGRADED_COOLDOWN_MS) {
+                      this.entryBlockedDegradedAlertTs.set(pair, Date.now());
+                      const ts = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Madrid' });
+                      const entryMsg = `🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+🚫 <b>Compra bloqueada por datos de mercado degradados</b>
+
+Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
+
+📊 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Timeframe: <code>${signalTimeframe}</code>
+   • Cola pendiente: <code>${rlDiag.queueLength}</code>
+   • Espera última: <code>${rlDiag.lastWaitedMs}ms</code>
+
+⏰ <b>Hora:</b> ${ts} (Madrid)
+💡 <i>La compra se re-evaluará cuando el sistema vuelva a datos fiables.</i>
+━━━━━━━━━━━━━━━━━━━`;
+                      this.telegramService.sendAlertWithSubtype(entryMsg, "trades", "trade_entry_blocked_degraded")
+                        .then(() => log(`[TELEGRAM_DEGRADED_ALERT_SENT] trade_entry_blocked_degraded ${pair}`, "trading"))
+                        .catch((e: any) => log(`[ALERT_ERR] trade_entry_blocked_degraded: ${e?.message ?? String(e)}`, "trading"));
+                    } else {
+                      log(`[TELEGRAM_DEGRADED_ALERT_SUPPRESSED] trade_entry_blocked_degraded ${pair} — cooldown ${Math.round((this.ENTRY_BLOCKED_DEGRADED_COOLDOWN_MS - elapsed) / 1000)}s restantes`, "trading");
+                    }
+                  }
+
                   this.updatePairTrace(pair, {
                     blockReasonCode: "STALE_CANDLE_BLOCK",
                     blockDetails: { reason: "MARKET_DATA_DEGRADED", rlQueue: rlDiag.queueLength, rlWaitedMs: rlDiag.lastWaitedMs },

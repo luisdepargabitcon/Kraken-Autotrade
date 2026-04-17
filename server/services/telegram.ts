@@ -626,7 +626,8 @@ type AlertSubtype =
   | "heartbeat_periodic"
   | "smart_exit_threshold" | "smart_exit_executed" | "smart_exit_regime" | "smart_exit_suppressed"
   | "fisco_sync_daily" | "fisco_sync_manual" | "fisco_report_generated" | "fisco_error_sync"
-  | "entry_intent";
+  | "entry_intent"
+  | "system_market_data_degraded_on" | "system_market_data_degraded_off" | "trade_entry_blocked_degraded";
 
 type EngineController = {
   start: () => Promise<void>;
