@@ -148,7 +148,12 @@ function composeBlockedEntryHuman(
       if (r.code === "insufficient_dip") {
         const { dip, min } = extractDipInfo(r.message);
         if (dip != null && min != null) {
-          parts.push(`la caída fue del ${dip}% (mínimo ${min}%)`);
+          const dipNum = parseFloat(dip);
+          if (dipNum < 0) {
+            parts.push(`el precio está un ${Math.abs(dipNum).toFixed(2)}% por encima del ancla (mínimo caída ${min}%)`);
+          } else {
+            parts.push(`la caída fue del ${dip}% (mínimo ${min}%)`);
+          }
         } else {
           parts.push("la caída desde el precio base fue insuficiente");
         }

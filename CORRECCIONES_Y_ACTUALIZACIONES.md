@@ -41,6 +41,57 @@ El sistema tenía estado de degradación de market data (MARKET_DATA_DEGRADED) p
 
 ----
 
+## 2026-04-17 — FIX: Corrección de signo y semántica en visualización de drawdownPctFromAnchor y EntryDip
+
+### Problema
+Error de doble inversión de signo en UI y semántica confusa en mensajes humanos:
+
+**CASO A — doble inversión en UI**
+- Backend: `drawdownPctFromAnchor = 3.21%` (positivo = caída real)
+- UI: mostraba "Caída desde ancla -3,21%" ❌ (signo invertido manualmente)
+
+**CASO B — semántica confusa**
+- Backend: `EntryDip = -2.79%` (negativo = precio por encima del ancla)
+- Mensaje: "la caída fue del -2.79%" ❌ (confuso semánticamente)
+
+### Cálculo correcto en backend (sin cambios)
+```typescript
+// IdcaSmartLayer.ts línea 606-608
+const drawdownPctFromAnchor = selectedPrice > 0
+  ? ((selectedPrice - currentPrice) / selectedPrice) * 100
+  : 0;
+
+// IdcaEngine.ts línea 1639-1641
+const entryDipPct = basePriceResult.price > 0
+  ? ((basePriceResult.price - currentPrice) / basePriceResult.price) * 100
+  : 0;
+```
+- Si precio < anchor → valor POSITIVO (caída real)
+- Si precio > anchor → valor NEGATIVO (precio por encima)
+
+### Solución
+
+| Archivo | Cambio |
+|---|---|
+| `client/src/components/idca/IdcaEventCards.tsx` | Quitar signo negativo manual en 3 ocurrencias (líneas 817, 877, 924) |
+| `client/src/components/idca/IdcaEventCards.tsx` | Cambiar etiqueta cuando valor < 0: "Precio sobre ancla" / "Sobre ancla" |
+| `client/src/components/idca/IdcaEventCards.tsx` | Usar Math.abs() para mostrar valor positivo sin signo |
+| `client/src/components/idca/IdcaEventCards.tsx` | Cambiar color a text-emerald-400 cuando valor < 0 (precio sobre ancla) |
+| `server/services/institutionalDca/IdcaMessageFormatter.ts` | Cuando dip < 0, cambiar frase de "la caída fue del -X%" a "el precio está X% por encima del ancla" |
+
+### Ejemplos antes/después
+
+| Caso | Backend | Antes UI | Después UI |
+|---|---|---|---|
+| Precio por debajo | +3.21% | "Caída desde ancla -3,21%" ❌ | "Caída desde ancla 3,21%" ✅ |
+| Precio por encima | -2.79% | "Caída desde ancla --2,79%" ❌ | "Precio sobre ancla 2,79%" ✅ |
+
+| Caso | Backend | Antes mensaje | Después mensaje |
+|---|---|---|---|
+| Precio por encima | -2.79% | "la caída fue del -2.79%" ❌ | "el precio está 2.79% por encima del ancla (mínimo caída 5%)" ✅ |
+
+----
+
 ## 2026-04-17 — UI: Mejora visual eventos IDCA — humanMessage amber + technicalSummary chips + payload colapsable
 
 ### Problema

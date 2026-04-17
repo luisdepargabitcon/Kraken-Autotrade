@@ -814,7 +814,13 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
           {!isExpanded && (
             <div className="flex items-center gap-4 mt-2.5 flex-wrap">
               {parsed.price != null && <DataPill label="Precio" value={fUsd(parsed.price)} />}
-              {parsed.entryDipPct != null && <DataPill label="Caída" value={`-${fN(parsed.entryDipPct)}%`} color="text-amber-400" />}
+              {parsed.entryDipPct != null && (
+                <DataPill
+                  label={parsed.entryDipPct >= 0 ? "Caída" : "Sobre ancla"}
+                  value={`${fN(Math.abs(parsed.entryDipPct))}%`}
+                  color={parsed.entryDipPct >= 0 ? "text-amber-400" : "text-emerald-400"}
+                />
+              )}
               {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}/100`} />}
               {parsed.pnlPct != null && (
                 <DataPill label="Resultado" value={`${parsed.pnlPct >= 0 ? "+" : ""}${fN(parsed.pnlPct)}%`}
@@ -874,7 +880,13 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   color={event.payloadJson.basePrice.meta.candleCount < 7 ? "text-amber-400" : "text-emerald-400"} />
               )}
               {parsed.basePriceType && <DataPill label="Tipo base" value={parsed.basePriceType} />}
-              {parsed.entryDipPct != null && <DataPill label="Caída entrada" value={`-${fN(parsed.entryDipPct)}%`} color="text-amber-400" />}
+              {parsed.entryDipPct != null && (
+                <DataPill
+                  label={parsed.entryDipPct >= 0 ? "Caída entrada" : "Precio sobre ancla"}
+                  value={`${parsed.entryDipPct >= 0 ? "" : ""}${fN(Math.abs(parsed.entryDipPct))}%`}
+                  color={parsed.entryDipPct >= 0 ? "text-amber-400" : "text-emerald-400"}
+                />
+              )}
               {parsed.quantity != null && <DataPill label="Cantidad" value={fN(parsed.quantity, 6)} />}
               {parsed.capital != null && <DataPill label="Capital" value={fUsd(parsed.capital)} />}
               {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}`} />}
@@ -921,8 +933,11 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   <DataPill label="Ancla" value={fUsd(parsed.basePriceMeta.selectedAnchorPrice)} color="text-sky-400" />
                 )}
                 {parsed.basePriceMeta.drawdownPctFromAnchor != null && (
-                  <DataPill label="Caída desde ancla" value={`-${fN(parsed.basePriceMeta.drawdownPctFromAnchor)}%`}
-                    color={parsed.basePriceMeta.drawdownPctFromAnchor > 0 ? "text-amber-400" : "text-muted-foreground"} />
+                  <DataPill
+                    label={parsed.basePriceMeta.drawdownPctFromAnchor >= 0 ? "Caída desde ancla" : "Precio sobre ancla"}
+                    value={`${fN(Math.abs(parsed.basePriceMeta.drawdownPctFromAnchor))}%`}
+                    color={parsed.basePriceMeta.drawdownPctFromAnchor >= 0 ? "text-amber-400" : "text-emerald-400"}
+                  />
                 )}
                 {parsed.basePriceMeta.selectedMethod && (
                   <DataPill label="Método" value={parsed.basePriceMeta.selectedMethod} />
