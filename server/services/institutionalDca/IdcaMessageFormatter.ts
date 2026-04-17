@@ -239,7 +239,13 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
     case "entry_check_blocked":
       if (ctx.entryBasePrice != null) techParts.push(`BasePrice=${fmtNum(ctx.entryBasePrice)}`);
       if (ctx.entryBasePriceType) techParts.push(`BaseType=${ctx.entryBasePriceType}`);
-      if (ctx.entryDipPct != null) techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
+      if (ctx.entryDipPct != null) {
+        if (ctx.entryDipPct >= 0) {
+          techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
+        } else {
+          techParts.push(`PrecioSobreAncla=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
+        }
+      }
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
       if (ctx.sizeProfile) techParts.push(`Perfil=${ctx.sizeProfile}`);
       if (ctx.blockReasons) {
@@ -254,7 +260,13 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
       if (ctx.capitalUsed != null) techParts.push(`Capital=$${ctx.capitalUsed.toFixed(2)}`);
       if (ctx.entryBasePrice != null) techParts.push(`BasePrice=${fmtNum(ctx.entryBasePrice)}`);
       if (ctx.entryBasePriceType) techParts.push(`BaseType=${ctx.entryBasePriceType}`);
-      if (ctx.entryDipPct != null) techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
+      if (ctx.entryDipPct != null) {
+        if (ctx.entryDipPct >= 0) {
+          techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
+        } else {
+          techParts.push(`PrecioSobreAncla=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
+        }
+      }
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
       if (ctx.buyCount != null) techParts.push(`Compra=#${ctx.buyCount}`);
       if (ctx.sizeProfile) techParts.push(`Perfil=${ctx.sizeProfile}`);
@@ -335,7 +347,13 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
     case "plus_cycle_activated":
       if (ctx.price != null) techParts.push(`Precio=${fmtNum(ctx.price)}`);
       if (ctx.quantity != null) techParts.push(`Qty=${ctx.quantity.toFixed(6)}`);
-      if (ctx.entryDipPct != null) techParts.push(`DipDesdeMain=${ctx.entryDipPct.toFixed(2)}%`);
+      if (ctx.entryDipPct != null) {
+        if (ctx.entryDipPct >= 0) {
+          techParts.push(`DipDesdeMain=${ctx.entryDipPct.toFixed(2)}%`);
+        } else {
+          techParts.push(`SobreMain=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
+        }
+      }
       if (ctx.parentCycleId != null) techParts.push(`Parent=#${ctx.parentCycleId}`);
       if (ctx.tpPct != null) techParts.push(`TP=${ctx.tpPct.toFixed(1)}%`);
       break;
