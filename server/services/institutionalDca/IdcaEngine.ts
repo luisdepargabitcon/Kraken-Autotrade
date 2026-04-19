@@ -683,6 +683,10 @@ async function evaluatePair(
         // Sin VWAP → comportamiento original directo
         await checkEntry(pair, currentPrice, config, assetConfig, mode);
       }
+    } else if (hasImported && !hasAny) {
+      // Imported/manual cycle active — run entry check in observe-only mode
+      // (generates events + logs for UI, but does NOT create a new cycle or buy)
+      await checkEntry(pair, currentPrice, config, assetConfig, mode, true);
     }
   }
 }
@@ -694,7 +698,8 @@ async function checkEntry(
   currentPrice: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode
+  mode: IdcaMode,
+  observeOnly = false
 ): Promise<void> {
   const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode);
 
@@ -723,6 +728,19 @@ async function checkEntry(
         sizeProfile: check.sizeProfile,
       });
     }
+    return;
+  }
+
+  // In observe-only mode, log that entry would be allowed but do NOT execute
+  if (observeOnly) {
+    const bp = check.basePrice!;
+    await createHumanEvent({
+      pair, mode,
+      eventType: "entry_check_passed",
+      severity: "info",
+      message: `[OBSERVE] Entry would be allowed (cycle active): BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
+      payloadJson: { observeOnly: true, marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias },
+    }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
     return;
   }
 
