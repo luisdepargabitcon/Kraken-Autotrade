@@ -761,6 +761,10 @@ export const timeStopConfig = pgTable("time_stop_config", {
   telegramAlertEnabled: boolean("telegram_alert_enabled").notNull().default(true),
   logExpiryEvenIfDisabled: boolean("log_expiry_even_if_disabled").notNull().default(true),
 
+  // FASE 4 — Soft mode: when true, only close on expiry if net P&L > roundTripFeePct.
+  // Replaces the decorative bot_config.timeStopMode="soft" that never gated behavior.
+  softMode: boolean("soft_mode").notNull().default(false),
+
   // Priority (lower = higher priority)
   priority: integer("priority").notNull().default(100),
 

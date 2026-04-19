@@ -504,12 +504,19 @@ export class ExitManager {
       log(`[TIME_STOP] Failed to get regime for ${pair}, using TRANSITION: ${e?.message}`, "trading");
     }
 
-    // Use Smart TimeStop Service (per-asset TTL + regime multiplier + clamp)
+    // Use Smart TimeStop Service (per-asset TTL + regime multiplier + clamp + softMode)
+    // FASE 4 — pasar P&L y fee round-trip para que el servicio pueda aplicar softMode real.
+    const priceChangePctLocal = ((currentPrice - entryPrice) / entryPrice) * 100;
+    const takerFeePctLocal = exitConfig.takerFeePct ?? getTakerFeePct();
+    const roundTripFeePctLocal = takerFeePctLocal * 2;
     const tsResult: TimeStopCheckResult = await checkSmartTimeStop(
       pair,
       openedAt,
       regime,
       timeStopDisabled ?? false,
+      "spot",
+      priceChangePctLocal,
+      roundTripFeePctLocal,
     );
 
     const { ageHours, ttlHours, expired, shouldClose, closeOrderType, limitFallbackSeconds, telegramAlertEnabled, logExpiryEvenIfDisabled, configSource } = tsResult;
@@ -1200,11 +1207,17 @@ export class ExitManager {
         log(`[TIME_STOP_SG] Failed to get regime for ${pair}, using TRANSITION: ${e?.message}`, "trading");
       }
 
+      // FASE 4 — pasar P&L + fee round-trip para softMode real.
+      const takerFeePctSG = getTakerFeePct();
+      const roundTripFeePctSG = takerFeePctSG * 2;
       const tsResult: TimeStopCheckResult = await checkSmartTimeStop(
         pair,
         position.openedAt,
         regime,
         position.timeStopDisabled ?? false,
+        "spot",
+        priceChange,
+        roundTripFeePctSG,
       );
 
       if (tsResult.expired) {

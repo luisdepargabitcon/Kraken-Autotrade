@@ -24,6 +24,7 @@ const timeStopConfigSchema = z.object({
   limitFallbackSeconds: z.number().int().min(5).max(300).optional(),
   telegramAlertEnabled: z.boolean().optional(),
   logExpiryEvenIfDisabled: z.boolean().optional(),
+  softMode: z.boolean().optional(),                 // FASE 4 — if true, only close on expiry if net P&L > roundTripFeePct
   priority: z.number().int().min(1).max(9999).optional(),
   isActive: z.boolean().optional(),
 });

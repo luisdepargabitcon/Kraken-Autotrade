@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   LogOut, Shield, CircleDollarSign, Timer, Brain, AlertTriangle,
 } from "lucide-react";
+import { TimeStopConfigPanel } from "./TimeStopConfigPanel";
 
 interface SalidasTabProps {
   config: any;
@@ -269,13 +269,15 @@ export function SalidasTab({ config, onUpdate, advancedMode }: SalidasTabProps) 
                         className="h-8 text-xs font-mono bg-background/50" />
                       <p className="text-[10px] text-muted-foreground">Ganancia mínima neta deseada</p>
                     </div>
+                    {/* FASE 4 — Time-Stop movido a panel dedicado TimeStopConfigPanel (fuente única). */}
                     <div className="space-y-1">
-                      <Label className="text-xs">Time-Stop (horas)</Label>
-                      <Input type="number" min={6} max={120}
-                        value={config.timeStopHours || 36}
-                        onChange={(e) => onUpdate({ timeStopHours: parseInt(e.target.value) || 36 })}
-                        className="h-8 text-xs font-mono bg-background/50" />
-                      <p className="text-[10px] text-muted-foreground">Tiempo máximo posición abierta</p>
+                      <Label className="text-xs">Time-Stop</Label>
+                      <div className="h-8 flex items-center px-2 rounded border border-amber-500/30 bg-amber-500/5 text-[10px] text-amber-300">
+                        Configuración movida al panel Time-Stop ↓
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        TTL por par + factor régimen + modo soft real en el panel de abajo.
+                      </p>
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -287,22 +289,6 @@ export function SalidasTab({ config, onUpdate, advancedMode }: SalidasTabProps) 
                     <p className="text-[10px] text-muted-foreground">
                       Piso mínimo para BE. Debe ser mayor que fees + buffer ({((parseFloat(config.takerFeePct || "0.40") * 2) + parseFloat(config.profitBufferPct || "1.00")).toFixed(2)}%).
                     </p>
-                  </div>
-                  <div className="flex items-center justify-between p-2 bg-emerald-500/10 rounded">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs">Modo Time-Stop</Label>
-                      <span className="text-[10px] text-muted-foreground">(soft = solo si hay ganancia)</span>
-                    </div>
-                    <Select value={config?.timeStopMode ?? "soft"}
-                      onValueChange={(value) => onUpdate({ timeStopMode: value })}>
-                      <SelectTrigger className="w-24 h-7 text-xs font-mono bg-background/50">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="soft">SOFT</SelectItem>
-                        <SelectItem value="hard">HARD</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                   <div className="text-xs bg-emerald-500/10 p-2 rounded border border-emerald-500/20">
                     <strong>Mínimo para cerrar:</strong> {((parseFloat(config.takerFeePct || "0.40") * 2) + parseFloat(config.profitBufferPct || "1.00")).toFixed(2)}%
@@ -456,6 +442,9 @@ export function SalidasTab({ config, onUpdate, advancedMode }: SalidasTabProps) 
         </Card>
       )}
 
+      {/* FASE 4 — Time-Stop Configuration Panel (fuente única) */}
+      <TimeStopConfigPanel />
+
       {/* Advanced Exit Mechanisms Info */}
       <Card className="glass-panel border-border/50">
         <CardHeader>
@@ -481,10 +470,10 @@ export function SalidasTab({ config, onUpdate, advancedMode }: SalidasTabProps) 
               <div className="flex items-center gap-2">
                 <Timer className="h-4 w-4 text-amber-500" />
                 <span className="font-medium text-sm">Time-Stop</span>
-                <Badge variant="outline" className="text-amber-400 border-amber-500/50 text-[10px]">AUTO</Badge>
+                <Badge variant="outline" className="text-amber-400 border-amber-500/50 text-[10px]">CONFIGURABLE</Badge>
               </div>
               <p className="text-xs text-muted-foreground">
-                Cierra posiciones estancadas tras un período configurable.
+                TTL por par con multiplicadores de régimen. Modo soft evita cerrar a pérdida neta.
               </p>
             </div>
             <div className="p-4 rounded-lg border border-blue-500/20 bg-blue-500/5 space-y-2">
@@ -509,13 +498,13 @@ export function SalidasTab({ config, onUpdate, advancedMode }: SalidasTabProps) 
             </div>
           </div>
           <div className="bg-muted/30 rounded-lg p-4">
-            <h4 className="font-medium text-sm mb-2">Prioridad de salida:</h4>
+            <h4 className="font-medium text-sm mb-2">Prioridad de salida (orden real en el motor):</h4>
             <p className="text-xs text-muted-foreground">
               1. <strong className="text-red-500">Circuit Breaker</strong> → bloquea si ya hay venta en curso
-              <br />2. <strong className="text-red-500">Stop-Loss</strong> → protección máxima de capital
-              <br />3. <strong className="text-green-500">Take-Profit / Trailing</strong> → asegurar ganancias
-              <br />4. <strong className="text-purple-500">SmartGuard</strong> → break-even + trailing adaptativo
-              <br />5. <strong className="text-amber-500">Time-Stop</strong> → liberar capital estancado
+              <br />2. <strong className="text-amber-500">Time-Stop</strong> → se evalúa <em>antes</em> que SmartGuard dentro del motor. Con <strong>modo soft</strong> NO cierra si P&amp;L neto ≤ 0
+              <br />3. <strong className="text-red-500">Ultimate Stop-Loss</strong> (SG) → protección de capital
+              <br />4. <strong className="text-green-500">Take-Profit fijo / Trailing</strong> → asegurar ganancias
+              <br />5. <strong className="text-purple-500">SmartGuard BE + Trailing</strong> → gestión adaptativa
               <br />6. <strong className="text-blue-500">Smart Exit</strong> → scoring técnico (si habilitado)
             </p>
           </div>
