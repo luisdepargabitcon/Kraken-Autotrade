@@ -642,7 +642,7 @@ async function checkEntry(
         eventType: "entry_check_blocked",
         severity: "info",
         message: check.blockReasons.map(r => r.code).join(", "),
-        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice },
+        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null },
       }, {
         eventType: "entry_check_blocked",
         reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
@@ -1828,7 +1828,7 @@ async function performEntryCheck(
 
   // ── VWAP Anchored context ──────────────────────────────────────
   let vwapContext: VwapEntryContext | undefined;
-  if (basePriceResult.isReliable && basePriceResult.timestamp) {
+  if (assetConfig.vwapEnabled && basePriceResult.isReliable && basePriceResult.timestamp) {
     const anchorMs = basePriceResult.timestamp instanceof Date
       ? basePriceResult.timestamp.getTime()
       : basePriceResult.timestamp;
