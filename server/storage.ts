@@ -1911,6 +1911,11 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_asset_configs', column: 'trailing_activation_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_activation_pct DECIMAL(5,2) NOT NULL DEFAULT 3.50' },
         { table: 'institutional_dca_asset_configs', column: 'trailing_margin_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_margin_pct DECIMAL(5,2) NOT NULL DEFAULT 1.50' },
 
+        // institutional_dca_asset_configs — VWAP + rebound config (028)
+        { table: 'institutional_dca_asset_configs', column: 'rebound_min_pct', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS rebound_min_pct DECIMAL(5,2) NOT NULL DEFAULT 0.30' },
+        { table: 'institutional_dca_asset_configs', column: 'vwap_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS vwap_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
+        { table: 'institutional_dca_asset_configs', column: 'vwap_dynamic_safety_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS vwap_dynamic_safety_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
+
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
         { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },

@@ -980,6 +980,14 @@ async function runMigration() {
     const idcaSchedulerAdaptivePath = path.resolve(process.cwd(), "db", "migrations", "027_idca_scheduler_adaptive.sql");
     await tryExecuteFile(db, idcaSchedulerAdaptivePath, "idca_scheduler_adaptive");
 
+    // ============================================================
+    // IDCA VWAP + REBOUND CONFIG (028) — adds rebound_min_pct,
+    // vwap_enabled, vwap_dynamic_safety_enabled to asset configs.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA VWAP + rebound config columns exist...");
+    const idcaVwapReboundPath = path.resolve(process.cwd(), "db", "migrations", "028_idca_vwap_rebound_config.sql");
+    await tryExecuteFile(db, idcaVwapReboundPath, "idca_vwap_rebound_config");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

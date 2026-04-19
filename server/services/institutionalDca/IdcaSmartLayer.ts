@@ -11,6 +11,7 @@ import type {
   TpBreakdown,
   BasePriceResult,
   DipReferenceMethod,
+  SafetyOrderLevel,
 } from "./IdcaTypes";
 import { SIZE_PROFILES } from "./IdcaTypes";
 
@@ -110,9 +111,11 @@ export function computeDynamicTrailing(input: VolatilityTrailingInput): number {
 // ─── ATR Calculation ───────────────────────────────────────────────
 
 export interface OhlcCandle {
+  open?: number;
   high: number;
   low: number;
   close: number;
+  volume?: number;
 }
 
 export function computeATR(candles: OhlcCandle[], period = 14): number {
@@ -384,6 +387,7 @@ export interface ReboundInput {
   recentCandles: OhlcCandle[];  // last 3-5 candles
   currentPrice: number;
   localLow: number;
+  reboundMinPct?: number;       // configurable bounce threshold (default 0.3%)
 }
 
 export function detectRebound(input: ReboundInput): boolean {
@@ -399,9 +403,10 @@ export function detectRebound(input: ReboundInput): boolean {
     if (lowerWick / range > 0.4) return true;
   }
 
-  // Condition 2: Close separated from local low (bounced > 0.3%)
+  // Condition 2: Close separated from local low (bounced > reboundMinPct)
+  const minBounce = input.reboundMinPct ?? 0.3;
   const bounceFromLow = ((input.currentPrice - input.localLow) / input.localLow) * 100;
-  if (bounceFromLow > 0.3 && last.close > prev.close) return true;
+  if (bounceFromLow > minBounce && last.close > prev.close) return true;
 
   // Condition 3: Bearish momentum decelerating (smaller red candles)
   if (input.recentCandles.length >= 3) {
@@ -761,6 +766,205 @@ function detectPivotHighs(candles: TimestampedCandle[], n: number): PivotResult 
     }
   }
   return { pivots };
+}
+
+// ─── Dynamic Safety Orders (VWAP-band aware) ─────────────────────
+
+export interface AdjustedSafetyOrder extends SafetyOrderLevel {
+  originalDipPct: number;
+  adjustedByVwap: boolean;
+  adjustmentReason?: string;
+}
+
+/**
+ * Adjust safety order dip levels based on VWAP band position.
+ *
+ * Logic:
+ * - If price is below VWAP lower band 2 → tighten levels by 20% (deep value zone)
+ * - If price is below VWAP lower band 1 → tighten levels by 10% (value zone)
+ * - If price is between bands → no change
+ * - If price is above VWAP upper band 1 → widen levels by 15% (overextended)
+ * - If price is above VWAP upper band 2 → widen levels by 25% (strongly overextended)
+ *
+ * This function never modifies the original safetyOrdersJson — it returns new adjusted levels.
+ */
+export function adjustSafetyOrdersWithVwap(
+  orders: SafetyOrderLevel[],
+  vwapZone: VwapBandPosition["zone"],
+): AdjustedSafetyOrder[] {
+  const factorMap: Record<VwapBandPosition["zone"], number> = {
+    below_lower2: 0.80,   // tighten 20%
+    below_lower1: 0.90,   // tighten 10%
+    between_bands: 1.00,  // no change
+    above_upper1: 1.15,   // widen 15%
+    above_upper2: 1.25,   // widen 25%
+  };
+
+  const factor = factorMap[vwapZone] ?? 1.0;
+  const adjusted = factor !== 1.0;
+
+  return orders.map(o => ({
+    dipPct: +(o.dipPct * factor).toFixed(2),
+    sizePctOfAssetBudget: o.sizePctOfAssetBudget,
+    originalDipPct: o.dipPct,
+    adjustedByVwap: adjusted,
+    adjustmentReason: adjusted
+      ? `VWAP zone=${vwapZone}, factor=${factor.toFixed(2)} (${o.dipPct}% → ${(o.dipPct * factor).toFixed(2)}%)`
+      : undefined,
+  }));
+}
+
+// ─── VWAP Anchored + Bandas ───────────────────────────────────────
+
+export interface VwapResult {
+  vwap: number;
+  upperBand1: number;  // +1 σ
+  lowerBand1: number;  // -1 σ
+  upperBand2: number;  // +2 σ
+  lowerBand2: number;  // -2 σ
+  stdDev: number;
+  anchorTime: number;  // epoch ms of anchor candle
+  candlesUsed: number;
+  isReliable: boolean;
+  reason: string;
+}
+
+export interface VwapBandPosition {
+  zone: "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+  distanceFromVwapPct: number;    // negative = below VWAP
+  distanceFromLower1Pct: number;  // negative = below lower band
+  distanceFromLower2Pct: number;
+}
+
+const VWAP_MIN_CANDLES = 5;
+
+/**
+ * Compute Anchored VWAP + standard deviation bands.
+ *
+ * VWAP = Σ(TP × Volume) / Σ(Volume)
+ * where TP = (High + Low + Close) / 3
+ *
+ * Bands are ±1σ and ±2σ of the volume-weighted price deviations.
+ *
+ * @param candles  Must have `open`, `high`, `low`, `close`, `volume`, `time` fields.
+ *                 Only candles with time >= anchorTimeMs are included.
+ * @param anchorTimeMs  Epoch ms of the anchor point (e.g. swing high timestamp).
+ *                      If 0 or undefined, uses all candles.
+ */
+export function computeVwapAnchored(
+  candles: TimestampedCandle[],
+  anchorTimeMs?: number,
+): VwapResult {
+  // Filter candles from anchor
+  const anchor = anchorTimeMs ?? 0;
+  const slice = anchor > 0 ? candles.filter(c => c.time >= anchor) : candles;
+
+  if (slice.length < VWAP_MIN_CANDLES) {
+    return {
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      isReliable: false,
+      reason: `Insufficient candles: ${slice.length}/${VWAP_MIN_CANDLES}`,
+    };
+  }
+
+  // Check that volume data is available
+  const hasVolume = slice.some(c => (c.volume ?? 0) > 0);
+  if (!hasVolume) {
+    return {
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      isReliable: false,
+      reason: "No volume data available for VWAP calculation",
+    };
+  }
+
+  // Compute VWAP
+  let cumulativeTPV = 0; // Σ(TP × V)
+  let cumulativeVol = 0; // Σ(V)
+
+  const tpValues: number[] = [];
+  const volValues: number[] = [];
+
+  for (const c of slice) {
+    const tp = (c.high + c.low + c.close) / 3;
+    const vol = c.volume ?? 0;
+    cumulativeTPV += tp * vol;
+    cumulativeVol += vol;
+    tpValues.push(tp);
+    volValues.push(vol);
+  }
+
+  if (cumulativeVol === 0) {
+    return {
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      isReliable: false,
+      reason: "Total volume is zero",
+    };
+  }
+
+  const vwap = cumulativeTPV / cumulativeVol;
+
+  // Compute volume-weighted standard deviation of TP from VWAP
+  let weightedSumSqDev = 0;
+  for (let i = 0; i < tpValues.length; i++) {
+    const dev = tpValues[i] - vwap;
+    weightedSumSqDev += volValues[i] * dev * dev;
+  }
+  const variance = weightedSumSqDev / cumulativeVol;
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    vwap,
+    upperBand1: vwap + stdDev,
+    lowerBand1: vwap - stdDev,
+    upperBand2: vwap + 2 * stdDev,
+    lowerBand2: vwap - 2 * stdDev,
+    stdDev,
+    anchorTime: slice[0].time,
+    candlesUsed: slice.length,
+    isReliable: true,
+    reason: `VWAP anchored from ${new Date(slice[0].time).toISOString().slice(0, 16)}, ${slice.length} candles`,
+  };
+}
+
+/**
+ * Determine which VWAP band zone the current price is in.
+ */
+export function getVwapBandPosition(price: number, vwap: VwapResult): VwapBandPosition {
+  if (!vwap.isReliable || vwap.vwap === 0) {
+    return {
+      zone: "between_bands",
+      distanceFromVwapPct: 0,
+      distanceFromLower1Pct: 0,
+      distanceFromLower2Pct: 0,
+    };
+  }
+
+  const distFromVwap = ((price - vwap.vwap) / vwap.vwap) * 100;
+  const distFromLower1 = vwap.lowerBand1 > 0 ? ((price - vwap.lowerBand1) / vwap.lowerBand1) * 100 : 0;
+  const distFromLower2 = vwap.lowerBand2 > 0 ? ((price - vwap.lowerBand2) / vwap.lowerBand2) * 100 : 0;
+
+  let zone: VwapBandPosition["zone"];
+  if (price <= vwap.lowerBand2) {
+    zone = "below_lower2";
+  } else if (price <= vwap.lowerBand1) {
+    zone = "below_lower1";
+  } else if (price >= vwap.upperBand2) {
+    zone = "above_upper2";
+  } else if (price >= vwap.upperBand1) {
+    zone = "above_upper1";
+  } else {
+    zone = "between_bands";
+  }
+
+  return {
+    zone,
+    distanceFromVwapPct: distFromVwap,
+    distanceFromLower1Pct: distFromLower1,
+    distanceFromLower2Pct: distFromLower2,
+  };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

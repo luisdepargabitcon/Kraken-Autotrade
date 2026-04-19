@@ -71,7 +71,10 @@ export interface IdcaAssetConfig {
   minDipPct: string;
   dipReference: string;
   requireReboundConfirmation: boolean;
+  reboundMinPct: string;
   trailingBuyEnabled: boolean;
+  vwapEnabled: boolean;
+  vwapDynamicSafetyEnabled: boolean;
   safetyOrdersJson: { dipPct: number; sizePctOfAssetBudget: number }[];
   maxSafetyOrders: number;
   takeProfitPct: string;

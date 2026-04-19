@@ -27,10 +27,12 @@ import type {
   BasePriceType,
   DipReferenceMethod,
   IdcaMacroContext,
+  VwapEntryContext,
 } from "./IdcaTypes";
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { MarketDataService } from "../MarketDataService";
 
 const TAG = "[IDCA]";
 
@@ -665,7 +667,7 @@ async function checkEntry(
     eventType: "entry_check_passed",
     severity: "info",
     message: `Entry check passed: BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
-    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp },
+    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null },
   }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
 
   // Calculate capital for this cycle
@@ -1173,7 +1175,8 @@ async function checkSafetyBuy(
       close: c.close,
     }));
     const localLow = Math.min(...recentCandles.map(c => c.low), currentPrice);
-    if (!smart.detectRebound({ recentCandles, currentPrice, localLow })) {
+    const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
+    if (!smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin })) {
       return; // No rebound confirmed yet
     }
   }
@@ -1816,9 +1819,44 @@ async function performEntryCheck(
     const localLow = recentCandles.length > 0
       ? Math.min(...recentCandles.map(c => c.low))
       : currentPrice;
-    reboundConfirmed = smart.detectRebound({ recentCandles, currentPrice, localLow });
+    const reboundMin = parseFloat(String(assetConfig.reboundMinPct ?? "0.30"));
+    reboundConfirmed = smart.detectRebound({ recentCandles, currentPrice, localLow, reboundMinPct: reboundMin });
     if (!reboundConfirmed) {
-      blocks.push({ code: "no_rebound_confirmed", message: "Waiting for rebound confirmation", timestamp: now });
+      blocks.push({ code: "no_rebound_confirmed", message: `Waiting for rebound confirmation (minBounce=${reboundMin}%)`, timestamp: now });
+    }
+  }
+
+  // ── VWAP Anchored context ──────────────────────────────────────
+  let vwapContext: VwapEntryContext | undefined;
+  if (basePriceResult.isReliable && basePriceResult.timestamp) {
+    const anchorMs = basePriceResult.timestamp instanceof Date
+      ? basePriceResult.timestamp.getTime()
+      : basePriceResult.timestamp;
+    const vwapResult = smart.computeVwapAnchored(candles, anchorMs);
+    if (vwapResult.isReliable) {
+      const bandPos = smart.getVwapBandPosition(currentPrice, vwapResult);
+      vwapContext = {
+        vwap: vwapResult.vwap,
+        upperBand1: vwapResult.upperBand1,
+        lowerBand1: vwapResult.lowerBand1,
+        upperBand2: vwapResult.upperBand2,
+        lowerBand2: vwapResult.lowerBand2,
+        stdDev: vwapResult.stdDev,
+        anchorTime: vwapResult.anchorTime,
+        candlesUsed: vwapResult.candlesUsed,
+        isReliable: true,
+        zone: bandPos.zone,
+        distanceFromVwapPct: bandPos.distanceFromVwapPct,
+        distanceFromLower1Pct: bandPos.distanceFromLower1Pct,
+      };
+      console.log(
+        `${TAG}[VWAP] ${pair}: vwap=$${vwapResult.vwap.toFixed(2)}` +
+        ` | zone=${bandPos.zone}` +
+        ` | dist=${bandPos.distanceFromVwapPct.toFixed(2)}%` +
+        ` | σ=$${vwapResult.stdDev.toFixed(2)}` +
+        ` | bands=[$${vwapResult.lowerBand2.toFixed(2)}, $${vwapResult.lowerBand1.toFixed(2)}, $${vwapResult.upperBand1.toFixed(2)}, $${vwapResult.upperBand2.toFixed(2)}]` +
+        ` | candles=${vwapResult.candlesUsed}`
+      );
     }
   }
 
@@ -1839,6 +1877,7 @@ async function performEntryCheck(
     entryDipPct,
     basePrice: basePriceResult,
     reboundConfirmed,
+    vwapContext,
   };
 }
 
@@ -1901,16 +1940,10 @@ async function checkModuleDrawdown(config: InstitutionalDcaConfigRow, mode: Idca
 // ─── Market Data Helpers ───────────────────────────────────────────
 
 async function getCurrentPrice(pair: string): Promise<number> {
-  try {
-    const dataExchange = ExchangeFactory.getDataExchange();
-    if (dataExchange.isInitialized()) {
-      const ticker = await dataExchange.getTicker(pair);
-      const price = ticker.last;
-      priceCache.set(pair, price);
-      return price;
-    }
-  } catch (e: any) {
-    // Fallback to cached price
+  const price = await MarketDataService.getPrice(pair);
+  if (price > 0) {
+    priceCache.set(pair, price);
+    return price;
   }
   return priceCache.get(pair) || 0;
 }
@@ -1991,10 +2024,12 @@ function computeP95Local(values: number[]): number {
 // Helper: map raw Kraken OHLC response to TimestampedCandle
 function mapKrakenCandles(candles: any[]): TimestampedCandle[] {
   return candles.map((c: any) => ({
-    high:  parseFloat(String(c.high  || c[2] || 0)),
-    low:   parseFloat(String(c.low   || c[3] || 0)),
-    close: parseFloat(String(c.close || c[4] || 0)),
-    time:  c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
+    open:   parseFloat(String(c.open   || c[1] || 0)),
+    high:   parseFloat(String(c.high   || c[2] || 0)),
+    low:    parseFloat(String(c.low    || c[3] || 0)),
+    close:  parseFloat(String(c.close  || c[4] || 0)),
+    volume: parseFloat(String(c.volume || c[5] || 0)),
+    time:   c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
   }));
 }
 
@@ -2026,26 +2061,26 @@ async function updateOhlcvCache(): Promise<void> {
       const dataExchange = ExchangeFactory.getDataExchange();
       if (!dataExchange.isInitialized()) continue;
 
-      // ── 1h candles (24h / 7d / 30d analysis) ───────────────────────
-      const candles1h = await (dataExchange as any).getOHLC?.(pair, 60);
-      if (candles1h && Array.isArray(candles1h) && candles1h.length > 0) {
+      // ── 1h candles (24h / 7d / 30d analysis) — via MarketDataService ──
+      const candles1h = await MarketDataService.getCandles(pair, "1h");
+      if (candles1h.length > 0) {
         const mapped1h = mapKrakenCandles(candles1h);
         ohlcCache.set(pair, mapped1h);
         console.log(
           `${TAG}[OHLCV] ${pair}: ${mapped1h.length} 1h candles` +
           ` | first=${new Date(mapped1h[0].time).toISOString().slice(0, 16)}` +
           ` | last=${new Date(mapped1h[mapped1h.length - 1].time).toISOString().slice(0, 16)}` +
-          ` | source=${ExchangeFactory.getDataExchangeType()}`
+          ` | source=${ExchangeFactory.getDataExchangeType()} (MDS)`
         );
         // Store last 10 in DB cache
         for (const c of candles1h.slice(-10)) {
           try {
             await repo.upsertOhlcv({
               pair, timeframe: "1h",
-              ts: new Date(c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now())),
-              open: String(c.open || c[1] || 0), high: String(c.high || c[2] || 0),
-              low:  String(c.low  || c[3] || 0), close: String(c.close || c[4] || 0),
-              volume: String(c.volume || c[5] || 0),
+              ts: new Date(c.time * 1000),
+              open: String(c.open), high: String(c.high),
+              low:  String(c.low),  close: String(c.close),
+              volume: String(c.volume),
             });
           } catch { /* ignore duplicate */ }
         }
@@ -2057,8 +2092,8 @@ async function updateOhlcvCache(): Promise<void> {
         // Skip — recent daily data still valid
       } else
       try {
-        const candlesDaily = await (dataExchange as any).getOHLC?.(pair, 1440);
-        if (candlesDaily && Array.isArray(candlesDaily) && candlesDaily.length > 0) {
+        const candlesDaily = await MarketDataService.getCandles(pair, "1d");
+        if (candlesDaily.length > 0) {
           const mappedDaily = mapKrakenCandles(candlesDaily);
           ohlcDailyCache.set(pair, mappedDaily);
           console.log(`${TAG}[OHLCV] ${pair}: ${mappedDaily.length} daily candles | source=${ExchangeFactory.getDataExchangeType()}`);

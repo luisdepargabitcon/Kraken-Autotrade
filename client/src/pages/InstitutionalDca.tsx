@@ -717,6 +717,7 @@ function ConfigTab() {
   const updateConfig = useUpdateIdcaConfig();
   const updateAsset = useUpdateAssetConfig();
   const [showAdvancedTp, setShowAdvancedTp] = useState(false);
+  const [configSubTab, setConfigSubTab] = useState<"general" | "vwap">("general");
 
   if (!config) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
 
@@ -731,6 +732,34 @@ function ConfigTab() {
 
   return (
     <div className="space-y-6">
+
+      {/* ════ SUB-TABS DENTRO DE CONFIG ════ */}
+      <div className="flex gap-2 border-b border-border/40 pb-2">
+        <button
+          onClick={() => setConfigSubTab("general")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "general"
+              ? "bg-primary/10 text-primary border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          General
+        </button>
+        <button
+          onClick={() => setConfigSubTab("vwap")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "vwap"
+              ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          VWAP & Rebound
+        </button>
+      </div>
+
+      {configSubTab === "general" && (<>
 
       {/* ════ BLOQUE 1 — DINERO Y LÍMITES ════ */}
       <ConfigBlock icon={Wallet} title="Dinero y límites"
@@ -1373,6 +1402,91 @@ function ConfigTab() {
           </div>
         )}
       </ConfigBlock>
+      </>)}
+
+      {/* ════ SUB-TAB: VWAP & REBOUND ════ */}
+      {configSubTab === "vwap" && (
+        <ConfigBlock icon={Activity} title="VWAP Anchored & Rebound"
+          desc="Configuración avanzada: VWAP anclado al swing high, rebote mínimo configurable y safety orders dinámicas basadas en bandas VWAP.">
+
+          {/* ── Rebound mínimo ── */}
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground">Rebote mínimo por par</p>
+            <p className="text-xs text-muted-foreground">
+              Porcentaje mínimo de rebote desde el mínimo local para confirmar entrada. Solo aplica si "Confirmar rebote" está activo en General.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            {btc && (
+              <ColorSlider label="Rebote mínimo BTC" color="cyan"
+                value={parseFloat(btc.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
+                onChange={(v) => updateAsset.mutate({ pair: btc.pair, reboundMinPct: String(v) })}
+                desc="Porcentaje mínimo de bounce desde el low local para BTC." />
+            )}
+            {eth && (
+              <ColorSlider label="Rebote mínimo ETH" color="cyan"
+                value={parseFloat(eth.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
+                onChange={(v) => updateAsset.mutate({ pair: eth.pair, reboundMinPct: String(v) })}
+                desc="Porcentaje mínimo de bounce desde el low local para ETH." />
+            )}
+          </div>
+
+          {/* ── VWAP Anchored ── */}
+          <div className="border-t border-border/30 pt-4 space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground">VWAP Anchored</p>
+              <p className="text-xs text-muted-foreground">
+                Calcula el VWAP anclado al swing high del base price con bandas de desviación estándar (±1σ, ±2σ). Enriquece el contexto de entrada con zona VWAP.
+              </p>
+            </div>
+            {btc && (
+              <ToggleField label="VWAP Anchored BTC" checked={btc.vwapEnabled ?? false}
+                onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapEnabled: v })}
+                desc="Activa el análisis VWAP anclado al swing high para BTC." />
+            )}
+            {eth && (
+              <ToggleField label="VWAP Anchored ETH" checked={eth.vwapEnabled ?? false}
+                onChange={(v) => updateAsset.mutate({ pair: eth.pair, vwapEnabled: v })}
+                desc="Activa el análisis VWAP anclado al swing high para ETH." />
+            )}
+          </div>
+
+          {/* ── Safety Orders dinámicas ── */}
+          <div className="border-t border-border/30 pt-4 space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground">Safety Orders dinámicas (VWAP)</p>
+              <p className="text-xs text-muted-foreground">
+                Ajusta automáticamente los niveles de safety orders según la zona VWAP actual. Requiere VWAP Anchored activo.
+              </p>
+            </div>
+            {btc && (
+              <ToggleField label="Safety dinámicas VWAP BTC" checked={btc.vwapDynamicSafetyEnabled ?? false}
+                onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapDynamicSafetyEnabled: v })}
+                desc="Deep value → tighten levels (compra antes). Overextended → widen levels." />
+            )}
+            {eth && (
+              <ToggleField label="Safety dinámicas VWAP ETH" checked={eth.vwapDynamicSafetyEnabled ?? false}
+                onChange={(v) => updateAsset.mutate({ pair: eth.pair, vwapDynamicSafetyEnabled: v })}
+                desc="Deep value → tighten levels (compra antes). Overextended → widen levels." />
+            )}
+          </div>
+
+          {/* ── Info panel ── */}
+          <div className="border-t border-border/30 pt-4">
+            <div className="bg-violet-500/10 border border-violet-500/30 rounded-lg p-3 space-y-2">
+              <p className="text-xs text-violet-300 font-semibold">Orden recomendado de activación:</p>
+              <ol className="text-xs text-violet-300/80 space-y-1 list-decimal list-inside">
+                <li>Activa <strong>VWAP Anchored</strong> y observa los vwapContext en los eventos del Monitor</li>
+                <li>Cuando entiendas las zonas, activa <strong>Safety dinámicas VWAP</strong></li>
+                <li>Ajusta el <strong>Rebote mínimo</strong> según la volatilidad (0.30% es conservador)</li>
+              </ol>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Los eventos entry_check_passed/blocked incluirán vwapContext en el payload JSON expandible del Monitor Tiempo Real.
+              </p>
+            </div>
+          </div>
+        </ConfigBlock>
+      )}
     </div>
   );
 }

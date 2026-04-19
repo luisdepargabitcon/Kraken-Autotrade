@@ -1,697 +1,394 @@
-# 📋 BITÁCORA - WINDSURF CHESTER BOT
+# 📋 BITÁCORA — WINDSURF CHESTER BOT
 
-> **Fuente de verdad** para registro de cambios, incidentes, deploys y verificaciones.  
-> Organizado por **categorías** con entradas en orden cronológico inverso.
-
----
-
-# CORRECCIONES POR CATEGORÍA
+> Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
+> Última actualización: 2026-04-19
 
 ---
 
-## 🚨 FIXES CRÍTICOS
+## 🏛️ ARQUITECTURA GENERAL
 
-### 2026-01-27 13:25 — MEJORA: Allowlist centralizada de pares activos (evita 404 RevolutX por pares no operados)
-
-**Problema:**
-El endpoint de portfolio intentaba consultar precios en RevolutX para activos presentes en balances pero no operados por el bot (ej. `LMWR`), generando spam de errores 404 (pares como `LMWR-USD`).
-
-**Solución:**
-- Helper central `pairAllowlist` basado en `botConfig.activePairs` (fuente de verdad).
-- Normalización de pares (`BTC-USD` -> `BTC/USD`).
-- Filtrado preventivo antes de llamar a `revolutXService.getTicker()`.
-- Validación de allowlist en trading manual RevolutX (`/api/trade/revolutx`).
-
-**Archivos Modificados:**
-- `server/services/pairAllowlist.ts` (nuevo)
-- `server/routes.ts`
-
-**Impacto:**
-- ✅ Elimina 404 por pares fuera de allowlist (ej. `LMWR-USD`)
-- ✅ Reduce llamadas innecesarias a RevolutX
-- ✅ Mantiene consistencia de formato de pares en endpoints manuales
-
-### 2026-01-25 12:50 — FIX: Modal Comisiones usaba fee incorrecto (Frontend)
-
-**Problema:**
-El bloque "COMISIONES" en el modal de detalles de posición usaba siempre 0.40% (Kraken) para calcular "Salida (estimada)", aunque el P&L Neto ya usaba 0.09% (RevolutX).
-
-**Síntomas:**
-- XRP: Salida mostraba -$1.36 (0.40%) en vez de ~$0.31 (0.09%)
-- ETH: Salida mostraba -$2.23 (0.40%) en vez de ~$0.50 (0.09%)
-- Desincronización entre P&L Neto y Comisiones mostradas
-
-**Solución:**
-```typescript
-// ANTES: Siempre usaba config Kraken
-const takerFeeRate = parseFloat(botConfig?.takerFeePct || "0.40") / 100;
-
-// AHORA: Fee según exchange de la posición
-const posExchange = selectedPosition.exchange || 'kraken';
-const feeRate = posExchange === 'revolutx' ? 0.09 / 100 : krakenFeeRate;
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     ExchangeFactory (singleton)                   │
+│                  Kraken  ←→  RevolutX                             │
+│     Trading exchange / Data exchange (configurable)               │
+└────────────┬─────────────────────────────────┬───────────────────┘
+             │                                 │
+             ▼                                 ▼
+┌────────────────────────┐     ┌──────────────────────────────────┐
+│  MarketDataService     │     │  tradingEngine (Modo Normal)     │
+│  (cache unificado)     │     │  SmartGuard + Momentum + Candles │
+│  TTLs: 15m/1h/1d/spot │     │  + ExitManager + FillWatcher     │
+└────────┬───────────────┘     └──────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     IdcaEngine (Modo IDCA)                        │
+│  ┌──────────────┐  ┌────────────────┐  ┌──────────────────────┐ │
+│  │IdcaSmartLayer│  │TrailingBuyMgr  │  │IdcaMessageFormatter  │ │
+│  │(VWAP,rebound │  │(trailing stop  │  │(mensajes humanos +   │ │
+│  │ ATR,basePrice│  │ buy inverso)   │  │ técnicos Telegram)   │ │
+│  │ safetyOrders)│  │                │  │                      │ │
+│  └──────────────┘  └────────────────┘  └──────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**Archivos Modificados:**
-- `client/src/pages/Terminal.tsx` - Interfaz OpenPosition + cálculo fees modal
+### Exchanges soportados
+- **Kraken**: API completa (OHLC, ticker, balance, orders, fills). Rate limiter FIFO con backpressure + estado degradado.
+- **RevolutX**: Orders, fills, balances. Sin ticker/OHLC → usa Kraken como data source. `pendingFill` → FillWatcher monitorea.
+
+### Modos de operación
+- **NORMAL**: SmartGuard (BE + trailing + scale-out + time-stop)
+- **IDCA**: Institutional DCA (ciclos, safety orders, TP dinámico, VWAP)
+- **DRY_RUN**: Simulación sin órdenes reales (ambos modos)
 
 ---
 
-### 2026-01-25 12:35 — FIX: P&L Neto usaba fee incorrecto (Backend)
+## 🏗️ ESTRUCTURA DEL PROYECTO
 
-**Problema:**
-El cálculo de P&L Neto en `/api/open-positions` usaba siempre 0.40% para todas las posiciones.
-
-**Solución:**
-Agregar `feePctForExchange()` que retorna 0.09% para RevolutX, config para Kraken.
-
-**Archivo:** `server/routes.ts` líneas 762-812
+```
+server/
+  services/
+    tradingEngine.ts          ← Motor principal (modo Normal)
+    exitManager.ts            ← SL/TP/BE/Trailing/Scale-out/Time-stop
+    FillWatcher.ts            ← Reconciliación de fills pendientes
+    MarketDataService.ts      ← Cache unificado velas+precios (TTL)
+    strategies.ts             ← momentumCandlesStrategy
+    telegram.ts               ← Multi-chat, alertas, polling
+    ErrorAlertService.ts      ← Alertas críticas (instancia inyectada)
+    botLogger.ts              ← Eventos + retención configurable
+    kraken.ts                 ← Kraken API wrapper
+    BackupService.ts          ← DB + code backups
+    exchanges/
+      ExchangeFactory.ts      ← Singleton multi-exchange
+      RevolutXService.ts      ← RevolutX API
+      IExchangeService.ts     ← Interfaz común
+    institutionalDca/
+      IdcaEngine.ts           ← Motor IDCA (ciclos, scheduler)
+      IdcaSmartLayer.ts       ← VWAP, ATR, rebound, base price, safety orders
+      IdcaTypes.ts            ← Interfaces (SafetyOrderLevel, VwapEntryContext, etc.)
+      IdcaMessageFormatter.ts ← Mensajes humanos + técnicos
+      IdcaReasonCatalog.ts    ← Catálogo de bloqueos con templates
+      TrailingBuyManager.ts   ← Trailing stop buy inverso (in-memory)
+  routes/
+    config.ts                 ← Config REST API (15 endpoints)
+    institutionalDca.routes.ts← IDCA REST API
+    fiscoAlerts.routes.ts     ← Alertas FISCO
+  utils/
+    krakenRateLimiter.ts      ← FIFO + backpressure + degraded state
+shared/
+  schema.ts                   ← Drizzle schema (todas las tablas)
+client/src/
+  pages/
+    InstitutionalDca.tsx      ← UI IDCA completa
+    Terminal.tsx               ← Posiciones + historial
+    Monitor.tsx                ← Eventos tiempo real
+    Notifications.tsx          ← Preferencias alertas Telegram
+  components/
+    idca/IdcaEventCards.tsx    ← Cards con humanMessage + chips técnicos
+  hooks/
+    useInstitutionalDca.ts    ← React Query hooks IDCA
+db/migrations/                ← SQL migrations (001-028)
+script/migrate.ts             ← Migration runner (deploy automático)
+```
 
 ---
 
-### 2026-01-24 20:45 — FIX CRÍTICO: Órdenes ejecutadas marcadas como FALLIDA
+## 📊 TABLAS DB PRINCIPALES
 
-**Problema Reportado:**
-Orden BUY TON ejecutada correctamente en RevolutX (32.72251 TON @ $1.5323), pero en UI:
-- Aparece lote 2/2 marcado como "FALLIDA"
-- La cantidad comprada se suma a la posición TON existente (lote 1)
-
-**Causa Raíz Identificada:**
-**RevolutXService NO tenía implementado el método `getFills`**. El FillWatcher:
-1. Intentaba llamar `exchangeService.getFills?.({ limit: 50 })`
-2. Al no existir, retornaba array vacío
-3. Después de 120s de timeout sin fills, marcaba la posición como FAILED
-4. La orden SÍ estaba ejecutada pero el bot no podía verificarlo
-
-**Solución Implementada:**
-
-#### 1️⃣ RevolutXService.ts - Métodos Faltantes
-- **NUEVO**: `getOrder(orderId)` - Consulta estado de orden específica
-  - Usa endpoint `GET /api/1.0/orders/{orderId}`
-  - Retorna filledSize, executedValue, averagePrice, status
-- **NUEVO**: `getFills(params)` - Obtiene fills recientes
-  - Usa `listPrivateTrades()` para symbol específico
-  - Fallback a `getOrder()` para construir fill sintético
-  - Fallback a endpoint `/api/1.0/fills`
-
-#### 2️⃣ FillWatcher.ts - Matching Robusto
-- **MEJORADO**: Función `fetchFillsForOrder()` con 3 estrategias:
-  1. **ESTRATEGIA 1**: Si hay `exchangeOrderId`, consulta `getOrder()` directamente
-  2. **ESTRATEGIA 2**: Si hay `pair`, usa `getFills({ symbol })` con filtro temporal
-  3. **ESTRATEGIA 3**: Fallback genérico `getFills({ limit: 50 })`
-
-#### 3️⃣ Schema & Storage - Persistencia de IDs
-- **NUEVO**: Campo `venueOrderId` en tabla `open_positions`
-- **ACTUALIZADO**: `createPendingPosition()` acepta `venueOrderId`
-- **NUEVO**: Método `getPositionByVenueOrderId()`
-- **ACTUALIZADO**: `tradingEngine.ts` pasa `venueOrderId` al crear posición
-
-#### 4️⃣ Migración SQL
-- **CREADO**: `db/migrations/011_add_venue_order_id.sql`
-- Columna + índice para búsquedas eficientes
-
-**Deploy y Verificación:**
-```bash
-# Migración aplicada
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS venue_order_id TEXT;"
-
-# Deploy completado
-git pull origin main  # Commit: 74dc673
-docker compose -f docker-compose.staging.yml up -d --build
-
-# Limpieza de posiciones FALLIDA antiguas
-docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "DELETE FROM open_positions WHERE status = 'FAILED' AND (amount = '0' OR amount IS NULL OR total_amount_base = '0');"
-```
-
-**Resultado:**
-- ✅ Fix implementado y deployado
-- ✅ Migración aplicada correctamente
-- ✅ Posiciones FALLIDA antiguas limpiadas
-- ✅ Nuevas órdenes ya no marcarán como FAILED
-
-**Commit:** `74dc673` - "fix(fillwatcher): Ordenes ejecutadas marcadas FALLIDA - implementar getFills/getOrder RevolutX"
+| Tabla | Propósito |
+|-------|-----------|
+| `bot_config` | Config global (SmartGuard, pares, dry_run, log retention) |
+| `api_config` | Credenciales Kraken + RevolutX + Telegram |
+| `open_positions` | Posiciones abiertas (solo bot-managed, nunca creadas por sync) |
+| `trades` | Historial de trades (origin: engine/manual/sync) |
+| `trade_fills` | Fills individuales por exchange |
+| `order_intents` | Órdenes enviadas con tracking de estado |
+| `institutional_dca_config` | Config global IDCA + scheduler + recovery |
+| `institutional_dca_asset_configs` | Config por par (dip, rebound, VWAP, safety, TP, sliders) |
+| `institutional_dca_cycles` | Ciclos activos/cerrados con base_price, TP, fees |
+| `institutional_dca_orders` | Órdenes de ciclo (base_buy, safety_buy, take_profit) |
+| `institutional_dca_events` | Eventos con humanMessage + technicalSummary + payload |
+| `time_stop_config` | TTL por activo con multiplicadores régimen |
+| `market_metrics_snapshots` | Snapshots de métricas (Fear&Greed, etc.) |
+| `market_metrics_evaluations` | Evaluaciones por par (score, bias, action) |
+| `fisco_operations` | Operaciones fiscales (Kraken + RevolutX) |
+| `fisco_lots` | Lotes FIFO para cálculo fiscal |
+| `fisco_disposals` | Ventas con cost basis y gain/loss EUR |
+| `training_trades` | Pipeline ML (backfill + labeling) |
+| `regime_state` | Estado régimen por par (TRANSITION, BULL, BEAR, RANGE) |
+| `telegram_chats` | Multi-chat con preferencias granulares |
 
 ---
 
-## SMART_GUARD Y LOGS
+## 🔄 FLUJO DE DATOS
 
-### 2026-01-24 00:30 — Documentación Completa de Alertas Telegram
+### Modo Normal (scan loop ~60s)
+```
+1. exitManager.checkStopLossTakeProfit() → SL/TP/BE/Trailing siempre
+2. KrakenRL.getState() → actualizar marketDataDegraded
+3. Por cada par:
+   a. shouldPollForNewCandle() → fetch vela si nueva (con catch-up cap)
+   b. Si CANDLE_NEW + !marketDataDegraded:
+      - analyzeWithCandleStrategy() → señal BUY/SELL/HOLD
+      - Si BUY: gate reentrada + anti-burst + exposure → executeTrade
+      - Si SELL: SmartGuard filter → safeSell
+   c. Si CANDLE_SAME: skip (timing invariant guard)
+```
 
-**Objetivo:**
-Crear inventario completo de todas las alertas Telegram, cuándo se activan y cómo se configuran.
-
-**Cambios implementados:**
-
-#### ALERTAS_TELEGRAM.md
-- Documentación completa de 25+ tipos de alertas
-- Tablas con cuándo se activa cada alerta
-- Cooldowns configurables por tipo
-- Sistema de deduplicación v2.0
-- Comandos para gestión de alertas
-
-**Alertas categorizadas:**
-- Programadas (Heartbeat, Reporte Diario)
-- Ciclo de vida del bot (Inicio/Detenido)
-- Trading (Compras/Ventas/SL/TP/Trailing)
-- Smart Guard (BE/Trailing/Scale-Out)
-- Riesgos y Límites (Drawdown, Cooldown)
-- Reconciliación (Posiciones huérfanas)
-- Errores (Críticos, API)
-
-**Archivo creado:** `ALERTAS_TELEGRAM.md`
+### Modo IDCA (scheduler adaptativo)
+```
+1. getCurrentPrice(pair) via MarketDataService
+2. updateOhlcvCache(pair) via MarketDataService (1h + 1d)
+3. checkEntryConditions():
+   a. computeHybridV2() → base price
+   b. entryDipPct = (basePrice - currentPrice) / basePrice
+   c. Si dip >= minDip + marketScore OK + rebound OK:
+      - computeVwapAnchored() → zona VWAP
+      - Retorna IdcaEntryCheckResult con vwapContext
+4. Si entry allowed: crear ciclo + base buy + safety levels
+5. Monitor ciclos activos: safety buys + exit management
+```
 
 ---
 
-### 2026-01-24 00:00 — Refactorización Telegram: Branding Unificado + Anti-Placeholders + Comandos
+## 🔐 REGLAS INVARIANTES
 
-**Objetivo:**
-Modernizar el sistema de notificaciones Telegram para reflejar las características actuales del bot (SMART_GUARD, momentum, multi-par, multi-exchange Kraken/RevolutX, lotes/reconcile, BE/trailing).
-
-**Cambios implementados:**
-
-#### 1️⃣ Branding Unificado
-- Nombre canónico: `CHESTER BOT` en todos los mensajes
-- Formato header: `[VPS/STG] 🤖 CHESTER BOT 🇪🇸`
-- Exchange explícito en body de cada mensaje (no en header)
-
-#### 2️⃣ Nuevo Módulo Modular `server/services/telegram/`
-- `types.ts` - Schemas Zod para validación anti-placeholders
-- `templates.ts` - Templates HTML con branding consistente
-- `deduplication.ts` - Hash/throttle para evitar spam
-- `index.ts` - Re-exports
-
-#### 3️⃣ Reporte Diario Mejorado
-- Posiciones confirmadas separadas de órdenes pendientes
-- lastSync por exchange con edad del sync
-- Warning visual si memoria > 90%
-- Nunca muestra "0 posiciones" cuando hay órdenes pendientes
-
-#### 4️⃣ Anti-Placeholders (Zod)
-- Validación de contextos antes de enviar mensajes
-- Nunca envía `-`, `null`, `undefined` como valores
-- Si falta dato → `N/D (motivo: ...)`
-
-#### 5️⃣ Deduplicación
-- Hash de contenido para evitar duplicados
-- Throttle por tipo de mensaje (ej: positions_update cada 5min)
-- Rate limit por hora
-
-#### 6️⃣ Comandos Telegram Alineados
-- `/refresh_commands` - Admin: actualiza menú en Telegram
-- `/ayuda` generado dinámicamente desde `TELEGRAM_COMMANDS`
-- `setMyCommands()` ejecutado al iniciar bot
-
-#### 7️⃣ Tests Snapshot
-- `templates.test.ts` con fixtures para cada template
-- Validación anti-placeholder en todos los templates
-- Snapshots para regresión
-
-**Archivos creados:**
-- `server/services/telegram/types.ts`
-- `server/services/telegram/templates.ts`
-- `server/services/telegram/deduplication.ts`
-- `server/services/telegram/index.ts`
-- `server/services/telegram/templates.test.ts`
-
-**Archivos modificados:**
-- `server/services/telegram.ts` (imports, branding, comandos)
+1. **`open_positions` = solo posiciones del bot** — Reconcile/sync nunca crea posiciones, solo `trades`
+2. **Salidas siempre ejecutan** — `marketDataDegraded` bloquea entradas, nunca salidas
+3. **Migraciones idempotentes** — `ADD COLUMN IF NOT EXISTS` en ambos paths (deploy + startup)
+4. **IDCA allowed pairs** — Solo `["BTC/USD", "ETH/USD"]` (constante en `shared/schema.ts`)
+5. **Telegram single instance** — ErrorAlertService usa instancia inyectada, nunca crea la suya
+6. **DRY_RUN gate en memoria** — Contadores de slots y cooldown usan Maps en memoria, no DB
 
 ---
 
-### 2026-01-23 23:55 — Fix Logs en Rojo (detectLevel falsos positivos)
+## 🚀 DEPLOY
 
-**Problema:**
-Los logs del endpoint `/api/logs` aparecían en rojo (ERROR) en la UI aunque eran peticiones exitosas (200 OK). Esto ocurría porque `serverLogsService.detectLevel()` buscaba la palabra "ERROR" en cualquier parte de la línea, incluyendo contenido JSON anidado como `"isError":false`.
-
-**Solución:**
-Mejorada la función `detectLevel()` en `server/services/serverLogsService.ts`:
-- Usa patrones regex específicos: `[ERROR]`, `(ERROR)`, `ERROR:`, etc.
-- Detecta si la línea es una respuesta JSON con `{"logs":` o `"isError"`
-- Para respuestas JSON, solo marca ERROR si el HTTP status es 4xx/5xx
-- Añadidos patrones para `FATAL`, `EXCEPTION`, `Uncaught`, `Unhandled`
-
-**Archivo modificado:** `server/services/serverLogsService.ts` líneas 53-98
-
----
-
-### 2026-01-23 — Arreglo Definitivo SMART_GUARD (no acumulación) + clientOrderId linking + logs duplicados
-
-**Problema:** 
-1. **SMART_GUARD permitía acumulación** - El bot podía abrir múltiples posiciones del mismo par a pesar del límite
-2. **clientOrderId perdido** - RevolutXService generaba su propio ID, rompiendo la cadena de atribución
-3. **Logs duplicados** - Cada cliente WebSocket persistía logs, creando duplicados en DB
-4. **Gate inconsistente** - Solo contaba posiciones OPEN, ignorando PENDING_FILL e intents
-
-**Solución Integral:**
-
-#### 1️⃣ SMART_GUARD Gate Robusto
-**Nueva lógica de bloqueo:**
-```typescript
-// Cuenta todos los slots ocupados (OPEN + PENDING_FILL + intents)
-const occupiedSlots = await storage.countOccupiedSlotsForPair(exchange, pair);
-// openPositions: number; pendingFillPositions: number; 
-// pendingIntents: number; acceptedIntents: number; total: number
-
-// Anti-burst cooldown: mínimo 120s entre entradas por par
-const lastOrderTime = await storage.getLastOrderTimeForPair(exchange, pair);
-if (secondsSinceLastOrder < 120) {
-  // Bloquear con cooldown remaining
-}
-
-// Gate único para SINGLE y SMART_GUARD
-if (currentOpenLots >= maxLotsForMode) {
-  // Bloquear con detalle: OPEN=X, PENDING=Y, intents=Z
-}
-```
-
-**Nuevas funciones storage:**
-- `countOccupiedSlotsForPair()` - Query SQL que cuenta OPEN + PENDING_FILL + pending/accepted intents
-- `getLastOrderTimeForPair()` - Para cooldown anti-ráfaga
-
-**Logs mejorados:**
-```
-TON/USD: Compra bloqueada - slots ocupados 1/1 (OPEN=0, PENDING=1, intents=0)
-SOL/USD: Compra bloqueada - Cooldown anti-ráfaga: 87s
-```
-
-#### 2️⃣ Fix Crítico: Propagación clientOrderId
-**Problema:** `RevolutXService.placeOrder()` ignoraba el `clientOrderId` del caller
-```typescript
-// ANTES (rompía la cadena)
-const clientOrderId = this.generateClientOrderId(); // Siempre nuevo
-
-// AHORA (preserva la cadena)
-const clientOrderId = params.clientOrderId || this.generateClientOrderId();
-console.log(`[revolutx] Using clientOrderId: ${clientOrderId} (caller-provided: ${!!params.clientOrderId})`);
-```
-
-**Interface actualizada:**
-```typescript
-// IExchangeService.placeOrder
-placeOrder(params: {
-  pair: string;
-  type: "buy" | "sell";
-  ordertype: string;
-  price?: string;
-  volume: string;
-  clientOrderId?: string; // Nuevo: opcional para traceabilidad
-}): Promise<OrderResult>;
-```
-
-#### 3️⃣ Logs Centralizados (Fix Duplicación)
-**Problema:** Cada cliente WS en `terminalWebSocket.ts` persistía logs
-```typescript
-// ANTES: Cada cliente persistía
-serverLogsService.persistLog("app_stdout", line, isError);
-
-// AHORA: Persistencia única centralizada
-// En logStreamService.addEntry()
-serverLogsService.persistLog("app_stdout", line, isError);
-```
-
-**Cambio implementado:**
-- `logStreamService.ts`: Centraliza persistencia en `addEntry()`
-- `terminalWebSocket.ts`: Solo envía a clientes, sin persistir
-
-#### 4️⃣ Configuración y Defaults
-**SMART_GUARD por defecto:**
-- `sgMaxOpenLotsPerPair = 1` (configurable)
-- `sgMinSecondsBetweenEntries = 120s` (anti-burst)
-- `sgAllowScaleIn = false` (no acumular por defecto)
-
-**Comportamiento resultante:**
-- **SINGLE**: Máximo 1 posición por par
-- **SMART_GUARD**: Máximo configurable (default 1), sin scale-in
-- **Cooldown**: 120s mínimo entre entradas del mismo par
-
----
-
-### � POSICIONES Y RECONCILE
-
-### 2026-01-23 — Posiciones instantáneas con Average Entry Price
-
-**Problema:** Las posiciones tardaban 10+ minutos en aparecer en UI (dependían de sync + reconcile).
-
-**Solución:** Posición visible en 0-2s tras aceptar orden (estado PENDING_FILL), confirmada a OPEN cuando llegan fills.
-
-**Nuevos campos `open_positions`:**
-- `status`: PENDING_FILL → OPEN → FAILED/CANCELLED
-- `client_order_id`: UUID para upsert idempotente
-- `total_cost_quote`, `total_amount_base`: Agregados para coste medio
-- `average_entry_price`: total_cost_quote / total_amount_base
-- `fill_count`, `first_fill_at`, `last_fill_at`: Tracking de fills
-
-**Flujo nuevo:**
-1. `placeOrder()` → Crea posición PENDING_FILL inmediatamente
-2. `FillWatcher` → Polling 3s monitorea fills
-3. Fill recibido → Actualiza agregados + status=OPEN + emite WS
-4. `reconcile` → Backup/repair si hay drift
-
-**Archivos modificados (SMART_GUARD + clientOrderId + logs):**
-- `server/services/exchanges/RevolutXService.ts` - Usa clientOrderId del caller
-- `server/services/exchanges/IExchangeService.ts` - Interface actualizada con clientOrderId?
-- `server/services/tradingEngine.ts` - Gate robusto en analyzePairAndTrade + analyzePairAndTradeWithCandles
-- `server/storage.ts` - countOccupiedSlotsForPair + getLastOrderTimeForPair + IStorage interface
-- `server/services/logStreamService.ts` - Persistencia centralizada en addEntry()
-- `server/services/terminalWebSocket.ts` - Removida persistencia duplicada
-
-**Deploy STG:**
 ```bash
 cd /opt/krakenbot-staging
-git pull origin main  # Commit: adbc9c3
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
-```
-
-**Verificación post-deploy:**
-```bash
-# SMART_GUARD gate visible
-docker compose -f docker-compose.staging.yml logs | grep "openLotsThisPair"
-
-# clientOrderId linking (próxima orden)
-docker compose -f docker-compose.staging.yml logs | grep "caller-provided"
-
-# No duplicación logs
-docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "
-SELECT line, COUNT(*) FROM server_logs
-WHERE timestamp > NOW() - INTERVAL '10 minutes'
-GROUP BY line HAVING COUNT(*) > 1;"
-```
-
-**Commit:** `adbc9c3` - "fix: SMART_GUARD no-accumulate + clientOrderId linking + logs duplicados"
-
----
-
-**Archivos (posiciones instantáneas):**
-- `db/migrations/009_instant_positions.sql` (migración)
-- `server/services/FillWatcher.ts` (nuevo)
-- `server/services/positionsWebSocket.ts` (nuevo)
-- `server/services/tradingEngine.ts` (crea PENDING_FILL + inicia watcher)
-- `server/storage.ts` (métodos createPendingPosition, updatePositionWithFill)
-- `server/routes.ts` (reconcile recalcula avgPrice)
-- `client/src/pages/Terminal.tsx` (badge status + coste medio)
-
-**Deploy (posiciones instantáneas):**
-```bash
 git pull origin main
-cat db/migrations/009_instant_positions.sql | docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
+docker compose -f docker-compose.staging.yml up -d --build
 ```
 
-**Commit:** `9c41b45`
+Migraciones ejecutan automáticamente:
+- `script/migrate.ts` (pre-start en Docker) — aplica SQL files de `db/migrations/`
+- `storage.runSchemaMigration()` (startup app) — ALTER TABLE inline como redundancia
 
----
-
-## 📋 RESULTADOS VERIFICACIÓN STG Y PRODUCCIÓN (2026-01-23)
-
-### ✅ SMART_GUARD Gate
-- **Estado:** Funcionando correctamente
-- **Evidencia:** `openLotsThisPair:1, maxLotsPerPair:2` visible en PAIR_DECISION_TRACE
-- **Logs:** Bloqueos con detalle `slots ocupados X/Y (OPEN=A, PENDING=B, intents=C)`
-- **Comportamiento:** NO acumula por defecto, 1 posición máxima por par
-
-### ✅ clientOrderId Linking  
-- **Estado:** Código desplegado y funcionando
-- **Evidencia:** XRP/USD con `order_intent_id=1` + `client_order_id` completo
-- **Propagación:** clientOrderId del engine → RevolutX (caller-provided: true)
-
-### ✅ Logs Centralizados
-- **Estado:** Sin duplicaciones confirmado
-- **Evidencia:** `0 rows` con COUNT(*) > 1 en últimos 10 minutos
-- **IDs:** Secuenciales únicos (12331-12346)
-
-### ✅ AEP Real - Corregido
-- **Estado:** Posiciones con Average Entry Price correcto
-- **Acción:** SQL UPDATE corrigió `total_cost_quote = amount × entry_price`
-- **Resultado:** 
-  - XRP/USD: 179.30 XRP @ $1.9252 = **$345.19** ✅
-  - ETH/USD: 0.19002405 ETH @ $2,963.50 = **$563.14** ✅  
-  - TON/USD: 116.46475000 TON @ $1.5368 = **$178.99** ✅
-
-### ✅ Posiciones Verificadas (Producción)
-- **Total invertido:** $1,087.32 USD
-- **Distribución:** XRP (31.7%), ETH (51.8%), TON (16.5%)
-- **Estado:** Todas OPEN con datos matemáticamente correctos
-- **SMART_GUARD:** 1 posición por par respetado
-
-### ✅ Backfill System Deployed
-- **Estado:** Sistema de backfill implementado y disponible
-- **Endpoints:** POST /api/admin/backfill-legacy-positions, GET /api/admin/backfill-status
-- **Resultado:** 0 legacy positions (ya estaban backfilled)
-
----
-
-**VERIFICACIÓN COMPLETA:**
-1. ✅ SMART_GUARD estricto implementado
-2. ✅ clientOrderId propagation funcionando
-3. ✅ AEP real calculado y verificado
-4. ✅ Logs centralizados sin duplicación
-5. ✅ Posiciones producción con datos correctos
-6. ✅ Sistema backfill disponible
-
-**Sistema 100% funcional y verificado.**
-
----
-
-### 2026-01-23 — Sistema de atribución de órdenes del bot
-
-**Problema:** Las órdenes BUY del bot no creaban posiciones abiertas. El sync importaba trades con `origin='sync'` pero no distinguía trades del bot de trades manuales/externos.
-
-**Solución:**
-1. **Nueva tabla `order_intents`**: Persiste la intención del bot ANTES de enviar la orden
-   - Campos: `clientOrderId`, `exchange`, `pair`, `side`, `volume`, `status`
-   - Estados: pending → accepted → filled/failed/expired
-
-2. **Campo `executed_by_bot` en trades**: Boolean marcado `true` cuando sync hace match con order_intent
-
-3. **Flujo modificado:**
-   - `tradingEngine.ts`: Genera `clientOrderId` UUID y persiste intent antes de `placeOrder()`
-   - `sync-revolutx`: Match trades con intents por pair, side, volume ±5%
-   - `reconcile`: Solo crea posiciones para trades con `executed_by_bot=true`
-
-**Archivos:** `shared/schema.ts`, `server/storage.ts`, `server/services/tradingEngine.ts`, `server/routes.ts`, `db/migrations/007_order_intents.sql`
-
-**Deploy:**
+### Verificación post-deploy
 ```bash
-git pull origin main
-cat db/migrations/007_order_intents.sql | docker exec -i krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
-docker compose -f docker-compose.staging.yml up -d --build --force-recreate
-```
-
-**Backfill históricos:**
-```sql
-UPDATE trades SET executed_by_bot = true 
-WHERE exchange = 'revolutx' AND type = 'buy' AND origin = 'sync' 
-AND executed_at > NOW() - INTERVAL '24 hours';
+docker logs krakenbot-staging-app --tail 50
+# Buscar: [migrate] Migration completed successfully!
+# Buscar: [startup] Auto-migration: added ...
+# Buscar: [startup] ExchangeFactory initialized
 ```
 
 ---
 
-### 2026-01-22 — REGLA ÚNICA: open_positions = solo posiciones del bot
+## 📡 ENDPOINTS CLAVE
 
-**Problema:** Posiciones vendidas "resucitaban" tras sync/reconcile. Reconcile creaba posiciones desde balances externos.
-
-**Solución:** Regla única implementada: `open_positions` contiene ÚNICAMENTE posiciones abiertas por el bot (engine).
-
-**Cambios:**
-- Reconcile: Solo elimina/actualiza posiciones del bot; PROHIBIDO crear desde balances externos
-- Smart-Guard: Solo gestiona posiciones con `configSnapshot != null` + `entryMode === 'SMART_GUARD'`
-- Sync RevolutX: Solo importa trades a tabla `trades`, nunca crea posiciones
-
-**Endpoints admin:**
-- `GET /api/admin/legacy-positions` - Lista posiciones legacy
-- `POST /api/admin/purge-legacy-positions` - Purga posiciones legacy
-
-**Archivos:** `server/routes.ts`, `server/services/tradingEngine.ts`
-
----
-
-### 2026-01-22 — Fix Smart-Guard para posiciones reconcile/sync
-
-**Problema:** Posiciones creadas por reconcile/sync no eran gestionadas por Smart-Guard (`configSnapshotJson` nulo).
-
-**Solución:**
-- Backfill automático en `loadOpenPositionsFromDB`: crea snapshot desde config actual
-- Endpoint reconcile con snapshot SMART_GUARD completo
-- Nuevos eventos: `SG_SNAPSHOT_BACKFILLED`, `SG_BE_ACTIVATED`, `SG_TRAIL_ACTIVATED`
-
-**Archivos:** `server/services/tradingEngine.ts`, `server/routes.ts`, `server/services/botLogger.ts`
-
----
-
-## 📈 TRADES Y SYNC
-
-### 2026-01-21 — Fix pendingFill RevolutX
-
-**Problema:** Órdenes aceptadas por RevolutX sin precio inmediato se marcaban como ORDER_FAILED.
-
-**Solución:**
-- `RevolutXService.ts`: Si orden aceptada pero sin precio → `success: true, pendingFill: true`
-- `tradingEngine.ts`: Manejo de `ORDER_PENDING_FILL`, notificación Telegram
-- Nuevos eventos: `ORDER_PENDING_FILL`, `ORDER_FILLED_VIA_SYNC`, `POSITION_CREATED_VIA_SYNC`
-
-**Archivos:** `server/services/exchanges/RevolutXService.ts`, `server/services/tradingEngine.ts`, `server/services/botLogger.ts`
-
----
-
-### 2026-01-20 — Fix phantom buys RevolutX
-
-**Problema:** Trades ejecutados por el bot no aparecían en `open_positions` (compras fantasma).
-
-**Root Cause:** Divergencia en generación de `trade_id` entre bot y sync.
-
-**Solución:**
-- Unificación con `buildTradeId()` usando hash SHA256 determinístico
-- Tabla `applied_trades` con gating idempotente
-- Eventos `TRADE_PERSIST_*`, `POSITION_APPLY_*`
-
-**Archivos:** `server/utils/tradeId.ts`, `server/routes.ts`, `server/services/tradingEngine.ts`, `db/migrations/006_applied_trades.sql`
-
----
-
-### 2026-01-20 — Fix validación órdenes RevolutX
-
-**Problema:** Posición fantasma creada aunque la orden falló (balance insuficiente).
-
-**Solución:** Validación crítica: `if ((order as any)?.success === false)` → log `ORDER_FAILED` + return false
-
-**Archivos:** `server/services/tradingEngine.ts`
-
----
-
-### 2026-01-20 — Fix sync RevolutX bloqueado
-
-**Problema:** Sync devolvía 403 (`REVOLUTX_SYNC_ENABLED` no configurada); endpoint orderbook 404.
-
-**Solución:**
-- `docker-compose.staging.yml`: Añadir `REVOLUTX_SYNC_ENABLED=true`
-- `RevolutXService.ts`: Deshabilitar endpoint orderbook inexistente
-- Usar Kraken como fuente de precio
-
-**Archivos:** `docker-compose.staging.yml`, `server/services/exchanges/RevolutXService.ts`
-
----
-
-## 📋 EVENTOS Y LOGS
-
-### 2026-01-22 — Filtrado eventos por rango temporal + exportación
-
-**Problema:** Filtro de rango (1h/6h/24h) no filtraba realmente; WebSocket enviaba solo últimos 50 eventos.
-
-**Solución:**
-- `getDbEvents()` acepta `{ limit, from, to, level, type }`
-- Endpoints: `/api/events`, `/api/events/export`, `/api/admin/purge-events`
-- WebSocket snapshot envía últimas 24h por defecto
-- Frontend con contador y timezone visible
-
-**Archivos:** `server/services/botLogger.ts`, `server/services/eventsWebSocket.ts`, `server/routes.ts`, `client/src/pages/Monitor.tsx`
-
----
-
-## 💾 BACKUPS
-
-### 2026-01-21 — Nombres personalizados en backups
-
-**Problema:** Nombre personalizado no se usaba; scripts hacían word-splitting con espacios.
-
-**Solución:**
-- Función `slugify()` + metadata JSON
-- Validación de entrada + prefijos correctos (`db_`, `code_`)
-
-**Archivos:** `server/services/BackupService.ts`, `scripts/backup-*.sh`
-
----
-
-### 2026-01-21 — Sistema de backups funcional en VPS
-
-**Problema:** Panel de backups fallaba: bash not found, rutas hardcodeadas, sin docker.sock.
-
-**Solución:**
-- Rutas configurables vía env (`BACKUP_DIR`, `BACKUP_SCRIPTS_DIR`)
-- Docker Compose con volumes + docker.sock montado
-
-**Archivos:** `server/services/BackupService.ts`, `docker-compose.staging.yml`, `scripts/backup-*.sh`
-
----
-
-## ⚙️ CONFIGURACIÓN Y SISTEMA
-
-### 2026-01-17 — Gran actualización de sistema
-
-Actualización masiva con múltiples fixes:
-- Fix Invalid Date en reporte diario
-- Branding consistente (WINDSURF CHESTER BOT)
-- `/logs` detallado con filtros y paginación
-- `/balance` multi-exchange y `/cartera`
-- `/ganancias` desde DB real
-- Telegram MULTI-CHAT + envío manual
-- SinglePollerGuard para Telegram polling 409
-- Circuit Breaker para RevolutX ticker
-
----
-
-### 2026-01-15 — Sistema de configuración dinámica
-
-**Implementaciones:**
-- ConfigService: singleton con cache, locking y validación
-- API REST: 15 endpoints para gestión de configuración
-- Base de Datos: 3 tablas (`trading_config`, `config_change`, `config_preset`)
-- Hot-Reload integrado con tradingEngine
-- Dashboard UI con tabs (Presets/Custom)
-- Presets: Conservative/Balanced/Aggressive
-
-**Archivos:** `shared/config-schema.ts`, `server/services/ConfigService.ts`, `server/routes/config.ts`, `client/src/components/dashboard/TradingConfigDashboard.tsx`
-
----
-
-# 📚 ANEXOS
-
-## Anexo A: Endpoints RevolutX API
-
-### ✅ Endpoints funcionales
 | Endpoint | Método | Propósito |
 |----------|--------|-----------|
-| `/api/1.0/accounts` | GET | Obtener balances |
-| `/api/1.0/orders` | POST | Crear órdenes |
-| `/api/1.0/orders/{id}` | DELETE | Cancelar órdenes |
-| `/api/1.0/orders` | GET | Obtener órdenes activas |
-| `/api/1.0/fills` | GET | Obtener trades ejecutados |
-| `/api/1.0/currencies` | GET | Obtener monedas disponibles |
-| `/api/1.0/symbols` | GET | Obtener pares disponibles |
+| `/api/market-data/stats` | GET | Cache stats de MarketDataService |
+| `/api/exchange-diagnostics` | GET | Nonce, rate limiter, estado exchanges |
+| `/api/portfolio` | GET | Balances + precios + P&L |
+| `/api/open-positions` | GET | Posiciones abiertas |
+| `/api/events` | GET | Eventos con filtros temporales |
+| `/api/test/critical-alert` | POST | Test alerta Telegram |
+| `/api/idca/*` | CRUD | Config, ciclos, órdenes, eventos IDCA |
+| `/api/fisco/*` | CRUD | Operaciones, lotes, sync fiscal |
 
-### ❌ Endpoints inexistentes
-| Endpoint | Estado |
+---
+
+## ⚙️ MODO NORMAL — DETALLE TÉCNICO
+
+### Motor de señales
+- `momentumCandlesStrategy()`: EMA10/20, RSI, MACD, Bollinger, volumen, engulfing. Score ponderado con umbral configurable.
+- `analyzeWithCandleStrategy()`: Multi-timeframe analysis + hybrid guard watches + anti-cresta + volume overrides + early momentum.
+
+### SmartGuard (gestión de posiciones)
+- **Break-even progresivo**: Activa stop a entry cuando P&L >= `sg_be_at_pct`
+- **Trailing stop**: Arranca a `sg_trail_start_pct`, distancia `sg_trail_distance_pct`, steps `sg_trail_step_pct`
+- **Scale-out**: Venta parcial (`sg_scale_out_pct`) al alcanzar `sg_scale_out_threshold`
+- **TP fijo**: Opcional, a `sg_tp_fixed_pct`
+- **Time-stop**: TTL por activo con multiplicadores por régimen (table `time_stop_config`)
+
+### Protecciones
+- **KrakenRL backpressure**: Cola FIFO con `KRAKEN_MAX_QUEUE_SIZE` (default 60). Queue overflow → rechazo inmediato.
+- **Market Data Degraded**: Histéresis (entrada: queue>30 OR waitedMs>15s OR 3+ errores; salida: 3 ticks limpios). Bloquea entradas, no salidas.
+- **Catch-up cap**: Max 1 poll catch-up/30s por par. Si desfase >4 intervalos → reset sync.
+- **Anti-burst DRY_RUN**: Gate reentrada + cooldown 120s usando contadores en memoria.
+
+### Telegram dedup
+- SELL_BLOCKED: Cooldown 15 min por par
+- Circuit breaker: Cooldown 15 min por lotId
+- DRY_RUN: Max 1 mensaje simulación por par+tipo cada 15 min
+- Market data degraded: Cooldown 10 min por par
+
+---
+
+## 📈 MODO IDCA — DETALLE TÉCNICO
+
+### MarketDataService (singleton)
+Cache TTL unificado para velas y precios. Sirve a ambos modos.
+
+| Timeframe | TTL |
+|-----------|-----|
+| 15m | 20 min |
+| 1h | 90 min |
+| 1d | 6 horas |
+| Spot price | 30 seg |
+
+### Base Price (computeHybridV2)
+Precio de referencia determinístico:
+- Ventanas: 24h, 48h, 72h, 7d, 30d
+- Candidatos: Swing highs (pivot detection) + P95
+- Outlier guard: ATR-based
+- Tolerancias dinámicas por par: Swing BTC [6%-18%], ETH [8%-25%]; Cap 7d BTC [6%-20%], ETH [8%-25%]; Cap 30d BTC 20%, ETH 25%
+
+### VWAP Anchored + Bandas
+- `computeVwapAnchored()`: VWAP desde timestamp del base price, bandas ±1σ y ±2σ
+- `getVwapBandPosition()`: Zona → `below_lower2` / `below_lower1` / `between_bands` / `above_upper1` / `above_upper2`
+- Per-pair toggle: `vwapEnabled` (default OFF)
+
+### Dynamic Safety Orders
+- `adjustSafetyOrdersWithVwap()`: Ajusta `dipPct` según zona VWAP (deep value → tighten, overextended → widen)
+- Per-pair toggle: `vwapDynamicSafetyEnabled` (default OFF)
+
+### Rebound Detection
+- 3 condiciones OR: lower wick >40% range, bounce > `reboundMinPct` desde local low, bearish momentum decelerating
+- `reboundMinPct`: Configurable por par (default 0.30%)
+
+### TrailingBuyManager
+Trailing stop inverso para entradas:
+1. `arm(pair)` → empieza tracking
+2. `update(pair, price)` → dispara buy cuando bounce >= 0.5% desde local low
+3. Expira después de 4h. Estado efímero (in-memory)
+
+### Ciclos
+- **Main**: Compra base + safety orders escalonados
+- **Plus**: Compra adicional en ciclo existente
+- **Recovery**: Ciclo secundario cuando main está en drawdown
+
+### Exit (3 sliders por par)
+1. **Protección**: Stop-loss a `protectionActivationPct`
+2. **Trailing**: Arranca a `trailingActivationPct`, margen `trailingMarginPct`
+3. **Close**: Rompe trailing → venta
+
+### Mensajes humanos
+- `humanTitle` + `humanMessage` en castellano natural
+- `technicalSummary` como chips coloreados en UI
+- Composición inteligente multi-bloqueo
+- Signo semántico: positivo = "Caída X%", negativo = "Precio sobre ancla X%"
+
+---
+
+## 🔌 IDCA ASSET CONFIG — COLUMNAS
+
+| Columna | Tipo | Default |
+|---------|------|---------|
+| `pair` | TEXT | — |
+| `enabled` | BOOLEAN | true |
+| `min_dip_pct` | DECIMAL | 2.00 |
+| `dip_reference` | TEXT | hybrid |
+| `require_rebound_confirmation` | BOOLEAN | true |
+| `rebound_min_pct` | DECIMAL | 0.30 |
+| `trailing_buy_enabled` | BOOLEAN | true |
+| `vwap_enabled` | BOOLEAN | false |
+| `vwap_dynamic_safety_enabled` | BOOLEAN | false |
+| `safety_orders_json` | JSONB | [{2%,25%},...] |
+| `max_safety_orders` | INTEGER | 4 |
+| `take_profit_pct` | DECIMAL | 4.00 |
+| `dynamic_take_profit` | BOOLEAN | true |
+| `protection_activation_pct` | DECIMAL | 1.00 |
+| `trailing_activation_pct` | DECIMAL | 3.50 |
+| `trailing_margin_pct` | DECIMAL | 1.50 |
+| `cooldown_minutes_between_buys` | INTEGER | 180 |
+| `max_cycle_duration_hours` | INTEGER | 720 |
+
+---
+
+## 🛡️ GUARDS Y PROTECCIONES
+
+| Guard | Descripción |
+|-------|-------------|
+| Market Data Degraded | Histéresis KrakenRL. Bloquea entradas, no salidas |
+| Anti-burst | Cooldown 120s entre entradas (LIVE + DRY_RUN) |
+| DRY_RUN double-sell | Previene SELL duplicado si lot ya cerrado |
+| Queue overflow | Rechaza tareas KrakenRL si cola >= 60 |
+| Catch-up cap | Max 1 poll catch-up/30s, reset si >4 intervalos |
+| Timing invariant | Detecta desync reloj, resetea lastEvaluatedCandle |
+| Fee cushion | Markup mínimo para cubrir comisiones |
+| Anti-cresta | Filtro de señales en pico de momentum |
+| MTF strict | Confirmación multi-timeframe |
+
+---
+
+## 💬 TELEGRAM
+
+### Multi-chat con preferencias granulares
+Cada chat configura qué subtipos recibe (trades, errores, sistema, balance, heartbeat).
+
+### Subtipos de alerta
+- `trade_buy_*`, `trade_sell_*`, `trade_entry_blocked_degraded`
+- `system_market_data_degraded_on/off`
+- `system_error_*`, `system_heartbeat`
+- `idca_*` (cycle started, buy executed, entry blocked, cycle closed, etc.)
+
+### ErrorAlertService
+Usa instancia inyectada del TelegramService global. Severidad: 🟡 Medium / 🔴 High / 🚨 Critical
+
+---
+
+## 💰 FISCO
+
+- Panel UI estilo Bit2Me: operaciones, lotes FIFO, disposals, P&L fiscal en EUR
+- Sync Kraken + RevolutX con retry/rate-limit
+- Cron diario 08:30 + sync manual
+- Alertas Telegram configurables por canal
+- Tablas: `fisco_operations`, `fisco_lots`, `fisco_disposals`, `fisco_sync_history`, `fisco_sync_retry`
+
+---
+
+## 📎 REFERENCIA RÁPIDA
+
+### RevolutX endpoints funcionales
+| Endpoint | Método |
 |----------|--------|
-| `/api/1.0/ticker` | 404 |
-| `/api/1.0/orderbook` | 404 |
+| `/api/1.0/accounts` | GET |
+| `/api/1.0/orders` | POST / DELETE / GET |
+| `/api/1.0/fills` | GET |
+| `/api/1.0/currencies` | GET |
+| `/api/1.0/symbols` | GET |
 
-## Anexo B: Significado de `origin` en trades
+No disponibles: ticker (404), orderbook (404)
 
+### Significado de `origin` en trades
 | Valor | Significado |
 |-------|-------------|
-| `engine` | Trade ejecutado por el motor de trading |
-| `manual` | Trade ejecutado via API (dashboard) |
-| `sync` | Trade importado desde exchange vía sync |
+| `engine` | Ejecutado por motor de trading |
+| `manual` | Ejecutado via API/dashboard |
+| `sync` | Importado desde exchange |
 
-## Anexo C: Queries de verificación
-
+### Queries de verificación útiles
 ```sql
 -- Posiciones con snapshot
 SELECT pair, entry_mode, config_snapshot_json IS NOT NULL as has_snapshot
 FROM open_positions ORDER BY pair;
 
 -- Trades por origen
-SELECT origin, COUNT(*) FROM trades WHERE exchange = 'revolutx' GROUP BY origin;
+SELECT origin, COUNT(*) FROM trades GROUP BY origin;
 
--- Verificar order_intents
-SELECT id, client_order_id, pair, side, status, created_at 
-FROM order_intents ORDER BY created_at DESC LIMIT 10;
+-- Ciclos IDCA activos
+SELECT id, pair, status, cycle_type, buy_count, capital_used_usd
+FROM institutional_dca_cycles WHERE status = 'active';
 
--- Trades con executed_by_bot
-SELECT id, pair, type, executed_by_bot, executed_at 
-FROM trades WHERE exchange='revolutx' AND executed_by_bot = true 
-ORDER BY executed_at DESC;
+-- IDCA asset configs
+SELECT pair, enabled, min_dip_pct, vwap_enabled, rebound_min_pct
+FROM institutional_dca_asset_configs;
 ```
 
 ---
 
-*Última actualización: 2026-01-24*  
+*Última actualización: 2026-04-19*
 *Mantenido por: Windsurf Cascade AI*

@@ -171,6 +171,21 @@ export const IDCA_BLOCK_CODES = [
 
 export type IdcaBlockCode = typeof IDCA_BLOCK_CODES[number];
 
+export interface VwapEntryContext {
+  vwap: number;
+  upperBand1: number;
+  lowerBand1: number;
+  upperBand2: number;
+  lowerBand2: number;
+  stdDev: number;
+  anchorTime: number;
+  candlesUsed: number;
+  isReliable: boolean;
+  zone: "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+  distanceFromVwapPct: number;
+  distanceFromLower1Pct: number;
+}
+
 export interface IdcaEntryCheckResult {
   allowed: boolean;
   blockReasons: IdcaBlockReason[];
@@ -180,6 +195,7 @@ export interface IdcaEntryCheckResult {
   entryDipPct?: number;
   basePrice?: BasePriceResult;
   reboundConfirmed?: boolean;
+  vwapContext?: VwapEntryContext;
 }
 
 export interface IdcaPairEvaluation {

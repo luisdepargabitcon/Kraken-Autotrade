@@ -1032,7 +1032,10 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   minDipPct: decimal("min_dip_pct", { precision: 5, scale: 2 }).notNull().default("2.00"),
   dipReference: text("dip_reference").notNull().default("hybrid"), // hybrid | swing_high | window_high | ema (reserved)
   requireReboundConfirmation: boolean("require_rebound_confirmation").notNull().default(true),
+  reboundMinPct: decimal("rebound_min_pct", { precision: 5, scale: 2 }).notNull().default("0.30"),
   trailingBuyEnabled: boolean("trailing_buy_enabled").notNull().default(true),
+  vwapEnabled: boolean("vwap_enabled").notNull().default(false),
+  vwapDynamicSafetyEnabled: boolean("vwap_dynamic_safety_enabled").notNull().default(false),
   safetyOrdersJson: jsonb("safety_orders_json").notNull().default([
     { dipPct: 2.0, sizePctOfAssetBudget: 25 },
     { dipPct: 4.0, sizePctOfAssetBudget: 25 },
