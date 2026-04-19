@@ -613,8 +613,9 @@ async function evaluatePair(
   } else {
     // Check for orphaned bot subcycles (plus/recovery without a main)
     const hasAny = await repo.hasActiveBotCycleForPair(pair, mode);
-    if (!hasAny) {
-      // No bot cycle active — look for new autonomous entry
+    const hasImported = (await repo.getActiveImportedCycles(pair, mode)).length > 0;
+    if (!hasAny && !hasImported) {
+      // No cycle active (bot or manual/imported) — look for new autonomous entry
       if (assetConfig.vwapEnabled) {
         // ── Trailing Buy (VWAP-driven) ─────────────────────────────
         const tbCandles = ohlcCache.get(pair) || [];
