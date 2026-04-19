@@ -132,11 +132,15 @@ function getReboundStrength(pair: string): "none" | "weak" | "strong" {
 
 // ─── Engine State ──────────────────────────────────────────────────
 
-let schedulerInterval: ReturnType<typeof setInterval> | null = null;
+// FASE 8 — Adaptive scheduler: we use a recursive setTimeout instead of a fixed
+// setInterval so the engine can sleep longer when idle and wake up faster when a
+// protected cycle is near its exit trigger.
+let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
 let isRunning = false;
 let lastTickAt: Date | null = null;
 let lastError: string | null = null;
 let tickCount = 0;
+let lastSchedulerState: "idle" | "active" | "protected" | "init" = "init";
 
 // Cache for market data
 const priceCache = new Map<string, number>();
@@ -172,7 +176,8 @@ export function getHealthStatus() {
     lastTickAt,
     lastError,
     tickCount,
-    schedulerActive: schedulerInterval !== null,
+    schedulerActive: schedulerTimeout !== null,
+    schedulerState: lastSchedulerState,
   };
 }
 
@@ -307,28 +312,104 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
   return cycle;
 }
 
-export async function startScheduler(): Promise<void> {
-  if (schedulerInterval) return;
-  const config = await repo.getIdcaConfig();
-  const intervalMs = (config.schedulerIntervalSeconds || 60) * 1000;
+// FASE 8 — Adaptive scheduler
+// State resolution:
+//   protected → any active cycle with status in {tp_armed, trailing_active} OR protectionArmedAt set
+//   active    → any active cycle (including imported, plus, recovery) for any pair
+//   idle      → no active cycles at all
+async function resolveSchedulerState(mode: IdcaMode): Promise<"idle" | "active" | "protected"> {
+  try {
+    // Checks current mode only; if mode=disabled we treat as idle (caller skips anyway).
+    const checkMode = mode === "disabled" ? "simulation" : mode;
+    const actives = await repo.getAllActiveCycles(checkMode);
+    if (actives.length === 0) return "idle";
+    const isProtected = actives.some(c =>
+      c.status === "tp_armed" ||
+      c.status === "trailing_active" ||
+      !!c.protectionArmedAt
+    );
+    return isProtected ? "protected" : "active";
+  } catch (e: any) {
+    console.warn(`${TAG}[SCHED_STATE] resolve failed, defaulting to active: ${e?.message}`);
+    return "active";
+  }
+}
 
-  console.log(`${TAG} Scheduler starting (interval: ${intervalMs / 1000}s)`);
+function computeNextDelayMs(
+  state: "idle" | "active" | "protected",
+  config: import("@shared/schema").InstitutionalDcaConfigRow,
+): number {
+  // All three columns have DB-level defaults; fallback to legacy schedulerIntervalSeconds
+  // if a column somehow ends up null (shouldn't happen after migration 027).
+  const legacy = (config.schedulerIntervalSeconds ?? 60) * 1000;
+  let secs: number;
+  switch (state) {
+    case "protected":
+      secs = (config as any).schedulerProtectedSeconds ?? 120;
+      break;
+    case "active":
+      secs = (config as any).schedulerActiveSeconds ?? 300;
+      break;
+    case "idle":
+    default:
+      secs = (config as any).schedulerIdleSeconds ?? 900;
+      break;
+  }
+  const ms = Math.max(5_000, Number(secs) * 1000); // floor 5s defensive
+  return ms > 0 ? ms : legacy;
+}
+
+async function scheduleNext(): Promise<void> {
+  if (!isRunning) return;
+  try {
+    const config = await repo.getIdcaConfig();
+    const mode = config.mode as IdcaMode;
+    const state = mode === "disabled" ? "idle" : await resolveSchedulerState(mode);
+    const delay = computeNextDelayMs(state, config);
+    if (state !== lastSchedulerState) {
+      console.log(`${TAG}[SCHED_STATE_CHANGE] ${lastSchedulerState} → ${state} (nextTick in ${Math.round(delay / 1000)}s)`);
+      lastSchedulerState = state;
+    }
+    schedulerTimeout = setTimeout(() => {
+      runTick()
+        .catch(e => console.error(`${TAG}[ERROR]`, e.message))
+        .finally(() => { void scheduleNext(); });
+    }, delay);
+  } catch (e: any) {
+    console.error(`${TAG}[SCHED_ERR] scheduleNext failed: ${e?.message}. Falling back to 60s.`);
+    schedulerTimeout = setTimeout(() => {
+      runTick()
+        .catch(er => console.error(`${TAG}[ERROR]`, er.message))
+        .finally(() => { void scheduleNext(); });
+    }, 60_000);
+  }
+}
+
+export async function startScheduler(): Promise<void> {
+  if (schedulerTimeout) return;
+  const config = await repo.getIdcaConfig();
+  const idle = (config as any).schedulerIdleSeconds ?? 900;
+  const active = (config as any).schedulerActiveSeconds ?? 300;
+  const protectedSec = (config as any).schedulerProtectedSeconds ?? 120;
+
+  console.log(`${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)`);
   isRunning = true;
 
-  // Initial tick
-  setTimeout(() => runTick().catch(e => console.error(`${TAG}[ERROR]`, e.message)), 2000);
-
-  schedulerInterval = setInterval(() => {
-    runTick().catch(e => console.error(`${TAG}[ERROR]`, e.message));
-  }, intervalMs);
+  // Initial tick after 2s; subsequent ticks are scheduled by scheduleNext().
+  schedulerTimeout = setTimeout(() => {
+    runTick()
+      .catch(e => console.error(`${TAG}[ERROR]`, e.message))
+      .finally(() => { void scheduleNext(); });
+  }, 2000);
 }
 
 export function stopScheduler(): void {
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
+  if (schedulerTimeout) {
+    clearTimeout(schedulerTimeout);
+    schedulerTimeout = null;
   }
   isRunning = false;
+  lastSchedulerState = "init";
   console.log(`${TAG} Scheduler stopped`);
 }
 
@@ -2700,7 +2781,7 @@ export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
   // Restart scheduler if needed
   if (newMode === "disabled") {
     stopScheduler();
-  } else if (!schedulerInterval) {
+  } else if (!schedulerTimeout) {
     await startScheduler();
   }
 }

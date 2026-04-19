@@ -511,6 +511,188 @@ function ColorSlider({ label, desc, value, min, max, step, unit = "%", color, on
   );
 }
 
+// FASE 7/8 — Scheduler config block with master slider + 3 advanced sliders.
+// Presets map a 0-100 master slider position to (idle, active, protected) tuples.
+const SCHEDULER_PRESETS = [
+  // pos=0 (más rápido)       idle=5m, active=2m, protected=1m
+  { pos: 0,   idle: 300,  active: 120, protected: 60  },
+  // pos=50 (equilibrado)     idle=15m, active=5m, protected=2m  (defaults)
+  { pos: 50,  idle: 900,  active: 300, protected: 120 },
+  // pos=100 (más tranquilo)  idle=30m, active=10m, protected=3m
+  { pos: 100, idle: 1800, active: 600, protected: 180 },
+];
+function schedulerPresetForPos(pos: number): { idle: number; active: number; protected: number } {
+  // Linear interpolation between the 3 anchors
+  if (pos <= 50) {
+    const t = pos / 50;
+    const a = SCHEDULER_PRESETS[0], b = SCHEDULER_PRESETS[1];
+    return {
+      idle: Math.round(a.idle + (b.idle - a.idle) * t),
+      active: Math.round(a.active + (b.active - a.active) * t),
+      protected: Math.round(a.protected + (b.protected - a.protected) * t),
+    };
+  }
+  const t = (pos - 50) / 50;
+  const a = SCHEDULER_PRESETS[1], b = SCHEDULER_PRESETS[2];
+  return {
+    idle: Math.round(a.idle + (b.idle - a.idle) * t),
+    active: Math.round(a.active + (b.active - a.active) * t),
+    protected: Math.round(a.protected + (b.protected - a.protected) * t),
+  };
+}
+function formatSecs(s: number): string {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return m === 0 ? `${h}h` : `${h}h ${m}min`;
+}
+
+function SchedulerConfigBlock({ config, onUpdate }: { config: any; onUpdate: (patch: Record<string, any>) => void }) {
+  const currentIdle = config?.schedulerIdleSeconds ?? 900;
+  const currentActive = config?.schedulerActiveSeconds ?? 300;
+  const currentProtected = config?.schedulerProtectedSeconds ?? 120;
+
+  // Derive an approximate master position from the current idle value
+  const [masterPos, setMasterPos] = useState<number>(() => {
+    const s = currentIdle;
+    // Reverse-map roughly: anchors at 300 (pos=0), 900 (pos=50), 1800 (pos=100)
+    if (s <= 900) return Math.round(50 * ((s - 300) / (900 - 300)));
+    return Math.round(50 + 50 * ((s - 900) / (1800 - 900)));
+  });
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
+
+  // Track editable values for the 3 advanced sliders
+  const [idleSec, setIdleSec] = useState<number>(currentIdle);
+  const [activeSec, setActiveSec] = useState<number>(currentActive);
+  const [protectedSec, setProtectedSec] = useState<number>(currentProtected);
+
+  useEffect(() => {
+    setIdleSec(currentIdle);
+    setActiveSec(currentActive);
+    setProtectedSec(currentProtected);
+  }, [currentIdle, currentActive, currentProtected]);
+
+  const dirty = idleSec !== currentIdle || activeSec !== currentActive || protectedSec !== currentProtected;
+
+  const applyMaster = (pos: number) => {
+    const clamped = Math.max(0, Math.min(100, pos));
+    setMasterPos(clamped);
+    const preset = schedulerPresetForPos(clamped);
+    setIdleSec(preset.idle);
+    setActiveSec(preset.active);
+    setProtectedSec(preset.protected);
+  };
+
+  const save = () => {
+    onUpdate({
+      schedulerIdleSeconds: idleSec,
+      schedulerActiveSeconds: activeSec,
+      schedulerProtectedSeconds: protectedSec,
+    });
+  };
+
+  return (
+    <ConfigBlock
+      icon={Clock}
+      title="Cadencia del scheduler"
+      desc="Cada cuánto despierta el módulo IDCA según el estado real (sin nada abierto / con ciclo activo / protegiendo salida). Ajústalo según cuánto ruido quieras en logs y llamadas a Kraken."
+    >
+      {/* Master slider */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-sm">Velocidad general</Label>
+          <span className="text-xs font-mono text-muted-foreground">
+            {masterPos <= 25 ? "Más rápido" : masterPos >= 75 ? "Más tranquilo" : "Equilibrado"}
+          </span>
+        </div>
+        <Slider
+          value={[masterPos]}
+          onValueChange={(v) => applyMaster(v[0])}
+          min={0}
+          max={100}
+          step={5}
+          className="[&>span]:bg-primary"
+        />
+        <div className="flex justify-between text-[10px] text-muted-foreground">
+          <span>Más rápido (más carga)</span>
+          <span>Equilibrado</span>
+          <span>Más tranquilo (menos carga)</span>
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        <div className="p-3 rounded border border-slate-500/30 bg-slate-500/5 text-center">
+          <div className="text-[10px] text-muted-foreground">Sin nada abierto</div>
+          <div className="font-mono text-sm text-slate-300">{formatSecs(idleSec)}</div>
+          <div className="text-[9px] text-muted-foreground">cada {idleSec}s</div>
+        </div>
+        <div className="p-3 rounded border border-blue-500/30 bg-blue-500/5 text-center">
+          <div className="text-[10px] text-muted-foreground">Con ciclo activo</div>
+          <div className="font-mono text-sm text-blue-300">{formatSecs(activeSec)}</div>
+          <div className="text-[9px] text-muted-foreground">cada {activeSec}s</div>
+        </div>
+        <div className="p-3 rounded border border-amber-500/30 bg-amber-500/5 text-center">
+          <div className="text-[10px] text-muted-foreground">Cerca de comprar/vender</div>
+          <div className="font-mono text-sm text-amber-300">{formatSecs(protectedSec)}</div>
+          <div className="text-[9px] text-muted-foreground">cada {protectedSec}s</div>
+        </div>
+      </div>
+
+      {/* Advanced */}
+      <div className="border-t border-border/30 pt-3 mt-3">
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-foreground underline"
+          onClick={() => setAdvancedOpen(v => !v)}
+        >
+          {advancedOpen ? "Ocultar" : "Mostrar"} ajuste avanzado
+        </button>
+        {advancedOpen && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Sin nada abierto (seg)</Label>
+              <Input
+                type="number" min={30} max={3600} step={30}
+                value={idleSec}
+                onChange={(e) => setIdleSec(Math.max(30, parseInt(e.target.value) || 900))}
+                className="h-8 text-xs font-mono bg-background/50"
+              />
+              <p className="text-[10px] text-muted-foreground">Cuando no hay ciclos activos. Ruido mínimo.</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Con ciclo activo (seg)</Label>
+              <Input
+                type="number" min={30} max={1800} step={30}
+                value={activeSec}
+                onChange={(e) => setActiveSec(Math.max(30, parseInt(e.target.value) || 300))}
+                className="h-8 text-xs font-mono bg-background/50"
+              />
+              <p className="text-[10px] text-muted-foreground">Seguimiento normal de un ciclo abierto.</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Cerca de comprar/vender (seg)</Label>
+              <Input
+                type="number" min={15} max={600} step={15}
+                value={protectedSec}
+                onChange={(e) => setProtectedSec(Math.max(15, parseInt(e.target.value) || 120))}
+                className="h-8 text-xs font-mono bg-background/50"
+              />
+              <p className="text-[10px] text-muted-foreground">Trailing activo o protección armada.</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 pt-2">
+        {dirty && <span className="text-[10px] text-amber-400">cambios sin guardar</span>}
+        <Button size="sm" onClick={save} disabled={!dirty}>Guardar cadencia</Button>
+      </div>
+    </ConfigBlock>
+  );
+}
+
 function ConfigBlock({ icon: Icon, title, desc, children }: {
   icon: any; title: string; desc: string; children: React.ReactNode;
 }) {
@@ -590,6 +772,12 @@ function ConfigTab() {
 
         {/* protectPrincipal — removed: not consumed by engine (legacy/decorative) */}
       </ConfigBlock>
+
+      {/* ════ BLOQUE 1.5 — CADENCIA DEL SCHEDULER (FASE 7/8) ════ */}
+      <SchedulerConfigBlock
+        config={config}
+        onUpdate={(patch) => updateConfig.mutate(patch)}
+      />
 
       {/* ════ BLOQUE 2 — CUÁNDO COMPRAR ════ */}
       <ConfigBlock icon={TrendingDown} title="Cuándo comprar"

@@ -934,6 +934,11 @@ export const institutionalDcaConfig = pgTable("institutional_dca_config", {
   blockOnHighSpread: boolean("block_on_high_spread").notNull().default(true),
   blockOnSellPressure: boolean("block_on_sell_pressure").notNull().default(true),
   schedulerIntervalSeconds: integer("scheduler_interval_seconds").notNull().default(60),
+  // FASE 8 — Adaptive scheduler intervals (state-aware).
+  // idle: no active cycles; active: ≥1 active cycle; protected: ≥1 cycle with tp_armed/trailing_active/protection_armed.
+  schedulerIdleSeconds: integer("scheduler_idle_seconds").notNull().default(900),
+  schedulerActiveSeconds: integer("scheduler_active_seconds").notNull().default(300),
+  schedulerProtectedSeconds: integer("scheduler_protected_seconds").notNull().default(120),
   localHighLookbackMinutes: integer("local_high_lookback_minutes").notNull().default(1440),
   // Smart Mode
   smartModeEnabled: boolean("smart_mode_enabled").notNull().default(true),
