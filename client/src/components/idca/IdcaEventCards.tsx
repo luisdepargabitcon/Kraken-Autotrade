@@ -71,6 +71,25 @@ interface ParsedPayload {
   blockReasons?: string[];
   parentCycleId?: number;
   dipFromLastBuy?: number;
+  // VWAP fields
+  effectiveBasePrice?: number;
+  effectiveMinDip?: number;
+  basePriceMethod?: string;
+  vwapContext?: {
+    vwap?: number;
+    lowerBand1?: number;
+    lowerBand2?: number;
+    lowerBand3?: number;
+    upperBand1?: number;
+    upperBand2?: number;
+    vwapWeekly?: number;
+    vwapMonthly?: number;
+    zone?: string;
+    distanceFromVwapPct?: number;
+    distanceFromLower1Pct?: number;
+  };
+  weeklyTrend?: string;
+  monthlyBias?: string;
   [key: string]: any;
 }
 
@@ -96,6 +115,14 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.entryDipPct) result.entryDipPct = parseFloat(String(p.entryDipPct));
   if (p.marketScore) result.marketScore = parseFloat(String(p.marketScore));
   if (p.sizeProfile) result.sizeProfile = p.sizeProfile;
+
+  // VWAP fields
+  if (p.effectiveBasePrice) result.effectiveBasePrice = parseFloat(String(p.effectiveBasePrice));
+  if (p.effectiveMinDip) result.effectiveMinDip = parseFloat(String(p.effectiveMinDip));
+  if (p.basePriceMethod) result.basePriceMethod = p.basePriceMethod;
+  if (p.vwapContext) result.vwapContext = p.vwapContext;
+  if (p.weeklyTrend) result.weeklyTrend = p.weeklyTrend;
+  if (p.monthlyBias) result.monthlyBias = p.monthlyBias;
 
   // Parse from message as fallback
   const priceMatch = msg.match(/@ ?([\d,.]+)/);
@@ -874,12 +901,20 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               {event.mode && <DataPill label="Modo" value={event.mode === "simulation" ? "Simulación" : "Real"} />}
               {parsed.price != null && <DataPill label="Precio" value={fUsd(parsed.price)} />}
               {parsed.avgEntry != null && <DataPill label="Precio medio" value={fUsd(parsed.avgEntry)} />}
-              {parsed.basePrice != null && parsed.basePrice > 0 && <DataPill label="Precio base" value={fUsd(parsed.basePrice)} />}
+              {/* Use effectiveBasePrice (VWAP) when available, otherwise basePrice */}
+              {parsed.effectiveBasePrice != null && parsed.effectiveBasePrice > 0 && (
+                <DataPill label="Precio base" value={fUsd(parsed.effectiveBasePrice)} color="text-cyan-400" />
+              )}
+              {parsed.effectiveBasePrice == null && parsed.basePrice != null && parsed.basePrice > 0 && (
+                <DataPill label="Precio base" value={fUsd(parsed.basePrice)} />
+              )}
               {(parsed.basePrice == null || parsed.basePrice === 0) && event.payloadJson?.basePrice?.meta?.candleCount != null && (
                 <DataPill label="Velas OHLCV" value={`${event.payloadJson.basePrice.meta.candleCount}/7`}
                   color={event.payloadJson.basePrice.meta.candleCount < 7 ? "text-amber-400" : "text-emerald-400"} />
               )}
-              {parsed.basePriceType && <DataPill label="Tipo base" value={parsed.basePriceType} />}
+              {/* Show basePriceMethod (VWAP method) when available, otherwise basePriceType */}
+              {parsed.basePriceMethod && <DataPill label="Tipo base" value={parsed.basePriceMethod} />}
+              {parsed.basePriceMethod == null && parsed.basePriceType && <DataPill label="Tipo base" value={parsed.basePriceType} />}
               {parsed.entryDipPct != null && (
                 <DataPill
                   label={parsed.entryDipPct >= 0 ? "Caída entrada" : "Precio sobre ancla"}
@@ -891,6 +926,9 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               {parsed.capital != null && <DataPill label="Capital" value={fUsd(parsed.capital)} />}
               {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}`} />}
               {parsed.sizeProfile && <DataPill label="Perfil" value={parsed.sizeProfile} />}
+              {/* VWAP-specific fields */}
+              {parsed.weeklyTrend && <DataPill label="Tendencia semanal" value={parsed.weeklyTrend} />}
+              {parsed.monthlyBias && <DataPill label="Sesgo mensual" value={parsed.monthlyBias} />}
               {parsed.pnlPct != null && (
                 <DataPill label="PnL %" value={`${parsed.pnlPct >= 0 ? "+" : ""}${fN(parsed.pnlPct)}%`}
                   color={parsed.pnlPct >= 0 ? "text-emerald-400" : "text-red-400"} />
@@ -924,8 +962,53 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
             </div>
           </div>
 
-          {/* B2. Cálculo de base — solo si hay meta híbrido */}
-          {parsed.basePriceMeta && (
+          {/* B2. VWAP band data — cuando VWAP está activo */}
+          {parsed.vwapContext && parsed.basePriceMethod?.startsWith("vwap_") && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">Datos VWAP</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-2 p-3 rounded-md bg-white/[0.02] border border-white/5">
+                {parsed.vwapContext.vwap != null && (
+                  <DataPill label="VWAP 24h" value={fUsd(parsed.vwapContext.vwap)} color="text-cyan-400" />
+                )}
+                {parsed.vwapContext.lowerBand1 != null && (
+                  <DataPill label="Banda -1σ" value={fUsd(parsed.vwapContext.lowerBand1)} color="text-red-400" />
+                )}
+                {parsed.vwapContext.lowerBand2 != null && (
+                  <DataPill label="Banda -2σ" value={fUsd(parsed.vwapContext.lowerBand2)} color="text-red-300" />
+                )}
+                {parsed.vwapContext.lowerBand3 != null && (
+                  <DataPill label="Banda -3σ" value={fUsd(parsed.vwapContext.lowerBand3)} color="text-red-200" />
+                )}
+                {parsed.vwapContext.upperBand1 != null && (
+                  <DataPill label="Banda +1σ" value={fUsd(parsed.vwapContext.upperBand1)} color="text-emerald-400" />
+                )}
+                {parsed.vwapContext.upperBand2 != null && (
+                  <DataPill label="Banda +2σ" value={fUsd(parsed.vwapContext.upperBand2)} color="text-emerald-300" />
+                )}
+                {parsed.vwapContext.vwapWeekly != null && (
+                  <DataPill label="VWAP 7d" value={fUsd(parsed.vwapContext.vwapWeekly)} color="text-sky-300" />
+                )}
+                {parsed.vwapContext.vwapMonthly != null && (
+                  <DataPill label="VWAP 30d" value={fUsd(parsed.vwapContext.vwapMonthly)} color="text-sky-200" />
+                )}
+                {parsed.vwapContext.zone && (
+                  <DataPill label="Zona VWAP" value={parsed.vwapContext.zone} color="text-violet-400" />
+                )}
+                {parsed.vwapContext.distanceFromVwapPct != null && (
+                  <DataPill label="Dist VWAP" value={`${fN(parsed.vwapContext.distanceFromVwapPct)}%`} />
+                )}
+                {parsed.vwapContext.distanceFromLower1Pct != null && (
+                  <DataPill label="Dist -1σ" value={`${fN(parsed.vwapContext.distanceFromLower1Pct)}%`} />
+                )}
+                {parsed.effectiveMinDip != null && (
+                  <DataPill label="Min Dip VWAP" value={`${fN(parsed.effectiveMinDip)}%`} color="text-amber-400" />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* B3. Cálculo de base — solo si hay meta híbrido Y VWAP no está activo */}
+          {parsed.basePriceMeta && !parsed.basePriceMethod?.startsWith("vwap_") && (
             <div>
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">Cálculo de base (Hybrid V2.1)</span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-2 p-3 rounded-md bg-white/[0.02] border border-white/5">
