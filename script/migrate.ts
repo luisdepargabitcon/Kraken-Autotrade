@@ -964,6 +964,22 @@ async function runMigration() {
     const idcaPriceContextSqlPath = path.resolve(process.cwd(), "db", "migrations", "025_idca_price_context.sql");
     await tryExecuteFile(db, idcaPriceContextSqlPath, "idca_price_context");
 
+    // ============================================================
+    // TIME-STOP SOFT MODE (026) — adds soft_mode column to time_stop_config
+    // (FASE 4 refactor: soft mode now really blocks close on net loss).
+    // ============================================================
+    console.log("[migrate] Ensuring time_stop_config.soft_mode column exists...");
+    const timeStopSoftModePath = path.resolve(process.cwd(), "db", "migrations", "026_time_stop_soft_mode.sql");
+    await tryExecuteFile(db, timeStopSoftModePath, "time_stop_soft_mode");
+
+    // ============================================================
+    // IDCA ADAPTIVE SCHEDULER (027) — adds 3 state-aware interval columns
+    // to institutional_dca_config (idle / active / protected).
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA adaptive scheduler columns exist...");
+    const idcaSchedulerAdaptivePath = path.resolve(process.cwd(), "db", "migrations", "027_idca_scheduler_adaptive.sql");
+    await tryExecuteFile(db, idcaSchedulerAdaptivePath, "idca_scheduler_adaptive");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
