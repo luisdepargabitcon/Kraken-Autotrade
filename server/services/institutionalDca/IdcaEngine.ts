@@ -614,6 +614,10 @@ async function evaluatePair(
     // Check for orphaned bot subcycles (plus/recovery without a main)
     const hasAny = await repo.hasActiveBotCycleForPair(pair, mode);
     const hasImported = (await repo.getActiveImportedCycles(pair, mode)).length > 0;
+    // Cleanup: disarm trailing buy if cycle exists but was armed before deploy
+    if ((hasAny || hasImported) && TrailingBuyManager.isArmed(pair)) {
+      TrailingBuyManager.disarm(pair);
+    }
     if (!hasAny && !hasImported) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
       if (assetConfig.vwapEnabled) {
