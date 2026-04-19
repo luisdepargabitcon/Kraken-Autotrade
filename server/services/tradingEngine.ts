@@ -13,7 +13,8 @@ import { db } from "../db";
 import { eq, and, desc, lt } from "drizzle-orm";
 import { buildTradeId } from "../utils/tradeId";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
-import type { IExchangeService } from "./exchanges/IExchangeService";
+import type { IExchangeService, OHLC } from "./exchanges/IExchangeService";
+import { MarketDataService, type Timeframe } from "./MarketDataService";
 import { configService } from "./ConfigService";
 import type { TradingConfig } from "@shared/config-schema";
 import { defaultFeatureFlags, type FeatureFlags } from "@shared/config-schema";
@@ -862,6 +863,45 @@ export class TradingEngine {
 
   private getDataExchange(): IExchangeService {
     return ExchangeFactory.getDataExchange();
+  }
+
+  /**
+   * Get cached spot price via MarketDataService with exchange fallback.
+   * Shared pairs (BTC/USD, ETH/USD) benefit from IDCA's cached data.
+   */
+  private async getCachedPrice(pair: string): Promise<number> {
+    try {
+      const price = await MarketDataService.getPrice(pair);
+      if (price > 0) return price;
+    } catch { /* fallback below */ }
+    // Fallback to direct exchange call
+    try {
+      const krakenPair = this.formatKrakenPair(pair);
+      const ticker = await this.getDataExchange().getTicker(krakenPair);
+      return Number((ticker as any)?.last ?? 0) || 0;
+    } catch { return 0; }
+  }
+
+  /**
+   * Get cached OHLC candles via MarketDataService with exchange fallback.
+   */
+  private async getCachedOHLC(pair: string, intervalMinutes: number): Promise<OHLCCandle[]> {
+    // Map interval minutes to Timeframe string
+    const tfMap: Record<number, Timeframe> = {
+      1: "1m", 5: "5m", 15: "15m", 30: "30m",
+      60: "1h", 240: "4h", 1440: "1d", 10080: "1w",
+    };
+    const tf = tfMap[intervalMinutes];
+    if (tf) {
+      try {
+        const candles = await MarketDataService.getCandles(pair, tf);
+        if (candles && candles.length > 0) return candles as unknown as OHLCCandle[];
+      } catch { /* fallback below */ }
+    }
+    // Fallback to direct exchange call
+    try {
+      return await this.getDataExchange().getOHLC(pair, intervalMinutes) ?? [];
+    } catch { return []; }
   }
 
   private getTradingExchangeType(): ExchangeType {
@@ -2653,13 +2693,11 @@ ${positionsList}
 
         const pair = position.pair;
 
-        // Get current price (cached per pair)
+        // Get current price (cached per pair via MarketDataService)
         let currentPrice = pairPriceCache.get(pair);
         if (currentPrice === undefined) {
           try {
-            const krakenPair = this.formatKrakenPair(pair);
-            const ticker = await this.getDataExchange().getTicker(krakenPair);
-            currentPrice = Number((ticker as any)?.last ?? 0);
+            currentPrice = await this.getCachedPrice(pair);
           } catch { currentPrice = 0; }
           pairPriceCache.set(pair, currentPrice!);
         }
@@ -2669,12 +2707,12 @@ ${positionsList}
         const pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
         const pnlUsd = (currentPrice - position.entryPrice) * position.amount;
 
-        // Get candles for technical analysis (cached per pair)
+        // Get candles for technical analysis (cached per pair via MarketDataService)
         let candles = pairCandleCache.get(pair);
         if (candles === undefined && !pairCandleCache.has(pair)) {
           try {
-            const rawCandles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
-            candles = rawCandles ? rawCandles.slice(0, -1) : undefined;
+            const rawCandles = await this.getCachedOHLC(pair, intervalMinutes);
+            candles = rawCandles.length > 0 ? rawCandles.slice(0, -1) : undefined;
           } catch { candles = undefined; }
           pairCandleCache.set(pair, candles);
         }
@@ -3395,7 +3433,9 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       }
 
       const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.getDataExchange().getTicker(krakenPair);
+      // Use MarketDataService for cached ticker with exchange fallback
+      let ticker = await MarketDataService.getTicker(krakenPair);
+      if (!ticker) ticker = await this.getDataExchange().getTicker(krakenPair);
       const currentPrice = Number((ticker as any)?.last ?? 0);
       const high24h = 0;
       const low24h = 0;
@@ -4634,7 +4674,9 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       }
 
       const krakenPair = this.formatKrakenPair(pair);
-      const ticker = await this.getDataExchange().getTicker(krakenPair);
+      // Use MarketDataService for cached ticker with exchange fallback
+      let ticker = await MarketDataService.getTicker(krakenPair);
+      if (!ticker) ticker = await this.getDataExchange().getTicker(krakenPair);
       const currentPrice = Number((ticker as any)?.last ?? 0);
       
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
