@@ -33,6 +33,7 @@ import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
+import { TrailingBuyManager } from "./TrailingBuyManager";
 
 const TAG = "[IDCA]";
 
@@ -614,7 +615,69 @@ async function evaluatePair(
     const hasAny = await repo.hasActiveBotCycleForPair(pair, mode);
     if (!hasAny) {
       // No bot cycle active — look for new autonomous entry
-      await checkEntry(pair, currentPrice, config, assetConfig, mode);
+      if (assetConfig.vwapEnabled) {
+        // ── Trailing Buy (VWAP-driven) ─────────────────────────────
+        const tbCandles = ohlcCache.get(pair) || [];
+        if (tbCandles.length >= 7) {
+          const anchor24h = Date.now() - 24 * 60 * 60 * 1000;
+          const tbVwap = smart.computeVwapAnchored(tbCandles, anchor24h);
+          if (tbVwap.isReliable) {
+            const tbZone = smart.getVwapBandPosition(currentPrice, tbVwap).zone;
+            const inInterestZone = tbZone === "below_lower1" || tbZone === "below_lower2" || tbZone === "below_lower3";
+            const inNeutralOrAbove = tbZone === "between_bands" || tbZone === "above_upper1" || tbZone === "above_upper2";
+
+            // Arm: precio entra en zona de interés
+            if (inInterestZone && !TrailingBuyManager.isArmed(pair)) {
+              const reboundMinPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
+              TrailingBuyManager.arm(pair, tbVwap.lowerBand1, currentPrice, { trailingPct: reboundMinPct });
+              await createHumanEvent({
+                pair, mode,
+                eventType: "trailing_buy_activated",
+                severity: "info",
+                message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}`,
+                payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
+              }, { eventType: "trailing_buy_activated", pair, mode });
+            }
+
+            // Update: si está armado, seguir el mínimo
+            if (TrailingBuyManager.isArmed(pair)) {
+              const tbResult = TrailingBuyManager.update(pair, currentPrice);
+              if (tbResult.triggered) {
+                // Trailing confirmó rebote → ejecutar entry check normal
+                await createHumanEvent({
+                  pair, mode,
+                  eventType: "trailing_buy_triggered",
+                  severity: "info",
+                  message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
+                  payloadJson: { ...tbResult, zone: tbZone },
+                }, { eventType: "trailing_buy_triggered", pair, mode });
+                await checkEntry(pair, currentPrice, config, assetConfig, mode);
+              }
+            }
+
+            // Disarm: precio vuelve a zona neutral sin haber comprado
+            if (inNeutralOrAbove && TrailingBuyManager.isArmed(pair)) {
+              TrailingBuyManager.disarm(pair);
+              await createHumanEvent({
+                pair, mode,
+                eventType: "trailing_buy_reset",
+                severity: "info",
+                message: `Trailing buy disarmed: price returned to ${tbZone}`,
+                payloadJson: { price: currentPrice, zone: tbZone, reason: "price_returned_to_neutral" },
+              }, { eventType: "trailing_buy_reset", pair, mode });
+            }
+          } else {
+            // VWAP not reliable — fallback to direct entry check
+            await checkEntry(pair, currentPrice, config, assetConfig, mode);
+          }
+        } else {
+          // Not enough candles for VWAP — fallback
+          await checkEntry(pair, currentPrice, config, assetConfig, mode);
+        }
+      } else {
+        // Sin VWAP → comportamiento original directo
+        await checkEntry(pair, currentPrice, config, assetConfig, mode);
+      }
     }
   }
 }
