@@ -175,6 +175,11 @@ export class ExitManager {
   private timeStopNotified: Map<string, number> = new Map();
   private readonly TIME_STOP_NOTIFY_THROTTLE_MS = 60 * 60 * 1000;
 
+  // FASE 2 — Dedup de EXIT_EVAL: evita persistir el mismo log cada 5s cuando nada material cambia.
+  // Se emite si hay cambio de estado o ha pasado el heartbeat mínimo.
+  private lastExitEvalEmitted: Map<string, { hash: string; ts: number }> = new Map();
+  private readonly EXIT_EVAL_HEARTBEAT_MS = 60 * 1000; // heartbeat cada 60s sin cambio
+
   // === FASE 0 HOTFIX: Exit Lock System ===
   // Prevents multiple simultaneous SELL attempts on the same position
   private exitLocks: Map<string, number> = new Map(); // lotId → timestamp
@@ -1391,20 +1396,38 @@ export class ExitManager {
 
     const breakEvenPrice = position.entryPrice * (1 + feeCushionPct / 100);
 
-    // === EXIT_EVAL ===
-    await botLogger.info("EXIT_EVAL", `SMART_GUARD evaluando posición ${pair}`, {
-      posId: lotId, exchange: this.host.getTradingExchangeType(), pair,
-      entryPrice: position.entryPrice, currentPrice, priceChangePct: priceChange,
-      qty: position.amount,
-      beArmed: position.sgBreakEvenActivated ?? false,
-      trailingArmed: position.sgTrailingActivated ?? false,
-      stopPrice: position.sgCurrentStopPrice ?? null,
-      beAtPct, trailStartPct,
-      trailDistancePct, trailDistancePctConfig, atrPct, decayFactor,
-      positionAgeHours: Math.round(positionAgeHours * 10) / 10,
-      beProgressiveLevel: position.beProgressiveLevel ?? 0,
-      ultimateSL,
-    });
+    // === EXIT_EVAL (FASE 2 — con dedup material) ===
+    // Sólo emitir cuando cambia el estado (BE/trailing/stopPrice) o cada heartbeat (60s).
+    // Evita persistir el mismo log cada 5s fuera de horario / en posiciones estables.
+    {
+      const evalHash = [
+        position.sgBreakEvenActivated ? "1" : "0",
+        position.sgTrailingActivated ? "1" : "0",
+        position.sgCurrentStopPrice != null ? position.sgCurrentStopPrice.toFixed(4) : "na",
+        position.beProgressiveLevel ?? 0,
+        // Redondear priceChange a 0.1% para tolerar jitter
+        (Math.round(priceChange * 10) / 10).toFixed(1),
+      ].join("|");
+      const nowEval = Date.now();
+      const prevEval = this.lastExitEvalEmitted.get(lotId);
+      const shouldEmit = !prevEval || prevEval.hash !== evalHash || (nowEval - prevEval.ts) >= this.EXIT_EVAL_HEARTBEAT_MS;
+      if (shouldEmit) {
+        this.lastExitEvalEmitted.set(lotId, { hash: evalHash, ts: nowEval });
+        await botLogger.info("EXIT_EVAL", `SMART_GUARD evaluando posición ${pair}`, {
+          posId: lotId, exchange: this.host.getTradingExchangeType(), pair,
+          entryPrice: position.entryPrice, currentPrice, priceChangePct: priceChange,
+          qty: position.amount,
+          beArmed: position.sgBreakEvenActivated ?? false,
+          trailingArmed: position.sgTrailingActivated ?? false,
+          stopPrice: position.sgCurrentStopPrice ?? null,
+          beAtPct, trailStartPct,
+          trailDistancePct, trailDistancePctConfig, atrPct, decayFactor,
+          positionAgeHours: Math.round(positionAgeHours * 10) / 10,
+          beProgressiveLevel: position.beProgressiveLevel ?? 0,
+          ultimateSL,
+        });
+      }
+    }
 
     // 1. ULTIMATE STOP-LOSS
     if (priceChange <= -ultimateSL) {

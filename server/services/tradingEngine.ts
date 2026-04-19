@@ -535,7 +535,17 @@ export class TradingEngine {
   
   // PAIR_DECISION_TRACE: Contexto de decisión por par para diagnóstico
   private pairDecisionTrace: Map<string, DecisionTraceContext> = new Map();
-  
+
+  // FASE 2 — Dedup de PAIR_DECISION_TRACE: evita emitir trazas idénticas cada scan (p.ej. TRADING_HOURS fuera de horario).
+  // Se mantiene un heartbeat mínimo para no perder visibilidad total.
+  private lastEmittedTraceHash: Map<string, { hash: string; ts: number }> = new Map();
+  private readonly TRACE_HEARTBEAT_MS = 5 * 60 * 1000; // Emitir al menos 1 traza cada 5 min por par aunque no cambie
+
+  // FASE 2 — Cache de balance USD para evitar getBalance() cada ciclo fuera de horario
+  private lastBalanceFetchedAt: number = 0;
+  private cachedBalances: any = null;
+  private readonly BALANCE_CACHE_MS = 30 * 1000; // 30s TTL
+
   // Scan state tracking (for MARKET_SCAN_SUMMARY guard)
   private scanInProgress: boolean = false;
   private currentScanId: string = "";
@@ -2879,8 +2889,19 @@ ${positionsList}
       this.lastScanTime = Date.now();
       this.lastScanResults.clear();
 
-      const balances = await this.getTradingExchange().getBalance();
-      this.currentUsdBalance = parseFloat(String(balances?.ZUSD || balances?.USD || "0"));
+      // FASE 2 — Cache de balance 30s: evita getBalance() cada 5s fuera de horario (reduce presión KrakenRL).
+      // Siempre refetch si hay trade reciente (MIN_TRADE_INTERVAL_MS implícito por lastTradeTime).
+      const nowBalCheck = Date.now();
+      const balanceAge = nowBalCheck - this.lastBalanceFetchedAt;
+      let balances: any;
+      if (this.lastBalanceFetchedAt > 0 && balanceAge < this.BALANCE_CACHE_MS && this.cachedBalances) {
+        balances = this.cachedBalances;
+      } else {
+        balances = await this.getTradingExchange().getBalance();
+        this.currentUsdBalance = parseFloat(String(balances?.ZUSD || balances?.USD || "0"));
+        this.cachedBalances = balances;
+        this.lastBalanceFetchedAt = nowBalCheck;
+      }
       
       // Reset diario del P&L
       const today = new Date().toISOString().split("T")[0];
@@ -3012,6 +3033,10 @@ El bot ha pausado las operaciones de COMPRA.
             blockDetails: { hourUTC: tradingHoursCheck.hourUTC, start: tradingHoursCheck.start, end: tradingHoursCheck.end },
             finalSignal: "NONE",
             finalReason: `Fuera de horario: ${tradingHoursCheck.hourUTC}h (${tradingHoursCheck.start}-${tradingHoursCheck.end}h)`,
+            // FASE 2 — Fuera de horario no se fetches velas. lastCandleClosedAt quedaría stale del último
+            // scan en horario, lo que confunde al lector. Se marca como null para reflejar que el bot no
+            // está evaluando vela en este ciclo.
+            lastCandleClosedAt: null,
           });
           this.emitPairDecisionTrace(pair);
         }
@@ -5745,7 +5770,28 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       spreadDiag,
       timingDiag,
     };
-    
+
+    // === FASE 2 — Dedup por contenido material ===
+    // Evita emitir la misma traza cada 5s cuando el estado no cambia (típico fuera de horario).
+    // Heartbeat mínimo cada TRACE_HEARTBEAT_MS para no perder visibilidad.
+    const dedupKey = [
+      safeTrace.blockReasonCode,
+      safeTrace.finalSignal,
+      safeTrace.smartGuardDecision,
+      safeTrace.openLotsThisPair ?? 0,
+      safeTrace.maxLotsPerPair ?? 0,
+      safeTrace.isIntermediateCycle ? "1" : "0",
+      // Redondear exposición para ignorar variaciones céntimos a céntimos
+      typeof safeTrace.exposureAvailableUsd === "number" ? Math.round(safeTrace.exposureAvailableUsd) : "na",
+      (safeTrace.finalReason || "").slice(0, 80),
+    ].join("|");
+    const now = Date.now();
+    const prev = this.lastEmittedTraceHash.get(pair);
+    if (prev && prev.hash === dedupKey && now - prev.ts < this.TRACE_HEARTBEAT_MS) {
+      return; // Suprimir: traza idéntica a la previa dentro del heartbeat
+    }
+    this.lastEmittedTraceHash.set(pair, { hash: dedupKey, ts: now });
+
     log(`[PAIR_DECISION_TRACE] ${JSON.stringify(safeTrace)}`, "trading");
   }
 
