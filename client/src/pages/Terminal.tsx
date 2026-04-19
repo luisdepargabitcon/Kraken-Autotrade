@@ -1260,7 +1260,9 @@ export default function Terminal() {
                                       ? "text-yellow-400 border-yellow-400/50 hover:bg-yellow-400/10" 
                                       : "text-emerald-400 border-emerald-400/50 hover:bg-emerald-400/10"}
                                     data-testid={`button-toggle-timestop-${pos.lotId}`}
-                                    title={pos.timeStopDisabled ? "Time-stop desactivado - Click para reactivar" : "Time-stop activo - Click para desactivar"}
+                                    title={pos.timeStopDisabled
+                                      ? "Time-Stop PAUSADO solo en este lote — Click para reactivar. (No afecta a la config global del par)"
+                                      : "Time-Stop activo en este lote — Click para pausar solo en este lote. Si quieres desactivarlo para todo el par, usa el panel de Salidas → Time-Stop."}
                                   >
                                     {togglingTimeStopKey === pos.lotId ? (
                                       <Loader2 className="h-4 w-4 animate-spin" />

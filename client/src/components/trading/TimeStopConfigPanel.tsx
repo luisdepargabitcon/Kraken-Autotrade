@@ -253,6 +253,14 @@ export function TimeStopConfigPanel() {
               <p>• <strong>Régimen dinámico</strong>: si desactivas "usar régimen", los tres factores se fuerzan a 1.0 (TTL fijo = TTL base).</p>
               <p>• El par <code>*</code> es el valor por defecto que se aplica a cualquier par sin fila propia.</p>
             </div>
+
+            {/* FASE 4.1 — Semántica del toggle "Activo" */}
+            <div className="p-3 rounded border border-sky-500/20 bg-sky-500/5 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-sky-400">Toggle "Activo" (desde FASE 4.1):</p>
+              <p>• <strong>Fila específica (ej. BTC/USD) en OFF</strong> → Time-Stop queda <strong>completamente desactivado para ese par</strong>. NO cae al wildcard, NO aplica legacy.</p>
+              <p>• <strong>Fila wildcard <code>*</code> en OFF y sin fila específica</strong> → Time-Stop desactivado globalmente (comportamiento seguro).</p>
+              <p>• Para pausar el Time-Stop de un <strong>lote individual</strong> sin tocar la config del par, usa el botón ⏱ en la tarjeta de la posición.</p>
+            </div>
           </>
         )}
       </CardContent>

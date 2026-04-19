@@ -48,6 +48,40 @@ export interface TimeStopCheckResult {
   softMode: boolean;                // FASE 4 — effective softMode for the resolved config row
   softModeBlocked: boolean;         // FASE 4 — true iff expiry occurred but close was suppressed by softMode
   configSource: string;
+  // FASE 4.1 — true when TimeStop is explicitly opted-out for this pair
+  // (specific row exists with isActive=false) OR globally disabled (no rows / wildcard inactive).
+  // Callers should treat it like timeStopDisabled but originated from config, not per-lot toggle.
+  explicitlyDisabled?: boolean;
+}
+
+// FASE 4.1 — Internal resolution status of the TimeStop config for a pair.
+// Encapsulates 3 distinct cases so callers can react correctly:
+//   - 'active'             : a usable config row was found (specific or wildcard).
+//   - 'explicitly_disabled': a specific row exists for this pair but isActive=false.
+//                            Semantically: "user explicitly turned TimeStop OFF for this pair."
+//                            → Do NOT fall through to wildcard/legacy.
+//   - 'no_config'          : neither specific row nor active wildcard exists.
+//                            → TimeStop is globally off. No legacy fallback in FASE 4.1.
+type ConfigResolution =
+  | { status: "active"; config: TimeStopConfigRow }
+  | { status: "explicitly_disabled"; pair: string; market: string }
+  | { status: "no_config" };
+
+// ─── Dedup helpers (FASE 4.1) ────────────────────────────────────────────────
+// Avoid flooding logs when TimeStop is disabled for a pair; we only want to
+// surface the state once every DEDUP_WINDOW_MS per (pair, market, reason) key.
+const DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 min
+const lastDisabledLogMs = new Map<string, number>();
+function logTimeStopDisabledOnce(pair: string, market: string, reason: "explicitly_disabled" | "no_config") {
+  const key = `${pair}:${market}:${reason}`;
+  const now = Date.now();
+  const last = lastDisabledLogMs.get(key) ?? 0;
+  if (now - last < DEDUP_WINDOW_MS) return;
+  lastDisabledLogMs.set(key, now);
+  const msg = reason === "explicitly_disabled"
+    ? `[TIME_STOP_DISABLED] pair=${pair} market=${market} — fila específica con Activo=OFF (opt-out explícito)`
+    : `[TIME_STOP_DISABLED] pair=${pair} market=${market} — ni fila específica ni wildcard activo, TimeStop inactivo`;
+  log(msg, "trading");
 }
 
 // ─── In-memory cache ─────────────────────────────────────────────────────────
@@ -69,7 +103,10 @@ async function ensureConfigCache(): Promise<TimeStopConfigRow[]> {
     log(`[TIME_STOP_SVC] Config cache refresh failed: ${e?.message}`, "trading");
     // Keep stale cache if available
     if (configCache.length === 0) {
-      // Return empty — callers will use legacy fallback
+      // FASE 4.1 — no rows at all. Callers will resolve to 'no_config' and
+      // skip TimeStop entirely (the old legacy fallback to bot_config.timeStopHours
+      // has been removed). A warning is logged per (pair, market) via
+      // logTimeStopDisabledOnce to make the state visible.
       return [];
     }
   }
@@ -78,22 +115,45 @@ async function ensureConfigCache(): Promise<TimeStopConfigRow[]> {
 
 // ─── Config resolution ───────────────────────────────────────────────────────
 
+// FASE 4.1 — Resolution with explicit status so callers distinguish
+// "no config for this pair" (cae al wildcard) vs "user turned off for this pair"
+// (opt-out explícito, NO cae al wildcard).
+function resolveConfigStatus(
+  configs: TimeStopConfigRow[],
+  pair: string,
+  market: string = "spot"
+): ConfigResolution {
+  // Exact match (pair + market), cualquiera que sea el valor de isActive.
+  const exact = configs.find((c) => c.pair === pair && c.market === market);
+  if (exact) {
+    if (exact.isActive) {
+      return { status: "active", config: exact };
+    }
+    // Fila específica inactiva = opt-out explícito; NO fallback.
+    return { status: "explicitly_disabled", pair, market };
+  }
+
+  // Sin fila específica → fallback al wildcard si está activo.
+  const wildcard = configs.find(
+    (c) => c.pair === "*" && c.market === market && c.isActive
+  );
+  if (wildcard) {
+    return { status: "active", config: wildcard };
+  }
+  return { status: "no_config" };
+}
+
+// Kept for backward compatibility with any caller still expecting the old signature.
+// Returns the effective config row if usable, or undefined if the pair should be skipped.
+// NOTE: this collapses the 3 statuses to 2, so internal callers should prefer
+// resolveConfigStatus() when they need to distinguish "disabled" from "no_config".
 function resolveConfig(
   configs: TimeStopConfigRow[],
   pair: string,
   market: string = "spot"
 ): TimeStopConfigRow | undefined {
-  // Exact match (pair + market)
-  const exact = configs.find(
-    (c) => c.pair === pair && c.market === market && c.isActive
-  );
-  if (exact) return exact;
-
-  // Wildcard fallback
-  const wildcard = configs.find(
-    (c) => c.pair === "*" && c.market === market && c.isActive
-  );
-  return wildcard;
+  const res = resolveConfigStatus(configs, pair, market);
+  return res.status === "active" ? res.config : undefined;
 }
 
 function getRegimeFactor(config: TimeStopConfigRow, regime: MarketRegime): number {
@@ -177,27 +237,74 @@ export async function checkSmartTimeStop(
   const ageMs = now - openedAt;
   const ageHours = ageMs / (1000 * 60 * 60);
 
-  const smartTTL = await calculateSmartTTL(pair, regime, market);
+  // FASE 4.1 — Use explicit 3-state resolution (active / explicitly_disabled / no_config).
+  // The legacy fallback to bot_config.timeStopHours has been removed. If the module has no
+  // active config rows (no wildcard + no specific), TimeStop is simply not applied.
+  const configs = await ensureConfigCache();
+  const resolution = resolveConfigStatus(configs, pair, market);
 
-  // If no config found, use legacy fallback from bot_config
-  if (!smartTTL) {
-    const config = await storage.getBotConfig();
-    const legacyTTL = config?.timeStopHours ?? 36;
+  if (resolution.status === "explicitly_disabled") {
+    // Specific row with isActive=false → user explicit opt-out for this pair.
+    // Never close by TimeStop. No fallback, no legacy.
+    logTimeStopDisabledOnce(pair, market, "explicitly_disabled");
     return {
-      expired: ageHours >= legacyTTL,
-      shouldClose: !timeStopDisabled && ageHours >= legacyTTL,
+      expired: false,
+      shouldClose: false,
       ageHours,
-      ttlHours: legacyTTL,
+      ttlHours: 0,
       closeOrderType: "market",
       limitFallbackSeconds: 30,
-      reason: ageHours >= legacyTTL
-        ? `[TIME_STOP] TTL expirado (${ageHours.toFixed(1)}h >= ${legacyTTL}h) [legacy fallback]`
-        : "",
-      telegramAlertEnabled: true,
-      logExpiryEvenIfDisabled: true,
+      reason: `TimeStop explícitamente desactivado para ${pair} (fila específica con Activo=OFF)`,
+      telegramAlertEnabled: false,
+      logExpiryEvenIfDisabled: false,
       softMode: false,
       softModeBlocked: false,
-      configSource: "legacy:bot_config",
+      configSource: `${pair}:${market} (disabled)`,
+      explicitlyDisabled: true,
+    };
+  }
+
+  if (resolution.status === "no_config") {
+    // No wildcard + no specific row → TimeStop is globally off.
+    // This is a degenerate state; warn once per pair so it shows in logs but doesn't spam.
+    logTimeStopDisabledOnce(pair, market, "no_config");
+    return {
+      expired: false,
+      shouldClose: false,
+      ageHours,
+      ttlHours: 0,
+      closeOrderType: "market",
+      limitFallbackSeconds: 30,
+      reason: `Sin configuración TimeStop activa (ni fila específica ni wildcard '*'). TimeStop desactivado para ${pair}.`,
+      telegramAlertEnabled: false,
+      logExpiryEvenIfDisabled: false,
+      softMode: false,
+      softModeBlocked: false,
+      configSource: "no_config",
+      explicitlyDisabled: true,
+    };
+  }
+
+  // resolution.status === "active" → proceed with the standard flow.
+  const smartTTL = await calculateSmartTTL(pair, regime, market);
+  if (!smartTTL) {
+    // Defensive: resolveConfigStatus said "active" but calculateSmartTTL returned null.
+    // Shouldn't happen (both paths share the same cache), but fail closed (no close).
+    log(`[TIME_STOP_SVC] Unexpected: active resolution but null smartTTL for ${pair}:${market}`, "trading");
+    return {
+      expired: false,
+      shouldClose: false,
+      ageHours,
+      ttlHours: 0,
+      closeOrderType: "market",
+      limitFallbackSeconds: 30,
+      reason: "Config inconsistente; TimeStop en modo seguro (no cierra)",
+      telegramAlertEnabled: false,
+      logExpiryEvenIfDisabled: false,
+      softMode: false,
+      softModeBlocked: false,
+      configSource: "error:inconsistent",
+      explicitlyDisabled: true,
     };
   }
 
