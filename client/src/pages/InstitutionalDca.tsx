@@ -61,6 +61,7 @@ import {
   Copy,
   Download,
   Heart,
+  Info,
   LayoutDashboard,
   ListOrdered,
   Pause,
@@ -152,11 +153,12 @@ export default function InstitutionalDca() {
         <ControlsBar />
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-4 md:grid-cols-8 gap-1 h-auto p-1">
+          <TabsList className="grid grid-cols-4 md:grid-cols-9 gap-1 h-auto p-1">
             <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
             <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
             <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
             <TabsTrigger value="history" className="text-xs gap-1"><ListOrdered className="h-3 w-3" /> Historial</TabsTrigger>
+            <TabsTrigger value="legend" className="text-xs gap-1"><Info className="h-3 w-3" /> Leyenda</TabsTrigger>
             <TabsTrigger value="simulation" className="text-xs gap-1"><Wallet className="h-3 w-3" /> Simulación</TabsTrigger>
             <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
             <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
@@ -167,6 +169,7 @@ export default function InstitutionalDca() {
           <TabsContent value="config"><ConfigTab /></TabsContent>
           <TabsContent value="cycles"><CyclesTab /></TabsContent>
           <TabsContent value="history"><HistoryTab /></TabsContent>
+          <TabsContent value="legend"><LegendTab /></TabsContent>
           <TabsContent value="simulation"><SimulationTab /></TabsContent>
           <TabsContent value="events"><EventsTab /></TabsContent>
           <TabsContent value="telegram"><TelegramTab /></TabsContent>
@@ -3635,6 +3638,281 @@ function GuideSection({ icon: Icon, title, children }: { icon: any; title: strin
       </CardHeader>
       <CardContent className="text-sm leading-relaxed space-y-3">{children}</CardContent>
     </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LEGEND TAB
+// ════════════════════════════════════════════════════════════════════
+
+function LegendTab() {
+  return (
+    <div className="space-y-6 max-w-5xl">
+
+      {/* INTRO */}
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Info className="h-5 w-5 text-primary" />
+            Leyenda de Datos — VWAP & Hybrid
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Esta leyenda explica en lenguaje humano qué significan todos los datos que aparecen en los eventos de entrada y salida.
+            Los datos más importantes están <span className="text-cyan-400 font-semibold">resaltados en cyan</span> o <span className="text-red-400 font-semibold">rojo</span>.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* DATOS CLAVE */}
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-mono">Datos Clave (Resumen)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <DataLegendItem
+            label="Par"
+            value="ETH/USD, BTC/USD, etc."
+            desc="El par de criptomonedas que se está evaluando."
+            color="text-sky-300"
+          />
+          <DataLegendItem
+            label="Modo"
+            value="Real / Simulación"
+            desc="Real = dinero real en el exchange. Simulación = saldo virtual de prueba."
+            color="text-cyan-300"
+          />
+          <DataLegendItem
+            label="Precio base"
+            value="$2312,36 (cyan)"
+            desc="El precio de referencia desde el que se calcula la caída. <span className='text-cyan-400 font-semibold'>Con VWAP activo, es la banda -1σ (lowerBand1)</span>. Sin VWAP, es el precio híbrido calculado."
+            color="text-cyan-400"
+            highlight
+          />
+          <DataLegendItem
+            label="Tipo base"
+            value="vwap_lowerBand1 / hybrid_v2"
+            desc="El método usado para calcular el precio base. <span className='text-cyan-400 font-semibold'>vwap_lowerBand1</span> = VWAP banda -1σ (referencia de entrada). <span className='text-violet-400 font-semibold'>hybrid_v2</span> = cálculo híbrido con P95 y swing highs."
+            color="text-violet-300"
+          />
+          <DataLegendItem
+            label="Caída entrada"
+            value="0.67%"
+            desc="Cuánto ha caído el precio desde el precio base. Si es negativo, el precio está por encima del base."
+            color="text-amber-300"
+          />
+          <DataLegendItem
+            label="Tendencia semanal"
+            value="below / neutral / above"
+            desc="Posición del precio semanal respecto al VWAP semanal. <span className='text-red-400 font-semibold'>below</span> = tendencia bajista (bloquea entradas). <span className='text-green-400 font-semibold'>above</span> = tendencia alcista (permite entradas)."
+            color="text-green-300"
+            highlight
+          />
+          <DataLegendItem
+            label="Sesgo mensual"
+            value="defensive / balanced / aggressive"
+            desc="Sesgo del precio mensual respecto al VWAP mensual. <span className='text-amber-400 font-semibold'>defensive</span> = precio bajo (usa perfil conservador). <span className='text-green-400 font-semibold'>aggressive</span> = precio alto (usa perfil agresivo)."
+            color="text-amber-300"
+            highlight
+          />
+        </CardContent>
+      </Card>
+
+      {/* DATOS VWAP */}
+      <Card className="border-cyan-500/30 bg-cyan-500/5">
+        <CardHeader>
+          <CardTitle className="text-sm font-mono text-cyan-400">Datos VWAP (Banda de Precio Promedio)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            VWAP (Volume-Weighted Average Price) es el precio promedio ponderado por volumen. Las bandas ±1σ, ±2σ, ±3σ indican zonas estadísticas de precio.
+          </p>
+          <DataLegendItem
+            label="VWAP 24h"
+            value="$2325,17"
+            desc="El precio promedio de las últimas 24 horas. Es el centro de las bandas."
+            color="text-cyan-400"
+          />
+          <DataLegendItem
+            label="Banda -1σ (lowerBand1)"
+            value="$2312,36 (rojo)"
+            desc="Una desviación estándar por debajo del VWAP. <span className='text-cyan-400 font-semibold'>Es el precio base de referencia para entradas</span> cuando VWAP está activo. Zona de compra interesante."
+            color="text-red-400"
+            highlight
+          />
+          <DataLegendItem
+            label="Banda -2σ (lowerBand2)"
+            value="$2299,55"
+            desc="Dos desviaciones estándar por debajo. Zona de compra muy agresiva. Aquí se ancla el Safety Order 1 si VWAP dinámico está activo."
+            color="text-red-300"
+          />
+          <DataLegendItem
+            label="Banda -3σ (lowerBand3)"
+            value="$2286,74"
+            desc="Tres desviaciones estándar por debajo. Zona extrema de compra. Aquí se ancla el Safety Order 2 si VWAP dinámico está activo."
+            color="text-red-200"
+          />
+          <DataLegendItem
+            label="Banda +1σ (upperBand1)"
+            value="$2337,98 (verde)"
+            desc="Una desviación estándar por encima. Zona de sobreprecio. El precio por encima suele ser señal de fortaleza."
+            color="text-emerald-400"
+          />
+          <DataLegendItem
+            label="Banda +2σ (upperBand2)"
+            value="$2350,79"
+            desc="Dos desviaciones estándar por encima. Zona de sobreprecio extremo. El precio aquí es muy caro estadísticamente."
+            color="text-emerald-300"
+          />
+          <DataLegendItem
+            label="VWAP 7d (semanal)"
+            value="$2342,17"
+            desc="VWAP de las últimas 7 días. Se usa para calcular la <span className='text-green-400 font-semibold'>tendencia semanal</span>. Si el precio está por debajo, bloquea entradas (gate semanal)."
+            color="text-sky-300"
+          />
+          <DataLegendItem
+            label="VWAP 30d (mensual)"
+            value="$2161,46"
+            desc="VWAP de los últimos 30 días. Se usa para calcular el <span className='text-amber-400 font-semibold'>sesgo mensual</span>. Determina si el perfil de tamaño es conservador o agresivo."
+            color="text-sky-200"
+          />
+          <DataLegendItem
+            label="Zona VWAP"
+            value="below_lower2 / between_bands / above_upper1"
+            desc="En qué zona estadística está el precio actual. <span className='text-red-400 font-semibold'>below_lower2</span> = entre -1σ y -2σ (zona de compra interesante)."
+            color="text-violet-400"
+          />
+          <DataLegendItem
+            label="Dist VWAP"
+            value="-1.22%"
+            desc="Distancia porcentual del precio actual al VWAP 24h. Negativo = por debajo (compra), positivo = por encima (caro)."
+            color="text-amber-300"
+          />
+          <DataLegendItem
+            label="Dist -1σ"
+            value="-0.67%"
+            desc="Distancia del precio a la banda -1σ. Si está cerca de 0%, el precio está en la zona de referencia de entrada."
+            color="text-amber-200"
+          />
+          <DataLegendItem
+            label="Min Dip VWAP"
+            value="5%"
+            desc="Caída mínima requerida para entrar cuando VWAP está activo. Se calcula dinámicamente basado en ATR (volatilidad). Si la caída desde lowerBand1 es menor a esto, no entra."
+            color="text-amber-400"
+            highlight
+          />
+        </CardContent>
+      </Card>
+
+      {/* DATOS HYBRID V2 */}
+      <Card className="border-violet-500/30 bg-violet-500/5">
+        <CardHeader>
+          <CardTitle className="text-sm font-mono text-violet-400">Datos Hybrid V2.1 (Cálculo Híbrido)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            El cálculo híbrido usa múltiples ventanas de tiempo (24h, 48h, 72h, 7d, 30d) para encontrar un precio base robusto usando P95 (percentil 95) y swing highs.
+          </p>
+          <DataLegendItem
+            label="Ancla"
+            value="$2360,48"
+            desc="El precio seleccionado como ancla de referencia (swing high alineado con P95)."
+            color="text-sky-400"
+          />
+          <DataLegendItem
+            label="Caída desde ancla"
+            value="2.77%"
+            desc="Cuánto ha caído el precio desde la ancla seleccionada."
+            color="text-amber-300"
+          />
+          <DataLegendItem
+            label="Método"
+            value="swing_high_24h / p95_24h / etc."
+            desc="El método que se usó para seleccionar la ancla. swing_high_24h = máximo de 24 horas. p95_24h = percentil 95 de 24h."
+            color="text-violet-300"
+          />
+          <DataLegendItem
+            label="ATR%"
+            value="0.72%"
+            desc="Average True Range en porcentaje. Mide la volatilidad del mercado. Se usa para calcular el dip mínimo dinámico."
+            color="text-amber-200"
+          />
+          <DataLegendItem
+            label="P95 24h"
+            value="$2360,33"
+            desc="El percentil 95 de precios de las últimas 24 horas. El 5% más alto de precios."
+            color="text-violet-400"
+          />
+          <DataLegendItem
+            label="P95 7d"
+            value="$2434,40"
+            desc="El percentil 95 de precios de los últimos 7 días. Se usa como límite superior (cap) para el precio base."
+            color="text-violet-300"
+          />
+          <DataLegendItem
+            label="P95 30d"
+            value="$2377,07"
+            desc="El percentil 95 de precios de los últimos 30 días. Se usa como límite superior (cap) para el precio base."
+            color="text-violet-200"
+          />
+          <DataLegendItem
+            label="Swing 24h"
+            value="$2360,48"
+            desc="El máximo (swing high) de las últimas 24 horas."
+            color="text-sky-300"
+          />
+        </CardContent>
+      </Card>
+
+      {/* RESUMEN VISUAL */}
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-mono">Resumen Visual</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-cyan-400"></div>
+            <span className="text-muted-foreground">Cyan = Datos más importantes (precio base VWAP, bandas clave)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-red-400"></div>
+            <span className="text-muted-foreground">Rojo = Zonas de compra (bandas -1σ, -2σ, -3σ)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-emerald-400"></div>
+            <span className="text-muted-foreground">Verde = Zonas de sobreprecio (bandas +1σ, +2σ, tendencias positivas)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-amber-400"></div>
+            <span className="text-muted-foreground">Amber = Datos de volatilidad, distancias, sesgos</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-violet-400"></div>
+            <span className="text-muted-foreground">Violeta = Datos híbridos, métodos de cálculo</span>
+          </div>
+        </CardContent>
+      </Card>
+
+    </div>
+  );
+}
+
+function DataLegendItem({ label, value, desc, color, highlight }: {
+  label: string;
+  value: string;
+  desc: string;
+  color: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={cn("border-l-2 pl-3 py-1", highlight ? "border-cyan-500 bg-cyan-500/5 -ml-1" : "border-border/50")}>
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono font-bold text-xs text-muted-foreground">{label}:</span>
+        <span className={cn("font-mono text-xs", color, highlight && "font-semibold")}>{value}</span>
+      </div>
+      <p className="text-xs text-muted-foreground mt-1" dangerouslySetInnerHTML={{ __html: desc }} />
+    </div>
   );
 }
 
