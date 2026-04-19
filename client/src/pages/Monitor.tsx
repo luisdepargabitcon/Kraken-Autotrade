@@ -14,7 +14,7 @@ import {
   Wifi, WifiOff, RefreshCw, Trash2, Pause, Play, 
   Download, Copy, Search, X, ChevronDown, ChevronRight,
   AlertCircle, AlertTriangle, Info, Terminal, Activity,
-  Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle
+  Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle, BarChart3
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -85,6 +85,10 @@ export default function Monitor() {
                 <Eye className="h-4 w-4" />
                 Diagnóstico
               </TabsTrigger>
+              <TabsTrigger value="marketdata" className="gap-1" data-testid="tab-marketdata">
+                <BarChart3 className="h-4 w-4" />
+                Market Data
+              </TabsTrigger>
             </TabsList>
           </div>
           
@@ -98,6 +102,10 @@ export default function Monitor() {
           
           <TabsContent value="diagnostic" className="mt-0">
             <DiagnosticTab />
+          </TabsContent>
+          
+          <TabsContent value="marketdata" className="mt-0">
+            <MarketDataTab />
           </TabsContent>
         </Tabs>
       </div>
@@ -1214,6 +1222,183 @@ interface DbDiagnosticData {
     recentVacuums: Array<{ table: string; lastVacuum: string; lastAnalyze: string }>;
   };
 }
+
+// ════════════════════════════════════════════════════════════════════
+// MARKET DATA TAB
+// ════════════════════════════════════════════════════════════════════
+
+interface MarketDataStatsResponse {
+  candleCacheSize: number;
+  priceCacheSize: number;
+  entries: {
+    key: string;
+    count: number;
+    ageMs: number;
+    ttlMs: number;
+    stale: boolean;
+  }[];
+}
+
+function MarketDataTab() {
+  const { data, isLoading, isFetching, error, refetch } = useQuery<MarketDataStatsResponse>({
+    queryKey: ["/api/market-data/stats"],
+    refetchInterval: 15000,
+    staleTime: 0,
+  });
+
+  const formatAge = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60_000) return `${(ms / 1000).toFixed(0)}s`;
+    if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+    return `${(ms / 3_600_000).toFixed(1)}h`;
+  };
+
+  const candleEntries = (data?.entries || []).filter(e => !e.key.endsWith("::price"));
+  const priceEntries = (data?.entries || []).filter(e => e.key.endsWith("::price"));
+  const staleCount = (data?.entries || []).filter(e => e.stale).length;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" />
+            Market Data Cache
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            data-testid="btn-refresh-marketdata"
+          >
+            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+            Actualizar
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {error ? (
+            <div className="text-red-400 text-sm">
+              Error al cargar Market Data: {(error as Error).message}
+            </div>
+          ) : isLoading ? (
+            <div className="text-muted-foreground text-sm">Cargando...</div>
+          ) : !data ? (
+            <div className="text-muted-foreground text-sm">Sin datos — el servicio no ha realizado fetches aún.</div>
+          ) : (
+            <>
+              {/* Summary cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Candle cache</div>
+                  <div className="text-lg font-semibold">{data.candleCacheSize}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Price cache</div>
+                  <div className="text-lg font-semibold">{data.priceCacheSize}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Entradas totales</div>
+                  <div className="text-lg font-semibold">{data.entries.length}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-xs text-muted-foreground">Stale</div>
+                  <div className={cn("text-lg font-semibold", staleCount > 0 ? "text-yellow-400" : "text-green-400")}>
+                    {staleCount}
+                  </div>
+                </div>
+              </div>
+
+              {/* Candle entries table */}
+              {candleEntries.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-sm font-medium mb-2">Candles en cache</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-muted">
+                          <th className="text-left py-2 px-3 font-medium">Par::TF</th>
+                          <th className="text-right py-2 px-3 font-medium">Candles</th>
+                          <th className="text-right py-2 px-3 font-medium">Edad</th>
+                          <th className="text-right py-2 px-3 font-medium">TTL</th>
+                          <th className="text-center py-2 px-3 font-medium">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {candleEntries.map((e) => (
+                          <tr key={e.key} className="border-b border-muted/50 hover:bg-muted/20">
+                            <td className="py-2 px-3 font-mono text-xs">{e.key}</td>
+                            <td className="py-2 px-3 text-right font-mono">{e.count}</td>
+                            <td className="py-2 px-3 text-right font-mono text-muted-foreground">{formatAge(e.ageMs)}</td>
+                            <td className="py-2 px-3 text-right font-mono text-muted-foreground">{formatAge(e.ttlMs)}</td>
+                            <td className="py-2 px-3 text-center">
+                              <Badge className={e.stale
+                                ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                                : "bg-green-500/20 text-green-400 border-green-500/30"
+                              }>
+                                {e.stale ? "STALE" : "FRESH"}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Price entries table */}
+              {priceEntries.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Precios spot en cache</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-muted">
+                          <th className="text-left py-2 px-3 font-medium">Par</th>
+                          <th className="text-right py-2 px-3 font-medium">Edad</th>
+                          <th className="text-right py-2 px-3 font-medium">TTL</th>
+                          <th className="text-center py-2 px-3 font-medium">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {priceEntries.map((e) => (
+                          <tr key={e.key} className="border-b border-muted/50 hover:bg-muted/20">
+                            <td className="py-2 px-3 font-mono text-xs">{e.key.replace("::price", "")}</td>
+                            <td className="py-2 px-3 text-right font-mono text-muted-foreground">{formatAge(e.ageMs)}</td>
+                            <td className="py-2 px-3 text-right font-mono text-muted-foreground">{formatAge(e.ttlMs)}</td>
+                            <td className="py-2 px-3 text-center">
+                              <Badge className={e.stale
+                                ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                                : "bg-green-500/20 text-green-400 border-green-500/30"
+                              }>
+                                {e.stale ? "STALE" : "FRESH"}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {data.entries.length === 0 && (
+                <div className="text-muted-foreground text-sm text-center py-8">
+                  Cache vacío — el servicio no ha realizado fetches aún. Espera al próximo tick del engine.
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DIAGNOSTIC TAB
+// ════════════════════════════════════════════════════════════════════
 
 function DiagnosticTab() {
   const { data, isLoading, isFetching, error, refetch } = useQuery<DiagnosticData>({
