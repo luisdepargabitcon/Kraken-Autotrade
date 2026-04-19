@@ -642,7 +642,7 @@ async function checkEntry(
         eventType: "entry_check_blocked",
         severity: "info",
         message: check.blockReasons.map(r => r.code).join(", "),
-        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod },
+        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias, selectedSizeProfile: check.sizeProfile },
       }, {
         eventType: "entry_check_blocked",
         reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
@@ -667,7 +667,7 @@ async function checkEntry(
     eventType: "entry_check_passed",
     severity: "info",
     message: `Entry check passed: BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
-    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod },
+    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias, selectedSizeProfile: check.sizeProfile },
   }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
 
   // Calculate capital for this cycle
@@ -1786,6 +1786,21 @@ async function performEntryCheck(
     blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip.toFixed(2)}% (EffectiveBase=$${effectiveBasePrice.toFixed(2)}, Method=${basePriceMethod})`, timestamp: now });
   }
 
+  // ── Gate semanal VWAP (solo con vwapEnabled) ──────────────────────
+  let weeklyTrend: "below" | "above" | "unknown" = "unknown";
+  if (assetConfig.vwapEnabled && vwapContext?.vwapWeekly) {
+    weeklyTrend = currentPrice < vwapContext.vwapWeekly ? "below" : "above";
+
+    const isNeutralZone = (
+      currentPrice >= (vwapContext.lowerBand1 || 0) &&
+      currentPrice <= (vwapContext.upperBand1 || Infinity)
+    );
+
+    if (weeklyTrend === "below" && isNeutralZone) {
+      blocks.push({ code: "vwap_weekly_trend_bearish", message: `Weekly VWAP bearish: price $${currentPrice.toFixed(2)} < weekly VWAP $${vwapContext.vwapWeekly.toFixed(2)} in neutral zone`, timestamp: now });
+    }
+  }
+
   // BTC gate for ETH
   if (pair === "ETH/USD" && config.btcMarketGateForEthEnabled) {
     const btcPrice = await getCurrentPrice("BTC/USD");
@@ -1868,6 +1883,22 @@ async function performEntryCheck(
     }
   }
 
+  // ── sizeProfile override por VWAP mensual ────────────────────
+  let monthlyBias: "aggressive" | "balanced" | "defensive" | "unknown" = "unknown";
+  if (assetConfig.vwapEnabled && vwapContext?.vwapMonthly) {
+    const mp = vwapContext.vwapMonthly;
+    if (currentPrice < mp * 0.95) {
+      monthlyBias = "aggressive";
+      sizeProfile = "aggressive_quality";
+    } else if (currentPrice < mp) {
+      monthlyBias = "balanced";
+      // No override — keep market score profile
+    } else {
+      monthlyBias = "defensive";
+      sizeProfile = "defensive";
+    }
+  }
+
   // Rebound confirmation
   let reboundConfirmed = true;
   if (assetConfig.requireReboundConfirmation && entryDipPct >= minDip) {
@@ -1904,6 +1935,8 @@ async function performEntryCheck(
     effectiveBasePrice,
     effectiveMinDip: minDip,
     basePriceMethod,
+    weeklyTrend,
+    monthlyBias,
   };
 }
 

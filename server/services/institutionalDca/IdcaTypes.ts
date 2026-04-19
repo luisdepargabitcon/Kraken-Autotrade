@@ -202,6 +202,8 @@ export interface IdcaEntryCheckResult {
   effectiveBasePrice?: number;
   effectiveMinDip?: number;
   basePriceMethod?: string;
+  weeklyTrend?: "below" | "above" | "unknown";
+  monthlyBias?: "aggressive" | "balanced" | "defensive" | "unknown";
 }
 
 export interface IdcaPairEvaluation {
