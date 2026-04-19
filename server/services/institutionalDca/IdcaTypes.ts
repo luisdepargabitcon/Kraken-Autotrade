@@ -177,13 +177,16 @@ export interface VwapEntryContext {
   lowerBand1: number;
   upperBand2: number;
   lowerBand2: number;
+  lowerBand3: number;
   stdDev: number;
   anchorTime: number;
   candlesUsed: number;
   isReliable: boolean;
-  zone: "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+  zone: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
   distanceFromVwapPct: number;
   distanceFromLower1Pct: number;
+  vwapWeekly: number | null;
+  vwapMonthly: number | null;
 }
 
 export interface IdcaEntryCheckResult {
@@ -196,6 +199,9 @@ export interface IdcaEntryCheckResult {
   basePrice?: BasePriceResult;
   reboundConfirmed?: boolean;
   vwapContext?: VwapEntryContext;
+  effectiveBasePrice?: number;
+  effectiveMinDip?: number;
+  basePriceMethod?: string;
 }
 
 export interface IdcaPairEvaluation {

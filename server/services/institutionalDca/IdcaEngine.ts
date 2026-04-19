@@ -642,7 +642,7 @@ async function checkEntry(
         eventType: "entry_check_blocked",
         severity: "info",
         message: check.blockReasons.map(r => r.code).join(", "),
-        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null },
+        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod },
       }, {
         eventType: "entry_check_blocked",
         reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
@@ -667,7 +667,7 @@ async function checkEntry(
     eventType: "entry_check_passed",
     severity: "info",
     message: `Entry check passed: BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
-    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null },
+    payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod },
   }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
 
   // Calculate capital for this cycle
@@ -1720,13 +1720,70 @@ async function performEntryCheck(
     blocks.push({ code: "insufficient_base_price_data", message: basePriceResult.reason, timestamp: now });
   }
 
-  const entryDipPct = basePriceResult.price > 0
-    ? ((basePriceResult.price - currentPrice) / basePriceResult.price) * 100
+  // ── VWAP Anchored context (computed early so it can influence dip check) ──
+  let vwapContext: VwapEntryContext | undefined;
+  if (assetConfig.vwapEnabled && basePriceResult.isReliable && basePriceResult.timestamp) {
+    const anchorMs = basePriceResult.timestamp instanceof Date
+      ? basePriceResult.timestamp.getTime()
+      : basePriceResult.timestamp;
+    const vwapResult = smart.computeVwapAnchored(candles, anchorMs);
+    if (vwapResult.isReliable) {
+      const bandPos = smart.getVwapBandPosition(currentPrice, vwapResult);
+      vwapContext = {
+        vwap: vwapResult.vwap,
+        upperBand1: vwapResult.upperBand1,
+        lowerBand1: vwapResult.lowerBand1,
+        upperBand2: vwapResult.upperBand2,
+        lowerBand2: vwapResult.lowerBand2,
+        lowerBand3: vwapResult.lowerBand3,
+        stdDev: vwapResult.stdDev,
+        anchorTime: vwapResult.anchorTime,
+        candlesUsed: vwapResult.candlesUsed,
+        isReliable: true,
+        zone: bandPos.zone,
+        distanceFromVwapPct: bandPos.distanceFromVwapPct,
+        distanceFromLower1Pct: bandPos.distanceFromLower1Pct,
+        vwapWeekly: vwapResult.vwapWeekly,
+        vwapMonthly: vwapResult.vwapMonthly,
+      };
+      console.log(
+        `${TAG}[VWAP] ${pair}: vwap=$${vwapResult.vwap.toFixed(2)}` +
+        ` | zone=${bandPos.zone}` +
+        ` | dist=${bandPos.distanceFromVwapPct.toFixed(2)}%` +
+        ` | σ=$${vwapResult.stdDev.toFixed(2)}` +
+        ` | bands=[$${vwapResult.lowerBand3.toFixed(2)}, $${vwapResult.lowerBand2.toFixed(2)}, $${vwapResult.lowerBand1.toFixed(2)}, $${vwapResult.upperBand1.toFixed(2)}, $${vwapResult.upperBand2.toFixed(2)}]` +
+        ` | weekly=${vwapResult.vwapWeekly?.toFixed(2) ?? "n/a"} | monthly=${vwapResult.vwapMonthly?.toFixed(2) ?? "n/a"}` +
+        ` | candles=${vwapResult.candlesUsed}`
+      );
+    }
+  }
+
+  // ── Effective base price: VWAP lowerBand1 if active, else hybrid_v2 ──
+  const effectiveBasePrice = (
+    assetConfig.vwapEnabled &&
+    vwapContext?.lowerBand1 &&
+    vwapContext.lowerBand1 > 0
+  )
+    ? vwapContext.lowerBand1
+    : basePriceResult.price;
+
+  const basePriceMethod = (
+    assetConfig.vwapEnabled &&
+    vwapContext?.lowerBand1 &&
+    vwapContext.lowerBand1 > 0
+  ) ? "vwap_lowerBand1" : "hybrid_v2";
+
+  const entryDipPct = effectiveBasePrice > 0
+    ? ((effectiveBasePrice - currentPrice) / effectiveBasePrice) * 100
     : 0;
-  const minDip = parseFloat(String(assetConfig.minDipPct));
+
+  const atrPct = basePriceResult.meta?.atrPct ?? 0;
+  const minDip = assetConfig.vwapEnabled
+    ? Math.max(atrPct * 1.5, parseFloat(String(assetConfig.minDipPct)))
+    : parseFloat(String(assetConfig.minDipPct));
 
   if (basePriceResult.isReliable && entryDipPct < minDip) {
-    blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip}% (BasePrice=$${basePriceResult.price.toFixed(2)}, Type=${basePriceResult.type})`, timestamp: now });
+    blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip.toFixed(2)}% (EffectiveBase=$${effectiveBasePrice.toFixed(2)}, Method=${basePriceMethod})`, timestamp: now });
   }
 
   // BTC gate for ETH
@@ -1826,40 +1883,6 @@ async function performEntryCheck(
     }
   }
 
-  // ── VWAP Anchored context ──────────────────────────────────────
-  let vwapContext: VwapEntryContext | undefined;
-  if (assetConfig.vwapEnabled && basePriceResult.isReliable && basePriceResult.timestamp) {
-    const anchorMs = basePriceResult.timestamp instanceof Date
-      ? basePriceResult.timestamp.getTime()
-      : basePriceResult.timestamp;
-    const vwapResult = smart.computeVwapAnchored(candles, anchorMs);
-    if (vwapResult.isReliable) {
-      const bandPos = smart.getVwapBandPosition(currentPrice, vwapResult);
-      vwapContext = {
-        vwap: vwapResult.vwap,
-        upperBand1: vwapResult.upperBand1,
-        lowerBand1: vwapResult.lowerBand1,
-        upperBand2: vwapResult.upperBand2,
-        lowerBand2: vwapResult.lowerBand2,
-        stdDev: vwapResult.stdDev,
-        anchorTime: vwapResult.anchorTime,
-        candlesUsed: vwapResult.candlesUsed,
-        isReliable: true,
-        zone: bandPos.zone,
-        distanceFromVwapPct: bandPos.distanceFromVwapPct,
-        distanceFromLower1Pct: bandPos.distanceFromLower1Pct,
-      };
-      console.log(
-        `${TAG}[VWAP] ${pair}: vwap=$${vwapResult.vwap.toFixed(2)}` +
-        ` | zone=${bandPos.zone}` +
-        ` | dist=${bandPos.distanceFromVwapPct.toFixed(2)}%` +
-        ` | σ=$${vwapResult.stdDev.toFixed(2)}` +
-        ` | bands=[$${vwapResult.lowerBand2.toFixed(2)}, $${vwapResult.lowerBand1.toFixed(2)}, $${vwapResult.upperBand1.toFixed(2)}, $${vwapResult.upperBand2.toFixed(2)}]` +
-        ` | candles=${vwapResult.candlesUsed}`
-      );
-    }
-  }
-
   // Entry decision log — emitido con todos los bloques evaluados
   logEntryDecision(
     pair, mode,
@@ -1878,6 +1901,9 @@ async function performEntryCheck(
     basePrice: basePriceResult,
     reboundConfirmed,
     vwapContext,
+    effectiveBasePrice,
+    effectiveMinDip: minDip,
+    basePriceMethod,
   };
 }
 

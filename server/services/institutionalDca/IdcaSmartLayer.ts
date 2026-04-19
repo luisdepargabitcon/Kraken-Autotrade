@@ -793,6 +793,7 @@ export function adjustSafetyOrdersWithVwap(
   vwapZone: VwapBandPosition["zone"],
 ): AdjustedSafetyOrder[] {
   const factorMap: Record<VwapBandPosition["zone"], number> = {
+    below_lower3: 0.70,   // tighten 30% (panic zone)
     below_lower2: 0.80,   // tighten 20%
     below_lower1: 0.90,   // tighten 10%
     between_bands: 1.00,  // no change
@@ -822,15 +823,18 @@ export interface VwapResult {
   lowerBand1: number;  // -1 σ
   upperBand2: number;  // +2 σ
   lowerBand2: number;  // -2 σ
+  lowerBand3: number;  // -3 σ
   stdDev: number;
   anchorTime: number;  // epoch ms of anchor candle
   candlesUsed: number;
   isReliable: boolean;
   reason: string;
+  vwapWeekly: number | null;   // VWAP of last 7 days (null if insufficient data)
+  vwapMonthly: number | null;  // VWAP of last 30 days (null if insufficient data)
 }
 
 export interface VwapBandPosition {
-  zone: "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+  zone: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
   distanceFromVwapPct: number;    // negative = below VWAP
   distanceFromLower1Pct: number;  // negative = below lower band
   distanceFromLower2Pct: number;
@@ -861,10 +865,11 @@ export function computeVwapAnchored(
 
   if (slice.length < VWAP_MIN_CANDLES) {
     return {
-      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
       stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
       isReliable: false,
       reason: `Insufficient candles: ${slice.length}/${VWAP_MIN_CANDLES}`,
+      vwapWeekly: null, vwapMonthly: null,
     };
   }
 
@@ -872,10 +877,11 @@ export function computeVwapAnchored(
   const hasVolume = slice.some(c => (c.volume ?? 0) > 0);
   if (!hasVolume) {
     return {
-      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
       stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
       isReliable: false,
       reason: "No volume data available for VWAP calculation",
+      vwapWeekly: null, vwapMonthly: null,
     };
   }
 
@@ -897,10 +903,11 @@ export function computeVwapAnchored(
 
   if (cumulativeVol === 0) {
     return {
-      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0,
+      vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
       stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
       isReliable: false,
       reason: "Total volume is zero",
+      vwapWeekly: null, vwapMonthly: null,
     };
   }
 
@@ -915,17 +922,37 @@ export function computeVwapAnchored(
   const variance = weightedSumSqDev / cumulativeVol;
   const stdDev = Math.sqrt(variance);
 
+  // Compute VWAP weekly and monthly from full candle set
+  const nowMs = Date.now();
+  const weekMs  = 7  * 24 * 60 * 60 * 1000;
+  const monthMs = 30 * 24 * 60 * 60 * 1000;
+
+  function calcPeriodVwap(src: TimestampedCandle[], periodMs: number): number | null {
+    const periodSlice = src.filter(c => c.time >= nowMs - periodMs);
+    if (periodSlice.length < 7) return null;
+    let tpv = 0, vol = 0;
+    for (const c of periodSlice) {
+      const v = c.volume ?? 0;
+      tpv += ((c.high + c.low + c.close) / 3) * v;
+      vol += v;
+    }
+    return vol > 0 ? tpv / vol : null;
+  }
+
   return {
     vwap,
     upperBand1: vwap + stdDev,
     lowerBand1: vwap - stdDev,
     upperBand2: vwap + 2 * stdDev,
     lowerBand2: vwap - 2 * stdDev,
+    lowerBand3: vwap - 3 * stdDev,
     stdDev,
     anchorTime: slice[0].time,
     candlesUsed: slice.length,
     isReliable: true,
     reason: `VWAP anchored from ${new Date(slice[0].time).toISOString().slice(0, 16)}, ${slice.length} candles`,
+    vwapWeekly: calcPeriodVwap(candles, weekMs),
+    vwapMonthly: calcPeriodVwap(candles, monthMs),
   };
 }
 
@@ -947,7 +974,9 @@ export function getVwapBandPosition(price: number, vwap: VwapResult): VwapBandPo
   const distFromLower2 = vwap.lowerBand2 > 0 ? ((price - vwap.lowerBand2) / vwap.lowerBand2) * 100 : 0;
 
   let zone: VwapBandPosition["zone"];
-  if (price <= vwap.lowerBand2) {
+  if (price <= vwap.lowerBand3) {
+    zone = "below_lower3";
+  } else if (price <= vwap.lowerBand2) {
     zone = "below_lower2";
   } else if (price <= vwap.lowerBand1) {
     zone = "below_lower1";
