@@ -14,7 +14,8 @@ import {
   Wifi, WifiOff, RefreshCw, Trash2, Pause, Play, 
   Download, Copy, Search, X, ChevronDown, ChevronRight,
   AlertCircle, AlertTriangle, Info, Terminal, Activity,
-  Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle, BarChart3
+  Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle, BarChart3,
+  Gauge, AlertOctagon, Zap, Clock, HelpCircle
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -1239,12 +1240,31 @@ interface MarketDataStatsResponse {
   }[];
 }
 
+interface RateLimiterState {
+  queueLength: number;
+  running: number;
+  minTimeMs: number;
+  totalCalls: number;
+  totalErrors: number;
+  degraded: boolean;
+  consecutiveErrors: number;
+  lastWaitedMs: number;
+}
+
 function MarketDataTab() {
   const { data, isLoading, isFetching, error, refetch } = useQuery<MarketDataStatsResponse>({
     queryKey: ["/api/market-data/stats"],
     refetchInterval: 15000,
     staleTime: 0,
   });
+
+  const { data: rl, isFetching: rlFetching, refetch: rlRefetch } = useQuery<RateLimiterState>({
+    queryKey: ["/api/rate-limiter/stats"],
+    refetchInterval: 5000,
+    staleTime: 0,
+  });
+
+  const [showLegend, setShowLegend] = useState(false);
 
   const formatAge = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
@@ -1257,26 +1277,142 @@ function MarketDataTab() {
   const priceEntries = (data?.entries || []).filter(e => e.key.endsWith("::price"));
   const staleCount = (data?.entries || []).filter(e => e.stale).length;
 
+  // Rate limiter gauge helpers
+  const MAX_QUEUE = 60;
+  const queuePct = rl ? Math.min(100, (rl.queueLength / MAX_QUEUE) * 100) : 0;
+  const queueColor = !rl ? "bg-muted" : rl.degraded ? "bg-red-500" : queuePct > 50 ? "bg-yellow-500" : "bg-green-500";
+  const errorRate = rl && rl.totalCalls > 0 ? ((rl.totalErrors / rl.totalCalls) * 100).toFixed(1) : "0.0";
+
   return (
     <div className="space-y-4">
+      {/* ── RATE LIMITER PANEL ── */}
+      <Card className={cn("border", rl?.degraded ? "border-red-500/50" : "border-border/50")}>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Gauge className="h-5 w-5" />
+            Kraken Rate Limiter
+            {rl?.degraded && (
+              <Badge className="bg-red-500/20 text-red-400 border-red-500/30 gap-1 ml-2 animate-pulse">
+                <AlertOctagon className="h-3 w-3" /> DEGRADADO
+              </Badge>
+            )}
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={() => rlRefetch()} disabled={rlFetching}>
+            <RefreshCw className={cn("h-4 w-4", rlFetching && "animate-spin")} />
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {!rl ? (
+            <div className="text-muted-foreground text-sm">Cargando estado del rate limiter...</div>
+          ) : (
+            <>
+              {/* Visual queue gauge */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                  <span>Cola de peticiones a Kraken</span>
+                  <span className="font-mono">{rl.queueLength} / {MAX_QUEUE}</span>
+                </div>
+                <div className="w-full bg-muted/30 rounded-full h-4 overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full transition-all duration-500", queueColor)}
+                    style={{ width: `${Math.max(queuePct, 2)}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                  <span>0 (libre)</span>
+                  <span className="text-yellow-400">30 (degradado)</span>
+                  <span className="text-red-400">60 (overflow)</span>
+                </div>
+              </div>
+
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Zap className="h-3 w-3" /> Ejecutando</div>
+                  <div className="text-lg font-semibold font-mono">{rl.running}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Espera</div>
+                  <div className={cn("text-lg font-semibold font-mono", rl.lastWaitedMs > 15000 ? "text-red-400" : rl.lastWaitedMs > 3000 ? "text-yellow-400" : "text-foreground")}>
+                    {formatAge(rl.lastWaitedMs)}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground">Total llamadas</div>
+                  <div className="text-lg font-semibold font-mono">{rl.totalCalls.toLocaleString()}</div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground">Errores</div>
+                  <div className={cn("text-lg font-semibold font-mono", rl.totalErrors > 0 ? "text-red-400" : "text-foreground")}>
+                    {rl.totalErrors} <span className="text-xs text-muted-foreground">({errorRate}%)</span>
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground">Racha errores</div>
+                  <div className={cn("text-lg font-semibold font-mono", rl.consecutiveErrors >= 3 ? "text-red-400" : rl.consecutiveErrors > 0 ? "text-yellow-400" : "text-green-400")}>
+                    {rl.consecutiveErrors}
+                  </div>
+                </div>
+              </div>
+
+              {/* Degraded explanation */}
+              {rl.degraded && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-300">
+                  <strong>Modo degradado activo:</strong> La API de Kraken no responde a tiempo. Las compras nuevas quedan bloqueadas hasta que se normalice.
+                  Las posiciones abiertas siguen gestionandose (SL/TP activos).
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── MARKET DATA CACHE ── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-lg flex items-center gap-2">
             <BarChart3 className="h-5 w-5" />
             Market Data Cache
           </CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            data-testid="btn-refresh-marketdata"
-          >
-            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
-            Actualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setShowLegend(!showLegend)} className="text-xs gap-1">
+              <HelpCircle className="h-3.5 w-3.5" />
+              {showLegend ? "Ocultar leyenda" : "Leyenda"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              data-testid="btn-refresh-marketdata"
+            >
+              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+              Actualizar
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
+          {/* Legend */}
+          {showLegend && (
+            <div className="mb-4 p-3 rounded-lg bg-muted/20 border border-border/40 text-sm space-y-2">
+              <p className="font-medium text-foreground">Que significan estos datos:</p>
+              <ul className="space-y-1.5 text-muted-foreground text-xs">
+                <li><strong className="text-foreground">Candle cache</strong> — Cuantos pares+timeframes tienen velas OHLCV guardadas en memoria. Cada par que opera necesita velas para calcular indicadores (EMA, RSI, MACD, etc.).</li>
+                <li><strong className="text-foreground">Price cache</strong> — Precios spot (ultimo precio de mercado) guardados en memoria para cada par. Se actualizan cada 30 segundos.</li>
+                <li><strong className="text-foreground">Par::TF</strong> — Par de trading y timeframe. Ej: <code className="bg-muted px-1 rounded">BTC/USD::1h</code> = velas de 1 hora para Bitcoin.</li>
+                <li><strong className="text-foreground">Candles</strong> — Numero de velas historicas guardadas para ese par y timeframe.</li>
+                <li><strong className="text-foreground">Edad</strong> — Hace cuanto se descargaron los datos. Si es muy alto, los datos pueden estar desactualizados.</li>
+                <li><strong className="text-foreground">TTL</strong> — Tiempo maximo de vida (Time-To-Live). Cuando la edad supera el TTL, los datos se consideran <strong className="text-yellow-400">STALE</strong> y se recargan.</li>
+                <li>
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">FRESH</Badge>{" "}
+                  Datos actualizados y listos para usar.{" "}
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">STALE</Badge>{" "}
+                  Datos expirados, se recargan en el proximo tick.
+                </li>
+              </ul>
+            </div>
+          )}
+
           {error ? (
             <div className="text-red-400 text-sm">
               Error al cargar Market Data: {(error as Error).message}
@@ -1284,7 +1420,7 @@ function MarketDataTab() {
           ) : isLoading ? (
             <div className="text-muted-foreground text-sm">Cargando...</div>
           ) : !data ? (
-            <div className="text-muted-foreground text-sm">Sin datos — el servicio no ha realizado fetches aún.</div>
+            <div className="text-muted-foreground text-sm">Sin datos — el servicio no ha realizado fetches aun.</div>
           ) : (
             <>
               {/* Summary cards */}
@@ -1385,7 +1521,7 @@ function MarketDataTab() {
 
               {data.entries.length === 0 && (
                 <div className="text-muted-foreground text-sm text-center py-8">
-                  Cache vacío — el servicio no ha realizado fetches aún. Espera al próximo tick del engine.
+                  Cache vacio — el servicio no ha realizado fetches aun. Espera al proximo tick del engine.
                 </div>
               )}
             </>

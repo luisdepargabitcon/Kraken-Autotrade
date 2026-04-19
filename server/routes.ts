@@ -12,6 +12,7 @@ import { environment } from "./services/environment";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
 import { MarketDataService } from "./services/MarketDataService";
+import { krakenRateLimiter } from "./utils/krakenRateLimiter";
 import { z } from "zod";
 import { errorAlertService } from "./services/ErrorAlertService";
 import cron from "node-cron";
@@ -97,6 +98,15 @@ export async function registerRoutes(
   app.get("/api/market-data/stats", (_req, res) => {
     try {
       res.json(MarketDataService.getStats());
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  // Kraken rate limiter diagnostics
+  app.get("/api/rate-limiter/stats", (_req, res) => {
+    try {
+      res.json(krakenRateLimiter.getState());
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
     }
