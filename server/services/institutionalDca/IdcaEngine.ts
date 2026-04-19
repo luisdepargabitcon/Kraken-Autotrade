@@ -783,7 +783,13 @@ async function checkEntry(
 
   // Next safety buy level
   const nextLevel = safetyOrders.length > 0 ? safetyOrders[0].dipPct : null;
-  const nextBuyPrice = nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
+  let nextBuyPrice = nextLevel ? currentPrice * (1 - nextLevel / 100) : null;
+
+  // VWAP override: safety 1 → lowerBand2 (if lower than % fallback)
+  const vc = check.vwapContext;
+  if (assetConfig.vwapEnabled && vc?.lowerBand2 && vc.lowerBand2 > 0 && nextBuyPrice !== null) {
+    nextBuyPrice = Math.min(nextBuyPrice, vc.lowerBand2);
+  }
 
   // Apply simulation fees
   let fees = 0;
@@ -822,7 +828,10 @@ async function checkEntry(
     basePriceType: bp.type,
     basePriceWindowMinutes: bp.windowMinutes,
     basePriceTimestamp: bp.timestamp,
-    basePriceMetaJson: bp.meta || null,
+    basePriceMetaJson: {
+      ...(bp.meta || {}),
+      ...(assetConfig.vwapEnabled && vc ? { vwapBands: { lowerBand2: vc.lowerBand2, lowerBand3: vc.lowerBand3 } } : {}),
+    },
     entryDipPct: (check.entryDipPct || 0).toFixed(4),
   });
 
@@ -1291,7 +1300,28 @@ async function checkSafetyBuy(
   const nextSafety = safetyOrders[safetyIndex]; // next after current
   const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
   const avgForNextBuy = newAvgPrice; // Reference from new avg
-  const nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
+  let nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
+
+  // VWAP override: anchor safety orders to real VWAP bands
+  // safetyIndex 1 (safety 1→2) → lowerBand2, safetyIndex 2 (safety 2→3) → lowerBand3
+  // safetyIndex >= 3 → fallback to % calculation above
+  if (assetConfig.vwapEnabled && nextBuyPriceCalc !== null) {
+    try {
+      const meta = typeof cycle.basePriceMetaJson === "string"
+        ? JSON.parse(cycle.basePriceMetaJson)
+        : cycle.basePriceMetaJson;
+      const vwapBands = meta?.vwapBands;
+      if (vwapBands) {
+        const vwapLevels = [vwapBands.lowerBand2, vwapBands.lowerBand3];
+        // safetyIndex is 0-based from safetyOrders, maps: 1→band2, 2→band3
+        if (safetyIndex < vwapLevels.length && vwapLevels[safetyIndex] > 0) {
+          nextBuyPriceCalc = Math.min(nextBuyPriceCalc, vwapLevels[safetyIndex]);
+        }
+      }
+    } catch {
+      // JSON corrupto → usa cálculo % fijo existente
+    }
+  }
 
   // Dynamic TP recalculation
   let tpPct = parseFloat(String(assetConfig.takeProfitPct));
