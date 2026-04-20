@@ -637,86 +637,6 @@ async function evaluatePair(
     if (!hasAny && !hasImported) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
 
-      // ── VWAP Anchor Memory (frozen anchor that never goes down) ─────────
-      // Calculate swing high from Hybrid V2.1 to update anchor memory
-      const cacheCandles = ohlcCache.get(pair) || [];
-      let frozenAnchor: VwapAnchorState | undefined;
-      if (cacheCandles.length >= 7) {
-        const dipRefMethod = normalizeDipReferenceMethod(assetConfig.dipReference || "hybrid", { pair, origin: "assetConfig.dipReference" });
-        const basePriceResult = smart.computeBasePrice({
-          candles: cacheCandles,
-          lookbackMinutes: config.localHighLookbackMinutes,
-          method: dipRefMethod,
-          currentPrice,
-          pair,
-        });
-
-        // Extract newSwingPrice/newSwingTs even if basePriceResult is not "fully reliable"
-        // (we just need a valid price + timestamp to anchor)
-        const newSwingPrice = basePriceResult?.price;
-        const rawTs = basePriceResult?.timestamp;
-        const newSwingTs = rawTs instanceof Date
-          ? rawTs.getTime()
-          : typeof rawTs === "string"
-            ? new Date(rawTs).getTime()
-            : typeof rawTs === "number"
-              ? rawTs
-              : Date.now();
-
-        if (newSwingPrice != null && newSwingPrice > 0 && !isNaN(newSwingTs)) {
-          const currentAnchor = vwapAnchorMemory.get(pair);
-
-          // ── Regla 2 FIRST: si precio actual supera ancla previa → resetear ──
-          // (chequear ANTES de actualizar para no borrar la nueva ancla)
-          if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
-            vwapAnchorMemory.delete(pair);
-            console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — currentPrice=${currentPrice.toFixed(2)} > oldAnchor=${currentAnchor.anchorPrice.toFixed(2)}`);
-          }
-
-          const anchorAfterReset = vwapAnchorMemory.get(pair);
-
-          // ── Regla 1: ancla solo sube (o se crea si no existe) ──
-          if (!anchorAfterReset || newSwingPrice > anchorAfterReset.anchorPrice) {
-            const previous: VwapAnchorPrevious | undefined = anchorAfterReset
-              ? {
-                  anchorPrice: anchorAfterReset.anchorPrice,
-                  anchorTimestamp: anchorAfterReset.anchorTimestamp,
-                  setAt: anchorAfterReset.setAt,
-                  replacedAt: Date.now(),
-                }
-              : currentAnchor
-                ? {
-                    anchorPrice: currentAnchor.anchorPrice,
-                    anchorTimestamp: currentAnchor.anchorTimestamp,
-                    setAt: currentAnchor.setAt,
-                    replacedAt: Date.now(),
-                  }
-                : undefined;
-
-            vwapAnchorMemory.set(pair, {
-              anchorPrice: newSwingPrice,
-              anchorTimestamp: newSwingTs,
-              setAt: Date.now(),
-              drawdownPct: 0,
-              previous,
-            });
-          }
-
-          // ── Actualizar drawdown acumulado ─────────────────────
-          const anchorState = vwapAnchorMemory.get(pair);
-          if (anchorState) {
-            anchorState.drawdownPct = ((anchorState.anchorPrice - currentPrice) / anchorState.anchorPrice) * 100;
-            vwapAnchorMemory.set(pair, anchorState);
-            frozenAnchor = anchorState;
-          }
-
-          // Diagnostic log (temporal)
-          console.log(`${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${frozenAnchor?.anchorPrice?.toFixed(2) ?? "null"} dd=${frozenAnchor?.drawdownPct?.toFixed(2) ?? "null"}%`);
-        } else {
-          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: skipped — newSwingPrice=${newSwingPrice} rawTs=${rawTs} reliable=${basePriceResult?.isReliable}`);
-        }
-      }
-
       // ── Entry check with VWAP logic ────────────────────────────────
       if (assetConfig.vwapEnabled) {
         // ── Trailing Buy (VWAP-driven) ─────────────────────────────
@@ -754,7 +674,7 @@ async function evaluatePair(
                   message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
                   payloadJson: { ...tbResult, zone: tbZone },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
-                await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
+                await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
               }
             }
 
@@ -771,15 +691,15 @@ async function evaluatePair(
             }
           } else {
             // VWAP not reliable — fallback to direct entry check
-            await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
+            await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
           }
         } else {
           // Not enough candles for VWAP — fallback
-          await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
+          await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
         }
       } else {
         // Sin VWAP → comportamiento original directo
-        await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
+        await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
       }
     } else if (hasImported && !hasAny) {
       // Imported/manual cycle active — run entry check in observe-only mode
@@ -797,10 +717,9 @@ async function checkEntry(
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode,
-  observeOnly = false,
-  frozenAnchor?: VwapAnchorState
+  observeOnly = false
 ): Promise<void> {
-  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, frozenAnchor);
+  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode);
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -808,6 +727,9 @@ async function checkEntry(
     }
     // Suppress event for data_not_ready (fires every tick on cold start, not useful)
     if (check.blockReasons.length > 0 && check.blockReasons[0]?.code !== "data_not_ready") {
+      // Read frozen anchor from Map (filled by performEntryCheck)
+      const frozenAnchor = vwapAnchorMemory.get(pair);
+
       // Calculate additional payload fields for VWAP anchor
       const minDip = check.effectiveMinDip ?? 0;
       const effectiveBasePrice = check.effectiveBasePrice ?? 0;
@@ -1922,8 +1844,7 @@ async function performEntryCheck(
   currentPrice: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode,
-  frozenAnchor?: VwapAnchorState
+  mode: IdcaMode
 ): Promise<IdcaEntryCheckResult> {
   const blocks: IdcaBlockReason[] = [];
   const now = new Date();
@@ -1996,6 +1917,62 @@ async function performEntryCheck(
   if (!basePriceResult.isReliable) {
     blocks.push({ code: "insufficient_base_price_data", message: basePriceResult.reason, timestamp: now });
   }
+
+  // ── VWAP Anchor Memory — update here so it works for ALL paths (bot + observe-only) ──
+  if (assetConfig.vwapEnabled && basePriceResult.price > 0) {
+    const rawTs = basePriceResult.timestamp;
+    const newSwingTs =
+      rawTs instanceof Date     ? rawTs.getTime() :
+      typeof rawTs === "string" ? new Date(rawTs).getTime() :
+      typeof rawTs === "number" ? rawTs :
+      Date.now();
+
+    if (!isNaN(newSwingTs)) {
+      const newSwingPrice = basePriceResult.price;
+
+      // Regla 1: resetear si precio supera la ancla
+      const currentAnchor = vwapAnchorMemory.get(pair);
+      if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
+        vwapAnchorMemory.delete(pair);
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — curPrice=${currentPrice.toFixed(2)} > anchor=${currentAnchor.anchorPrice.toFixed(2)}`);
+      }
+
+      // Regla 2: ancla solo sube, nunca baja
+      const anchorAfterReset = vwapAnchorMemory.get(pair);
+      if (!anchorAfterReset || newSwingPrice > anchorAfterReset.anchorPrice) {
+        vwapAnchorMemory.set(pair, {
+          anchorPrice: newSwingPrice,
+          anchorTimestamp: newSwingTs,
+          setAt: Date.now(),
+          drawdownPct: 0,
+          previous: anchorAfterReset ? {
+            anchorPrice:     anchorAfterReset.anchorPrice,
+            anchorTimestamp: anchorAfterReset.anchorTimestamp,
+            setAt:           anchorAfterReset.setAt,
+            replacedAt:      Date.now(),
+          } : currentAnchor ? {
+            anchorPrice:     currentAnchor.anchorPrice,
+            anchorTimestamp: currentAnchor.anchorTimestamp,
+            setAt:           currentAnchor.setAt,
+            replacedAt:      Date.now(),
+          } : undefined,
+        });
+      }
+
+      // Actualizar drawdown acumulado
+      const frozenNow = vwapAnchorMemory.get(pair);
+      if (frozenNow) {
+        frozenNow.drawdownPct = ((frozenNow.anchorPrice - currentPrice) / frozenNow.anchorPrice) * 100;
+        vwapAnchorMemory.set(pair, frozenNow);
+      }
+
+      const fa = vwapAnchorMemory.get(pair);
+      console.log(`${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`);
+    }
+  }
+
+  // Read frozen anchor (just updated above)
+  const frozenAnchor = vwapAnchorMemory.get(pair);
 
   // ── VWAP Anchored context (computed early so it can influence dip check) ──
   let vwapContext: VwapEntryContext | undefined;
