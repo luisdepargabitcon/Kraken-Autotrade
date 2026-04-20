@@ -11,6 +11,21 @@ import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schem
 
 const lastAlertTimes = new Map<string, number>();
 
+// ─── VWAP Alert State (anti-spam) ─────────────────────────────────
+// Approaching buy: separate 2h cooldown per pair (independent of global cooldown)
+const lastApproachingBuyAlert = new Map<string, number>();
+const APPROACHING_BUY_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const APPROACHING_BUY_THRESHOLD_PCT = 3.0;
+
+// Drawdown milestones: track highest milestone fired per pair; resets on anchor change
+const lastDrawdownMilestone = new Map<string, number>();
+const DRAWDOWN_MILESTONES = [5, 10, 15, 20];
+
+export function resetVwapAlertState(pair: string): void {
+  lastDrawdownMilestone.delete(pair);
+  lastApproachingBuyAlert.delete(pair);
+}
+
 async function canSend(alertType: string): Promise<{ chatId: string; enabled: boolean }> {
   const config = await repo.getIdcaConfig();
   if (!config.telegramEnabled) {
@@ -417,6 +432,164 @@ export async function sendRawMessage(message: string): Promise<boolean> {
   const config = await repo.getIdcaConfig();
   if (!config.telegramChatId || !config.telegramEnabled) return false;
   return send(config.telegramChatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── VWAP Anchor Alerts ────────────────────────────────────────────
+
+export async function alertVwapAnchorChanged(
+  pair: string,
+  mode: string,
+  oldPrice: number | null,
+  newPrice: number,
+  anchorAgeHours: number,
+  drawdownPct: number
+): Promise<void> {
+  const { chatId, enabled } = await canSend("vwap_anchor_changed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  // Reset drawdown milestones and approaching buy cooldown on anchor change
+  resetVwapAlertState(pair);
+
+  const priceDiff = oldPrice ? ((newPrice - oldPrice) / oldPrice) * 100 : null;
+  const prevLine = oldPrice
+    ? `📌 Ancla anterior: $${oldPrice.toFixed(2)}${priceDiff !== null ? ` (${priceDiff >= 0 ? "+" : ""}${priceDiff.toFixed(2)}%)` : ""}`
+    : `📌 Primera ancla registrada`;
+
+  const msg = [
+    `🔔 <b>Ancla VWAP actualizada</b> — <b>${pair}</b>`,
+    ``,
+    `📍 Nueva ancla: <b>$${newPrice.toFixed(2)}</b>`,
+    prevLine,
+    `⏱ Fijada hace: ${anchorAgeHours.toFixed(1)}h`,
+    `📉 Caída acumulada: ${drawdownPct.toFixed(2)}%`,
+    ``,
+    `El bot ha registrado un nuevo máximo relevante como referencia VWAP. Las bandas se recalcularán desde este precio.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertApproachingBuy(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  buyTriggerPrice: number,
+  distToBuyPct: number,
+  zone: string
+): Promise<void> {
+  // Long cooldown check first — avoid polluting canSend timer
+  const lastTime = lastApproachingBuyAlert.get(pair) || 0;
+  if (Date.now() - lastTime < APPROACHING_BUY_COOLDOWN_MS) return;
+
+  const { chatId, enabled } = await canSend("vwap_approaching_buy");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  lastApproachingBuyAlert.set(pair, Date.now());
+
+  const msg = [
+    `⚡ <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    ``,
+    `📊 Precio actual: <b>$${currentPrice.toFixed(2)}</b>`,
+    `🎯 Precio de entrada: $${buyTriggerPrice.toFixed(2)} (falta ${distToBuyPct.toFixed(2)}% más)`,
+    `📍 Zona VWAP: ${zone}`,
+    ``,
+    `Aviso previo — el bot ejecutará la compra cuando se confirme el rebote.`,
+    ``,
+    `<i>Modo: ${mode} | Cooldown: 2h</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertVwapDrawdownMilestone(
+  pair: string,
+  mode: string,
+  drawdownPct: number,
+  anchorPrice: number,
+  anchorAgeHours: number
+): Promise<void> {
+  // Find highest milestone crossed
+  const milestone = DRAWDOWN_MILESTONES.filter(m => drawdownPct >= m).pop();
+  if (!milestone) return;
+
+  // Only fire if this is a new (higher) milestone
+  const lastMilestone = lastDrawdownMilestone.get(pair) || 0;
+  if (milestone <= lastMilestone) return;
+
+  const { chatId, enabled } = await canSend("vwap_drawdown_milestone");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  lastDrawdownMilestone.set(pair, milestone);
+
+  const severity = milestone >= 15 ? "🔴" : milestone >= 10 ? "🟠" : "🟡";
+  const msg = [
+    `${severity} <b>Caída ${milestone}% desde ancla</b> — <b>${pair}</b>`,
+    ``,
+    `📉 Caída acumulada: <b>${drawdownPct.toFixed(2)}%</b>`,
+    `📌 Ancla VWAP: $${anchorPrice.toFixed(2)} (hace ${anchorAgeHours.toFixed(1)}h)`,
+    ``,
+    `El precio sigue por debajo de la referencia VWAP. El bot vigilando y esperando rebote.`,
+    ``,
+    `<i>Modo: ${mode} | Hito: -${milestone}%</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingBuyArmed(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  zone: string,
+  lowerBand1: number
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_armed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const msg = [
+    `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
+    ``,
+    `📊 Precio actual: $${currentPrice.toFixed(2)}`,
+    `📍 Zona VWAP: ${zone}`,
+    `📉 Banda -1σ: $${lowerBand1.toFixed(2)}`,
+    ``,
+    `Precio en zona de interés. Esperando confirmación de rebote para ejecutar la compra.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingBuyTriggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  bouncePct: number,
+  localLow: number
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_triggered");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const msg = [
+    `✅ <b>Trailing Buy disparado</b> — <b>${pair}</b>`,
+    ``,
+    `📈 Rebote confirmado: <b>+${bouncePct.toFixed(3)}%</b> desde mínimo $${localLow.toFixed(2)}`,
+    `💰 Precio actual: $${currentPrice.toFixed(2)}`,
+    ``,
+    `Rebote verificado. Procediendo a verificar condiciones de entrada para ejecutar la compra.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

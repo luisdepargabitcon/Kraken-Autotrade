@@ -141,6 +141,12 @@ export interface TelegramAlertToggles {
   critical_error: boolean;
   smart_adjustment_applied: boolean;
   simulation_alerts_enabled: boolean;
+  // VWAP anchor alerts
+  vwap_anchor_changed: boolean;       // Ancla VWAP actualizada a precio más alto
+  vwap_approaching_buy: boolean;      // Precio a ≤3% del trigger de compra (cooldown 2h)
+  vwap_drawdown_milestone: boolean;   // Caída -5%, -10%, -15%, -20% desde ancla (1x por hito)
+  trailing_buy_armed: boolean;        // Trailing buy armado (precio entró en zona de interés)
+  trailing_buy_triggered: boolean;    // Trailing buy disparado (rebote confirmado)
 }
 
 export interface IdcaBlockReason {

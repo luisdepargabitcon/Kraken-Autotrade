@@ -702,6 +702,8 @@ async function evaluatePair(
                 message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}`,
                 payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
               }, { eventType: "trailing_buy_activated", pair, mode });
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbZone, tbVwap.lowerBand1)
+                .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
 
             // Update: si está armado, seguir el mínimo
@@ -716,6 +718,8 @@ async function evaluatePair(
                   message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
                   payloadJson: { ...tbResult, zone: tbZone },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
+                telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow)
+                  .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTriggered failed: ${e.message}`));
                 trailingAllowsEntry = true;
               }
             }
@@ -775,6 +779,13 @@ async function checkEntry(
       const effectiveBasePrice = check.effectiveBasePrice ?? 0;
       const buyTriggerPrice = effectiveBasePrice * (1 - minDip / 100);
       const distToBuyPct = ((currentPrice - buyTriggerPrice) / currentPrice) * 100;
+
+      // Alerta: precio se acerca al trigger de compra (≤3%)
+      if (distToBuyPct >= 0 && distToBuyPct <= 3.0 && check.vwapContext) {
+        telegram.alertApproachingBuy(pair, mode, currentPrice, buyTriggerPrice, distToBuyPct, check.vwapContext.zone)
+          .catch(e => console.warn(`${TAG}[TELEGRAM] alertApproachingBuy failed: ${e.message}`));
+      }
+
       const trailingBuyArmed = TrailingBuyManager.isArmed(pair);
       const trailingBuyLocalLow = TrailingBuyManager.getState(pair)?.localLow ?? null;
       const trailingBuyTriggerAt = trailingBuyLocalLow
@@ -1959,6 +1970,7 @@ async function performEntryCheck(
   }
 
   // ── VWAP Anchor Memory — update here so it works for ALL paths (bot + observe-only) ──
+  const anchorPriceBefore = vwapAnchorMemory.get(pair)?.anchorPrice ?? null;
   if (assetConfig.vwapEnabled && basePriceResult.price > 0) {
     const rawTs = basePriceResult.timestamp;
     const newSwingTs =
@@ -2007,7 +2019,23 @@ async function performEntryCheck(
       }
 
       const fa = vwapAnchorMemory.get(pair);
-      console.log(`${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`);
+      console.log(
+        `${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`
+      );
+
+      // Alerta: ancla cambió (precio más alto registrado)
+      if (fa && fa.anchorPrice !== anchorPriceBefore) {
+        const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
+        telegram.alertVwapAnchorChanged(pair, mode, anchorPriceBefore, fa.anchorPrice, anchorAgeHours, fa.drawdownPct)
+          .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapAnchorChanged failed: ${e.message}`));
+      }
+
+      // Alerta: hito de drawdown (-5%, -10%, -15%, -20%)
+      if (fa && fa.drawdownPct > 0) {
+        const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
+        telegram.alertVwapDrawdownMilestone(pair, mode, fa.drawdownPct, fa.anchorPrice, anchorAgeHours)
+          .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapDrawdownMilestone failed: ${e.message}`));
+      }
 
       // Persist to DB (fire-and-forget — do NOT await to avoid blocking tick)
       if (fa) {
