@@ -156,11 +156,18 @@ const lastEntryEventMs = new Map<string, number>();             // throttle: max
 const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
 
 // VWAP anchor memory — frozen anchor that never goes down (only up or reset)
+interface VwapAnchorPrevious {
+  anchorPrice: number;
+  anchorTimestamp: number;
+  setAt: number;
+  replacedAt: number;       // when it was replaced by a new anchor
+}
 interface VwapAnchorState {
   anchorPrice: number;      // price of the swing high that set the anchor
   anchorTimestamp: number;  // timestamp of that swing high (ms)
   setAt: number;            // when it was set (Date.now())
   drawdownPct: number;      // accumulated drawdown from anchor (updated each tick)
+  previous?: VwapAnchorPrevious; // previous anchor (invalidated)
 }
 const vwapAnchorMemory = new Map<string, VwapAnchorState>();
 
@@ -644,29 +651,55 @@ async function evaluatePair(
           pair,
         });
 
-        if (basePriceResult.isReliable && basePriceResult.timestamp) {
-          const newSwingPrice = basePriceResult.price;
-          const newSwingTs = typeof basePriceResult.timestamp === "string"
-            ? new Date(basePriceResult.timestamp).getTime()
-            : basePriceResult.timestamp instanceof Date
-              ? basePriceResult.timestamp.getTime()
+        // Extract newSwingPrice/newSwingTs even if basePriceResult is not "fully reliable"
+        // (we just need a valid price + timestamp to anchor)
+        const newSwingPrice = basePriceResult?.price;
+        const rawTs = basePriceResult?.timestamp;
+        const newSwingTs = rawTs instanceof Date
+          ? rawTs.getTime()
+          : typeof rawTs === "string"
+            ? new Date(rawTs).getTime()
+            : typeof rawTs === "number"
+              ? rawTs
               : Date.now();
 
+        if (newSwingPrice != null && newSwingPrice > 0 && !isNaN(newSwingTs)) {
           const currentAnchor = vwapAnchorMemory.get(pair);
 
-          // ── Regla 1: ancla solo sube, nunca baja ──────────────
-          if (!currentAnchor || newSwingPrice > currentAnchor.anchorPrice) {
+          // ── Regla 2 FIRST: si precio actual supera ancla previa → resetear ──
+          // (chequear ANTES de actualizar para no borrar la nueva ancla)
+          if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
+            vwapAnchorMemory.delete(pair);
+            console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — currentPrice=${currentPrice.toFixed(2)} > oldAnchor=${currentAnchor.anchorPrice.toFixed(2)}`);
+          }
+
+          const anchorAfterReset = vwapAnchorMemory.get(pair);
+
+          // ── Regla 1: ancla solo sube (o se crea si no existe) ──
+          if (!anchorAfterReset || newSwingPrice > anchorAfterReset.anchorPrice) {
+            const previous: VwapAnchorPrevious | undefined = anchorAfterReset
+              ? {
+                  anchorPrice: anchorAfterReset.anchorPrice,
+                  anchorTimestamp: anchorAfterReset.anchorTimestamp,
+                  setAt: anchorAfterReset.setAt,
+                  replacedAt: Date.now(),
+                }
+              : currentAnchor
+                ? {
+                    anchorPrice: currentAnchor.anchorPrice,
+                    anchorTimestamp: currentAnchor.anchorTimestamp,
+                    setAt: currentAnchor.setAt,
+                    replacedAt: Date.now(),
+                  }
+                : undefined;
+
             vwapAnchorMemory.set(pair, {
               anchorPrice: newSwingPrice,
               anchorTimestamp: newSwingTs,
               setAt: Date.now(),
               drawdownPct: 0,
+              previous,
             });
-          }
-
-          // ── Regla 2: resetear si precio supera la ancla ───────
-          if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
-            vwapAnchorMemory.delete(pair);
           }
 
           // ── Actualizar drawdown acumulado ─────────────────────
@@ -676,6 +709,11 @@ async function evaluatePair(
             vwapAnchorMemory.set(pair, anchorState);
             frozenAnchor = anchorState;
           }
+
+          // Diagnostic log (temporal)
+          console.log(`${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${frozenAnchor?.anchorPrice?.toFixed(2) ?? "null"} dd=${frozenAnchor?.drawdownPct?.toFixed(2) ?? "null"}%`);
+        } else {
+          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: skipped — newSwingPrice=${newSwingPrice} rawTs=${rawTs} reliable=${basePriceResult?.isReliable}`);
         }
       }
 
@@ -828,6 +866,7 @@ async function checkEntry(
           frozenAnchorTs: frozenAnchor?.anchorTimestamp ?? null,
           frozenAnchorAgeHours: frozenAnchor ? Math.round((Date.now() - frozenAnchor.setAt) / 36000) / 100 : null,
           drawdownFromAnchorPct: frozenAnchor?.drawdownPct ?? null,
+          frozenAnchorPrevious: frozenAnchor?.previous ?? null,
           buyTriggerPrice,
           distToBuyPct,
           trailingBuyArmed,
@@ -4306,7 +4345,7 @@ export function resetVwapAnchor(pair: string): { ok: true; pair: string } {
   return { ok: true, pair };
 }
 
-export function getVwapAnchorStatus(): Array<{
+interface VwapAnchorStatusEntry {
   pair: string;
   anchorPrice: number;
   anchorTimestamp: string;
@@ -4314,17 +4353,17 @@ export function getVwapAnchorStatus(): Array<{
   ageHours: number;
   drawdownPct: number;
   drawupPct: number;
-}> {
-  const now = Date.now();
-  const result: Array<{
-    pair: string;
+  previous: {
     anchorPrice: number;
     anchorTimestamp: string;
     setAt: string;
-    ageHours: number;
-    drawdownPct: number;
-    drawupPct: number;
-  }> = [];
+    replacedAt: string;
+  } | null;
+}
+
+export function getVwapAnchorStatus(): VwapAnchorStatusEntry[] {
+  const now = Date.now();
+  const result: VwapAnchorStatusEntry[] = [];
 
   for (const [pair, state] of vwapAnchorMemory.entries()) {
     const ageHours = (now - state.setAt) / (1000 * 60 * 60);
@@ -4336,6 +4375,14 @@ export function getVwapAnchorStatus(): Array<{
       ageHours: Math.round(ageHours * 10) / 10,
       drawdownPct: state.drawdownPct,
       drawupPct: state.drawdownPct < 0 ? Math.abs(state.drawdownPct) : 0,
+      previous: state.previous
+        ? {
+            anchorPrice: state.previous.anchorPrice,
+            anchorTimestamp: new Date(state.previous.anchorTimestamp).toISOString(),
+            setAt: new Date(state.previous.setAt).toISOString(),
+            replacedAt: new Date(state.previous.replacedAt).toISOString(),
+          }
+        : null,
     });
   }
 

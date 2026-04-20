@@ -95,6 +95,12 @@ interface ParsedPayload {
   frozenAnchorTs?: string;
   frozenAnchorAgeHours?: number;
   drawdownFromAnchorPct?: number;
+  frozenAnchorPrevious?: {
+    anchorPrice: number;
+    anchorTimestamp: number;
+    setAt: number;
+    replacedAt: number;
+  } | null;
   buyTriggerPrice?: number;
   distToBuyPct?: number;
   trailingBuyArmed?: boolean;
@@ -144,6 +150,9 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.trailingBuyArmed) result.trailingBuyArmed = Boolean(p.trailingBuyArmed);
   if (p.trailingBuyLocalLow) result.trailingBuyLocalLow = parseFloat(String(p.trailingBuyLocalLow));
   if (p.trailingBuyTriggerAt) result.trailingBuyTriggerAt = parseFloat(String(p.trailingBuyTriggerAt));
+  if (p.frozenAnchorPrevious && typeof p.frozenAnchorPrevious === "object") {
+    result.frozenAnchorPrevious = p.frozenAnchorPrevious;
+  }
 
   // Parse from message as fallback
   const priceMatch = msg.match(/@ ?([\d,.]+)/);
@@ -175,6 +184,18 @@ const fN = (v: number | undefined, d = 2): string =>
 
 const fUsd = (v: number | undefined): string =>
   v != null ? `$${fN(v)}` : "—";
+
+function formatRelativeTime(timestampMs: number | string): string {
+  const ts = typeof timestampMs === "string" ? new Date(timestampMs).getTime() : timestampMs;
+  if (!ts || isNaN(ts)) return "—";
+  const diffMs = Date.now() - ts;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `hace ${diffH}h`;
+  const diffD = Math.floor(diffH / 24);
+  return diffD === 1 ? "hace 1 día" : `hace ${diffD} días`;
+}
 
 function getZoneDescription(zone: string | undefined): string {
   const descriptions: Record<string, string> = {
@@ -729,7 +750,7 @@ function timeAgo(dateStr: string | null | undefined): string {
 // KEY-VALUE DISPLAY
 // ════════════════════════════════════════════════════════════════════
 
-function DataPill({ label, value, color }: { label: string; value: string; color?: string }) {
+function DataPill({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
     <div className="flex flex-col items-start gap-0.5 min-w-[80px]">
       <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-medium">{label}</span>
@@ -943,20 +964,79 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
             <div className="border border-cyan-500/30 bg-cyan-500/5 rounded-lg overflow-hidden">
               {/* Header */}
               <div className="px-4 py-2 bg-cyan-500/10 border-b border-cyan-500/20">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-cyan-400">
-                    📊 ESTADO VWAP — {event.pair}
-                  </span>
-                  {parsed.frozenAnchorPrice && (
-                    <span className="text-[10px] text-cyan-300/70">
-                      Ancla: ${parsed.frozenAnchorPrice.toFixed(2)} · hace {parsed.frozenAnchorAgeHours?.toFixed(1) ?? "—"}h
-                    </span>
-                  )}
-                </div>
+                <span className="text-xs font-semibold text-cyan-400">
+                  📊 ESTADO VWAP — {event.pair}
+                </span>
               </div>
 
               {/* Content */}
               <div className="p-4 space-y-3">
+                {/* Ancla VWAP — destacada en rojo */}
+                {parsed.frozenAnchorPrice != null ? (
+                  <div className="bg-red-500/5 border border-red-500/20 rounded-md p-3">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-red-500 mb-1">
+                      � ANCLA VWAP ACTIVA
+                    </div>
+                    <div className="text-2xl font-bold text-red-500 mb-1">
+                      ${parsed.frozenAnchorPrice.toFixed(2)}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
+                      {parsed.frozenAnchorTs && (
+                        <div>
+                          Fijada:{" "}
+                          {new Date(parsed.frozenAnchorTs).toLocaleString("es-ES", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                          {parsed.frozenAnchorAgeHours != null && (
+                            <span> · hace {parsed.frozenAnchorAgeHours.toFixed(1)}h</span>
+                          )}
+                        </div>
+                      )}
+                      {parsed.drawdownFromAnchorPct != null && (
+                        <div>
+                          Caída acumulada:{" "}
+                          <span className="font-semibold text-red-400">
+                            -{Math.abs(parsed.drawdownFromAnchorPct).toFixed(2)}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ancla anterior (si existe) */}
+                    {parsed.frozenAnchorPrevious && (
+                      <div className="mt-3 pt-2 border-t border-white/5">
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                          Ancla anterior (inválida)
+                        </div>
+                        <div className="text-xs opacity-50">
+                          <span className="line-through">
+                            ${parsed.frozenAnchorPrevious.anchorPrice.toFixed(2)}
+                          </span>
+                          <span className="ml-2">
+                            → reemplazada{" "}
+                            {formatRelativeTime(parsed.frozenAnchorPrevious.replacedAt)}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground/40 mt-0.5 italic">
+                          (precio superó esta ancla)
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-yellow-500/5 border border-yellow-500/30 rounded-md p-3">
+                    <div className="text-xs font-semibold text-yellow-400">
+                      ⚠️ Ancla no detectada aún — esperando primer tick
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/60 mt-1">
+                      El sistema está esperando un swing high válido para anclar el VWAP.
+                    </div>
+                  </div>
+                )}
+
                 {/* Caída acumulada vs precio actual vs banda -1σ */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
@@ -1111,7 +1191,21 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   color={event.payloadJson.basePrice.meta.candleCount < 7 ? "text-amber-400" : "text-emerald-400"} />
               )}
               {/* Show basePriceMethod (VWAP method) when available, otherwise basePriceType */}
-              {parsed.basePriceMethod && <DataPill label="Tipo base" value={parsed.basePriceMethod} />}
+              {parsed.basePriceMethod && (
+                <DataPill
+                  label="Tipo base"
+                  value={
+                    <span className="inline-flex items-center gap-2">
+                      <span>{parsed.basePriceMethod}</span>
+                      {parsed.basePriceMethod === "vwap_lowerBand1" && parsed.frozenAnchorPrice != null && (
+                        <span className="text-red-500 font-bold text-[10px]">
+                          🔴 Ancla: ${parsed.frozenAnchorPrice.toFixed(2)}
+                        </span>
+                      )}
+                    </span>
+                  }
+                />
+              )}
               {parsed.basePriceMethod == null && parsed.basePriceType && <DataPill label="Tipo base" value={parsed.basePriceType} />}
               {parsed.entryDipPct != null && (
                 <DataPill
