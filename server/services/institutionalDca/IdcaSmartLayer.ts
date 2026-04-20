@@ -861,7 +861,21 @@ export function computeVwapAnchored(
 ): VwapResult {
   // Filter candles from anchor
   const anchor = anchorTimeMs ?? 0;
-  const slice = anchor > 0 ? candles.filter(c => c.time >= anchor) : candles;
+  let slice = anchor > 0 ? candles.filter(c => c.time >= anchor) : candles;
+
+  // If the anchor is too recent and yields fewer than 24 candles, extend the
+  // window backwards to get at least 24 candles. This avoids artificially
+  // narrow σ-bands from only 7 candles, which makes every price appear
+  // "above_upper2" when the anchor was just set.
+  const VWAP_IDEAL_CANDLES = 24;
+  if (slice.length < VWAP_IDEAL_CANDLES && candles.length >= VWAP_IDEAL_CANDLES) {
+    const sorted = [...candles].sort((a, b) => b.time - a.time);
+    const extSlice = sorted.slice(0, VWAP_IDEAL_CANDLES).reverse();
+    // Use extended slice only if it adds more history (still ends at same candle)
+    if (extSlice.length > slice.length) {
+      slice = extSlice;
+    }
+  }
 
   if (slice.length < VWAP_MIN_CANDLES) {
     return {

@@ -16,10 +16,12 @@ import {
   institutionalDcaOhlcvCache,
   idcaPriceContextSnapshots,
   idcaPriceContextStatic,
+  idcaVwapAnchors,
   type IdcaPriceContextSnapshotRow,
   type InsertIdcaPriceContextSnapshot,
   type IdcaPriceContextStaticRow,
   type InsertIdcaPriceContextStatic,
+  type IdcaVwapAnchorRow,
   type TradingEngineControls,
   type InsertTradingEngineControls,
   type InstitutionalDcaConfigRow,
@@ -1168,4 +1170,55 @@ export async function getPriceContextStatic(
     .where(eq(idcaPriceContextStatic.pair, pair))
     .limit(1);
   return rows[0];
+}
+
+// ─── VWAP Anchor Persistence ───────────────────────────────────────
+
+export async function upsertVwapAnchor(anchor: {
+  pair: string;
+  anchorPrice: number;
+  anchorTs: number;
+  setAt: number;
+  drawdownPct: number;
+  prevPrice?: number | null;
+  prevTs?: number | null;
+  prevSetAt?: number | null;
+  prevReplacedAt?: number | null;
+}): Promise<void> {
+  await db
+    .insert(idcaVwapAnchors)
+    .values({
+      pair:           anchor.pair,
+      anchorPrice:    anchor.anchorPrice.toString(),
+      anchorTs:       anchor.anchorTs,
+      setAt:          anchor.setAt,
+      drawdownPct:    anchor.drawdownPct.toString(),
+      prevPrice:      anchor.prevPrice != null ? anchor.prevPrice.toString() : null,
+      prevTs:         anchor.prevTs ?? null,
+      prevSetAt:      anchor.prevSetAt ?? null,
+      prevReplacedAt: anchor.prevReplacedAt ?? null,
+      updatedAt:      new Date(),
+    })
+    .onConflictDoUpdate({
+      target: idcaVwapAnchors.pair,
+      set: {
+        anchorPrice:    sql`excluded.anchor_price`,
+        anchorTs:       sql`excluded.anchor_ts`,
+        setAt:          sql`excluded.set_at`,
+        drawdownPct:    sql`excluded.drawdown_pct`,
+        prevPrice:      sql`excluded.prev_price`,
+        prevTs:         sql`excluded.prev_ts`,
+        prevSetAt:      sql`excluded.prev_set_at`,
+        prevReplacedAt: sql`excluded.prev_replaced_at`,
+        updatedAt:      sql`NOW()`,
+      },
+    });
+}
+
+export async function loadAllVwapAnchors(): Promise<IdcaVwapAnchorRow[]> {
+  return db.select().from(idcaVwapAnchors);
+}
+
+export async function deleteVwapAnchor(pair: string): Promise<void> {
+  await db.delete(idcaVwapAnchors).where(eq(idcaVwapAnchors.pair, pair));
 }

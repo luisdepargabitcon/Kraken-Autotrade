@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, jsonb, unique, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, bigint, jsonb, unique, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tradingConfigSchema, configChangeSchema, type TradingConfig, type ConfigChange } from "./config-schema";
@@ -1280,3 +1280,20 @@ export const idcaPriceContextStatic = pgTable("idca_price_context_static", {
 
 export type IdcaPriceContextStaticRow = typeof idcaPriceContextStatic.$inferSelect;
 export type InsertIdcaPriceContextStatic = typeof idcaPriceContextStatic.$inferInsert;
+
+// 10.12 IDCA VWAP Anchors — persistent anchor memory (survives restarts)
+export const idcaVwapAnchors = pgTable("idca_vwap_anchors", {
+  pair:           text("pair").primaryKey(),
+  anchorPrice:    decimal("anchor_price", { precision: 20, scale: 8 }).notNull(),
+  anchorTs:       bigint("anchor_ts", { mode: "number" }).notNull(),
+  setAt:          bigint("set_at",     { mode: "number" }).notNull(),
+  drawdownPct:    decimal("drawdown_pct", { precision: 10, scale: 4 }).notNull().default("0"),
+  prevPrice:      decimal("prev_price",   { precision: 20, scale: 8 }),
+  prevTs:         bigint("prev_ts",       { mode: "number" }),
+  prevSetAt:      bigint("prev_set_at",   { mode: "number" }),
+  prevReplacedAt: bigint("prev_replaced_at", { mode: "number" }),
+  updatedAt:      timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type IdcaVwapAnchorRow    = typeof idcaVwapAnchors.$inferSelect;
+export type InsertIdcaVwapAnchor = typeof idcaVwapAnchors.$inferInsert;

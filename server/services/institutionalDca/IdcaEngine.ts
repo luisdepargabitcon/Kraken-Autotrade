@@ -404,6 +404,29 @@ async function scheduleNext(): Promise<void> {
   }
 }
 
+async function loadAnchorsFromDb(): Promise<void> {
+  try {
+    const rows = await repo.loadAllVwapAnchors();
+    for (const row of rows) {
+      vwapAnchorMemory.set(row.pair, {
+        anchorPrice:     parseFloat(row.anchorPrice),
+        anchorTimestamp: row.anchorTs,
+        setAt:           row.setAt,
+        drawdownPct:     parseFloat(row.drawdownPct ?? "0"),
+        previous: row.prevPrice != null ? {
+          anchorPrice:     parseFloat(row.prevPrice),
+          anchorTimestamp: row.prevTs!,
+          setAt:           row.prevSetAt!,
+          replacedAt:      row.prevReplacedAt!,
+        } : undefined,
+      });
+    }
+    console.log(`${TAG}[VWAP_ANCHOR] Loaded ${rows.length} anchor(s) from DB: ${rows.map(r => `${r.pair}=$${parseFloat(r.anchorPrice).toFixed(2)}`).join(", ") || "none"}`);
+  } catch (e: any) {
+    console.warn(`${TAG}[VWAP_ANCHOR] Could not load anchors from DB (table may not exist yet): ${e.message}`);
+  }
+}
+
 export async function startScheduler(): Promise<void> {
   if (schedulerTimeout) return;
   const config = await repo.getIdcaConfig();
@@ -412,6 +435,7 @@ export async function startScheduler(): Promise<void> {
   const protectedSec = (config as any).schedulerProtectedSeconds ?? 120;
 
   console.log(`${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)`);
+  await loadAnchorsFromDb();
   isRunning = true;
 
   // Initial tick after 2s; subsequent ticks are scheduled by scheduleNext().
@@ -1968,6 +1992,21 @@ async function performEntryCheck(
 
       const fa = vwapAnchorMemory.get(pair);
       console.log(`${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`);
+
+      // Persist to DB (fire-and-forget — do NOT await to avoid blocking tick)
+      if (fa) {
+        repo.upsertVwapAnchor({
+          pair,
+          anchorPrice:    fa.anchorPrice,
+          anchorTs:       fa.anchorTimestamp,
+          setAt:          fa.setAt,
+          drawdownPct:    fa.drawdownPct,
+          prevPrice:      fa.previous?.anchorPrice ?? null,
+          prevTs:         fa.previous?.anchorTimestamp ?? null,
+          prevSetAt:      fa.previous?.setAt ?? null,
+          prevReplacedAt: fa.previous?.replacedAt ?? null,
+        }).catch(e => console.warn(`${TAG}[VWAP_ANCHOR] DB persist failed for ${pair}: ${e.message}`));
+      }
     }
   }
 
@@ -4318,7 +4357,8 @@ async function emitRecoveryRiskWarning(
 
 export function resetVwapAnchor(pair: string): { ok: true; pair: string } {
   vwapAnchorMemory.delete(pair);
-  console.log(`${TAG}[VWAP_ANCHOR] Reset anchor for ${pair}`);
+  repo.deleteVwapAnchor(pair).catch(e => console.warn(`${TAG}[VWAP_ANCHOR] DB delete failed for ${pair}: ${e.message}`));
+  console.log(`${TAG}[VWAP_ANCHOR] Reset anchor for ${pair} (memory + DB)`);
   return { ok: true, pair };
 }
 
