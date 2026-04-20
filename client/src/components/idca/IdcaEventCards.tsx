@@ -90,6 +90,16 @@ interface ParsedPayload {
   };
   weeklyTrend?: string;
   monthlyBias?: string;
+  // VWAP anchor fields
+  frozenAnchorPrice?: number;
+  frozenAnchorTs?: string;
+  frozenAnchorAgeHours?: number;
+  drawdownFromAnchorPct?: number;
+  buyTriggerPrice?: number;
+  distToBuyPct?: number;
+  trailingBuyArmed?: boolean;
+  trailingBuyLocalLow?: number;
+  trailingBuyTriggerAt?: number;
   [key: string]: any;
 }
 
@@ -124,6 +134,17 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.weeklyTrend) result.weeklyTrend = p.weeklyTrend;
   if (p.monthlyBias) result.monthlyBias = p.monthlyBias;
 
+  // VWAP anchor fields
+  if (p.frozenAnchorPrice) result.frozenAnchorPrice = parseFloat(String(p.frozenAnchorPrice));
+  if (p.frozenAnchorTs) result.frozenAnchorTs = p.frozenAnchorTs;
+  if (p.frozenAnchorAgeHours) result.frozenAnchorAgeHours = parseFloat(String(p.frozenAnchorAgeHours));
+  if (p.drawdownFromAnchorPct) result.drawdownFromAnchorPct = parseFloat(String(p.drawdownFromAnchorPct));
+  if (p.buyTriggerPrice) result.buyTriggerPrice = parseFloat(String(p.buyTriggerPrice));
+  if (p.distToBuyPct) result.distToBuyPct = parseFloat(String(p.distToBuyPct));
+  if (p.trailingBuyArmed) result.trailingBuyArmed = Boolean(p.trailingBuyArmed);
+  if (p.trailingBuyLocalLow) result.trailingBuyLocalLow = parseFloat(String(p.trailingBuyLocalLow));
+  if (p.trailingBuyTriggerAt) result.trailingBuyTriggerAt = parseFloat(String(p.trailingBuyTriggerAt));
+
   // Parse from message as fallback
   const priceMatch = msg.match(/@ ?([\d,.]+)/);
   if (priceMatch && !result.price) result.price = parseFloat(priceMatch[1]);
@@ -154,6 +175,30 @@ const fN = (v: number | undefined, d = 2): string =>
 
 const fUsd = (v: number | undefined): string =>
   v != null ? `$${fN(v)}` : "—";
+
+function getZoneDescription(zone: string | undefined): string {
+  const descriptions: Record<string, string> = {
+    above_upper2: "sobrecomprado",
+    above_upper1: "caro",
+    between_bands: "neutral",
+    below_lower1: "interés",
+    below_lower2: "valor",
+    below_lower3: "pánico/oportunidad",
+  };
+  return descriptions[zone || ""] || "desconocido";
+}
+
+async function handleResetAnchor(pair: string): Promise<void> {
+  try {
+    const response = await fetch(`/api/institutional-dca/vwap-anchor/reset/${encodeURIComponent(pair)}`, {
+      method: "POST",
+    });
+    if (!response.ok) throw new Error("Error resetting anchor");
+    alert("Ancla reseteada — se detectará nuevo swing high en el próximo tick");
+  } catch (e: any) {
+    alert(`Error al resetear ancla: ${e.message}`);
+  }
+}
 
 const BLOCK_REASON_LABELS: Record<string, string> = {
   data_not_ready: "Sistema inicializando datos de mercado",
@@ -893,7 +938,160 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
             </div>
           )}
 
-          {/* B. Datos clave — grid */}
+          {/* B. VWAP Anchor Panel — solo para eventos con vwapContext y basePriceMethod === "vwap_lowerBand1" */}
+          {parsed.vwapContext && parsed.basePriceMethod === "vwap_lowerBand1" && (
+            <div className="border border-cyan-500/30 bg-cyan-500/5 rounded-lg overflow-hidden">
+              {/* Header */}
+              <div className="px-4 py-2 bg-cyan-500/10 border-b border-cyan-500/20">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-cyan-400">
+                    📊 ESTADO VWAP — {event.pair}
+                  </span>
+                  {parsed.frozenAnchorPrice && (
+                    <span className="text-[10px] text-cyan-300/70">
+                      Ancla: ${parsed.frozenAnchorPrice.toFixed(2)} · hace {parsed.frozenAnchorAgeHours?.toFixed(1) ?? "—"}h
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-4 space-y-3">
+                {/* Caída acumulada vs precio actual vs banda -1σ */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
+                    <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">Caída acumulada desde ancla</div>
+                    <div className="text-lg font-bold text-red-400">
+                      {parsed.drawdownFromAnchorPct != null
+                        ? `-${parsed.drawdownFromAnchorPct.toFixed(2)}%`
+                        : parsed.entryDipPct != null
+                          ? `-${parsed.entryDipPct.toFixed(2)}%`
+                          : "—"
+                      }
+                    </div>
+                    {parsed.frozenAnchorPrice && parsed.price && (
+                      <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        ${parsed.frozenAnchorPrice.toFixed(2)} → ${parsed.price.toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
+                    <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">Precio actual vs banda -1σ</div>
+                    <div className="text-lg font-bold text-orange-400">
+                      {parsed.vwapContext?.distanceFromLower1Pct != null
+                        ? `${parsed.vwapContext.distanceFromLower1Pct.toFixed(2)}%`
+                        : "—"
+                      }
+                    </div>
+                    {parsed.vwapContext?.lowerBand1 && parsed.price && (
+                      <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        ${parsed.vwapContext.lowerBand1.toFixed(2)} → ${parsed.price.toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Zona actual */}
+                <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
+                  <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">Zona actual</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">
+                      {parsed.vwapContext?.zone ?? "—"}
+                    </span>
+                    {parsed.vwapContext?.zone && (
+                      <span className="text-[10px] text-muted-foreground/60">
+                        ({getZoneDescription(parsed.vwapContext.zone)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* VWAP día, semanal, banda -1σ */}
+                <div className="grid grid-cols-3 gap-2 text-[10px]">
+                  <div className="bg-white/[0.02] rounded p-2 border border-white/5">
+                    <div className="text-muted-foreground/60 mb-0.5">VWAP día</div>
+                    <div className="font-semibold text-cyan-300">
+                      ${parsed.vwapContext?.vwap?.toFixed(2) ?? "—"}
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.02] rounded p-2 border border-white/5">
+                    <div className="text-muted-foreground/60 mb-0.5">Semanal</div>
+                    <div className="font-semibold text-sky-300">
+                      ${parsed.vwapContext?.vwapWeekly?.toFixed(2) ?? "—"}
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.02] rounded p-2 border border-white/5">
+                    <div className="text-muted-foreground/60 mb-0.5">Banda -1σ</div>
+                    <div className="font-semibold text-red-300">
+                      ${parsed.vwapContext?.lowerBand1?.toFixed(2) ?? "—"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Para entrar */}
+                <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
+                  <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">🎯 PARA ENTRAR</div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-muted-foreground/60">Precio de compra</div>
+                      <div className="font-semibold text-cyan-300">
+                        ${parsed.buyTriggerPrice?.toFixed(2) ?? "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground/60">Falta caer</div>
+                      <div className="font-semibold text-amber-300">
+                        {parsed.distToBuyPct != null && parsed.distToBuyPct > 0
+                          ? `${parsed.distToBuyPct.toFixed(2)}% más`
+                          : "YA en rango"
+                        }
+                      </div>
+                    </div>
+                  </div>
+                  {parsed.effectiveBasePrice && parsed.effectiveMinDip && (
+                    <div className="text-[10px] text-muted-foreground/50 mt-1.5">
+                      Mín dip efectivo: {parsed.effectiveMinDip.toFixed(2)}% desde banda -1σ (${parsed.effectiveBasePrice.toFixed(2)})
+                    </div>
+                  )}
+                </div>
+
+                {/* Trailing Buy */}
+                <div className={cn(
+                  "bg-white/[0.02] rounded-md p-2.5 border border-white/5",
+                  parsed.trailingBuyArmed && "border-cyan-500/30 bg-cyan-500/5"
+                )}>
+                  <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">
+                    {parsed.trailingBuyArmed ? "🔵 TRAILING BUY — ARMADO" : "⚪ TRAILING BUY — EN ESPERA"}
+                  </div>
+                  {parsed.trailingBuyArmed && parsed.trailingBuyLocalLow && (
+                    <div className="text-xs space-y-0.5">
+                      <div className="text-muted-foreground/60">
+                        Mínimo visto: <span className="text-cyan-300 font-semibold">${parsed.trailingBuyLocalLow.toFixed(2)}</span>
+                      </div>
+                      <div className="text-muted-foreground/60">
+                        Compra si sube a: <span className="text-emerald-300 font-semibold">${parsed.trailingBuyTriggerAt?.toFixed(2) ?? "—"}</span>
+                      </div>
+                    </div>
+                  )}
+                  {!parsed.trailingBuyArmed && (
+                    <div className="text-[10px] text-muted-foreground/50">
+                      Precio no en zona de interés aún
+                    </div>
+                  )}
+                </div>
+
+                {/* Reset button */}
+                <button
+                  onClick={() => handleResetAnchor(event.pair)}
+                  className="w-full py-2 px-3 rounded-md bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 text-[11px] text-muted-foreground/70 hover:text-foreground transition-all flex items-center justify-center gap-1.5"
+                >
+                  🔄 Reset ancla manual
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* C. Datos clave — grid */}
           <div>
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">Datos clave</span>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-2.5 mt-2 p-3 rounded-md bg-white/[0.02] border border-white/5">

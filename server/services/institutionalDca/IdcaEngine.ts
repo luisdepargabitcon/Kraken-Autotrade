@@ -155,6 +155,15 @@ const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
 const lastEntryEventMs = new Map<string, number>();             // throttle: max 1 entry_evaluated DB event per 5min per pair
 const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
 
+// VWAP anchor memory — frozen anchor that never goes down (only up or reset)
+interface VwapAnchorState {
+  anchorPrice: number;      // price of the swing high that set the anchor
+  anchorTimestamp: number;  // timestamp of that swing high (ms)
+  setAt: number;            // when it was set (Date.now())
+  drawdownPct: number;      // accumulated drawdown from anchor (updated each tick)
+}
+const vwapAnchorMemory = new Map<string, VwapAnchorState>();
+
 // ─── Human Event Helper ───────────────────────────────────────────
 
 async function createHumanEvent(
@@ -620,6 +629,57 @@ async function evaluatePair(
     }
     if (!hasAny && !hasImported) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
+
+      // ── VWAP Anchor Memory (frozen anchor that never goes down) ─────────
+      // Calculate swing high from Hybrid V2.1 to update anchor memory
+      const cacheCandles = ohlcCache.get(pair) || [];
+      let frozenAnchor: VwapAnchorState | undefined;
+      if (cacheCandles.length >= 7) {
+        const dipRefMethod = normalizeDipReferenceMethod(assetConfig.dipReference || "hybrid", { pair, origin: "assetConfig.dipReference" });
+        const basePriceResult = smart.computeBasePrice({
+          candles: cacheCandles,
+          lookbackMinutes: config.localHighLookbackMinutes,
+          method: dipRefMethod,
+          currentPrice,
+          pair,
+        });
+
+        if (basePriceResult.isReliable && basePriceResult.timestamp) {
+          const newSwingPrice = basePriceResult.price;
+          const newSwingTs = typeof basePriceResult.timestamp === "string"
+            ? new Date(basePriceResult.timestamp).getTime()
+            : basePriceResult.timestamp instanceof Date
+              ? basePriceResult.timestamp.getTime()
+              : Date.now();
+
+          const currentAnchor = vwapAnchorMemory.get(pair);
+
+          // ── Regla 1: ancla solo sube, nunca baja ──────────────
+          if (!currentAnchor || newSwingPrice > currentAnchor.anchorPrice) {
+            vwapAnchorMemory.set(pair, {
+              anchorPrice: newSwingPrice,
+              anchorTimestamp: newSwingTs,
+              setAt: Date.now(),
+              drawdownPct: 0,
+            });
+          }
+
+          // ── Regla 2: resetear si precio supera la ancla ───────
+          if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
+            vwapAnchorMemory.delete(pair);
+          }
+
+          // ── Actualizar drawdown acumulado ─────────────────────
+          const anchorState = vwapAnchorMemory.get(pair);
+          if (anchorState) {
+            anchorState.drawdownPct = ((anchorState.anchorPrice - currentPrice) / anchorState.anchorPrice) * 100;
+            vwapAnchorMemory.set(pair, anchorState);
+            frozenAnchor = anchorState;
+          }
+        }
+      }
+
+      // ── Entry check with VWAP logic ────────────────────────────────
       if (assetConfig.vwapEnabled) {
         // ── Trailing Buy (VWAP-driven) ─────────────────────────────
         const tbCandles = ohlcCache.get(pair) || [];
@@ -656,7 +716,7 @@ async function evaluatePair(
                   message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
                   payloadJson: { ...tbResult, zone: tbZone },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
-                await checkEntry(pair, currentPrice, config, assetConfig, mode);
+                await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
               }
             }
 
@@ -673,15 +733,15 @@ async function evaluatePair(
             }
           } else {
             // VWAP not reliable — fallback to direct entry check
-            await checkEntry(pair, currentPrice, config, assetConfig, mode);
+            await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
           }
         } else {
           // Not enough candles for VWAP — fallback
-          await checkEntry(pair, currentPrice, config, assetConfig, mode);
+          await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
         }
       } else {
         // Sin VWAP → comportamiento original directo
-        await checkEntry(pair, currentPrice, config, assetConfig, mode);
+        await checkEntry(pair, currentPrice, config, assetConfig, mode, false, frozenAnchor);
       }
     } else if (hasImported && !hasAny) {
       // Imported/manual cycle active — run entry check in observe-only mode
@@ -699,9 +759,10 @@ async function checkEntry(
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode,
-  observeOnly = false
+  observeOnly = false,
+  frozenAnchor?: VwapAnchorState
 ): Promise<void> {
-  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode);
+  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, frozenAnchor);
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -709,13 +770,70 @@ async function checkEntry(
     }
     // Suppress event for data_not_ready (fires every tick on cold start, not useful)
     if (check.blockReasons.length > 0 && check.blockReasons[0]?.code !== "data_not_ready") {
+      // Calculate additional payload fields for VWAP anchor
+      const minDip = check.effectiveMinDip ?? 0;
+      const effectiveBasePrice = check.effectiveBasePrice ?? 0;
+      const buyTriggerPrice = effectiveBasePrice * (1 - minDip / 100);
+      const distToBuyPct = ((currentPrice - buyTriggerPrice) / currentPrice) * 100;
+      const trailingBuyArmed = TrailingBuyManager.isArmed(pair);
+      const trailingBuyLocalLow = TrailingBuyManager.getState(pair)?.localLow ?? null;
+      const trailingBuyTriggerAt = trailingBuyLocalLow
+        ? trailingBuyLocalLow * (1 + parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) / 100)
+        : null;
+
+      // Calculate data for improved human message
+      const drawdown = (frozenAnchor?.drawdownPct ?? check.entryDipPct) ?? 0;
+      const anchorAge = frozenAnchor ? Math.round((Date.now() - frozenAnchor.setAt) / (1000 * 60 * 60) * 10) / 10 : 0;
+      const buyPrice = effectiveBasePrice * (1 - minDip / 100);
+      const distToBuy = ((currentPrice - buyPrice) / buyPrice) * 100;
+      const trailingArmed = TrailingBuyManager.isArmed(pair);
+      const localLow = TrailingBuyManager.getState(pair)?.localLow ?? null;
+      const reboundPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
+      const trailingBuyAt = localLow ? localLow * (1 + reboundPct / 100) : null;
+
+      const humanMessage = [
+        `📉 Caída acumulada desde ancla: ${drawdown.toFixed(2)}%`,
+        `   Ancla: $${frozenAnchor?.anchorPrice?.toFixed(2) ?? "—"} | hace ${anchorAge}h`,
+        ``,
+        `📊 VWAP: $${check.vwapContext?.vwap?.toFixed(2) ?? "—"}`,
+        `   Zona: ${check.vwapContext?.zone ?? "—"} | Dist. banda -1σ: ${check.vwapContext?.distanceFromLower1Pct?.toFixed(2) ?? "—"}%`,
+        `   Tendencia semanal: ${check.weeklyTrend} | Sesgo mensual: ${check.monthlyBias}`,
+        ``,
+        `🎯 Para comprar necesita caer ${distToBuy > 0 ? distToBuy.toFixed(2) + "% más" : "YA en rango"}`,
+        `   Precio de entrada: $${buyPrice.toFixed(2)}`,
+        `   Mín dip efectivo: ${minDip.toFixed(2)}% desde banda -1σ ($${effectiveBasePrice.toFixed(2)})`,
+        ``,
+        trailingArmed && localLow
+          ? `🔵 Trailing Buy ARMADO | Mínimo: $${localLow.toFixed(2)} | Compra si rebota a: $${trailingBuyAt?.toFixed(2)}`
+          : `⚪ Trailing Buy en espera (precio no en zona de interés aún)`,
+      ].join("\n");
+
       await createHumanEvent({
         pair,
         mode,
         eventType: "entry_check_blocked",
         severity: "info",
-        message: check.blockReasons.map(r => r.code).join(", "),
-        payloadJson: { blockReasons: check.blockReasons, basePrice: check.basePrice, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias, selectedSizeProfile: check.sizeProfile },
+        message: humanMessage,
+        payloadJson: {
+          blockReasons: check.blockReasons,
+          basePrice: check.basePrice,
+          vwapContext: check.vwapContext ?? null,
+          effectiveBasePrice: check.effectiveBasePrice,
+          effectiveMinDip: check.effectiveMinDip,
+          basePriceMethod: check.basePriceMethod,
+          weeklyTrend: check.weeklyTrend,
+          monthlyBias: check.monthlyBias,
+          selectedSizeProfile: check.sizeProfile,
+          frozenAnchorPrice: frozenAnchor?.anchorPrice ?? null,
+          frozenAnchorTs: frozenAnchor?.anchorTimestamp ?? null,
+          frozenAnchorAgeHours: frozenAnchor ? Math.round((Date.now() - frozenAnchor.setAt) / 36000) / 100 : null,
+          drawdownFromAnchorPct: frozenAnchor?.drawdownPct ?? null,
+          buyTriggerPrice,
+          distToBuyPct,
+          trailingBuyArmed,
+          trailingBuyLocalLow,
+          trailingBuyTriggerAt,
+        },
       }, {
         eventType: "entry_check_blocked",
         reasonCode: check.blockReasons[0]?.code || "entry_check_blocked",
@@ -755,6 +873,9 @@ async function checkEntry(
     message: `Entry check passed: BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
     payloadJson: { marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias, selectedSizeProfile: check.sizeProfile },
   }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
+
+  // ── Regla 3: resetear ancla al abrir ciclo ────────────
+  vwapAnchorMemory.delete(pair);
 
   // Calculate capital for this cycle
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd));
@@ -1762,7 +1883,8 @@ async function performEntryCheck(
   currentPrice: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode
+  mode: IdcaMode,
+  frozenAnchor?: VwapAnchorState
 ): Promise<IdcaEntryCheckResult> {
   const blocks: IdcaBlockReason[] = [];
   const now = new Date();
@@ -1839,9 +1961,12 @@ async function performEntryCheck(
   // ── VWAP Anchored context (computed early so it can influence dip check) ──
   let vwapContext: VwapEntryContext | undefined;
   if (assetConfig.vwapEnabled && basePriceResult.isReliable && basePriceResult.timestamp) {
-    const anchorMs = basePriceResult.timestamp instanceof Date
-      ? basePriceResult.timestamp.getTime()
-      : basePriceResult.timestamp;
+    // Use frozen anchor timestamp if available, otherwise use basePriceResult timestamp
+    const anchorMs = frozenAnchor?.anchorTimestamp
+      ? frozenAnchor.anchorTimestamp
+      : basePriceResult.timestamp instanceof Date
+        ? basePriceResult.timestamp.getTime()
+        : basePriceResult.timestamp;
     const vwapResult = smart.computeVwapAnchored(candles, anchorMs);
     if (vwapResult.isReliable) {
       const bandPos = smart.getVwapBandPosition(currentPrice, vwapResult);
@@ -4171,4 +4296,48 @@ async function emitRecoveryRiskWarning(
     capitalUsed: pairExposure, parentCycleId: mainCycleId,
     reason: `Exposición del par: ${pairExposurePct.toFixed(1)}% de ${rcfg.maxPairExposurePct}%`,
   });
+}
+
+// ─── VWAP Anchor Helper Functions ───────────────────────────────────
+
+export function resetVwapAnchor(pair: string): { ok: true; pair: string } {
+  vwapAnchorMemory.delete(pair);
+  console.log(`${TAG}[VWAP_ANCHOR] Reset anchor for ${pair}`);
+  return { ok: true, pair };
+}
+
+export function getVwapAnchorStatus(): Array<{
+  pair: string;
+  anchorPrice: number;
+  anchorTimestamp: string;
+  setAt: string;
+  ageHours: number;
+  drawdownPct: number;
+  drawupPct: number;
+}> {
+  const now = Date.now();
+  const result: Array<{
+    pair: string;
+    anchorPrice: number;
+    anchorTimestamp: string;
+    setAt: string;
+    ageHours: number;
+    drawdownPct: number;
+    drawupPct: number;
+  }> = [];
+
+  for (const [pair, state] of vwapAnchorMemory.entries()) {
+    const ageHours = (now - state.setAt) / (1000 * 60 * 60);
+    result.push({
+      pair,
+      anchorPrice: state.anchorPrice,
+      anchorTimestamp: new Date(state.anchorTimestamp).toISOString(),
+      setAt: new Date(state.setAt).toISOString(),
+      ageHours: Math.round(ageHours * 10) / 10,
+      drawdownPct: state.drawdownPct,
+      drawupPct: state.drawdownPct < 0 ? Math.abs(state.drawdownPct) : 0,
+    });
+  }
+
+  return result;
 }

@@ -782,6 +782,27 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── VWAP Anchor Management ───────────────────────────────────────
+
+  app.post(`${PREFIX}/vwap-anchor/reset/:pair`, async (req, res) => {
+    try {
+      const pair = decodeURIComponent(req.params.pair);
+      const result = engine.resetVwapAnchor(pair);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get(`${PREFIX}/vwap-anchor/status`, async (_req, res) => {
+    try {
+      const status = engine.getVwapAnchorStatus();
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Edit Imported Cycle ─────────────────────────────────────────
 
   app.patch(`${PREFIX}/cycles/:id/edit-imported`, async (req, res) => {
