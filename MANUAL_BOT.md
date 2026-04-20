@@ -180,10 +180,10 @@ Cada posición guarda un snapshot de la configuración al momento de entrada:
 
 ### Variables de Entorno
 ```bash
-# Base de datos
-DATABASE_URL=postgresql://user:pass@host:5432/db
+# Base de datos (VPS Staging — contenedor krakenbot-staging-db)
+DATABASE_URL=postgresql://krakenstaging:Kr4k3n_St4g1ng_2026!@krakenbot-staging-db:5432/krakenbot_staging
 POSTGRES_USER=krakenstaging
-POSTGRES_PASSWORD=xxx
+POSTGRES_PASSWORD=Kr4k3n_St4g1ng_2026!
 POSTGRES_DB=krakenbot_staging
 
 # Trading
@@ -197,6 +197,19 @@ REVOLUTX_SYNC_ENABLED=true  # Solo en VPS con IP whitelist
 # Backups
 BACKUP_DIR=/app/backups
 BACKUP_SCRIPTS_DIR=/app/scripts
+```
+
+### Acceso a PostgreSQL en VPS (Staging)
+```bash
+# Conectar a la DB (desde el host del VPS)
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging
+
+# Consulta directa
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SELECT ..."
+
+# Ejemplos útiles
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "SELECT pair, anchor_price, set_at FROM idca_vwap_anchors;"
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging -c "\dt"
 ```
 
 ### Presets de Configuración
