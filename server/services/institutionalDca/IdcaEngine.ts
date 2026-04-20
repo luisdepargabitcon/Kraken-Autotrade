@@ -568,11 +568,22 @@ async function evaluatePair(
   config: InstitutionalDcaConfigRow,
   mode: IdcaMode
 ): Promise<void> {
+  console.log(`${TAG}[EVAL_START] pair=${pair}`);
   const assetConfig = await repo.getAssetConfig(pair);
-  if (!assetConfig || !assetConfig.enabled) return;
+  if (!assetConfig) {
+    console.warn(`${TAG}[EVAL_SKIP] ${pair}: no assetConfig in DB`);
+    return;
+  }
+  if (!assetConfig.enabled) {
+    console.log(`${TAG}[EVAL_SKIP] ${pair}: assetConfig.enabled=false`);
+    return;
+  }
 
   const currentPrice = await getCurrentPrice(pair);
-  if (currentPrice <= 0) return;
+  if (currentPrice <= 0) {
+    console.warn(`${TAG}[EVAL_SKIP] ${pair}: currentPrice=${currentPrice}`);
+    return;
+  }
 
   // Update price/PnL for ALL active cycles of this pair (main, plus, imported, manual)
   const allPairCycles = await repo.getAllActiveCyclesForPair(pair, mode);

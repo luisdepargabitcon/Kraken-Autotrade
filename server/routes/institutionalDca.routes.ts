@@ -244,6 +244,27 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // Diagnostic endpoint — BTC/USD specific (P3 investigation)
+  app.get(`${PREFIX}/events/debug/btc`, async (_req, res) => {
+    try {
+      const btcAsset = await repo.getAssetConfig('BTC/USD');
+      const btcEvents = await repo.getEvents({ pair: 'BTC/USD', limit: 5, orderBy: 'createdAt', orderDirection: 'desc' });
+      const btcCount  = await repo.getEventsCount({ pair: 'BTC/USD' });
+      res.json({
+        assetConfig: btcAsset
+          ? { pair: btcAsset.pair, enabled: btcAsset.enabled, dipReference: btcAsset.dipReference, vwapEnabled: btcAsset.vwapEnabled }
+          : null,
+        eventsInDb: btcCount,
+        latestEvents: btcEvents.map(e => ({
+          id: e.id, eventType: e.eventType, pair: e.pair,
+          createdAt: e.createdAt, message: (e.message || '').slice(0, 120),
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get(`${PREFIX}/events`, async (req, res) => {
     try {
       const { 

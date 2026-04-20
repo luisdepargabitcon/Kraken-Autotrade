@@ -826,7 +826,8 @@ export interface VwapResult {
   lowerBand3: number;  // -3 σ
   stdDev: number;
   anchorTime: number;  // epoch ms of anchor candle
-  candlesUsed: number;
+  candlesUsed: number;      // candles from anchor (used for VWAP)
+  candlesForSigma: number;  // candles used for stdDev (>= candlesUsed)
   isReliable: boolean;
   reason: string;
   vwapWeekly: number | null;   // VWAP of last 7 days (null if insufficient data)
@@ -859,28 +860,14 @@ export function computeVwapAnchored(
   candles: TimestampedCandle[],
   anchorTimeMs?: number,
 ): VwapResult {
-  // Filter candles from anchor
+  // Filter candles from anchor (used for VWAP price computation)
   const anchor = anchorTimeMs ?? 0;
-  let slice = anchor > 0 ? candles.filter(c => c.time >= anchor) : candles;
-
-  // If the anchor is too recent and yields fewer than 24 candles, extend the
-  // window backwards to get at least 24 candles. This avoids artificially
-  // narrow σ-bands from only 7 candles, which makes every price appear
-  // "above_upper2" when the anchor was just set.
-  const VWAP_IDEAL_CANDLES = 24;
-  if (slice.length < VWAP_IDEAL_CANDLES && candles.length >= VWAP_IDEAL_CANDLES) {
-    const sorted = [...candles].sort((a, b) => b.time - a.time);
-    const extSlice = sorted.slice(0, VWAP_IDEAL_CANDLES).reverse();
-    // Use extended slice only if it adds more history (still ends at same candle)
-    if (extSlice.length > slice.length) {
-      slice = extSlice;
-    }
-  }
+  const slice = anchor > 0 ? candles.filter(c => c.time >= anchor) : candles;
 
   if (slice.length < VWAP_MIN_CANDLES) {
     return {
       vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
-      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length, candlesForSigma: slice.length,
       isReliable: false,
       reason: `Insufficient candles: ${slice.length}/${VWAP_MIN_CANDLES}`,
       vwapWeekly: null, vwapMonthly: null,
@@ -892,33 +879,28 @@ export function computeVwapAnchored(
   if (!hasVolume) {
     return {
       vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
-      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length, candlesForSigma: slice.length,
       isReliable: false,
       reason: "No volume data available for VWAP calculation",
       vwapWeekly: null, vwapMonthly: null,
     };
   }
 
-  // Compute VWAP
+  // Compute VWAP from anchor slice (price is anchored to swing high)
   let cumulativeTPV = 0; // Σ(TP × V)
   let cumulativeVol = 0; // Σ(V)
-
-  const tpValues: number[] = [];
-  const volValues: number[] = [];
 
   for (const c of slice) {
     const tp = (c.high + c.low + c.close) / 3;
     const vol = c.volume ?? 0;
     cumulativeTPV += tp * vol;
     cumulativeVol += vol;
-    tpValues.push(tp);
-    volValues.push(vol);
   }
 
   if (cumulativeVol === 0) {
     return {
       vwap: 0, upperBand1: 0, lowerBand1: 0, upperBand2: 0, lowerBand2: 0, lowerBand3: 0,
-      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length,
+      stdDev: 0, anchorTime: anchor, candlesUsed: slice.length, candlesForSigma: slice.length,
       isReliable: false,
       reason: "Total volume is zero",
       vwapWeekly: null, vwapMonthly: null,
@@ -927,14 +909,23 @@ export function computeVwapAnchored(
 
   const vwap = cumulativeTPV / cumulativeVol;
 
-  // Compute volume-weighted standard deviation of TP from VWAP
-  let weightedSumSqDev = 0;
-  for (let i = 0; i < tpValues.length; i++) {
-    const dev = tpValues[i] - vwap;
-    weightedSumSqDev += volValues[i] * dev * dev;
-  }
-  const variance = weightedSumSqDev / cumulativeVol;
-  const stdDev = Math.sqrt(variance);
+  // Compute stdDev with extended slice (min 24 candles) for representative bands.
+  // When the anchor is very recent (e.g. 7 candles), using only those candles
+  // produces an artificially narrow stdDev, making normal prices appear as
+  // "above_upper2". We extend the sigma window to the last 24 candles while
+  // keeping the VWAP itself anchored to the swing high.
+  const VWAP_SIGMA_MIN_CANDLES = 24;
+  const sigmaSlice =
+    slice.length < VWAP_SIGMA_MIN_CANDLES && candles.length >= VWAP_SIGMA_MIN_CANDLES
+      ? candles.slice(-Math.max(VWAP_SIGMA_MIN_CANDLES, slice.length))
+      : slice;
+
+  const sigmaVol = sigmaSlice.reduce((s, c) => s + (c.volume ?? 1), 0);
+  const weightedSumSqDev = sigmaSlice.reduce((s, c) => {
+    const tp = (c.high + c.low + c.close) / 3;
+    return s + (c.volume ?? 1) * Math.pow(tp - vwap, 2);
+  }, 0);
+  const stdDev = Math.sqrt(weightedSumSqDev / (sigmaVol || 1));
 
   // Compute VWAP weekly and monthly from full candle set
   const nowMs = Date.now();
@@ -963,8 +954,9 @@ export function computeVwapAnchored(
     stdDev,
     anchorTime: slice[0].time,
     candlesUsed: slice.length,
+    candlesForSigma: sigmaSlice.length,
     isReliable: true,
-    reason: `VWAP anchored from ${new Date(slice[0].time).toISOString().slice(0, 16)}, ${slice.length} candles`,
+    reason: `VWAP anchored from ${new Date(slice[0].time).toISOString().slice(0, 16)}, ${slice.length} candles (sigma: ${sigmaSlice.length})`,
     vwapWeekly: calcPeriodVwap(candles, weekMs),
     vwapMonthly: calcPeriodVwap(candles, monthMs),
   };
