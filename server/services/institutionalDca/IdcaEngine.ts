@@ -3089,6 +3089,8 @@ async function closePlusCycle(
 
   if (reason === "trailing_exit") {
     await telegram.alertTrailingExit(plusCycle);
+  } else if (reason === "breakeven_exit") {
+    await telegram.alertBreakevenExit(plusCycle);
   }
 }
 

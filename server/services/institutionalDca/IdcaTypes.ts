@@ -127,21 +127,27 @@ export interface MarketScoreWeights {
 }
 
 export interface TelegramAlertToggles {
+  // ── Compras ──────────────────────────────────────────────────────
   cycle_started: boolean;
   base_buy_executed: boolean;
   safety_buy_executed: boolean;
   buy_blocked: boolean;
-  tp_armed: boolean;
+  // ── Sistema de salida ────────────────────────────────────────────
+  protection_armed: boolean;          // Break-even armado (stop a coste)
+  trailing_activated: boolean;        // Trailing stop activado (start seguimiento)
+  tp_armed: boolean;                  // TP alcanzado: venta parcial + trailing residual
+  trailing_exit: boolean;             // Trailing stop ejecutado → venta final
+  breakeven_exit: boolean;            // Salida por break-even (stop tocado)
+  module_max_drawdown_reached: boolean; // Módulo superó drawdown máximo
+  // ── Eventos de ciclo ─────────────────────────────────────────────
+  cycle_closed: boolean;
   partial_sell_executed: boolean;
   trailing_updated: boolean;
-  trailing_exit: boolean;
-  breakeven_exit: boolean;
-  cycle_closed: boolean;
   daily_summary: boolean;
   critical_error: boolean;
   smart_adjustment_applied: boolean;
   simulation_alerts_enabled: boolean;
-  // VWAP anchor alerts
+  // ── VWAP / Trailing Buy ──────────────────────────────────────────
   vwap_anchor_changed: boolean;       // Ancla VWAP actualizada a precio más alto
   vwap_approaching_buy: boolean;      // Precio a ≤3% del trigger de compra (cooldown 2h)
   vwap_drawdown_milestone: boolean;   // Caída -5%, -10%, -15%, -20% desde ancla (1x por hito)

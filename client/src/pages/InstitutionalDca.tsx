@@ -3607,16 +3607,82 @@ function TelegramTab() {
         </CardContent>
       </Card>
 
+      {/* ── Alertas de Compra ── */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">ALERTAS HABILITADAS</CardTitle>
+          <CardTitle className="text-sm font-mono">🛒 ALERTAS DE COMPRA</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {Object.entries(toggles).map(([key, val]) => (
-              <ToggleField key={key} label={key.replace(/_/g, " ")} checked={val}
-                onChange={(v) => updateToggle(key, v)} />
-            ))}
+            <ToggleField label="Ciclo iniciado" checked={toggles["cycle_started"] !== false}
+              desc="Cada vez que se abre una compra base" onChange={(v) => updateToggle("cycle_started", v)} />
+            <ToggleField label="Compra base ejecutada" checked={toggles["base_buy_executed"] !== false}
+              desc="Confirmación de la orden base" onChange={(v) => updateToggle("base_buy_executed", v)} />
+            <ToggleField label="Compra de seguridad" checked={toggles["safety_buy_executed"] !== false}
+              desc="Safety orders ejecutadas" onChange={(v) => updateToggle("safety_buy_executed", v)} />
+            <ToggleField label="Compra bloqueada" checked={!!toggles["buy_blocked"]}
+              desc="Cuando la entrada es rechazada" onChange={(v) => updateToggle("buy_blocked", v)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Alertas de Venta / Salida ── */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-mono">📈 ALERTAS DE VENTA / SALIDA</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <ToggleField label="Protección armada" checked={toggles["protection_armed"] !== false}
+              desc="Stop break-even activado (+X%)" onChange={(v) => updateToggle("protection_armed", v)} />
+            <ToggleField label="Trailing activado" checked={toggles["trailing_activated"] !== false}
+              desc="Trailing stop iniciando seguimiento" onChange={(v) => updateToggle("trailing_activated", v)} />
+            <ToggleField label="TP alcanzado (venta parcial)" checked={toggles["tp_armed"] !== false}
+              desc="Take profit: vende parcial + trailing residual" onChange={(v) => updateToggle("tp_armed", v)} />
+            <ToggleField label="Salida trailing" checked={toggles["trailing_exit"] !== false}
+              desc="Stop trailing ejecutado → venta final" onChange={(v) => updateToggle("trailing_exit", v)} />
+            <ToggleField label="Salida break-even" checked={toggles["breakeven_exit"] !== false}
+              desc="Stop tocado, salida a coste" onChange={(v) => updateToggle("breakeven_exit", v)} />
+            <ToggleField label="Drawdown máximo módulo" checked={toggles["module_max_drawdown_reached"] !== false}
+              desc="El módulo superó el drawdown configurado" onChange={(v) => updateToggle("module_max_drawdown_reached", v)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Alertas VWAP ── */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-mono">📊 ALERTAS VWAP / TRAILING BUY</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <ToggleField label="Ancla actualizada" checked={toggles["vwap_anchor_changed"] !== false}
+              desc="Nuevo máximo registrado como referencia VWAP" onChange={(v) => updateToggle("vwap_anchor_changed", v)} />
+            <ToggleField label="Precio cerca de compra" checked={toggles["vwap_approaching_buy"] !== false}
+              desc="Precio a ≤3% del trigger (cooldown 2h)" onChange={(v) => updateToggle("vwap_approaching_buy", v)} />
+            <ToggleField label="Hito de caída" checked={toggles["vwap_drawdown_milestone"] !== false}
+              desc="-5%, -10%, -15%, -20% desde ancla (1x por hito)" onChange={(v) => updateToggle("vwap_drawdown_milestone", v)} />
+            <ToggleField label="Trailing buy armado" checked={toggles["trailing_buy_armed"] !== false}
+              desc="Precio entró en zona de interés" onChange={(v) => updateToggle("trailing_buy_armed", v)} />
+            <ToggleField label="Trailing buy disparado" checked={toggles["trailing_buy_triggered"] !== false}
+              desc="Rebote confirmado → se evalúa entrada" onChange={(v) => updateToggle("trailing_buy_triggered", v)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Alertas de Sistema ── */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-mono">⚙️ ALERTAS DE SISTEMA</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <ToggleField label="Error crítico" checked={toggles["critical_error"] !== false}
+              desc="Fallos graves (venta fallida, etc.)" onChange={(v) => updateToggle("critical_error", v)} />
+            <ToggleField label="Ajuste inteligente" checked={!!toggles["smart_adjustment_applied"]}
+              desc="Smart-Guard modificó parámetros" onChange={(v) => updateToggle("smart_adjustment_applied", v)} />
+            <ToggleField label="Alertas en simulación" checked={!!toggles["simulation_alerts_enabled"]}
+              desc="Recibir notificaciones en modo simulación" onChange={(v) => updateToggle("simulation_alerts_enabled", v)} />
           </div>
         </CardContent>
       </Card>
