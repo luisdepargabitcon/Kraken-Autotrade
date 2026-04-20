@@ -216,6 +216,24 @@ export async function getClosedRecoveryCyclesCount(
   return rows.length;
 }
 
+export async function getLastClosedRecoveryCycle(
+  parentCycleId: number
+): Promise<InstitutionalDcaCycle | null> {
+  const rows = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(
+      and(
+        eq(institutionalDcaCycles.cycleType, "recovery"),
+        eq(institutionalDcaCycles.parentCycleId, parentCycleId),
+        eq(institutionalDcaCycles.status, "closed")
+      )
+    )
+    .orderBy(desc(institutionalDcaCycles.closedAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getTotalPairExposureUsd(
   pair: string,
   mode: string

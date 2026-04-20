@@ -2871,8 +2871,22 @@ async function managePlusCycle(
   if (plusCycle.status === "active") {
     const tpPct = parseFloat(String(plusCycle.tpTargetPct || "3"));
     if (unrealizedPnlPct >= tpPct) {
-      // Arm TP — for plus cycles we do a direct final sell (simpler than main)
-      await closePlusCycle(plusCycle, currentPrice, config, mode, "tp_reached");
+      // Transition to tp_armed → trailing (same as main cycle flow)
+      const isBtc = pair === "BTC/USD";
+      const trailingPct = isBtc ? plusCfg.trailingPctBtc : plusCfg.trailingPctEth;
+      await repo.updateCycle(plusCycle.id, {
+        status: "tp_armed",
+        tpArmedAt: new Date(),
+        highestPriceAfterTp: currentPrice.toFixed(8),
+        trailingPct: trailingPct.toFixed(2),
+      });
+      await createHumanEvent({
+        cycleId: plusCycle.id, pair, mode,
+        eventType: "tp_armed",
+        severity: "info",
+        message: `Plus TP alcanzado +${unrealizedPnlPct.toFixed(2)}%: trailing ${trailingPct}% activado desde $${currentPrice.toFixed(2)}`,
+      }, { eventType: "tp_armed", pair, mode, price: currentPrice, pnlPct: unrealizedPnlPct, trailingPct });
+      await telegram.alertTpArmed(plusCycle, 100); // 100% = no partial sell on plus
       return;
     }
 
@@ -2976,7 +2990,7 @@ async function checkPlusSafetyBuy(
     lastBuyAt: new Date(),
   });
 
-  await repo.createOrder({
+  const plusSafetyOrder = await repo.createOrder({
     cycleId: plusCycle.id,
     pair,
     mode,
@@ -3012,6 +3026,11 @@ async function checkPlusSafetyBuy(
     price: currentPrice, quantity, avgEntry: newAvgPrice,
     capitalUsed: newTotalCost, buyCount: newBuyCount,
   });
+
+  const updatedPlus = await repo.getCycleById(plusCycle.id);
+  if (updatedPlus) {
+    await telegram.alertBuyExecuted(updatedPlus, plusSafetyOrder, "safety_buy", parseFloat(String(plusCycle.avgEntryPrice)));
+  }
 }
 
 // ─── Plus Cycle Close ─────────────────────────────────────────────
@@ -3087,10 +3106,16 @@ async function closePlusCycle(
     closeReason: reason, parentCycleId: plusCycle.parentCycleId,
   });
 
-  if (reason === "trailing_exit") {
-    await telegram.alertTrailingExit(plusCycle);
-  } else if (reason === "breakeven_exit") {
-    await telegram.alertBreakevenExit(plusCycle);
+  const updatedPlusClosed = await repo.getCycleById(plusCycle.id);
+  if (updatedPlusClosed) {
+    if (reason === "trailing_exit") {
+      await telegram.alertTrailingExit(updatedPlusClosed);
+    } else if (reason === "breakeven_exit") {
+      await telegram.alertBreakevenExit(updatedPlusClosed);
+    } else if (reason === "tp_reached" || reason === "main_cycle_closed") {
+      // tp_reached won't fire here anymore (goes through tp_armed first), but kept as safety
+      await telegram.alertTrailingExit(updatedPlusClosed);
+    }
   }
 }
 
@@ -3775,10 +3800,15 @@ async function checkRecoveryActivation(
 
   // 4d) Cooldown between recovery cycles
   if (closedCount > 0) {
-    // Check last closed recovery
-    // Use a simplified check: if any recovery was closed recently
-    // This is approximate; in production you'd store closedAt timestamp
-    // For now we check using closedCount > 0 as a proxy
+    const lastClosed = await repo.getLastClosedRecoveryCycle(mainCycle.id);
+    if (lastClosed?.closedAt) {
+      const sinceLastRecoveryMs = Date.now() - new Date(lastClosed.closedAt).getTime();
+      const betweenCooldownMs = rcfg.cooldownMinutesBetweenRecovery * 60 * 1000;
+      if (sinceLastRecoveryMs < betweenCooldownMs) {
+        const remaining = Math.ceil((betweenCooldownMs - sinceLastRecoveryMs) / 60000);
+        blockReasons.push(`cooldown_between_recovery: ${remaining}min remaining`);
+      }
+    }
   }
 
   // 4e) Market score
@@ -4233,10 +4263,17 @@ async function closeRecoveryCycle(
     capitalUsed,
   });
 
-  // Telegram alert for recovery close (reuse imported close format)
+  // Telegram alert for recovery cycle close (dedicated format)
   const updated = await repo.getCycleById(recoveryCycle.id);
   if (updated) {
-    await telegram.alertImportedClosed(updated, pnlUsd, pnlPct, durationStr);
+    if (closeReason === "trailing_exit") {
+      await telegram.alertTrailingExit(updated);
+    } else if (closeReason === "breakeven_exit") {
+      await telegram.alertBreakevenExit(updated);
+    } else {
+      // tp_reached, main_cycle_closed, main_recovered, max_duration_exceeded
+      await telegram.alertImportedClosed(updated, pnlUsd, pnlPct, durationStr);
+    }
   }
 }
 
