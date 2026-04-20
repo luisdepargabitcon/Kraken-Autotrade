@@ -675,7 +675,14 @@ async function evaluatePair(
       // ── Entry check with VWAP logic ────────────────────────────────
       if (assetConfig.vwapEnabled) {
         // ── Trailing Buy (VWAP-driven) ─────────────────────────────
+        // Trailing buy manages the ARM/DISARM state and gates the actual purchase.
+        // checkEntry() is ALWAYS called so that entry_check_blocked events are
+        // generated every tick for ALL pairs (BTC/USD included) regardless of
+        // trailing state. Without this, pairs with vwapEnabled=true in neutral
+        // zone would never produce any UI events.
         const tbCandles = ohlcCache.get(pair) || [];
+        let trailingAllowsEntry = false; // true only when trailing buy fires
+
         if (tbCandles.length >= 7) {
           const anchor24h = Date.now() - 24 * 60 * 60 * 1000;
           const tbVwap = smart.computeVwapAnchored(tbCandles, anchor24h);
@@ -701,7 +708,7 @@ async function evaluatePair(
             if (TrailingBuyManager.isArmed(pair)) {
               const tbResult = TrailingBuyManager.update(pair, currentPrice);
               if (tbResult.triggered) {
-                // Trailing confirmó rebote → ejecutar entry check normal
+                // Trailing confirmó rebote → permitir ejecución de compra
                 await createHumanEvent({
                   pair, mode,
                   eventType: "trailing_buy_triggered",
@@ -709,7 +716,7 @@ async function evaluatePair(
                   message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
                   payloadJson: { ...tbResult, zone: tbZone },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
-                await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
+                trailingAllowsEntry = true;
               }
             }
 
@@ -724,14 +731,12 @@ async function evaluatePair(
                 payloadJson: { price: currentPrice, zone: tbZone, reason: "price_returned_to_neutral" },
               }, { eventType: "trailing_buy_reset", pair, mode });
             }
-          } else {
-            // VWAP not reliable — fallback to direct entry check
-            await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
           }
-        } else {
-          // Not enough candles for VWAP — fallback
-          await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
         }
+
+        // Always run checkEntry for event generation (entry_check_blocked visible in UI).
+        // observeOnly=true unless trailing buy fired — prevents accidental purchase.
+        await checkEntry(pair, currentPrice, config, assetConfig, mode, !trailingAllowsEntry);
       } else {
         // Sin VWAP → comportamiento original directo
         await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
