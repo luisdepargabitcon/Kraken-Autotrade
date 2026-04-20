@@ -180,7 +180,8 @@ export interface VwapEntryContext {
   lowerBand3: number;
   stdDev: number;
   anchorTime: number;
-  candlesUsed: number;
+  candlesUsed: number;      // candles from anchor (used for VWAP)
+  candlesForSigma: number;  // candles used for stdDev (>= candlesUsed, min 24)
   isReliable: boolean;
   zone: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
   distanceFromVwapPct: number;

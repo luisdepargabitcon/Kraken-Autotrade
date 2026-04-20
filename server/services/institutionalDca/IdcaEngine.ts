@@ -2051,6 +2051,7 @@ async function performEntryCheck(
         stdDev: vwapResult.stdDev,
         anchorTime: vwapResult.anchorTime,
         candlesUsed: vwapResult.candlesUsed,
+        candlesForSigma: vwapResult.candlesForSigma,
         isReliable: true,
         zone: bandPos.zone,
         distanceFromVwapPct: bandPos.distanceFromVwapPct,
