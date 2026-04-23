@@ -93,6 +93,10 @@ import {
 import { cn } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
 import { EditImportedCycleModal } from "@/components/idca/EditImportedCycleModal";
+import { EntradasTab } from "@/components/idca/EntradasTab";
+import { SalidasTab } from "@/components/idca/SalidasTab";
+import { EjecucionTab } from "@/components/idca/EjecucionTab";
+import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -153,9 +157,10 @@ export default function InstitutionalDca() {
         <ControlsBar />
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-4 md:grid-cols-9 gap-1 h-auto p-1">
+          <TabsList className="grid grid-cols-5 md:grid-cols-10 gap-1 h-auto p-1">
             <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
             <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
+            <TabsTrigger value="adaptive" className="text-xs gap-1" data-testid="tab-adaptive"><Sparkles className="h-3 w-3" /> Adaptativo</TabsTrigger>
             <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
             <TabsTrigger value="history" className="text-xs gap-1"><ListOrdered className="h-3 w-3" /> Historial</TabsTrigger>
             <TabsTrigger value="legend" className="text-xs gap-1"><Info className="h-3 w-3" /> Leyenda</TabsTrigger>
@@ -167,6 +172,7 @@ export default function InstitutionalDca() {
 
           <TabsContent value="summary"><SummaryTab /></TabsContent>
           <TabsContent value="config"><ConfigTab /></TabsContent>
+          <TabsContent value="adaptive"><AdaptiveTab /></TabsContent>
           <TabsContent value="cycles"><CyclesTab /></TabsContent>
           <TabsContent value="history"><HistoryTab /></TabsContent>
           <TabsContent value="legend"><LegendTab /></TabsContent>
@@ -4215,6 +4221,128 @@ function GuideTab() {
         </div>
       </GuideSection>
 
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ADAPTIVE TAB — 4 sub-tabs: Entradas / Salidas / Ejecución / Avanzado
+// Por par seleccionado. Usa servicios nuevos IDCA (LadderAtrp, TrailingBuy,
+// MarketContext, ExitManager).
+// ════════════════════════════════════════════════════════════════════
+
+function AdaptiveTab() {
+  const { data: assetConfigs, isLoading } = useIdcaAssetConfigs();
+  const { toast } = useToast();
+  const updateAsset = useUpdateAssetConfig();
+  const [selectedPair, setSelectedPair] = useState<string>("");
+  const [activeSub, setActiveSub] = useState<string>("entradas");
+
+  // Default to first enabled asset, or first
+  useEffect(() => {
+    if (!selectedPair && assetConfigs && assetConfigs.length > 0) {
+      const enabled = assetConfigs.find((a) => a.enabled);
+      setSelectedPair(enabled?.pair || assetConfigs[0].pair);
+    }
+  }, [assetConfigs, selectedPair]);
+
+  const currentAsset = useMemo(
+    () => assetConfigs?.find((a) => a.pair === selectedPair),
+    [assetConfigs, selectedPair]
+  );
+
+  const handleConfigUpdate = useCallback(
+    (updates: any) => {
+      if (!selectedPair) return;
+      updateAsset.mutate(
+        { pair: selectedPair, ...updates },
+        {
+          onSuccess: () => toast({ title: "Configuración guardada" }),
+          onError: (err: any) =>
+            toast({
+              title: "Error al guardar",
+              description: err?.message || "Error desconocido",
+              variant: "destructive",
+            }),
+        }
+      );
+    },
+    [selectedPair, updateAsset, toast]
+  );
+
+  if (isLoading) {
+    return <div className="text-center py-8 text-muted-foreground">Cargando configuraciones...</div>;
+  }
+
+  if (!assetConfigs || assetConfigs.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center text-muted-foreground">
+          No hay pares configurados. Añade un par desde la pestaña Config.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="adaptive-tab-container">
+      {/* Pair selector */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-3">
+            <Label className="whitespace-nowrap">Par:</Label>
+            <Select value={selectedPair} onValueChange={setSelectedPair}>
+              <SelectTrigger className="w-[220px]" data-testid="adaptive-pair-select">
+                <SelectValue placeholder="Selecciona un par" />
+              </SelectTrigger>
+              <SelectContent>
+                {assetConfigs.map((a) => (
+                  <SelectItem key={a.pair} value={a.pair}>
+                    {a.pair} {a.enabled ? "" : "(deshab.)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {currentAsset && (
+              <Badge variant={currentAsset.enabled ? "default" : "secondary"}>
+                {currentAsset.enabled ? "Activo" : "Inactivo"}
+              </Badge>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {currentAsset && (
+        <Tabs value={activeSub} onValueChange={setActiveSub}>
+          <TabsList className="grid grid-cols-4 gap-1 h-auto p-1">
+            <TabsTrigger value="entradas" className="text-xs gap-1" data-testid="subtab-entradas">
+              <TrendingDown className="h-3 w-3" /> Entradas
+            </TabsTrigger>
+            <TabsTrigger value="salidas" className="text-xs gap-1" data-testid="subtab-salidas">
+              <TrendingUp className="h-3 w-3" /> Salidas
+            </TabsTrigger>
+            <TabsTrigger value="ejecucion" className="text-xs gap-1" data-testid="subtab-ejecucion">
+              <Zap className="h-3 w-3" /> Ejecución
+            </TabsTrigger>
+            <TabsTrigger value="avanzado" className="text-xs gap-1" data-testid="subtab-avanzado">
+              <Settings2 className="h-3 w-3" /> Avanzado
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="entradas" className="mt-4">
+            <EntradasTab assetConfig={currentAsset as any} pair={selectedPair} />
+          </TabsContent>
+          <TabsContent value="salidas" className="mt-4">
+            <SalidasTab assetConfig={currentAsset as any} pair={selectedPair} onConfigUpdate={handleConfigUpdate} />
+          </TabsContent>
+          <TabsContent value="ejecucion" className="mt-4">
+            <EjecucionTab assetConfig={currentAsset as any} pair={selectedPair} onConfigUpdate={handleConfigUpdate} />
+          </TabsContent>
+          <TabsContent value="avanzado" className="mt-4">
+            <AvanzadoTab assetConfig={currentAsset as any} pair={selectedPair} onConfigUpdate={handleConfigUpdate} />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }
