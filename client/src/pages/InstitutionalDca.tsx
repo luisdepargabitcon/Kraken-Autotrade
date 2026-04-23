@@ -4232,7 +4232,7 @@ function GuideTab() {
 // ════════════════════════════════════════════════════════════════════
 
 function AdaptiveTab() {
-  const { data: assetConfigs, isLoading } = useIdcaAssetConfigs();
+  const { data: assetConfigs, isLoading, isError, error } = useIdcaAssetConfigs();
   const { toast } = useToast();
   const updateAsset = useUpdateAssetConfig();
   const [selectedPair, setSelectedPair] = useState<string>("");
@@ -4272,6 +4272,19 @@ function AdaptiveTab() {
 
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando configuraciones...</div>;
+  }
+
+  if (isError) {
+    return (
+      <Card className="border-red-500/30">
+        <CardContent className="py-8 text-center space-y-2">
+          <AlertTriangle className="h-6 w-6 text-red-500 mx-auto" />
+          <p className="text-red-400 font-mono text-sm font-semibold">Error cargando configuraciones de assets</p>
+          <p className="text-xs text-muted-foreground font-mono">{(error as Error)?.message || "Error desconocido"}</p>
+          <p className="text-xs text-yellow-400">Si el error menciona una columna faltante, reinicia el backend para aplicar la migración automática.</p>
+        </CardContent>
+      </Card>
+    );
   }
 
   if (!assetConfigs || assetConfigs.length === 0) {

@@ -988,6 +988,41 @@ async function runMigration() {
     const idcaVwapReboundPath = path.resolve(process.cwd(), "db", "migrations", "028_idca_vwap_rebound_config.sql");
     await tryExecuteFile(db, idcaVwapReboundPath, "idca_vwap_rebound_config");
 
+    // ============================================================
+    // IDCA VWAP ANCHORS TABLE (029a) — persistent anchor memory
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA VWAP anchors table exists...");
+    const idcaVwapAnchorsPath = path.resolve(process.cwd(), "db", "migrations", "029_idca_vwap_anchors.sql");
+    await tryExecuteFile(db, idcaVwapAnchorsPath, "idca_vwap_anchors");
+
+    // ============================================================
+    // IDCA LADDER ATRP + TRAILING BUY LEVEL 1 (029b)
+    // Uses IF NOT EXISTS to be idempotent (safe re-run)
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA ladder ATRP columns exist...");
+    const idcaLadderMigrations = [
+      "ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS ladder_atrp_config_json JSONB",
+      "ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS ladder_atrp_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+      "ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_buy_level_1_config_json JSONB",
+    ];
+    for (const m of idcaLadderMigrations) {
+      await tryExecute(db, m, "idca_ladder_atrp");
+    }
+    // Backfill default configs for existing rows
+    await tryExecute(db, `
+      UPDATE institutional_dca_asset_configs
+      SET
+        ladder_atrp_config_json = '{"enabled":false,"profile":"balanced","sliderIntensity":50,"baseMultiplier":0.8,"stepMultiplier":0.4,"maxMultiplier":4.0,"effectiveMultipliers":[0.8,1.2,1.6,2.0,2.4],"sizeDistribution":[25,25,20,15,15],"minDipPct":0.8,"maxDipPct":20,"maxLevels":5,"adaptiveScaling":true,"volatilityScaling":1.0,"rebalanceOnVwap":true}'::jsonb,
+        trailing_buy_level_1_config_json = '{"enabled":false,"triggerLevel":0,"triggerMode":"dip_pct","trailingMode":"rebound_pct","trailingValue":0.3,"maxWaitMinutes":60,"cancelOnRecovery":true,"minVolumeCheck":false,"confirmWithVwap":false}'::jsonb
+      WHERE ladder_atrp_config_json IS NULL
+    `, "idca_ladder_atrp_backfill");
+    // Create index if not exists
+    await tryExecute(db, `
+      CREATE INDEX IF NOT EXISTS idx_idca_asset_configs_ladder_enabled
+      ON institutional_dca_asset_configs(ladder_atrp_enabled)
+      WHERE ladder_atrp_enabled = true
+    `, "idca_ladder_atrp_index");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

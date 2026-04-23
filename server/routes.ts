@@ -112,6 +112,26 @@ export async function registerRoutes(
     }
   });
 
+  // Register IDCA routes eagerly — must happen before DB-auth check so routes
+  // are available even when API credentials load fails (e.g. local dev DB mismatch)
+  try {
+    const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
+    registerInstitutionalDcaRoutes(app);
+    console.log('[startup] Institutional DCA routes registered');
+  } catch (e: any) {
+    console.error('[startup] Failed to register Institutional DCA routes:', e?.message || e);
+  }
+
+  // Proactive schema migration — ensure new columns exist before IDCA queries
+  try {
+    const migrationResult = await storage.runSchemaMigration();
+    if (migrationResult.columnsAdded.length > 0) {
+      console.log(`[startup] Auto-migration: added ${migrationResult.columnsAdded.join(', ')}`);
+    }
+  } catch (e: any) {
+    console.error('[startup] Auto-migration error (non-fatal):', e?.message || e);
+  }
+
   // Load saved API credentials on startup
   try {
     const apiConfig = await storage.getApiConfig();
@@ -252,21 +272,8 @@ export async function registerRoutes(
       tradingEngine.start();
     }
 
-    // Proactive schema migration — ensure new columns exist before IDCA queries
+    // IDCA Scheduler auto-start (routes already registered above)
     try {
-      const migrationResult = await storage.runSchemaMigration();
-      if (migrationResult.columnsAdded.length > 0) {
-        console.log(`[startup] Auto-migration: added ${migrationResult.columnsAdded.join(', ')}`);
-      }
-    } catch (e: any) {
-      console.error('[startup] Auto-migration error (non-fatal):', e?.message || e);
-    }
-
-    // Institutional DCA Module — register routes & auto-start scheduler
-    try {
-      const { registerInstitutionalDcaRoutes } = await import('./routes/institutionalDca.routes');
-      registerInstitutionalDcaRoutes(app);
-
       const { IdcaRepository, IdcaEngine } = await import('./services/institutionalDca');
       const idcaControls = await IdcaRepository.getTradingEngineControls();
       const idcaConfig = await IdcaRepository.getIdcaConfig();
@@ -277,7 +284,7 @@ export async function registerRoutes(
         console.log('[startup] Institutional DCA module idle (toggle off or mode disabled)');
       }
     } catch (e: any) {
-      console.error('[startup] Failed to initialize Institutional DCA module:', e?.message || e);
+      console.error('[startup] Failed to start Institutional DCA scheduler:', e?.message || e);
     }
   } catch (error) {
     console.error("[startup] Error loading API credentials:", error);

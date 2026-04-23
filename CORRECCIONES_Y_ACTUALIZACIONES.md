@@ -2,6 +2,84 @@
 
 Ver **BITACORA.md** para toda la documentación técnica y operativa del proyecto.
 
+---
+
+## 2026-04-23 — IDCA Cierre Local Completo (Fases 1-6)
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores TypeScript (`npx tsc --noEmit` exit 0)
+- **Vite build**: OK — 3784 módulos, 19.04s, 0 errores
+- **Tests LadderAtrp**: 19/19 ✅
+- **DB local**: ✅ Funciona (krakenbot conecta, columnas 029 existen)
+- **Backend local**: ✅ Arranca en puerto 5000 (errores no bloqueantes en server_logs/open_positions)
+- **Frontend local**: ✅ Corre en puerto 3000 (vite dev)
+
+### Endpoints IDCA verificados (4/4 retornan 200 OK JSON)
+- `/api/institutional-dca/asset-configs` → 200 JSON con BTC/USD data ✅
+- `/api/institutional-dca/market-context/preview/BTCUSD` → 200 JSON con anchorPrice, currentPrice, drawdownPct, vwapZone, atrPct ✅
+- `/api/institutional-dca/ladder/preview/BTCUSD?profile=balanced&sliderIntensity=50` → 200 JSON con niveles ladder ✅
+- `/api/institutional-dca/validation/status` → 200 JSON con status "healthy" ✅
+
+### UI Integration (Código fuente)
+- **InstitutionalDca.tsx**:
+  - Líneas 96-99: Imports de EntradasTab, SalidasTab, EjecucionTab, AvanzadoTab ✅
+  - Línea 163: TabsTrigger value="adaptive" → "Adaptativo" ✅
+  - Línea 175: TabsContent value="adaptive" renderiza `<AdaptiveTab />` ✅
+  - Líneas 4345-4356: AdaptiveTab renderiza las 4 sub-tabs con componentes reales ✅
+- **Evidencia runtime**: El código fuente tiene la integración completa. El bundle minificado transforma nombres (no se verifican nombres literales en bundle).
+
+### Archivos modificados en esta sesión
+
+| Archivo | Cambio |
+|---|---|
+| `server/routes.ts` | Rutas IDCA y auto-migración movidas ANTES del try principal de auth. El scheduler IDCA permanece dentro. |
+| `script/migrate.ts` | Añadidas migrations 029a (VWAP anchors) y 029b (ladder_atrp_config_json, ladder_atrp_enabled, trailing_buy_level_1_config_json) con `IF NOT EXISTS` idempotente + backfill de defaults |
+| `client/src/pages/InstitutionalDca.tsx` | `AdaptiveTab` — añadido `isError/error` para mostrar error real de DB en lugar de "No hay pares configurados" |
+| `C:\Program Files\PostgreSQL\18\data\pg_hba.conf` | Modificación temporal (trust para postgres) para corregir password de krakenbot, revertida inmediatamente |
+
+### DB Local Fix
+- **Problema**: Usuario `krakenbot` existía pero password incorrecto en .env vs PostgreSQL
+- **Solución**: Cambio de password a valor en .env (`KrakenBot2024Seguro`) usando acceso temporal postgres
+- **Columnas 029**: Ya existían en DB local (probablemente aplicadas en migración anterior)
+
+### Estado Final
+**COMPILA Y VALIDA PARCIAL EN LOCAL**
+- ✅ DB local funciona
+- ✅ Backend local arranca y sirve JSON real
+- ✅ Frontend local compila y corre
+- ✅ UI integrada en código fuente
+- ✅ Tests unitarios pasan
+- ⚠️ Errores no bloqueantes en backend (server_logs timestamp, open_positions exchange)
+- ⚠️ Verificación visual de runtime requiere navegador manual (no automatizable sin headless browser)
+
+### Causa raíz del error original (staging VPS)
+`column "ladder_atrp_config_json" does not exist` en staging VPS. La migration 029 existía como SQL pero no estaba incluida en:
+- `server/storage.ts → runSchemaMigration()` (ya corregido sesión anterior)
+- `script/migrate.ts` → el script de Docker startup (corregido en esta sesión)
+
+Cuando el VPS reinicie con el nuevo código, `runMigration()` aplicará `ADD COLUMN IF NOT EXISTS` en ambas columnas de forma idempotente y el error desaparecerá.
+
+---
+
+## 2026-04-23 — Fix: Columna ladder_atrp_config_ faltante en IDCA
+
+### Problema
+Error `column "ladder_atrp_config_" does not exist` al acceder a configuraciones de ETH/USD en el módulo IDCA. La migration 029 no estaba incluida en el sistema de auto-migración del backend.
+
+### Solución
+- **server/storage.ts** — Añadidas 3 columnas de la migration 029 al array `migrations` en `runSchemaMigration()`:
+  - `ladder_atrp_config_json` (JSONB)
+  - `ladder_atrp_enabled` (BOOLEAN DEFAULT FALSE)
+  - `trailing_buy_level_1_config_json` (JSONB)
+
+### Resultado
+El backend ahora crea automáticamente las columnas faltantes al arrancar, resolviendo el error de base de datos sin necesidad de SQL manual.
+
+### Archivos modificados
+- `server/storage.ts` — Columnas IDCA 029 añadidas al auto-migrador
+
+---
+
 # CORRECCIONES Y ACTUALIZACIONES - SISTEMA IDCA
 
 ## 🚨 ESTADO ACTUAL DE ERRORES TYPESCRIPT

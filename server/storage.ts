@@ -1916,6 +1916,11 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_asset_configs', column: 'vwap_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS vwap_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
         { table: 'institutional_dca_asset_configs', column: 'vwap_dynamic_safety_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS vwap_dynamic_safety_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
 
+        // institutional_dca_asset_configs — Ladder ATRP + Trailing Buy Level 1 config (029)
+        { table: 'institutional_dca_asset_configs', column: 'ladder_atrp_config_json', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS ladder_atrp_config_json JSONB' },
+        { table: 'institutional_dca_asset_configs', column: 'ladder_atrp_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS ladder_atrp_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
+        { table: 'institutional_dca_asset_configs', column: 'trailing_buy_level_1_config_json', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_buy_level_1_config_json JSONB' },
+
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
         { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },
