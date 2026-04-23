@@ -158,16 +158,17 @@ class IdcaLadderAtrpService {
     for (let i = 0; i < config.maxLevels; i++) {
       const atrpMultiplier = config.effectiveMultipliers[i];
       const rawDipPct = atrpMultiplier * context.atrPct * adaptiveFactor * vwapFactor;
-      
-      // Aplicar clamps
+
+      // Aplicar clamps pero asegurar que cada nivel sea mayor que el anterior
+      const minDipForLevel = i === 0 ? config.minDipPct : (levels[i - 1].dipPct + 0.5); // Mínimo 0.5% de diferencia
       const dipPct = Math.max(
-        config.minDipPct,
+        minDipForLevel,
         Math.min(config.maxDipPct, rawDipPct)
       );
 
       const triggerPrice = context.anchorPrice * (1 - dipPct / 100);
       const sizePct = config.sizeDistribution[i] || 0;
-      
+
       totalSizePct += sizePct;
 
       levels.push({
@@ -347,6 +348,7 @@ class IdcaLadderAtrpService {
         dipPct: l.dipPct,
         triggerPrice: l.triggerPrice,
         sizePct: l.sizePct,
+        atrpMultiplier: l.atrpMultiplier,
       })),
       maxDrawdown: ladder.maxDrawdownCovered,
       totalSize: ladder.totalSizePct,

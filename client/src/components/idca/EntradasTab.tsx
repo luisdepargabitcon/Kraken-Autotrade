@@ -288,7 +288,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                             {level.dipPct.toFixed(2)}% dip → ${level.triggerPrice.toFixed(2)}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier?.toFixed(2) ?? "N/A"}
+                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier.toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -400,7 +400,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <Label>
-                    {trailingMode === "rebound_pct" ? "Rebounce %" : "Fracción ATRP"}
+                    {trailingMode === "rebound_pct" ? "Rebound %" : "Fracción ATRP"}
                   </Label>
                   <span className="text-sm text-muted-foreground">{trailingValue}</span>
                 </div>

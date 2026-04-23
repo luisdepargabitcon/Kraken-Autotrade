@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import {
   useIdcaControls,
@@ -741,6 +742,16 @@ function ConfigTab() {
 
   return (
     <div className="space-y-6">
+
+      {/* ════ BANNER LEGACY ════ */}
+      <Alert className="bg-amber-500/10 border-amber-500/30">
+        <AlertTriangle className="h-4 w-4 text-amber-500" />
+        <AlertDescription className="text-amber-200">
+          <strong>LEGACY - Configuración clásica</strong>: Esta pestaña contiene la configuración original del módulo. 
+          La nueva configuración adaptativa está en la pestaña <strong>Adaptativo</strong>. 
+          Algunos campos aquí están duplicados con la nueva configuración.
+        </AlertDescription>
+      </Alert>
 
       {/* ════ SUB-TABS DENTRO DE CONFIG ════ */}
       <div className="flex gap-2 border-b border-border/40 pb-2">

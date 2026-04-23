@@ -21,13 +21,13 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
     failSafeMaxLossPct: 15.0,
     failSafeTriggerPct: 12.0,
     
+    // Break-Even - configuración local solo para enable
     breakEvenEnabled: assetConfig?.breakevenEnabled ?? true,
-    breakEvenActivationPct: parseFloat(assetConfig?.protectionActivationPct || "1.0"),
-    breakEvenBufferPct: 0.5,
+    // NOTA: protectionActivationPct se configura en ConfigTab (pestaña antigua)
     
+    // Trailing - configuración local solo para enable
     trailingEnabled: true,
-    trailingActivationPct: parseFloat(assetConfig?.trailingActivationPct || "3.5"),
-    trailingMarginPct: parseFloat(assetConfig?.trailingMarginPct || "1.5"),
+    // NOTA: trailingActivationPct y trailingMarginPct se configuran en ConfigTab (pestaña antigua)
     
     takeProfitEnabled: true,
     takeProfitPct: parseFloat(assetConfig?.takeProfitPct || "4.0"),
@@ -61,9 +61,6 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
       await updateConfig.mutateAsync({
         pair,
         breakevenEnabled: localConfig.breakEvenEnabled,
-        protectionActivationPct: String(localConfig.breakEvenActivationPct),
-        trailingActivationPct: String(localConfig.trailingActivationPct),
-        trailingMarginPct: String(localConfig.trailingMarginPct),
         takeProfitPct: String(localConfig.takeProfitPct),
         dynamicTakeProfit: localConfig.dynamicTpEnabled,
       });
@@ -178,9 +175,11 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               max={30}
               step={0.5}
               className="w-full"
+              disabled
             />
+            <div className="text-xs text-muted-foreground mt-1">Valor fijo en runtime (requiere migración DB)</div>
           </div>
-          
+
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium">Trigger de Activación</label>
@@ -193,7 +192,9 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               max={25}
               step={0.5}
               className="w-full"
+              disabled
             />
+            <div className="text-xs text-muted-foreground mt-1">Valor fijo en runtime (requiere migración DB)</div>
           </div>
         </CardContent>
       </Card>
@@ -212,43 +213,17 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               <div className="font-medium">Break-Even Activado</div>
               <div className="text-sm text-gray-500">Protege el capital invertido</div>
             </div>
-            <Switch 
+            <Switch
               checked={localConfig.breakEvenEnabled}
               onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, breakEvenEnabled: checked }))}
             />
           </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Activación con Ganancia</label>
-              <span className="text-sm">{localConfig.breakEvenActivationPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.breakEvenActivationPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, breakEvenActivationPct: value }))}
-              min={0.5}
-              max={5}
-              step={0.1}
-              className="w-full"
-              disabled={!localConfig.breakEvenEnabled}
-            />
-          </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Buffer sobre Precio Entrada</label>
-              <span className="text-sm">{localConfig.breakEvenBufferPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.breakEvenBufferPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, breakEvenBufferPct: value }))}
-              min={0.1}
-              max={2}
-              step={0.1}
-              className="w-full"
-              disabled={!localConfig.breakEvenEnabled}
-            />
-          </div>
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              La activación y margen de Break-Even se configuran en la pestaña <strong>Config → Cuándo vender</strong>.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 
@@ -266,43 +241,17 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               <div className="font-medium">Trailing Activado</div>
               <div className="text-sm text-gray-500">Sigue las ganancias con stop dinámico</div>
             </div>
-            <Switch 
+            <Switch
               checked={localConfig.trailingEnabled}
               onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, trailingEnabled: checked }))}
             />
           </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Activación con Ganancia</label>
-              <span className="text-sm">{localConfig.trailingActivationPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.trailingActivationPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, trailingActivationPct: value }))}
-              min={1}
-              max={10}
-              step={0.5}
-              className="w-full"
-              disabled={!localConfig.trailingEnabled}
-            />
-          </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Margen de Trailing</label>
-              <span className="text-sm">{localConfig.trailingMarginPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.trailingMarginPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, trailingMarginPct: value }))}
-              min={0.5}
-              max={5}
-              step={0.1}
-              className="w-full"
-              disabled={!localConfig.trailingEnabled}
-            />
-          </div>
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              La activación y margen de Trailing se configuran en la pestaña <strong>Config → Cuándo vender</strong>.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 

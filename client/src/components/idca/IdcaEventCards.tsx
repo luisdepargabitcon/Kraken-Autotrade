@@ -1130,7 +1130,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   </div>
                   {parsed.effectiveBasePrice && parsed.effectiveMinDip && (
                     <div className="text-[10px] text-muted-foreground/50 mt-1.5">
-                      Mín dip efectivo: {parsed.effectiveMinDip.toFixed(2)}% desde banda -1σ (${parsed.effectiveBasePrice.toFixed(2)})
+                      Mín dip efectivo: {parsed.effectiveMinDip.toFixed(2)}% desde ancla (${parsed.effectiveBasePrice.toFixed(2)})
                     </div>
                   )}
                 </div>

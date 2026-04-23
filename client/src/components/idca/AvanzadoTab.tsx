@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Database, Bell, Shield, GitBranch, RefreshCw } from 'lucide-react';
+import { Settings, Database, Bell, Shield, GitBranch, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useUpdateAssetConfig } from '@/hooks/useInstitutionalDca';
 
 interface AvanzadoTabProps {
@@ -20,30 +20,28 @@ interface AvanzadoTabProps {
 
 export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onConfigUpdate }) => {
   const [localConfig, setLocalConfig] = useState({
-    // Configuración General
-    maxSafetyOrders: parseInt(assetConfig?.maxSafetyOrders || "5"),
+    // Cooldown y límites (nuevo)
     cooldownMinutesBetweenBuys: parseInt(assetConfig?.cooldownMinutesBetweenBuys || "30"),
-    requireReboundConfirmation: assetConfig?.requireReboundConfirmation ?? false,
-    reboundMinPct: parseFloat(assetConfig?.reboundMinPct || "0.3"),
-    
-    // VWAP
-    vwapEnabled: assetConfig?.vwapEnabled ?? false,
-    vwapDynamicSafetyEnabled: assetConfig?.vwapDynamicSafetyEnabled ?? false,
-    
-    // Límites
     maxCapitalPerCycle: parseFloat(assetConfig?.maxCapitalPerCycle || "1000"),
     maxDailyTrades: parseInt(assetConfig?.maxDailyTrades || "10"),
     
-    // Diagnóstico
+    // Diagnóstico (nuevo)
     enableDetailedLogging: true,
     enablePerformanceMetrics: true,
     logRetentionDays: 7,
     
-    // Telegram
+    // Telegram (nuevo)
     telegramDiagnosticsEnabled: true,
     telegramExecutionReports: true,
     telegramExitStrategyReports: true,
     telegramMarketContextAlerts: false,
+    
+    // NOTA: Los siguientes se configuran en ConfigTab (pestaña antigua):
+    // - maxSafetyOrders
+    // - requireReboundConfirmation
+    // - reboundMinPct
+    // - vwapEnabled
+    // - vwapDynamicSafetyEnabled
   });
 
   const [migrationStatus, setMigrationStatus] = useState<any>(null);
@@ -86,12 +84,13 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
     try {
       await updateConfig.mutateAsync({
         pair,
-        maxSafetyOrders: localConfig.maxSafetyOrders,
         cooldownMinutesBetweenBuys: localConfig.cooldownMinutesBetweenBuys,
-        requireReboundConfirmation: localConfig.requireReboundConfirmation,
-        reboundMinPct: String(localConfig.reboundMinPct),
-        vwapEnabled: localConfig.vwapEnabled,
-        vwapDynamicSafetyEnabled: localConfig.vwapDynamicSafetyEnabled,
+        // NOTA: Los siguientes se configuran en ConfigTab (pestaña antigua):
+        // - maxSafetyOrders
+        // - requireReboundConfirmation
+        // - reboundMinPct
+        // - vwapEnabled
+        // - vwapDynamicSafetyEnabled
       });
       onConfigUpdate(localConfig);
     } catch (error) {
@@ -147,16 +146,6 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium">Máximo Safety Orders</Label>
-                  <Input
-                    type="number"
-                    value={localConfig.maxSafetyOrders}
-                    onChange={(e) => setLocalConfig(prev => ({ ...prev, maxSafetyOrders: parseInt(e.target.value) || 0 }))}
-                    min={1}
-                    max={20}
-                  />
-                </div>
-                <div>
                   <Label className="text-sm font-medium">Cooldown entre Compras (min)</Label>
                   <Input
                     type="number"
@@ -167,68 +156,21 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
                   />
                 </div>
               </div>
-              
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Requerir Confirmación de Rebote</div>
-                  <div className="text-sm text-gray-500">Espera rebote antes de comprar</div>
-                </div>
-                <Switch 
-                  checked={localConfig.requireReboundConfirmation}
-                  onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, requireReboundConfirmation: checked }))}
-                />
-              </div>
-              
-              {localConfig.requireReboundConfirmation && (
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <Label className="text-sm font-medium">Rebote Mínimo (%)</Label>
-                    <span className="text-sm">{localConfig.reboundMinPct}%</span>
-                  </div>
-                  <Slider
-                    value={[localConfig.reboundMinPct]}
-                    onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, reboundMinPct: value }))}
-                    min={0.1}
-                    max={2}
-                    step={0.1}
-                    className="w-full"
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
-          {/* Configuración VWAP */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <GitBranch className="h-5 w-5" />
-                Configuración VWAP
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">VWAP Habilitado</div>
-                  <div className="text-sm text-gray-500">Usa VWAP anclado para análisis</div>
-                </div>
-                <Switch 
-                  checked={localConfig.vwapEnabled}
-                  onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, vwapEnabled: checked }))}
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Safety Dinámico VWAP</div>
-                  <div className="text-sm text-gray-500">Ajusta safety orders según VWAP</div>
-                </div>
-                <Switch 
-                  checked={localConfig.vwapDynamicSafetyEnabled}
-                  onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, vwapDynamicSafetyEnabled: checked }))}
-                  disabled={!localConfig.vwapEnabled}
-                />
-              </div>
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Los siguientes se configuran en la pestaña <strong>Config → Cuándo comprar</strong>:
+                  Máximo Safety Orders, Requerir Confirmación de Rebote, Rebote Mínimo.
+                </AlertDescription>
+              </Alert>
+
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  VWAP se configura en la pestaña <strong>Config → VWAP & Rebound</strong>.
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
 

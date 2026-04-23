@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Zap, Clock, Layers, TrendingUp } from 'lucide-react';
+import { Shield, Target, TrendingUp, AlertTriangle, Zap, Clock, Layers } from 'lucide-react';
 import { useUpdateAssetConfig } from '@/hooks/useInstitutionalDca';
 
 interface EjecucionTabProps {
@@ -68,7 +68,8 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
   const handleSave = async () => {
     setIsLoading(true);
     try {
-      // Guardar configuración de ejecución (necesitaría endpoint específico)
+      // NOTA: Configuración de ejecución actualmente es solo visual
+      // No hay endpoint específico para guardar estos parámetros en runtime
       console.log('Saving execution config:', localConfig);
       onConfigUpdate(localConfig);
     } catch (error) {
@@ -110,6 +111,15 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
 
   return (
     <div className="space-y-6">
+      {/* Banner Roadmap */}
+      <Alert className="bg-blue-500/10 border-blue-500/30">
+        <AlertTriangle className="h-4 w-4 text-blue-500" />
+        <AlertDescription className="text-blue-200">
+          <strong>ROADMAP - Preview</strong>: Esta pestaña muestra el diseño futuro de configuración de ejecución. 
+          Actualmente no tiene endpoint backend, por lo que los cambios no se guardan ni afectan el runtime.
+        </AlertDescription>
+      </Alert>
+
       {/* Estado Actual de Ejecución */}
       <Card>
         <CardHeader>
@@ -488,12 +498,13 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
 
       {/* Botones de acción */}
       <div className="flex gap-4">
-        <Button 
-          onClick={handleSave} 
-          disabled={isLoading}
+        <Button
+          onClick={handleSave}
+          disabled={true}
           className="flex-1"
+          variant="outline"
         >
-          {isLoading ? 'Guardando...' : 'Guardar Configuración'}
+          Preview - No disponible aún
         </Button>
       </div>
     </div>

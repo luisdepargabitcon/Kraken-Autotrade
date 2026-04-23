@@ -1020,7 +1020,7 @@ async function checkEntry(
         ``,
         `🎯 Para comprar necesita caer ${distToBuy > 0 ? distToBuy.toFixed(2) + "% más" : "YA en rango"}`,
         `   Precio de entrada: $${buyPrice.toFixed(2)}`,
-        `   Mín dip efectivo: ${minDip.toFixed(2)}% desde banda -1σ ($${effectiveBasePrice.toFixed(2)})`,
+        `   Mín dip efectivo: ${minDip.toFixed(2)}% desde ancla ($${effectiveBasePrice.toFixed(2)})`,
         ``,
         trailingArmed && localLow
           ? `🔵 Trailing Buy ARMADO | Mínimo: $${localLow.toFixed(2)} | Compra si rebota a: $${trailingBuyAt?.toFixed(2)}`
@@ -2318,20 +2318,11 @@ async function performEntryCheck(
     }
   }
 
-  // ── Effective base price: VWAP lowerBand1 if active, else hybrid_v2 ──
-  const effectiveBasePrice = (
-    assetConfig.vwapEnabled &&
-    vwapContext?.lowerBand1 &&
-    vwapContext.lowerBand1 > 0
-  )
-    ? vwapContext.lowerBand1
-    : basePriceResult.price;
-
-  const basePriceMethod = (
-    assetConfig.vwapEnabled &&
-    vwapContext?.lowerBand1 &&
-    vwapContext.lowerBand1 > 0
-  ) ? "vwap_lowerBand1" : "hybrid_v2";
+  // ── Effective base price: anchorPrice (frozen anchor or current swing high) ──
+  // Referencia principal: caída desde ancla
+  // VWAP se usa solo como confirmación, no como base de cálculo
+  const effectiveBasePrice = basePriceResult.price;
+  const basePriceMethod = "anchor_price";
 
   const entryDipPct = effectiveBasePrice > 0
     ? ((effectiveBasePrice - currentPrice) / effectiveBasePrice) * 100
