@@ -288,7 +288,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                             {level.dipPct.toFixed(2)}% dip → ${level.triggerPrice.toFixed(2)}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier.toFixed(2)}
+                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier?.toFixed(2) ?? "N/A"}
                           </div>
                         </div>
                       </div>
