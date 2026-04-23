@@ -1043,6 +1043,11 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
     { dipPct: 8.0, sizePctOfAssetBudget: 25 },
   ]),
   maxSafetyOrders: integer("max_safety_orders").notNull().default(4),
+  // Ladder ATRP config (new system)
+  ladderAtrpConfigJson: jsonb("ladder_atrp_config_json"),
+  ladderAtrpEnabled: boolean("ladder_atrp_enabled").notNull().default(false),
+  // Trailing Buy Level 1 config
+  trailingBuyLevel1ConfigJson: jsonb("trailing_buy_level_1_config_json"),
   takeProfitPct: decimal("take_profit_pct", { precision: 5, scale: 2 }).notNull().default("4.00"),
   dynamicTakeProfit: boolean("dynamic_take_profit").notNull().default(true),
   trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }).notNull().default("1.20"),

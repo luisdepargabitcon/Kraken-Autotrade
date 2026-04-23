@@ -4,9 +4,14 @@
  * Completely isolated from the main bot's TradingEngine.
  */
 import * as repo from "./IdcaRepository";
-import * as smart from "./IdcaSmartLayer";
+import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
+import * as smart from "./IdcaSmartLayer";
+import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
+import { idcaMigrationService } from "./IdcaMigrationService";
+import { idcaExitManager } from "./IdcaExitManager";
+import { idcaExecutionManager } from "./IdcaExecutionManager";
 import {
   INSTITUTIONAL_DCA_ALLOWED_PAIRS,
   type InstitutionalDcaCycle,
@@ -33,9 +38,111 @@ import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
-import { TrailingBuyManager } from "./TrailingBuyManager";
 
 const TAG = "[IDCA]";
+
+// ─── Helper Functions ───────────────────────────────────────────
+
+/**
+ * Get ATRP for a pair (helper for trailing buy level 1)
+ */
+async function getAtrPctForPair(pair: string): Promise<number> {
+  try {
+    const candles = await MarketDataService.getCandles(pair, "1h");
+    if (candles.length >= 14) {
+      return computeATRPct(candles, 14);
+    }
+  } catch (error) {
+    console.warn(`${TAG}[ATRP] Failed to get ATRP for ${pair}:`, error);
+  }
+  return 2.0; // Default fallback
+}
+
+// ─── Exit Execution ─────────────────────────────────────────────
+
+/**
+ * Ejecuta una salida basada en señal del ExitManager
+ */
+async function executeExit(
+  cycle: InstitutionalDcaCycle,
+  signal: any, // ExitSignal type
+  config: InstitutionalDcaConfigRow,
+  assetConfig: InstitutionalDcaAssetConfigRow,
+  mode: IdcaMode
+): Promise<void> {
+  const pair = cycle.pair;
+  const totalQty = parseFloat(String(cycle.totalQuantity));
+  
+  try {
+    // Crear orden de salida
+    const exchange = ExchangeFactory.getTradingExchange();
+    const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: totalQty.toFixed(8) });
+    
+    if (!sellOrder) {
+      throw new Error("Failed to create sell order");
+    }
+    
+    // Actualizar ciclo
+    await repo.updateCycle(cycle.id, {
+      status: "closed",
+      closeReason: signal.exitType,
+      closedAt: new Date(),
+    });
+    
+    // Limpiar estado de salida
+    idcaExitManager.clearExitState(cycle.id);
+    
+    // Eventos y notificaciones
+    await createHumanEvent({
+      pair, mode,
+      eventType: "exit_executed",
+      severity: "info",
+      message: `Exit executed: ${signal.exitType} at $${signal.exitPrice.toFixed(2)}`,
+      payloadJson: {
+        exitType: signal.exitType,
+        exitPrice: signal.exitPrice,
+        exitReason: signal.exitReason,
+        urgency: signal.urgency,
+      },
+    }, { eventType: "exit_executed", pair, mode });
+    
+    // Alerta Telegram según tipo de salida
+    switch (signal.exitType) {
+      case "fail_safe":
+        await telegram.alertFailSafeTriggered(pair, mode, signal.exitPrice, signal.metadata.currentState.unrealizedPnlPct);
+        break;
+      case "take_profit":
+        await telegram.alertTakeProfitReached(pair, mode, signal.exitPrice, signal.metadata.currentState.unrealizedPnlPct);
+        break;
+      case "trailing":
+        await telegram.alertTrailingStopTriggered(pair, mode, signal.exitPrice, signal.metadata.currentState.unrealizedPnlPct);
+        break;
+      case "break_even":
+        await telegram.alertBreakEvenTriggered(pair, mode, signal.exitPrice);
+        break;
+    }
+    
+    console.log(
+      `[IDCA][EXIT] ${pair}: ${signal.exitType} executed at $${signal.exitPrice.toFixed(2)} ` +
+      `(${signal.metadata.currentState.unrealizedPnlPct?.toFixed(2)}% PnL)`
+    );
+    
+  } catch (error) {
+    console.error(`[IDCA][EXIT] Failed to execute exit for ${pair}:`, error);
+    
+    await createHumanEvent({
+      pair, mode,
+      eventType: "exit_failed",
+      severity: "error",
+      message: `Exit execution failed: ${(error as Error).message}`,
+      payloadJson: {
+        exitType: signal.exitType,
+        exitPrice: signal.exitPrice,
+        error: (error as Error).message,
+      },
+    }, { eventType: "exit_failed", pair, mode });
+  }
+}
 
 // ─── Cycle Review Diagnosis ───────────────────────────────────────
 // Captures what the bot evaluated and concluded during cycle management
@@ -738,6 +845,107 @@ async function evaluatePair(
           }
         }
 
+        // Check trailing buy level 1 configuration
+        const trailingBuyLevel1Config = assetConfig.trailingBuyLevel1ConfigJson as import('./IdcaTypes').TrailingBuyLevel1Config | null | undefined;
+        if (trailingBuyLevel1Config?.enabled && !trailingAllowsEntry) {
+          // Check if we should trigger trailing buy for specific level
+          const triggerLevel = trailingBuyLevel1Config.triggerLevel;
+          
+          // Get ladder ATRP levels if available
+          let triggerPrice: number | undefined;
+          if (assetConfig.ladderAtrpEnabled && assetConfig.ladderAtrpConfigJson) {
+            // Use ladder ATRP to determine trigger price
+            try {
+              const { idcaLadderAtrpService } = await import('./IdcaLadderAtrpService');
+              const ladder = await idcaLadderAtrpService.calculateLadder(pair, assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig);
+              const level = ladder.levels.find(l => l.level === triggerLevel);
+              if (level) {
+                triggerPrice = level.triggerPrice;
+              }
+            } catch (error) {
+              console.warn(`${TAG}[TRAILING_BUY_L1] Failed to get ladder ATRP for ${pair}:`, error);
+            }
+          }
+          
+          // Fallback to safety orders if ladder ATRP not available
+          if (!triggerPrice && assetConfig.safetyOrdersJson) {
+            const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+            if (triggerLevel === 0) {
+              // Base buy - use current dip calculation
+              const dipPct = parseFloat(String(assetConfig.minDipPct || "2.0"));
+              const { idcaMarketContextService } = await import('./IdcaMarketContextService');
+              const context = await idcaMarketContextService.getMarketContext(pair);
+              triggerPrice = context.anchorPrice * (1 - dipPct / 100);
+            } else if (triggerLevel <= safetyOrders.length) {
+              const safetyOrder = safetyOrders[triggerLevel - 1];
+              if (safetyOrder) {
+                const { idcaMarketContextService } = await import('./IdcaMarketContextService');
+                const context = await idcaMarketContextService.getMarketContext(pair);
+                triggerPrice = context.anchorPrice * (1 - safetyOrder.dipPct / 100);
+              }
+            }
+          }
+          
+          if (triggerPrice && currentPrice <= triggerPrice) {
+            // Trigger trailing buy level 1
+            const atrPct = await getAtrPctForPair(pair);
+            TrailingBuyManager.armLevel(pair, triggerPrice, currentPrice, triggerLevel, {
+              trailingMode: trailingBuyLevel1Config.trailingMode,
+              trailingValue: trailingBuyLevel1Config.trailingValue,
+              maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
+              cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
+              atrpMultiplier: atrPct,
+            });
+            
+            await createHumanEvent({
+              pair, mode,
+              eventType: "trailing_buy_level1_activated",
+              severity: "info",
+              message: `Trailing buy Level 1 armed: level ${triggerLevel} at $${triggerPrice.toFixed(2)}, current $${currentPrice.toFixed(2)}`,
+              payloadJson: { 
+                triggerLevel, 
+                triggerPrice, 
+                currentPrice, 
+                trailingMode: trailingBuyLevel1Config.trailingMode,
+                trailingValue: trailingBuyLevel1Config.trailingValue,
+              },
+            }, { eventType: "trailing_buy_level1_activated", pair, mode });
+            
+            telegram.alertTrailingBuyArmed(pair, mode, currentPrice, `level_${triggerLevel}`, triggerPrice)
+              .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed L1 failed: ${e.message}`));
+          }
+        }
+
+        // Validate no double execution before proceeding
+        const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+        const validation = idcaMigrationService.validateNoDoubleExecution(
+          pair,
+          safetyOrders,
+          assetConfig.ladderAtrpEnabled || false,
+          assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig | undefined
+        );
+        
+        if (!validation.valid) {
+          // Log warning but continue with current system
+          console.warn(`${TAG}[MIGRATION] ${pair}: ${validation.issues.join(", ")}`);
+          await createHumanEvent({
+            pair, mode,
+            eventType: "migration_validation_warning",
+            severity: "warning",
+            message: `Migration validation warning: ${validation.issues.join(", ")}`,
+            payloadJson: { 
+              issues: validation.issues,
+              recommendation: validation.recommendation,
+              activeSystem: idcaMigrationService.getActiveSystem(
+                pair,
+                safetyOrders,
+                assetConfig.ladderAtrpEnabled || false,
+                assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig | undefined
+              )
+            },
+          }, { eventType: "migration_validation_warning", pair, mode });
+        }
+
         // Always run checkEntry for event generation (entry_check_blocked visible in UI).
         // observeOnly=true unless trailing buy fired — prevents accidental purchase.
         await checkEntry(pair, currentPrice, config, assetConfig, mode, !trailingAllowsEntry);
@@ -1251,7 +1459,18 @@ async function handleActiveState(
   const pair = cycle.pair;
   const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
 
-  // Read slider config values
+  // Usar nuevo sistema unificado de salidas
+  const exitSignals = await idcaExitManager.evaluateExitSignals(cycle, assetConfig, currentPrice);
+  
+  // Procesar señales de salida
+  for (const signal of exitSignals) {
+    if (signal.shouldExit) {
+      await executeExit(cycle, signal, config, assetConfig, mode);
+      return; // Solo procesar la primera señal (OCO lógico ya aplicado)
+    }
+  }
+
+  // Lógica de seguridad existente como fallback
   const protectionActivationPct = parseFloat(String(assetConfig.protectionActivationPct ?? "1.00"));
   const trailingActivationPct = parseFloat(String(assetConfig.trailingActivationPct ?? "3.50"));
   const trailingMarginPct = parseFloat(String(assetConfig.trailingMarginPct ?? "1.50"));
@@ -2577,25 +2796,55 @@ async function updateOhlcvCache(): Promise<void> {
 
 // ─── Order Execution (Live) ────────────────────────────────────────
 
-async function executeRealBuy(pair: string, quantity: number, price: number): Promise<void> {
+async function executeRealBuy(pair: string, quantity: number, price: number, assetConfig?: InstitutionalDcaAssetConfigRow): Promise<void> {
   try {
-    const tradingExchange = ExchangeFactory.getTradingExchange();
-    if (!tradingExchange.isInitialized()) {
-      console.error(`${TAG}[LIVE][BUY] Trading exchange not initialized — order NOT sent for ${pair}`);
-      return;
-    }
-    console.log(`${TAG}[LIVE][BUY] Placing order: ${pair} qty=${quantity.toFixed(8)} @ ~${price.toFixed(2)}`);
-    const result = await tradingExchange.placeOrder({
-      pair,
-      type: "buy",
-      ordertype: "market",
-      volume: quantity.toFixed(8),
-    });
-    if (result.success) {
-      console.log(`${TAG}[LIVE][BUY] Order accepted: ${pair} orderId=${result.orderId || result.txid || "(pending)"}`);
+    // Usar nuevo ExecutionManager si hay asset config
+    if (assetConfig) {
+      const executionConfig = idcaExecutionManager.createExecutionConfig(assetConfig);
+      
+      const request = {
+        cycleId: 0, // Temporal, se asignará en contexto real
+        pair,
+        side: "buy" as const,
+        totalQuantity: quantity,
+        totalValueUsd: quantity * price,
+        urgency: "medium" as const,
+        reason: "IDCA safety buy",
+        config: executionConfig,
+      };
+      
+      const result = await idcaExecutionManager.executeOrder(request);
+      
+      if (result.success) {
+        console.log(
+          `${TAG}[LIVE][BUY] ExecutionManager order completed: ${pair} ` +
+          `qty=${result.executedQuantity.toFixed(8)} avgPrice=$${result.avgPrice.toFixed(2)} ` +
+          `orders=${result.orders.length} time=${result.executionTimeMs}ms`
+        );
+      } else {
+        console.error(`${TAG}[LIVE][BUY] ExecutionManager failed: ${pair} warnings=${result.warnings.join(", ")}`);
+        throw new Error(`ExecutionManager buy failed: ${result.warnings.join(", ")}`);
+      }
     } else {
-      console.error(`${TAG}[LIVE][BUY] Order FAILED: ${pair} error=${result.error}`);
-      throw new Error(`Live buy order failed: ${result.error}`);
+      // Fallback a método original
+      const tradingExchange = ExchangeFactory.getTradingExchange();
+      if (!tradingExchange.isInitialized()) {
+        console.error(`${TAG}[LIVE][BUY] Trading exchange not initialized — order NOT sent for ${pair}`);
+        return;
+      }
+      console.log(`${TAG}[LIVE][BUY] Placing order: ${pair} qty=${quantity.toFixed(8)} @ ~${price.toFixed(2)}`);
+      const result = await tradingExchange.placeOrder({
+        pair,
+        type: "buy",
+        ordertype: "market",
+        volume: quantity.toFixed(8),
+      });
+      if (result.success) {
+        console.log(`${TAG}[LIVE][BUY] Order accepted: ${pair} orderId=${result.orderId || result.txid || "(pending)"}`);
+      } else {
+        console.error(`${TAG}[LIVE][BUY] Order FAILED: ${pair} error=${result.error}`);
+        throw new Error(`Live buy order failed: ${result.error}`);
+      }
     }
   } catch (e: any) {
     console.error(`${TAG}[LIVE][BUY] Error placing order for ${pair}:`, e.message);

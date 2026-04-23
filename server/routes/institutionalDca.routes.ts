@@ -233,10 +233,10 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const latest = await repo.getEvents({ limit: 5, orderBy: 'createdAt', orderDirection: 'desc' });
       res.json({
         totalEvents: total,
-        latestEvents: latest.map(e => ({
-          id: e.id, eventType: e.eventType, severity: e.severity,
-          pair: e.pair, mode: e.mode, createdAt: e.createdAt,
-          message: (e.message || '').slice(0, 120),
+        latestEvents: latest.map((event: any) => ({
+          id: event.id, eventType: event.eventType, severity: event.severity,
+          pair: event.pair, mode: event.mode, createdAt: event.createdAt,
+          message: (event.message || '').slice(0, 120),
         })),
       });
     } catch (e: any) {
@@ -255,9 +255,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           ? { pair: btcAsset.pair, enabled: btcAsset.enabled, dipReference: btcAsset.dipReference, vwapEnabled: btcAsset.vwapEnabled }
           : null,
         eventsInDb: btcCount,
-        latestEvents: btcEvents.map(e => ({
-          id: e.id, eventType: e.eventType, pair: e.pair,
-          createdAt: e.createdAt, message: (e.message || '').slice(0, 120),
+        latestEvents: btcEvents.map((event: any) => ({
+          id: event.id, eventType: event.eventType, pair: event.pair,
+          createdAt: event.createdAt, message: (event.message || '').slice(0, 120),
         })),
       });
     } catch (e: any) {
@@ -970,6 +970,508 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         }))
       );
       res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Market Context Preview (para UI nueva) ───────────────────────
+  app.get(`${PREFIX}/market-context/preview/:pair`, async (req, res) => {
+    try {
+      const { idcaMarketContextService } = await import('../services/institutionalDca/IdcaMarketContextService');
+      const pair = decodeURIComponent(req.params.pair);
+      const preview = await idcaMarketContextService.getPreviewContext(pair);
+      res.json({ pair, ...preview });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get(`${PREFIX}/market-context/preview`, async (_req, res) => {
+    try {
+      const { idcaMarketContextService } = await import('../services/institutionalDca/IdcaMarketContextService');
+      const results = await idcaMarketContextService.getMultipleContexts([...INSTITUTIONAL_DCA_ALLOWED_PAIRS]);
+      const previews = results.map((r: any) => ({
+        pair: r.pair,
+        anchorPrice: r.anchorPrice,
+        currentPrice: r.currentPrice,
+        drawdownPct: r.drawdownPct || 0,
+        vwapZone: r.vwapZone,
+        atrPct: r.atrPct,
+        dataQuality: r.dataQuality,
+      }));
+      res.json(previews);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Ladder ATRP Preview (para UI nueva) ───────────────────────────
+  app.get(`${PREFIX}/ladder/preview/:pair`, async (req, res) => {
+    try {
+      const { idcaLadderAtrpService } = await import('../services/institutionalDca/IdcaLadderAtrpService');
+      const pair = decodeURIComponent(req.params.pair);
+      const profile = req.query.profile as "aggressive" | "balanced" | "conservative" | "custom" || "balanced";
+      const sliderIntensity = parseInt(req.query.sliderIntensity as string) || 50;
+      
+      if (sliderIntensity < 0 || sliderIntensity > 100) {
+        return res.status(400).json({ error: "sliderIntensity must be between 0 and 100" });
+      }
+      
+      const preview = await idcaLadderAtrpService.getLadderPreview(pair, profile, sliderIntensity);
+      res.json({
+        pair,
+        profile,
+        sliderIntensity,
+        ...preview,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Migration Management ───────────────────────────────────────────
+  
+  // Suggest ladder ATRP config from safety orders
+  app.get(`${PREFIX}/migration/suggest/:pair`, async (req, res) => {
+    try {
+      const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+      const pair = decodeURIComponent(req.params.pair);
+      const targetProfile = req.query.profile as "aggressive" | "balanced" | "conservative" || "balanced";
+      
+      const assetConfig = await repo.getAssetConfig(pair);
+      if (!assetConfig) {
+        return res.status(404).json({ error: `Asset config not found for ${pair}` });
+      }
+      
+      const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+      if (!safetyOrders.length) {
+        return res.status(400).json({ error: "No safety orders configured for migration" });
+      }
+      
+      const suggestion = await idcaMigrationService.suggestLadderFromSafetyOrders(pair, safetyOrders, targetProfile);
+      res.json({
+        pair,
+        currentSafetyOrders: safetyOrders,
+        suggestion,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Execute migration to ladder ATRP
+  app.post(`${PREFIX}/migration/migrate/:pair`, async (req, res) => {
+    try {
+      const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+      const pair = decodeURIComponent(req.params.pair);
+      const { targetConfig } = req.body;
+      
+      const assetConfig = await repo.getAssetConfig(pair);
+      if (!assetConfig) {
+        return res.status(404).json({ error: `Asset config not found for ${pair}` });
+      }
+      
+      const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+      if (!safetyOrders.length) {
+        return res.status(400).json({ error: "No safety orders to migrate" });
+      }
+      
+      // Execute migration
+      const migration = await idcaMigrationService.migrateToLadderAtrp(pair, safetyOrders, targetConfig);
+      
+      if (migration.success) {
+        // Update database with new ladder config
+        await repo.upsertAssetConfig(pair, {
+          ladderAtrpConfigJson: targetConfig,
+          ladderAtrpEnabled: true,
+          // Optionally clear safety orders after successful migration
+          // safetyOrdersJson: [],
+        });
+        
+        console.log(`[IDCA][MIGRATION] Successfully migrated ${pair} to ladder ATRP`);
+      }
+      
+      res.json({
+        pair,
+        migration,
+        configUpdated: migration.success,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Rollback to safety orders
+  app.post(`${PREFIX}/migration/rollback/:pair`, async (req, res) => {
+    try {
+      const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+      const pair = decodeURIComponent(req.params.pair);
+      const { originalSafetyOrders } = req.body;
+      
+      const assetConfig = await repo.getAssetConfig(pair);
+      if (!assetConfig) {
+        return res.status(404).json({ error: `Asset config not found for ${pair}` });
+      }
+      
+      if (!assetConfig.ladderAtrpConfigJson) {
+        return res.status(400).json({ error: "No ladder ATRP config to rollback from" });
+      }
+      
+      // Execute rollback
+      const rollback = await idcaMigrationService.rollbackToSafetyOrders(
+        pair, 
+        assetConfig.ladderAtrpConfigJson as import('../services/institutionalDca/IdcaTypes').LadderAtrpConfig, 
+        originalSafetyOrders
+      );
+      
+      if (rollback.success) {
+        // Update database to disable ladder and restore safety orders
+        await repo.upsertAssetConfig(pair, {
+          ladderAtrpEnabled: false,
+          safetyOrdersJson: originalSafetyOrders,
+        });
+        
+        console.log(`[IDCA][MIGRATION] Successfully rolled back ${pair} to safety orders`);
+      }
+      
+      res.json({
+        pair,
+        rollback,
+        configUpdated: rollback.success,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get migration status
+  app.get(`${PREFIX}/migration/status/:pair`, async (req, res) => {
+    try {
+      const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+      const pair = decodeURIComponent(req.params.pair);
+      
+      const assetConfig = await repo.getAssetConfig(pair);
+      if (!assetConfig) {
+        return res.status(404).json({ error: `Asset config not found for ${pair}` });
+      }
+      
+      const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+      const status = await idcaMigrationService.getMigrationStatus(
+        pair,
+        safetyOrders,
+        assetConfig.ladderAtrpEnabled || false,
+        assetConfig.ladderAtrpConfigJson as import('../services/institutionalDca/IdcaTypes').LadderAtrpConfig | undefined
+      );
+      
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Validate no double execution
+  app.get(`${PREFIX}/migration/validate/:pair`, async (req, res) => {
+    try {
+      const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+      const pair = decodeURIComponent(req.params.pair);
+      
+      const assetConfig = await repo.getAssetConfig(pair);
+      if (!assetConfig) {
+        return res.status(404).json({ error: `Asset config not found for ${pair}` });
+      }
+      
+      const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
+      const ladderCfg = assetConfig.ladderAtrpConfigJson as import('../services/institutionalDca/IdcaTypes').LadderAtrpConfig | undefined;
+      const validation = idcaMigrationService.validateNoDoubleExecution(
+        pair,
+        safetyOrders,
+        assetConfig.ladderAtrpEnabled || false,
+        ladderCfg
+      );
+      
+      res.json({
+        pair,
+        validation,
+        activeSystem: idcaMigrationService.getActiveSystem(
+          pair,
+          safetyOrders,
+          assetConfig.ladderAtrpEnabled || false,
+          ladderCfg
+        ),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Cleanup Management ───────────────────────────────────────────
+  
+  // Get available cleanup plans
+  app.get(`${PREFIX}/cleanup/plans`, async (req, res) => {
+    try {
+      const { idcaCleanupService } = await import('../services/institutionalDca/IdcaCleanupService');
+      const plans = idcaCleanupService.generateCleanupPlans();
+      res.json({
+        plans,
+        timestamp: new Date(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get cleanup report
+  app.get(`${PREFIX}/cleanup/report`, async (req, res) => {
+    try {
+      const { idcaCleanupService } = await import('../services/institutionalDca/IdcaCleanupService');
+      const report = idcaCleanupService.generateCleanupReport();
+      res.json(report);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get cleanup history
+  app.get(`${PREFIX}/cleanup/history`, async (req, res) => {
+    try {
+      const { idcaCleanupService } = await import('../services/institutionalDca/IdcaCleanupService');
+      const history = idcaCleanupService.getCleanupHistory();
+      res.json({
+        history,
+        totalCleanups: history.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Execute cleanup for a specific component
+  app.post(`${PREFIX}/cleanup/execute/:component`, async (req, res) => {
+    try {
+      const { idcaCleanupService } = await import('../services/institutionalDca/IdcaCleanupService');
+      const component = decodeURIComponent(req.params.component);
+      const { forceValidation } = req.body;
+      
+      const plans = idcaCleanupService.generateCleanupPlans();
+      const plan = plans.find(p => p.targetComponent === component);
+      
+      if (!plan) {
+        return res.status(404).json({ error: `Cleanup plan not found for component: ${component}` });
+      }
+      
+      // Validaciones de seguridad
+      if (plan.riskLevel === "high" && !forceValidation) {
+        return res.status(400).json({ 
+          error: "High-risk cleanup requires explicit validation",
+          component,
+          riskLevel: plan.riskLevel,
+        });
+      }
+      
+      console.log(`[IDCA][CLEANUP] Starting cleanup for component: ${component}`);
+      const result = await idcaCleanupService.executeCleanup(plan);
+      
+      if (result.success) {
+        console.log(`[IDCA][CLEANUP] Successfully cleaned up: ${component}`);
+      } else {
+        console.error(`[IDCA][CLEANUP] Cleanup failed for ${component}:`, result.errors);
+      }
+      
+      res.json({
+        component,
+        result,
+        executedAt: new Date(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Validate cleanup readiness
+  app.get(`${PREFIX}/cleanup/validate/:component`, async (req, res) => {
+    try {
+      const { idcaCleanupService } = await import('../services/institutionalDca/IdcaCleanupService');
+      const component = decodeURIComponent(req.params.component);
+      
+      const plans = idcaCleanupService.generateCleanupPlans();
+      const plan = plans.find(p => p.targetComponent === component);
+      
+      if (!plan) {
+        return res.status(404).json({ error: `Cleanup plan not found for component: ${component}` });
+      }
+      
+      // Ejecutar solo validaciones sin limpieza
+      const validationResults = [];
+      for (const check of plan.validationChecks) {
+        try {
+          const result = await check.checkFunction();
+          validationResults.push({
+            name: check.name,
+            description: check.description,
+            required: check.required,
+            ...result,
+          });
+        } catch (error) {
+          validationResults.push({
+            name: check.name,
+            description: check.description,
+            required: check.required,
+            passed: false,
+            message: `Validation error: ${(error as Error).message}`,
+          });
+        }
+      }
+      
+      const allRequiredPassed = validationResults
+        .filter(v => v.required)
+        .every(v => v.passed);
+      
+      res.json({
+        component,
+        ready: allRequiredPassed,
+        validationResults,
+        plan: {
+          targetComponent: plan.targetComponent,
+          riskLevel: plan.riskLevel,
+          dependencies: plan.dependencies,
+          rollbackAvailable: plan.rollbackAvailable,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── STG Validation Endpoints ─────────────────────────────────────
+
+  // Run full STG validation
+  app.post(`${PREFIX}/validation/run-full`, async (req, res) => {
+    try {
+      const { idcaValidationService } = await import('../services/institutionalDca/IdcaValidationService');
+      
+      console.log('[IDCA][VALIDATION] Starting full STG validation...');
+      const report = await idcaValidationService.runFullValidation();
+      
+      console.log(`[IDCA][VALIDATION] Full validation completed: ${report.overall}`);
+      
+      res.json({
+        report,
+        executedAt: new Date(),
+      });
+    } catch (e: any) {
+      console.error('[IDCA][VALIDATION] Full validation error:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get validation status (quick check)
+  app.get(`${PREFIX}/validation/status`, async (req, res) => {
+    try {
+      const { idcaValidationService } = await import('../services/institutionalDca/IdcaValidationService');
+      
+      // Ejecutar validación rápida de servicios críticos
+      const quickChecks = [
+        {
+          name: "Market Context Service",
+          check: async () => {
+            const { idcaMarketContextService } = await import('../services/institutionalDca/IdcaMarketContextService');
+            const context = await idcaMarketContextService.getMarketContext("BTC/USD");
+            return !!context;
+          }
+        },
+        {
+          name: "Ladder ATRP Service", 
+          check: async () => {
+            const { idcaLadderAtrpService } = await import('../services/institutionalDca/IdcaLadderAtrpService');
+            const preview = await idcaLadderAtrpService.getLadderPreview("BTC/USD", "balanced", 50);
+            return !!(preview && preview.levels && preview.levels.length > 0);
+          }
+        },
+        {
+          name: "Exit Manager",
+          check: async () => {
+            const { idcaExitManager } = await import('../services/institutionalDca/IdcaExitManager');
+            return typeof idcaExitManager.evaluateExitSignals === 'function';
+          }
+        },
+        {
+          name: "Migration Service",
+          check: async () => {
+            const { idcaMigrationService } = await import('../services/institutionalDca/IdcaMigrationService');
+            return typeof idcaMigrationService.validateNoDoubleExecution === 'function';
+          }
+        }
+      ];
+
+      const results = [];
+      for (const check of quickChecks) {
+        try {
+          const passed = await check.check();
+          results.push({ name: check.name, passed, error: null });
+        } catch (error) {
+          results.push({ name: check.name, passed: false, error: (error as Error).message });
+        }
+      }
+
+      const allPassed = results.every(r => r.passed);
+      
+      res.json({
+        status: allPassed ? "healthy" : "degraded",
+        checks: results,
+        timestamp: new Date(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get validation history
+  app.get(`${PREFIX}/validation/history`, async (req, res) => {
+    try {
+      // Simulación - en producción guardaría historial real
+      res.json({
+        history: [],
+        lastValidation: null,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Validate specific component
+  app.get(`${PREFIX}/validation/component/:component`, async (req, res) => {
+    try {
+      const component = decodeURIComponent(req.params.component);
+      const { idcaValidationService } = await import('../services/institutionalDca/IdcaValidationService');
+      
+      // Ejecutar validación específica según componente
+      let result;
+      switch (component) {
+        case "market-context":
+          result = await idcaValidationService["testMarketContextService"]();
+          break;
+        case "ladder-atrp":
+          result = await idcaValidationService["testLadderAtrpService"]();
+          break;
+        case "exit-manager":
+          result = await idcaValidationService["testExitManager"]();
+          break;
+        case "execution-manager":
+          result = await idcaValidationService["testExecutionManager"]();
+          break;
+        case "migration":
+          result = await idcaValidationService["testMigrationValidation"]();
+          break;
+        default:
+          return res.status(404).json({ error: `Unknown component: ${component}` });
+      }
+      
+      res.json({
+        component,
+        result,
+        validatedAt: new Date(),
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

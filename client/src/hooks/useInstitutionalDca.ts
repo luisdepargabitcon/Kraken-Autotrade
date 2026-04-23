@@ -87,6 +87,36 @@ export interface IdcaAssetConfig {
   trailingMarginPct: string;
   cooldownMinutesBetweenBuys: number;
   maxCycleDurationHours: number;
+  // Ladder ATRP config
+  ladderAtrpConfigJson?: {
+    enabled: boolean;
+    profile: "aggressive" | "balanced" | "conservative" | "custom";
+    sliderIntensity: number;
+    baseMultiplier: number;
+    stepMultiplier: number;
+    maxMultiplier: number;
+    effectiveMultipliers: number[];
+    sizeDistribution: number[];
+    minDipPct: number;
+    maxDipPct: number;
+    maxLevels: number;
+    adaptiveScaling: boolean;
+    volatilityScaling: number;
+    rebalanceOnVwap: boolean;
+  };
+  ladderAtrpEnabled: boolean;
+  // Trailing Buy Level 1 config
+  trailingBuyLevel1ConfigJson?: {
+    enabled: boolean;
+    triggerLevel: number;
+    triggerMode: "dip_pct" | "atrp_multiplier";
+    trailingMode: "rebound_pct" | "atrp_fraction";
+    trailingValue: number;
+    maxWaitMinutes: number;
+    cancelOnRecovery: boolean;
+    minVolumeCheck: boolean;
+    confirmWithVwap: boolean;
+  };
 }
 
 export interface IdcaCycle {
@@ -180,6 +210,52 @@ export interface IdcaEvent {
   createdAt: string;
 }
 
+export interface IdcaSimulationWallet {
+  balance: number;
+  totalInvested: number;
+  totalValue: number;
+  totalPnl: number;
+  totalPnlPct: number;
+  cycles: IdcaSimulationWalletCycle[];
+}
+
+export interface IdcaSimulationWalletCycle {
+  // Add properties for IdcaSimulationWalletCycle
+}
+
+export interface LadderPreviewLevel {
+  level: number;
+  dipPct: number;
+  triggerPrice: number;
+  sizePct: number;
+  atrpMultiplier: number;
+  isActive: boolean;
+}
+
+export interface LadderPreview {
+  levels: LadderPreviewLevel[];
+  maxDrawdown: number;
+  totalSize: number;
+  marketContext: {
+    anchorPrice: number;
+    currentPrice: number;
+    atrPct?: number;
+    vwapZone?: string;
+  };
+  profile: "aggressive" | "balanced" | "conservative" | "custom";
+  sliderIntensity: number;
+}
+
+export interface MarketContextPreview {
+  pair: string;
+  anchorPrice: number;
+  currentPrice: number;
+  drawdownPct: number;
+  vwapZone?: "deep_value" | "value" | "fair" | "overextended";
+  atrPct?: number;
+  dataQuality: "excellent" | "good" | "poor" | "insufficient";
+}
+
 export interface IdcaSummary {
   mode: string;
   allocatedCapitalUsd: number;
@@ -192,7 +268,7 @@ export interface IdcaSummary {
   buysToday: number;
   sellsToday: number;
   smartModeEnabled: boolean;
-  simulationWallet: any;
+  simulationWallet: IdcaSimulationWallet;
   cycles: IdcaCycle[];
 }
 
@@ -837,6 +913,104 @@ export function useEditImportedCycle() {
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         throw new Error(err.error || "Failed to edit imported cycle");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
+// ─── Market Context Preview ───────────────────────────────────────
+
+export function useMarketContextPreview(pair: string) {
+  return useQuery<MarketContextPreview, Error>({
+    queryKey: ["idca", "market-context-preview", pair],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${PREFIX}/market-context/preview/${encodeURIComponent(pair)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to fetch market context preview");
+      }
+      return res.json();
+    },
+    staleTime: 30000, // 30 seconds
+    refetchInterval: 60000, // 1 minute
+  });
+}
+
+export function useAllMarketContextPreviews() {
+  return useQuery<MarketContextPreview[], Error>({
+    queryKey: ["idca", "market-context-preview-all"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${PREFIX}/market-context/preview`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to fetch all market context previews");
+      }
+      return res.json();
+    },
+    staleTime: 30000,
+    refetchInterval: 60000,
+  });
+}
+
+// ─── Ladder ATRP Preview ───────────────────────────────────────────
+
+export function useLadderPreview(pair: string, profile: "aggressive" | "balanced" | "conservative" | "custom", sliderIntensity: number) {
+  return useQuery<LadderPreview, Error>({
+    queryKey: ["idca", "ladder-preview", pair, profile, sliderIntensity],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        profile,
+        sliderIntensity: sliderIntensity.toString(),
+      });
+      const res = await apiRequest("GET", `${PREFIX}/ladder/preview/${encodeURIComponent(pair)}?${params}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to fetch ladder preview");
+      }
+      return res.json();
+    },
+    staleTime: 30000,
+    enabled: !!pair && !!profile && sliderIntensity >= 0 && sliderIntensity <= 100,
+  });
+}
+
+// ─── Ladder ATRP Config Mutations ───────────────────────────────────
+
+export function useUpdateLadderAtrpConfig() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { pair: string; config: any }>({
+    mutationFn: async ({ pair, config }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/asset-configs/${encodeURIComponent(pair)}`, {
+        ladderAtrpConfigJson: config,
+        ladderAtrpEnabled: config.enabled,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to update ladder ATRP config");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+      qc.invalidateQueries({ queryKey: ["idca", "ladder-preview"] });
+    },
+  });
+}
+
+export function useUpdateTrailingBuyLevel1Config() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { pair: string; config: any }>({
+    mutationFn: async ({ pair, config }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/asset-configs/${encodeURIComponent(pair)}`, {
+        trailingBuyLevel1ConfigJson: config,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to update trailing buy level 1 config");
       }
       return res.json();
     },

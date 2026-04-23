@@ -20,6 +20,12 @@ export interface TrailingBuyState {
   maxDurationMs: number;     // max time to wait before expiring
   lastPrice: number;         // last price update
   lastUpdateAt: number;      // epoch ms of last price update
+  // Level 1 extensions
+  triggerLevel: number;      // Which ladder level triggers this trailing (0 = base, 1+ = safety)
+  triggerMode: "dip_pct" | "atrp_multiplier";  // How this was triggered
+  atrpMultiplier?: number;   // ATRP multiplier if triggered by ATRP
+  cancelOnRecovery: boolean; // Cancel if price recovers too much
+  recoveryThreshold: number; // Price threshold for cancellation
 }
 
 export interface TrailingBuyTrigger {
@@ -56,10 +62,61 @@ class TrailingBuyManagerClass {
       maxDurationMs: opts?.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
       lastPrice: currentPrice,
       lastUpdateAt: now,
+      triggerLevel: 0, // Default: base level
+      triggerMode: "dip_pct",
+      cancelOnRecovery: false,
+      recoveryThreshold: triggerPrice * 1.02, // 2% above trigger
     });
     console.log(
       `[TrailingBuy] ARMED ${pair} triggerPrice=$${triggerPrice.toFixed(2)}` +
       ` localLow=$${currentPrice.toFixed(2)} trailingPct=${(opts?.trailingPct ?? DEFAULT_TRAILING_PCT).toFixed(2)}%`
+    );
+  }
+
+  /**
+   * Arm trailing buy for a specific ladder level (Level 1 functionality)
+   */
+  armLevel(
+    pair: string, 
+    triggerPrice: number, 
+    currentPrice: number, 
+    triggerLevel: number,
+    opts: {
+      trailingMode: "rebound_pct" | "atrp_fraction";
+      trailingValue: number;
+      maxWaitMinutes?: number;
+      cancelOnRecovery?: boolean;
+      atrpMultiplier?: number;
+    }
+  ): void {
+    const now = Date.now();
+    const trailingPct = opts.trailingMode === "rebound_pct" 
+      ? opts.trailingValue 
+      : (opts.atrpMultiplier ? opts.trailingValue * opts.atrpMultiplier : opts.trailingValue);
+    
+    const maxDurationMs = (opts.maxWaitMinutes ?? 60) * 60 * 1000;
+    
+    this.states.set(pair, {
+      pair,
+      armed: true,
+      armedAt: now,
+      triggerPrice,
+      localLow: currentPrice,
+      localLowAt: now,
+      trailingPct,
+      maxDurationMs,
+      lastPrice: currentPrice,
+      lastUpdateAt: now,
+      triggerLevel,
+      triggerMode: opts.trailingMode === "rebound_pct" ? "dip_pct" : "atrp_multiplier",
+      atrpMultiplier: opts.atrpMultiplier,
+      cancelOnRecovery: opts.cancelOnRecovery ?? true,
+      recoveryThreshold: triggerPrice * 1.02, // 2% above trigger
+    });
+    
+    console.log(
+      `[TrailingBuy] ARMED LEVEL ${pair} level=${triggerLevel} triggerPrice=$${triggerPrice.toFixed(2)}` +
+      ` localLow=$${currentPrice.toFixed(2)} trailingPct=${trailingPct.toFixed(2)}% mode=${opts.trailingMode}`
     );
   }
 
@@ -81,6 +138,23 @@ class TrailingBuyManagerClass {
     if (now - state.armedAt > state.maxDurationMs) {
       this.disarm(pair);
       return { triggered: false, buyPrice: 0, localLow: state.localLow, bouncePct: 0, reason: "expired" };
+    }
+
+    // Check cancellation due to recovery (Level 1 feature)
+    if (state.cancelOnRecovery && currentPrice > state.recoveryThreshold) {
+      const recoveryPct = ((currentPrice - state.triggerPrice) / state.triggerPrice) * 100;
+      this.disarm(pair);
+      console.log(
+        `[TrailingBuy] CANCELLED ${pair} price recovered to $${currentPrice.toFixed(2)}` +
+        ` (${recoveryPct.toFixed(2)}% above trigger $${state.triggerPrice.toFixed(2)})`
+      );
+      return { 
+        triggered: false, 
+        buyPrice: 0, 
+        localLow: state.localLow, 
+        bouncePct: 0, 
+        reason: `recovered_${recoveryPct.toFixed(2)}%` 
+      };
     }
 
     // Track new local low
@@ -160,6 +234,51 @@ class TrailingBuyManagerClass {
    */
   clearAll(): void {
     this.states.clear();
+  }
+
+  /**
+   * Check if a specific ladder level should trigger trailing buy (Level 1)
+   */
+  shouldTriggerLevel(
+    pair: string, 
+    currentPrice: number, 
+    triggerLevel: number, 
+    triggerPrice: number
+  ): boolean {
+    const state = this.states.get(pair);
+    if (state && state.armed && state.triggerLevel === triggerLevel) {
+      return currentPrice <= triggerPrice;
+    }
+    return false;
+  }
+
+  /**
+   * Get trailing buy info for UI/diagnostics
+   */
+  getTrailingBuyInfo(pair: string): {
+    armed: boolean;
+    triggerLevel?: number;
+    localLow?: number;
+    targetPrice?: number;
+    expiresAt?: Date;
+    elapsedMinutes?: number;
+  } {
+    const state = this.states.get(pair);
+    if (!state || !state.armed) {
+      return { armed: false };
+    }
+
+    const now = Date.now();
+    const targetPrice = state.localLow * (1 + state.trailingPct / 100);
+    
+    return {
+      armed: true,
+      triggerLevel: state.triggerLevel,
+      localLow: state.localLow,
+      targetPrice,
+      expiresAt: new Date(state.armedAt + state.maxDurationMs),
+      elapsedMinutes: (now - state.armedAt) / (60 * 1000),
+    };
   }
 }
 

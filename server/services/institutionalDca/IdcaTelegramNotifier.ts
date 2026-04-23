@@ -572,24 +572,426 @@ export async function alertTrailingBuyTriggered(
   mode: string,
   currentPrice: number,
   bouncePct: number,
-  localLow: number
+  localLow: number,
 ): Promise<void> {
   const { chatId, enabled } = await canSend("trailing_buy_triggered");
   if (!enabled) return;
+
   const config = await repo.getIdcaConfig();
+  const message = `🔄 *TRAILING BUY TRIGGERED* ${pair}
 
-  const msg = [
-    `✅ <b>Trailing Buy disparado</b> — <b>${pair}</b>`,
-    ``,
-    `📈 Rebote confirmado: <b>+${bouncePct.toFixed(3)}%</b> desde mínimo $${localLow.toFixed(2)}`,
-    `💰 Precio actual: $${currentPrice.toFixed(2)}`,
-    ``,
-    `Rebote verificado. Procediendo a verificar condiciones de entrada para ejecutar la compra.`,
-    ``,
-    `<i>Modo: ${mode}</i>`,
-  ].join("\n");
+💰 *Price*: $${currentPrice.toFixed(2)}
+📈 *Bounce*: ${bouncePct.toFixed(3)}%
+📍 *Local Low*: $${localLow.toFixed(2)}
 
-  await send(chatId, msg, config.telegramThreadId || undefined);
+🎯 *Entry executed at optimal bounce price*`;
+
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── Trailing Buy Level 1 Alerts ───────────────────────────────────────
+
+export async function alertTrailingBuyLevel1Activated(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  triggerLevel: number,
+  triggerPrice: number,
+  trailingMode: string,
+  trailingValue: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_level1_activated");
+  if (!enabled) return;
+
+  const message = `🎯 *TRAILING BUY LEVEL 1 ACTIVATED* ${pair}
+
+📍 *Level*: ${triggerLevel === 0 ? 'Base Buy' : `Safety ${triggerLevel}`}
+💰 *Trigger Price*: $${triggerPrice.toFixed(2)}
+📊 *Current Price*: $${currentPrice.toFixed(2)}
+⚙️ *Mode*: ${trailingMode}
+📈 *Value*: ${trailingValue}${trailingMode === 'rebound_pct' ? '%' : ' ATRP'}
+
+🔍 *Waiting for bounce to execute entry*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingBuyLevel1Triggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  triggerLevel: number,
+  bouncePct: number,
+  localLow: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_level1_triggered");
+  if (!enabled) return;
+
+  const message = `🚀 *TRAILING BUY LEVEL 1 TRIGGERED* ${pair}
+
+📍 *Level*: ${triggerLevel === 0 ? 'Base Buy' : `Safety ${triggerLevel}`}
+💰 *Price*: $${currentPrice.toFixed(2)}
+📈 *Bounce*: ${bouncePct.toFixed(3)}%
+📍 *Local Low*: $${localLow.toFixed(2)}
+
+✅ *Entry executed at level ${triggerLevel} optimal price*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── Exit Management Alerts ─────────────────────────────────────────
+
+export async function alertFailSafeTriggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  unrealizedPnlPct: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("fail_safe_triggered");
+  if (!enabled) return;
+
+  const message = `🚨 *FAIL-SAFE TRIGGERED* ${pair}
+
+💰 *Price*: $${currentPrice.toFixed(2)}
+📉 *PnL*: ${unrealizedPnlPct.toFixed(2)}%
+🛡️ *Protection*: Maximum loss exceeded
+
+⚠️ *Emergency exit executed to prevent further losses*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function alertTakeProfitReached(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  unrealizedPnlPct: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("take_profit_reached");
+  if (!enabled) return;
+
+  const message = `🎯 *TAKE PROFIT REACHED* ${pair}
+
+💰 *Price*: $${currentPrice.toFixed(2)}
+📈 *PnL*: ${unrealizedPnlPct.toFixed(2)}%
+✅ *Target achieved*
+
+🎉 *Profit target successfully reached*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingStopTriggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  unrealizedPnlPct: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_stop_triggered");
+  if (!enabled) return;
+
+  const message = `📊 *TRAILING STOP TRIGGERED* ${pair}
+
+💰 *Price*: $${currentPrice.toFixed(2)}
+📈 *Peak PnL*: ${unrealizedPnlPct.toFixed(2)}%
+📉 *Trailing activated*
+
+✅ *Trailing stop captured profits at peak*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function alertBreakEvenTriggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("break_even_triggered");
+  if (!enabled) return;
+
+  const message = `🛡️ *BREAK-EVEN TRIGGERED* ${pair}
+
+💰 *Price*: $${currentPrice.toFixed(2)}
+🔄 *Protection*: Capital protected
+
+✅ *Position closed at break-even point*`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── Enhanced Diagnostics ───────────────────────────────────────────
+
+export async function sendSystemDiagnostics(
+  mode: string,
+  diagnostics: {
+    activeCycles: number;
+    totalPnl: number;
+    activeSystems: string[];
+    warnings: string[];
+    errors: string[];
+    lastUpdate: Date;
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("system_diagnostics");
+  if (!enabled) return;
+
+  const message = `📊 *IDCA SYSTEM DIAGNOSTICS* ${mode}
+
+🔄 *Active Cycles*: ${diagnostics.activeCycles}
+💰 *Total PnL*: ${diagnostics.totalPnl.toFixed(2)}%
+⚙️ *Active Systems*: ${diagnostics.activeSystems.join(", ")}
+
+⚠️ *Warnings*: ${diagnostics.warnings.length}
+${diagnostics.warnings.slice(0, 3).map(w => `• ${w}`).join("\n")}
+
+❌ *Errors*: ${diagnostics.errors.length}
+${diagnostics.errors.slice(0, 3).map(e => `• ${e}`).join("\n")}
+
+🕐 *Last Update*: ${diagnostics.lastUpdate.toLocaleString()}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function sendLadderAtrpDiagnostics(
+  pair: string,
+  mode: string,
+  ladderDiagnostics: {
+    profile: string;
+    intensity: number;
+    levels: number;
+    maxDrawdown: number;
+    totalSize: number;
+    active: boolean;
+    warnings: string[];
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("ladder_diagnostics");
+  if (!enabled) return;
+
+  const status = ladderDiagnostics.active ? "✅ Active" : "❌ Inactive";
+  
+  const message = `🪜 *LADDER ATRP DIAGNOSTICS* ${pair}
+
+📊 *Status*: ${status}
+🎯 *Profile*: ${ladderDiagnostics.profile}
+📈 *Intensity*: ${ladderDiagnostics.intensity}%
+📊 *Levels*: ${ladderDiagnostics.levels}
+📉 *Max Drawdown*: ${ladderDiagnostics.maxDrawdown.toFixed(2)}%
+💰 *Total Size*: ${ladderDiagnostics.totalSize.toFixed(2)}%
+
+⚠️ *Warnings*: ${ladderDiagnostics.warnings.length}
+${ladderDiagnostics.warnings.map(w => `• ${w}`).join("\n")}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function sendMigrationStatus(
+  pair: string,
+  mode: string,
+  migrationStatus: {
+    activeSystem: string;
+    safetyOrdersCount: number;
+    ladderEnabled: boolean;
+    lastMigration?: Date;
+    validationStatus: string;
+    recommendations: string[];
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("migration_status");
+  if (!enabled) return;
+
+  const systemIcon = migrationStatus.activeSystem === "ladderAtrp" ? "🪜" : "📋";
+  
+  const message = `${systemIcon} *MIGRATION STATUS* ${pair}
+
+🔄 *Active System*: ${migrationStatus.activeSystem}
+📊 *Safety Orders*: ${migrationStatus.safetyOrdersCount}
+🪜 *Ladder Enabled*: ${migrationStatus.ladderEnabled ? "✅" : "❌"}
+✅ *Validation*: ${migrationStatus.validationStatus}
+
+💡 *Recommendations*:
+${migrationStatus.recommendations.map(r => `• ${r}`).join("\n")}
+
+${migrationStatus.lastMigration ? `🕐 *Last Migration*: ${migrationStatus.lastMigration.toLocaleString()}` : ""}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function sendExecutionReport(
+  pair: string,
+  mode: string,
+  executionReport: {
+    strategy: string;
+    orderCount: number;
+    totalQuantity: number;
+    avgPrice: number;
+    totalFees: number;
+    slippage: number;
+    executionTime: number;
+    warnings: string[];
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("execution_report");
+  if (!enabled) return;
+
+  const message = `⚡ *EXECUTION REPORT* ${pair}
+
+🎯 *Strategy*: ${executionReport.strategy}
+📊 *Orders*: ${executionReport.orderCount}
+💰 *Quantity*: ${executionReport.totalQuantity.toFixed(8)}
+📈 *Avg Price*: $${executionReport.avgPrice.toFixed(2)}
+💸 *Fees*: $${executionReport.totalFees.toFixed(2)}
+📉 *Slippage*: ${executionReport.slippage.toFixed(3)}%
+⏱️ *Time*: ${executionReport.executionTime}ms
+
+⚠️ *Warnings*: ${executionReport.warnings.length}
+${executionReport.warnings.map(w => `• ${w}`).join("\n")}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function sendExitStrategyReport(
+  pair: string,
+  mode: string,
+  exitReport: {
+    failSafeArmed: boolean;
+    breakEvenArmed: boolean;
+    trailingArmed: boolean;
+    tpArmed: boolean;
+    currentPnl: number;
+    nearestTrigger: string;
+    distanceToTrigger: number;
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("exit_strategy_report");
+  if (!enabled) return;
+
+  const armedStatus = (armed: boolean) => armed ? "✅" : "❌";
+  
+  const message = `🛡️ *EXIT STRATEGY REPORT* ${pair}
+
+📊 *Current PnL*: ${exitReport.currentPnl.toFixed(2)}%
+
+🔒 *Protections*:
+${armedStatus(exitReport.failSafeArmed)} Fail-Safe
+${armedStatus(exitReport.breakEvenArmed)} Break-Even
+${armedStatus(exitReport.trailingArmed)} Trailing
+${armedStatus(exitReport.tpArmed)} Take Profit
+
+🎯 *Nearest Trigger*: ${exitReport.nearestTrigger}
+📏 *Distance*: ${exitReport.distanceToTrigger.toFixed(2)}%`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── STG Validation ───────────────────────────────────────────────
+
+export async function sendStgValidationReport(
+  mode: string,
+  validation: {
+    overall: "passed" | "failed" | "warning";
+    checks: Array<{
+      name: string;
+      status: "passed" | "failed" | "warning";
+      message: string;
+      details?: any;
+    }>;
+    summary: string;
+    recommendations: string[];
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("stg_validation");
+  if (!enabled) return;
+
+  const statusIcon = {
+    passed: "✅",
+    failed: "❌", 
+    warning: "⚠️"
+  }[validation.overall];
+
+  const checksList = validation.checks.map(check => {
+    const icon = {
+      passed: "✅",
+      failed: "❌",
+      warning: "⚠️"
+    }[check.status];
+    return `${icon} ${check.name}: ${check.message}`;
+  }).join("\n");
+
+  const message = `${statusIcon} *STG VALIDATION REPORT* ${mode}
+
+📊 *Overall Status*: ${validation.overall.toUpperCase()}
+
+🔍 *Checks*:
+${checksList}
+
+📝 *Summary*: ${validation.summary}
+
+💡 *Recommendations*:
+${validation.recommendations.map(r => `• ${r}`).join("\n")}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── Real-time Market Context Alerts ───────────────────────────────
+
+export async function sendMarketContextAlert(
+  pair: string,
+  mode: string,
+  context: {
+    vwapZone: string;
+    atrPct: number;
+    volatilityStatus: "low" | "normal" | "high";
+    trendDirection: "bullish" | "bearish" | "neutral";
+    dataQuality: "good" | "fair" | "poor";
+    recommendations: string[];
+  }
+): Promise<void> {
+  const { chatId, enabled } = await canSend("market_context_alert");
+  if (!enabled) return;
+
+  const volatilityIcon = {
+    low: "🟢",
+    normal: "🟡", 
+    high: "🔴"
+  }[context.volatilityStatus];
+
+  const trendIcon = {
+    bullish: "📈",
+    bearish: "📉",
+    neutral: "➡️"
+  }[context.trendDirection];
+
+  const qualityIcon = {
+    good: "✅",
+    fair: "⚠️",
+    poor: "❌"
+  }[context.dataQuality];
+
+  const message = `📊 *MARKET CONTEXT ALERT* ${pair}
+
+📍 *VWAP Zone*: ${context.vwapZone}
+📈 *ATRP*: ${context.atrPct.toFixed(2)}%
+${volatilityIcon} *Volatility*: ${context.volatilityStatus.toUpperCase()}
+${trendIcon} *Trend*: ${context.trendDirection.toUpperCase()}
+${qualityIcon} *Data Quality*: ${context.dataQuality.toUpperCase()}
+${qualityIcon}💡 *Recommendations*:
+${context.recommendations.map((r: string) => `• ${r}`).join("\n")}`;
+
+  const config = await repo.getIdcaConfig();
+  await send(chatId, message, config.telegramThreadId || undefined);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

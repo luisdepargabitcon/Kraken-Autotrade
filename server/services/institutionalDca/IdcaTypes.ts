@@ -395,3 +395,92 @@ export interface PostImportActivityCheck {
   case: "A_no_activity" | "B_with_activity";
   warnings: string[];
 }
+
+// ─── Ladder ATRP Config ───────────────────────────────────────────────
+
+export type LadderProfile = "aggressive" | "balanced" | "conservative" | "custom";
+
+export interface LadderAtrpConfig {
+  // Master switches
+  enabled: boolean;
+  profile: LadderProfile;
+  
+  // Intensity slider (0-100)
+  sliderIntensity: number;  // 0 = ultra conservative, 100 = ultra aggressive
+  
+  // Multipliers based on ATRP
+  baseMultiplier: number;      // Base ATRP multiplier for first safety order
+  stepMultiplier: number;      // Increment per level
+  maxMultiplier: number;       // Maximum ATRP multiplier
+  
+  // Effective multipliers (calculated)
+  effectiveMultipliers: number[];  // Final ATRP multipliers per level
+  
+  // Size distribution
+  sizeDistribution: number[];     // % per level (sums to 100)
+  
+  // Clamps
+  minDipPct: number;          // Minimum dip % (absolute floor)
+  maxDipPct: number;          // Maximum dip % (absolute ceiling)
+  maxLevels: number;          // Maximum number of safety orders
+  
+  // Advanced settings
+  adaptiveScaling: boolean;   // Scale with volatility
+  volatilityScaling: number;  // How much to scale with ATRP
+  rebalanceOnVwap: boolean;   // Rebalance based on VWAP zones
+}
+
+export interface LadderLevel {
+  level: number;              // 0 = base buy, 1+ = safety orders
+  dipPct: number;             // Dip % from anchor
+  triggerPrice: number;       // Price where this level triggers
+  sizePct: number;            // % of asset budget for this level
+  atrpMultiplier: number;     // ATRP multiplier used
+  isActive: boolean;          // Whether this level is active
+}
+
+export interface LadderResult {
+  levels: LadderLevel[];
+  totalLevels: number;
+  maxDrawdownCovered: number;  // Maximum dip % covered by ladder
+  totalSizePct: number;        // Total % of asset budget
+  calculatedAt: Date;
+  config: LadderAtrpConfig;
+  marketContext: {
+    anchorPrice: number;
+    currentPrice: number;
+    atrPct?: number;
+    vwapZone?: string;
+  };
+}
+
+// ─── Trailing Buy Level 1 Config ───────────────────────────────────────
+
+export interface TrailingBuyLevel1Config {
+  enabled: boolean;
+  
+  // Trigger conditions
+  triggerLevel: number;        // Which ladder level triggers trailing (0 = base, 1 = first safety)
+  triggerMode: "dip_pct" | "atrp_multiplier";  // How to trigger
+  
+  // Trailing parameters
+  trailingMode: "rebound_pct" | "atrp_fraction";
+  trailingValue: number;       // Either % rebound or ATRP fraction
+  
+  // Time limits
+  maxWaitMinutes: number;      // Maximum time to wait for trigger
+  cancelOnRecovery: boolean;   // Cancel if price recovers too much
+  
+  // Advanced
+  minVolumeCheck: boolean;     // Check volume before triggering
+  confirmWithVwap: boolean;    // Require VWAP confirmation
+}
+
+export interface TrailingBuyState {
+  isArmed: boolean;
+  triggeredAt?: Date;
+  localLow?: number;
+  targetPrice?: number;
+  triggerLevel: number;
+  expiresAt?: Date;
+}
