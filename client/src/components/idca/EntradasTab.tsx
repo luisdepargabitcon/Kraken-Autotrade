@@ -44,7 +44,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
   const [targetCoveragePct, setTargetCoveragePct] = useState(8);
   
   // Queries
-  const ladderPreview = useLadderPreview(pair, profile, sliderIntensity);
+  const ladderPreview = useLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct);
   const marketContext = useMarketContextPreview(pair);
   const updateLadderConfig = useUpdateLadderAtrpConfig();
   const updateTrailingBuyConfig = useUpdateTrailingBuyLevel1Config();
@@ -83,6 +83,11 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       enabled: ladderEnabled,
       profile,
       sliderIntensity,
+      // Deep ladder settings
+      depthMode,
+      targetCoveragePct,
+      minStepPct: 0.5,
+      allowDeepExtension: true,
       // Use preview data if available, otherwise defaults
       baseMultiplier: ladderPreview.data?.marketContext?.atrPct ? 0.8 : 0.8,
       stepMultiplier: 0.4,

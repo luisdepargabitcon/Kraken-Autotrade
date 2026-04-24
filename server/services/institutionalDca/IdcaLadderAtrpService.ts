@@ -173,7 +173,16 @@ class IdcaLadderAtrpService {
 
     // Generar niveles
     for (let i = 0; i < config.maxLevels; i++) {
-      const atrpMultiplier = config.effectiveMultipliers[i];
+      // Usar manualMultipliers si manualLevelEnabled=true, sino effectiveMultipliers
+      const atrpMultiplier = config.manualLevelEnabled && config.manualMultipliers && config.manualMultipliers[i]
+        ? config.manualMultipliers[i]
+        : config.effectiveMultipliers[i];
+      
+      // Usar manualSizeDistribution si manualLevelEnabled=true, sino sizeDistribution
+      const sizePct = config.manualLevelEnabled && config.manualSizeDistribution && config.manualSizeDistribution[i]
+        ? config.manualSizeDistribution[i]
+        : config.sizeDistribution[i] || 0;
+      
       const rawDipPct = atrpMultiplier * context.atrPct * adaptiveFactor * vwapFactor;
 
       // Aplicar clamps pero asegurar que cada nivel sea mayor que el anterior
@@ -184,7 +193,6 @@ class IdcaLadderAtrpService {
       );
 
       const triggerPrice = context.anchorPrice * (1 - dipPct / 100);
-      const sizePct = config.sizeDistribution[i] || 0;
 
       totalSizePct += sizePct;
 
@@ -390,6 +398,8 @@ class IdcaLadderAtrpService {
     pair: string,
     profile: LadderProfile,
     sliderIntensity: number,
+    depthMode?: "normal" | "deep" | "manual",
+    targetCoveragePct?: number,
     frozenAnchorPrice?: number
   ): Promise<{
     levels: Array<{
@@ -398,32 +408,43 @@ class IdcaLadderAtrpService {
       triggerPrice: number;
       sizePct: number;
     }>;
+    totalLevels: number;
     maxDrawdown: number;
     totalSize: number;
+    isLimitedByMaxLevels?: boolean;
     marketContext: {
       anchorPrice: number;
       currentPrice: number;
       atrPct?: number;
       vwapZone?: string;
     };
+    profile: LadderProfile;
+    sliderIntensity: number;
   }> {
     const config = this.createLadderConfig(profile, sliderIntensity);
-    const ladder = await this.calculateLadder(pair, config, undefined, frozenAnchorPrice);
+    
+    // Aplicar configuración de profundidad si se proporciona
+    if (depthMode) config.depthMode = depthMode;
+    if (targetCoveragePct !== undefined) config.targetCoveragePct = targetCoveragePct;
+    
+    const result = await this.calculateLadder(pair, config, undefined, frozenAnchorPrice);
     
     return {
-      levels: ladder.levels.map(l => ({
+      levels: result.levels.map(l => ({
         level: l.level,
         dipPct: l.dipPct,
         triggerPrice: l.triggerPrice,
         sizePct: l.sizePct,
-        atrpMultiplier: l.atrpMultiplier,
       })),
-      maxDrawdown: ladder.maxDrawdownCovered,
-      totalSize: ladder.totalSizePct,
-      marketContext: ladder.marketContext,
+      totalLevels: result.totalLevels,
+      maxDrawdown: result.maxDrawdownCovered,
+      totalSize: result.totalSizePct,
+      isLimitedByMaxLevels: result.isLimitedByMaxLevels,
+      marketContext: result.marketContext,
+      profile: config.profile,
+      sliderIntensity: config.sliderIntensity,
     };
   }
 }
 
-// Singleton export
 export const idcaLadderAtrpService = new IdcaLadderAtrpService();

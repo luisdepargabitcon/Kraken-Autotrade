@@ -960,14 +960,16 @@ export function useAllMarketContextPreviews() {
 
 // ─── Ladder ATRP Preview ───────────────────────────────────────────
 
-export function useLadderPreview(pair: string, profile: "aggressive" | "balanced" | "conservative" | "custom", sliderIntensity: number) {
+export function useLadderPreview(pair: string, profile: "aggressive" | "balanced" | "conservative" | "custom", sliderIntensity: number, depthMode?: "normal" | "deep" | "manual", targetCoveragePct?: number) {
   return useQuery<LadderPreview, Error>({
-    queryKey: ["idca", "ladder-preview", pair, profile, sliderIntensity],
+    queryKey: ["idca", "ladder-preview", pair, profile, sliderIntensity, depthMode, targetCoveragePct],
     queryFn: async () => {
       const params = new URLSearchParams({
         profile,
         sliderIntensity: sliderIntensity.toString(),
       });
+      if (depthMode) params.append("depthMode", depthMode);
+      if (targetCoveragePct !== undefined) params.append("targetCoveragePct", targetCoveragePct.toString());
       const res = await apiRequest("GET", `${PREFIX}/ladder/preview/${encodeURIComponent(pair)}?${params}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));

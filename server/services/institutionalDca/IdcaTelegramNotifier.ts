@@ -557,11 +557,11 @@ export async function alertTrailingBuyArmed(
     ``,
     `📊 Precio actual: $${currentPrice.toFixed(2)}`,
     `📍 Zona VWAP: ${zone}`,
-    `📉 Banda -1σ: $${lowerBand1.toFixed(2)}`,
+    `🎯 Precio de referencia de entrada: $${lowerBand1.toFixed(2)}`,
     ``,
-    `Precio en zona de interés. Esperando confirmación de rebote para ejecutar la compra.`,
+    `El precio está en zona de interés. El bot espera rebote para ejecutar compra óptima.`,
     ``,
-    `<i>Modo: ${mode}</i>`,
+    `<i>Modo: ${mode} | Fuente: VWAP Anclado</i>`,
   ].join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);

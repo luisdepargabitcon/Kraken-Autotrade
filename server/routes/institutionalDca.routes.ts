@@ -1013,16 +1013,18 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const pair = decodeURIComponent(req.params.pair);
       const profile = req.query.profile as "aggressive" | "balanced" | "conservative" | "custom" || "balanced";
       const sliderIntensity = parseInt(req.query.sliderIntensity as string) || 50;
+      const depthMode = req.query.depthMode as "normal" | "deep" | "manual" || undefined;
+      const targetCoveragePct = req.query.targetCoveragePct ? parseFloat(req.query.targetCoveragePct as string) : undefined;
       
       if (sliderIntensity < 0 || sliderIntensity > 100) {
         return res.status(400).json({ error: "sliderIntensity must be between 0 and 100" });
       }
       
-      const preview = await idcaLadderAtrpService.getLadderPreview(pair, profile, sliderIntensity);
+      const preview = await idcaLadderAtrpService.getLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct);
       res.json({
         pair,
-        profile,
-        sliderIntensity,
+        depthMode,
+        targetCoveragePct,
         ...preview,
       });
     } catch (e: any) {
