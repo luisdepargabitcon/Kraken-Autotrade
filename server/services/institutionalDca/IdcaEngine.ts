@@ -872,14 +872,17 @@ async function evaluatePair(
               const level = ladder.levels.find(l => l.level === triggerLevel);
               if (level) {
                 triggerPrice = level.triggerPrice;
+                console.log(`${TAG}[TRAILING_BUY_L1] ${pair}: using ladder level ${triggerLevel}, triggerPrice=${triggerPrice.toFixed(2)}`);
+              } else {
+                console.warn(`${TAG}[TRAILING_BUY_L1] ${pair}: ladder level ${triggerLevel} not found in ladder (totalLevels=${ladder.totalLevels})`);
               }
             } catch (error) {
-              console.warn(`${TAG}[TRAILING_BUY_L1] Failed to get ladder ATRP for ${pair}:`, error);
+              console.error(`${TAG}[TRAILING_BUY_L1] Failed to get ladder ATRP for ${pair}:`, error);
             }
           }
           
-          // Fallback to safety orders if ladder ATRP not available
-          if (!triggerPrice && assetConfig.safetyOrdersJson) {
+          // Fallback to safety orders ONLY if ladder ATRP is NOT enabled
+          if (!triggerPrice && !assetConfig.ladderAtrpEnabled && assetConfig.safetyOrdersJson) {
             const safetyOrders = Array.isArray(assetConfig.safetyOrdersJson) ? assetConfig.safetyOrdersJson : [];
             if (triggerLevel === 0) {
               // Base buy - use current dip calculation
@@ -895,6 +898,9 @@ async function evaluatePair(
                 triggerPrice = context.anchorPrice * (1 - safetyOrder.dipPct / 100);
               }
             }
+          } else if (!triggerPrice && assetConfig.ladderAtrpEnabled) {
+            // Ladder is enabled but triggerPrice not found - do not fallback to VWAP
+            console.warn(`${TAG}[TRAILING_BUY_L1] ${pair}: ladder ATRP enabled but triggerPrice not found for level ${triggerLevel}, skipping trailing buy trigger`);
           }
           
           if (triggerPrice && currentPrice <= triggerPrice) {
@@ -2959,8 +2965,23 @@ async function checkPlusActivation(
   if (plusCfg.requireMainExhausted) {
     let maxBuys: number;
     if (assetConfig.ladderAtrpEnabled && assetConfig.ladderAtrpConfigJson) {
-      // Usar ladder totalLevels si ladder ATRP está activo
-      maxBuys = (assetConfig.ladderAtrpConfigJson as any).maxLevels || 5;
+      // Calcular ladder real y usar totalLevels
+      try {
+        const { idcaLadderAtrpService } = await import('./IdcaLadderAtrpService');
+        const frozenAnchor = vwapAnchorMemory.get(pair);
+        const ladder = await idcaLadderAtrpService.calculateLadder(
+          pair,
+          assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig,
+          undefined,
+          frozenAnchor?.anchorPrice
+        );
+        maxBuys = ladder.totalLevels;
+        console.log(`${TAG}[PLUS] ${pair}: ladder real calculated, totalLevels=${maxBuys}`);
+      } catch (error) {
+        console.error(`${TAG}[PLUS] ${pair}: error calculating ladder, fallback to maxLevels`, error);
+        // Fallback seguro a maxLevels
+        maxBuys = (assetConfig.ladderAtrpConfigJson as any).maxLevels || 5;
+      }
     } else {
       // Usar safety orders legacy
       const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
