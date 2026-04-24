@@ -47,8 +47,19 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
     assetConfig.ladderAtrpConfigJson?.targetCoveragePct ?? 8
   );
   
+  // Coeficientes manuales por nivel
+  const [manualLevelEnabled, setManualLevelEnabled] = useState(
+    assetConfig.ladderAtrpConfigJson?.manualLevelEnabled ?? false
+  );
+  const [manualMultipliers, setManualMultipliers] = useState<number[]>(
+    assetConfig.ladderAtrpConfigJson?.manualMultipliers ?? [0.8, 1.2, 1.6, 2.0, 2.4]
+  );
+  const [manualSizeDistribution, setManualSizeDistribution] = useState<number[]>(
+    assetConfig.ladderAtrpConfigJson?.manualSizeDistribution ?? [25, 25, 20, 15, 15]
+  );
+  
   // Queries
-  const ladderPreview = useLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct);
+  const ladderPreview = useLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct, manualLevelEnabled, manualLevelEnabled ? manualMultipliers : undefined, manualLevelEnabled ? manualSizeDistribution : undefined);
   const marketContext = useMarketContextPreview(pair);
   const updateLadderConfig = useUpdateLadderAtrpConfig();
   const updateTrailingBuyConfig = useUpdateTrailingBuyLevel1Config();
@@ -83,6 +94,21 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
 
   // Handle ladder config update
   const handleSaveLadderConfig = () => {
+    // Validar suma de tamaños si manualLevelEnabled=true
+    if (manualLevelEnabled) {
+      const sizeSum = manualSizeDistribution.reduce((a, b) => a + b, 0);
+      if (Math.abs(sizeSum - 100) > 0.1) {
+        alert(`La suma de tamaños debe ser 100%. Actual: ${sizeSum}%`);
+        return;
+      }
+      
+      // Validar multiplicadores positivos
+      if (manualMultipliers.some(m => m <= 0 || isNaN(m))) {
+        alert("Todos los multiplicadores ATRP deben ser positivos");
+        return;
+      }
+    }
+    
     // Validar effectiveMultipliers con fallback seguro
     const previewMultipliers = ladderPreview.data?.levels?.map(l => l.atrpMultiplier);
     const hasValidMultipliers = previewMultipliers && 
@@ -102,6 +128,10 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       targetCoveragePct,
       minStepPct: 0.5,
       allowDeepExtension: true,
+      // Manual level settings
+      manualLevelEnabled,
+      manualMultipliers: manualLevelEnabled ? manualMultipliers : undefined,
+      manualSizeDistribution: manualLevelEnabled ? manualSizeDistribution : undefined,
       // Use preview data if available, otherwise defaults
       baseMultiplier: ladderPreview.data?.marketContext?.atrPct ? 0.8 : 0.8,
       stepMultiplier: 0.4,
@@ -300,6 +330,81 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                 </SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Coeficientes ATRP Manuales */}
+          <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={manualLevelEnabled}
+                  onCheckedChange={setManualLevelEnabled}
+                />
+                <Label className="font-semibold">Personalizar niveles manualmente</Label>
+              </div>
+              <Badge variant={manualLevelEnabled ? "default" : "secondary"}>
+                {manualLevelEnabled ? "Activo" : "Automático"}
+              </Badge>
+            </div>
+            
+            {manualLevelEnabled && (
+              <div className="space-y-3 pt-3 border-t">
+                <div className="text-sm text-muted-foreground">
+                  Configura multiplicadores ATRP y tamaños por nivel
+                </div>
+                <div className="space-y-2">
+                  {manualMultipliers.map((mult, idx) => (
+                    <div key={idx} className="grid grid-cols-3 gap-2 items-center">
+                      <div className="text-sm font-medium">Nivel {idx}</div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">ATRP ×</Label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          value={mult}
+                          onChange={(e) => {
+                            const newMultipliers = [...manualMultipliers];
+                            newMultipliers[idx] = parseFloat(e.target.value) || 0;
+                            setManualMultipliers(newMultipliers);
+                          }}
+                          className="w-full px-2 py-1 text-sm border rounded"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Tamaño %</Label>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="100"
+                          value={manualSizeDistribution[idx]}
+                          onChange={(e) => {
+                            const newSizes = [...manualSizeDistribution];
+                            newSizes[idx] = parseFloat(e.target.value) || 0;
+                            setManualSizeDistribution(newSizes);
+                          }}
+                          className="w-full px-2 py-1 text-sm border rounded"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span>Suma tamaños:</span>
+                    <span className={manualSizeDistribution.reduce((a, b) => a + b, 0) === 100 ? "text-green-600" : "text-yellow-600"}>
+                      {manualSizeDistribution.reduce((a, b) => a + b, 0)}%
+                    </span>
+                  </div>
+                  {manualSizeDistribution.reduce((a, b) => a + b, 0) !== 100 && (
+                    <div className="text-yellow-600">
+                      ⚠️ La suma debe ser 100%
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Target Coverage Slider (solo si depthMode es deep o manual) */}

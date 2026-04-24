@@ -1015,12 +1015,15 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const sliderIntensity = parseInt(req.query.sliderIntensity as string) || 50;
       const depthMode = req.query.depthMode as "normal" | "deep" | "manual" || undefined;
       const targetCoveragePct = req.query.targetCoveragePct ? parseFloat(req.query.targetCoveragePct as string) : undefined;
+      const manualLevelEnabled = req.query.manualLevelEnabled === "true";
+      const manualMultipliers = req.query.manualMultipliers ? (req.query.manualMultipliers as string).split(",").map(Number) : undefined;
+      const manualSizeDistribution = req.query.manualSizeDistribution ? (req.query.manualSizeDistribution as string).split(",").map(Number) : undefined;
       
       if (sliderIntensity < 0 || sliderIntensity > 100) {
         return res.status(400).json({ error: "sliderIntensity must be between 0 and 100" });
       }
       
-      const preview = await idcaLadderAtrpService.getLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct);
+      const preview = await idcaLadderAtrpService.getLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct, undefined, manualLevelEnabled, manualMultipliers, manualSizeDistribution);
       res.json({
         pair,
         depthMode,

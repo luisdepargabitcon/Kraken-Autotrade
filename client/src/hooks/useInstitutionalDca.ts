@@ -969,9 +969,9 @@ export function useAllMarketContextPreviews() {
 
 // ─── Ladder ATRP Preview ───────────────────────────────────────────
 
-export function useLadderPreview(pair: string, profile: "aggressive" | "balanced" | "conservative" | "custom", sliderIntensity: number, depthMode?: "normal" | "deep" | "manual", targetCoveragePct?: number) {
+export function useLadderPreview(pair: string, profile: "aggressive" | "balanced" | "conservative" | "custom", sliderIntensity: number, depthMode?: "normal" | "deep" | "manual", targetCoveragePct?: number, manualLevelEnabled?: boolean, manualMultipliers?: number[], manualSizeDistribution?: number[]) {
   return useQuery<LadderPreview, Error>({
-    queryKey: ["idca", "ladder-preview", pair, profile, sliderIntensity, depthMode, targetCoveragePct],
+    queryKey: ["idca", "ladder-preview", pair, profile, sliderIntensity, depthMode, targetCoveragePct, manualLevelEnabled, manualMultipliers, manualSizeDistribution],
     queryFn: async () => {
       const params = new URLSearchParams({
         profile,
@@ -979,6 +979,9 @@ export function useLadderPreview(pair: string, profile: "aggressive" | "balanced
       });
       if (depthMode) params.append("depthMode", depthMode);
       if (targetCoveragePct !== undefined) params.append("targetCoveragePct", targetCoveragePct.toString());
+      if (manualLevelEnabled !== undefined) params.append("manualLevelEnabled", manualLevelEnabled.toString());
+      if (manualMultipliers) params.append("manualMultipliers", manualMultipliers.join(","));
+      if (manualSizeDistribution) params.append("manualSizeDistribution", manualSizeDistribution.join(","));
       const res = await apiRequest("GET", `${PREFIX}/ladder/preview/${encodeURIComponent(pair)}?${params}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));

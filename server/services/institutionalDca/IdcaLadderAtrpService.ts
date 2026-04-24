@@ -400,7 +400,10 @@ class IdcaLadderAtrpService {
     sliderIntensity: number,
     depthMode?: "normal" | "deep" | "manual",
     targetCoveragePct?: number,
-    frozenAnchorPrice?: number
+    frozenAnchorPrice?: number,
+    manualLevelEnabled?: boolean,
+    manualMultipliers?: number[],
+    manualSizeDistribution?: number[]
   ): Promise<{
     levels: Array<{
       level: number;
@@ -426,6 +429,11 @@ class IdcaLadderAtrpService {
     // Aplicar configuración de profundidad si se proporciona
     if (depthMode) config.depthMode = depthMode;
     if (targetCoveragePct !== undefined) config.targetCoveragePct = targetCoveragePct;
+    
+    // Aplicar configuración manual si se proporciona
+    if (manualLevelEnabled !== undefined) config.manualLevelEnabled = manualLevelEnabled;
+    if (manualMultipliers) config.manualMultipliers = manualMultipliers;
+    if (manualSizeDistribution) config.manualSizeDistribution = manualSizeDistribution;
     
     const result = await this.calculateLadder(pair, config, undefined, frozenAnchorPrice);
     
