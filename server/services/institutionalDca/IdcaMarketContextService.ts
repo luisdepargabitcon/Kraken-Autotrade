@@ -68,7 +68,7 @@ class IdcaMarketContextService {
   /**
    * Obtiene contexto completo de mercado para un par
    */
-  async getMarketContext(pair: string, options: MarketContextOptions = {}): Promise<MarketContext> {
+  async getMarketContext(pair: string, options: MarketContextOptions & { frozenAnchorPrice?: number } = {}): Promise<MarketContext> {
     const opts = { ...this.defaultOptions, ...options };
     const cacheKey = `${pair}_${JSON.stringify(opts)}`;
     
@@ -115,15 +115,20 @@ class IdcaMarketContextService {
       console.warn(`[IdcaMarketContextService] ATR calculation failed for ${pair}:`, error);
     }
 
-    // Determine anchor (VWAP si es fiable, sino high de ventana)
+    // Determine anchor (frozenAnchorPrice si está disponible, sino VWAP si fiable, sino high de ventana)
     let anchorPrice: number;
     let anchorTimestamp: Date;
     
-    if (vwap?.isReliable) {
+    // Prioridad 1: frozenAnchorPrice (VWAP Anchor guardado en memoria) - alineado con IdcaEngine
+    if (options.frozenAnchorPrice && options.frozenAnchorPrice > 0) {
+      anchorPrice = options.frozenAnchorPrice;
+      anchorTimestamp = new Date(); // frozenAnchor no tiene timestamp explícito aquí
+    } else if (vwap?.isReliable) {
+      // Prioridad 2: VWAP si es fiable
       anchorPrice = vwap.vwap;
       anchorTimestamp = new Date(vwap.anchorTime);
     } else {
-      // Fallback a high de ventana extendida
+      // Prioridad 3: Fallback a high de ventana extendida
       const anchorCandles = candles.slice(-opts.anchorLookbackHours);
       const highCandle = anchorCandles.reduce((max, c) => c.high > max.high ? c : max, anchorCandles[0]);
       anchorPrice = highCandle.high;

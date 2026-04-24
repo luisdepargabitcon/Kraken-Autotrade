@@ -139,7 +139,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
           ) : marketContext.data ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <Label className="text-xs text-muted-foreground">Precio Ancla</Label>
+                <Label className="text-xs text-muted-foreground">Precio de referencia de entrada</Label>
                 <div className="font-semibold">${marketContext.data.anchorPrice.toFixed(2)}</div>
               </div>
               <div>
@@ -304,10 +304,8 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
 
               <div className="grid grid-cols-2 gap-4 pt-4 border-t">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Drawdown Máximo Cubierto</Label>
-                  <div className="font-semibold text-red-600">
-                    {ladderPreview.data.maxDrawdown.toFixed(2)}%
-                  </div>
+                  <Label className="text-xs text-muted-foreground">Cobertura del ladder configurado</Label>
+                  <div className="font-semibold text-amber-600">{ladderPreview.data.maxDrawdown.toFixed(2)}%</div>
                 </div>
                 <div>
                   <Label className="text-xs text-muted-foreground">Tamaño Total</Label>

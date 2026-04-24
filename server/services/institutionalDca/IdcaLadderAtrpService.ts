@@ -109,10 +109,11 @@ class IdcaLadderAtrpService {
   async calculateLadder(
     pair: string,
     config: LadderAtrpConfig,
-    marketContext?: MarketContext
+    marketContext?: MarketContext,
+    frozenAnchorPrice?: number
   ): Promise<LadderResult> {
-    // Obtener contexto si no se proporciona
-    const context = marketContext || await idcaMarketContextService.getMarketContext(pair);
+    // Obtener contexto si no se proporciona, pasando frozenAnchorPrice si está disponible
+    const context = marketContext || await idcaMarketContextService.getMarketContext(pair, { frozenAnchorPrice });
     
     if (!config.enabled) {
       throw new Error(`Ladder ATRP not enabled for ${pair}`);
@@ -322,7 +323,8 @@ class IdcaLadderAtrpService {
   async getLadderPreview(
     pair: string,
     profile: LadderProfile,
-    sliderIntensity: number
+    sliderIntensity: number,
+    frozenAnchorPrice?: number
   ): Promise<{
     levels: Array<{
       level: number;
@@ -340,7 +342,7 @@ class IdcaLadderAtrpService {
     };
   }> {
     const config = this.createLadderConfig(profile, sliderIntensity);
-    const ladder = await this.calculateLadder(pair, config);
+    const ladder = await this.calculateLadder(pair, config, undefined, frozenAnchorPrice);
     
     return {
       levels: ladder.levels.map(l => ({

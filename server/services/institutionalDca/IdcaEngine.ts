@@ -857,7 +857,13 @@ async function evaluatePair(
             // Use ladder ATRP to determine trigger price
             try {
               const { idcaLadderAtrpService } = await import('./IdcaLadderAtrpService');
-              const ladder = await idcaLadderAtrpService.calculateLadder(pair, assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig);
+              const frozenAnchor = vwapAnchorMemory.get(pair);
+              const ladder = await idcaLadderAtrpService.calculateLadder(
+                pair, 
+                assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig,
+                undefined,
+                frozenAnchor?.anchorPrice
+              );
               const level = ladder.levels.find(l => l.level === triggerLevel);
               if (level) {
                 triggerPrice = level.triggerPrice;
@@ -1011,21 +1017,30 @@ async function checkEntry(
       const trailingBuyAt = localLow ? localLow * (1 + reboundPct / 100) : null;
 
       const humanMessage = [
-        `📉 Caída acumulada desde ancla: ${drawdown.toFixed(2)}%`,
-        `   Ancla: $${frozenAnchor?.anchorPrice?.toFixed(2) ?? "—"} | hace ${anchorAge}h`,
+        `📉 Entrada bloqueada — ${pair}`,
         ``,
-        `📊 VWAP: $${check.vwapContext?.vwap?.toFixed(2) ?? "—"}`,
-        `   Zona: ${check.vwapContext?.zone ?? "—"} | Dist. banda -1σ: ${check.vwapContext?.distanceFromLower1Pct?.toFixed(2) ?? "—"}%`,
-        `   Tendencia semanal: ${check.weeklyTrend} | Sesgo mensual: ${check.monthlyBias}`,
+        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia.`,
         ``,
-        `🎯 Para comprar necesita caer ${distToBuy > 0 ? distToBuy.toFixed(2) + "% más" : "YA en rango"}`,
-        `   Precio de entrada: $${buyPrice.toFixed(2)}`,
-        `   Mín dip efectivo: ${minDip.toFixed(2)}% desde ancla ($${effectiveBasePrice.toFixed(2)})`,
+        `📍 Precio de referencia de entrada: $${effectiveBasePrice.toFixed(2)}`,
+        `   Fuente: ${check.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : check.basePriceMethod === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : check.basePriceMethod}`,
+        ``,
+        `💵 Precio actual: $${currentPrice.toFixed(2)}`,
+        `📉 Caída desde referencia: ${(check.entryDipPct ?? 0).toFixed(2)}%`,
+        `🎯 Entrada mínima requerida: ${minDip.toFixed(2)}%`,
+        `🛒 Precio objetivo de entrada: $${buyPrice.toFixed(2)}`,
+        `⏳ Falta caer: ${distToBuy > 0 ? distToBuy.toFixed(2) + "%" : "YA en rango"}`,
+        ``,
+        check.vwapContext ? [
+          `📊 Contexto VWAP`,
+          `   Zona: ${check.vwapContext.zone}`,
+          `   Tendencia semanal: ${check.weeklyTrend}`,
+          `   Sesgo mensual: ${check.monthlyBias}`,
+        ].join("\n") : null,
         ``,
         trailingArmed && localLow
           ? `🔵 Trailing Buy ARMADO | Mínimo: $${localLow.toFixed(2)} | Compra si rebota a: $${trailingBuyAt?.toFixed(2)}`
           : `⚪ Trailing Buy en espera (precio no en zona de interés aún)`,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
       await createHumanEvent({
         pair,
@@ -2318,11 +2333,23 @@ async function performEntryCheck(
     }
   }
 
-  // ── Effective base price: anchorPrice (frozen anchor or current swing high) ──
-  // Referencia principal: caída desde ancla
-  // VWAP se usa solo como confirmación, no como base de cálculo
-  const effectiveBasePrice = basePriceResult.price;
-  const basePriceMethod = "anchor_price";
+  // ── Effective base price: VWAP Anchor manda, Hybrid V2.1 es fallback ──
+  // Si VWAP Anchored está activo y es fiable, usa frozenAnchorPrice
+  // Si NO, usa Hybrid V2.1 como fallback
+  const vwapAnchorAvailable = assetConfig.vwapEnabled && frozenAnchor?.anchorPrice && frozenAnchor.anchorPrice > 0;
+  
+  let effectiveBasePrice: number;
+  let basePriceMethod: string;
+
+  if (vwapAnchorAvailable) {
+    // VWAP Anchor es la referencia principal cuando está activo y fiable
+    effectiveBasePrice = frozenAnchor.anchorPrice;
+    basePriceMethod = "vwap_anchor";
+  } else {
+    // Hybrid V2.1 como fallback si VWAP Anchor no está disponible o no es fiable
+    effectiveBasePrice = basePriceResult.price;
+    basePriceMethod = "hybrid_v2_fallback";
+  }
 
   const entryDipPct = effectiveBasePrice > 0
     ? ((effectiveBasePrice - currentPrice) / effectiveBasePrice) * 100

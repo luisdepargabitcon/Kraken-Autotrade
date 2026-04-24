@@ -959,8 +959,8 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
             </div>
           )}
 
-          {/* B. VWAP Anchor Panel — solo para eventos con vwapContext y basePriceMethod === "vwap_lowerBand1" */}
-          {parsed.vwapContext && parsed.basePriceMethod === "vwap_lowerBand1" && (
+          {/* B. VWAP Anchor Panel — solo para eventos con vwapContext y basePriceMethod vwap_anchor o fallback */}
+          {parsed.vwapContext && (parsed.basePriceMethod === "vwap_anchor" || parsed.basePriceMethod === "hybrid_v2_fallback" || parsed.basePriceMethod === "vwap_lowerBand1") && (
             <div className="border border-cyan-500/30 bg-cyan-500/5 rounded-lg overflow-hidden">
               {/* Header */}
               <div className="px-4 py-2 bg-cyan-500/10 border-b border-cyan-500/20">
@@ -971,17 +971,23 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
 
               {/* Content */}
               <div className="p-4 space-y-3">
-                {/* Ancla VWAP — destacada en rojo */}
-                {parsed.frozenAnchorPrice != null ? (
+                {/* Precio de referencia de entrada */}
+                {parsed.effectiveBasePrice != null ? (
                   <div className="bg-red-500/5 border border-red-500/20 rounded-md p-3">
                     <div className="text-[10px] uppercase tracking-wider font-bold text-red-500 mb-1">
-                      � ANCLA VWAP ACTIVA
+                      💰 PRECIO DE REFERENCIA DE ENTRADA
                     </div>
                     <div className="text-2xl font-bold text-red-500 mb-1">
-                      ${parsed.frozenAnchorPrice.toFixed(2)}
+                      ${parsed.effectiveBasePrice.toFixed(2)}
                     </div>
                     <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
-                      {parsed.frozenAnchorTs && (
+                      <div>
+                        Fuente:{" "}
+                        <span className="font-semibold text-cyan-400">
+                          {parsed.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : "Hybrid V2.1 fallback"}
+                        </span>
+                      </div>
+                      {parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor" && (
                         <div>
                           Fijada:{" "}
                           {new Date(parsed.frozenAnchorTs).toLocaleString("es-ES", {
@@ -997,7 +1003,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                       )}
                       {parsed.drawdownFromAnchorPct != null && (
                         <div>
-                          Caída acumulada:{" "}
+                          Caída desde referencia:{" "}
                           <span className="font-semibold text-red-400">
                             -{Math.abs(parsed.drawdownFromAnchorPct).toFixed(2)}%
                           </span>
@@ -1006,10 +1012,10 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                     </div>
 
                     {/* Ancla anterior (si existe) */}
-                    {parsed.frozenAnchorPrevious && (
+                    {parsed.frozenAnchorPrevious && parsed.basePriceMethod === "vwap_anchor" && (
                       <div className="mt-3 pt-2 border-t border-white/5">
                         <div className="text-[9px] uppercase tracking-wider text-muted-foreground/50 mb-1">
-                          Ancla anterior (inválida)
+                          Referencia anterior (inválida)
                         </div>
                         <div className="text-xs opacity-50">
                           <span className="line-through">
@@ -1021,7 +1027,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                           </span>
                         </div>
                         <div className="text-[10px] text-muted-foreground/40 mt-0.5 italic">
-                          (precio superó esta ancla)
+                          (precio superó esta referencia)
                         </div>
                       </div>
                     )}
@@ -1029,10 +1035,10 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                 ) : (
                   <div className="bg-yellow-500/5 border border-yellow-500/30 rounded-md p-3">
                     <div className="text-xs font-semibold text-yellow-400">
-                      ⚠️ Ancla no detectada aún — esperando primer tick
+                      ⚠️ Referencia no detectada aún — esperando primer tick
                     </div>
                     <div className="text-[10px] text-muted-foreground/60 mt-1">
-                      El sistema está esperando un swing high válido para anclar el VWAP.
+                      El sistema está esperando un swing high válido para establecer la referencia de entrada.
                     </div>
                   </div>
                 )}
