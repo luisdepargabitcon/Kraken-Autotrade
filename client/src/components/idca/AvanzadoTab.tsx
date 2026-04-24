@@ -126,7 +126,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
   return (
     <div className="space-y-6">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="migration">Migración</TabsTrigger>
           <TabsTrigger value="health">Salud Sistema</TabsTrigger>
@@ -144,7 +144,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm font-medium">Cooldown entre Compras (min)</Label>
                   <Input
@@ -221,7 +221,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
             <CardContent>
               {migrationStatus && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <span className="text-sm font-medium">Sistema Activo:</span>
                       <Badge className="ml-2">
@@ -236,7 +236,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <span className="text-sm font-medium">Safety Orders:</span>
                       <span className="ml-2">{migrationStatus.safetyOrdersCount}</span>

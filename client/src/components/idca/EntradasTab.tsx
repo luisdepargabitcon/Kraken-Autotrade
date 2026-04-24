@@ -354,7 +354,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                 </div>
                 <div className="space-y-2">
                   {manualMultipliers.map((mult, idx) => (
-                    <div key={idx} className="grid grid-cols-3 gap-2 items-center">
+                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
                       <div className="text-sm font-medium">Nivel {idx}</div>
                       <div className="space-y-1">
                         <Label className="text-xs">ATRP ×</Label>
@@ -496,7 +496,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
               {/* Información de profundidad */}
               {(depthMode === "deep" || depthMode === "manual") && (
                 <div className="pt-2 border-t">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-xs text-muted-foreground">Cobertura Deseada</Label>
                       <div className="font-semibold text-purple-600">{targetCoveragePct}%</div>
@@ -613,7 +613,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Timeout (minutos)</Label>
                   <Select defaultValue="60">

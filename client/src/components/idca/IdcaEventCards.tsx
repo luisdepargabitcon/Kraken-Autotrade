@@ -1044,7 +1044,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                 )}
 
                 {/* Caída acumulada vs precio actual vs banda -1σ */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
                     <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">Caída acumulada desde ancla</div>
                     <div className="text-lg font-bold text-red-400">
@@ -1093,7 +1093,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                 </div>
 
                 {/* VWAP día, semanal, banda -1σ */}
-                <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px]">
                   <div className="bg-white/[0.02] rounded p-2 border border-white/5">
                     <div className="text-muted-foreground/60 mb-0.5">VWAP día</div>
                     <div className="font-semibold text-cyan-300">
@@ -1117,7 +1117,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                 {/* Para entrar */}
                 <div className="bg-white/[0.02] rounded-md p-2.5 border border-white/5">
                   <div className="text-[10px] uppercase text-muted-foreground/70 mb-1">🎯 PARA ENTRAR</div>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div>
                       <div className="text-muted-foreground/60">Precio de compra</div>
                       <div className="font-semibold text-cyan-300">
