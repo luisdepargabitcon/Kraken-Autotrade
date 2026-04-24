@@ -65,6 +65,7 @@ interface ParsedPayload {
   marketScore?: number;
   sizeProfile?: string;
   buyCount?: number;
+  priceUpdatedAt?: string;
   closeReason?: string;
   tpPct?: number;
   trailingPct?: number;
@@ -95,7 +96,6 @@ interface ParsedPayload {
   frozenAnchorTs?: string;
   frozenAnchorAgeHours?: number;
   drawdownFromAnchorPct?: number;
-  priceUpdatedAt?: string;
   frozenAnchorPrevious?: {
     anchorPrice: number;
     anchorTimestamp: number;
