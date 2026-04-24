@@ -95,6 +95,7 @@ interface ParsedPayload {
   frozenAnchorTs?: string;
   frozenAnchorAgeHours?: number;
   drawdownFromAnchorPct?: number;
+  priceUpdatedAt?: string;
   frozenAnchorPrevious?: {
     anchorPrice: number;
     anchorTimestamp: number;
@@ -138,6 +139,7 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.basePriceMethod) result.basePriceMethod = p.basePriceMethod;
   if (p.vwapContext) result.vwapContext = p.vwapContext;
   if (p.weeklyTrend) result.weeklyTrend = p.weeklyTrend;
+  if (p.priceUpdatedAt) result.priceUpdatedAt = p.priceUpdatedAt;
   if (p.monthlyBias) result.monthlyBias = p.monthlyBias;
 
   // VWAP anchor fields
@@ -1052,9 +1054,19 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                         <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
                           <div>
                             Actualizado:{" "}
-                            {event.createdAt ? (
+                            {parsed.priceUpdatedAt ? (
                               <span className="font-semibold text-green-400">
-                                {new Date(event.createdAt).toLocaleString("es-ES", {
+                                {new Date(parsed.priceUpdatedAt).toLocaleString("es-ES", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            ) : event.createdAt ? (
+                              <span className="font-semibold text-yellow-400">
+                                Evento generado: {new Date(event.createdAt).toLocaleString("es-ES", {
                                   day: "2-digit",
                                   month: "2-digit",
                                   year: "2-digit",

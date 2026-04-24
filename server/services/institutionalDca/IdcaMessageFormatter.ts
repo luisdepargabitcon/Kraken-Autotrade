@@ -250,7 +250,7 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
         if (ctx.entryDipPct >= 0) {
           techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
         } else {
-          techParts.push(`PrecioSobreAncla=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
+          techParts.push(`PrecioSobreRef=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
         }
       }
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
@@ -271,7 +271,7 @@ export function formatIdcaMessage(ctx: FormatContext): HumanMessage {
         if (ctx.entryDipPct >= 0) {
           techParts.push(`EntryDip=${ctx.entryDipPct.toFixed(2)}%`);
         } else {
-          techParts.push(`PrecioSobreAncla=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
+          techParts.push(`PrecioSobreRef=${Math.abs(ctx.entryDipPct).toFixed(2)}%`);
         }
       }
       if (ctx.marketScore != null) techParts.push(`Score=${ctx.marketScore}`);
@@ -556,7 +556,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
         `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
         `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
-        `� Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `💵 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
         `🔒 Stop protección: <code>$${fmtNum(ctx.stopPrice || ctx.avgEntry || 0)}</code>`,
       ];
       if (ctx.trailingActivationPct != null && ctx.avgEntry) {
@@ -576,7 +576,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
         `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
         `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
-        `� Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `💵 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
         `📐 Margen trailing: <code>${(ctx.trailingPct || ctx.trailingMarginPct || 0).toFixed(2)}%</code>`,
       ];
       lines.push(``, `💡 Dejando correr beneficios. El sistema seguirá el precio y cerrará cuando retroceda el margen configurado.`);
@@ -591,7 +591,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
-      if (ctx.price != null) lines.push(`� Precio actual: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`💵 Precio actual: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.pnlPct != null) lines.push(`📈 PnL: <code>${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%</code>`);
       if (ctx.partialPct != null) lines.push(`📤 Venta parcial: <code>${ctx.partialPct.toFixed(0)}%</code>`);
       if (ctx.trailingPct != null) lines.push(`📐 Trailing: <code>${ctx.trailingPct.toFixed(2)}%</code>`);
@@ -613,7 +613,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`💵 Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
       if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
 
@@ -650,7 +650,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`💵 Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
       if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
 
@@ -711,7 +711,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
           lines.push(`• ${be.emoji} ${be.humanTitle}`);
         }
       } else if (ctx.reasonCode) {
-        lines.push(`� Motivo: ${entry.humanTitle}`);
+        lines.push(`🚫 Motivo: ${entry.humanTitle}`);
       }
       
       if (ctx.pnlPct != null) lines.push(`📊 PnL: <code>${ctx.pnlPct.toFixed(2)}%</code>`);
@@ -776,7 +776,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`💵 Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       lines.push(``, `📈 <b>Resultado:</b>`);
       lines.push(`• PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b> (${pnlPctVal >= 0 ? "+" : ""}${pnlPctVal.toFixed(2)}%)`);
       if (ctx.durationStr) lines.push(`• Duración: ${ctx.durationStr}`);
@@ -808,13 +808,12 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
-      if (ctx.realizedPnl != null) lines.push(`📈 PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b>`);
+      if (ctx.price != null) lines.push(`💵 Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.realizedPnl != null) lines.push(`📈 PnL: <b>${ctx.realizedPnl >= 0 ? "+" : ""}$${fmtNum(ctx.realizedPnl)}</b>`);
       if (ctx.closeReason) lines.push(`📝 Motivo: ${escapeHtml(ctx.closeReason)}`);
       if (ctx.parentCycleId != null) lines.push(`🔗 Parent: <code>#${ctx.parentCycleId}</code>`);
       return lines.join("\n");
     }
-
     // ═══ FALLBACK ═══
     default: {
       const { humanTitle, humanMessage, technicalSummary } = formatIdcaMessage(ctx);
