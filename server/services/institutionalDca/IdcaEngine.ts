@@ -347,18 +347,23 @@ export async function importPosition(req: import("./IdcaTypes").ImportPositionRe
   let importSkippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null = null;
 
   if (!req.soloSalida && assetConfig) {
-    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-    const effectiveSafety = calculateEffectiveSafetyLevel(
-      safetyOrders,
-      req.avgEntryPrice,
-      currentPrice || req.avgEntryPrice,
-      1 // buyCount=1 for imported positions (counts as base buy)
-    );
-    importNextBuyLevelPct = effectiveSafety.nextLevelPct?.toFixed(2) || null;
-    importNextBuyPrice = effectiveSafety.nextBuyPrice?.toFixed(8) || null;
-    importSkippedSafetyLevels = effectiveSafety.skippedLevels;
-    importSkippedLevelsDetail = effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null;
-    console.log(`${TAG}[IMPORT] ${req.pair}: nextBuy=${importNextBuyPrice ? `$${parseFloat(importNextBuyPrice).toFixed(2)}` : "none"}, skipped=${importSkippedSafetyLevels}`);
+    // Si ladder ATRP está activo, no usar safety orders legacy para evitar doble ejecución
+    if (!assetConfig.ladderAtrpEnabled) {
+      const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+      const effectiveSafety = calculateEffectiveSafetyLevel(
+        safetyOrders,
+        req.avgEntryPrice,
+        currentPrice || req.avgEntryPrice,
+        1 // buyCount=1 for imported positions (counts as base buy)
+      );
+      importNextBuyLevelPct = effectiveSafety.nextLevelPct?.toFixed(2) || null;
+      importNextBuyPrice = effectiveSafety.nextBuyPrice?.toFixed(8) || null;
+      importSkippedSafetyLevels = effectiveSafety.skippedLevels;
+      importSkippedLevelsDetail = effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null;
+      console.log(`${TAG}[IMPORT] ${req.pair}: nextBuy=${importNextBuyPrice ? `$${parseFloat(importNextBuyPrice).toFixed(2)}` : "none"}, skipped=${importSkippedSafetyLevels}`);
+    } else {
+      console.log(`${TAG}[IMPORT] ${req.pair}: ladder ATRP enabled, skipping safety orders legacy calculation`);
+    }
   }
 
   const snapshot = {
@@ -1374,27 +1379,30 @@ async function manageCycle(
   if (cycle.isImported && !cycle.soloSalida) {
     const storedNext = parseFloat(String(cycle.nextBuyPrice || "0"));
     if (storedNext <= 0) {
-      const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-      const effectiveSafety = calculateEffectiveSafetyLevel(
-        safetyOrders,
-        avgEntry,
-        currentPrice,
-        cycle.buyCount || 1
-      );
-      if (effectiveSafety.nextBuyPrice && effectiveSafety.nextBuyPrice > 0) {
-        await repo.updateCycle(cycle.id, {
-          nextBuyLevelPct: effectiveSafety.nextLevelPct?.toFixed(2) || null,
-          nextBuyPrice: effectiveSafety.nextBuyPrice.toFixed(8),
-          skippedSafetyLevels: effectiveSafety.skippedLevels,
-          skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
-        });
-        console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${effectiveSafety.nextBuyPrice.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
-      } else if (effectiveSafety.skippedLevels !== (cycle.skippedSafetyLevels ?? 0)) {
-        // Update skipped count even if no valid next level
-        await repo.updateCycle(cycle.id, {
-          skippedSafetyLevels: effectiveSafety.skippedLevels,
-          skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
-        });
+      // Si ladder ATRP está activo, no usar safety orders legacy para evitar doble ejecución
+      if (!assetConfig.ladderAtrpEnabled) {
+        const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+        const effectiveSafety = calculateEffectiveSafetyLevel(
+          safetyOrders,
+          avgEntry,
+          currentPrice,
+          cycle.buyCount || 1
+        );
+        if (effectiveSafety.nextBuyPrice && effectiveSafety.nextBuyPrice > 0) {
+          await repo.updateCycle(cycle.id, {
+            nextBuyLevelPct: effectiveSafety.nextLevelPct?.toFixed(2) || null,
+            nextBuyPrice: effectiveSafety.nextBuyPrice.toFixed(8),
+            skippedSafetyLevels: effectiveSafety.skippedLevels,
+            skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
+          });
+          console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${effectiveSafety.nextBuyPrice.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
+        } else if (effectiveSafety.skippedLevels !== (cycle.skippedSafetyLevels ?? 0)) {
+          // Update skipped count even if no valid next level
+          await repo.updateCycle(cycle.id, { skippedSafetyLevels: effectiveSafety.skippedLevels });
+          console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: skippedSafetyLevels updated → ${effectiveSafety.skippedLevels}`);
+        }
+      } else {
+        console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: ladder ATRP enabled, skipping safety orders legacy calculation`);
       }
     }
   }
@@ -2949,8 +2957,15 @@ async function checkPlusActivation(
 
   // 1) Main must be exhausted (all safety orders used)
   if (plusCfg.requireMainExhausted) {
-    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-    const maxBuys = safetyOrders.length + 1; // base + safety orders
+    let maxBuys: number;
+    if (assetConfig.ladderAtrpEnabled && assetConfig.ladderAtrpConfigJson) {
+      // Usar ladder totalLevels si ladder ATRP está activo
+      maxBuys = (assetConfig.ladderAtrpConfigJson as any).maxLevels || 5;
+    } else {
+      // Usar safety orders legacy
+      const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+      maxBuys = safetyOrders.length + 1; // base + safety orders
+    }
     if (mainCycle.buyCount < maxBuys) return; // main not exhausted yet
   }
 
@@ -3543,18 +3558,28 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
 
   // ── 1. Safety buy levels ──────────────────────────────────
   // Use effective safety level calculation for imported cycles
-  const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const effectiveSafety = calculateEffectiveSafetyLevel(
-    safetyOrders,
-    avgEntry,
-    currentPrice,
-    buyCount
-  );
+  // Si ladder ATRP está activo, no usar safety orders legacy para evitar doble ejecución
+  let nextLevelPct: number | null = null;
+  let nextBuyPrice: number | null = null;
+  let skippedSafetyLevels = 0;
+  let skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null = null;
 
-  const nextLevelPct = effectiveSafety.nextLevelPct;
-  const nextBuyPrice = effectiveSafety.nextBuyPrice;
-  const skippedSafetyLevels = effectiveSafety.skippedLevels;
-  const skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
+  if (!assetConfig.ladderAtrpEnabled) {
+    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+    const effectiveSafety = calculateEffectiveSafetyLevel(
+      safetyOrders,
+      avgEntry,
+      currentPrice,
+      buyCount
+    );
+
+    nextLevelPct = effectiveSafety.nextLevelPct;
+    nextBuyPrice = effectiveSafety.nextBuyPrice;
+    skippedSafetyLevels = effectiveSafety.skippedLevels;
+    skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
+  } else {
+    console.log(`${TAG}[RECALCULATE] ${pair}: ladder ATRP enabled, skipping safety orders legacy calculation`);
+  }
 
   // ── 2. Capital reserved (budget for safety buys) ──────────
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));
@@ -3633,7 +3658,7 @@ export async function rehydrateImportedCycle(cycleId: number): Promise<import("@
 
   // Log the rehydration event
   const skippedMsg = skippedSafetyLevels > 0
-    ? ` (${skippedSafetyLevels} niveles de seguridad ya superados: ${skippedLevelsDetail.map(s => `-${s.dipPct}%`).join(', ')})`
+    ? ` (${skippedSafetyLevels} niveles de seguridad ya superados: ${skippedLevelsDetail?.map(s => `-${s.dipPct}%`).join(', ') || 'N/A'})`
     : '';
 
   await createHumanEvent({
@@ -3776,18 +3801,28 @@ export async function editImportedCycle(
   const buyCount = cycle.buyCount || 1;
 
   // Safety buy levels - use effective calculation for imported cycles
-  const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
-  const effectiveSafety = calculateEffectiveSafetyLevel(
-    safetyOrders,
-    newAvgEntry,
-    currentPrice,
-    buyCount
-  );
+  // Si ladder ATRP está activo, no usar safety orders legacy para evitar doble ejecución
+  let nextLevelPct: number | null = null;
+  let nextBuyPrice: number | null = null;
+  let skippedSafetyLevels = 0;
+  let skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null = null;
 
-  const nextLevelPct = effectiveSafety.nextLevelPct;
-  const nextBuyPrice = effectiveSafety.nextBuyPrice;
-  const skippedSafetyLevels = effectiveSafety.skippedLevels;
-  const skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
+  if (!assetConfig.ladderAtrpEnabled) {
+    const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
+    const effectiveSafety = calculateEffectiveSafetyLevel(
+      safetyOrders,
+      newAvgEntry,
+      currentPrice,
+      buyCount
+    );
+
+    nextLevelPct = effectiveSafety.nextLevelPct;
+    nextBuyPrice = effectiveSafety.nextBuyPrice;
+    skippedSafetyLevels = effectiveSafety.skippedLevels;
+    skippedLevelsDetail = effectiveSafety.skippedLevelsDetail;
+  } else {
+    console.log(`${TAG}[BUY_EXECUTED] ${pair}: ladder ATRP enabled, skipping safety orders legacy calculation`);
+  }
 
   // Capital reserved
   const allocatedCapital = parseFloat(String(config.allocatedCapitalUsd || "0"));

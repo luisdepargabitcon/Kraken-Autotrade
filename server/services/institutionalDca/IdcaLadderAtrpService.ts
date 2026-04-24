@@ -435,6 +435,8 @@ class IdcaLadderAtrpService {
         dipPct: l.dipPct,
         triggerPrice: l.triggerPrice,
         sizePct: l.sizePct,
+        atrpMultiplier: l.atrpMultiplier,
+        isActive: l.isActive,
       })),
       totalLevels: result.totalLevels,
       maxDrawdown: result.maxDrawdownCovered,

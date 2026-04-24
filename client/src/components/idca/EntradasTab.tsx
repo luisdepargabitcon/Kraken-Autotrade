@@ -40,8 +40,12 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
   const [profile, setProfile] = useState<LadderProfile>("balanced");
   const [sliderIntensity, setSliderIntensity] = useState(50);
   const [ladderEnabled, setLadderEnabled] = useState(assetConfig.ladderAtrpEnabled || false);
-  const [depthMode, setDepthMode] = useState<"normal" | "deep" | "manual">("normal");
-  const [targetCoveragePct, setTargetCoveragePct] = useState(8);
+  const [depthMode, setDepthMode] = useState<"normal" | "deep" | "manual">(
+    (assetConfig.ladderAtrpConfigJson?.depthMode as "normal" | "deep" | "manual") ?? "normal"
+  );
+  const [targetCoveragePct, setTargetCoveragePct] = useState(
+    assetConfig.ladderAtrpConfigJson?.targetCoveragePct ?? 8
+  );
   
   // Queries
   const ladderPreview = useLadderPreview(pair, profile, sliderIntensity, depthMode, targetCoveragePct);
@@ -79,6 +83,16 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
 
   // Handle ladder config update
   const handleSaveLadderConfig = () => {
+    // Validar effectiveMultipliers con fallback seguro
+    const previewMultipliers = ladderPreview.data?.levels?.map(l => l.atrpMultiplier);
+    const hasValidMultipliers = previewMultipliers && 
+      previewMultipliers.length > 0 && 
+      previewMultipliers.every(m => m != null && !isNaN(m) && m > 0);
+    
+    const effectiveMultipliers = hasValidMultipliers 
+      ? previewMultipliers 
+      : [0.8, 1.2, 1.6, 2.0, 2.4];
+
     const config = {
       enabled: ladderEnabled,
       profile,
@@ -92,7 +106,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       baseMultiplier: ladderPreview.data?.marketContext?.atrPct ? 0.8 : 0.8,
       stepMultiplier: 0.4,
       maxMultiplier: 4.0,
-      effectiveMultipliers: ladderPreview.data?.levels?.map(l => l.atrpMultiplier) || [0.8, 1.2, 1.6, 2.0, 2.4],
+      effectiveMultipliers,
       sizeDistribution: [25, 25, 20, 15, 15],
       minDipPct: 0.8,
       maxDipPct: 20,
@@ -347,7 +361,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                             {level.dipPct.toFixed(2)}% dip → ${level.triggerPrice.toFixed(2)}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier.toFixed(2)}
+                            {level.sizePct}% del presupuesto • ATRP ×{level.atrpMultiplier != null ? level.atrpMultiplier.toFixed(2) : "—"}
                           </div>
                         </div>
                       </div>

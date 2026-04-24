@@ -103,6 +103,15 @@ export interface IdcaAssetConfig {
     adaptiveScaling: boolean;
     volatilityScaling: number;
     rebalanceOnVwap: boolean;
+    // Deep ladder settings
+    depthMode?: "normal" | "deep" | "manual";
+    targetCoveragePct?: number;
+    minStepPct?: number;
+    allowDeepExtension?: boolean;
+    // Manual level settings
+    manualLevelEnabled?: boolean;
+    manualMultipliers?: number[];
+    manualSizeDistribution?: number[];
   };
   ladderAtrpEnabled: boolean;
   // Trailing Buy Level 1 config
