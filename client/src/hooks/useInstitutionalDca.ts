@@ -234,8 +234,10 @@ export interface LadderPreviewLevel {
 
 export interface LadderPreview {
   levels: LadderPreviewLevel[];
+  totalLevels: number;
   maxDrawdown: number;
   totalSize: number;
+  isLimitedByMaxLevels?: boolean;
   marketContext: {
     anchorPrice: number;
     currentPrice: number;

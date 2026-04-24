@@ -424,6 +424,17 @@ export interface LadderAtrpConfig {
   maxDipPct: number;          // Maximum dip % (absolute ceiling)
   maxLevels: number;          // Maximum number of safety orders
   
+  // Deep ladder settings
+  depthMode: "normal" | "deep" | "manual";  // How deep the ladder can go
+  targetCoveragePct: number;  // Target coverage % (e.g., 8 for BTC, 10 for ETH)
+  minStepPct: number;         // Minimum step between levels (%)
+  allowDeepExtension: boolean;  // Allow extending beyond calculated coverage
+  
+  // Manual per-level configuration
+  manualLevelEnabled?: boolean;  // Whether manual per-level configuration is enabled
+  manualMultipliers?: number[];  // Manual ATRP multipliers per level
+  manualSizeDistribution?: number[];  // Manual size distribution per level
+  
   // Advanced settings
   adaptiveScaling: boolean;   // Scale with volatility
   volatilityScaling: number;  // How much to scale with ATRP
@@ -444,6 +455,7 @@ export interface LadderResult {
   totalLevels: number;
   maxDrawdownCovered: number;  // Maximum dip % covered by ladder
   totalSizePct: number;        // Total % of asset budget
+  isLimitedByMaxLevels?: boolean;  // Whether target coverage was limited by maxLevels
   calculatedAt: Date;
   config: LadderAtrpConfig;
   marketContext: {

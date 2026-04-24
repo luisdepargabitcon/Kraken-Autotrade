@@ -26,6 +26,12 @@ export interface FormatContext {
   entryDipPct?: number;
   entryBasePrice?: number;
   entryBasePriceType?: string;
+  currentPrice?: number;
+  effectiveMinDip?: number;
+  buyTriggerPrice?: number;
+  distToBuyPct?: number;
+  ladderCoverage?: number;
+  trailingBuyArmed?: boolean;
   marketScore?: number;
   pnlPct?: number;
   pnlUsd?: number;
@@ -680,27 +686,36 @@ export function formatTelegramMessage(ctx: FormatContext): string {
     case "buy_blocked": {
       const entry = getCatalogEntry(ctx.reasonCode || ctx.eventType);
       const lines = [
-        `⛔ <b>IDCA — Compra bloqueada</b>`,
+        `📉 <b>Entrada bloqueada — ${pair}</b>`,
         ``,
-        `📦 <code>${pair}</code>  [${modeTag}]`,
+        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia.`,
+        ``,
+        `📍 <b>Precio de referencia de entrada:</b> <code>$${ctx.entryBasePrice ? fmtNum(ctx.entryBasePrice) : "—"}</code>`,
+        ctx.entryBasePriceType ? `   Fuente: <code>${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType}</code>` : null,
+        ctx.currentPrice ? `💵 <b>Precio actual:</b> <code>$${fmtNum(ctx.currentPrice)}</code>` : null,
+        ctx.entryDipPct != null ? `📉 <b>Caída desde referencia:</b> <code>${ctx.entryDipPct.toFixed(2)}%</code>` : null,
+        ctx.effectiveMinDip != null ? `🎯 <b>Entrada mínima requerida:</b> <code>${ctx.effectiveMinDip.toFixed(2)}%</code>` : null,
+        ctx.buyTriggerPrice ? `� <b>Precio objetivo de entrada:</b> <code>$${fmtNum(ctx.buyTriggerPrice)}</code>` : null,
+        ctx.distToBuyPct != null ? `⏳ <b>Falta caer:</b> <code>${ctx.distToBuyPct.toFixed(2)}%</code>` : null,
+        ctx.ladderCoverage ? `� <b>Cobertura ladder configurada:</b> <code>${ctx.ladderCoverage.toFixed(2)}%</code>` : null,
+        ctx.trailingBuyArmed ? `🔵 <b>Trailing Buy:</b> ARMADO` : `⚪ <b>Trailing Buy:</b> En espera`,
       ];
+      
+      // Bloqueos traducidos
       if (ctx.blockReasons && ctx.blockReasons.length > 0) {
-        lines.push(``, `🚫 <b>Motivos:</b>`);
+        lines.push(``, `🚫 <b>Bloqueos:</b>`);
         for (const r of ctx.blockReasons) {
           const be = getCatalogEntry(r.code);
           lines.push(`• ${be.emoji} ${be.humanTitle}`);
         }
       } else if (ctx.reasonCode) {
-        lines.push(`🚫 Motivo: ${entry.humanTitle}`);
+        lines.push(`� Motivo: ${entry.humanTitle}`);
       }
-      if (ctx.entryDipPct != null && ctx.entryBasePrice != null) {
-        lines.push(`📉 Dip: <code>${ctx.entryDipPct.toFixed(2)}%</code> desde base <code>$${fmtNum(ctx.entryBasePrice)}</code>`);
-      } else if (ctx.entryDipPct != null) {
-        lines.push(`📉 Dip: <code>${ctx.entryDipPct.toFixed(2)}%</code>`);
-      }
+      
       if (ctx.pnlPct != null) lines.push(`📊 PnL: <code>${ctx.pnlPct.toFixed(2)}%</code>`);
       if (ctx.buyCount != null) lines.push(`📦 Compras actuales: ${ctx.buyCount}`);
-      return lines.join("\n");
+      
+      return lines.filter(Boolean).join("\n");
     }
 
     // ═══ SMART ADJUSTMENT ═══

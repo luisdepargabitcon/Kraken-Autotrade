@@ -15,41 +15,53 @@ import { idcaMarketContextService, MarketContext } from "./IdcaMarketContextServ
 const LADDER_PROFILES: Record<LadderProfile, Omit<LadderAtrpConfig, 'enabled' | 'sliderIntensity' | 'effectiveMultipliers'>> = {
   aggressive: {
     profile: "aggressive",
-    baseMultiplier: 0.5,      // Más agresivo: niveles más cercanos
+    baseMultiplier: 0.8,
     stepMultiplier: 0.3,
     maxMultiplier: 3.0,
-    sizeDistribution: [30, 25, 20, 15, 10],  // Más tamaño al principio
+    sizeDistribution: [30, 25, 20, 15, 10],
     minDipPct: 0.5,
-    maxDipPct: 25,
+    maxDipPct: 15,
     maxLevels: 5,
+    depthMode: "normal",
+    targetCoveragePct: 6,
+    minStepPct: 0.5,
+    allowDeepExtension: true,
     adaptiveScaling: true,
-    volatilityScaling: 1.2,
+    volatilityScaling: 1.0,
     rebalanceOnVwap: true,
   },
   balanced: {
     profile: "balanced",
-    baseMultiplier: 0.8,
+    baseMultiplier: 1.0,
     stepMultiplier: 0.4,
     maxMultiplier: 4.0,
     sizeDistribution: [25, 25, 20, 15, 15],
     minDipPct: 0.8,
     maxDipPct: 20,
     maxLevels: 5,
+    depthMode: "normal",
+    targetCoveragePct: 8,
+    minStepPct: 0.5,
+    allowDeepExtension: true,
     adaptiveScaling: true,
     volatilityScaling: 1.0,
     rebalanceOnVwap: true,
   },
   conservative: {
     profile: "conservative",
-    baseMultiplier: 1.2,      // Más conservador: niveles más separados
+    baseMultiplier: 1.2,
     stepMultiplier: 0.5,
     maxMultiplier: 5.0,
-    sizeDistribution: [20, 20, 20, 20, 20],  // Distribución uniforme
+    sizeDistribution: [20, 20, 20, 20, 20],
     minDipPct: 1.0,
-    maxDipPct: 18,
+    maxDipPct: 25,
     maxLevels: 5,
+    depthMode: "normal",
+    targetCoveragePct: 10,
+    minStepPct: 0.5,
+    allowDeepExtension: true,
     adaptiveScaling: true,
-    volatilityScaling: 0.8,
+    volatilityScaling: 1.0,
     rebalanceOnVwap: true,
   },
   custom: {
@@ -61,6 +73,10 @@ const LADDER_PROFILES: Record<LadderProfile, Omit<LadderAtrpConfig, 'enabled' | 
     minDipPct: 0.8,
     maxDipPct: 20,
     maxLevels: 5,
+    depthMode: "normal",
+    targetCoveragePct: 8,
+    minStepPct: 0.5,
+    allowDeepExtension: true,
     adaptiveScaling: true,
     volatilityScaling: 1.0,
     rebalanceOnVwap: true,
@@ -161,7 +177,7 @@ class IdcaLadderAtrpService {
       const rawDipPct = atrpMultiplier * context.atrPct * adaptiveFactor * vwapFactor;
 
       // Aplicar clamps pero asegurar que cada nivel sea mayor que el anterior
-      const minDipForLevel = i === 0 ? config.minDipPct : (levels[i - 1].dipPct + 0.5); // Mínimo 0.5% de diferencia
+      const minDipForLevel = i === 0 ? config.minDipPct : (levels[i - 1].dipPct + config.minStepPct); // Usar minStepPct configurable
       const dipPct = Math.max(
         minDipForLevel,
         Math.min(config.maxDipPct, rawDipPct)
@@ -187,11 +203,61 @@ class IdcaLadderAtrpService {
       }
     }
 
+    // Extender niveles si targetCoveragePct no se alcanza y allowDeepExtension es true
+    let isLimitedByMaxLevels = false;
+    if (config.allowDeepExtension && config.depthMode !== "normal") {
+      const maxDrawdownCovered = levels.length > 0 ? levels[levels.length - 1].dipPct : 0;
+      const targetCoverage = config.targetCoveragePct;
+      
+      while (maxDrawdownCovered < targetCoverage && levels.length < config.maxLevels * 2) {
+        const i = levels.length;
+        const lastLevel = levels[levels.length - 1];
+        
+        // Calcular siguiente nivel extendido
+        const atrpMultiplier = config.maxMultiplier; // Usar máximo para profundidad
+        const rawDipPct = atrpMultiplier * context.atrPct * adaptiveFactor * vwapFactor;
+        
+        const minDipForLevel = lastLevel.dipPct + config.minStepPct;
+        const dipPct = Math.max(
+          minDipForLevel,
+          Math.min(config.maxDipPct, rawDipPct)
+        );
+
+        if (dipPct <= lastLevel.dipPct) break; // No más progreso
+
+        const triggerPrice = context.anchorPrice * (1 - dipPct / 100);
+        const sizePct = config.sizeDistribution[config.sizeDistribution.length - 1] || 5; // Usar último tamaño o 5% default
+
+        levels.push({
+          level: i,
+          dipPct,
+          triggerPrice,
+          sizePct,
+          atrpMultiplier,
+          isActive: currentPrice <= triggerPrice,
+        });
+
+        totalSizePct += sizePct;
+        
+        // Actualizar maxDrawdownCovered
+        const newMaxDrawdownCovered = levels[levels.length - 1].dipPct;
+        if (newMaxDrawdownCovered >= targetCoverage) {
+          break;
+        }
+      }
+      
+      // Verificar si se limitó por maxLevels
+      if (levels.length >= config.maxLevels * 2 && levels[levels.length - 1].dipPct < targetCoverage) {
+        isLimitedByMaxLevels = true;
+      }
+    }
+
     return {
       levels,
       totalLevels: levels.length,
       maxDrawdownCovered: levels.length > 0 ? levels[levels.length - 1].dipPct : 0,
       totalSizePct,
+      isLimitedByMaxLevels,
       calculatedAt: new Date(),
       config,
       marketContext: {

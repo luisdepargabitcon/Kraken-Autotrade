@@ -40,6 +40,8 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
   const [profile, setProfile] = useState<LadderProfile>("balanced");
   const [sliderIntensity, setSliderIntensity] = useState(50);
   const [ladderEnabled, setLadderEnabled] = useState(assetConfig.ladderAtrpEnabled || false);
+  const [depthMode, setDepthMode] = useState<"normal" | "deep" | "manual">("normal");
+  const [targetCoveragePct, setTargetCoveragePct] = useState(8);
   
   // Queries
   const ladderPreview = useLadderPreview(pair, profile, sliderIntensity);
@@ -251,6 +253,58 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
             </div>
           </div>
 
+          {/* Depth Mode Selector */}
+          <div className="space-y-2">
+            <Label>Modo de Profundidad</Label>
+            <Select value={depthMode} onValueChange={(value: "normal" | "deep" | "manual") => setDepthMode(value)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">
+                  <div className="flex items-center gap-2">
+                    <Badge className="text-blue-600 bg-blue-50 border-blue-200">Normal</Badge>
+                    <span className="text-sm">Cobertura estándar según perfil</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="deep">
+                  <div className="flex items-center gap-2">
+                    <Badge className="text-purple-600 bg-purple-50 border-purple-200">Profundo</Badge>
+                    <span className="text-sm">Cobertura extendida hasta objetivo</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="manual">
+                  <div className="flex items-center gap-2">
+                    <Badge className="text-orange-600 bg-orange-50 border-orange-200">Manual</Badge>
+                    <span className="text-sm">Cobertura personalizada</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Target Coverage Slider (solo si depthMode es deep o manual) */}
+          {(depthMode === "deep" || depthMode === "manual") && (
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label>Cobertura Deseada</Label>
+                <span className="text-sm text-muted-foreground">{targetCoveragePct}%</span>
+              </div>
+              <Slider
+                value={[targetCoveragePct]}
+                onValueChange={(value) => setTargetCoveragePct(value[0])}
+                max={25}
+                min={3}
+                step={0.5}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>3%</span>
+                <span>25%</span>
+              </div>
+            </div>
+          )}
+
           {/* Ladder Preview */}
           {ladderPreview.isLoading ? (
             <div className="text-center py-4">Calculando ladder...</div>
@@ -304,7 +358,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
 
               <div className="grid grid-cols-2 gap-4 pt-4 border-t">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Cobertura del ladder configurado</Label>
+                  <Label className="text-xs text-muted-foreground">Cobertura Actual</Label>
                   <div className="font-semibold text-amber-600">{ladderPreview.data.maxDrawdown.toFixed(2)}%</div>
                 </div>
                 <div>
@@ -314,6 +368,27 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                   </div>
                 </div>
               </div>
+
+              {/* Información de profundidad */}
+              {(depthMode === "deep" || depthMode === "manual") && (
+                <div className="pt-2 border-t">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Cobertura Deseada</Label>
+                      <div className="font-semibold text-purple-600">{targetCoveragePct}%</div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Niveles Generados</Label>
+                      <div className="font-semibold">{ladderPreview.data.totalLevels}</div>
+                    </div>
+                  </div>
+                  {ladderPreview.data.isLimitedByMaxLevels && (
+                    <div className="mt-2 text-xs text-orange-600 bg-orange-50 p-2 rounded">
+                      ⚠️ Cobertura limitada por número máximo de niveles
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : null}
 
