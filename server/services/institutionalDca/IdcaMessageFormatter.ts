@@ -694,7 +694,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📍 <b>Precio de referencia de entrada:</b> <code>$${ctx.entryBasePrice ? fmtNum(ctx.entryBasePrice) : "—"}</code>`,
         ctx.entryBasePriceType ? `   Fuente: <code>${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType}</code>` : null,
         ctx.currentPrice ? `💵 <b>Precio actual:</b> <code>$${fmtNum(ctx.currentPrice)}</code>` : null,
-        ctx.currentPrice && ctx.priceUpdatedAt ? `   Actualizado: <code>${new Date(ctx.priceUpdatedAt).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}</code>` : null,
+        ctx.currentPrice && ctx.priceUpdatedAt ? `   Actualizado: <code>${fmtDate(ctx.priceUpdatedAt) ?? "no disponible"}</code>` : null,
         ctx.entryDipPct != null ? `📉 <b>Caída desde referencia:</b> <code>${ctx.entryDipPct.toFixed(2)}%</code>` : null,
         ctx.effectiveMinDip != null ? `🎯 <b>Entrada mínima requerida:</b> <code>${ctx.effectiveMinDip.toFixed(2)}%</code>` : null,
         ctx.buyTriggerPrice ? `🎯 <b>Precio objetivo de entrada:</b> <code>$${fmtNum(ctx.buyTriggerPrice)}</code>` : null,
@@ -876,4 +876,11 @@ function escapeHtml(text: string): string {
 
 function fmtNum(val: number): string {
   return val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtDate(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
