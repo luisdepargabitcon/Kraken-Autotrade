@@ -267,6 +267,35 @@ class IdcaLadderAtrpService {
       }
     }
 
+    // Normalizar tamaños en modo automático para que totalSizePct nunca supere 100
+    if (!config.manualLevelEnabled && levels.length > 0 && totalSizePct > 100) {
+      const totalRawSizePct = totalSizePct;
+      const normalizedLevels = levels.map((level, idx) => {
+        const normalizedSizePct = (level.sizePct / totalRawSizePct) * 100;
+        return {
+          ...level,
+          sizePct: Math.round(normalizedSizePct * 100) / 100, // Redondear a 2 decimales
+        };
+      });
+
+      // Calcular la suma después de redondear
+      const roundedTotal = normalizedLevels.reduce((sum, level) => sum + level.sizePct, 0);
+      const difference = 100 - roundedTotal;
+
+      // Ajustar el último nivel para que la suma sea exactamente 100
+      if (normalizedLevels.length > 0 && difference !== 0) {
+        normalizedLevels[normalizedLevels.length - 1].sizePct = Math.round(
+          (normalizedLevels[normalizedLevels.length - 1].sizePct + difference) * 100
+        ) / 100;
+      }
+
+      // Recalcular totalSizePct
+      totalSizePct = normalizedLevels.reduce((sum, level) => sum + level.sizePct, 0);
+      
+      // Reemplazar levels con normalizedLevels
+      levels.splice(0, levels.length, ...normalizedLevels);
+    }
+
     return {
       levels,
       totalLevels: levels.length,

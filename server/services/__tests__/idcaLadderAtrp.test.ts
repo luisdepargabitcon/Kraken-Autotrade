@@ -267,3 +267,168 @@ describe("IdcaLadderAtrpService.checkTrailingBuyTrigger — arm/track/cancel", (
     expect(idcaLadderAtrpService.getTrailingBuyState("BTC/USD")).toBeUndefined();
   });
 });
+
+// ---- Manual Level Enabled -----------------------------------------------
+
+describe("IdcaLadderAtrpService.calculateLadder — manualLevelEnabled", () => {
+  it("respeta manualSizeDistribution.length cuando manualLevelEnabled=true", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    cfg.manualLevelEnabled = true;
+    cfg.manualMultipliers = [0.8, 1.6, 2.4, 3.2, 4.0];
+    cfg.manualSizeDistribution = [20, 20, 20, 20, 20];
+    cfg.allowDeepExtension = true;
+    cfg.depthMode = "deep";
+    
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 95000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    expect(res.levels.length).toBe(5);
+    expect(res.totalSizePct).toBe(100);
+    expect(res.isLimitedByMaxLevels).toBe(false);
+  });
+
+  it("respeta manualMultipliers cuando manualLevelEnabled=true", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    cfg.manualLevelEnabled = true;
+    cfg.manualMultipliers = [0.8, 1.6, 2.4, 3.2, 4.0];
+    cfg.manualSizeDistribution = [20, 20, 20, 20, 20];
+    
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 95000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    expect(res.levels[0].atrpMultiplier).toBeCloseTo(0.8, 5);
+    expect(res.levels[1].atrpMultiplier).toBeCloseTo(1.6, 5);
+    expect(res.levels[2].atrpMultiplier).toBeCloseTo(2.4, 5);
+    expect(res.levels[3].atrpMultiplier).toBeCloseTo(3.2, 5);
+    expect(res.levels[4].atrpMultiplier).toBeCloseTo(4.0, 5);
+  });
+
+  it("no extiende niveles cuando manualLevelEnabled=true", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    cfg.manualLevelEnabled = true;
+    cfg.manualMultipliers = [0.8, 1.6];
+    cfg.manualSizeDistribution = [50, 50];
+    cfg.allowDeepExtension = true;
+    cfg.depthMode = "deep";
+    cfg.targetCoveragePct = 20; // Muy alto para intentar forzar extensión
+    
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 95000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    expect(res.levels.length).toBe(2);
+    expect(res.totalSizePct).toBe(100);
+  });
+});
+
+// ---- Normalización de tamaños en modo automático -------------------------
+
+describe("IdcaLadderAtrpService.calculateLadder — normalización totalSize", () => {
+  it("normaliza tamaños cuando manualLevelEnabled=false y totalSize > 100", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    cfg.manualLevelEnabled = false;
+    cfg.allowDeepExtension = true;
+    cfg.depthMode = "deep";
+    cfg.targetCoveragePct = 12;
+    
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    // totalSize debe ser <= 100
+    expect(res.totalSizePct).toBeLessThanOrEqual(100.01);
+    // Si hay niveles, totalSize debe ser cercano a 100
+    if (res.levels.length > 0) {
+      expect(res.totalSizePct).toBeGreaterThan(99.99);
+    }
+  });
+
+  it("puede generar niveles extendidos en modo automático", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    cfg.manualLevelEnabled = false;
+    cfg.allowDeepExtension = true;
+    cfg.depthMode = "deep";
+    cfg.targetCoveragePct = 12;
+    
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    // Debe generar más niveles que config.maxLevels cuando se extiende
+    expect(res.levels.length).toBeGreaterThan(cfg.maxLevels);
+  });
+});
+
+// ---- Validación de campos de niveles ------------------------------------
+
+describe("IdcaLadderAtrpService.calculateLadder — validación campos", () => {
+  it("todos los niveles tienen atrpMultiplier definido", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    for (const lvl of res.levels) {
+      expect(lvl.atrpMultiplier).toBeDefined();
+      expect(typeof lvl.atrpMultiplier).toBe("number");
+      expect(lvl.atrpMultiplier).not.toBeNaN();
+    }
+  });
+
+  it("todos los niveles tienen isActive definido", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    for (const lvl of res.levels) {
+      expect(lvl.isActive).toBeDefined();
+      expect(typeof lvl.isActive).toBe("boolean");
+    }
+  });
+
+  it("todos los niveles tienen triggerPrice definido", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    for (const lvl of res.levels) {
+      expect(lvl.triggerPrice).toBeDefined();
+      expect(typeof lvl.triggerPrice).toBe("number");
+      expect(lvl.triggerPrice).not.toBeNaN();
+      expect(lvl.triggerPrice).toBeGreaterThan(0);
+    }
+  });
+
+  it("todos los niveles tienen sizePct definido", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    for (const lvl of res.levels) {
+      expect(lvl.sizePct).toBeDefined();
+      expect(typeof lvl.sizePct).toBe("number");
+      expect(lvl.sizePct).not.toBeNaN();
+      expect(lvl.sizePct).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("no hay null/undefined/NaN en campos críticos", async () => {
+    const cfg = idcaLadderAtrpService.createLadderConfig("balanced", 50);
+    const ctx = mockMarketContext({ anchorPrice: 100000, currentPrice: 50000, atrPct: 2.0 });
+    const res = await idcaLadderAtrpService.calculateLadder("BTC/USD", cfg, ctx);
+    
+    for (const lvl of res.levels) {
+      expect(lvl.dipPct).not.toBeNull();
+      expect(lvl.dipPct).not.toBeUndefined();
+      expect(lvl.dipPct).not.toBeNaN();
+      
+      expect(lvl.triggerPrice).not.toBeNull();
+      expect(lvl.triggerPrice).not.toBeUndefined();
+      expect(lvl.triggerPrice).not.toBeNaN();
+      
+      expect(lvl.sizePct).not.toBeNull();
+      expect(lvl.sizePct).not.toBeUndefined();
+      expect(lvl.sizePct).not.toBeNaN();
+      
+      expect(lvl.atrpMultiplier).not.toBeNull();
+      expect(lvl.atrpMultiplier).not.toBeUndefined();
+      expect(lvl.atrpMultiplier).not.toBeNaN();
+    }
+  });
+});
