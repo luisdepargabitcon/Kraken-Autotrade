@@ -171,8 +171,13 @@ class IdcaLadderAtrpService {
       }
     }
 
+    // Determinar maxLevels: usar manualSizeDistribution.length si manualLevelEnabled=true, sino config.maxLevels
+    const maxLevelsToGenerate = config.manualLevelEnabled && config.manualSizeDistribution
+      ? config.manualSizeDistribution.length
+      : config.maxLevels;
+
     // Generar niveles
-    for (let i = 0; i < config.maxLevels; i++) {
+    for (let i = 0; i < maxLevelsToGenerate; i++) {
       // Usar manualMultipliers si manualLevelEnabled=true, sino effectiveMultipliers
       const atrpMultiplier = config.manualLevelEnabled && config.manualMultipliers && config.manualMultipliers[i]
         ? config.manualMultipliers[i]
@@ -206,14 +211,16 @@ class IdcaLadderAtrpService {
       });
 
       // Si el precio actual no ha alcanzado este nivel, los siguientes tampoco estarán activos
-      if (currentPrice > triggerPrice) {
+      // PERO si manualLevelEnabled=true, generar todos los niveles especificados sin importar precio actual
+      if (!config.manualLevelEnabled && currentPrice > triggerPrice) {
         break;
       }
     }
 
     // Extender niveles si targetCoveragePct no se alcanza y allowDeepExtension es true
+    // NO extender niveles cuando manualLevelEnabled=true (respetar configuración manual)
     let isLimitedByMaxLevels = false;
-    if (config.allowDeepExtension && config.depthMode !== "normal") {
+    if (config.allowDeepExtension && config.depthMode !== "normal" && !config.manualLevelEnabled) {
       const maxDrawdownCovered = levels.length > 0 ? levels[levels.length - 1].dipPct : 0;
       const targetCoverage = config.targetCoveragePct;
       
