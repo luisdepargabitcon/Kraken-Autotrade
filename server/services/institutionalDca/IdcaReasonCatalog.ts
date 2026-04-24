@@ -261,62 +261,62 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
 
   insufficient_dip: {
     humanTitle: "Caída insuficiente",
-    humanTemplate: "No se compró {pair} porque el precio no ha caído lo suficiente desde el precio base de referencia. Se requiere una caída mayor para activar la compra.",
+    humanTemplate: "No se compró {pair} porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.",
     emoji: "🟡",
     defaultSeverity: "info",
   },
 
   no_rebound_confirmed: {
-    humanTitle: "Compra bloqueada: falta rebote confirmado",
-    humanTemplate: "No se compró {pair} porque, aunque el precio ya había caído lo suficiente, todavía no mostró una señal clara de giro o rebote. El sistema prefirió esperar antes de entrar para no comprar en plena caída.",
+    humanTitle: "Falta confirmación de rebote",
+    humanTemplate: "No se compró {pair} porque falta confirmación de rebote técnico. El precio entró en zona de interés pero aún no mostró señal clara de giro.",
     emoji: "🟠",
     defaultSeverity: "info",
   },
 
   market_score_too_low: {
-    humanTitle: "Compra bloqueada: score de mercado bajo",
-    humanTemplate: "No se compró {pair} porque las condiciones generales del mercado no son lo suficientemente favorables. El análisis técnico indica debilidad y el sistema espera mejores condiciones.",
+    humanTitle: "Score de mercado bajo",
+    humanTemplate: "No se compró {pair} porque el score de mercado es demasiado bajo. Las condiciones actuales no son favorables para entrada.",
     emoji: "🟠",
     defaultSeverity: "info",
   },
 
   breakdown_detected: {
-    humanTitle: "Compra bloqueada: ruptura bajista detectada",
+    humanTitle: "Ruptura bajista detectada",
     humanTemplate: "No se compró {pair} porque se detectó una ruptura técnica bajista. El sistema evita comprar cuando hay señales claras de continuación de caída.",
     emoji: "🔴",
     defaultSeverity: "warn",
   },
 
   spread_too_high: {
-    humanTitle: "Compra bloqueada: spread alto",
+    humanTitle: "Spread alto",
     humanTemplate: "No se compró {pair} porque el spread bid/ask es anormalmente alto, lo que indica baja liquidez. Comprar en estas condiciones implicaría un coste extra excesivo.",
     emoji: "🟡",
     defaultSeverity: "warn",
   },
 
   sell_pressure_too_high: {
-    humanTitle: "Compra bloqueada: presión de venta alta",
+    humanTitle: "Presión de venta alta",
     humanTemplate: "No se compró {pair} porque se detectó presión de venta inusual en el mercado. El sistema espera a que se normalice antes de entrar.",
     emoji: "🟠",
     defaultSeverity: "warn",
   },
 
   combined_exposure_exceeded: {
-    humanTitle: "Compra bloqueada: exposición combinada excedida",
+    humanTitle: "Exposición combinada excedida",
     humanTemplate: "No se compró {pair} porque la exposición total combinada (IDCA + bot principal) supera el límite de seguridad configurado.",
     emoji: "⛔",
     defaultSeverity: "warn",
   },
 
   module_exposure_max_reached: {
-    humanTitle: "Compra bloqueada: exposición máxima del módulo",
+    humanTitle: "Exposición máxima del módulo",
     humanTemplate: "No se compró {pair} porque el capital ya comprometido en el módulo IDCA alcanzó el porcentaje máximo de exposición configurado.",
     emoji: "⛔",
     defaultSeverity: "warn",
   },
 
   asset_exposure_max_reached: {
-    humanTitle: "Compra bloqueada: exposición máxima del activo",
+    humanTitle: "Exposición máxima del activo",
     humanTemplate: "No se ejecutó compra adicional en {pair} porque el capital invertido en este ciclo ya alcanzó el porcentaje máximo de exposición por activo configurado.",
     emoji: "⛔",
     defaultSeverity: "warn",

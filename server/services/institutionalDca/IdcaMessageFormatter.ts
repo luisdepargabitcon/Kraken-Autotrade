@@ -27,6 +27,7 @@ export interface FormatContext {
   entryBasePrice?: number;
   entryBasePriceType?: string;
   currentPrice?: number;
+  priceUpdatedAt?: string | Date;
   effectiveMinDip?: number;
   buyTriggerPrice?: number;
   distToBuyPct?: number;
@@ -471,13 +472,13 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `🚀 <b>IDCA — Nuevo ciclo iniciado</b>`,
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
-        `💵 Precio: <b>$${fmtNum(ctx.price || 0)}</b>`,
+        `💵 Precio de compra: <b>$${fmtNum(ctx.price || 0)}</b>`,
       ];
       if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
       if (ctx.entryDipPct != null && ctx.entryBasePrice != null) {
-        lines.push(`📉 Dip detectado: <code>-${ctx.entryDipPct.toFixed(2)}%</code> desde base <code>$${fmtNum(ctx.entryBasePrice)}</code> (${ctx.entryBasePriceType || "hybrid"})`);
+        lines.push(`📉 Caída desde referencia: <code>-${ctx.entryDipPct.toFixed(2)}%</code> desde precio de referencia <code>$${fmtNum(ctx.entryBasePrice)}</code> (${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType || "hybrid"})`);
       } else if (ctx.entryDipPct != null) {
-        lines.push(`📉 Dip detectado: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
+        lines.push(`📉 Caída desde referencia: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
       }
       if (ctx.marketScore != null) lines.push(`🧠 Score mercado: <code>${ctx.marketScore}</code>`);
       if (ctx.capitalUsed != null && ctx.totalCapitalReserved) {
@@ -508,7 +509,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <b>IDCA — Compra adicional #${ctx.buyCount || "?"}</b>${ctx.maxBuyCount ? ` de ${ctx.maxBuyCount}` : ""}`,
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
-        `💵 Precio: <b>$${fmtNum(ctx.price || 0)}</b>`,
+        `💵 Precio de compra: <b>$${fmtNum(ctx.price || 0)}</b>`,
       ];
       if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <b>$${fmtNum(ctx.avgEntry)}</b>${avgImproved ? ` (mejoró -${improvePct.toFixed(1)}%)` : ""}`);
@@ -555,7 +556,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
         `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
         `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
-        `📍 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `� Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
         `🔒 Stop protección: <code>$${fmtNum(ctx.stopPrice || ctx.avgEntry || 0)}</code>`,
       ];
       if (ctx.trailingActivationPct != null && ctx.avgEntry) {
@@ -575,7 +576,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
         `📈 PnL actual: <code>+${(ctx.pnlPct || 0).toFixed(2)}%</code>`,
         `💰 Precio medio: <code>$${fmtNum(ctx.avgEntry || 0)}</code>`,
-        `📍 Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
+        `� Precio actual: <code>$${fmtNum(ctx.price || 0)}</code>`,
         `📐 Margen trailing: <code>${(ctx.trailingPct || ctx.trailingMarginPct || 0).toFixed(2)}%</code>`,
       ];
       lines.push(``, `💡 Dejando correr beneficios. El sistema seguirá el precio y cerrará cuando retroceda el margen configurado.`);
@@ -590,7 +591,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
-      if (ctx.price != null) lines.push(`📍 Precio actual: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`� Precio actual: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.pnlPct != null) lines.push(`📈 PnL: <code>${ctx.pnlPct >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%</code>`);
       if (ctx.partialPct != null) lines.push(`📤 Venta parcial: <code>${ctx.partialPct.toFixed(0)}%</code>`);
       if (ctx.trailingPct != null) lines.push(`📐 Trailing: <code>${ctx.trailingPct.toFixed(2)}%</code>`);
@@ -612,7 +613,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
       if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
 
@@ -649,7 +650,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.avgEntry != null) lines.push(`💰 Precio medio: <code>$${fmtNum(ctx.avgEntry)}</code>`);
       if (ctx.capitalUsed != null) lines.push(`💰 Capital invertido: <code>$${fmtNum(ctx.capitalUsed)}</code>`);
 
@@ -693,11 +694,12 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         `📍 <b>Precio de referencia de entrada:</b> <code>$${ctx.entryBasePrice ? fmtNum(ctx.entryBasePrice) : "—"}</code>`,
         ctx.entryBasePriceType ? `   Fuente: <code>${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType}</code>` : null,
         ctx.currentPrice ? `💵 <b>Precio actual:</b> <code>$${fmtNum(ctx.currentPrice)}</code>` : null,
+        ctx.currentPrice && ctx.priceUpdatedAt ? `   Actualizado: <code>${new Date(ctx.priceUpdatedAt).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}</code>` : null,
         ctx.entryDipPct != null ? `📉 <b>Caída desde referencia:</b> <code>${ctx.entryDipPct.toFixed(2)}%</code>` : null,
         ctx.effectiveMinDip != null ? `🎯 <b>Entrada mínima requerida:</b> <code>${ctx.effectiveMinDip.toFixed(2)}%</code>` : null,
-        ctx.buyTriggerPrice ? `� <b>Precio objetivo de entrada:</b> <code>$${fmtNum(ctx.buyTriggerPrice)}</code>` : null,
+        ctx.buyTriggerPrice ? `🎯 <b>Precio objetivo de entrada:</b> <code>$${fmtNum(ctx.buyTriggerPrice)}</code>` : null,
         ctx.distToBuyPct != null ? `⏳ <b>Falta caer:</b> <code>${ctx.distToBuyPct.toFixed(2)}%</code>` : null,
-        ctx.ladderCoverage ? `� <b>Cobertura ladder configurada:</b> <code>${ctx.ladderCoverage.toFixed(2)}%</code>` : null,
+        ctx.ladderCoverage ? `📦 <b>Cobertura ladder configurada:</b> <code>${ctx.ladderCoverage.toFixed(2)}%</code>` : null,
         ctx.trailingBuyArmed ? `🔵 <b>Trailing Buy:</b> ARMADO` : `⚪ <b>Trailing Buy:</b> En espera`,
       ];
       
@@ -774,7 +776,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       lines.push(``, `📈 <b>Resultado:</b>`);
       lines.push(`• PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b> (${pnlPctVal >= 0 ? "+" : ""}${pnlPctVal.toFixed(2)}%)`);
       if (ctx.durationStr) lines.push(`• Duración: ${ctx.durationStr}`);
@@ -789,7 +791,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`💵 Precio: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`💵 Precio de compra: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.quantity != null) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code>`);
       if (ctx.entryDipPct != null) lines.push(`📉 Dip desde main: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
       if (ctx.parentCycleId != null) lines.push(`🔗 Ciclo padre: <code>#${ctx.parentCycleId}</code>`);
@@ -806,7 +808,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
         ``,
         `📦 <code>${pair}</code>  [${modeTag}]`,
       ];
-      if (ctx.price != null) lines.push(`📍 Precio cierre: <code>$${fmtNum(ctx.price)}</code>`);
+      if (ctx.price != null) lines.push(`� Precio de cierre: <code>$${fmtNum(ctx.price)}</code>`);
       if (ctx.realizedPnl != null) lines.push(`📈 PnL: <b>${pnl >= 0 ? "+" : ""}$${fmtNum(pnl)}</b>`);
       if (ctx.closeReason) lines.push(`📝 Motivo: ${escapeHtml(ctx.closeReason)}`);
       if (ctx.parentCycleId != null) lines.push(`🔗 Parent: <code>#${ctx.parentCycleId}</code>`);

@@ -265,6 +265,7 @@ export interface MarketContextPreview {
   vwapZone?: "deep_value" | "value" | "fair" | "overextended";
   atrPct?: number;
   dataQuality: "excellent" | "good" | "poor" | "insufficient";
+  priceUpdatedAt?: string;
 }
 
 export interface IdcaSummary {

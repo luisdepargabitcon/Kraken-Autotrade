@@ -196,6 +196,17 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
               <div>
                 <Label className="text-xs text-muted-foreground">Precio Actual</Label>
                 <div className="font-semibold">${marketContext.data.currentPrice.toFixed(2)}</div>
+                {marketContext.data.priceUpdatedAt && (
+                  <div className="text-[10px] text-muted-foreground/60">
+                    Actualizado: {new Date(marketContext.data.priceUpdatedAt).toLocaleString("es-ES", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                )}
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Drawdown</Label>

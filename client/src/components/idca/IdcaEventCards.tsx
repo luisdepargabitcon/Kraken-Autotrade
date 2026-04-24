@@ -984,9 +984,17 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                       <div>
                         Fuente:{" "}
                         <span className="font-semibold text-cyan-400">
-                          {parsed.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : "Hybrid V2.1 fallback"}
+                          {parsed.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : parsed.basePriceMethod === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : parsed.basePriceMethod}
                         </span>
                       </div>
+                      {parsed.basePriceMethod === "hybrid_v2_fallback" && (
+                        <div>
+                          Método:{" "}
+                          <span className="font-semibold text-cyan-400">
+                            swing_high_24h
+                          </span>
+                        </div>
+                      )}
                       {parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor" && (
                         <div>
                           Fijada:{" "}
@@ -1028,6 +1036,36 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                         </div>
                         <div className="text-[10px] text-muted-foreground/40 mt-0.5 italic">
                           (precio superó esta referencia)
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Precio actual con timestamp */}
+                    {parsed.price != null && (
+                      <div className="bg-green-500/5 border border-green-500/20 rounded-md p-3 mt-3">
+                        <div className="text-[10px] uppercase tracking-wider font-bold text-green-500 mb-1">
+                          💵 PRECIO ACTUAL
+                        </div>
+                        <div className="text-2xl font-bold text-green-500 mb-1">
+                          ${parsed.price.toFixed(2)}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
+                          <div>
+                            Actualizado:{" "}
+                            {event.createdAt ? (
+                              <span className="font-semibold text-green-400">
+                                {new Date(event.createdAt).toLocaleString("es-ES", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/50">no disponible</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
