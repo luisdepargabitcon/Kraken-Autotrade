@@ -476,7 +476,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       ];
       if (ctx.quantity) lines.push(`📊 Cantidad: <code>${ctx.quantity.toFixed(6)}</code> (~$${fmtNum((ctx.quantity || 0) * (ctx.price || 0))})`);
       if (ctx.entryDipPct != null && ctx.entryBasePrice != null) {
-        lines.push(`📉 Caída desde referencia: <code>-${ctx.entryDipPct.toFixed(2)}%</code> desde precio de referencia <code>$${fmtNum(ctx.entryBasePrice)}</code> (${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType || "hybrid"})`);
+        lines.push(`📉 Caída desde referencia: <code>-${ctx.entryDipPct.toFixed(2)}%</code> desde precio de referencia de entrada <code>$${fmtNum(ctx.entryBasePrice)}</code> (${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType || "hybrid"})`);
       } else if (ctx.entryDipPct != null) {
         lines.push(`📉 Caída desde referencia: <code>-${ctx.entryDipPct.toFixed(2)}%</code>`);
       }
@@ -689,7 +689,7 @@ export function formatTelegramMessage(ctx: FormatContext): string {
       const lines = [
         `📉 <b>Entrada bloqueada — ${pair}</b>`,
         ``,
-        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia.`,
+        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.`,
         ``,
         `📍 <b>Precio de referencia de entrada:</b> <code>$${ctx.entryBasePrice ? fmtNum(ctx.entryBasePrice) : "—"}</code>`,
         ctx.entryBasePriceType ? `   Fuente: <code>${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType}</code>` : null,

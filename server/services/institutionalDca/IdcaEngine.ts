@@ -1089,7 +1089,7 @@ async function checkEntry(
       const humanMessage = [
         `📉 Entrada bloqueada — ${pair}`,
         ``,
-        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia.`,
+        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.`,
         ``,
         `📍 Precio de referencia de entrada: $${effectiveBasePrice.toFixed(2)}`,
         `   Fuente: ${check.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : check.basePriceMethod === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : check.basePriceMethod}`,
