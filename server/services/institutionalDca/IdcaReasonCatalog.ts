@@ -275,8 +275,15 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
 
   market_score_too_low: {
     humanTitle: "Score de mercado bajo",
-    humanTemplate: "No se compró {pair} porque el score de mercado es demasiado bajo. Las condiciones actuales no son favorables para entrada.",
+    humanTemplate: "No se compró {pair} porque el score de mercado fue {marketScore}/100 (mínimo {minScore}). Las condiciones actuales no son favorables para entrada.",
     emoji: "🟠",
+    defaultSeverity: "info",
+  },
+
+  vwap_weekly_trend_bearish: {
+    humanTitle: "Tendencia semanal VWAP bajista",
+    humanTemplate: "No se compró {pair} porque el precio está por debajo del VWAP semanal y el contexto todavía no acompaña la entrada.",
+    emoji: "📉",
     defaultSeverity: "info",
   },
 

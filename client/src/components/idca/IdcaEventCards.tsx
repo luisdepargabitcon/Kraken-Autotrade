@@ -117,6 +117,7 @@ function parsePayload(ev: any): ParsedPayload {
 
   // Extract from payloadJson
   if (p.price) result.price = parseFloat(String(p.price));
+  if (p.currentPrice) result.price = parseFloat(String(p.currentPrice));
   if (p.quantity) result.quantity = parseFloat(String(p.quantity));
   if (p.capital) result.capital = parseFloat(String(p.capital));
   // Fix: price can be 0 (falsy) — check for object type explicitly
@@ -154,6 +155,11 @@ function parsePayload(ev: any): ParsedPayload {
   if (p.trailingBuyTriggerAt) result.trailingBuyTriggerAt = parseFloat(String(p.trailingBuyTriggerAt));
   if (p.frozenAnchorPrevious && typeof p.frozenAnchorPrevious === "object") {
     result.frozenAnchorPrevious = p.frozenAnchorPrevious;
+  }
+
+  // Fallback: si hay trailing buy armado y no hay precio actual, usar trailingBuyLocalLow como referencia visual
+  if (!result.price && p.trailingBuyArmed && p.trailingBuyLocalLow != null) {
+    result.price = parseFloat(String(p.trailingBuyLocalLow));
   }
 
   // Parse from message as fallback
@@ -749,31 +755,28 @@ function timeAgo(dateStr: string | null | undefined): string {
 }
 
 function getPriceTimestamp(parsed: ParsedPayload, event: any): { label: string; value: string; raw?: string } {
-  const raw =
-    parsed.priceUpdatedAt ??
-    (parsed as any).currentPriceUpdatedAt ??
-    (parsed as any).marketContext?.priceUpdatedAt ??
-    (parsed as any).marketContext?.updatedAt ??
-    (parsed as any).timestamp;
+  // Prioridad: priceUpdatedAt del payload, luego marketContext, vwapContext, blockReasons, timestamp del evento
+  const sources = [
+    parsed.priceUpdatedAt,
+    (parsed as any).currentPriceUpdatedAt,
+    (parsed as any).marketContext?.priceUpdatedAt,
+    (parsed as any).marketContext?.updatedAt,
+    (parsed as any).vwapContext?.priceUpdatedAt,
+    (parsed as any).vwapContext?.updatedAt,
+    (parsed as any).blockReasons?.[0]?.timestamp,
+    (parsed as any).timestamp,
+    event?.createdAt,
+  ];
 
-  if (raw) {
+  for (const raw of sources) {
+    if (!raw) continue;
     const d = new Date(raw);
     if (!Number.isNaN(d.getTime())) {
+      const isFromEventCreated = raw === event?.createdAt && sources.slice(0, -1).filter(Boolean).length === 0;
       return {
-        label: "Actualizado",
+        label: isFromEventCreated ? "Evento generado" : "Actualizado",
         value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
         raw: String(raw),
-      };
-    }
-  }
-
-  if (event?.createdAt) {
-    const d = new Date(event.createdAt);
-    if (!Number.isNaN(d.getTime())) {
-      return {
-        label: "Evento generado",
-        value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
-        raw: event.createdAt,
       };
     }
   }

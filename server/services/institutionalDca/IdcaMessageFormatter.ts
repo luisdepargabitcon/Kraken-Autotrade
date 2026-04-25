@@ -686,10 +686,34 @@ export function formatTelegramMessage(ctx: FormatContext): string {
     case "entry_check_blocked":
     case "buy_blocked": {
       const entry = getCatalogEntry(ctx.reasonCode || ctx.eventType);
+
+      // Determinar texto introductorio coherente con blockReasons reales
+      const blockCodes = (ctx.blockReasons || []).map((r: any) => r.code);
+      const hasInsufficientDip = blockCodes.includes("insufficient_dip") || blockCodes.includes("insufficient_base_price_data") || blockCodes.includes("data_not_ready");
+      const hasMarketScoreTooLow = blockCodes.includes("market_score_too_low");
+      const hasVwapWeeklyBearish = blockCodes.includes("vwap_weekly_trend_bearish");
+      const hasBreakdown = blockCodes.includes("breakdown_detected");
+      const hasNoRebound = blockCodes.includes("no_rebound_confirmed");
+
+      let introText = "No se compró porque no se cumplieron las condiciones de entrada.";
+      if (hasInsufficientDip && !hasMarketScoreTooLow && !hasVwapWeeklyBearish) {
+        introText = "No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.";
+      } else if (hasMarketScoreTooLow && hasVwapWeeklyBearish) {
+        introText = `No se compró ${pair} por condiciones de mercado desfavorables: score de mercado bajo y tendencia semanal VWAP bajista.`;
+      } else if (hasMarketScoreTooLow) {
+        introText = `No se compró ${pair} porque el score de mercado fue ${ctx.marketScore ?? "—"}/100 y las condiciones no son favorables para entrada.`;
+      } else if (hasVwapWeeklyBearish) {
+        introText = `No se compró ${pair} porque el precio sigue por debajo del VWAP semanal y el contexto todavía no acompaña la entrada.`;
+      } else if (hasBreakdown) {
+        introText = `No se compró ${pair} porque se detectó una ruptura técnica bajista. El sistema evita comprar cuando hay señales claras de continuación de caída.`;
+      } else if (hasNoRebound) {
+        introText = `No se compró ${pair} porque falta confirmación de rebote técnico. El precio entró en zona de interés pero aún no mostró señal clara de giro.`;
+      }
+
       const lines = [
         `📉 <b>Entrada bloqueada — ${pair}</b>`,
         ``,
-        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.`,
+        introText,
         ``,
         `📍 <b>Precio de referencia de entrada:</b> <code>$${ctx.entryBasePrice ? fmtNum(ctx.entryBasePrice) : "—"}</code>`,
         ctx.entryBasePriceType ? `   Fuente: <code>${ctx.entryBasePriceType === "vwap_anchor" ? "VWAP Anclado" : ctx.entryBasePriceType === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : ctx.entryBasePriceType}</code>` : null,

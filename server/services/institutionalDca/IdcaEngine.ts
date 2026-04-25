@@ -1086,10 +1086,35 @@ async function checkEntry(
       const reboundPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
       const trailingBuyAt = localLow ? localLow * (1 + reboundPct / 100) : null;
 
+      // Construir mensaje humano coherente con los blockReasons reales
+      const hasInsufficientDip = check.blockReasons.some(r => r.code === "insufficient_dip" || r.code === "insufficient_base_price_data" || r.code === "data_not_ready");
+      const hasMarketScoreTooLow = check.blockReasons.some(r => r.code === "market_score_too_low");
+      const hasVwapWeeklyBearish = check.blockReasons.some(r => r.code === "vwap_weekly_trend_bearish");
+      const hasBreakdown = check.blockReasons.some(r => r.code === "breakdown_detected");
+      const hasNoRebound = check.blockReasons.some(r => r.code === "no_rebound_confirmed");
+
+      let whyBlocked = "";
+      if (hasInsufficientDip && !hasMarketScoreTooLow && !hasVwapWeeklyBearish) {
+        whyBlocked = "No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.";
+      } else if (hasMarketScoreTooLow && hasVwapWeeklyBearish) {
+        whyBlocked = `No se compró ${pair} por condiciones de mercado desfavorables: score de mercado bajo y tendencia semanal VWAP bajista.`;
+      } else if (hasMarketScoreTooLow) {
+        whyBlocked = `No se compró ${pair} porque el score de mercado fue ${check.marketScore ?? "—"}/100 y las condiciones no son favorables para entrada.`;
+      } else if (hasVwapWeeklyBearish) {
+        whyBlocked = `No se compró ${pair} porque el precio sigue por debajo del VWAP semanal y el contexto todavía no acompaña la entrada.`;
+      } else if (hasBreakdown) {
+        whyBlocked = `No se compró ${pair} porque se detectó una ruptura técnica bajista. El sistema evita comprar cuando hay señales claras de continuación de caída.`;
+      } else if (hasNoRebound) {
+        whyBlocked = `No se compró ${pair} porque falta confirmación de rebote técnico. El precio entró en zona de interés pero aún no mostró señal clara de giro.`;
+      } else {
+        const codeLabels = check.blockReasons.map(r => r.code);
+        whyBlocked = `No se compró ${pair} por las siguientes condiciones de bloqueo: ${codeLabels.join(", ")}.`;
+      }
+
       const humanMessage = [
         `📉 Entrada bloqueada — ${pair}`,
         ``,
-        `No se compró porque todavía no alcanzó la caída mínima desde el precio de referencia de entrada.`,
+        whyBlocked,
         ``,
         `📍 Precio de referencia de entrada: $${effectiveBasePrice.toFixed(2)}`,
         `   Fuente: ${check.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : check.basePriceMethod === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : check.basePriceMethod}`,
@@ -1120,6 +1145,9 @@ async function checkEntry(
         message: humanMessage,
         payloadJson: {
           blockReasons: check.blockReasons,
+          price: currentPrice,
+          currentPrice,
+          priceUpdatedAt: new Date().toISOString(),
           basePrice: check.basePrice,
           vwapContext: check.vwapContext ?? null,
           effectiveBasePrice: check.effectiveBasePrice,
