@@ -748,6 +748,30 @@ function timeAgo(dateStr: string | null | undefined): string {
   return `hace ${Math.floor(ms / 86400000)}d`;
 }
 
+function getPriceTimestamp(parsed: ParsedPayload, event: any): { label: string; value: string; raw?: string } {
+  if (parsed.priceUpdatedAt) {
+    const d = new Date(parsed.priceUpdatedAt);
+    if (!isNaN(d.getTime())) {
+      return {
+        label: "Actualizado",
+        value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
+        raw: parsed.priceUpdatedAt,
+      };
+    }
+  }
+  if (event.createdAt) {
+    const d = new Date(event.createdAt);
+    if (!isNaN(d.getTime())) {
+      return {
+        label: "Evento generado",
+        value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
+        raw: event.createdAt,
+      };
+    }
+  }
+  return { label: "Actualizado", value: "no disponible" };
+}
+
 // ════════════════════════════════════════════════════════════════════
 // KEY-VALUE DISPLAY
 // ════════════════════════════════════════════════════════════════════
@@ -973,114 +997,115 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
 
               {/* Content */}
               <div className="p-4 space-y-3">
-                {/* Precio de referencia de entrada */}
+                {/* Precio de referencia y precio actual - Grid de 2 columnas */}
                 {parsed.effectiveBasePrice != null ? (
-                  <div className="bg-red-500/5 border border-red-500/20 rounded-md p-3">
-                    <div className="text-[10px] uppercase tracking-wider font-bold text-red-500 mb-1">
-                      💰 PRECIO DE REFERENCIA DE ENTRADA
-                    </div>
-                    <div className="text-2xl font-bold text-red-500 mb-1">
-                      ${parsed.effectiveBasePrice.toFixed(2)}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
-                      <div>
-                        Fuente:{" "}
-                        <span className="font-semibold text-cyan-400">
-                          {parsed.basePriceMethod === "vwap_anchor" ? "VWAP Anclado" : parsed.basePriceMethod === "hybrid_v2_fallback" ? "Hybrid V2.1 fallback" : parsed.basePriceMethod}
-                        </span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Precio de referencia */}
+                    <div className="bg-red-500/5 border border-red-500/20 rounded-md p-3">
+                      <div className="text-[10px] uppercase tracking-wider font-bold text-red-500 mb-1">
+                        💰 PRECIO DE REFERENCIA DE ENTRADA
                       </div>
-                      {parsed.basePriceMethod === "hybrid_v2_fallback" && (
+
+                      <div className="text-2xl font-bold text-red-500 mb-1">
+                        ${parsed.effectiveBasePrice.toFixed(2)}
+                      </div>
+
+                      <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
                         <div>
-                          Método:{" "}
+                          Fuente:{" "}
                           <span className="font-semibold text-cyan-400">
-                            swing_high_24h
+                            {parsed.basePriceMethod === "vwap_anchor"
+                              ? "VWAP Anclado"
+                              : parsed.basePriceMethod === "hybrid_v2_fallback"
+                                ? "Hybrid V2.1 fallback"
+                                : parsed.basePriceMethod ?? "no disponible"}
                           </span>
                         </div>
-                      )}
-                      {parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor" && (
-                        <div>
-                          Fijada:{" "}
-                          {new Date(parsed.frozenAnchorTs).toLocaleString("es-ES", {
-                            day: "2-digit",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                          {parsed.frozenAnchorAgeHours != null && (
-                            <span> · hace {parsed.frozenAnchorAgeHours.toFixed(1)}h</span>
-                          )}
-                        </div>
-                      )}
-                      {parsed.drawdownFromAnchorPct != null && (
-                        <div>
-                          Caída desde referencia:{" "}
-                          <span className="font-semibold text-red-400">
-                            -{Math.abs(parsed.drawdownFromAnchorPct).toFixed(2)}%
-                          </span>
-                        </div>
-                      )}
-                    </div>
 
-                    {/* Ancla anterior (si existe) */}
-                    {parsed.frozenAnchorPrevious && parsed.basePriceMethod === "vwap_anchor" && (
-                      <div className="mt-3 pt-2 border-t border-white/5">
-                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground/50 mb-1">
-                          Referencia anterior (inválida)
-                        </div>
-                        <div className="text-xs opacity-50">
-                          <span className="line-through">
-                            ${parsed.frozenAnchorPrevious.anchorPrice.toFixed(2)}
-                          </span>
-                          <span className="ml-2">
-                            → reemplazada{" "}
-                            {formatRelativeTime(parsed.frozenAnchorPrevious.replacedAt)}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground/40 mt-0.5 italic">
-                          (precio superó esta referencia)
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Precio actual con timestamp */}
-                    {parsed.price != null && (
-                      <div className="bg-green-500/5 border border-green-500/20 rounded-md p-3 mt-3">
-                        <div className="text-[10px] uppercase tracking-wider font-bold text-green-500 mb-1">
-                          💵 PRECIO ACTUAL
-                        </div>
-                        <div className="text-2xl font-bold text-green-500 mb-1">
-                          ${parsed.price.toFixed(2)}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
+                        {parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor" && (
                           <div>
-                            Actualizado:{" "}
-                            {parsed.priceUpdatedAt ? (
-                              <span className="font-semibold text-green-400">
-                                {new Date(parsed.priceUpdatedAt).toLocaleString("es-ES", {
-                                  day: "2-digit",
-                                  month: "2-digit",
-                                  year: "2-digit",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </span>
-                            ) : event.createdAt ? (
-                              <span className="font-semibold text-yellow-400">
-                                Evento generado: {new Date(event.createdAt).toLocaleString("es-ES", {
-                                  day: "2-digit",
-                                  month: "2-digit",
-                                  year: "2-digit",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground/50">no disponible</span>
+                            Fijada:{" "}
+                            {new Date(parsed.frozenAnchorTs).toLocaleString("es-ES", {
+                              day: "2-digit",
+                              month: "short",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                            {parsed.frozenAnchorAgeHours != null && (
+                              <span> · hace {parsed.frozenAnchorAgeHours.toFixed(1)}h</span>
                             )}
                           </div>
-                        </div>
+                        )}
+
+                        {parsed.drawdownFromAnchorPct != null && (
+                          <div>
+                            Caída desde referencia:{" "}
+                            <span className="font-semibold text-red-400">
+                              -{Math.abs(parsed.drawdownFromAnchorPct).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    )}
+
+                      {/* Ancla anterior (si existe) */}
+                      {parsed.frozenAnchorPrevious && parsed.basePriceMethod === "vwap_anchor" && (
+                        <div className="mt-3 pt-2 border-t border-white/5">
+                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                            Referencia anterior (inválida)
+                          </div>
+                          <div className="text-xs opacity-50">
+                            <span className="line-through">
+                              ${parsed.frozenAnchorPrevious.anchorPrice.toFixed(2)}
+                            </span>
+                            <span className="ml-2">
+                              → reemplazada{" "}
+                              {formatRelativeTime(parsed.frozenAnchorPrevious.replacedAt)}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground/40 mt-0.5 italic">
+                            (precio superó esta referencia)
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Precio actual */}
+                    <div className="bg-amber-500/5 border border-amber-500/25 rounded-md p-3">
+                      <div className="text-[10px] uppercase tracking-wider font-bold text-amber-400 mb-1">
+                        💵 PRECIO ACTUAL
+                      </div>
+
+                      <div className="text-2xl font-bold text-amber-300 mb-1">
+                        {parsed.price != null ? `$${parsed.price.toFixed(2)}` : "No disponible"}
+                      </div>
+
+                      <div className="text-[11px] text-muted-foreground/70 space-y-0.5">
+                        {(() => {
+                          const priceTs = getPriceTimestamp(parsed, event);
+                          return (
+                            <div>
+                              {priceTs.label}:{" "}
+                              <span className="font-semibold text-amber-200">
+                                {priceTs.value}
+                              </span>
+                            </div>
+                          );
+                        })()}
+
+                        {parsed.effectiveBasePrice != null && parsed.price != null && (
+                          <div>
+                            Diferencia vs referencia:{" "}
+                            <span className={
+                              parsed.price < parsed.effectiveBasePrice
+                                ? "font-semibold text-red-400"
+                                : "font-semibold text-green-400"
+                            }>
+                              {(((parsed.price - parsed.effectiveBasePrice) / parsed.effectiveBasePrice) * 100).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="bg-yellow-500/5 border border-yellow-500/30 rounded-md p-3">
