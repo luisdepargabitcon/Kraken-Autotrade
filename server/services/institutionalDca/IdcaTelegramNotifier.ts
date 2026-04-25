@@ -8,6 +8,7 @@ import * as repo from "./IdcaRepository";
 import { formatTelegramMessage, type FormatContext } from "./IdcaMessageFormatter";
 import type { TelegramAlertToggles } from "./IdcaTypes";
 import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schema";
+import * as tbState from "./IdcaTrailingBuyTelegramState";
 
 const lastAlertTimes = new Map<string, number>();
 
@@ -546,8 +547,15 @@ export async function alertTrailingBuyArmed(
   mode: string,
   currentPrice: number,
   zone: string,
-  lowerBand1: number
+  lowerBand1: number,
+  reboundTriggerPrice?: number,
 ): Promise<void> {
+  // Anti-spam: solo notificar si no estaba ya armado
+  if (!tbState.shouldNotifyArmed(pair, mode)) {
+    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping ARMED alert for ${pair} - already armed/tracking`);
+    return;
+  }
+
   const { chatId, enabled } = await canSend("trailing_buy_armed");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
@@ -555,16 +563,21 @@ export async function alertTrailingBuyArmed(
   const msg = [
     `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
     ``,
-    `📊 Precio actual: $${currentPrice.toFixed(2)}`,
-    `📍 Zona VWAP: ${zone}`,
-    `🎯 Precio de referencia de entrada: $${lowerBand1.toFixed(2)}`,
+    `� Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📍 Precio de referencia de entrada: <code>$${lowerBand1.toFixed(2)}</code>`,
+    `📊 Zona: <code>${zone}</code>`,
+    reboundTriggerPrice ? `🎯 Compra si rebota hasta: <code>$${reboundTriggerPrice.toFixed(2)}</code>` : null,
     ``,
-    `El precio está en zona de interés. El bot espera rebote para ejecutar compra óptima.`,
+    `El bot no compra todavía. Está esperando confirmación de rebote.`,
     ``,
     `<i>Modo: ${mode} | Fuente: VWAP Anclado</i>`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
+  
+  // Marcar como notificado
+  tbState.markNotifiedArmed(pair, mode, lowerBand1, currentPrice);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] ARMED notification sent for ${pair}`);
 }
 
 export async function alertTrailingBuyTriggered(
@@ -574,19 +587,33 @@ export async function alertTrailingBuyTriggered(
   bouncePct: number,
   localLow: number,
 ): Promise<void> {
+  // Anti-spam: solo notificar una vez
+  if (!tbState.shouldNotifyTriggered(pair, mode)) {
+    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRIGGERED alert for ${pair} - already notified`);
+    return;
+  }
+
   const { chatId, enabled } = await canSend("trailing_buy_triggered");
   if (!enabled) return;
 
   const config = await repo.getIdcaConfig();
-  const message = `🔄 *TRAILING BUY TRIGGERED* ${pair}
+  const msg = [
+    `� <b>Compra ejecutada por Trailing Buy</b> — <b>${pair}</b>`,
+    ``,
+    `� Precio de compra: <code>$${currentPrice.toFixed(2)}</code>`,
+    `� Mejor precio previo (mínimo): <code>$${localLow.toFixed(2)}</code>`,
+    `� Rebote confirmado: <code>+${bouncePct.toFixed(3)}%</code>`,
+    ``,
+    `Fuente: VWAP Anclado / Ladder ATRP`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
 
-💰 *Price*: $${currentPrice.toFixed(2)}
-📈 *Bounce*: ${bouncePct.toFixed(3)}%
-📍 *Local Low*: $${localLow.toFixed(2)}
-
-🎯 *Entry executed at optimal bounce price*`;
-
-  await send(chatId, message, config.telegramThreadId || undefined);
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  
+  // Marcar como notificado
+  tbState.markNotifiedTriggered(pair, mode);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRIGGERED notification sent for ${pair}`);
 }
 
 // ─── Trailing Buy Level 1 Alerts ───────────────────────────────────────
@@ -639,6 +666,91 @@ export async function alertTrailingBuyLevel1Triggered(
 
   const config = await repo.getIdcaConfig();
   await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+// ─── Trailing Buy Tracking and Cancelled Alerts ────────────────────────
+
+export async function alertTrailingBuyTracking(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  bestPriceObserved: number,
+  reboundTriggerPrice: number,
+  minutesSinceLastNotify: number,
+): Promise<void> {
+  // Anti-spam: verificar throttle antes de enviar
+  const check = tbState.shouldNotifyTracking(pair, mode, bestPriceObserved);
+  if (!check.should) {
+    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRACKING alert for ${pair} - throttle active (${check.reason || 'no reason'})`);
+    return;
+  }
+
+  const { chatId, enabled } = await canSend("trailing_buy_tracking");
+  if (!enabled) return;
+
+  const config = await repo.getIdcaConfig();
+  const msg = [
+    `🔵 <b>Trailing Buy siguiendo precio</b> — <b>${pair}</b>`,
+    ``,
+    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📉 Mejor precio observado: <code>$${bestPriceObserved.toFixed(2)}</code>`,
+    `🎯 Compra si rebota hasta: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
+    ``,
+    `Último aviso hace: ${minutesSinceLastNotify} min`,
+    ``,
+    `No se ejecutó compra todavía.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  
+  // Marcar como notificado
+  tbState.markNotifiedTracking(pair, mode, bestPriceObserved);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRACKING notification sent for ${pair} (reason: ${check.reason})`);
+}
+
+export async function alertTrailingBuyCancelled(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  reason: "price_recovered" | "reference_changed" | "timeout" | "module_paused" | "cycle_closed" | string,
+): Promise<void> {
+  // Anti-spam: solo notificar una vez
+  if (!tbState.shouldNotifyCancelled(pair, mode)) {
+    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping CANCELLED alert for ${pair} - already notified or not armed`);
+    return;
+  }
+
+  const { chatId, enabled } = await canSend("trailing_buy_cancelled");
+  if (!enabled) return;
+
+  const reasonText: Record<string, string> = {
+    price_recovered: "precio salió de zona",
+    reference_changed: "referencia cambió",
+    timeout: "timeout",
+    module_paused: "módulo pausado",
+    cycle_closed: "ciclo cerrado",
+  };
+
+  const config = await repo.getIdcaConfig();
+  const msg = [
+    `⚪ <b>Trailing Buy desactivado</b> — <b>${pair}</b>`,
+    ``,
+    `Motivo: ${reasonText[reason] || reason}`,
+    `Último precio observado: <code>$${currentPrice.toFixed(2)}</code>`,
+    ``,
+    `No se ejecutó compra.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  
+  // Marcar como notificado y limpiar estado
+  tbState.markNotifiedCancelled(pair, mode);
+  tbState.resetTrailingBuyTelegramState(pair, mode, "cancelled");
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] CANCELLED notification sent for ${pair} (reason: ${reason})`);
 }
 
 // ─── Exit Management Alerts ─────────────────────────────────────────

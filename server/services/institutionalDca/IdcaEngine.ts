@@ -814,13 +814,30 @@ async function evaluatePair(
                 message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}`,
                 payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
               }, { eventType: "trailing_buy_activated", pair, mode });
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbZone, tbVwap.lowerBand1)
+              const reboundTriggerPrice = currentPrice * (1 + reboundMinPct / 100);
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbZone, tbVwap.lowerBand1, reboundTriggerPrice)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
 
-            // Update: si está armado, seguir el mínimo
+            // Update: si está armado, seguir el mínimo y notificar con throttle
             if (TrailingBuyManager.isArmed(pair)) {
+              const tbState = TrailingBuyManager.getState(pair);
               const tbResult = TrailingBuyManager.update(pair, currentPrice);
+              
+              // Notificar tracking throttled (no en cada tick)
+              if (tbState && !tbResult.triggered) {
+                const { shouldNotifyTracking } = await import('./IdcaTrailingBuyTelegramState');
+                const check = shouldNotifyTracking(pair, mode, tbState.localLow);
+                if (check.should) {
+                  const lastState = await import('./IdcaTrailingBuyTelegramState').then(m => m.getTrailingBuyTelegramState(pair, mode));
+                  const minutesSince = lastState ? Math.round((Date.now() - lastState.lastNotifiedAt) / 60000) : 15;
+                  const reboundMinPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
+                  const reboundTriggerPrice = tbState.localLow * (1 + reboundMinPct / 100);
+                  telegram.alertTrailingBuyTracking(pair, mode, currentPrice, tbState.localLow, reboundTriggerPrice, minutesSince)
+                    .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTracking failed: ${e.message}`));
+                }
+              }
+              
               if (tbResult.triggered) {
                 // Trailing confirmó rebote → permitir ejecución de compra
                 await createHumanEvent({
@@ -846,6 +863,10 @@ async function evaluatePair(
                 message: `Trailing buy disarmed: price returned to ${tbZone}`,
                 payloadJson: { price: currentPrice, zone: tbZone, reason: "price_returned_to_neutral" },
               }, { eventType: "trailing_buy_reset", pair, mode });
+              
+              // Notificar cancelación por recuperación de precio
+              telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
+                .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled failed: ${e.message}`));
             }
           }
         }
