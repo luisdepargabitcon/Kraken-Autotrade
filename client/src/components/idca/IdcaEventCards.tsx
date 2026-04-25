@@ -749,19 +749,27 @@ function timeAgo(dateStr: string | null | undefined): string {
 }
 
 function getPriceTimestamp(parsed: ParsedPayload, event: any): { label: string; value: string; raw?: string } {
-  if (parsed.priceUpdatedAt) {
-    const d = new Date(parsed.priceUpdatedAt);
-    if (!isNaN(d.getTime())) {
+  const raw =
+    parsed.priceUpdatedAt ??
+    (parsed as any).currentPriceUpdatedAt ??
+    (parsed as any).marketContext?.priceUpdatedAt ??
+    (parsed as any).marketContext?.updatedAt ??
+    (parsed as any).timestamp;
+
+  if (raw) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
       return {
         label: "Actualizado",
         value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
-        raw: parsed.priceUpdatedAt,
+        raw: String(raw),
       };
     }
   }
-  if (event.createdAt) {
+
+  if (event?.createdAt) {
     const d = new Date(event.createdAt);
-    if (!isNaN(d.getTime())) {
+    if (!Number.isNaN(d.getTime())) {
       return {
         label: "Evento generado",
         value: d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }),
@@ -769,6 +777,7 @@ function getPriceTimestamp(parsed: ParsedPayload, event: any): { label: string; 
       };
     }
   }
+
   return { label: "Actualizado", value: "no disponible" };
 }
 
