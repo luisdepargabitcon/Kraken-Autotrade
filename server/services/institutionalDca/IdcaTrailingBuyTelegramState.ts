@@ -166,3 +166,8 @@ export function getAllTrailingBuyTelegramStates(): Array<{ pair: string; mode: s
     return { pair, mode, state };
   });
 }
+
+// Exposed for testing only
+export function resetAllStates(): void {
+  trailingBuyTelegramStates.clear();
+}

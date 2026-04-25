@@ -6,6 +6,7 @@
 import * as repo from "./IdcaRepository";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
+import * as tbState from "./IdcaTrailingBuyTelegramState";
 import * as smart from "./IdcaSmartLayer";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
@@ -610,6 +611,15 @@ export async function emergencyCloseAll(): Promise<number> {
   }, { eventType: "emergency_close_all", mode, closedCount: closed, triggerSource: "manual" });
 
   await telegram.alertEmergencyClose(mode, closed);
+  
+  // Limpiar todos los estados de trailing buy para este modo
+  for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
+    if (TrailingBuyManager.isArmed(pair)) {
+      TrailingBuyManager.disarm(pair);
+    }
+    tbState.resetTrailingBuyTelegramState(pair, mode, "emergency_close");
+  }
+  
   return closed;
 }
 
@@ -688,6 +698,11 @@ async function evaluatePair(
   }
   if (!assetConfig.enabled) {
     console.log(`${TAG}[EVAL_SKIP] ${pair}: assetConfig.enabled=false`);
+    // Limpiar trailing buy si el par se desactivó
+    if (TrailingBuyManager.isArmed(pair)) {
+      TrailingBuyManager.disarm(pair);
+      tbState.resetTrailingBuyTelegramState(pair, mode, "asset_disabled");
+    }
     return;
   }
 
@@ -780,6 +795,7 @@ async function evaluatePair(
     // Cleanup: disarm trailing buy if cycle exists but was armed before deploy
     if ((hasAny || hasImported) && TrailingBuyManager.isArmed(pair)) {
       TrailingBuyManager.disarm(pair);
+      tbState.resetTrailingBuyTelegramState(pair, mode, "cycle_active_cleanup");
     }
     if (!hasAny && !hasImported) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
@@ -850,6 +866,28 @@ async function evaluatePair(
                 telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow)
                   .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTriggered failed: ${e.message}`));
                 trailingAllowsEntry = true;
+              } else if (tbResult.reason === "expired") {
+                // Trailing buy expiró por timeout
+                await createHumanEvent({
+                  pair, mode,
+                  eventType: "trailing_buy_reset",
+                  severity: "info",
+                  message: `Trailing buy expired: timeout reached`,
+                  payloadJson: { price: currentPrice, zone: tbZone, reason: "expired" },
+                }, { eventType: "trailing_buy_reset", pair, mode });
+                telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "timeout")
+                  .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(expired) failed: ${e.message}`));
+              } else if (tbResult.reason?.startsWith("recovered")) {
+                // Trailing buy cancelado por recuperación de precio (Manager level 1)
+                await createHumanEvent({
+                  pair, mode,
+                  eventType: "trailing_buy_reset",
+                  severity: "info",
+                  message: `Trailing buy cancelled: price recovered above threshold`,
+                  payloadJson: { price: currentPrice, zone: tbZone, reason: tbResult.reason },
+                }, { eventType: "trailing_buy_reset", pair, mode });
+                telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
+                  .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(recovered) failed: ${e.message}`));
               }
             }
 
@@ -2256,6 +2294,14 @@ async function performEntryCheck(
       if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
         vwapAnchorMemory.delete(pair);
         console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — curPrice=${currentPrice.toFixed(2)} > anchor=${currentAnchor.anchorPrice.toFixed(2)}`);
+        
+        // Limpiar estado de trailing buy si la referencia cambia
+        if (TrailingBuyManager.isArmed(pair)) {
+          TrailingBuyManager.disarm(pair);
+          telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "reference_changed")
+            .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(anchor_reset) failed: ${e.message}`));
+        }
+        tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
       }
 
       // Regla 2: ancla solo sube, nunca baja
@@ -3551,6 +3597,14 @@ export async function handleModeTransition(newMode: IdcaMode): Promise<void> {
       await repo.updateCycle(cycle.id, { status: "paused" });
     }
     console.log(`${TAG}[MODE_TRANSITION] Paused ${liveCycles.length} live cycles`);
+  }
+
+  // Limpiar todos los estados de trailing buy al cambiar de modo
+  for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
+    if (TrailingBuyManager.isArmed(pair)) {
+      TrailingBuyManager.disarm(pair);
+    }
+    tbState.resetTrailingBuyTelegramState(pair, oldMode, "mode_transition");
   }
 
   // Update config
