@@ -1484,97 +1484,109 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
-  // ─── IDCA Logs desde server_logs ──────────────────────────────
-  // Endpoint principal para "Logs IDCA" — lee de server_logs (stdout real)
-  // y filtra líneas que pertenecen a IDCA por patrones en el campo `line`.
-  // Soporta: hours, limit, level, pair, search (text libre en línea raw).
-  // Fallback: si server_logs devuelve 0 resultados, añade eventos de
-  // institutional_dca_events para no mostrar vista vacía.
+  // ─── IDCA Logs ────────────────────────────────────────────────
+  // FUENTE REAL: institutional_dca_events (el motor IDCA escribe directo
+  // ahí vía repo.createEvent(), nunca por console.log/stdout).
+  // server_logs contiene logs de infraestructura (trading scanner, HTTP, etc.)
+  // pero NO logs IDCA — el motor no usa console.log.
+  //
+  // Complemento: logs de arranque/migración de server_logs con isIdcaLine().
+  // Soporta: hours, limit, level, pair, search, mode, eventType, debug.
 
   app.get(`${PREFIX}/logs`, async (req, res) => {
     try {
-      const hours  = Math.min(parseInt((req.query.hours  as string) || "24", 10), 168);
-      const limit  = Math.min(parseInt((req.query.limit  as string) || "500", 10), 5000);
-      const level  = req.query.level  as string | undefined;
-      const pair   = req.query.pair   as string | undefined;
-      const search = req.query.search as string | undefined;
-      const mode   = req.query.mode   as string | undefined;
-      const debug  = req.query.debug === "1";
+      const hours     = Math.min(parseInt((req.query.hours  as string) || "24", 10), 168);
+      const limit     = Math.min(parseInt((req.query.limit  as string) || "500", 10), 5000);
+      const level     = req.query.level     as string | undefined;
+      const pair      = req.query.pair      as string | undefined;
+      const search    = req.query.search    as string | undefined;
+      const mode      = req.query.mode      as string | undefined;
+      const eventType = req.query.eventType as string | undefined;
+      const debug     = req.query.debug === "1";
 
       const from = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-      // 1. Leer logs combinando memoria+DB (evita el delay de batch insert de 5s)
-      //    getLogsWithMemory() combina buffer en memoria (500 entradas) + DB sin duplicados
-      const rawLogs = await serverLogsService.getLogsWithMemory({
-        from,
-        level: level ? level.toUpperCase() : undefined,
-        search: search || undefined,
-        limit: Math.min(limit * 8, 10000), // ampliar para poder filtrar en memoria
+      // ── 1. Fuente primaria: institutional_dca_events ──────────────
+      // El motor IDCA (IdcaEngine, TrailingBuyManager, etc.) persiste todos
+      // sus eventos aquí directamente. Es la fuente canónica de logs IDCA.
+      const events = await repo.getEvents({
+        dateFrom: from,
+        mode:      mode      || undefined,
+        pair:      pair      || undefined,
+        eventType: eventType || undefined,
+        // severity: mapear level UI → severity DB
+        severity: level === 'error' ? 'error'
+                : level === 'warn'  ? 'warning'
+                : level === 'debug' ? 'debug'
+                : undefined, // sin filtro para info/undefined → devuelve todos
+        limit: limit,
+        orderBy: 'createdAt',
+        orderDirection: 'desc',
       });
 
-      // 2. Filtrar por patrón IDCA (15 patrones en line)
-      let idcaLines = rawLogs.filter(l => isIdcaLine(l.line));
+      // Filtro de búsqueda libre en mensaje (client-side, ya tenemos los datos)
+      const filtered = search
+        ? events.filter(e => (e.message ?? '').toLowerCase().includes(search.toLowerCase()))
+        : events;
 
-      // 3. Filtrar por pair si se especifica
-      if (pair) {
-        const pairUpper = pair.toUpperCase();
-        idcaLines = idcaLines.filter(l => l.line.toUpperCase().includes(pairUpper));
+      const primaryLogs = filtered.map(e => ({
+        id:        e.id ?? 0,
+        timestamp: (e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as any)).toISOString(),
+        level:     e.severity === 'warning' ? 'warn' : (e.severity ?? 'info'),
+        source:    'idca_events' as const,
+        pair:      e.pair      ?? null,
+        event:     e.eventType ?? null,
+        message:   e.message   ?? '',
+        raw:       e.message   ?? '',
+      }));
+
+      // ── 2. Complemento: logs de arranque/migración en server_logs ──
+      // Captura logs de [IDCA][MIGRATION], safetyOrdersJson, etc. que sí
+      // pasan por console.log durante el arranque de la app.
+      const rawLogs = await serverLogsService.getLogsWithMemory({
+        from,
+        limit: 2000,
+      });
+      const idcaStartupLines = rawLogs
+        .filter(l => isIdcaLine(l.line))
+        .filter(l => pair   ? l.line.toUpperCase().includes(pair.toUpperCase())   : true)
+        .filter(l => mode   ? l.line.toLowerCase().includes(mode.toLowerCase())   : true)
+        .filter(l => search ? l.line.toLowerCase().includes(search.toLowerCase()) : true)
+        .map(l => parseIdcaLog(l as any));
+
+      // ── 3. Combinar: eventos primarios + logs de arranque ──────────
+      // Deduplicar por timestamp+mensaje (los logs de migración también se
+      // guardan en idca_events como migration_validation_warning)
+      const seen = new Set<string>();
+      const combined: Array<{ id: number; timestamp: string; level: string; source: string; pair: string | null; event: string | null; message: string; raw: string }> = [];
+
+      for (const log of primaryLogs) {
+        const key = `${log.timestamp}:${log.message.slice(0, 60)}`;
+        if (!seen.has(key)) { seen.add(key); combined.push(log); }
+      }
+      for (const log of idcaStartupLines) {
+        const key = `${log.timestamp}:${log.message.slice(0, 60)}`;
+        if (!seen.has(key)) { seen.add(key); combined.push({ ...log, source: 'server_logs' as any }); }
       }
 
-      // 4. Filtrar por mode si se especifica (simulation/live en la línea)
-      if (mode) {
-        idcaLines = idcaLines.filter(l => l.line.toLowerCase().includes(mode.toLowerCase()));
-      }
+      // Ordenar por timestamp desc
+      combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const result = combined.slice(0, limit);
 
-      // 5. Parsear y enriquecer
-      const parsed = idcaLines.slice(0, limit).map(l => parseIdcaLog(l as any));
-
-      // Debug info (solo si ?debug=1)
       const debugInfo = debug ? {
-        rawTotal: rawLogs.length,
-        idcaFiltered: idcaLines.length,
-        memorySize: serverLogsService.getMemoryLogs().length,
-        fromTs: from.toISOString(),
+        primaryEvents: primaryLogs.length,
+        startupLines:  idcaStartupLines.length,
+        memorySize:    serverLogsService.getMemoryLogs().length,
+        fromTs:        from.toISOString(),
         hours,
-        sampleLines: rawLogs.slice(0, 3).map(l => l.line.slice(0, 120)),
       } : undefined;
-
-      if (debug) {
-        console.log(`[IDCA][LOGS][DEBUG] rawTotal=${rawLogs.length} idcaFiltered=${idcaLines.length} memory=${serverLogsService.getMemoryLogs().length}`);
-      }
-
-      // 6. Fallback: si 0 resultados de server_logs+memory, completar con institutional_dca_events
-      let fallbackUsed = false;
-      let combinedLogs: typeof parsed = parsed;
-      if (parsed.length === 0) {
-        fallbackUsed = true;
-        const events = await repo.getEvents({
-          dateFrom: from,
-          mode: mode || undefined,
-          pair: pair || undefined,
-          severity: level || undefined,
-          limit: Math.min(limit, 500),
-          orderBy: 'createdAt',
-          orderDirection: 'desc',
-        });
-        combinedLogs = events.map((e, i) => ({
-          id: e.id ?? i,
-          timestamp: (e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as any)).toISOString(),
-          level: e.severity === 'warning' ? 'warn' : (e.severity ?? 'info'),
-          source: 'idca_events',
-          pair: e.pair ?? null,
-          event: e.eventType ?? null,
-          message: e.message ?? '',
-          raw: e.message ?? '',
-        }));
-      }
 
       res.json({
         success: true,
-        count: combinedLogs.length,
-        fallback: fallbackUsed,
-        source: fallbackUsed ? 'idca_events' : 'server_logs',
-        logs: combinedLogs,
+        count:   result.length,
+        fallback: false,
+        source:  'idca_events',
+        logs:    result,
         ...(debug ? { _debug: debugInfo } : {}),
       });
     } catch (e: any) {

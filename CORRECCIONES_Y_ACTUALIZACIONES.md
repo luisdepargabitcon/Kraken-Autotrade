@@ -622,3 +622,60 @@ Si `_debug.memorySize = 0` → `logStreamService` no está capturando → proble
 
 *Última actualización: 2026-04-26*
 *Estado: Hotfix FASE 15 — endpoint usa memoria+DB, logs IDCA operativos*.
+
+---
+
+## 2026-04-26 — HOTFIX FASE 16: Logs IDCA — fuente primaria correcta (idca_events)
+
+### Causa raíz definitiva (confirmada por _debug en VPS)
+
+```json
+"_debug": { "rawTotal": 160, "idcaFiltered": 0, "memorySize": 288 }
+```
+
+`sampleLines` reveló que todos los logs en `server_logs` son del trading scanner:
+```
+[20:49:25] [LOG  ] 8:49:25 PM [trading] [SCAN_START] ...
+```
+
+**El motor IDCA (IdcaEngine, TrailingBuyManager) nunca usa `console.log`.** Escribe todos sus
+eventos directamente a `institutional_dca_events` vía `repo.createEvent()`. Por tanto:
+- `server_logs` → logs de infraestructura (HTTP, scanner, migración startup)
+- `institutional_dca_events` → fuente canónica de todos los logs IDCA
+
+La lógica anterior tenía el fallback invertido: usaba `idca_events` como "último recurso"
+cuando en realidad es la **fuente primaria**.
+
+### Fix
+
+#### `server/routes/institutionalDca.routes.ts`
+- **Fuente primaria**: `repo.getEvents()` desde `institutional_dca_events`
+  - Filtros nativos en DB: `dateFrom`, `pair`, `mode`, `eventType`, `severity`
+  - Mapeo `level` UI → `severity` DB: `warn`→`warning`, resto directo
+  - Filtro `search` client-side en `message` (ya cargado)
+- **Complemento**: `server_logs` via `getLogsWithMemory()` para logs de arranque/migración
+  que sí pasan por `console.log` (ej: `[IDCA][MIGRATION] safetyOrdersJson`)
+- **Deduplicación** por `timestamp:message[:60]` para evitar duplicados de migración
+- `fallback: false` siempre — no hay fallback porque `idca_events` es la fuente real
+- Nuevo parámetro `?eventType=trailing_buy_level1_activated` para filtrar por tipo
+
+### Resultado en VPS post-deploy
+```bash
+curl -s "http://localhost:3020/api/institutional-dca/logs?hours=24&limit=5&debug=1" | python3 -m json.tool
+# Esperado:
+{
+  "success": true,
+  "count": 5,
+  "fallback": false,
+  "source": "idca_events",
+  "_debug": { "primaryEvents": 500, "startupLines": 1, "memorySize": 288 }
+}
+```
+
+### Validación
+- `npm run check`: 0 errores ✅
+- `npm run build`: 17s ✅
+- `vitest idcaLogs`: **68/68** ✅
+
+*Última actualización: 2026-04-26*
+*Estado: Hotfix FASE 16 — idca_events como fuente primaria correcta, fallback eliminado*.
