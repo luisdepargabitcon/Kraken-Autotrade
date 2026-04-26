@@ -99,6 +99,7 @@ import { SalidasTab } from "@/components/idca/SalidasTab";
 import { EjecucionTab } from "@/components/idca/EjecucionTab";
 import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
+import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -3213,7 +3214,7 @@ function translateOrderType(ot: string): string {
 }
 
 function EventsTab() {
-  const [subTab, setSubTab] = useState<"live" | "events" | "terminal">("live");
+  const [subTab, setSubTab] = useState<"live" | "events" | "terminal" | "logs">("live");
 
   return (
     <div className="space-y-3">
@@ -3230,10 +3231,19 @@ function EventsTab() {
           className="text-xs gap-1" onClick={() => setSubTab("terminal")}>
           <Terminal className="h-3 w-3" /> Terminal
         </Button>
+        <Button size="sm" variant={subTab === "logs" ? "default" : "outline"}
+          className="text-xs gap-1" onClick={() => setSubTab("logs")}>
+          <BarChart3 className="h-3 w-3" /> Logs IDCA
+        </Button>
+      </div>
+      <div className="text-[10px] text-muted-foreground/50 font-mono">
+        {subTab === "terminal" && "Eventos IDCA enriquecidos y payloads."}
+        {subTab === "logs" && "Logs técnicos continuos del módulo IDCA."}
       </div>
       {subTab === "live" && <LiveMonitorPanel />}
       {subTab === "events" && <EventsLogPanel />}
       {subTab === "terminal" && <IdcaTerminalPanel />}
+      {subTab === "logs" && <IdcaLogsPanel />}
     </div>
   );
 }

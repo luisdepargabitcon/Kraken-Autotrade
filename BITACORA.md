@@ -411,11 +411,57 @@ FROM institutional_dca_asset_configs;
 - **Filtros**: par, modo, nivel, texto libre, rangos de fecha (1h/6h/24h/7d/30d/Custom)
 
 ### Validación
-- `npm run check` — ✅ 0 errores TypeScript
-- `npm run build` — ✅ OK (3785 módulos)
-- `vitest run idcaTerminalLogs.test.ts` — ✅ 11/11 tests
+- `npm run check` — 0 errores TypeScript
+- `npm run build` — OK (3785 módulos)
+- `vitest run idcaTerminalLogs.test.ts` — 11/11 tests
 
 ---
 
-*Última actualización: 2026-04-23*
+## 2026-04-26 — Logs IDCA: Nueva Pestaña Estilo Monitor Normal
+
+### Objetivo
+Añadir una 4ª subpestaña "Logs IDCA" en IDCA → Eventos, con vista continua tipo consola idéntica al Monitor normal del bot principal. Sin eliminar la pestaña "Terminal" existente.
+
+### Nuevos archivos
+- `client/src/components/idca/IdcaLogsPanel.tsx` — Componente React "Logs IDCA" completo:
+  - Fondo oscuro `zinc-950`, fuente monoespaciada
+  - Líneas completas con timestamp, badge nivel, badge par, badge modo, mensaje expandible
+  - Campos técnicos extraídos inline: score, caída, mínimo, bloqueos, precio ref, precio actual, zona, trigger, motivo
+  - Click en línea expande RAW completo
+  - Polling 5s en modo "En vivo", histórico REST en otros rangos
+  - Filtros: rango (1h/6h/24h/7d/30d/En vivo), nivel (INFO/WARN/ERROR/DEBUG), par, modo (SIM/LIVE), tipo (entrada/VWAP/TrailingBuy/compra/salida/warning/sistema), búsqueda libre
+  - Copiar TXT (incluye RAW + campos extraídos), Copiar JSON, Descargar TXT, Descargar JSON, Export API
+- `server/services/__tests__/idcaLogs.test.ts` — 42 tests unitarios sin DB
+
+### Archivos modificados
+- `client/src/pages/InstitutionalDca.tsx`:
+  - Import `IdcaLogsPanel`
+  - `EventsTab` actualizado con 4ª subpestaña "Logs IDCA" (`BarChart3` icon)
+  - Descripción contextual por subpestaña (Terminal vs Logs IDCA)
+
+### Diseño
+- **Fuente de datos**: `GET /api/logs?search=[IDCA]&source=app_stdout` → tabla `server_logs` (reutiliza infraestructura existente, sin endpoint nuevo)
+- **Sin WebSocket**: Polling 5s para "En vivo"; histórico vía REST para rangos
+- **Parseo frontend**: `parseIdcaLine()` extrae par, modo, nivel, tipo de evento y campos numéricos de la línea de texto
+- **Export completo**: copiar/descargar incluye `RAW: [línea original completa]` + campos extraídos → no solo el mensaje visible
+- **Terminal sigue intacto**: subpestaña "Terminal" con `IdcaTerminalPanel` no se modifica
+
+### Diferencia funcional Terminal vs Logs IDCA
+| | Terminal | Logs IDCA |
+|---|---|---|
+| Fuente | `institutional_dca_events` | `server_logs` vía `console.log` |
+| Vista | Eventos enriquecidos (tarjetas) | Líneas continuas tipo consola |
+| Necesita abrir evento | Sí | No — todo inline |
+| Export | Eventos IDCA estructurados | Líneas RAW + campos extraídos |
+| Tiempo real | Polling 5s | Polling 5s / histórico |
+
+### Validación
+- `npm run check` — 0 errores TypeScript
+- `npm run build` — OK (3786 módulos)
+- `vitest run idcaLogs.test.ts` — 42/42 tests
+- `vitest run idcaTrailingBuyTelegramState idcaLadderAtrp idcaMessageFormatter idcaReasonCatalog idcaLogs` — 131/131 tests
+
+---
+
+*Última actualización: 2026-04-26*
 *Mantenido por: Windsurf Cascade AI*
