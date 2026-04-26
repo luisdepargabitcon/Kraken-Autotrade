@@ -639,6 +639,21 @@ describe("idcaLogParser — formato real logStreamService [HH:mm:ss] [LEVEL] men
     expect(isIdcaLine(line)).toBe(false);
   });
 
+  it("HTTP access log Express con IDCA en body NO entra (exclusión)", () => {
+    const line = "[10:23:45.120] [LOG  ] 9:39:20 PM [express] GET /api/institutional-dca/logs 200 in 3874ms :: {\"success\":true,\"count\":150,\"source\":\"idca_events\"}";
+    expect(isIdcaLine(line)).toBe(false);
+  });
+
+  it("HTTP access log Express terminal/logs NO entra aunque contenga IDCA payload", () => {
+    const line = "[09:38:57.123] [LOG  ] 9:38:57 PM [express] GET /api/institutional-dca/terminal/logs 200 in 459ms :: {\"logs\":[{\"event\":\"entry_check_blocked\"}]}";
+    expect(isIdcaLine(line)).toBe(false);
+  });
+
+  it("Express in Xms :: patrón excluye HTTP logs con JSON IDCA en body", () => {
+    const line = "[10:00:00.000] [LOG  ] GET /api/institutional-dca/logs 200 in 1200ms :: {\"source\":\"idca_events\",\"logs\":[]}";
+    expect(isIdcaLine(line)).toBe(false);
+  });
+
   it("parseMessage elimina prefijo [HH:mm:ss.ms] [LOG  ]", () => {
     const original = "[IDCA][ENTRY_BLOCKED] ETH/USD dip=1.1%";
     const withPrefix = `[10:23:45.123] [LOG  ] ${original}`;

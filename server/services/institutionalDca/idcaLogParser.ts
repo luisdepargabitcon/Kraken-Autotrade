@@ -67,7 +67,18 @@ const IDCA_PATTERNS: RegExp[] = [
   /\[OHLCV\].*(?:ETH|BTC|SOL|XRP|ADA|AVAX|MATIC|LINK|LTC|DOT)/i,
 ];
 
+// Patrones de exclusión: líneas que NO son logs IDCA aunque contengan texto IDCA
+// - HTTP access logs de Express (contienen IDCA en el JSON del response body)
+// - Líneas de SQL / ORM queries que mencionan tablas IDCA
+const IDCA_EXCLUDE_PATTERNS: RegExp[] = [
+  /\[express\]\s+(?:GET|POST|PUT|DELETE|PATCH)\s+\//i,  // HTTP access log
+  /\d+:\d+:\d+\s+(?:AM|PM)\s+\[express\]/i,             // variante con hora AM/PM
+  /in \d+ms\s*::/,                                       // Express timing :: response
+];
+
 export function isIdcaLine(line: string): boolean {
+  // Primero excluir líneas que no son logs IDCA reales
+  if (IDCA_EXCLUDE_PATTERNS.some(p => p.test(line))) return false;
   return IDCA_PATTERNS.some(p => p.test(line));
 }
 
