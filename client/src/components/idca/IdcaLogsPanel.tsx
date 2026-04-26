@@ -400,9 +400,11 @@ function LogRow({ log }: { log: ParsedIdcaLog }) {
           </span>
         )}
 
-        {/* Message */}
+        {/* Message — truncar en compacto para no saturar el DOM */}
         <span className={cn("flex-1 break-all", LEVEL_LINE_COLORS[log.level] ?? "text-zinc-300")}>
-          {log.message}
+          {!expanded && log.message.length > 220
+            ? log.message.slice(0, 220) + "…"
+            : log.message}
         </span>
       </div>
 
@@ -457,20 +459,23 @@ export function IdcaLogsPanel() {
   // ── Fetch logs ─────────────────────────────────────────────────
   // Usa /api/institutional-dca/logs — fuente primaria idca_events
   // + complemento server_logs para logs de arranque IDCA.
+  const isLiveMode = timeRange === "live";
+
   const queryParams = useMemo(() => {
     const p = new URLSearchParams();
-    // Convertir timeRange a hours para el endpoint
+    // En vivo: solo últimas 1h y pocos logs para no saturar el browser
+    // Histórico: rango completo con más logs
     const hoursMap: Record<string, number> = {
       live: 1, "1h": 1, "6h": 6, "24h": 24, "7d": 168, "30d": 720
     };
     p.set("hours", String(hoursMap[timeRange] ?? 24));
-    p.set("limit", "2000");
+    p.set("limit", isLiveMode ? "150" : "500"); // live: ligero; histórico: completo
     if (levelFilter !== "all") p.set("level", levelFilter.toLowerCase());
     if (pairFilter  !== "all") p.set("pair", pairFilter);
     if (modeFilter  !== "all") p.set("mode", modeFilter.toLowerCase());
     if (searchText.trim())     p.set("search", searchText.trim());
     return p.toString();
-  }, [timeRange, levelFilter, pairFilter, modeFilter, searchText]);
+  }, [timeRange, isLiveMode, levelFilter, pairFilter, modeFilter, searchText]);
 
   const { data, isFetching, refetch } = useQuery<{ success: boolean; count: number; fallback: boolean; source: string; logs: IdcaLogEntry[] }>({
     queryKey: ["idca-logs-v2", queryParams],
@@ -479,8 +484,8 @@ export function IdcaLogsPanel() {
       if (!res.ok) throw new Error("Failed to fetch IDCA logs");
       return res.json();
     },
-    staleTime: 4000,
-    refetchInterval: (!isPaused && timeRange === "live") ? 5000 : false,
+    staleTime: isLiveMode ? 12000 : 30000, // live: 12s stale; histórico: 30s
+    refetchInterval: (!isPaused && isLiveMode) ? 15000 : false, // live: cada 15s
   });
 
   // ── Parse & filter ─────────────────────────────────────────────
@@ -587,11 +592,15 @@ export function IdcaLogsPanel() {
     tbArmed: filteredLogs.filter(l => l.logType === "trailing_buy_armed").length,
   }), [filteredLogs]);
 
-  const isLive = timeRange === "live";
+  const isLive = isLiveMode;
 
   // Display: invertir a asc (más viejos arriba, nuevos abajo) para estilo consola
-  const displayLogs = useMemo(() =>
-    [...filteredLogs].reverse(), [filteredLogs]);
+  // Cap a 500 filas en DOM para no saturar el renderer
+  const MAX_DOM_ROWS = 500;
+  const displayLogs = useMemo(() => {
+    const reversed = [...filteredLogs].reverse();
+    return reversed.length > MAX_DOM_ROWS ? reversed.slice(-MAX_DOM_ROWS) : reversed;
+  }, [filteredLogs]);
 
   return (
     <div className="flex flex-col gap-2 min-h-0 flex-1" data-testid="idca-logs-panel">
@@ -617,7 +626,7 @@ export function IdcaLogsPanel() {
             {isLive ? (
               <>
                 {isFetching ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                {isPaused ? "PAUSADO" : isFetching ? "Actualizando…" : "EN VIVO (5s)"}
+                {isPaused ? "PAUSADO" : isFetching ? "Actualizando…" : "EN VIVO (15s)"}
               </>
             ) : (
               <>
