@@ -23,7 +23,7 @@ import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
 export type TrailingBuyTelegramState = {
-  state: "idle" | "armed" | "tracking" | "triggered" | "cancelled" | "expired";
+  state: "idle" | "watching" | "armed" | "tracking" | "triggered" | "cancelled" | "expired";
   lastNotifiedAt: number;
   lastNotifiedBestPrice?: number;
   lastNotifiedState?: string;
@@ -32,6 +32,7 @@ export type TrailingBuyTelegramState = {
   localLow?: number;
   cancelledAt?: number;
   rearmAllowedAfter?: number;     // timestamp unix ms: no rearmar hasta este momento
+  lastWatchingNotifiedAt?: number; // timestamp de última notificación WATCHING
 };
 
 // Estado en memoria por par:modo
@@ -45,6 +46,7 @@ const TRACKING_MIN_INTERVAL_MS        = 15 * 60 * 1000; // 15 min
 const TRACKING_MIN_PRICE_IMPROVEMENT  = 0.20;           // 0.20% mejora mínima para re-notificar tracking
 const REARM_COOLDOWN_AFTER_CANCEL_MS  = 30 * 60 * 1000; // 30 min de cooldown tras CANCELLED
 const CANCEL_HISTERESIS_TICKS         = 2;              // ticks consecutivos sobre trigger antes de cancelar
+const WATCHING_MIN_INTERVAL_MS        = 30 * 60 * 1000; // 30 min entre notificaciones WATCHING
 
 function getStateKey(pair: string, mode: string): string {
   return `${mode}:${pair}:trailing_buy`;
@@ -135,6 +137,37 @@ export async function loadStateFromDb(pair: string, mode: string): Promise<void>
 export function getTrailingBuyTelegramState(pair: string, mode: string): TrailingBuyTelegramState | undefined {
   return trailingBuyTelegramStates.get(getStateKey(pair, mode));
 }
+
+// ─── WATCHING (pre-arm) ────────────────────────────────────────────
+
+/**
+ * Indica si se debe notificar el estado WATCHING (precio cerca de zona, no armado aún).
+ * Throttle: máximo 1 vez cada 30 min por par:modo.
+ */
+export function shouldNotifyWatching(pair: string, mode: string): boolean {
+  const key = getStateKey(pair, mode);
+  const current = trailingBuyTelegramStates.get(key);
+  // No notificar watching si ya estamos armed/tracking/triggered
+  if (current && (current.state === "armed" || current.state === "tracking" || current.state === "triggered")) {
+    return false;
+  }
+  const lastAt = current?.lastWatchingNotifiedAt ?? 0;
+  return (Date.now() - lastAt) >= WATCHING_MIN_INTERVAL_MS;
+}
+
+export function markNotifiedWatching(pair: string, mode: string): void {
+  const key = getStateKey(pair, mode);
+  const current = trailingBuyTelegramStates.get(key);
+  const next: TrailingBuyTelegramState = {
+    ...(current ?? { lastNotifiedAt: 0 }),
+    state: "watching",
+    lastWatchingNotifiedAt: Date.now(),
+    lastNotifiedState: "watching",
+  };
+  trailingBuyTelegramStates.set(key, next);
+}
+
+// ─── ARMED ─────────────────────────────────────────────────────────
 
 export function shouldNotifyArmed(pair: string, mode: string): boolean {
   const key = getStateKey(pair, mode);

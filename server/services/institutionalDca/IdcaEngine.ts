@@ -838,7 +838,7 @@ async function evaluatePair(
                 payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
               }, { eventType: "trailing_buy_activated", pair, mode });
               const reboundTriggerPrice = currentPrice * (1 + reboundMinPct / 100);
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbZone, tbVwap.lowerBand1, reboundTriggerPrice)
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbVwap.lowerBand1, tbVwap.lowerBand1, reboundTriggerPrice)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
 
@@ -981,33 +981,62 @@ async function evaluatePair(
             console.warn(`${TAG}[TRAILING_BUY_L1] ${pair}: ladder ATRP enabled but triggerPrice not found for level ${triggerLevel}, skipping trailing buy trigger`);
           }
           
-          if (triggerPrice && currentPrice <= triggerPrice) {
-            // Trigger trailing buy level 1
-            const atrPct = await getAtrPctForPair(pair);
-            TrailingBuyManager.armLevel(pair, triggerPrice, currentPrice, triggerLevel, {
-              trailingMode: trailingBuyLevel1Config.trailingMode,
-              trailingValue: trailingBuyLevel1Config.trailingValue,
-              maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
-              cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
-              atrpMultiplier: atrPct,
-            });
-            
-            await createHumanEvent({
-              pair, mode,
-              eventType: "trailing_buy_level1_activated",
-              severity: "info",
-              message: `Trailing buy Level 1 armed: level ${triggerLevel} at $${triggerPrice.toFixed(2)}, current $${currentPrice.toFixed(2)}`,
-              payloadJson: { 
-                triggerLevel, 
-                triggerPrice, 
-                currentPrice, 
+          if (triggerPrice) {
+            // referencePrice = precio del nivel ladder (ya incluye la caída del nivel)
+            // activationPrice = referencePrice * (1 - minDipPct/100)
+            //   → el TB solo se arma cuando currentPrice <= activationPrice
+            //   → si currentPrice > activationPrice: estado WATCHING
+            const effectiveMinDipPct = parseFloat(String(assetConfig.minDipPct || "3.5"));
+            const activationPrice = triggerPrice * (1 - effectiveMinDipPct / 100);
+
+            if (currentPrice > activationPrice) {
+              // ── WATCHING: precio está cayendo hacia la zona de activación ──────
+              const missingDipPct = ((currentPrice - activationPrice) / activationPrice * 100).toFixed(2);
+              console.log(
+                `${TAG}[TRAILING_BUY_WATCHING] pair=${pair}` +
+                ` referencePrice=$${triggerPrice.toFixed(2)}` +
+                ` activationPrice=$${activationPrice.toFixed(2)}` +
+                ` currentPrice=$${currentPrice.toFixed(2)}` +
+                ` missingDipPct=${missingDipPct}% status=not_armed_yet`
+              );
+              telegram.alertTrailingBuyWatching(pair, mode, currentPrice, triggerPrice, activationPrice)
+                .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyWatching failed: ${e.message}`));
+
+            } else if (currentPrice <= activationPrice && !TrailingBuyManager.isArmed(pair)) {
+              // ── ARMED: precio llegó al nivel de activación ─────────────────────
+              const atrPct = await getAtrPctForPair(pair);
+              TrailingBuyManager.armLevel(pair, triggerPrice, activationPrice, currentPrice, triggerLevel, {
                 trailingMode: trailingBuyLevel1Config.trailingMode,
                 trailingValue: trailingBuyLevel1Config.trailingValue,
-              },
-            }, { eventType: "trailing_buy_level1_activated", pair, mode });
-            
-            telegram.alertTrailingBuyArmed(pair, mode, currentPrice, `level_${triggerLevel}`, triggerPrice)
-              .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed L1 failed: ${e.message}`));
+                maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
+                cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
+                atrpMultiplier: atrPct,
+              });
+
+              const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
+                ? trailingBuyLevel1Config.trailingValue
+                : trailingBuyLevel1Config.trailingValue * (atrPct ?? 1);
+              const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
+
+              await createHumanEvent({
+                pair, mode,
+                eventType: "trailing_buy_level1_activated",
+                severity: "info",
+                message: `Trailing buy Level 1 armed: level ${triggerLevel} referencePrice=$${triggerPrice.toFixed(2)} activationPrice=$${activationPrice.toFixed(2)} current=$${currentPrice.toFixed(2)}`,
+                payloadJson: {
+                  triggerLevel,
+                  referencePrice: triggerPrice,
+                  activationPrice,
+                  currentPrice,
+                  reboundTriggerPrice,
+                  trailingMode: trailingBuyLevel1Config.trailingMode,
+                  trailingValue: trailingBuyLevel1Config.trailingValue,
+                },
+              }, { eventType: "trailing_buy_level1_activated", pair, mode });
+
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, triggerPrice, activationPrice, reboundTriggerPrice)
+                .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed L1 failed: ${e.message}`));
+            }
           }
         }
 

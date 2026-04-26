@@ -542,13 +542,45 @@ export async function alertVwapDrawdownMilestone(
   await send(chatId, msg, config.telegramThreadId || undefined);
 }
 
+export async function alertTrailingBuyWatching(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  referencePrice: number,
+  activationPrice: number,
+): Promise<void> {
+  if (!tbState.shouldNotifyWatching(pair, mode)) {
+    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping WATCHING alert for ${pair} - throttle active`);
+    return;
+  }
+  const { chatId, enabled } = await canSend("trailing_buy_armed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+  const missingPct = ((currentPrice - activationPrice) / activationPrice * 100).toFixed(2);
+  const msg = [
+    `🔵 <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    ``,
+    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📍 Precio de referencia: <code>$${referencePrice.toFixed(2)}</code>`,
+    `🎯 Falta caer hasta: <code>$${activationPrice.toFixed(2)}</code>`,
+    `📉 Falta bajar: <code>${missingPct}%</code>`,
+    ``,
+    `No se ejecuta compra todavía. El Trailing Buy se armará al llegar a $${activationPrice.toFixed(2)}.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  tbState.markNotifiedWatching(pair, mode);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] WATCHING notification sent for ${pair} referencePrice=$${referencePrice.toFixed(2)} activationPrice=$${activationPrice.toFixed(2)}`);
+}
+
 export async function alertTrailingBuyArmed(
   pair: string,
   mode: string,
   currentPrice: number,
-  zone: string,
-  lowerBand1: number,
-  reboundTriggerPrice?: number,
+  referencePrice: number,
+  activationPrice: number,
+  reboundTriggerPrice: number,
 ): Promise<void> {
   // Anti-spam: solo notificar si no estaba ya armado
   if (!tbState.shouldNotifyArmed(pair, mode)) {
@@ -563,10 +595,10 @@ export async function alertTrailingBuyArmed(
   const msg = [
     `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
     ``,
-    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
-    `📍 Precio de referencia de entrada: <code>$${lowerBand1.toFixed(2)}</code>`,
-    `📊 Zona: <code>${zone}</code>`,
-    reboundTriggerPrice ? `🎯 Compra si rebota hasta: <code>$${reboundTriggerPrice.toFixed(2)}</code>` : null,
+    `💵 Precio actual (mínimo): <code>$${currentPrice.toFixed(2)}</code>`,
+    `📍 Precio de referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
+    `✅ Activación alcanzada: <code>$${activationPrice.toFixed(2)}</code>`,
+    `🎯 Compra si rebota a: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
     ``,
     `El bot no compra todavía. Está esperando confirmación de rebote.`,
     ``,
@@ -575,8 +607,7 @@ export async function alertTrailingBuyArmed(
 
   await send(chatId, msg, config.telegramThreadId || undefined);
   
-  // Marcar como notificado
-  tbState.markNotifiedArmed(pair, mode, lowerBand1, currentPrice);
+  tbState.markNotifiedArmed(pair, mode, referencePrice, currentPrice);
   console.log(`[IDCA][TELEGRAM][TRAILING_BUY] ARMED notification sent for ${pair}`);
 }
 

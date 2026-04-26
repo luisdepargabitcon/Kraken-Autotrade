@@ -1,31 +1,53 @@
 /**
  * TrailingBuyManager — Inverse trailing stop for IDCA entries.
  *
- * When a valid entry zone is detected (dip conditions met, rebound pending),
- * instead of buying immediately this manager tracks the price falling further
- * and triggers a buy when price bounces by a configurable % from the local low.
+ * Flujo correcto:
+ *   1. referencePrice = precio de referencia del nivel (ancla o nivel ladder)
+ *   2. activationPrice = referencePrice * (1 - minDipPct/100)
+ *      → el TB solo se arma cuando currentPrice <= activationPrice
+ *   3. Mientras price > activationPrice: estado WATCHING (no armado)
+ *   4. Al armar: trackear localLow y reboundTriggerPrice = localLow*(1+trailingPct/100)
+ *   5. Compra solo cuando currentPrice >= reboundTriggerPrice (+ revalidación condiciones)
  *
- * State is per-pair and ephemeral (in-memory). If the bot restarts, trailing
- * buy state is lost and the next evaluation starts fresh.
+ * Estado efímero (en memoria). Si el bot reinicia, el siguiente tick recalcula.
  */
 
 export interface TrailingBuyState {
   pair: string;
   armed: boolean;
-  armedAt: number;           // epoch ms when trailing buy was armed
-  triggerPrice: number;      // the dip trigger price that armed the trailing buy
-  localLow: number;          // tracked local low since arming
-  localLowAt: number;        // epoch ms when localLow was last updated
-  trailingPct: number;       // the bounce % required to trigger (e.g. 0.5%)
-  maxDurationMs: number;     // max time to wait before expiring
-  lastPrice: number;         // last price update
-  lastUpdateAt: number;      // epoch ms of last price update
+  armedAt: number;              // epoch ms when trailing buy was armed
+  referencePrice: number;       // entryReferencePrice: base para calcular activationPrice
+  activationPrice: number;      // buyTriggerPrice = referencePrice * (1 - minDipPct/100)
+  triggerPrice: number;         // alias de referencePrice (retrocompatibilidad)
+  localLow: number;             // tracked local low since arming
+  localLowAt: number;           // epoch ms when localLow was last updated
+  trailingPct: number;          // the bounce % required to trigger (e.g. 0.3%)
+  maxDurationMs: number;        // max time to wait before expiring
+  lastPrice: number;            // last price update
+  lastUpdateAt: number;         // epoch ms of last price update
   // Level 1 extensions
-  triggerLevel: number;      // Which ladder level triggers this trailing (0 = base, 1+ = safety)
-  triggerMode: "dip_pct" | "atrp_multiplier";  // How this was triggered
-  atrpMultiplier?: number;   // ATRP multiplier if triggered by ATRP
-  cancelOnRecovery: boolean; // Cancel if price recovers too much
-  recoveryThreshold: number; // Price threshold for cancellation
+  triggerLevel: number;         // Which ladder level triggers this trailing (0 = base, 1+ = safety)
+  triggerMode: "dip_pct" | "atrp_multiplier";
+  atrpMultiplier?: number;
+  cancelOnRecovery: boolean;
+  recoveryThreshold: number;    // Price threshold for cancellation
+}
+
+/**
+ * Helper: calcula el activationPrice a partir del referencePrice y minDipPct.
+ * activationPrice = referencePrice * (1 - minDipPct / 100)
+ * Ejemplo: referencePrice=2404.66, minDipPct=3.5 → activationPrice=2320.50
+ */
+export function computeActivationPrice(referencePrice: number, minDipPct: number): number {
+  return referencePrice * (1 - minDipPct / 100);
+}
+
+/**
+ * Devuelve el reboundTriggerPrice dado un localLow y trailingPct.
+ * reboundTriggerPrice = localLow * (1 + trailingPct / 100)
+ */
+export function computeReboundTriggerPrice(localLow: number, trailingPct: number): number {
+  return localLow * (1 + trailingPct / 100);
 }
 
 export interface TrailingBuyTrigger {
@@ -51,25 +73,30 @@ class TrailingBuyManagerClass {
     maxDurationMs?: number;
   }): void {
     const now = Date.now();
+    const trailingPct = opts?.trailingPct ?? DEFAULT_TRAILING_PCT;
+    const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
     this.states.set(pair, {
       pair,
       armed: true,
       armedAt: now,
+      referencePrice: triggerPrice,
+      activationPrice: triggerPrice, // En VWAP-path, lowerBand1 ya ES el activation price
       triggerPrice,
       localLow: currentPrice,
       localLowAt: now,
-      trailingPct: opts?.trailingPct ?? DEFAULT_TRAILING_PCT,
+      trailingPct,
       maxDurationMs: opts?.maxDurationMs ?? DEFAULT_MAX_DURATION_MS,
       lastPrice: currentPrice,
       lastUpdateAt: now,
-      triggerLevel: 0, // Default: base level
+      triggerLevel: 0,
       triggerMode: "dip_pct",
       cancelOnRecovery: false,
-      recoveryThreshold: triggerPrice * 1.02, // 2% above trigger
+      recoveryThreshold: triggerPrice * 1.02,
     });
     console.log(
-      `[TrailingBuy] ARMED ${pair} triggerPrice=$${triggerPrice.toFixed(2)}` +
-      ` localLow=$${currentPrice.toFixed(2)} trailingPct=${(opts?.trailingPct ?? DEFAULT_TRAILING_PCT).toFixed(2)}%`
+      `[TRAILING_BUY_ARMED] pair=${pair} referencePrice=$${triggerPrice.toFixed(2)}` +
+      ` activationPrice=$${triggerPrice.toFixed(2)} localLow=$${currentPrice.toFixed(2)}` +
+      ` reboundPct=${trailingPct.toFixed(2)} reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}`
     );
   }
 
@@ -77,9 +104,10 @@ class TrailingBuyManagerClass {
    * Arm trailing buy for a specific ladder level (Level 1 functionality)
    */
   armLevel(
-    pair: string, 
-    triggerPrice: number, 
-    currentPrice: number, 
+    pair: string,
+    referencePrice: number,
+    activationPrice: number,
+    currentPrice: number,
     triggerLevel: number,
     opts: {
       trailingMode: "rebound_pct" | "atrp_fraction";
@@ -90,17 +118,20 @@ class TrailingBuyManagerClass {
     }
   ): void {
     const now = Date.now();
-    const trailingPct = opts.trailingMode === "rebound_pct" 
-      ? opts.trailingValue 
+    const trailingPct = opts.trailingMode === "rebound_pct"
+      ? opts.trailingValue
       : (opts.atrpMultiplier ? opts.trailingValue * opts.atrpMultiplier : opts.trailingValue);
-    
+
     const maxDurationMs = (opts.maxWaitMinutes ?? 60) * 60 * 1000;
-    
+    const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
+
     this.states.set(pair, {
       pair,
       armed: true,
       armedAt: now,
-      triggerPrice,
+      referencePrice,
+      activationPrice,
+      triggerPrice: referencePrice, // retrocompatibilidad
       localLow: currentPrice,
       localLowAt: now,
       trailingPct,
@@ -111,12 +142,14 @@ class TrailingBuyManagerClass {
       triggerMode: opts.trailingMode === "rebound_pct" ? "dip_pct" : "atrp_multiplier",
       atrpMultiplier: opts.atrpMultiplier,
       cancelOnRecovery: opts.cancelOnRecovery ?? true,
-      recoveryThreshold: triggerPrice * 1.02, // 2% above trigger
+      recoveryThreshold: referencePrice * 1.02,
     });
-    
+
     console.log(
-      `[TrailingBuy] ARMED LEVEL ${pair} level=${triggerLevel} triggerPrice=$${triggerPrice.toFixed(2)}` +
-      ` localLow=$${currentPrice.toFixed(2)} trailingPct=${trailingPct.toFixed(2)}% mode=${opts.trailingMode}`
+      `[TRAILING_BUY_ARMED] pair=${pair} level=${triggerLevel}` +
+      ` referencePrice=$${referencePrice.toFixed(2)} activationPrice=$${activationPrice.toFixed(2)}` +
+      ` localLow=$${currentPrice.toFixed(2)} reboundPct=${trailingPct.toFixed(2)}%` +
+      ` reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)} mode=${opts.trailingMode}`
     );
   }
 
@@ -161,6 +194,11 @@ class TrailingBuyManagerClass {
     if (currentPrice < state.localLow) {
       state.localLow = currentPrice;
       state.localLowAt = now;
+      const reboundTriggerPrice = computeReboundTriggerPrice(state.localLow, state.trailingPct);
+      console.log(
+        `[TRAILING_BUY_TRACKING] pair=${pair}` +
+        ` localLow=$${state.localLow.toFixed(2)} reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}`
+      );
       return { triggered: false, buyPrice: 0, localLow: state.localLow, bouncePct: 0, reason: "tracking_lower" };
     }
 
@@ -168,9 +206,16 @@ class TrailingBuyManagerClass {
     const bouncePct = state.localLow > 0
       ? ((currentPrice - state.localLow) / state.localLow) * 100
       : 0;
+    const reboundTriggerPrice = computeReboundTriggerPrice(state.localLow, state.trailingPct);
 
     if (bouncePct >= state.trailingPct) {
-      // TRIGGER! Price bounced enough from local low
+      // TRIGGER! Price bounced enough from local low — revalidar condiciones en el engine
+      console.log(
+        `[TRAILING_BUY_REBOUND_DETECTED] pair=${pair} currentPrice=$${currentPrice.toFixed(2)}` +
+        ` localLow=$${state.localLow.toFixed(2)} reboundPct=${state.trailingPct}%` +
+        ` reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)} bouncePct=${bouncePct.toFixed(3)}%` +
+        ` elapsed=${((now - state.armedAt) / 60000).toFixed(1)}min revalidation=pending`
+      );
       const result: TrailingBuyTrigger = {
         triggered: true,
         buyPrice: currentPrice,
@@ -178,11 +223,6 @@ class TrailingBuyManagerClass {
         bouncePct,
         reason: `Bounce ${bouncePct.toFixed(3)}% >= ${state.trailingPct}% from low=$${state.localLow.toFixed(2)}`,
       };
-      console.log(
-        `[TrailingBuy] TRIGGERED ${pair} price=$${currentPrice.toFixed(2)}` +
-        ` low=$${state.localLow.toFixed(2)} bounce=${bouncePct.toFixed(3)}%` +
-        ` elapsed=${((now - state.armedAt) / 60000).toFixed(1)}min`
-      );
       this.disarm(pair);
       return result;
     }
@@ -192,7 +232,7 @@ class TrailingBuyManagerClass {
       buyPrice: 0,
       localLow: state.localLow,
       bouncePct,
-      reason: `waiting (bounce=${bouncePct.toFixed(3)}% < ${state.trailingPct}%)`,
+      reason: `waiting (bounce=${bouncePct.toFixed(3)}% < ${state.trailingPct}% reboundTrigger=$${reboundTriggerPrice.toFixed(2)})`,
     };
   }
 
