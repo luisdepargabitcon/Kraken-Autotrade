@@ -817,6 +817,7 @@ async function evaluatePair(
         // zone would never produce any UI events.
         const tbCandles = ohlcCache.get(pair) || [];
         let trailingAllowsEntry = false; // true only when trailing buy fires
+        let trailingBuyTriggerData: { localLow: number; bouncePct: number; buyThreshold: number; maxExecutionPrice: number } | undefined;
 
         if (tbCandles.length >= 7) {
           const anchor24h = Date.now() - 24 * 60 * 60 * 1000;
@@ -862,12 +863,21 @@ async function evaluatePair(
               
               if (tbResult.triggered) {
                 // Trailing confirmó rebote → permitir ejecución de compra
+                const tbState$ = TrailingBuyManager.getState(pair); // puede ser undefined ya (disarmed)
+                const tbBuyThreshold = tbResult.buyThreshold ?? tbState$?.buyThreshold ?? currentPrice;
+                const tbMaxExecutionPrice = tbResult.maxExecutionPrice ?? tbState$?.maxExecutionPrice ?? currentPrice * 1.01;
+                trailingBuyTriggerData = {
+                  localLow: tbResult.localLow,
+                  bouncePct: tbResult.bouncePct,
+                  buyThreshold: tbBuyThreshold,
+                  maxExecutionPrice: tbMaxExecutionPrice,
+                };
                 await createHumanEvent({
                   pair, mode,
                   eventType: "trailing_buy_triggered",
                   severity: "info",
-                  message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)}`,
-                  payloadJson: { ...tbResult, zone: tbZone },
+                  message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)} | buyThreshold=$${tbBuyThreshold.toFixed(2)} maxExec=$${tbMaxExecutionPrice.toFixed(2)}`,
+                  payloadJson: { ...tbResult, zone: tbZone, buyThreshold: tbBuyThreshold, maxExecutionPrice: tbMaxExecutionPrice },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
                 telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow)
                   .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTriggered failed: ${e.message}`));
@@ -982,35 +992,42 @@ async function evaluatePair(
           }
           
           if (triggerPrice) {
-            // referencePrice = precio del nivel ladder (ya incluye la caída del nivel)
-            // activationPrice = referencePrice * (1 - minDipPct/100)
-            //   → el TB solo se arma cuando currentPrice <= activationPrice
-            //   → si currentPrice > activationPrice: estado WATCHING
+            // ── OPCIÓN B: effectiveEntryReference = frozenAnchorPrice (o fallback triggerPrice) ──
+            // buyThreshold = effectiveEntryReference * (1 - minDipPct/100)
+            //   → WATCHING si currentPrice > buyThreshold
+            //   → ARMED    si currentPrice <= buyThreshold (y no armado aún)
+            const frozenAnchor$ = vwapAnchorMemory.get(pair);
+            const effectiveEntryReference = frozenAnchor$?.anchorPrice && frozenAnchor$.anchorPrice > 0
+              ? frozenAnchor$.anchorPrice
+              : triggerPrice; // fallback al precio del nivel ladder
             const effectiveMinDipPct = parseFloat(String(assetConfig.minDipPct || "3.5"));
-            const activationPrice = triggerPrice * (1 - effectiveMinDipPct / 100);
+            const buyThreshold = effectiveEntryReference * (1 - effectiveMinDipPct / 100);
+            const maxOvershootPct = parseFloat(String(trailingBuyLevel1Config.maxTrailingBuyOvershootPct ?? "0.30"));
+            const maxExecutionPrice = buyThreshold * (1 + maxOvershootPct / 100);
 
-            if (currentPrice > activationPrice) {
-              // ── WATCHING: precio está cayendo hacia la zona de activación ──────
-              const missingDipPct = ((currentPrice - activationPrice) / activationPrice * 100).toFixed(2);
+            if (currentPrice > buyThreshold) {
+              // ── WATCHING: precio está cayendo hacia la zona de activación ──
+              const missingDipPct = ((currentPrice - buyThreshold) / currentPrice * 100).toFixed(2);
               console.log(
                 `${TAG}[TRAILING_BUY_WATCHING] pair=${pair}` +
-                ` referencePrice=$${triggerPrice.toFixed(2)}` +
-                ` activationPrice=$${activationPrice.toFixed(2)}` +
+                ` referencePrice=$${effectiveEntryReference.toFixed(2)}` +
+                ` buyThreshold=$${buyThreshold.toFixed(2)}` +
                 ` currentPrice=$${currentPrice.toFixed(2)}` +
                 ` missingDipPct=${missingDipPct}% status=not_armed_yet`
               );
-              telegram.alertTrailingBuyWatching(pair, mode, currentPrice, triggerPrice, activationPrice)
+              telegram.alertTrailingBuyWatching(pair, mode, currentPrice, effectiveEntryReference, buyThreshold)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyWatching failed: ${e.message}`));
 
-            } else if (currentPrice <= activationPrice && !TrailingBuyManager.isArmed(pair)) {
-              // ── ARMED: precio llegó al nivel de activación ─────────────────────
+            } else if (!TrailingBuyManager.isArmed(pair)) {
+              // ── ARMED: precio llegó al nivel de activación ──
               const atrPct = await getAtrPctForPair(pair);
-              TrailingBuyManager.armLevel(pair, triggerPrice, activationPrice, currentPrice, triggerLevel, {
+              TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, {
                 trailingMode: trailingBuyLevel1Config.trailingMode,
                 trailingValue: trailingBuyLevel1Config.trailingValue,
                 maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
                 cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
                 atrpMultiplier: atrPct,
+                maxExecutionPrice,
               });
 
               const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
@@ -1022,19 +1039,21 @@ async function evaluatePair(
                 pair, mode,
                 eventType: "trailing_buy_level1_activated",
                 severity: "info",
-                message: `Trailing buy Level 1 armed: level ${triggerLevel} referencePrice=$${triggerPrice.toFixed(2)} activationPrice=$${activationPrice.toFixed(2)} current=$${currentPrice.toFixed(2)}`,
+                message: `Trailing buy Level 1 ARMED: level ${triggerLevel} referencePrice=$${effectiveEntryReference.toFixed(2)} buyThreshold=$${buyThreshold.toFixed(2)} maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} current=$${currentPrice.toFixed(2)}`,
                 payloadJson: {
                   triggerLevel,
-                  referencePrice: triggerPrice,
-                  activationPrice,
+                  effectiveEntryReference,
+                  buyThreshold,
+                  maxExecutionPrice,
                   currentPrice,
                   reboundTriggerPrice,
                   trailingMode: trailingBuyLevel1Config.trailingMode,
                   trailingValue: trailingBuyLevel1Config.trailingValue,
+                  entrySource: "trailing_buy",
                 },
               }, { eventType: "trailing_buy_level1_activated", pair, mode });
 
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, triggerPrice, activationPrice, reboundTriggerPrice)
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, effectiveEntryReference, buyThreshold, reboundTriggerPrice)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed L1 failed: ${e.message}`));
             }
           }
@@ -1070,8 +1089,17 @@ async function evaluatePair(
         }
 
         // Always run checkEntry for event generation (entry_check_blocked visible in UI).
-        // If trailingAllowsEntry, this will also execute the buy.
-        await checkEntry(pair, currentPrice, config, assetConfig, mode, !trailingAllowsEntry);
+        // If trailingAllowsEntry, this will also execute the buy (con bypass de insufficient_dip).
+        await checkEntry(
+          pair, currentPrice, config, assetConfig, mode,
+          !trailingAllowsEntry,
+          trailingAllowsEntry && trailingBuyTriggerData
+            ? { localLow: trailingBuyTriggerData.localLow, bouncePct: trailingBuyTriggerData.bouncePct }
+            : undefined,
+          trailingAllowsEntry && trailingBuyTriggerData
+            ? { localLow: trailingBuyTriggerData.localLow, buyThreshold: trailingBuyTriggerData.buyThreshold, maxExecutionPrice: trailingBuyTriggerData.maxExecutionPrice }
+            : undefined,
+        );
       } else {
         // Sin VWAP → comportamiento original directo
         await checkEntry(pair, currentPrice, config, assetConfig, mode, false);
@@ -1093,9 +1121,10 @@ async function checkEntry(
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode,
   observeOnly = false,
-  trailingBuyContext?: { localLow: number; bouncePct: number }
+  trailingBuyContext?: { localLow: number; bouncePct: number },
+  trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
 ): Promise<void> {
-  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode);
+  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, trailingBuyEntry);
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -2291,7 +2320,8 @@ async function performEntryCheck(
   currentPrice: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode
+  mode: IdcaMode,
+  trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
 ): Promise<IdcaEntryCheckResult> {
   const blocks: IdcaBlockReason[] = [];
   const now = new Date();
@@ -2530,7 +2560,25 @@ async function performEntryCheck(
     ? Math.max(atrPct * 1.5, parseFloat(String(assetConfig.minDipPct)))
     : parseFloat(String(assetConfig.minDipPct));
 
-  if (basePriceResult.isReliable && entryDipPct < minDip) {
+  if (trailingBuyEntry) {
+    // ── Trailing Buy entry: la caída mínima ya fue validada al armar el TB ──
+    // Solo verificar que el precio post-rebote no supera maxExecutionPrice
+    if (currentPrice > trailingBuyEntry.maxExecutionPrice) {
+      console.log(
+        `${TAG}[TRAILING_BUY_EXECUTION_BLOCKED] pair=${pair}` +
+        ` reason=execution_too_high currentPrice=$${currentPrice.toFixed(2)}` +
+        ` maxExecutionPrice=$${trailingBuyEntry.maxExecutionPrice.toFixed(2)}` +
+        ` buyThreshold=$${trailingBuyEntry.buyThreshold.toFixed(2)}` +
+        ` localLow=$${trailingBuyEntry.localLow.toFixed(2)}`
+      );
+      blocks.push({
+        code: "trailing_buy_execution_too_high",
+        message: `currentPrice $${currentPrice.toFixed(2)} > maxExecutionPrice $${trailingBuyEntry.maxExecutionPrice.toFixed(2)} (buyThreshold=$${trailingBuyEntry.buyThreshold.toFixed(2)})`,
+        timestamp: now,
+      });
+    }
+    // insufficient_dip NO se valida con currentPrice; la caída ya fue confirmada por localLow
+  } else if (basePriceResult.isReliable && entryDipPct < minDip) {
     blocks.push({ code: "insufficient_dip", message: `EntryDip ${entryDipPct.toFixed(2)}% < min ${minDip.toFixed(2)}% (EffectiveBase=$${effectiveBasePrice.toFixed(2)}, Method=${basePriceMethod})`, timestamp: now });
   }
 
@@ -2686,6 +2734,8 @@ async function performEntryCheck(
     basePriceMethod,
     weeklyTrend,
     monthlyBias,
+    entrySource: trailingBuyEntry ? "trailing_buy" : "normal",
+    dipValidatedBy: trailingBuyEntry ? "localLow" : "currentPrice",
   };
 }
 

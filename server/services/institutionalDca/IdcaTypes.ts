@@ -217,6 +217,8 @@ export interface IdcaEntryCheckResult {
   basePriceMethod?: string;
   weeklyTrend?: "below" | "above" | "unknown";
   monthlyBias?: "aggressive" | "balanced" | "defensive" | "unknown";
+  entrySource?: "normal" | "trailing_buy";
+  dipValidatedBy?: "currentPrice" | "localLow";
 }
 
 export interface IdcaPairEvaluation {
@@ -486,6 +488,9 @@ export interface TrailingBuyLevel1Config {
   // Advanced
   minVolumeCheck: boolean;     // Check volume before triggering
   confirmWithVwap: boolean;    // Require VWAP confirmation
+
+  // Execution safety
+  maxTrailingBuyOvershootPct?: number; // Max % above buyThreshold allowed at execution (default 0.30)
 }
 
 export interface TrailingBuyState {

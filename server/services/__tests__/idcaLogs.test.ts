@@ -42,15 +42,19 @@ function detectLogType(line: string): string {
   const l = line.toLowerCase();
   if (l.includes("entry_check_blocked") || l.includes("entrada bloqueada")) return "entry_check_blocked";
   if (l.includes("entry_check_passed") || l.includes("entrada permitida"))  return "entry_check_passed";
+  if (l.includes("trailing_buy_watching") || (l.includes("trailing buy") && l.includes("watching")))    return "trailing_buy_watching";
+  if (l.includes("trailing_buy_execution_blocked") || l.includes("execution_too_high"))                 return "trailing_buy_execution_blocked";
+  if (l.includes("trailing_buy_rebound_detected") || (l.includes("trailing buy") && l.includes("rebound_detected"))) return "trailing_buy_rebound_detected";
   if (l.includes("trailing buy level") && l.includes("armed"))              return "trailing_buy_armed";
   if (l.includes("trailing buy level") && l.includes("tracking"))           return "trailing_buy_tracking";
   if (l.includes("trailing buy level") && l.includes("triggered"))          return "trailing_buy_triggered";
   if (l.includes("trailing buy level") && l.includes("executed"))           return "trailing_buy_executed";
   if (l.includes("trailing buy level") && l.includes("cancel"))             return "trailing_buy_cancelled";
-  if (l.includes("trailing buy") && l.includes("armed"))                    return "trailing_buy_armed";
+  if (l.includes("trailing_buy_armed") || (l.includes("trailing buy") && l.includes("armed")))         return "trailing_buy_armed";
+  if (l.includes("trailing_buy_tracking") || (l.includes("trailing buy") && l.includes("tracking")))   return "trailing_buy_tracking";
   if (l.includes("trailing buy") && l.includes("trigger"))                  return "trailing_buy_triggered";
   if (l.includes("trailing buy") && l.includes("execut"))                   return "trailing_buy_executed";
-  if (l.includes("trailing buy") && l.includes("cancel"))                   return "trailing_buy_cancelled";
+  if (l.includes("trailing_buy_cancelled") || (l.includes("trailing buy") && l.includes("cancel")))    return "trailing_buy_cancelled";
   if (l.includes("trailing buy"))                                            return "trailing_buy_tracking";
   if (l.includes("vwap") || l.includes("precio referencia"))                return "vwap_context";
   if (l.includes("safety buy") || l.includes("safety_buy"))                 return "safety_buy";
@@ -734,5 +738,19 @@ describe("idcaLogParser — tests spec obligatorios (11-13)", () => {
     };
     expect(params.cycleId).toBe(0); // confirma que el test usa valor inválido
     expect(!params.cycleId || params.cycleId <= 0).toBe(true); // guard se activaría
+  });
+
+  it("14. detectLogType reconoce nuevos tipos Opción B: WATCHING, EXECUTION_BLOCKED, REBOUND_DETECTED", () => {
+    const cases: [string, string][] = [
+      ["[TRAILING_BUY_WATCHING] pair=ETH/USD referencePrice=$2424.05 buyThreshold=$2339.21 status=not_armed_yet", "trailing_buy_watching"],
+      ["[TRAILING_BUY_EXECUTION_BLOCKED] pair=ETH/USD reason=execution_too_high currentPrice=$2350.00", "trailing_buy_execution_blocked"],
+      ["[TRAILING_BUY_REBOUND_DETECTED] pair=ETH/USD localLow=$2325.00 currentPrice=$2331.98 status=processing_entry", "trailing_buy_rebound_detected"],
+      ["[TRAILING_BUY_ARMED] pair=ETH/USD buyThreshold=$2339.21 maxExecutionPrice=$2346.23", "trailing_buy_armed"],
+      ["[TRAILING_BUY_TRACKING] pair=ETH/USD oldLow=$2339.21 newLow=$2325.00", "trailing_buy_tracking"],
+      ["[TRAILING_BUY_CANCELLED] pair=ETH/USD reason=price_recovered", "trailing_buy_cancelled"],
+    ];
+    for (const [line, expected] of cases) {
+      expect(detectLogType(line), `Failed for: ${line}`).toBe(expected);
+    }
   });
 });

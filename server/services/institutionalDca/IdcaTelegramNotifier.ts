@@ -547,7 +547,7 @@ export async function alertTrailingBuyWatching(
   mode: string,
   currentPrice: number,
   referencePrice: number,
-  activationPrice: number,
+  buyThreshold: number,
 ): Promise<void> {
   if (!tbState.shouldNotifyWatching(pair, mode)) {
     console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping WATCHING alert for ${pair} - throttle active`);
@@ -556,22 +556,23 @@ export async function alertTrailingBuyWatching(
   const { chatId, enabled } = await canSend("trailing_buy_armed");
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
-  const missingPct = ((currentPrice - activationPrice) / activationPrice * 100).toFixed(2);
+  const missingPct = ((currentPrice - buyThreshold) / currentPrice * 100).toFixed(2);
   const msg = [
-    `🔵 <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    `⚡ <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
     ``,
     `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
     `📍 Precio de referencia: <code>$${referencePrice.toFixed(2)}</code>`,
-    `🎯 Falta caer hasta: <code>$${activationPrice.toFixed(2)}</code>`,
-    `📉 Falta bajar: <code>${missingPct}%</code>`,
+    `🎯 Zona de activación: <code>$${buyThreshold.toFixed(2)}</code>`,
+    `📉 Falta caer: <code>${missingPct}%</code>`,
     ``,
-    `No se ejecuta compra todavía. El Trailing Buy se armará al llegar a $${activationPrice.toFixed(2)}.`,
+    `No se ejecutará compra todavía. El Trailing Buy se armará solo si el precio toca la zona de activación.`,
     ``,
     `<i>Modo: ${mode}</i>`,
   ].join("\n");
+
   await send(chatId, msg, config.telegramThreadId || undefined);
   tbState.markNotifiedWatching(pair, mode);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] WATCHING notification sent for ${pair} referencePrice=$${referencePrice.toFixed(2)} activationPrice=$${activationPrice.toFixed(2)}`);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] WATCHING notification sent for ${pair} referencePrice=$${referencePrice.toFixed(2)} buyThreshold=$${buyThreshold.toFixed(2)}`);
 }
 
 export async function alertTrailingBuyArmed(
@@ -592,13 +593,16 @@ export async function alertTrailingBuyArmed(
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
+  const maxExecutionPrice = activationPrice * 1.003; // fallback 0.30% sobre buyThreshold
   const msg = [
     `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
     ``,
     `💵 Precio actual (mínimo): <code>$${currentPrice.toFixed(2)}</code>`,
     `📍 Precio de referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
     `✅ Activación alcanzada: <code>$${activationPrice.toFixed(2)}</code>`,
+    `📊 Mínimo observado: <code>$${currentPrice.toFixed(2)}</code>`,
     `🎯 Compra si rebota a: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
+    `🚫 Límite máximo de ejecución: <code>$${maxExecutionPrice.toFixed(2)}</code>`,
     ``,
     `El bot no compra todavía. Está esperando confirmación de rebote.`,
     ``,

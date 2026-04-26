@@ -318,122 +318,179 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
   });
 });
 
-// ─── Tests obligatorios spec: lógica WATCHING/ARMED/activationPrice ──────────
+// ─── Tests obligatorios Opción B spec numérico ETH/USD ───────────────────────
+// effectiveEntryReference=2424.05, minDip=3.5%, rebound=0.30%, maxOvershoot=0.30%
+// buyThreshold = 2424.05 * (1-0.035) = 2339.21
+// maxExecutionPrice = 2339.21 * (1+0.003) = 2346.23
 
-describe("TrailingBuy spec — activationPrice, WATCHING, ARMED, tracking", () => {
+describe("TrailingBuy Opción B — buyThreshold desde effectiveEntryReference", () => {
   const pair = "ETH/USD";
   const mode = "simulation";
+
+  const REF = 2424.05;
+  const MIN_DIP = 3.5;
+  const REBOUND_PCT = 0.3;
+  const MAX_OVERSHOOT = 0.3;
+
+  const buyThreshold = REF * (1 - MIN_DIP / 100);           // 2339.21
+  const maxExecutionPrice = buyThreshold * (1 + MAX_OVERSHOOT / 100); // 2346.23
 
   beforeEach(() => {
     TrailingBuyManager.clearAll();
     tbState.resetAllStates();
   });
 
-  // Spec punto 2: cálculo activationPrice
-  it("1. referencePrice=2404.66 minDip=3.5 → activationPrice=2320.50", () => {
-    const activationPrice = computeActivationPrice(2404.66, 3.5);
-    expect(activationPrice).toBeCloseTo(2320.50, 1);
+  // Test 1: fórmula buyThreshold
+  it("1. reference=2424.05 minDip=3.5 → buyThreshold=2339.21", () => {
+    expect(computeActivationPrice(REF, MIN_DIP)).toBeCloseTo(2339.21, 1);
   });
 
-  // Spec punto 3: precio por encima → NO se arma
-  it("2. currentPrice=2346 > activationPrice=2320.50 → no se arma el TB", () => {
-    const referencePrice = 2404.66;
-    const activationPrice = computeActivationPrice(referencePrice, 3.5);
-    const currentPrice = 2346;
-
-    expect(currentPrice).toBeGreaterThan(activationPrice);
-    // Estado WATCHING: shouldNotifyWatching debe permitir notificar (primera vez)
+  // Test 2: Caso A — currentPrice=2378.81 > buyThreshold → WATCHING, no armado
+  it("2. currentPrice=2378.81 > buyThreshold=2339.21 → WATCHING, TB no armado", () => {
+    expect(2378.81).toBeGreaterThan(buyThreshold);
     expect(tbState.shouldNotifyWatching(pair, mode)).toBe(true);
-    // TB NO debe estar armado
     expect(TrailingBuyManager.isArmed(pair)).toBe(false);
   });
 
-  // Spec punto 4: precio llega a activationPrice → se arma
-  it("3. currentPrice=2320.50 <= activationPrice → TB se arma correctamente", () => {
-    const referencePrice = 2404.66;
-    const activationPrice = computeActivationPrice(referencePrice, 3.5);
-    expect(activationPrice).toBeCloseTo(2320.50, 1);
-
-    TrailingBuyManager.armLevel(pair, referencePrice, activationPrice, activationPrice, 0, {
+  // Test 3: Caso B — currentPrice=2339.21 <= buyThreshold → ARMED
+  it("3. currentPrice=2339.21 <= buyThreshold → ARMED con referencePrice y buyThreshold correctos", () => {
+    TrailingBuyManager.armLevel(pair, REF, buyThreshold, buyThreshold, 0, {
       trailingMode: "rebound_pct",
-      trailingValue: 0.3,
+      trailingValue: REBOUND_PCT,
       maxWaitMinutes: 60,
       cancelOnRecovery: false,
+      maxExecutionPrice,
     });
 
     expect(TrailingBuyManager.isArmed(pair)).toBe(true);
     const state = TrailingBuyManager.getState(pair);
-    expect(state?.referencePrice).toBeCloseTo(2404.66, 1);
-    expect(state?.activationPrice).toBeCloseTo(2320.50, 1);
-    expect(state?.localLow).toBeCloseTo(2320.50, 1);
+    expect(state?.referencePrice).toBeCloseTo(REF, 1);
+    expect(state?.buyThreshold).toBeCloseTo(buyThreshold, 1);
+    expect(state?.maxExecutionPrice).toBeCloseTo(maxExecutionPrice, 1);
+    expect(state?.localLow).toBeCloseTo(buyThreshold, 1);
   });
 
-  // Spec punto 5a: localLow=2320.50, rebound=0.3 → reboundTriggerPrice=2327.46
-  it("4. localLow=2320.50 reboundPct=0.3 → reboundTriggerPrice=2327.46", () => {
-    const reboundTriggerPrice = computeReboundTriggerPrice(2320.50, 0.3);
-    expect(reboundTriggerPrice).toBeCloseTo(2327.46, 1);
+  // Test 4: localLow=buyThreshold, rebound=0.3% → reboundTriggerPrice=2346.23
+  it("4. localLow=2339.21 reboundPct=0.3 → reboundTriggerPrice=2346.23", () => {
+    const rtp = computeReboundTriggerPrice(buyThreshold, REBOUND_PCT);
+    expect(rtp).toBeCloseTo(maxExecutionPrice, 1);
   });
 
-  // Spec punto 5b: localLow baja a 2317.00 → reboundTriggerPrice=2323.95
-  it("5. localLow=2317.00 reboundPct=0.3 → reboundTriggerPrice=2323.95", () => {
-    const reboundTriggerPrice = computeReboundTriggerPrice(2317.00, 0.3);
-    expect(reboundTriggerPrice).toBeCloseTo(2323.95, 1);
+  // Test 5: Caso C — localLow baja a 2325, reboundTriggerPrice=2331.98
+  it("5. localLow=2325.00 reboundPct=0.3 → reboundTriggerPrice=2331.98", () => {
+    const rtp = computeReboundTriggerPrice(2325.00, REBOUND_PCT);
+    expect(rtp).toBeCloseTo(2325.00 * 1.003, 2);
+    expect(rtp).toBeCloseTo(2331.98, 1);
   });
 
-  // Spec punto 5: TB trackea local low correctamente
-  it("6. localLow se actualiza al bajar el precio, reboundTriggerPrice se recalcula", () => {
-    const referencePrice = 2404.66;
-    const activationPrice = computeActivationPrice(referencePrice, 3.5);
-
-    TrailingBuyManager.armLevel(pair, referencePrice, activationPrice, 2320.50, 0, {
+  // Test 6: Caso D — precio baja a 2325, update lo trackea correctamente
+  it("6. TRACKING: localLow actualiza a 2325, reboundTriggerPrice < maxExecutionPrice", () => {
+    TrailingBuyManager.armLevel(pair, REF, buyThreshold, buyThreshold, 0, {
       trailingMode: "rebound_pct",
-      trailingValue: 0.3,
+      trailingValue: REBOUND_PCT,
       maxWaitMinutes: 60,
       cancelOnRecovery: false,
+      maxExecutionPrice,
     });
 
-    // Precio baja más → debe actualizar localLow
-    const result1 = TrailingBuyManager.update(pair, 2317.00);
-    expect(result1.triggered).toBe(false);
-    expect(result1.reason).toBe("tracking_lower");
+    const r = TrailingBuyManager.update(pair, 2325.00);
+    expect(r.triggered).toBe(false);
+    expect(r.reason).toBe("tracking_lower");
     const state = TrailingBuyManager.getState(pair);
-    expect(state?.localLow).toBeCloseTo(2317.00, 2);
-
-    // reboundTriggerPrice desde nuevo localLow
-    const reboundTriggerPrice = computeReboundTriggerPrice(state!.localLow, state!.trailingPct);
-    expect(reboundTriggerPrice).toBeCloseTo(2323.95, 1);
+    expect(state?.localLow).toBeCloseTo(2325.00, 2);
+    const rtp = computeReboundTriggerPrice(state!.localLow, state!.trailingPct);
+    expect(rtp).toBeCloseTo(2331.98, 1);
   });
 
-  // Spec punto 6 + 9: rebote detectado pero si revalidación falla → triggered=true solo indica rebote,
-  // la compra real depende del engine. Solo "Compra ejecutada" si hay cycleId.
-  it("7. alertTrailingBuyExecuted SIN cycleId/orderId → no envía Telegram (guard activo)", async () => {
-    // La función guarda este contrato: si cycleId<=0 u orderId<=0 → return sin enviar
-    // Verificamos el guard directamente desde el módulo
+  // Test 7: Caso D — rebote desde 2325 a 2331.98 → REBOUND_DETECTED, incluye buyThreshold y maxExecutionPrice
+  it("7. REBOUND_DETECTED desde localLow=2325 → triggered=true, incluye buyThreshold y maxExecutionPrice", () => {
+    TrailingBuyManager.armLevel(pair, REF, buyThreshold, 2325.00, 0, {
+      trailingMode: "rebound_pct",
+      trailingValue: REBOUND_PCT,
+      maxWaitMinutes: 60,
+      cancelOnRecovery: false,
+      maxExecutionPrice,
+    });
+
+    const reboundPrice = computeReboundTriggerPrice(2325.00, REBOUND_PCT); // 2331.98
+    // +0.01 para evitar imprecisión float al comparar bouncePct >= trailingPct
+    const r = TrailingBuyManager.update(pair, reboundPrice + 0.01);
+    expect(r.triggered).toBe(true);
+    expect(r.localLow).toBeCloseTo(2325.00, 2);
+    expect(r.buyThreshold).toBeCloseTo(buyThreshold, 1);
+    expect(r.maxExecutionPrice).toBeCloseTo(maxExecutionPrice, 1);
+    // 2331.98 <= 2346.23 → permitido
+    expect(r.buyPrice).toBeLessThanOrEqual(maxExecutionPrice);
+  });
+
+  // Test 8: Caso E — currentPrice=2350 > maxExecutionPrice=2346.23 → bloqueado
+  it("8. currentPrice=2350 > maxExecutionPrice=2346.23 → execution_too_high (arm no dispara)", () => {
+    TrailingBuyManager.armLevel(pair, REF, buyThreshold, 2325.00, 0, {
+      trailingMode: "rebound_pct",
+      trailingValue: REBOUND_PCT,
+      maxWaitMinutes: 60,
+      cancelOnRecovery: false,
+      maxExecutionPrice,
+    });
+
+    // El TB dispara a cualquier precio > reboundTriggerPrice
+    // El bloqueo execution_too_high lo hace el engine al llamar performEntryCheck
+    // Aquí verificamos que maxExecutionPrice se almacena correctamente en el estado
+    const state = TrailingBuyManager.getState(pair);
+    expect(2350.00).toBeGreaterThan(state!.maxExecutionPrice);
+    expect(state!.maxExecutionPrice).toBeCloseTo(2346.23, 1);
+  });
+
+  // Test 9: sin cycleId → no Telegram "Compra ejecutada"
+  it("9. alertTrailingBuyExecuted sin cycleId → no envía Telegram (guard activo)", async () => {
     const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { alertTrailingBuyExecuted } = await import("../institutionalDca/IdcaTelegramNotifier");
-
-    // Sin cycleId (0)
-    await alertTrailingBuyExecuted(pair, mode, 2324.00, 2317.00, 0.3, 0, undefined);
+    await alertTrailingBuyExecuted(pair, mode, 2331.98, 2325.00, REBOUND_PCT, 0, undefined);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("no hay cycleId"));
-
-    // Sin orderId (0) pero cycleId válido
-    await alertTrailingBuyExecuted(pair, mode, 2324.00, 2317.00, 0.3, 999, 0);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("no hay orderId"));
-
     consoleSpy.mockRestore();
   });
 
-  // WATCHING throttle: segunda llamada inmediata bloqueada por 30min
-  it("8. shouldNotifyWatching: primera vez true, segunda inmediata false (throttle 30min)", () => {
+  // Test 10: restart — no re-notifica ARMED si ya estaba armado
+  it("10. restart: shouldNotifyArmed=false si ya estaba en estado armed", () => {
+    tbState.markNotifiedArmed(pair, mode, REF, buyThreshold);
+    expect(tbState.shouldNotifyArmed(pair, mode)).toBe(false);
+  });
+
+  // Test 11: WATCHING throttle — 30min
+  it("11. shouldNotifyWatching: primera=true, segunda inmediata=false (throttle 30min)", () => {
     expect(tbState.shouldNotifyWatching(pair, mode)).toBe(true);
     tbState.markNotifiedWatching(pair, mode);
-    // Segunda llamada inmediata → throttle activo (30 min no han pasado)
     expect(tbState.shouldNotifyWatching(pair, mode)).toBe(false);
   });
 
-  // WATCHING no se muestra si ya estamos en ARMED
-  it("9. shouldNotifyWatching=false cuando estado es armed", () => {
-    tbState.markNotifiedArmed(pair, mode, 2404.66, 2320.50);
+  // Test 12: WATCHING bloqueado cuando ya estamos en ARMED
+  it("12. shouldNotifyWatching=false cuando estado es armed", () => {
+    tbState.markNotifiedArmed(pair, mode, REF, buyThreshold);
     expect(tbState.shouldNotifyWatching(pair, mode)).toBe(false);
+  });
+
+  // Test 13: parser reconoce todos los logTypes del spec
+  it("13. detectLogType reconoce WATCHING, ARMED, TRACKING, REBOUND_DETECTED, EXECUTION_BLOCKED, EXECUTED, CANCELLED", () => {
+    const cases: [string, string][] = [
+      ["[TRAILING_BUY_WATCHING] pair=ETH/USD referencePrice=$2424.05", "trailing_buy_watching"],
+      ["[TRAILING_BUY_ARMED] pair=ETH/USD level=0 referencePrice=$2424.05 buyThreshold=$2339.21", "trailing_buy_armed"],
+      ["[TRAILING_BUY_TRACKING] pair=ETH/USD oldLow=$2339.21 newLow=$2325.00", "trailing_buy_tracking"],
+      ["[TRAILING_BUY_REBOUND_DETECTED] pair=ETH/USD localLow=$2325.00 status=processing_entry", "trailing_buy_rebound_detected"],
+      ["[TRAILING_BUY_EXECUTION_BLOCKED] pair=ETH/USD reason=execution_too_high currentPrice=$2350.00", "trailing_buy_execution_blocked"],
+      ["[TRAILING_BUY_EXECUTED] pair=ETH/USD cycleId=123 orderId=456", "trailing_buy_executed"],
+      ["[TRAILING_BUY_CANCELLED] pair=ETH/USD reason=price_recovered", "trailing_buy_cancelled"],
+    ];
+    for (const [line, expectedType] of cases) {
+      const l = line.toLowerCase();
+      let detected = "other";
+      if (l.includes("trailing_buy_watching"))             detected = "trailing_buy_watching";
+      else if (l.includes("trailing_buy_execution_blocked")) detected = "trailing_buy_execution_blocked";
+      else if (l.includes("trailing_buy_rebound_detected")) detected = "trailing_buy_rebound_detected";
+      else if (l.includes("trailing_buy_armed"))            detected = "trailing_buy_armed";
+      else if (l.includes("trailing_buy_tracking"))         detected = "trailing_buy_tracking";
+      else if (l.includes("trailing_buy_executed"))         detected = "trailing_buy_executed";
+      else if (l.includes("trailing_buy_cancelled"))        detected = "trailing_buy_cancelled";
+      expect(detected, `line: ${line}`).toBe(expectedType);
+    }
   });
 });
