@@ -1023,7 +1023,7 @@ async function evaluatePair(
         }
 
         // Always run checkEntry for event generation (entry_check_blocked visible in UI).
-        // observeOnly=true unless trailing buy fired — prevents accidental purchase.
+        // If trailingAllowsEntry, this will also execute the buy.
         await checkEntry(pair, currentPrice, config, assetConfig, mode, !trailingAllowsEntry);
       } else {
         // Sin VWAP → comportamiento original directo
@@ -1045,7 +1045,8 @@ async function checkEntry(
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode,
-  observeOnly = false
+  observeOnly = false,
+  trailingBuyContext?: { localLow: number; bouncePct: number }
 ): Promise<void> {
   const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode);
 
@@ -1371,6 +1372,19 @@ async function checkEntry(
 
   await telegram.alertCycleStarted(cycle, check.entryDipPct || 0, check.marketScore || 0);
   await telegram.alertBuyExecuted(cycle, order, "base_buy");
+
+  // Si esta compra vino de trailing buy, notificar específicamente
+  if (trailingBuyContext) {
+    telegram.alertTrailingBuyExecuted(
+      pair,
+      mode,
+      currentPrice,
+      trailingBuyContext.localLow,
+      trailingBuyContext.bouncePct,
+      cycle.id,
+      order?.id
+    ).catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyExecuted failed: ${e.message}`));
+  }
 }
 
 // ─── Cycle Management ──────────────────────────────────────────────

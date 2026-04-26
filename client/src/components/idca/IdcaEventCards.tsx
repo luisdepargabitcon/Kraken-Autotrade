@@ -235,6 +235,7 @@ const BLOCK_REASON_LABELS: Record<string, string> = {
   insufficient_base_price_data: "Datos de velas insuficientes para calcular referencia",
   insufficient_dip: "Caída insuficiente para entrar",
   market_score_too_low: "Condiciones de mercado desfavorables",
+  vwap_weekly_trend_bearish: "Tendencia semanal VWAP bajista",
   module_exposure_max_reached: "Exposición máxima del módulo alcanzada",
   asset_exposure_max_reached: "Exposición máxima del activo alcanzada",
   cycle_already_active: "Ya existe un ciclo activo",
@@ -1510,15 +1511,35 @@ interface IdcaEventsListProps {
   maxHeight?: string;
 }
 
+// Eventos técnicos que no deben mostrarse en el feed principal
+const TECHNICAL_EVENT_TYPES = new Set([
+  "migration_validation_warning",
+  "trailing_buy_activated",
+  "trailing_buy_triggered",
+  "trailing_buy_reset",
+  "trailing_buy_level1_activated",
+]);
+
+function isTechnicalEvent(event: any): boolean {
+  return TECHNICAL_EVENT_TYPES.has(event?.eventType);
+}
+
 export function IdcaEventsList({ events, maxHeight = "700px" }: IdcaEventsListProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  
+  // Filtrar eventos técnicos del feed principal
+  const visibleEvents = events.filter(ev => !isTechnicalEvent(ev));
 
-  if (events.length === 0) {
+  if (visibleEvents.length === 0) {
     return (
       <Card className="border-border/50">
         <CardContent className="p-8 text-center text-muted-foreground">
           <p className="text-sm">No hay eventos que mostrar</p>
-          <p className="text-xs mt-1 text-muted-foreground/60">Los eventos aparecerán aquí cuando el módulo IDCA esté activo.</p>
+          <p className="text-xs mt-1 text-muted-foreground/60">
+            {events.length > visibleEvents.length 
+              ? `(${events.length - visibleEvents.length} eventos técnicos ocultos)`
+              : "Los eventos aparecerán aquí cuando el módulo IDCA esté activo."}
+          </p>
         </CardContent>
       </Card>
     );
@@ -1530,7 +1551,7 @@ export function IdcaEventsList({ events, maxHeight = "700px" }: IdcaEventsListPr
 
   return (
     <div className="space-y-2" style={style}>
-      {events.map((ev) => (
+      {visibleEvents.map((ev) => (
         <IdcaEventCard
           key={ev.id}
           event={ev}
@@ -1548,13 +1569,20 @@ export function IdcaEventsList({ events, maxHeight = "700px" }: IdcaEventsListPr
 
 export function IdcaLiveEventsFeed({ events }: { events: any[] }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  
+  // Filtrar eventos técnicos
+  const visibleEvents = events.filter(ev => !isTechnicalEvent(ev));
 
-  if (events.length === 0) {
+  if (visibleEvents.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <Clock className="h-6 w-6 mx-auto mb-2 opacity-40" />
         <p className="text-sm">Sin actividad reciente</p>
-        <p className="text-xs mt-1 text-muted-foreground/60">Los eventos aparecerán aquí en tiempo real.</p>
+        <p className="text-xs mt-1 text-muted-foreground/60">
+          {events.length > visibleEvents.length 
+            ? `(${events.length - visibleEvents.length} eventos técnicos ocultos)`
+            : "Los eventos aparecerán aquí en tiempo real."}
+        </p>
       </div>
     );
   }
@@ -1562,7 +1590,7 @@ export function IdcaLiveEventsFeed({ events }: { events: any[] }) {
   // Show last 50 as compact cards
   return (
     <div className="space-y-1.5 max-h-[75vh] overflow-auto">
-      {events.slice(0, 50).map((ev) => (
+      {visibleEvents.slice(0, 50).map((ev) => (
         <IdcaEventCard
           key={ev.id}
           event={ev}
