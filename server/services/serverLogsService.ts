@@ -203,6 +203,66 @@ class ServerLogsService {
     return [...this.memoryLogs];
   }
 
+  /**
+   * Devuelve logs combinando buffer en memoria + DB para mayor cobertura.
+   * El buffer en memoria captura los logs desde el arranque (hasta 500 líneas).
+   * La DB tiene logs persistidos del arranque y sesiones anteriores.
+   * Se eliminan duplicados por id.
+   *
+   * Útil cuando el batch insert de DB tiene delay (5s) y aún no ha flusheado.
+   */
+  async getLogsWithMemory(options: {
+    limit?: number;
+    from?: Date;
+    level?: string;
+    search?: string;
+  } = {}): Promise<ServerLog[]> {
+    const { limit = 500, from, level, search } = options;
+
+    // 1. Logs de memoria (siempre disponibles, sin latencia de batch)
+    let memLogs = [...this.memoryLogs];
+
+    // Filtrar memoria igual que DB
+    if (from) {
+      memLogs = memLogs.filter(l => l.timestamp >= from);
+    }
+    if (level) {
+      memLogs = memLogs.filter(l => l.level === level.toUpperCase());
+    }
+    if (search) {
+      const s = search.toLowerCase();
+      memLogs = memLogs.filter(l => l.line.toLowerCase().includes(s));
+    }
+
+    // 2. Logs de DB
+    const dbLogs = await this.getLogs({ limit, from, level, search });
+
+    // 3. Combinar: DB + memoria, evitar duplicados por timestamp+line (memory ids son Date.now())
+    const seen = new Set<string>();
+    const combined: ServerLog[] = [];
+
+    const addLog = (l: ServerLog) => {
+      const key = `${l.timestamp.getTime?.() ?? l.timestamp}:${l.line.slice(0, 80)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(l);
+      }
+    };
+
+    // DB primero (ids reales), luego memoria (puede tener más recientes no flusheados)
+    for (const l of dbLogs) addLog(l);
+    for (const l of memLogs) addLog(l);
+
+    // Ordenar por timestamp desc, limitar
+    combined.sort((a, b) => {
+      const ta = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp as any).getTime();
+      const tb = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp as any).getTime();
+      return tb - ta;
+    });
+
+    return combined.slice(0, limit);
+  }
+
   async exportLogs(options: {
     from?: Date;
     to?: Date;

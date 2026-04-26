@@ -17,26 +17,54 @@ export type ParsedIdcaLog = {
 };
 
 // ─── Patrones IDCA — una línea pertenece a IDCA si cumple alguno ─────────────
+// IMPORTANTE: logStreamService guarda con formato: [HH:mm:ss.ms] [LEVEL] mensaje
+// Por tanto el texto [IDCA] aparece DENTRO de la línea, no al inicio.
 
 const IDCA_PATTERNS: RegExp[] = [
+  // Prefijos de módulo IDCA (aparecen dentro de la línea tras [HH:mm:ss] [LEVEL])
   /\[IDCA\]/i,
-  /IDCA_/i,
-  /\[TRAILING_BUY/i,
-  /\[VWAP_ANCHOR\]/i,
+  /\[IDCA\]\[/i,
   /IDCA_ENTRY_DECISION/i,
+  /IDCA_BASE_PRICE/i,
+  /\[IDCA_BASE_PRICE\]/i,
   /\[ENTRY_BLOCKED\]/i,
   /\[ENTRY_EVENT\]/i,
-  /\[TRAILING_BUY_L1\]/i,
-  /Ladder ATRP/i,
-  /safetyOrdersJson/i,
-  /\[MIGRATION\].*(?:safetyOrders|ladder|ATRP)/i,
-  /\[IDCA_BASE_PRICE\]/i,
   /\[EVAL_START\]/i,
+
+  // Trailing Buy
+  /\[TRAILING_BUY/i,
+  /\[TRAILING_BUY_L1\]/i,
+  /\[TrailingBuy\]/i,
+  /TrailingBuyTelegramState/i,
+  /TrailingBuy.*ARMED/i,
+  /TrailingBuy.*TRIGGERED/i,
+  /TrailingBuy.*CANCEL/i,
+
+  // VWAP / anchors
+  /\[VWAP_ANCHOR\]/i,
+  /\[VWAP\]/i,
+  /VWAP_ANCHOR/i,
+
+  // Migration / config warnings IDCA
+  /\[MIGRATION\]/i,
+  /safetyOrdersJson/i,
+  /Ladder ATRP/i,
+  /ladderAtrp/i,
+
+  // Scheduler IDCA
   /\[TICK #/i,
   /\[SCHED_STATE_CHANGE\]/i,
+  /SCHED_STATE_CHANGE/i,
   /Scheduler starting.*adaptive/i,
-  /TrailingBuyTelegramState/i,
-  /\[TrailingBuy\]/i,
+  /\[IDCA\].*Scheduler/i,
+
+  // Telegram IDCA
+  /\[IDCA\]\[TELEGRAM\]/i,
+  /\[TELEGRAM\]\[TRAILING_BUY\]/i,
+
+  // OHLCV IDCA
+  /\[IDCA\]\[OHLCV\]/i,
+  /\[OHLCV\].*(?:ETH|BTC|SOL|XRP|ADA|AVAX|MATIC|LINK|LTC|DOT)/i,
 ];
 
 export function isIdcaLine(line: string): boolean {
@@ -110,6 +138,16 @@ export function normalizeLevel(raw: string): string {
   return "info";
 }
 
+// ─── Extracción de mensaje limpio ────────────────────────────────────────────
+// logStreamService guarda líneas con formato: [HH:mm:ss.ms] [LEVEL] <mensaje>
+// parseMessage() elimina ese prefijo para obtener el mensaje real.
+
+const LOG_PREFIX_RE = /^\[\d{2}:\d{2}:\d{2}[.\d]*\]\s*\[[A-Z ]{3,7}\]\s*/;
+
+export function parseMessage(line: string): string {
+  return line.replace(LOG_PREFIX_RE, "").trim();
+}
+
 // ─── Parser completo ─────────────────────────────────────────────────────────
 
 export function parseIdcaLog(row: {
@@ -124,6 +162,9 @@ export function parseIdcaLog(row: {
     ? row.timestamp.toISOString()
     : String(row.timestamp);
 
+  // Extraer mensaje limpio (sin prefijo de tiempo/nivel de logStreamService)
+  const cleanMessage = parseMessage(row.line);
+
   return {
     id: row.id,
     timestamp: ts,
@@ -131,7 +172,7 @@ export function parseIdcaLog(row: {
     source: row.source ?? "app_stdout",
     pair:  extractPair(row.line),
     event: extractEvent(row.line),
-    message: row.line,
+    message: cleanMessage || row.line,
     raw: row.line,
   };
 }

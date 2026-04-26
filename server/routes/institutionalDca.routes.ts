@@ -1499,18 +1499,20 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const pair   = req.query.pair   as string | undefined;
       const search = req.query.search as string | undefined;
       const mode   = req.query.mode   as string | undefined;
+      const debug  = req.query.debug === "1";
 
       const from = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-      // 1. Leer últimas líneas de server_logs en el rango (sin filtro IDCA aún — lo hacemos en memoria)
-      const rawLogs = await serverLogsService.getLogs({
+      // 1. Leer logs combinando memoria+DB (evita el delay de batch insert de 5s)
+      //    getLogsWithMemory() combina buffer en memoria (500 entradas) + DB sin duplicados
+      const rawLogs = await serverLogsService.getLogsWithMemory({
         from,
         level: level ? level.toUpperCase() : undefined,
         search: search || undefined,
-        limit: Math.min(limit * 6, 10000), // ampliar para poder filtrar en memoria
+        limit: Math.min(limit * 8, 10000), // ampliar para poder filtrar en memoria
       });
 
-      // 2. Filtrar por patrón IDCA
+      // 2. Filtrar por patrón IDCA (15 patrones en line)
       let idcaLines = rawLogs.filter(l => isIdcaLine(l.line));
 
       // 3. Filtrar por pair si se especifica
@@ -1527,7 +1529,21 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       // 5. Parsear y enriquecer
       const parsed = idcaLines.slice(0, limit).map(l => parseIdcaLog(l as any));
 
-      // 6. Fallback: si 0 resultados de server_logs, completar con institutional_dca_events
+      // Debug info (solo si ?debug=1)
+      const debugInfo = debug ? {
+        rawTotal: rawLogs.length,
+        idcaFiltered: idcaLines.length,
+        memorySize: serverLogsService.getMemoryLogs().length,
+        fromTs: from.toISOString(),
+        hours,
+        sampleLines: rawLogs.slice(0, 3).map(l => l.line.slice(0, 120)),
+      } : undefined;
+
+      if (debug) {
+        console.log(`[IDCA][LOGS][DEBUG] rawTotal=${rawLogs.length} idcaFiltered=${idcaLines.length} memory=${serverLogsService.getMemoryLogs().length}`);
+      }
+
+      // 6. Fallback: si 0 resultados de server_logs+memory, completar con institutional_dca_events
       let fallbackUsed = false;
       let combinedLogs: typeof parsed = parsed;
       if (parsed.length === 0) {
@@ -1559,6 +1575,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         fallback: fallbackUsed,
         source: fallbackUsed ? 'idca_events' : 'server_logs',
         logs: combinedLogs,
+        ...(debug ? { _debug: debugInfo } : {}),
       });
     } catch (e: any) {
       console.error(`[IDCA][LOGS] ERROR: ${e.message}`);

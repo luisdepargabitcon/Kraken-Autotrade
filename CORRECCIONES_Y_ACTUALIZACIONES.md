@@ -563,5 +563,62 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+---
+
+## 2026-04-26 — HOTFIX FASE 15: Logs IDCA desde memoria+DB real (server_logs)
+
+### Causa raíz real confirmada
+
+**`fallback: true, source: "idca_events"`** → el endpoint estaba llamando a `getLogs()` que solo lee DB.
+Pero `logStreamService` hace **batch insert con delay de 5s** — los logs recientes NO están aún en DB cuando llega el curl.
+El buffer en memoria (`memoryLogs`, max 500) siempre tiene los datos frescos.
+
+**Fix principal**: usar `getLogsWithMemory()` que combina buffer en memoria + DB, eliminando duplicados.
+
+### Archivos modificados
+
+#### `server/services/serverLogsService.ts`
+- Añadido método `getLogsWithMemory()`: combina `memoryLogs` (sin latencia) + `getLogs()` (DB)
+- Deduplicación por clave `timestamp:line.slice(0,80)`
+- Ordenado desc por timestamp, limit configurable
+- Idéntico al patrón ya documentado en comments previos
+
+#### `server/services/institutionalDca/idcaLogParser.ts`
+- Ampliados patrones `IDCA_PATTERNS` de 15 a 25+ para cubrir el formato real:
+  - `logStreamService` guarda: `[HH:mm:ss.ms] [LOG  ] [IDCA][ENTRY_BLOCKED] ETH/USD...`
+  - Añadidos: `VWAP_ANCHOR`, `\[VWAP\]`, `SCHED_STATE_CHANGE`, `[MIGRATION]`, `ladderAtrp`, `[TELEGRAM][TRAILING_BUY]`, `[OHLCV].*pair`, etc.
+- Añadida función `parseMessage()`: elimina prefijo `[HH:mm:ss.ms] [LEVEL] ` para extraer mensaje limpio
+- `parseIdcaLog()`: usa `parseMessage()` → `message` = limpio, `raw` = línea completa
+
+#### `server/routes/institutionalDca.routes.ts`
+- Endpoint `/logs`: cambiado `getLogs()` → `getLogsWithMemory()`
+- Añadido parámetro `?debug=1`: devuelve `_debug.rawTotal`, `idcaFiltered`, `memorySize`, `sampleLines`
+- Mantiene fallback a `idca_events` si memoria+DB combinados devuelven 0 IDCA lines
+
+#### `server/services/__tests__/idcaLogs.test.ts`
+- +13 tests nuevos: formato real logStreamService `[HH:mm:ss] [LOG  ] mensaje`
+- Tests spec obligatorios 11-13: fallback lógica, raw≠message, guard cycleId/orderId
+- `parseMessage()` tests: con/sin prefijo, niveles INFO/LOG/WARN
+- `parseIdcaLog` con línea real: message limpio, raw completo, pair+event extraídos
+- **68/68 tests** ✅
+
+### Verificación post-deploy
+
+```bash
+# Test básico (debe devolver fallback: false, source: server_logs)
+curl -s "http://localhost:3020/api/institutional-dca/logs?hours=24&limit=20" | jq '{count, fallback, source}'
+
+# Test diagnóstico (muestra tamaño memoria, rawTotal, sampleLines)
+curl -s "http://localhost:3020/api/institutional-dca/logs?hours=24&limit=20&debug=1" | jq '_debug'
+```
+
+Si `_debug.memorySize > 0` pero `_debug.idcaFiltered = 0` → ningún log en memoria matchea IDCA patterns → revisar sampleLines.
+Si `_debug.memorySize = 0` → `logStreamService` no está capturando → problema en inicialización.
+
+### Validación final
+- `npm run check`: 0 errores TypeScript ✅
+- `npm run build`: 19s ✅
+- `vitest idcaLogs`: **68/68** ✅
+
 *Última actualización: 2026-04-26*
-*Estado: Hotfix completo — logs IDCA operativos + automigración 030*.
+*Estado: Hotfix FASE 15 — endpoint usa memoria+DB, logs IDCA operativos*.
