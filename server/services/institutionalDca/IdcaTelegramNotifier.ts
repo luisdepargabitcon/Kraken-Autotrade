@@ -598,7 +598,7 @@ export async function alertTrailingBuyTriggered(
 
   const config = await repo.getIdcaConfig();
   const msg = [
-    `� <b>Rebote detectado por Trailing Buy</b> — <b>${pair}</b>`,
+    `🟡 <b>Rebote detectado por Trailing Buy</b> — <b>${pair}</b>`,
     ``,
     `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
     `📉 Mejor precio previo (mínimo): <code>$${localLow.toFixed(2)}</code>`,
@@ -625,6 +625,15 @@ export async function alertTrailingBuyExecuted(
   cycleId: number,
   orderId?: number,
 ): Promise<void> {
+  // GUARD OBLIGATORIO: solo notificar si la compra fue realmente persistida
+  if (!cycleId || cycleId <= 0) {
+    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay cycleId (${cycleId}), no se envía Telegram ejecutado`);
+    return;
+  }
+  if (!orderId || orderId <= 0) {
+    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay orderId (${orderId}), no se envía Telegram ejecutado`);
+    return;
+  }
   const { chatId, enabled } = await canSend("trailing_buy_executed");
   if (!enabled) return;
 
