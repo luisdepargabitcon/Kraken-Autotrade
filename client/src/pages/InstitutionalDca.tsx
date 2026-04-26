@@ -3217,7 +3217,7 @@ function EventsTab() {
   const [subTab, setSubTab] = useState<"live" | "events" | "terminal" | "logs">("live");
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       <div className="flex gap-2 flex-wrap">
         <Button size="sm" variant={subTab === "live" ? "default" : "outline"}
           className="text-xs gap-1" onClick={() => setSubTab("live")}>

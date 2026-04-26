@@ -594,7 +594,7 @@ export function IdcaLogsPanel() {
     [...filteredLogs].reverse(), [filteredLogs]);
 
   return (
-    <div className="flex flex-col gap-2" data-testid="idca-logs-panel">
+    <div className="flex flex-col gap-2 min-h-0 flex-1" data-testid="idca-logs-panel">
 
       {/* ── Barra superior: estado + controles ─────────────────── */}
       <div className="flex flex-wrap items-center gap-2 justify-between">
@@ -801,11 +801,11 @@ export function IdcaLogsPanel() {
       </Card>
 
       {/* ── Consola de logs ────────────────────────────────────── */}
-      <Card className="border-border/50 bg-zinc-950/90">
-        <CardContent className="p-0">
+      <Card className="border-border/50 bg-zinc-950/90 flex-1 min-h-0">
+        <CardContent className="p-0 h-full">
           <ScrollArea
-            className="h-[calc(100vh-340px)]"
-            style={{ minHeight: 320 }}
+            className="h-[calc(100vh-460px)]"
+            style={{ minHeight: 400 }}
             ref={scrollRef}
             data-testid="idca-logs-scroll"
           >
