@@ -45,17 +45,20 @@ import {
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-interface ServerLogEntry {
+// Shape devuelto por /api/institutional-dca/logs
+interface IdcaLogEntry {
   id: number;
-  timestamp: string | Date;
-  source: string;
-  level: string;
-  line: string;
-  isError: boolean | null;
+  timestamp: string;
+  source: string;   // 'idca_events' | 'server_logs'
+  level: string;    // 'info' | 'warn' | 'error' | 'debug'
+  pair: string | null;
+  event: string | null;
+  message: string;  // mensaje limpio (sin prefijo tiempo/nivel)
+  raw: string;      // línea completa original
 }
 
 interface ParsedIdcaLog {
-  raw: ServerLogEntry;
+  raw: IdcaLogEntry;
   ts: string;
   level: "INFO" | "WARN" | "ERROR" | "DEBUG";
   pair: string | null;
@@ -152,60 +155,42 @@ function matchesTypeFilter(logType: string, filter: string): boolean {
 }
 
 /**
- * Extrae pair, mode, module del prefijo típico IDCA:
- * "[IDCA][ETH/USD][SIMULATION] mensaje" ó "[14:05:32] [INFO ] [IDCA][ETH/USD][SIM] mensaje"
+ * Adapta una IdcaLogEntry (del nuevo endpoint /api/institutional-dca/logs)
+ * al formato interno ParsedIdcaLog. El endpoint ya trae pair, event, message
+ * pre-procesados — solo necesitamos normalizar level, detectar mode y logType.
  */
-function parseIdcaLine(entry: ServerLogEntry): ParsedIdcaLog {
-  const line = entry.line;
+function parseIdcaLine(entry: IdcaLogEntry): ParsedIdcaLog {
+  const line = entry.raw || entry.message;
 
-  // Detectar nivel del campo DB o de la línea
+  // Nivel desde el campo 'level' del endpoint (ya normalizado)
   let level: ParsedIdcaLog["level"] = "INFO";
-  const dbLevel = (entry.level || "INFO").toUpperCase();
+  const dbLevel = (entry.level || "info").toUpperCase();
   if      (dbLevel === "ERROR") level = "ERROR";
   else if (dbLevel === "WARN")  level = "WARN";
   else if (dbLevel === "DEBUG") level = "DEBUG";
-  else if (line.includes("[WARN") || line.includes(" WARN "))  level = "WARN";
-  else if (line.includes("[ERROR") || line.includes(" ERROR ")) level = "ERROR";
-  else if (line.includes("[DEBUG") || line.includes(" DEBUG ")) level = "DEBUG";
 
-  // Extraer pair: [BTC/USD] [ETH/USD] [BTCUSD] etc.
-  let pair: string | null = null;
-  const pairMatch = line.match(/\[(BTC\/USD|ETH\/USD|SOL\/USD|XRP\/USD|[A-Z]{3,6}\/[A-Z]{3,6})\]/);
-  if (pairMatch) pair = pairMatch[1];
+  // Pair ya viene pre-extraído del endpoint
+  const pair = entry.pair ?? null;
 
-  // Extraer modo: [SIM] [SIMULATION] [LIVE]
+  // Mode: detectar desde el raw si el endpoint no lo trae
   let mode: string | null = null;
-  if (/\[SIM(ULATION)?\]/i.test(line))  mode = "SIM";
-  else if (/\[LIVE\]/i.test(line))      mode = "LIVE";
+  if (/\[SIM(ULATION)?\]/i.test(line) || /mode=simulation/i.test(line)) mode = "SIM";
+  else if (/\[LIVE\]/i.test(line) || /mode=live/i.test(line))           mode = "LIVE";
 
-  // Extraer mensaje limpiando prefijos técnicos
-  // Típico: "[14:05:32] [INFO ] [IDCA][ETH/USD][SIM] Mensaje..."
-  // ó simplemente: "[IDCA][ETH/USD][SIM] Mensaje..."
-  let message = line
-    .replace(/^\[\d{2}:\d{2}:\d{2}[.\d]*\]\s*/, "")   // timestamp horario
-    .replace(/\[(?:INFO|WARN(?:ING)?|ERROR|DEBUG)\s*\]\s*/i, "")  // level tag
-    .replace(/\[IDCA\]\s*/g, "")
-    .replace(/\[(?:BTC|ETH|SOL|XRP)[^\]]*\]\s*/g, "")  // pair tags
-    .replace(/\[SIM(?:ULATION)?\]\s*/ig, "")
-    .replace(/\[LIVE\]\s*/ig, "")
-    .trim();
-
-  // Módulo/source: extraer [IdcaEngine], [IdcaSmartLayer], etc.
+  // Módulo desde el event o desde el raw
   let module = "IDCA";
   const modMatch = line.match(/\[Idca[A-Za-z]+\]/);
-  if (modMatch) {
-    module = modMatch[0].replace(/[\[\]]/g, "");
-    message = message.replace(modMatch[0], "").trim();
-  }
+  if (modMatch) module = modMatch[0].replace(/[\[\]]/g, "");
+
+  // Mensaje: usar el message limpio que devuelve el endpoint
+  const message = entry.message || line;
 
   const logType = detectLogType(line);
 
   // Extraer campos inline de mensajes conocidos
   const parsed: ParsedIdcaLog = {
     raw: entry,
-    ts: typeof entry.timestamp === "string"
-      ? entry.timestamp
-      : (entry.timestamp as Date).toISOString(),
+    ts: entry.timestamp,
     level,
     pair,
     mode,
@@ -322,7 +307,7 @@ function formatLogForExport(log: ParsedIdcaLog): string {
   if (log.localLow)     extras.push(`local_low=${log.localLow}`);
   if (log.reason)       extras.push(`motivo=${log.reason}`);
   if (extras.length > 0) out += "\n  → " + extras.join(", ");
-  out += "\n  RAW: " + log.raw.line;
+  out += "\n  RAW: " + log.raw.raw;
   return out;
 }
 
@@ -337,7 +322,7 @@ function formatLogJsonExport(log: ParsedIdcaLog): object {
     source: log.module,
     logType: log.logType,
     message: log.message,
-    rawLine: log.raw.line,
+    rawLine: log.raw.raw,
     extracted: {
       score: log.score ?? null,
       dipPct: log.dipPct ?? null,
@@ -378,6 +363,7 @@ function LogRow({ log }: { log: ParsedIdcaLog }) {
       )}
       onClick={() => setExpanded(e => !e)}
       data-testid={`idca-log-row-${log.raw.id}`}
+      title={log.raw.source === 'server_logs' ? 'Log técnico (stdout)' : 'Evento IDCA (DB)'}
     >
       {/* Compact line */}
       <div className="flex items-start gap-1.5 flex-wrap">
@@ -436,10 +422,11 @@ function LogRow({ log }: { log: ParsedIdcaLog }) {
         </div>
       )}
 
-      {/* Expanded: raw line */}
+      {/* Expanded: raw line + source */}
       {expanded && (
-        <div className="mt-1 ml-2 text-[10px] text-zinc-600 bg-black/40 rounded px-2 py-1 break-all">
-          <span className="text-zinc-700">RAW: </span>{log.raw.line}
+        <div className="mt-1 ml-2 text-[10px] text-zinc-600 bg-black/40 rounded px-2 py-1 break-all space-y-0.5">
+          <div><span className="text-zinc-700">SRC: </span><span className={log.raw.source === 'server_logs' ? 'text-amber-700' : 'text-blue-700'}>{log.raw.source}</span></div>
+          <div><span className="text-zinc-700">RAW: </span>{log.raw.raw}</div>
         </div>
       )}
     </div>
@@ -465,39 +452,30 @@ export function IdcaLogsPanel() {
   const prevCountRef = useRef(0);
 
   // ── Compute time params ────────────────────────────────────────
-  const { fromIso, toIso } = useMemo(() => {
-    if (timeRange === "live") {
-      const to = new Date();
-      const from = new Date(to.getTime() - 60 * 60 * 1000); // último 1h para "en vivo"
-      return { fromIso: from.toISOString(), toIso: to.toISOString() };
-    }
-    const to = new Date();
-    const msMap: Record<string, number> = {
-      "1h":  1 * 60 * 60 * 1000,
-      "6h":  6 * 60 * 60 * 1000,
-      "24h": 24 * 60 * 60 * 1000,
-      "7d":  7 * 24 * 60 * 60 * 1000,
-      "30d": 30 * 24 * 60 * 60 * 1000,
-    };
-    const from = new Date(to.getTime() - (msMap[timeRange] ?? msMap["24h"]));
-    return { fromIso: from.toISOString(), toIso: to.toISOString() };
-  }, [timeRange]);
+  // El nuevo endpoint usa ?hours= en vez de from/to ISO
 
   // ── Fetch logs ─────────────────────────────────────────────────
+  // Usa /api/institutional-dca/logs — fuente primaria idca_events
+  // + complemento server_logs para logs de arranque IDCA.
   const queryParams = useMemo(() => {
     const p = new URLSearchParams();
-    p.set("from", fromIso);
-    p.set("to", toIso);
-    p.set("search", "[IDCA]");  // Filtra solo logs IDCA
+    // Convertir timeRange a hours para el endpoint
+    const hoursMap: Record<string, number> = {
+      live: 1, "1h": 1, "6h": 6, "24h": 24, "7d": 168, "30d": 720
+    };
+    p.set("hours", String(hoursMap[timeRange] ?? 24));
     p.set("limit", "2000");
-    if (levelFilter !== "all") p.set("level", levelFilter);
+    if (levelFilter !== "all") p.set("level", levelFilter.toLowerCase());
+    if (pairFilter  !== "all") p.set("pair", pairFilter);
+    if (modeFilter  !== "all") p.set("mode", modeFilter.toLowerCase());
+    if (searchText.trim())     p.set("search", searchText.trim());
     return p.toString();
-  }, [fromIso, toIso, levelFilter]);
+  }, [timeRange, levelFilter, pairFilter, modeFilter, searchText]);
 
-  const { data, isFetching, refetch } = useQuery<{ logs: ServerLogEntry[]; total: number }>({
-    queryKey: ["idca-logs", queryParams],
+  const { data, isFetching, refetch } = useQuery<{ success: boolean; count: number; fallback: boolean; source: string; logs: IdcaLogEntry[] }>({
+    queryKey: ["idca-logs-v2", queryParams],
     queryFn: async () => {
-      const res = await fetch(`/api/logs?${queryParams}`);
+      const res = await fetch(`/api/institutional-dca/logs?${queryParams}`);
       if (!res.ok) throw new Error("Failed to fetch IDCA logs");
       return res.json();
     },
@@ -506,6 +484,8 @@ export function IdcaLogsPanel() {
   });
 
   // ── Parse & filter ─────────────────────────────────────────────
+  // El endpoint ya aplica filtros pair/mode/search/level en servidor.
+  // Solo aplicamos typeFilter client-side (no está en el endpoint).
   const allParsed = useMemo<ParsedIdcaLog[]>(() => {
     if (!data?.logs) return [];
     return data.logs.map(parseIdcaLine);
@@ -513,30 +493,13 @@ export function IdcaLogsPanel() {
 
   const filteredLogs = useMemo<ParsedIdcaLog[]>(() => {
     let logs = allParsed;
-
-    if (pairFilter !== "all") {
-      logs = logs.filter(l => l.pair === pairFilter);
-    }
-    if (modeFilter !== "all") {
-      logs = logs.filter(l => l.mode === modeFilter);
-    }
     if (typeFilter !== "all") {
       logs = logs.filter(l => matchesTypeFilter(l.logType, typeFilter));
     }
-    if (searchText.trim()) {
-      const q = searchText.toLowerCase();
-      logs = logs.filter(l =>
-        l.message.toLowerCase().includes(q) ||
-        l.raw.line.toLowerCase().includes(q) ||
-        (l.pair?.toLowerCase().includes(q) ?? false) ||
-        (l.blockReasons?.toLowerCase().includes(q) ?? false)
-      );
-    }
-
     return logs;
-  }, [allParsed, pairFilter, modeFilter, typeFilter, searchText]);
+  }, [allParsed, typeFilter]);
 
-  // Detectar pares disponibles en los logs actuales
+  // Pares disponibles en la respuesta actual
   const availablePairs = useMemo(() => {
     const pairs = new Set(allParsed.map(l => l.pair).filter(Boolean) as string[]);
     return Array.from(pairs).sort();
@@ -612,14 +575,8 @@ export function IdcaLogsPanel() {
   }, [filteredLogs]);
 
   const handleDownloadApiExport = useCallback(() => {
-    const params = new URLSearchParams();
-    params.set("from", fromIso);
-    params.set("to", toIso);
-    params.set("search", "[IDCA]");
-    if (levelFilter !== "all") params.set("level", levelFilter);
-    params.set("format", "txt");
-    window.open(`/api/logs/export?${params}`, "_blank");
-  }, [fromIso, toIso, levelFilter]);
+    window.open(`/api/institutional-dca/logs?${queryParams}&limit=5000`, "_blank");
+  }, [queryParams]);
 
   // ── Estadísticas rápidas ───────────────────────────────────────
   const stats = useMemo(() => ({
@@ -679,7 +636,7 @@ export function IdcaLogsPanel() {
             {stats.warns  > 0 && <span className="text-amber-400">Avisos: {stats.warns}</span>}
             {stats.blocked > 0 && <span className="text-zinc-500">Bloqueadas: {stats.blocked}</span>}
             {stats.tbArmed > 0 && <span className="text-sky-400">TB armados: {stats.tbArmed}</span>}
-            {data && <span className="text-zinc-700 text-[10px]">DB total: {data.total.toLocaleString()}</span>}
+            {data && <span className="text-zinc-700 text-[10px]">Fuente: {data.source}</span>}
           </div>
         </div>
 
@@ -882,13 +839,13 @@ export function IdcaLogsPanel() {
       {/* ── Footer ─────────────────────────────────────────────── */}
       <div className="flex items-center justify-between text-[10px] font-mono text-zinc-700 px-1">
         <span>
-          Fuente: server_logs · Filtro: [IDCA] · Retención: 7d · Polling: {isLive && !isPaused ? "5s" : "pausado"}
+          Fuente: {data?.source ?? "idca_events"} · Retención: 30d · Polling: {isLive && !isPaused ? "5s" : "pausado"}
         </span>
         <span>
           {filteredLogs.length !== allParsed.length
             ? `Filtrados: ${filteredLogs.length} de ${allParsed.length}`
             : `${allParsed.length} logs IDCA`}
-          {data?.total && data.total > 2000 ? " · (límite 2000 — usa rango más pequeño)" : ""}
+          {data?.count && data.count >= 2000 ? " · (límite 2000 — usa rango más pequeño)" : ""}
         </span>
       </div>
     </div>

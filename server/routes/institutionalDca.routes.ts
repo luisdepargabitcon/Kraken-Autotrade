@@ -1519,7 +1519,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
                 : level === 'warn'  ? 'warning'
                 : level === 'debug' ? 'debug'
                 : undefined, // sin filtro para info/undefined → devuelve todos
-        limit: limit,
+        limit: limit * 2, // pedir más para dejar espacio al merge con server_logs
         orderBy: 'createdAt',
         orderDirection: 'desc',
       });
