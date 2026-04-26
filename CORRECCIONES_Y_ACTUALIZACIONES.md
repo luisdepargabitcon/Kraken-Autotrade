@@ -460,5 +460,108 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+## 2026-04-26 — HOTFIX IDCA Logs + Automigración + Parser (FASE 13-15)
+
+### Causas raíz encontradas
+
+#### Causa 1 — Migración 030 nunca se aplicaba automáticamente
+- El sistema de migración real NO lee archivos `.sql` de `db/migrations/`
+- `storage.ts::runSchemaMigration()` es código TypeScript inline que se ejecuta al arrancar
+- La migración 030 terminaba en el bloque 029 (`idca_vwap_anchors`) y no incluía la tabla 030
+- **Fix**: Añadido bloque `CREATE TABLE IF NOT EXISTS idca_trailing_buy_telegram_state` a `runSchemaMigration()`
+
+#### Causa 2 — Pestaña "Logs IDCA" muestra "Sin logs" siempre
+- El endpoint `GET /api/institutional-dca/terminal/logs` leía de `institutional_dca_events`
+- Los logs técnicos IDCA (`[IDCA][ENTRY_DECISION]`, `[TRAILING_BUY]`, etc.) se persisten en `server_logs` vía `logStreamService`, no en `institutional_dca_events`
+- El hook UI llamaba al endpoint incorrecto con los filtros equivocados
+- **Fix**: Nuevo endpoint `GET /api/institutional-dca/logs` que lee `server_logs` filtrado por patrones IDCA en el campo `line`
+
+### Archivos modificados
+
+#### `server/storage.ts`
+- Añadida migración 030 inline en `runSchemaMigration()`
+- `CREATE TABLE IF NOT EXISTS idca_trailing_buy_telegram_state` — idempotente
+- Incluye todos los campos: pair, mode, state, last_notified_at, armed_at, trigger_price, local_low, cancelled_at, rearm_allowed_after, updated_at
+- Se ejecuta automáticamente al arrancar (sin `psql` manual)
+
+#### `server/services/institutionalDca/idcaLogParser.ts` (NUEVO)
+- Helper centralizado: `isIdcaLine()`, `extractPair()`, `extractEvent()`, `parseIdcaLog()`
+- 15 patrones IDCA para identificar líneas relevantes en server_logs
+- Extrae pair de líneas como `ETH/USD`, `pair=BTC/USD`, `[BTC/USD]`
+- Extrae evento: `IDCA_ENTRY_DECISION`, `ENTRY_BLOCKED`, `TRAILING_BUY_ARMED`, `MIGRATION`, etc.
+- Mapea nivel: `WARN` → `warn`, `ERROR` → `error`, resto → `info`
+
+#### `server/routes/institutionalDca.routes.ts`
+- Import añadido: `serverLogsService`, `isIdcaLine`, `parseIdcaLog`
+- Nuevo endpoint `GET /api/institutional-dca/logs`:
+  - Lee `server_logs` filtrado en memoria por `isIdcaLine()`
+  - Soporta: `hours` (def 24, max 168), `limit` (def 500, max 5000), `level`, `pair`, `search`, `mode`
+  - Amplía fetch x6 antes de filtrar IDCA para garantizar densidad suficiente
+  - Fallback automático a `institutional_dca_events` si server_logs devuelve 0 resultados
+  - Respuesta: `{ success, count, fallback, source, logs: ParsedIdcaLog[] }`
+
+#### `client/src/hooks/useInstitutionalDca.ts`
+- `IdcaTerminalLog` actualizado: añadidos campos `event`, `raw` (nullable)
+- `IdcaTerminalLogsResponse` actualizado: `hasMore` opcional, `success/fallback/source` nuevos
+- **Nuevo hook `useIdcaLogs()`**: usa `/api/institutional-dca/logs` primero, fallback a `terminal/logs`
+- `useIdcaTerminalLogs()` ahora delega a `useIdcaLogs()` (compatibilidad hacia atrás)
+- Polling cada 8s (antes 5s — reducido para evitar carga)
+
+#### `client/src/components/idca/IdcaTerminalPanel.tsx`
+- Cambiado import: `useIdcaTerminalLogs` → `useIdcaLogs`
+- `EVENT_STYLES`: colores por tipo de evento (IDCA_ENTRY_DECISION → sky, TRAILING_BUY → violet, MIGRATION → amber, TICK/OHLCV → zinc, etc.)
+- `LogLine`: muestra `[EVENTO]` badge coloreado, flecha expand ▼/▲ cuando hay detalle
+- Expanded view: RAW completo + payload JSON expandible
+- `buildExportLine()`: incluye `event`, `raw`, `payload` en copia/descarga
+- Botón **JSON**: descarga todos los campos (timestamp, level, source, pair, event, message, raw, payload)
+- Contador muestra fuente de datos: `[server_logs]` o `[fallback: events]`
+- Mensaje "Sin logs": añade información de fuente y orientación
+
+### Tests actualizados
+
+#### `server/services/__tests__/idcaLogs.test.ts`
+- 13 tests nuevos para `idcaLogParser.ts` (bloques `idcaLogParser — isIdcaLine` y `parseIdcaLog`)
+- Tests 1-10: filtro IDCA completo según especificación (isIdcaLine, extractPair, extractEvent)
+- Tests 11-13: parseIdcaLog enriquecido (pair, event, level, raw, null-safety)
+- **55/55 tests pasan** ✅
+
+### Validación final
+- `npm run check`: 0 errores TypeScript ✅
+- `npm run build`: 3787 módulos, 16s ✅
+- `vitest idcaLogs`: 55/55 ✅
+- `vitest idcaTrailingBuyTelegramState`: 20/20 ✅
+- `vitest idcaMessageFormatter`: 22/22 ✅
+- `vitest idcaReasonCatalog`: 23/23 ✅
+- **Total IDCA tests: 120/120** ✅
+
+### Verificación endpoint (LOCAL)
+```bash
+curl "http://localhost:5000/api/institutional-dca/logs?hours=24&limit=20"
+# → { "success": true, "count": N, "source": "server_logs", "logs": [...] }
+```
+
+### Autoevaluación FASE 14
+
+| Punto | Estado |
+|---|---|
+| ¿Migración 030 se aplica automáticamente? | **SÍ** — en runSchemaMigration() al arrancar |
+| ¿Logs IDCA cargan desde server_logs? | **SÍ** — nuevo endpoint /logs con filtro IDCA |
+| ¿Fallback si server_logs vacío? | **SÍ** — cae a institutional_dca_events automáticamente |
+| ¿Logs muestran pair, event, raw expandible? | **SÍ** — parseIdcaLog + LogLine mejorado |
+| ¿Copiar/descargar incluye raw + metadata? | **SÍ** — buildExportLine + exportar JSON |
+| ¿TSC/build/tests pasan? | **SÍ** — 0 errores, 3787 módulos, 120/120 tests |
+| ¿"Compra ejecutada" requiere cycleId+orderId? | **SÍ** — guard ya existía en alertTrailingBuyExecuted |
+| ¿"TRIGGERED" dice "Rebote detectado" no "Compra ejecutada"? | **SÍ** — texto correcto en alertTrailingBuyTriggered |
+
+### Deploy VPS
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+**La tabla 030 se crea automáticamente al primer arranque** (no requiere psql manual).
+
+---
+
 *Última actualización: 2026-04-26*
-*Estado: Hotfix completado y validado*.
+*Estado: Hotfix completo — logs IDCA operativos + automigración 030*.

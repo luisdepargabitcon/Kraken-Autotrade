@@ -8,6 +8,8 @@ import * as repo from "../services/institutionalDca/IdcaRepository";
 import * as engine from "../services/institutionalDca/IdcaEngine";
 import * as telegram from "../services/institutionalDca/IdcaTelegramNotifier";
 import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
+import { serverLogsService } from "../services/serverLogsService";
+import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -1479,6 +1481,88 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── IDCA Logs desde server_logs ──────────────────────────────
+  // Endpoint principal para "Logs IDCA" — lee de server_logs (stdout real)
+  // y filtra líneas que pertenecen a IDCA por patrones en el campo `line`.
+  // Soporta: hours, limit, level, pair, search (text libre en línea raw).
+  // Fallback: si server_logs devuelve 0 resultados, añade eventos de
+  // institutional_dca_events para no mostrar vista vacía.
+
+  app.get(`${PREFIX}/logs`, async (req, res) => {
+    try {
+      const hours  = Math.min(parseInt((req.query.hours  as string) || "24", 10), 168);
+      const limit  = Math.min(parseInt((req.query.limit  as string) || "500", 10), 5000);
+      const level  = req.query.level  as string | undefined;
+      const pair   = req.query.pair   as string | undefined;
+      const search = req.query.search as string | undefined;
+      const mode   = req.query.mode   as string | undefined;
+
+      const from = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+      // 1. Leer últimas líneas de server_logs en el rango (sin filtro IDCA aún — lo hacemos en memoria)
+      const rawLogs = await serverLogsService.getLogs({
+        from,
+        level: level ? level.toUpperCase() : undefined,
+        search: search || undefined,
+        limit: Math.min(limit * 6, 10000), // ampliar para poder filtrar en memoria
+      });
+
+      // 2. Filtrar por patrón IDCA
+      let idcaLines = rawLogs.filter(l => isIdcaLine(l.line));
+
+      // 3. Filtrar por pair si se especifica
+      if (pair) {
+        const pairUpper = pair.toUpperCase();
+        idcaLines = idcaLines.filter(l => l.line.toUpperCase().includes(pairUpper));
+      }
+
+      // 4. Filtrar por mode si se especifica (simulation/live en la línea)
+      if (mode) {
+        idcaLines = idcaLines.filter(l => l.line.toLowerCase().includes(mode.toLowerCase()));
+      }
+
+      // 5. Parsear y enriquecer
+      const parsed = idcaLines.slice(0, limit).map(l => parseIdcaLog(l as any));
+
+      // 6. Fallback: si 0 resultados de server_logs, completar con institutional_dca_events
+      let fallbackUsed = false;
+      let combinedLogs: typeof parsed = parsed;
+      if (parsed.length === 0) {
+        fallbackUsed = true;
+        const events = await repo.getEvents({
+          dateFrom: from,
+          mode: mode || undefined,
+          pair: pair || undefined,
+          severity: level || undefined,
+          limit: Math.min(limit, 500),
+          orderBy: 'createdAt',
+          orderDirection: 'desc',
+        });
+        combinedLogs = events.map((e, i) => ({
+          id: e.id ?? i,
+          timestamp: (e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as any)).toISOString(),
+          level: e.severity === 'warning' ? 'warn' : (e.severity ?? 'info'),
+          source: 'idca_events',
+          pair: e.pair ?? null,
+          event: e.eventType ?? null,
+          message: e.message ?? '',
+          raw: e.message ?? '',
+        }));
+      }
+
+      res.json({
+        success: true,
+        count: combinedLogs.length,
+        fallback: fallbackUsed,
+        source: fallbackUsed ? 'idca_events' : 'server_logs',
+        logs: combinedLogs,
+      });
+    } catch (e: any) {
+      console.error(`[IDCA][LOGS] ERROR: ${e.message}`);
+      res.status(500).json({ success: false, error: e.message, count: 0, logs: [] });
     }
   });
 

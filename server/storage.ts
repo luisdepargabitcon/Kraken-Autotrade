@@ -2059,6 +2059,28 @@ export class DatabaseStorage implements IStorage {
         columnsAdded.push('idca_vwap_anchors (table)');
       } catch (e) { /* already exists */ }
 
+      // === 030: IDCA Trailing Buy Telegram State (anti-spam persistence + cooldown) ===
+      try {
+        await db.execute(sql`
+          CREATE TABLE IF NOT EXISTS idca_trailing_buy_telegram_state (
+            pair                     VARCHAR(20)   NOT NULL,
+            mode                     VARCHAR(20)   NOT NULL,
+            state                    VARCHAR(20)   NOT NULL DEFAULT 'idle',
+            last_notified_at         BIGINT,
+            last_notified_best_price DECIMAL(20,8),
+            last_notified_state      VARCHAR(20),
+            armed_at                 BIGINT,
+            trigger_price            DECIMAL(20,8),
+            local_low                DECIMAL(20,8),
+            cancelled_at             BIGINT,
+            rearm_allowed_after      BIGINT,
+            updated_at               TIMESTAMP     NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (pair, mode)
+          )
+        `);
+        columnsAdded.push('idca_trailing_buy_telegram_state (table)');
+      } catch (e) { /* already exists — idempotent */ }
+
       console.log(`[schema] Migration completed. Columns added: ${columnsAdded.join(', ') || 'none (all exist)'}`);
       return { success: true, columnsAdded };
     } catch (error) {

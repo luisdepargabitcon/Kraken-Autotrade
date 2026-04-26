@@ -1042,20 +1042,88 @@ export function useUpdateTrailingBuyLevel1Config() {
 export interface IdcaTerminalLog {
   id: number;
   timestamp: string;
-  level: "debug" | "info" | "warn" | "error";
+  level: "debug" | "info" | "warn" | "error" | string;
   pair: string | null;
   mode: string | null;
   source: string;
-  eventType: string;
+  eventType: string | null;
+  event: string | null;
   message: string;
+  raw: string | null;
   payload: Record<string, unknown> | null;
 }
 
 export interface IdcaTerminalLogsResponse {
   logs: IdcaTerminalLog[];
   count: number;
-  hasMore: boolean;
+  hasMore?: boolean;
+  success?: boolean;
+  fallback?: boolean;
+  source?: string;
 }
+
+// ─── Hook principal: usa /logs (server_logs filtrado por IDCA) ──────────────
+
+export function useIdcaLogs(filters: {
+  pair?: string;
+  mode?: string;
+  level?: string;
+  search?: string;
+  hours?: number;
+  limit?: number;
+  enabled?: boolean;
+}) {
+  const stableKey = { ...filters };
+
+  return useQuery<IdcaTerminalLogsResponse>({
+    queryKey: ["idca", "logs-v2", stableKey],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.pair)   params.set("pair",   filters.pair);
+      if (filters.mode)   params.set("mode",   filters.mode);
+      if (filters.level)  params.set("level",  filters.level);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.hours)  params.set("hours",  String(filters.hours));
+      if (filters.limit)  params.set("limit",  String(filters.limit));
+
+      // Intentar nuevo endpoint /logs primero
+      try {
+        const res = await fetch(`${PREFIX}/logs?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success !== false) return data;
+        }
+      } catch (_e) {
+        // fallback below
+      }
+
+      // Fallback al endpoint antiguo terminal/logs
+      const fallbackParams = new URLSearchParams();
+      if (filters.pair)  fallbackParams.set("pair",  filters.pair);
+      if (filters.mode)  fallbackParams.set("mode",  filters.mode);
+      if (filters.level) fallbackParams.set("level", filters.level);
+      if (filters.search) fallbackParams.set("q",    filters.search);
+      if (filters.limit) fallbackParams.set("limit", String(filters.limit));
+      const fallbackRes = await fetch(`${PREFIX}/terminal/logs?${fallbackParams}`);
+      if (!fallbackRes.ok) throw new Error("Failed to fetch IDCA logs");
+      const fallbackData = await fallbackRes.json();
+      return {
+        ...fallbackData,
+        success: true,
+        source: 'terminal_fallback',
+        logs: (fallbackData.logs ?? []).map((l: any) => ({
+          ...l,
+          event: l.eventType ?? null,
+          raw: l.message ?? null,
+        })),
+      };
+    },
+    staleTime: 5000,
+    refetchInterval: filters.enabled !== false ? 8000 : false,
+  });
+}
+
+// ─── Hook legacy (compatibilidad) — llama al mismo hook ────────────────────
 
 export function useIdcaTerminalLogs(filters: {
   pair?: string;
@@ -1067,28 +1135,17 @@ export function useIdcaTerminalLogs(filters: {
   limit?: number;
   enabled?: boolean;
 }) {
-  const stableKey = {
-    ...filters,
-    from: filters.from ? truncDateToSec(filters.from) : undefined,
-    to:   filters.to   ? truncDateToSec(filters.to)   : undefined,
-  };
+  const hours = filters.from
+    ? Math.ceil((Date.now() - filters.from.getTime()) / (60 * 60 * 1000))
+    : 24;
 
-  return useQuery<IdcaTerminalLogsResponse>({
-    queryKey: ["idca", "terminal-logs", stableKey],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (filters.pair)  params.set("pair",  filters.pair);
-      if (filters.mode)  params.set("mode",  filters.mode);
-      if (filters.level) params.set("level", filters.level);
-      if (filters.q)     params.set("q",     filters.q);
-      if (filters.from)  params.set("from",  filters.from.toISOString());
-      if (filters.to)    params.set("to",    filters.to.toISOString());
-      if (filters.limit) params.set("limit", String(filters.limit));
-      const res = await fetch(`${PREFIX}/terminal/logs?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch IDCA terminal logs");
-      return res.json();
-    },
-    staleTime: 5000,
-    refetchInterval: filters.enabled !== false ? 5000 : false,
+  return useIdcaLogs({
+    pair:    filters.pair,
+    mode:    filters.mode,
+    level:   filters.level,
+    search:  filters.q,
+    hours:   Math.min(hours, 168),
+    limit:   filters.limit,
+    enabled: filters.enabled,
   });
 }

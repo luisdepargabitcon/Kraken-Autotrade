@@ -490,3 +490,110 @@ describe("IdcaLogsPanel - anti-regresión: payload completo", () => {
     expect(p.score).toBe("72/100");
   });
 });
+
+// ─── Tests idcaLogParser.ts — filtro y extracción ────────────────────────────
+
+import { isIdcaLine, extractPair, extractEvent, parseIdcaLog } from "../institutionalDca/idcaLogParser";
+
+describe("idcaLogParser — isIdcaLine (filtro de pertenencia a IDCA)", () => {
+  it("1. message=[IDCA][ENTRY_BLOCKED] ETH/USD... entra", () => {
+    expect(isIdcaLine("[IDCA][ENTRY_BLOCKED] ETH/USD dip=1.2% below minDip=2.5%")).toBe(true);
+  });
+
+  it("2. line contiene [IDCA][VWAP] BTC/USD... entra", () => {
+    expect(isIdcaLine("[IDCA][VWAP] BTC/USD anchor=68000 drawdown=1.5%")).toBe(true);
+  });
+
+  it("3. log normal sin IDCA no entra", () => {
+    expect(isIdcaLine("[INFO] Bot started successfully")).toBe(false);
+    expect(isIdcaLine("[WARN] DB connection slow")).toBe(false);
+  });
+
+  it("4. TRAILING_BUY_L1 ETH/USD entra", () => {
+    expect(isIdcaLine("[TRAILING_BUY_L1] ETH/USD triggerPrice=2350")).toBe(true);
+  });
+
+  it("5. Both safetyOrdersJson and ladder ATRP... entra como MIGRATION/WARN", () => {
+    const line = "[IDCA][MIGRATION] ETH/USD: Both safetyOrdersJson and ladder ATRP are configured, Risk of double execution";
+    expect(isIdcaLine(line)).toBe(true);
+    const event = extractEvent(line);
+    expect(event).toBe("MIGRATION");
+  });
+
+  it("6. extrae ETH/USD correctamente", () => {
+    expect(extractPair("[IDCA][TRAILING_BUY] ETH/USD armed at 2350")).toBe("ETH/USD");
+  });
+
+  it("7. extrae BTC/USD correctamente", () => {
+    expect(extractPair("pair=BTC/USD drawdown=2.3%")).toBe("BTC/USD");
+  });
+
+  it("8. extrae IDCA_ENTRY_DECISION como evento", () => {
+    const line = "[IDCA] IDCA_ENTRY_DECISION pair=ETH/USD action=blocked reason=dip_too_small";
+    expect(extractEvent(line)).toBe("IDCA_ENTRY_DECISION");
+  });
+
+  it("9. search=market_score encuentra ENTRY_BLOCKED", () => {
+    const line = "[IDCA][ENTRY_BLOCKED] ETH/USD market_score=42/100 dip=1.1%";
+    expect(isIdcaLine(line)).toBe(true);
+    expect(line.toLowerCase().includes("market_score")).toBe(true);
+  });
+
+  it("10. level=warn identifica MIGRATION como WARN", () => {
+    const line = "[WARN] [IDCA][MIGRATION] BTC/USD: Both safetyOrdersJson and ladder ATRP configured";
+    expect(isIdcaLine(line)).toBe(true);
+    const parsed = parseIdcaLog({
+      id: 1,
+      timestamp: new Date("2026-01-01T00:00:00Z"),
+      source: "app_stdout",
+      level: "WARN",
+      line,
+      isError: false,
+    });
+    expect(parsed.level).toBe("warn");
+    expect(parsed.event).toBe("MIGRATION");
+  });
+});
+
+describe("idcaLogParser — parseIdcaLog enriquecimiento completo", () => {
+  it("devuelve pair, event, level, raw correctos para ENTRY_BLOCKED", () => {
+    const row = {
+      id: 42,
+      timestamp: new Date("2026-04-26T10:00:00Z"),
+      source: "app_stdout",
+      level: "INFO",
+      line: "[IDCA][ENTRY_BLOCKED] ETH/USD reason=dip_too_small current=1.1% min=2.5%",
+      isError: false,
+    };
+    const parsed = parseIdcaLog(row);
+    expect(parsed.id).toBe(42);
+    expect(parsed.pair).toBe("ETH/USD");
+    expect(parsed.event).toBe("ENTRY_BLOCKED");
+    expect(parsed.level).toBe("info");
+    expect(parsed.raw).toBe(row.line);
+  });
+
+  it("devuelve pair=null y event=null para línea IDCA genérica sin datos", () => {
+    const parsed = parseIdcaLog({
+      id: 1,
+      timestamp: new Date(),
+      source: "app_stdout",
+      level: "INFO",
+      line: "[IDCA] Scheduler tick started",
+      isError: false,
+    });
+    expect(parsed.pair).toBeNull();
+    expect(parsed.event).toBeNull();
+  });
+
+  it("no lanza excepciones con entrada mínima", () => {
+    expect(() => parseIdcaLog({
+      id: 0,
+      timestamp: new Date(),
+      source: "x",
+      level: "INFO",
+      line: "",
+      isError: null,
+    })).not.toThrow();
+  });
+});

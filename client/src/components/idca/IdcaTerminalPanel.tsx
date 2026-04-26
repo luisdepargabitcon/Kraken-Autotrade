@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useIdcaTerminalLogs, type IdcaTerminalLog } from "@/hooks/useInstitutionalDca";
+import { useIdcaLogs, type IdcaTerminalLog } from "@/hooks/useInstitutionalDca";
 import {
   Play,
   Pause,
@@ -75,6 +75,26 @@ const LEVEL_BADGE: Record<string, string> = {
   error: "bg-red-900/60 text-red-300",
 };
 
+const EVENT_STYLES: Record<string, string> = {
+  IDCA_ENTRY_DECISION:      "text-sky-400",
+  ENTRY_BLOCKED:            "text-yellow-400",
+  ENTRY_EVENT:              "text-green-400",
+  VWAP_ANCHOR:              "text-cyan-300",
+  IDCA_BASE_PRICE:          "text-cyan-300",
+  TRAILING_BUY:             "text-violet-400",
+  TRAILING_BUY_ARMED:       "text-violet-400",
+  TRAILING_BUY_TRIGGERED:   "text-violet-300",
+  TRAILING_BUY_CANCELLED:   "text-slate-400",
+  TRAILING_BUY_TRACKING:    "text-violet-500",
+  TRAILING_BUY_L1:          "text-purple-400",
+  TELEGRAM_TRAILING_BUY:    "text-fuchsia-400",
+  MIGRATION:                "text-amber-300",
+  TICK:                     "text-zinc-600",
+  OHLCV:                    "text-zinc-600",
+  SCHED_STATE_CHANGE:       "text-blue-400",
+  SCHEDULER_START:          "text-blue-400",
+};
+
 const RANGE_OPTIONS = [
   { label: "1h",    hours: 1   },
   { label: "6h",    hours: 6   },
@@ -88,14 +108,17 @@ const RANGE_OPTIONS = [
 
 function LogLine({ log }: { log: IdcaTerminalLog }) {
   const [expanded, setExpanded] = useState(false);
+  const eventStyle = log.event ? (EVENT_STYLES[log.event] ?? "text-zinc-400") : (LEVEL_STYLES[log.level] ?? "text-zinc-400");
+  const hasDetail = !!(log.raw || log.payload);
 
   return (
     <div
       className={cn(
-        "font-mono text-[11px] leading-relaxed px-2 py-[2px] hover:bg-white/5 cursor-pointer border-b border-border/20",
-        LEVEL_STYLES[log.level] ?? "text-zinc-400"
+        "font-mono text-[11px] leading-relaxed px-2 py-[2px] hover:bg-white/5 border-b border-border/20",
+        hasDetail ? "cursor-pointer" : "",
+        eventStyle,
       )}
-      onClick={() => setExpanded(e => !e)}
+      onClick={() => hasDetail && setExpanded(e => !e)}
     >
       {/* Compact line */}
       <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -109,14 +132,28 @@ function LogLine({ log }: { log: IdcaTerminalLog }) {
         {log.mode && (
           <span className="text-violet-400 shrink-0 text-[10px]">[{log.mode === "simulation" ? "SIM" : log.mode.toUpperCase()}]</span>
         )}
-        <span className="text-zinc-500 shrink-0 text-[10px]">[{log.source}]</span>
-        <span className="break-all">{log.message}</span>
+        {log.event && (
+          <span className={cn("shrink-0 text-[10px] font-semibold", eventStyle)}>[{log.event}]</span>
+        )}
+        <span className="break-all text-zinc-300">{log.message}</span>
+        {hasDetail && (
+          <span className="text-zinc-600 text-[9px] shrink-0">{expanded ? "▲" : "▼"}</span>
+        )}
       </div>
-      {/* Expanded payload */}
-      {expanded && log.payload && (
-        <pre className="mt-1 ml-2 text-[10px] text-zinc-500 bg-zinc-900/60 rounded p-1.5 overflow-auto max-h-32 whitespace-pre-wrap">
-          {JSON.stringify(log.payload, null, 2)}
-        </pre>
+      {/* Expanded: raw + payload */}
+      {expanded && (
+        <div className="mt-1 ml-2 space-y-1">
+          {log.raw && log.raw !== log.message && (
+            <pre className="text-[10px] text-zinc-400 bg-zinc-900/80 rounded p-1.5 overflow-auto max-h-24 whitespace-pre-wrap">
+              {log.raw}
+            </pre>
+          )}
+          {log.payload && (
+            <pre className="text-[10px] text-zinc-500 bg-zinc-900/60 rounded p-1.5 overflow-auto max-h-32 whitespace-pre-wrap">
+              {JSON.stringify(log.payload, null, 2)}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );
@@ -157,13 +194,17 @@ export function IdcaTerminalPanel() {
     };
   }, [rangeKey, customFrom, customTo]);
 
-  const { data, isFetching, refetch } = useIdcaTerminalLogs({
+  const rangeHours = useMemo(() => {
+    if (rangeKey === "Custom") return 24;
+    return RANGE_OPTIONS.find(r => r.label === rangeKey)?.hours ?? 24;
+  }, [rangeKey]);
+
+  const { data, isFetching, refetch } = useIdcaLogs({
     pair:    pairFilter  !== "all" ? pairFilter  : undefined,
     mode:    modeFilter  !== "all" ? modeFilter  : undefined,
     level:   levelFilter !== "all" ? levelFilter : undefined,
-    q:       qFilter || undefined,
-    from:    fromDate,
-    to:      toDate,
+    search:  qFilter || undefined,
+    hours:   rangeHours,
     limit:   500,
     enabled: !paused,
   });
@@ -200,10 +241,13 @@ export function IdcaTerminalPanel() {
     setSeenIds(new Set());
   };
 
+  const buildExportLine = (l: IdcaTerminalLog) =>
+    `[${fmtDate(l.timestamp)}] [${l.level.toUpperCase()}] [${l.pair ?? "—"}] [${l.mode ?? "—"}] [${l.source}] [${l.event ?? "—"}] ${l.message}${
+      l.raw && l.raw !== l.message ? `\n  RAW: ${l.raw}` : ""
+    }${l.payload ? `\n  PAYLOAD: ${JSON.stringify(l.payload)}` : ""}`;
+
   const handleCopy = () => {
-    const text = localLogs.map(l =>
-      `[${fmtDate(l.timestamp)}] [${l.level.toUpperCase()}] ${l.pair ? `[${l.pair}]` : ""} [${l.source}] ${l.message}`
-    ).join("\n");
+    const text = localLogs.map(buildExportLine).join("\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -211,20 +255,31 @@ export function IdcaTerminalPanel() {
   };
 
   const handleExport = () => {
-    const text = localLogs.map(l =>
-      `[${fmtDate(l.timestamp)}] [${l.level.toUpperCase()}] [${l.pair ?? "—"}] [${l.mode ?? "—"}] [${l.source}] ${l.message}`
-    ).join("\n");
+    const text = localLogs.map(buildExportLine).join("\n");
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `idca_terminal_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `idca_logs_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportJson = () => {
+    const json = JSON.stringify(localLogs, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `idca_logs_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const visibleCount = localLogs.length;
   const hiddenCount = Math.max(0, (data?.count ?? 0) - visibleCount);
+  const dataSource = data?.source ?? "—";
+  const isFallback = data?.fallback === true;
 
   return (
     <div className="flex flex-col gap-2" style={{ minHeight: "calc(100vh - 290px)" }}>
@@ -253,12 +308,18 @@ export function IdcaTerminalPanel() {
               </span>
             </div>
 
-            {/* Counter */}
+            {/* Counter + source */}
             <span className="text-[10px] font-mono text-muted-foreground ml-1">
               {visibleCount.toLocaleString()} visibles
               {hiddenCount > 0 && ` · ${hiddenCount} ocultos`}
               {data?.hasMore && " · (más disponibles)"}
             </span>
+            {isFallback && (
+              <span className="text-[9px] font-mono text-amber-400 ml-1">[fallback: events]</span>
+            )}
+            {!isFallback && dataSource !== "—" && (
+              <span className="text-[9px] font-mono text-zinc-600 ml-1">[{dataSource}]</span>
+            )}
 
             {/* Controls */}
             <div className="flex items-center gap-1 ml-auto">
@@ -280,8 +341,11 @@ export function IdcaTerminalPanel() {
               <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={handleCopy}>
                 {copied ? <ClipboardCheck className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
               </Button>
-              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={handleExport}>
+              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={handleExport} title="Exportar TXT">
                 <Download className="h-3 w-3" />
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={handleExportJson} title="Exportar JSON">
+                <span className="text-[9px] font-mono">JSON</span>
               </Button>
             </div>
           </div>
@@ -378,8 +442,13 @@ export function IdcaTerminalPanel() {
                 ? "Streaming pausado. Pulsa Reanudar para recibir logs."
                 : isFetching
                 ? "Cargando logs IDCA…"
-                : "Sin logs en el rango seleccionado. El bot emitirá logs en el próximo tick."}
+                : "Sin logs en el rango seleccionado. Ajusta el rango horario o espera el próximo tick del scheduler."}
             </p>
+            {!paused && !isFetching && (
+              <p className="text-[10px] font-mono text-zinc-600 mt-1">
+                Fuente: {dataSource} · Los logs aparecen cuando el scheduler IDCA ejecuta ticks.
+              </p>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-border/10">
