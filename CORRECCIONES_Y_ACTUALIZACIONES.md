@@ -389,5 +389,76 @@ Implementación completa del sistema Institutional DCA con todas las fases plani
 
 ---
 
-*Última actualización: 2026-01-20*
-*Estado: En corrección activa*.
+## 2026-04-26 — HOTFIX IDCA Trailing Buy + Logs + Config Conflict
+
+### Síntomas corregidos
+- ETH/USD mandaba múltiples `ARMED` notificaciones tras restart del scheduler
+- Secuencia `ARMED → CANCELLED → ARMED` repetida cada pocos ticks por oscilaciones pequeñas
+- Warning `Both safetyOrdersJson and ladder ATRP are configured` aparecía en cada tick
+- Log `IDCA_ENTRY_DECISION` mostraba solo `base_price` sin distinguir `effective_entry_reference`
+- Logs ruidosos: `Skipping CANCELLED/ARMED/TRACKING alert` saturaban la vista principal
+
+### Archivos modificados
+
+#### `server/services/institutionalDca/IdcaTrailingBuyTelegramState.ts`
+- **Persistencia DB**: Estado anti-spam ahora se guarda en `idca_trailing_buy_telegram_state` (tabla nueva)
+- **`loadStateFromDb(pair, mode)`**: Nuevo export — carga estado al arrancar, evita re-enviar ARMED tras restart sin cambio real
+- **Cooldown rearmado 30min**: Tras `CANCELLED`, `shouldNotifyArmed` bloquea nuevo ARMED durante 30 minutos
+- **Histéresis cancelación**: `cancelIncrement()` acumula ticks consecutivos; solo cancela al 2do tick (configurable via `CANCEL_HISTERESIS_TICKS=2`)
+- **`cancelReset()`**: Reinicia contador histéresis cuando precio vuelve a zona válida
+- Import corregido: `../../db` (no `@db`)
+
+#### `db/migrations/030_idca_trailing_buy_state.sql`
+- Nueva tabla `idca_trailing_buy_telegram_state` con campos: pair, mode, state, last_notified_at, armed_at, trigger_price, local_low, cancelled_at, rearm_allowed_after
+
+#### `server/services/institutionalDca/IdcaEngine.ts`
+- **`startScheduler()`**: Llama `tbState.loadStateFromDb()` para todos los pares al arrancar
+- **Migration warning throttle**: `migrationWarnedPairs` — warning se emite solo UNA VEZ por par por proceso, no en cada tick
+- **`logEntryDecision()`**: Ahora acepta `effectiveBasePrice` y `basePriceMethod`. Loguea `hybrid_base_price`, `effective_entry_reference`, `reference_method` y `drawdown_from_reference_pct` de forma separada
+- **Histéresis en `inNeutralOrAbove`**: Usa `tbState.cancelIncrement()` antes de disarmar por zona neutral (2 ticks)
+- **Histéresis en `price_recovered`** (TrailingBuyManager nivel 1): Usa `tbState.cancelIncrement()` antes de cancelar
+- **`cancelReset()`** cuando precio sigue en zona válida
+- Renombrада variable local `tbState` → `tbManagerState` para evitar shadowing del namespace importado
+- Tracking: eliminados imports dinámicos redundantes — usa namespace `tbState` directamente
+
+#### `server/services/institutionalDca/IdcaTelegramNotifier.ts`
+- Logs `Skipping ARMED/TRIGGERED/TRACKING/CANCELLED` bajados de `console.log` a `console.debug` (no saturan vista principal)
+- `alertTrailingBuyCancelled`: eliminado `resetTrailingBuyTelegramState` después de `markNotifiedCancelled` — el cooldown `rearmAllowedAfter` ahora se preserva correctamente
+
+### Tests actualizados
+
+#### `server/services/__tests__/idcaTrailingBuyTelegramState.test.ts`
+- 5 tests nuevos (16-20): cooldown rearmado, histéresis cancelIncrement/cancelReset, estado cargado impide ARMED, preservación de rearmAllowedAfter
+- Tests 3 y 12 corregidos: valores numéricos ajustados para reflejar que "improvement" en trailing buy es precio más bajo (nuevo mínimo local)
+- **20/20 tests pasan** ✅
+
+### Validación final
+- `npm run check`: 0 errores TypeScript ✅
+- `npm run build`: 3786 módulos ✅
+- `vitest idcaTrailingBuyTelegramState`: 20/20 ✅
+- `vitest idcaLadderAtrp + idcaMessageFormatter + idcaReasonCatalog + idcaLogs`: 116/116 ✅
+- Total tests IDCA: 136/136 ✅
+
+### Autoevaluación FASE 12
+
+| Punto | Estado |
+|---|---|
+| ¿Puede mandar ARMED tras restart sin cambio real? | **NO** — estado cargado de DB bloquea re-notificación |
+| ¿Puede alternar ARMED/CANCELLED cada pocos ticks? | **NO** — histéresis 2 ticks + cooldown 30min tras cancel |
+| ¿Conflicto safetyOrdersJson + Ladder ATRP queda neutral? | **SÍ** — warning 1x por proceso, safetyOrders ignorado en runtime |
+| ¿Logs distinguen hybrid_base_price y effective_entry_reference? | **SÍ** — ambos campos en `IDCA_ENTRY_DECISION` |
+| ¿Logs ruidosos eliminados de vista principal? | **SÍ** — bajados a `console.debug` |
+| ¿TSC/build/tests pasan? | **SÍ** — 0 errores, 3786 módulos, 136/136 tests |
+
+### Deploy VPS
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+**REQUIERE migración DB**: `030_idca_trailing_buy_state.sql` se aplica automáticamente al arrancar si el sistema usa auto-migration.
+
+---
+
+*Última actualización: 2026-04-26*
+*Estado: Hotfix completado y validado*.

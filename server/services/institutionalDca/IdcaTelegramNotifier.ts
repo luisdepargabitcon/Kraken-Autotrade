@@ -552,7 +552,7 @@ export async function alertTrailingBuyArmed(
 ): Promise<void> {
   // Anti-spam: solo notificar si no estaba ya armado
   if (!tbState.shouldNotifyArmed(pair, mode)) {
-    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping ARMED alert for ${pair} - already armed/tracking`);
+    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping ARMED alert for ${pair} - already armed/tracking or in cooldown`);
     return;
   }
 
@@ -589,7 +589,7 @@ export async function alertTrailingBuyTriggered(
 ): Promise<void> {
   // Anti-spam: solo notificar una vez
   if (!tbState.shouldNotifyTriggered(pair, mode)) {
-    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRIGGERED alert for ${pair} - already notified`);
+    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRIGGERED alert for ${pair} - already notified`);
     return;
   }
 
@@ -721,7 +721,7 @@ export async function alertTrailingBuyTracking(
   // Anti-spam: verificar throttle antes de enviar
   const check = tbState.shouldNotifyTracking(pair, mode, bestPriceObserved);
   if (!check.should) {
-    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRACKING alert for ${pair} - throttle active (${check.reason || 'no reason'})`);
+    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRACKING alert for ${pair} - throttle active`);
     return;
   }
 
@@ -758,7 +758,7 @@ export async function alertTrailingBuyCancelled(
 ): Promise<void> {
   // Anti-spam: solo notificar una vez
   if (!tbState.shouldNotifyCancelled(pair, mode)) {
-    console.log(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping CANCELLED alert for ${pair} - already notified or not armed`);
+    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping CANCELLED alert for ${pair} - already notified or not armed`);
     return;
   }
 
@@ -787,10 +787,9 @@ export async function alertTrailingBuyCancelled(
 
   await send(chatId, msg, config.telegramThreadId || undefined);
   
-  // Marcar como notificado y limpiar estado
+  // Marcar como notificado — NO resetear: el cooldown de rearmado (rearmAllowedAfter) debe preservarse
   tbState.markNotifiedCancelled(pair, mode);
-  tbState.resetTrailingBuyTelegramState(pair, mode, "cancelled");
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] CANCELLED notification sent for ${pair} (reason: ${reason})`);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] CANCELLED notification sent for ${pair} (reason: ${reason}). Cooldown 30min activo.`);
 }
 
 // ─── Exit Management Alerts ─────────────────────────────────────────

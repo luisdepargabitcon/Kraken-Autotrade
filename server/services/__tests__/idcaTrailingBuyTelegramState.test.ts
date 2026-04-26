@@ -43,18 +43,18 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
   // ───────────────────────────────────────────────
   // Test 3: TRACKING — allow on significant improvement (>= 0.20%)
   // ───────────────────────────────────────────────
-  it("should allow tracking notification when price improves >= 0.20%", () => {
+  it("should allow tracking notification when price improves >= 0.20% (new lower low)", () => {
     tbState.markNotifiedArmed(pair, mode, 2400, 2350);
     
-    // Mark tracking once
+    // Mark tracking once at 2350
     tbState.markNotifiedTracking(pair, mode, 2350);
     
-    // Small change blocked
-    const check1 = tbState.shouldNotifyTracking(pair, mode, 2350.47); // +0.02%
+    // Small drop (<0.20%) blocked
+    const check1 = tbState.shouldNotifyTracking(pair, mode, 2349.58); // -0.018% — blocked
     expect(check1.should).toBe(false);
     
-    // Significant improvement (0.25%)
-    const check2 = tbState.shouldNotifyTracking(pair, mode, 2355.88); // +0.25%
+    // New lower low by >= 0.20% triggers improvement notification (2350 * 0.998 = 2345.30)
+    const check2 = tbState.shouldNotifyTracking(pair, mode, 2345.00); // -0.2128% from 2350
     expect(check2.should).toBe(true);
     expect(check2.reason).toBe("improvement");
   });
@@ -72,8 +72,8 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
     // After marking tracking, need to wait
     tbState.markNotifiedTracking(pair, mode, 2340);
     
-    // Still blocked immediately
-    const check2 = tbState.shouldNotifyTracking(pair, mode, 2330);
+    // Small change (0.04%) — still blocked immediately
+    const check2 = tbState.shouldNotifyTracking(pair, mode, 2339.10); // -0.038%
     expect(check2.should).toBe(false);
   });
 
@@ -179,18 +179,18 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
   // ───────────────────────────────────────────────
   // Test 12: TRACKING improvement detection
   // ───────────────────────────────────────────────
-  it("should detect price improvement correctly", () => {
+  it("should detect price improvement correctly (lower low)", () => {
     tbState.markNotifiedArmed(pair, mode, 2400, 2350);
     
     // Initial tracking notification at 2350
     tbState.markNotifiedTracking(pair, mode, 2350);
     
-    // Improvement less than 0.20%
-    const check1 = tbState.shouldNotifyTracking(pair, mode, 2354); // +0.17%
+    // Drop less than 0.20% — blocked
+    const check1 = tbState.shouldNotifyTracking(pair, mode, 2346.30); // -0.16%
     expect(check1.should).toBe(false);
     
-    // Improvement slightly above 0.20% (0.201% to avoid floating point edge case)
-    const check2 = tbState.shouldNotifyTracking(pair, mode, 2354.72); // +0.201%
+    // Drop exactly above 0.20% — allowed
+    const check2 = tbState.shouldNotifyTracking(pair, mode, 2345.29); // -0.20% from 2350
     expect(check2.should).toBe(true);
     expect(check2.reason).toBe("improvement");
   });
@@ -239,5 +239,80 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
     
     // Already cancelled → blocked
     expect(tbState.shouldNotifyCancelled(pair, mode)).toBe(false);
+  });
+
+  // ───────────────────────────────────────────────
+  // Test 16: Cooldown de rearmado tras cancel
+  // ───────────────────────────────────────────────
+  it("should block re-arming within 30 min after cancel", () => {
+    // Arm, then cancel
+    tbState.markNotifiedArmed(pair, mode, 2400, 2350);
+    tbState.markNotifiedCancelled(pair, mode);
+
+    // Immediately after cancel: shouldNotifyArmed must be false (cooldown active)
+    expect(tbState.shouldNotifyArmed(pair, mode)).toBe(false);
+  });
+
+  // ───────────────────────────────────────────────
+  // Test 17: cancelIncrement — histéresis (2 ticks para cancelar)
+  // ───────────────────────────────────────────────
+  it("cancelIncrement should return false on first tick and true on second", () => {
+    tbState.markNotifiedArmed(pair, mode, 2400, 2350);
+
+    // Tick 1 — no debe cancelar
+    const tick1 = tbState.cancelIncrement(pair, mode);
+    expect(tick1).toBe(false);
+
+    // Tick 2 — debe cancelar
+    const tick2 = tbState.cancelIncrement(pair, mode);
+    expect(tick2).toBe(true);
+  });
+
+  // ───────────────────────────────────────────────
+  // Test 18: cancelReset reinicia el contador de histéresis
+  // ───────────────────────────────────────────────
+  it("cancelReset should restart histeresis counter", () => {
+    tbState.markNotifiedArmed(pair, mode, 2400, 2350);
+
+    // Tick 1 — no cancela
+    tbState.cancelIncrement(pair, mode);
+
+    // Reset — vuelve a cero
+    tbState.cancelReset(pair, mode);
+
+    // Tick 1 de nuevo — no cancela (reinició)
+    const tick1again = tbState.cancelIncrement(pair, mode);
+    expect(tick1again).toBe(false);
+
+    // Tick 2 — ahora sí cancela
+    const tick2 = tbState.cancelIncrement(pair, mode);
+    expect(tick2).toBe(true);
+  });
+
+  // ───────────────────────────────────────────────
+  // Test 19: Estado cargado como "armed" impide re-notificar ARMED (simula restart)
+  // ───────────────────────────────────────────────
+  it("should not re-notify ARMED if state was loaded from DB as armed (restart simulation)", () => {
+    // Simulamos lo que hace loadStateFromDb — se llama markNotifiedArmed directamente
+    // (la carga de DB establece el mismo estado en memoria)
+    tbState.markNotifiedArmed(pair, mode, 2400, 2350);
+
+    // Como si el scheduler hubiera arrancado y cargado ese estado:
+    // shouldNotifyArmed debe retornar false
+    expect(tbState.shouldNotifyArmed(pair, mode)).toBe(false);
+  });
+
+  // ───────────────────────────────────────────────
+  // Test 20: Estado cancelado preserva rearmAllowedAfter tras markNotifiedCancelled
+  // ───────────────────────────────────────────────
+  it("should preserve rearmAllowedAfter in cancelled state (cooldown intact)", () => {
+    tbState.markNotifiedArmed(pair, mode, 2400, 2350);
+    tbState.markNotifiedCancelled(pair, mode);
+
+    const st = tbState.getTrailingBuyTelegramState(pair, mode);
+    expect(st?.state).toBe("cancelled");
+    expect(st?.cancelledAt).toBeDefined();
+    expect(st?.rearmAllowedAfter).toBeDefined();
+    expect(st!.rearmAllowedAfter!).toBeGreaterThan(Date.now());
   });
 });

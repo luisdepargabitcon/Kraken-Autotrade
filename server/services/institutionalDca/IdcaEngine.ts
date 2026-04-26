@@ -262,6 +262,7 @@ const lastDailyFetchMs = new Map<string, number>();             // throttle: max
 const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
 const lastEntryEventMs = new Map<string, number>();             // throttle: max 1 entry_evaluated DB event per 5min per pair
 const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
+const migrationWarnedPairs = new Set<string>();                 // only warn ONCE per pair per process lifetime
 
 // VWAP anchor memory — frozen anchor that never goes down (only up or reset)
 interface VwapAnchorPrevious {
@@ -549,6 +550,12 @@ export async function startScheduler(): Promise<void> {
 
   console.log(`${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)`);
   await loadAnchorsFromDb();
+  // Reconstruct anti-spam Trailing Buy state from DB so ARMED is not re-sent after restart
+  for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
+    for (const mode of ["simulation", "live"]) {
+      void tbState.loadStateFromDb(pair, mode);
+    }
+  }
   isRunning = true;
 
   // Initial tick after 2s; subsequent ticks are scheduled by scheduleNext().
@@ -837,19 +844,18 @@ async function evaluatePair(
 
             // Update: si está armado, seguir el mínimo y notificar con throttle
             if (TrailingBuyManager.isArmed(pair)) {
-              const tbState = TrailingBuyManager.getState(pair);
+              const tbManagerState = TrailingBuyManager.getState(pair);
               const tbResult = TrailingBuyManager.update(pair, currentPrice);
               
               // Notificar tracking throttled (no en cada tick)
-              if (tbState && !tbResult.triggered) {
-                const { shouldNotifyTracking } = await import('./IdcaTrailingBuyTelegramState');
-                const check = shouldNotifyTracking(pair, mode, tbState.localLow);
+              if (tbManagerState && !tbResult.triggered) {
+                const check = tbState.shouldNotifyTracking(pair, mode, tbManagerState.localLow);
                 if (check.should) {
-                  const lastState = await import('./IdcaTrailingBuyTelegramState').then(m => m.getTrailingBuyTelegramState(pair, mode));
-                  const minutesSince = lastState ? Math.round((Date.now() - lastState.lastNotifiedAt) / 60000) : 15;
+                  const lastTgState = tbState.getTrailingBuyTelegramState(pair, mode);
+                  const minutesSince = lastTgState ? Math.round((Date.now() - lastTgState.lastNotifiedAt) / 60000) : 15;
                   const reboundMinPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
-                  const reboundTriggerPrice = tbState.localLow * (1 + reboundMinPct / 100);
-                  telegram.alertTrailingBuyTracking(pair, mode, currentPrice, tbState.localLow, reboundTriggerPrice, minutesSince)
+                  const reboundTriggerPrice = tbManagerState.localLow * (1 + reboundMinPct / 100);
+                  telegram.alertTrailingBuyTracking(pair, mode, currentPrice, tbManagerState.localLow, reboundTriggerPrice, minutesSince)
                     .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTracking failed: ${e.message}`));
                 }
               }
@@ -878,33 +884,46 @@ async function evaluatePair(
                 telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "timeout")
                   .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(expired) failed: ${e.message}`));
               } else if (tbResult.reason?.startsWith("recovered")) {
-                // Trailing buy cancelado por recuperación de precio (Manager level 1)
-                await createHumanEvent({
-                  pair, mode,
-                  eventType: "trailing_buy_reset",
-                  severity: "info",
-                  message: `Trailing buy cancelled: price recovered above threshold`,
-                  payloadJson: { price: currentPrice, zone: tbZone, reason: tbResult.reason },
-                }, { eventType: "trailing_buy_reset", pair, mode });
-                telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
-                  .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(recovered) failed: ${e.message}`));
+                // Histéresis: solo cancelar si 2 ticks consecutivos sobre threshold
+                const doCancel = tbState.cancelIncrement(pair, mode);
+                if (doCancel) {
+                  // Trailing buy cancelado por recuperación de precio (Manager level 1)
+                  await createHumanEvent({
+                    pair, mode,
+                    eventType: "trailing_buy_reset",
+                    severity: "info",
+                    message: `Trailing buy cancelled: price recovered above threshold`,
+                    payloadJson: { price: currentPrice, zone: tbZone, reason: tbResult.reason },
+                  }, { eventType: "trailing_buy_reset", pair, mode });
+                  telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
+                    .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(recovered) failed: ${e.message}`));
+                } else {
+                  console.log(`${TAG}[TRAILING_BUY] ${pair} price_recovered tick 1/${2} (histéresis) — esperando confirmación`);
+                }
               }
             }
 
             // Disarm: precio vuelve a zona neutral sin haber comprado
             if (inNeutralOrAbove && TrailingBuyManager.isArmed(pair)) {
-              TrailingBuyManager.disarm(pair);
-              await createHumanEvent({
-                pair, mode,
-                eventType: "trailing_buy_reset",
-                severity: "info",
-                message: `Trailing buy disarmed: price returned to ${tbZone}`,
-                payloadJson: { price: currentPrice, zone: tbZone, reason: "price_returned_to_neutral" },
-              }, { eventType: "trailing_buy_reset", pair, mode });
-              
-              // Notificar cancelación por recuperación de precio
-              telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
-                .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled failed: ${e.message}`));
+              // Histéresis: acumular ticks antes de cancelar por zona neutral
+              const doCancel = tbState.cancelIncrement(pair, mode);
+              if (doCancel) {
+                TrailingBuyManager.disarm(pair);
+                await createHumanEvent({
+                  pair, mode,
+                  eventType: "trailing_buy_reset",
+                  severity: "info",
+                  message: `Trailing buy disarmed: price returned to ${tbZone}`,
+                  payloadJson: { price: currentPrice, zone: tbZone, reason: "price_returned_to_neutral" },
+                }, { eventType: "trailing_buy_reset", pair, mode });
+                telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "price_recovered")
+                  .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled failed: ${e.message}`));
+              } else {
+                console.log(`${TAG}[TRAILING_BUY] ${pair} returned to neutral tick 1/${2} (histéresis) — waiting`);
+              }
+            } else if (!inNeutralOrAbove && TrailingBuyManager.isArmed(pair)) {
+              // Precio sigue en zona de interés — resetear contador histéresis
+              tbState.cancelReset(pair, mode);
             }
           }
         }
@@ -1002,24 +1021,23 @@ async function evaluatePair(
         );
         
         if (!validation.valid) {
-          // Log warning but continue with current system
-          console.warn(`${TAG}[MIGRATION] ${pair}: ${validation.issues.join(", ")}`);
-          await createHumanEvent({
-            pair, mode,
-            eventType: "migration_validation_warning",
-            severity: "warning",
-            message: `Migration validation warning: ${validation.issues.join(", ")}`,
-            payloadJson: { 
-              issues: validation.issues,
-              recommendation: validation.recommendation,
-              activeSystem: idcaMigrationService.getActiveSystem(
-                pair,
-                safetyOrders,
-                assetConfig.ladderAtrpEnabled || false,
-                assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig | undefined
-              )
-            },
-          }, { eventType: "migration_validation_warning", pair, mode });
+          const warnKey = `${pair}:${mode}`;
+          if (!migrationWarnedPairs.has(warnKey)) {
+            migrationWarnedPairs.add(warnKey);
+            // Ladder ATRP active → safetyOrdersJson legacy is silently ignored at runtime
+            const activeSystem = idcaMigrationService.getActiveSystem(
+              pair, safetyOrders, assetConfig.ladderAtrpEnabled || false,
+              assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig | undefined
+            );
+            console.warn(`${TAG}[MIGRATION] ${pair} (once): ${validation.issues.join(", ")}. ActiveSystem=${activeSystem}. safetyOrdersJson legacy IGNORED while Ladder ATRP is enabled.`);
+            await createHumanEvent({
+              pair, mode,
+              eventType: "migration_validation_warning",
+              severity: "warning",
+              message: `Migration validation warning (logged once): ${validation.issues.join(", ")}. Ladder ATRP activo: safetyOrdersJson legacy ignorado.`,
+              payloadJson: { issues: validation.issues, recommendation: validation.recommendation, activeSystem },
+            }, { eventType: "migration_validation_warning", pair, mode });
+          }
         }
 
         // Always run checkEntry for event generation (entry_check_blocked visible in UI).
@@ -2620,7 +2638,8 @@ async function performEntryCheck(
     pair, mode,
     blocks.length === 0 ? "allowed" : "blocked",
     blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
-    entryDipPct, minDip, basePriceResult, currentPrice
+    entryDipPct, minDip, basePriceResult, currentPrice,
+    effectiveBasePrice, basePriceMethod
   );
 
   return {
@@ -2740,15 +2759,24 @@ function logBasePriceDebug(pair: string, currentPrice: number, base: BasePriceRe
   );
 }
 
-function logEntryDecision(pair: string, mode: string, action: "allowed" | "blocked", reason: string, dip: number, minDip: number, base: BasePriceResult, currentPrice: number): void {
+function logEntryDecision(
+  pair: string, mode: string, action: "allowed" | "blocked", reason: string,
+  dip: number, minDip: number, base: BasePriceResult, currentPrice: number,
+  effectiveBasePrice?: number, basePriceMethod?: string
+): void {
+  const effBase = effectiveBasePrice ?? base.price;
+  const effMethod = basePriceMethod ?? base.type ?? "hybrid";
+  const drawdownFromEff = effBase > 0 ? ((effBase - currentPrice) / effBase) * 100 : dip;
   console.log(
     `${TAG}[IDCA_ENTRY_DECISION]` +
     ` pair=${pair}` +
     ` action=${action}` +
     ` reason="${reason}"` +
-    ` drawdown_pct=${dip.toFixed(2)}%` +
+    ` hybrid_base_price=${base.price.toFixed(2)}` +
+    ` effective_entry_reference=${effBase.toFixed(2)}` +
+    ` reference_method=${effMethod}` +
+    ` drawdown_from_reference_pct=${drawdownFromEff.toFixed(2)}%` +
     ` required_drop=${minDip.toFixed(2)}%` +
-    ` base_price=${base.price.toFixed(2)}` +
     ` current_price=${currentPrice.toFixed(2)}`
   );
   // Persist to DB (always for "allowed"; throttled 5min for "blocked" to avoid DB spam)
