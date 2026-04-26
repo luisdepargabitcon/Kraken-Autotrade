@@ -1482,13 +1482,75 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Terminal Logs ─────────────────────────────────────────────
+  // Endpoint para la subpestaña Terminal: devuelve todos los eventos IDCA
+  // incluyendo los técnicos (terminal_log, trailing_buy_*, migration_*)
+  // que el feed visual oculta. Soporta los mismos filtros que /events.
+
+  app.get(`${PREFIX}/terminal/logs`, async (req, res) => {
+    try {
+      const {
+        pair, mode, level, q, from, to, limit, cursor
+      } = req.query;
+
+      const parsedFrom = from ? (() => { const d = new Date((from as string).replace(/ /g, '+')); return isNaN(d.getTime()) ? undefined : d; })() : undefined;
+      const parsedTo   = to   ? (() => { const d = new Date((to   as string).replace(/ /g, '+')); return isNaN(d.getTime()) ? undefined : d; })() : undefined;
+
+      // Default: últimas 24h si no se especifica rango
+      const effectiveFrom = parsedFrom ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+      const parsedLimit = Math.min(
+        limit ? parseInt(limit as string, 10) : 300,
+        1000
+      );
+
+      const logs = await repo.getEvents({
+        pair: pair as string | undefined,
+        mode: mode as string | undefined,
+        severity: level as string | undefined,
+        dateFrom: effectiveFrom,
+        dateTo: parsedTo,
+        limit: parsedLimit,
+        orderBy: 'createdAt',
+        orderDirection: 'desc',
+      });
+
+      // Filtro texto libre (q) en servidor
+      const filtered = q
+        ? logs.filter(l =>
+            `${l.message} ${l.eventType} ${l.pair ?? ''} ${l.technicalSummary ?? ''}`.toLowerCase()
+              .includes((q as string).toLowerCase())
+          )
+        : logs;
+
+      res.json({
+        logs: filtered.map(l => ({
+          id: l.id,
+          timestamp: l.createdAt,
+          level: l.severity,
+          pair: l.pair ?? null,
+          mode: l.mode ?? null,
+          source: (l.payloadJson as any)?.source ?? l.technicalSummary ?? 'IDCA',
+          eventType: l.eventType,
+          message: l.message,
+          payload: l.payloadJson ?? null,
+        })),
+        count: filtered.length,
+        hasMore: logs.length === parsedLimit,
+      });
+    } catch (e: any) {
+      console.error(`[IDCA][TERMINAL_LOGS] ERROR: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Event Purge Scheduler ─────────────────────────────────────
-  // Auto-purge events older than 7 days every 6 hours
+  // Auto-purge IDCA events older than 30 days every 6 hours
   setInterval(async () => {
     try {
-      const deleted = await repo.purgeOldEvents(7, 1000);
+      const deleted = await repo.purgeOldEvents(30, 1000);
       if (deleted > 0) {
-        console.log(`[IDCA][PURGE] Auto-purged ${deleted} events older than 7 days`);
+        console.log(`[IDCA][PURGE] Auto-purged ${deleted} IDCA events older than 30 days`);
       }
     } catch (e: any) {
       console.error('[IDCA][PURGE] Auto-purge failed:', e.message);

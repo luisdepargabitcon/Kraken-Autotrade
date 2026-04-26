@@ -98,6 +98,7 @@ import { EntradasTab } from "@/components/idca/EntradasTab";
 import { SalidasTab } from "@/components/idca/SalidasTab";
 import { EjecucionTab } from "@/components/idca/EjecucionTab";
 import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
+import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -3212,21 +3213,27 @@ function translateOrderType(ot: string): string {
 }
 
 function EventsTab() {
-  const [subTab, setSubTab] = useState<"live" | "events">("live");
+  const [subTab, setSubTab] = useState<"live" | "events" | "terminal">("live");
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <Button size="sm" variant={subTab === "live" ? "default" : "outline"}
           className="text-xs gap-1" onClick={() => setSubTab("live")}>
           <Radio className="h-3 w-3" /> Monitor Tiempo Real
         </Button>
         <Button size="sm" variant={subTab === "events" ? "default" : "outline"}
           className="text-xs gap-1" onClick={() => setSubTab("events")}>
-          <Terminal className="h-3 w-3" /> Historial de Eventos
+          <Activity className="h-3 w-3" /> Historial de Eventos
+        </Button>
+        <Button size="sm" variant={subTab === "terminal" ? "default" : "outline"}
+          className="text-xs gap-1" onClick={() => setSubTab("terminal")}>
+          <Terminal className="h-3 w-3" /> Terminal
         </Button>
       </div>
-      {subTab === "live" ? <LiveMonitorPanel /> : <EventsLogPanel />}
+      {subTab === "live" && <LiveMonitorPanel />}
+      {subTab === "events" && <EventsLogPanel />}
+      {subTab === "terminal" && <IdcaTerminalPanel />}
     </div>
   );
 }

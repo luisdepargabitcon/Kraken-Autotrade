@@ -1036,3 +1036,59 @@ export function useUpdateTrailingBuyLevel1Config() {
     },
   });
 }
+
+// ─── Terminal Logs ─────────────────────────────────────────────────
+
+export interface IdcaTerminalLog {
+  id: number;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+  pair: string | null;
+  mode: string | null;
+  source: string;
+  eventType: string;
+  message: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface IdcaTerminalLogsResponse {
+  logs: IdcaTerminalLog[];
+  count: number;
+  hasMore: boolean;
+}
+
+export function useIdcaTerminalLogs(filters: {
+  pair?: string;
+  mode?: string;
+  level?: string;
+  q?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  enabled?: boolean;
+}) {
+  const stableKey = {
+    ...filters,
+    from: filters.from ? truncDateToSec(filters.from) : undefined,
+    to:   filters.to   ? truncDateToSec(filters.to)   : undefined,
+  };
+
+  return useQuery<IdcaTerminalLogsResponse>({
+    queryKey: ["idca", "terminal-logs", stableKey],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.pair)  params.set("pair",  filters.pair);
+      if (filters.mode)  params.set("mode",  filters.mode);
+      if (filters.level) params.set("level", filters.level);
+      if (filters.q)     params.set("q",     filters.q);
+      if (filters.from)  params.set("from",  filters.from.toISOString());
+      if (filters.to)    params.set("to",    filters.to.toISOString());
+      if (filters.limit) params.set("limit", String(filters.limit));
+      const res = await fetch(`${PREFIX}/terminal/logs?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch IDCA terminal logs");
+      return res.json();
+    },
+    staleTime: 5000,
+    refetchInterval: filters.enabled !== false ? 5000 : false,
+  });
+}

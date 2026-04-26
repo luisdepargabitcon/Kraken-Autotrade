@@ -390,5 +390,32 @@ FROM institutional_dca_asset_configs;
 
 ---
 
-*Última actualización: 2026-04-19*
+## 2026-04-23 — Terminal IDCA: Subpestaña de Logs Técnicos en Tiempo Real
+
+### Nuevos archivos
+- `server/services/institutionalDca/idcaLog.ts` — Helper centralizado `idcaLog(level, message, meta)` para emitir logs técnicos IDCA a consola + `institutional_dca_events`
+- `client/src/components/idca/IdcaTerminalPanel.tsx` — Componente React "Terminal" tipo consola con polling 5s, filtros, pausa/reanudar, exportar, copiar
+- `server/services/__tests__/idcaTerminalLogs.test.ts` — 11 tests unitarios sin DB (truncación payload, mapeo, retención)
+
+### Archivos modificados
+- `server/routes/institutionalDca.routes.ts` — Añadido endpoint `GET /api/institutional-dca/terminal/logs` (filtros: pair, mode, level, q, from, to, limit). Retención cambiada de 7 → 30 días.
+- `client/src/hooks/useInstitutionalDca.ts` — Añadido hook `useIdcaTerminalLogs` con polling cada 5s
+- `client/src/pages/InstitutionalDca.tsx` — `EventsTab` actualizado con 3ª subpestaña "Terminal"
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Corregido `config` no definido en `alertTrailingBuyTriggered`
+
+### Diseño
+- **Fuente de datos**: `institutional_dca_events` (sin crear tabla nueva). La Terminal muestra TODOS los eventos incluyendo técnicos que el feed visual oculta.
+- **Retención**: 30 días (purga batch cada 6h)
+- **Polling**: 5s en tiempo real, pausa manual disponible
+- **Máx**: 1.000 logs por request, 1.000 en vista
+- **Filtros**: par, modo, nivel, texto libre, rangos de fecha (1h/6h/24h/7d/30d/Custom)
+
+### Validación
+- `npm run check` — ✅ 0 errores TypeScript
+- `npm run build` — ✅ OK (3785 módulos)
+- `vitest run idcaTerminalLogs.test.ts` — ✅ 11/11 tests
+
+---
+
+*Última actualización: 2026-04-23*
 *Mantenido por: Windsurf Cascade AI*

@@ -596,6 +596,8 @@ export async function alertTrailingBuyTriggered(
   const { chatId, enabled } = await canSend("trailing_buy_triggered");
   if (!enabled) return;
 
+  const config = await repo.getIdcaConfig();
+
   const msg = [
     `🟡 <b>Rebote detectado por Trailing Buy</b> — <b>${pair}</b>`,
     ``,
