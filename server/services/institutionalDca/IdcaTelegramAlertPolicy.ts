@@ -2,6 +2,7 @@
  * IdcaTelegramAlertPolicy — Política centralizada de alertas Telegram para Trailing Buy IDCA.
  *
  * Lee el bloque "trailingBuy" de telegramAlertTogglesJson y aplica valores por defecto seguros.
+ * Si existe telegramUiJson (sliders), usa getEffectiveTelegramConfig para override cooldowns dinámicos.
  *
  * Regla crítica: trackingEnabled = false por defecto.
  * El tracking técnico siempre se escribe en Logs IDCA, pero Telegram solo recibe eventos
@@ -13,6 +14,7 @@
  *   balanced     — eventos importantes sin tracking individual (recomendado por defecto)
  *   verbose      — permite tracking individual con límites duros
  */
+import { getEffectiveTelegramConfig } from "./IdcaSliderConfig";
 
 export interface TrailingBuyTelegramConfig {
   profile: "silent" | "actions_only" | "balanced" | "verbose";
@@ -120,6 +122,31 @@ function applyProfileOverrides(config: TrailingBuyTelegramConfig): TrailingBuyTe
 export function resolveTrailingBuyPolicy(togglesJson: unknown): TrailingBuyTelegramConfig {
   const config = getTrailingBuyTelegramConfig(togglesJson);
   return applyProfileOverrides(config);
+}
+
+/**
+ * Resuelve la política con override desde telegramUiJson (sliders).
+ * Si telegramUiJson existe, usa getEffectiveTelegramConfig para derivar cooldowns dinámicos.
+ * Los toggles individuales (armedEnabled, watchingEnabled, etc.) siguen desde telegramAlertTogglesJson.
+ */
+export function resolveTrailingBuyPolicyWithSliders(
+  togglesJson: unknown,
+  telegramUiJson: unknown,
+): TrailingBuyTelegramConfig {
+  const baseConfig = getTrailingBuyTelegramConfig(togglesJson);
+  const sliderOverride = getEffectiveTelegramConfig({ telegramUiJson });
+
+  // Override solo los cooldowns y trackingEnabled desde sliders
+  const merged: TrailingBuyTelegramConfig = {
+    ...baseConfig,
+    trackingEnabled: sliderOverride.trackingEnabled,
+    trackingMinMinutes: sliderOverride.trackingMinIntervalMinutes,
+    digestIntervalMinutes: sliderOverride.digestIntervalMinutes,
+    trackingMinPriceImprovementPct: sliderOverride.trackingMinPriceImprovementPct,
+    // watchingCooldownMinutes se pasa por separado a IdcaTrailingBuyTelegramState
+  };
+
+  return applyProfileOverrides(merged);
 }
 
 /**

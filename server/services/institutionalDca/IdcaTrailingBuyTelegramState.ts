@@ -142,9 +142,10 @@ export function getTrailingBuyTelegramState(pair: string, mode: string): Trailin
 
 /**
  * Indica si se debe notificar el estado WATCHING (precio cerca de zona, no armado aún).
- * Throttle: máximo 1 vez cada 30 min por par:modo.
+ * Throttle: máximo 1 vez cada watchingMinIntervalMs por par:modo.
+ * Si watchingMinIntervalMs no se pasa, usa el fallback WATCHING_MIN_INTERVAL_MS (120 min).
  */
-export function shouldNotifyWatching(pair: string, mode: string): boolean {
+export function shouldNotifyWatching(pair: string, mode: string, watchingMinIntervalMs?: number): boolean {
   const key = getStateKey(pair, mode);
   const current = trailingBuyTelegramStates.get(key);
   // No notificar watching si ya estamos armed/tracking/triggered
@@ -152,7 +153,8 @@ export function shouldNotifyWatching(pair: string, mode: string): boolean {
     return false;
   }
   const lastAt = current?.lastWatchingNotifiedAt ?? 0;
-  return (Date.now() - lastAt) >= WATCHING_MIN_INTERVAL_MS;
+  const intervalMs = watchingMinIntervalMs ?? WATCHING_MIN_INTERVAL_MS;
+  return (Date.now() - lastAt) >= intervalMs;
 }
 
 export function markNotifiedWatching(pair: string, mode: string): void {

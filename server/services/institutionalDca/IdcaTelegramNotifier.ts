@@ -11,6 +11,7 @@ import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schem
 import * as tbState from "./IdcaTrailingBuyTelegramState";
 import {
   resolveTrailingBuyPolicy,
+  resolveTrailingBuyPolicyWithSliders,
   shouldSendTrackingTelegram,
   buildDigestMessage,
   type TrailingBuyDigestEntry,
@@ -594,15 +595,26 @@ export async function alertTrailingBuyWatching(
     ` state=watching`,
   );
 
-  // Verificar política
+  // Verificar política (con sliders si existen)
   const idcaConfig = await repo.getIdcaConfig();
-  const tbPolicy = resolveTrailingBuyPolicy(idcaConfig.telegramAlertTogglesJson || {});
+  const tbPolicy = resolveTrailingBuyPolicyWithSliders(
+    idcaConfig.telegramAlertTogglesJson || {},
+    idcaConfig.telegramUiJson || {},
+  );
   if (!tbPolicy.watchingEnabled) {
     console.log(`[TELEGRAM_BLOCKED_BY_POLICY] pair=${pair} alertType=watching reason=watching_disabled_by_policy`);
     return;
   }
 
-  if (!tbState.shouldNotifyWatching(pair, mode)) {
+  // Obtener watchingMinIntervalMs desde sliders (si existe telegramUiJson)
+  const sliderOverride = idcaConfig.telegramUiJson
+    ? await import("./IdcaSliderConfig").then(m => m.getEffectiveTelegramConfig({ telegramUiJson: idcaConfig.telegramUiJson }))
+    : null;
+  const watchingMinIntervalMs = sliderOverride
+    ? sliderOverride.watchingMinIntervalMinutes * 60 * 1000
+    : undefined;
+
+  if (!tbState.shouldNotifyWatching(pair, mode, watchingMinIntervalMs)) {
     console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping WATCHING alert for ${pair} - throttle active`);
     return;
   }
@@ -757,8 +769,11 @@ export async function alertTrailingBuyTracking(
   const idcaConfig = await repo.getIdcaConfig();
   if (!idcaConfig.telegramEnabled || !idcaConfig.telegramChatId) return;
 
-  // Verificar política: si trackingEnabled=false (default), solo log IDCA, no Telegram
-  const tbPolicy = resolveTrailingBuyPolicy(idcaConfig.telegramAlertTogglesJson || {});
+  // Verificar política (con sliders si existen): si trackingEnabled=false (default), solo log IDCA, no Telegram
+  const tbPolicy = resolveTrailingBuyPolicyWithSliders(
+    idcaConfig.telegramAlertTogglesJson || {},
+    idcaConfig.telegramUiJson || {},
+  );
   if (!tbPolicy.trackingEnabled) {
     console.log(
       `[TELEGRAM_BLOCKED_BY_POLICY] pair=${pair} alertType=tracking reason=tracking_disabled_by_policy` +
