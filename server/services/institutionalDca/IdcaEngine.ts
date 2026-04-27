@@ -7,7 +7,7 @@ import * as repo from "./IdcaRepository";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
 import * as tbState from "./IdcaTrailingBuyTelegramState";
-import { resolveTrailingBuyPolicy, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
+import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
@@ -691,7 +691,10 @@ async function runTick(): Promise<void> {
 
     // Digest: enviar resumen agrupado Trailing Buy si la política lo requiere
     try {
-      const tbPolicy = resolveTrailingBuyPolicy(config.telegramAlertTogglesJson || {});
+      const tbPolicy = resolveTrailingBuyPolicyWithSliders(
+        config.telegramAlertTogglesJson || {},
+        config.telegramUiJson || {},
+      );
       if (shouldSendDigest(lastDigestSentAt.get(mode) ?? 0, tbPolicy)) {
         lastDigestSentAt.set(mode, Date.now());
         const digestEntries = (INSTITUTIONAL_DCA_ALLOWED_PAIRS
