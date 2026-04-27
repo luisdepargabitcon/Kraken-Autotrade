@@ -48,7 +48,6 @@ import {
   useDeleteOrder,
   useDeleteAllOrders,
   useSetCycleStatus,
-  useUpdateTrailingBuyPolicy,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -722,6 +721,47 @@ function ConfigBlock({ icon: Icon, title, desc, children }: {
   );
 }
 
+// ─── Helpers de preview client-side (mirrors IdcaSliderConfig.ts) ──
+
+function lerpUI(level: number, points: [number, number][]): number {
+  if (level <= points[0][0]) return points[0][1];
+  if (level >= points[points.length - 1][0]) return points[points.length - 1][1];
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x0, y0] = points[i]; const [x1, y1] = points[i + 1];
+    if (level >= x0 && level <= x1) {
+      return +(y0 + ((level - x0) / (x1 - x0)) * (y1 - y0)).toFixed(2);
+    }
+  }
+  return points[points.length - 1][1];
+}
+
+function deriveEntryPreview(patience: number, rebound: number, quality: number) {
+  const btcDip     = lerpUI(patience, [[0, 3.00], [50, 3.70], [70, 4.20], [100, 5.20]]);
+  const ethDip     = lerpUI(patience, [[0, 3.30], [50, 4.00], [70, 4.60], [100, 6.00]]);
+  const btcRebound = lerpUI(rebound,  [[0, 0.25], [50, 0.45], [65, 0.55], [100, 0.90]]);
+  const ethRebound = lerpUI(rebound,  [[0, 0.30], [50, 0.55], [65, 0.65], [100, 1.10]]);
+  const minScore   = Math.round(Math.max(
+    lerpUI(patience, [[0, 50], [50, 57], [70, 62], [100, 75]]),
+    lerpUI(quality,  [[0, 45], [50, 58], [65, 65], [100, 80]]),
+  ));
+  const minMarket  = Math.round(lerpUI(patience, [[0, 42], [50, 48], [70, 52], [100, 62]]));
+  let style: string, desc: string;
+  if (patience >= 80)      { style = "Muy conservador"; desc = "Espera caídas profundas. Pocas entradas, alta selectividad."; }
+  else if (patience >= 65) { style = "Prudente";        desc = "El bot esperará caída real, confirmará rebote y filtrará entradas de baja calidad."; }
+  else if (patience >= 40) { style = "Equilibrado";     desc = "Balance entre oportunidades y prudencia. Activo en mercados normales."; }
+  else                     { style = "Agresivo";        desc = "Más entradas, menor margen requerido. Recomendado solo en tendencia alcista."; }
+  return { btcDip, ethDip, btcRebound, ethRebound, minScore, minMarket, style, desc };
+}
+
+function deriveAlertPreview(freq: number, detail: number, grouping: number) {
+  const watchingMin = Math.round(lerpUI(freq,     [[0, 60], [85, 240], [100, 480]]));
+  const trackingMin = Math.round(lerpUI(freq,     [[0, 30], [85, 90],  [100, 180]]));
+  const digestMin   = Math.max(30, Math.round(lerpUI(grouping, [[0, 30], [50, 120], [85, 240], [100, 480]])));
+  const tracking    = detail >= 70;
+  const profile     = detail <= 15 ? "Silencioso" : detail <= 40 && freq >= 70 ? "Equilibrado" : detail >= 70 ? "Detallado" : "Solo acciones";
+  return { watchingMin, trackingMin, digestMin, tracking, profile };
+}
+
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
 function ConfigTab() {
@@ -730,7 +770,7 @@ function ConfigTab() {
   const updateConfig = useUpdateIdcaConfig();
   const updateAsset = useUpdateAssetConfig();
   const [showAdvancedTp, setShowAdvancedTp] = useState(false);
-  const [configSubTab, setConfigSubTab] = useState<"general" | "vwap">("general");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
 
   if (!config) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
 
@@ -759,6 +799,17 @@ function ConfigTab() {
       {/* ════ SUB-TABS DENTRO DE CONFIG ════ */}
       <div className="flex gap-2 border-b border-border/40 pb-2">
         <button
+          onClick={() => setConfigSubTab("entrada")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "entrada"
+              ? "bg-green-500/10 text-green-400 border-b-2 border-green-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          🎯 Entrada
+        </button>
+        <button
           onClick={() => setConfigSubTab("general")}
           className={cn(
             "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
@@ -781,6 +832,120 @@ function ConfigTab() {
           VWAP & Rebound
         </button>
       </div>
+
+      {/* ════ ENTRADA AUTOMÁTICA ════ */}
+      {configSubTab === "entrada" && (() => {
+        const eu = config.entryUiJson as Record<string, number> | null;
+        const patience  = eu?.entryPatienceLevel       ?? 70;
+        const rebound   = eu?.reboundConfirmationLevel ?? 65;
+        const quality   = eu?.entryQualityLevel        ?? 65;
+        const size      = eu?.entrySizeAggressiveness  ?? 40;
+        const preview   = deriveEntryPreview(patience, rebound, quality);
+        const saveEntry = (key: string, val: number) =>
+          updateConfig.mutate({ entryUiJson: { ...(eu ?? {}), [key]: val } });
+        return (
+          <div className="space-y-6">
+            <Card className="border-green-500/30 bg-green-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-mono text-green-400">🎯 ENTRADA AUTOMÁTICA</CardTitle>
+                <p className="text-xs text-muted-foreground">Controla cuándo y cómo el bot entra al mercado. Todos los valores técnicos se calculan automáticamente.</p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+
+                {/* Slider 1 — Entrada */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Entrada</Label>
+                    <span className="font-mono text-lg font-semibold text-green-400">{patience}</span>
+                  </div>
+                  <Slider value={[patience]} onValueChange={(v) => saveEntry("entryPatienceLevel", v[0])}
+                    min={0} max={100} step={1} className="[&>span]:bg-green-500" />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>Comprar antes</span><span>Esperar mejor precio</span>
+                  </div>
+                </div>
+
+                {/* Slider 2 — Confirmación del rebote */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Confirmación del rebote</Label>
+                    <span className="font-mono text-lg font-semibold text-blue-400">{rebound}</span>
+                  </div>
+                  <Slider value={[rebound]} onValueChange={(v) => saveEntry("reboundConfirmationLevel", v[0])}
+                    min={0} max={100} step={1} className="[&>span]:bg-blue-500" />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>Rápida</span><span>Fuerte</span>
+                  </div>
+                </div>
+
+                {/* Slider 3 — Calidad mínima de entrada */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Calidad mínima de entrada</Label>
+                    <span className="font-mono text-lg font-semibold text-amber-400">{quality}</span>
+                  </div>
+                  <Slider value={[quality]} onValueChange={(v) => saveEntry("entryQualityLevel", v[0])}
+                    min={0} max={100} step={1} className="[&>span]:bg-amber-500" />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>Más oportunidades</span><span>Más filtro</span>
+                  </div>
+                </div>
+
+                {/* Slider 4 — Tamaño de compra inicial */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Tamaño de compra inicial</Label>
+                    <span className="font-mono text-lg font-semibold text-purple-400">{size}</span>
+                  </div>
+                  <Slider value={[size]} onValueChange={(v) => saveEntry("entrySizeAggressiveness", v[0])}
+                    min={0} max={100} step={1} className="[&>span]:bg-purple-500" />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>Más conservador</span><span>Más decidido</span>
+                  </div>
+                </div>
+
+                {/* Resumen calculado */}
+                <div className="rounded-md border border-border/50 bg-muted/30 p-4 space-y-3">
+                  <p className="text-xs font-mono font-medium text-muted-foreground">RESUMEN CALCULADO</p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">BTC caída mínima</span>
+                      <span className="font-mono font-medium">{preview.btcDip.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">ETH caída mínima</span>
+                      <span className="font-mono font-medium">{preview.ethDip.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">BTC rebote</span>
+                      <span className="font-mono font-medium">{preview.btcRebound.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">ETH rebote</span>
+                      <span className="font-mono font-medium">{preview.ethRebound.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Score mínimo entrada</span>
+                      <span className="font-mono font-medium">{preview.minScore}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Score mínimo mercado</span>
+                      <span className="font-mono font-medium">{preview.minMarket}</span>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-border/30">
+                    <p className="text-xs">
+                      <span className="font-medium text-green-400">Configuración actual: {preview.style}.</span>{" "}
+                      {preview.desc}
+                    </p>
+                  </div>
+                </div>
+
+              </CardContent>
+            </Card>
+          </div>
+        );
+      })()}
 
       {configSubTab === "general" && (<>
 
@@ -3572,33 +3737,9 @@ function EventsLogPanel() {
 // TELEGRAM TAB
 // ════════════════════════════════════════════════════════════════════
 
-// ── defaults must match TB_ALERT_DEFAULTS from IdcaTelegramAlertPolicy.ts ──
-const TB_POLICY_DEFAULTS = {
-  profile: "balanced" as const,
-  armedEnabled: true,
-  watchingEnabled: true,
-  trackingEnabled: false,
-  cancelledEnabled: true,
-  reboundDetectedEnabled: true,
-  executedEnabled: true,
-  blockedExecutionEnabled: true,
-  digestEnabled: true,
-  digestIntervalMinutes: 240,
-  trackingMinMinutes: 60,
-  trackingMinPriceImprovementPct: 0.30,
-};
-
-const PROFILE_LABELS: Record<string, string> = {
-  balanced:     "Equilibrado — recomendado",
-  actions_only: "Solo acciones (rebote, compra, bloqueo)",
-  verbose:      "Detallado — activa todos los toggles",
-  silent:       "Silencioso — solo compra ejecutada",
-};
-
 function TelegramTab() {
   const { data: config } = useIdcaConfig();
   const updateConfig = useUpdateIdcaConfig();
-  const updateTbPolicy = useUpdateTrailingBuyPolicy();
   const testTelegram = useIdcaTelegramTest();
   const { data: telegramStatus, refetch: refetchStatus } = useIdcaTelegramStatus();
   const { toast } = useToast();
@@ -3607,20 +3748,9 @@ function TelegramTab() {
 
   const toggles = (config.telegramAlertTogglesJson || {}) as Record<string, boolean>;
 
-  const tbPolicy = {
-    ...TB_POLICY_DEFAULTS,
-    ...((config.telegramAlertTogglesJson as any)?.trailingBuy ?? {}),
-  };
-
   const updateToggle = (key: string, val: boolean) => {
     updateConfig.mutate({
       telegramAlertTogglesJson: { ...toggles, [key]: val },
-    });
-  };
-
-  const updateTb = (key: string, val: unknown) => {
-    updateTbPolicy.mutate({ [key]: val }, {
-      onError: (e: any) => toast({ title: "Error al guardar", description: e.message, variant: "destructive" }),
     });
   };
 
@@ -3740,131 +3870,95 @@ function TelegramTab() {
         </CardContent>
       </Card>
 
-      {/* ── Política Alertas Trailing Buy ── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">🤖 POLÍTICA ALERTAS TRAILING BUY</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* ── Alertas IDCA — 3 sliders ── */}
+      {(() => {
+        const tu = config.telegramUiJson as Record<string, number> | null;
+        const freq     = tu?.telegramAlertFrequencyLevel ?? 85;
+        const detail   = tu?.telegramAlertDetailLevel    ?? 40;
+        const grouping = tu?.telegramAlertGroupingLevel  ?? 85;
+        const ap       = deriveAlertPreview(freq, detail, grouping);
+        const saveTu   = (key: string, val: number) =>
+          updateConfig.mutate({ telegramUiJson: { ...(tu ?? {}), [key]: val } });
+        return (
+          <Card className="border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-mono">🔔 ALERTAS IDCA</CardTitle>
+              <p className="text-xs text-muted-foreground">Configura cuándo y con qué detalle el bot te notifica. Sin parámetros técnicos.</p>
+            </CardHeader>
+            <CardContent className="space-y-6">
 
-          {/* Selector de perfil */}
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground font-mono">Perfil de alertas</Label>
-            <Select value={tbPolicy.profile} onValueChange={(v) => updateTb("profile", v)}>
-              <SelectTrigger className="h-8 text-xs font-mono">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(PROFILE_LABELS).map(([k, label]) => (
-                  <SelectItem key={k} value={k} className="text-xs font-mono">{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-[10px] text-muted-foreground">
-              {tbPolicy.profile === "balanced" && "✅ Sin spam: tracking desactivado, resumen periódico activo."}
-              {tbPolicy.profile === "actions_only" && "Solo rebote detectado, compra ejecutada y bloqueos críticos."}
-              {tbPolicy.profile === "verbose" && "⚠️ Activa todos los toggles. Puede generar spam si el tracking está activo."}
-              {tbPolicy.profile === "silent" && "Solo compras reales ejecutadas. Sin más notificaciones."}
-            </p>
-          </div>
-
-          {/* Toggles principales */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <ToggleField
-              label="Trailing Buy armado"
-              checked={tbPolicy.armedEnabled}
-              desc="Notificar cuando se activa el seguimiento"
-              onChange={(v) => updateTb("armedEnabled", v)} />
-            <ToggleField
-              label="Precio cerca de zona"
-              checked={tbPolicy.watchingEnabled}
-              desc="Precio próximo a activación, sin comprar todavía"
-              onChange={(v) => updateTb("watchingEnabled", v)} />
-            <ToggleField
-              label="Rebote detectado"
-              checked={tbPolicy.reboundDetectedEnabled}
-              desc="Rebote técnico confirmado — evaluando entrada"
-              onChange={(v) => updateTb("reboundDetectedEnabled", v)} />
-            <ToggleField
-              label="Cancelado / desactivado"
-              checked={tbPolicy.cancelledEnabled}
-              desc="Trailing buy se desactiva sin comprar"
-              onChange={(v) => updateTb("cancelledEnabled", v)} />
-            <ToggleField
-              label="Compra ejecutada"
-              checked={tbPolicy.executedEnabled}
-              desc="Compra real confirmada — siempre recomendado"
-              onChange={(v) => updateTb("executedEnabled", v)} />
-            <ToggleField
-              label="Compra bloqueada"
-              checked={tbPolicy.blockedExecutionEnabled}
-              desc="Rebote detectado pero entrada rechazada"
-              onChange={(v) => updateTb("blockedExecutionEnabled", v)} />
-          </div>
-
-          {/* Toggle tracking con advertencia */}
-          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-mono font-medium">Seguimiento del mínimo (tracking)</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  ⚠️ Desactivado por defecto. Cada tick puede generar una notificación.
-                </p>
-              </div>
-              <Switch
-                checked={tbPolicy.trackingEnabled}
-                onCheckedChange={(v) => updateTb("trackingEnabled", v)}
-              />
-            </div>
-            {tbPolicy.trackingEnabled && (
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div className="space-y-1">
-                  <Label className="text-[10px] text-muted-foreground font-mono">Intervalo mínimo (min)</Label>
-                  <Input
-                    type="number" min={15} max={480}
-                    className="h-7 text-xs font-mono"
-                    value={tbPolicy.trackingMinMinutes}
-                    onChange={(e) => updateTb("trackingMinMinutes", parseInt(e.target.value) || 60)}
-                  />
+              {/* Slider T1 — Frecuencia */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Frecuencia de alertas IDCA</Label>
+                  <span className="font-mono text-lg font-semibold text-blue-400">{freq}</span>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-[10px] text-muted-foreground font-mono">Mejora mínima (%)</Label>
-                  <Input
-                    type="number" min={0.10} max={5.00} step={0.05}
-                    className="h-7 text-xs font-mono"
-                    value={tbPolicy.trackingMinPriceImprovementPct}
-                    onChange={(e) => updateTb("trackingMinPriceImprovementPct", parseFloat(e.target.value) || 0.30)}
-                  />
+                <Slider value={[freq]} onValueChange={(v) => saveTu("telegramAlertFrequencyLevel", v[0])}
+                  min={0} max={100} step={1} className="[&>span]:bg-blue-500" />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Más avisos</span><span>Menos avisos</span>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Resumen digest */}
-          <div className="grid grid-cols-2 gap-3 items-start">
-            <ToggleField
-              label="Resumen periódico (digest)"
-              checked={tbPolicy.digestEnabled}
-              desc="Envía un resumen agrupado del estado del Trailing Buy"
-              onChange={(v) => updateTb("digestEnabled", v)} />
-            {tbPolicy.digestEnabled && (
-              <div className="space-y-1">
-                <Label className="text-[10px] text-muted-foreground font-mono">Intervalo resumen (min)</Label>
-                <Input
-                  type="number" min={30} max={1440}
-                  className="h-7 text-xs font-mono"
-                  value={tbPolicy.digestIntervalMinutes}
-                  onChange={(e) => updateTb("digestIntervalMinutes", parseInt(e.target.value) || 240)}
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Por defecto: 240 min (4h)
-                </p>
+              {/* Slider T2 — Detalle */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Detalle de alertas</Label>
+                  <span className="font-mono text-lg font-semibold text-amber-400">{detail}</span>
+                </div>
+                <Slider value={[detail]} onValueChange={(v) => saveTu("telegramAlertDetailLevel", v[0])}
+                  min={0} max={100} step={1} className="[&>span]:bg-amber-500" />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Solo importante</span><span>Muy detallado</span>
+                </div>
               </div>
-            )}
-          </div>
 
-        </CardContent>
-      </Card>
+              {/* Slider T3 — Agrupación */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Agrupar avisos repetidos</Label>
+                  <span className="font-mono text-lg font-semibold text-green-400">{grouping}</span>
+                </div>
+                <Slider value={[grouping]} onValueChange={(v) => saveTu("telegramAlertGroupingLevel", v[0])}
+                  min={0} max={100} step={1} className="[&>span]:bg-green-500" />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Individuales</span><span>Agrupados</span>
+                </div>
+              </div>
+
+              {/* Resumen calculado */}
+              <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2">
+                <p className="text-xs font-mono font-medium text-muted-foreground">CONFIGURACIÓN CALCULADA</p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Perfil</span>
+                    <span className="font-mono font-medium">{ap.profile}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tracking precio</span>
+                    <span className={`font-mono font-medium ${ap.tracking ? "text-amber-400" : "text-muted-foreground"}`}>
+                      {ap.tracking ? "activo ⚠️" : "desactivado"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cooldown watching</span>
+                    <span className="font-mono font-medium">{ap.watchingMin} min</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cooldown tracking</span>
+                    <span className="font-mono font-medium">{ap.trackingMin} min</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Resumen periódico</span>
+                    <span className="font-mono font-medium">{ap.digestMin} min</span>
+                  </div>
+                </div>
+              </div>
+
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* ── Alertas de Sistema ── */}
       <Card className="border-border/50">
