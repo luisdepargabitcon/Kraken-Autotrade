@@ -41,12 +41,12 @@ const trailingBuyTelegramStates = new Map<string, TrailingBuyTelegramState>();
 // Contador de ticks consecutivos "precio sobre trigger" para histéresis de cancelación
 const cancelTickCounter = new Map<string, number>();
 
-// Constantes
-const TRACKING_MIN_INTERVAL_MS        = 15 * 60 * 1000; // 15 min
-const TRACKING_MIN_PRICE_IMPROVEMENT  = 0.20;           // 0.20% mejora mínima para re-notificar tracking
+// Constantes (fallback cuando política IdcaTelegramAlertPolicy no está configurada)
+const TRACKING_MIN_INTERVAL_MS        = 60 * 60 * 1000; // 60 min (era 15 min — reducir spam)
+const TRACKING_MIN_PRICE_IMPROVEMENT  = 0.30;           // 0.30% mejora mínima (era 0.20%)
 const REARM_COOLDOWN_AFTER_CANCEL_MS  = 30 * 60 * 1000; // 30 min de cooldown tras CANCELLED
 const CANCEL_HISTERESIS_TICKS         = 2;              // ticks consecutivos sobre trigger antes de cancelar
-const WATCHING_MIN_INTERVAL_MS        = 30 * 60 * 1000; // 30 min entre notificaciones WATCHING
+const WATCHING_MIN_INTERVAL_MS        = 120 * 60 * 1000; // 120 min entre notificaciones WATCHING (era 30 min)
 
 function getStateKey(pair: string, mode: string): string {
   return `${mode}:${pair}:trailing_buy`;

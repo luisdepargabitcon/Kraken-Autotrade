@@ -7,6 +7,7 @@ import * as repo from "./IdcaRepository";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
 import * as tbState from "./IdcaTrailingBuyTelegramState";
+import { resolveTrailingBuyPolicy, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import * as smart from "./IdcaSmartLayer";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
@@ -263,6 +264,8 @@ const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
 const lastEntryEventMs = new Map<string, number>();             // throttle: max 1 entry_evaluated DB event per 5min per pair
 const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
 const migrationWarnedPairs = new Set<string>();                 // only warn ONCE per pair per process lifetime
+// TODO: persistir en DB si se quiere sobrevivir reinicios (actualmente en memoria con TTL)
+const lastDigestSentAt = new Map<string, number>();             // por modo: last time digest was sent
 
 // VWAP anchor memory — frozen anchor that never goes down (only up or reset)
 interface VwapAnchorPrevious {
@@ -684,6 +687,48 @@ async function runTick(): Promise<void> {
       }
     }
     console.log(`${TAG}[TICK #${tickCount}] mode=${mode} | ${pairResults.join(" | ")}`);
+
+    // Digest: enviar resumen agrupado Trailing Buy si la política lo requiere
+    try {
+      const tbPolicy = resolveTrailingBuyPolicy(config.telegramAlertTogglesJson || {});
+      if (shouldSendDigest(lastDigestSentAt.get(mode) ?? 0, tbPolicy)) {
+        lastDigestSentAt.set(mode, Date.now());
+        const digestEntries = (INSTITUTIONAL_DCA_ALLOWED_PAIRS
+          .map(p => {
+            const tbManagerState = TrailingBuyManager.getState(p);
+            if (!tbManagerState) return null;
+            const telegramState = tbState.getTrailingBuyTelegramState(p, mode);
+            const stateLabel = (() => {
+              switch (telegramState?.state) {
+                case "armed":    return "Trailing Buy armado";
+                case "tracking": return "Siguiendo el m\u00ednimo";
+                case "watching": return "Cerca de zona de entrada";
+                default:         return "En seguimiento";
+              }
+            })();
+            const rtp = tbManagerState.localLow > 0
+              ? tbManagerState.localLow * (1 + tbManagerState.trailingPct / 100)
+              : undefined;
+            const entry: TrailingBuyDigestEntry = {
+              pair: p as string,
+              stateLabel,
+              referencePrice: tbManagerState.referencePrice,
+              localLow: tbManagerState.localLow,
+              reboundTriggerPrice: rtp,
+              maxExecutionPrice: tbManagerState.maxExecutionPrice,
+            };
+            return entry;
+          })
+          .filter(e => e !== null)) as TrailingBuyDigestEntry[];
+        if (digestEntries.length > 0) {
+          telegram.sendTrailingBuyDigest(mode, digestEntries)
+            .catch(e2 => console.warn(`${TAG}[TELEGRAM] digest failed: ${(e2 as Error).message}`));
+          console.log(`${TAG}[TELEGRAM_DIGEST_SENT] mode=${mode} pairs=${digestEntries.map(e2 => e2.pair).join(",")}`);
+        }
+      }
+    } catch (digestErr: any) {
+      console.warn(`${TAG}[DIGEST_ERR] ${digestErr.message}`);
+    }
   } catch (e: any) {
     lastError = e.message;
     console.error(`${TAG}[ERROR] Tick failed:`, e.message);

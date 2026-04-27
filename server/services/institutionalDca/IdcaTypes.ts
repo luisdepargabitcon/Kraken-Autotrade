@@ -153,6 +153,14 @@ export interface TelegramAlertToggles {
   vwap_drawdown_milestone: boolean;   // Caída -5%, -10%, -15%, -20% desde ancla (1x por hito)
   trailing_buy_armed: boolean;        // Trailing buy armado (precio entró en zona de interés)
   trailing_buy_triggered: boolean;    // Trailing buy disparado (rebote confirmado)
+  trailing_buy_tracking?: boolean;    // Seguimiento del mínimo (desactivado por defecto vía política)
+  trailing_buy_cancelled?: boolean;   // Trailing buy cancelado/desactivado
+  trailing_buy_executed?: boolean;    // Compra real ejecutada por trailing buy
+  trailing_buy_watching?: boolean;    // Precio cerca de zona, todavía sin armar
+  // ── Configuración avanzada de alertas Trailing Buy ───────────────
+  // Bloque extendido leído por IdcaTelegramAlertPolicy.ts
+  // Estructura: { profile, trackingEnabled, armedEnabled, digestEnabled, ... }
+  trailingBuy?: import("./IdcaTelegramAlertPolicy").TrailingBuyTelegramConfig;
 }
 
 export interface IdcaBlockReason {

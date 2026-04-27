@@ -42,20 +42,20 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
   });
 
   // ───────────────────────────────────────────────
-  // Test 3: TRACKING — allow on significant improvement (>= 0.20%)
+  // Test 3: TRACKING — allow on significant improvement (>= 0.30%)
   // ───────────────────────────────────────────────
-  it("should allow tracking notification when price improves >= 0.20% (new lower low)", () => {
+  it("should allow tracking notification when price improves >= 0.30% (new lower low)", () => {
     tbState.markNotifiedArmed(pair, mode, 2400, 2350);
     
     // Mark tracking once at 2350
     tbState.markNotifiedTracking(pair, mode, 2350);
     
-    // Small drop (<0.20%) blocked
-    const check1 = tbState.shouldNotifyTracking(pair, mode, 2349.58); // -0.018% — blocked
+    // Small drop (<0.30%) blocked (2350 * 0.9977 = 2344.55)
+    const check1 = tbState.shouldNotifyTracking(pair, mode, 2345.29); // -0.20% — now blocked
     expect(check1.should).toBe(false);
     
-    // New lower low by >= 0.20% triggers improvement notification (2350 * 0.998 = 2345.30)
-    const check2 = tbState.shouldNotifyTracking(pair, mode, 2345.00); // -0.2128% from 2350
+    // New lower low by >= 0.30% triggers improvement notification (2350 * 0.997 = 2342.95)
+    const check2 = tbState.shouldNotifyTracking(pair, mode, 2342.90); // -0.3021% from 2350
     expect(check2.should).toBe(true);
     expect(check2.reason).toBe("improvement");
   });
@@ -186,12 +186,12 @@ describe("IdcaTrailingBuyTelegramState — Anti-spam state machine", () => {
     // Initial tracking notification at 2350
     tbState.markNotifiedTracking(pair, mode, 2350);
     
-    // Drop less than 0.20% — blocked
-    const check1 = tbState.shouldNotifyTracking(pair, mode, 2346.30); // -0.16%
+    // Drop less than 0.30% — blocked
+    const check1 = tbState.shouldNotifyTracking(pair, mode, 2346.30); // -0.16% — blocked
     expect(check1.should).toBe(false);
     
-    // Drop exactly above 0.20% — allowed
-    const check2 = tbState.shouldNotifyTracking(pair, mode, 2345.29); // -0.20% from 2350
+    // Drop above 0.30% — allowed (2350 * 0.997 = 2342.95)
+    const check2 = tbState.shouldNotifyTracking(pair, mode, 2342.90); // -0.30% from 2350
     expect(check2.should).toBe(true);
     expect(check2.reason).toBe("improvement");
   });

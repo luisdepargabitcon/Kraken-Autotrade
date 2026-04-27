@@ -9,6 +9,12 @@ import { formatTelegramMessage, type FormatContext } from "./IdcaMessageFormatte
 import type { TelegramAlertToggles } from "./IdcaTypes";
 import type { InstitutionalDcaCycle, InstitutionalDcaOrder } from "@shared/schema";
 import * as tbState from "./IdcaTrailingBuyTelegramState";
+import {
+  resolveTrailingBuyPolicy,
+  shouldSendTrackingTelegram,
+  buildDigestMessage,
+  type TrailingBuyDigestEntry,
+} from "./IdcaTelegramAlertPolicy";
 
 const lastAlertTimes = new Map<string, number>();
 
@@ -581,6 +587,21 @@ export async function alertTrailingBuyWatching(
   referencePrice: number,
   buyThreshold: number,
 ): Promise<void> {
+  // Siempre registrar log técnico
+  console.log(
+    `[TRAILING_BUY_WATCHING] pair=${pair} currentPrice=$${currentPrice.toFixed(2)}` +
+    ` referencePrice=$${referencePrice.toFixed(2)} buyThreshold=$${buyThreshold.toFixed(2)}` +
+    ` state=watching`,
+  );
+
+  // Verificar política
+  const idcaConfig = await repo.getIdcaConfig();
+  const tbPolicy = resolveTrailingBuyPolicy(idcaConfig.telegramAlertTogglesJson || {});
+  if (!tbPolicy.watchingEnabled) {
+    console.log(`[TELEGRAM_BLOCKED_BY_POLICY] pair=${pair} alertType=watching reason=watching_disabled_by_policy`);
+    return;
+  }
+
   if (!tbState.shouldNotifyWatching(pair, mode)) {
     console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping WATCHING alert for ${pair} - throttle active`);
     return;
@@ -590,14 +611,16 @@ export async function alertTrailingBuyWatching(
   const config = await repo.getIdcaConfig();
   const missingPct = ((currentPrice - buyThreshold) / currentPrice * 100).toFixed(2);
   const msg = [
-    `⚡ <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    `⚡ <b>Cerca de zona de entrada</b> — <b>${pair}</b>`,
+    ``,
+    `${pair} está cerca de la zona de activación del Trailing Buy, pero todavía no ha caído lo suficiente.`,
     ``,
     `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
-    `📍 Precio de referencia: <code>$${referencePrice.toFixed(2)}</code>`,
+    `📍 Referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
     `🎯 Zona de activación: <code>$${buyThreshold.toFixed(2)}</code>`,
-    `📉 Falta caer: <code>${missingPct}%</code>`,
+    `📉 Falta bajar: <code>${missingPct}%</code>`,
     ``,
-    `No se ejecutará compra todavía. El Trailing Buy se armará solo si el precio toca la zona de activación.`,
+    `El bot no compra todavía. El Trailing Buy se armará solo si el precio toca la zona de activación.`,
     ``,
     `<i>Modo: ${mode}</i>`,
   ].join("\n");
@@ -635,7 +658,7 @@ export async function alertTrailingBuyArmed(
       ]
     : [
         `⚠️ Rebote fuera de rango: si sube hasta <code>$${reboundTriggerPrice.toFixed(2)}</code>, la compra se bloqueará por superar el límite máximo.`,
-        `� Mínimo necesario para rebote válido: <code>$${requiredLocalLow.toFixed(2)}</code>`,
+        `📉 Mínimo necesario para rebote válido: <code>$${requiredLocalLow.toFixed(2)}</code>`,
         faltaPct > 0 ? `⏳ Falta bajar: <code>${faltaPct.toFixed(2)}%</code>` : ``,
         `El bot seguirá buscando un mínimo más bajo antes de permitir ejecución.`,
       ].filter(Boolean);
@@ -645,7 +668,7 @@ export async function alertTrailingBuyArmed(
     ``,
     `📍 Precio de referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
     `✅ Activación alcanzada: <code>$${activationPrice.toFixed(2)}</code>`,
-    `� Precio actual / mínimo inicial: <code>$${currentPrice.toFixed(2)}</code>`,
+    `💵 Precio actual / mínimo inicial: <code>$${currentPrice.toFixed(2)}</code>`,
     `📉 Mínimo observado: <code>$${currentPrice.toFixed(2)}</code>`,
     ``,
     `🎯 Rebote técnico calculado: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
@@ -704,104 +727,10 @@ export async function alertTrailingBuyTriggered(
   ].filter(Boolean).join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
-  
-  // Marcar como notificado
+
   tbState.markNotifiedTriggered(pair, mode);
   console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRIGGERED notification sent for ${pair} withinLimit=${withinLimit}`);
 }
-
-export async function alertTrailingBuyExecuted(
-  pair: string,
-  mode: string,
-  currentPrice: number,
-  localLow: number,
-  bouncePct: number,
-  cycleId: number,
-  orderId?: number,
-): Promise<void> {
-  // GUARD OBLIGATORIO: solo notificar si la compra fue realmente persistida
-  if (!cycleId || cycleId <= 0) {
-    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay cycleId (${cycleId}), no se envía Telegram ejecutado`);
-    return;
-  }
-  if (!orderId || orderId <= 0) {
-    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay orderId (${orderId}), no se envía Telegram ejecutado`);
-    return;
-  }
-  const { chatId, enabled } = await canSend("trailing_buy_executed");
-  if (!enabled) return;
-
-  const config = await repo.getIdcaConfig();
-  const msg = [
-    `🟢 <b>Compra ejecutada por Trailing Buy</b> — <b>${pair}</b>`,
-    ``,
-    `💵 Precio de compra: <code>$${currentPrice.toFixed(2)}</code>`,
-    `📉 Mejor precio previo (mínimo): <code>$${localLow.toFixed(2)}</code>`,
-    `📈 Rebote confirmado: <code>+${bouncePct.toFixed(3)}%</code>`,
-    ``,
-    `Ciclo: <code>${cycleId}</code>`,
-    orderId ? `Orden: <code>${orderId}</code>` : null,
-    ``,
-    `<i>Modo: ${mode}</i>`,
-  ].filter(Boolean).join("\n");
-
-  await send(chatId, msg, config.telegramThreadId || undefined);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] EXECUTED notification sent for ${pair}, cycle ${cycleId}`);
-}
-
-// ─── Trailing Buy Level 1 Alerts ───────────────────────────────────────
-
-export async function alertTrailingBuyLevel1Activated(
-  pair: string,
-  mode: string,
-  currentPrice: number,
-  triggerLevel: number,
-  triggerPrice: number,
-  trailingMode: string,
-  trailingValue: number,
-): Promise<void> {
-  const { chatId, enabled } = await canSend("trailing_buy_level1_activated");
-  if (!enabled) return;
-
-  const message = `🎯 *TRAILING BUY LEVEL 1 ACTIVATED* ${pair}
-
-📍 *Level*: ${triggerLevel === 0 ? 'Base Buy' : `Safety ${triggerLevel}`}
-💰 *Trigger Price*: $${triggerPrice.toFixed(2)}
-📊 *Current Price*: $${currentPrice.toFixed(2)}
-⚙️ *Mode*: ${trailingMode}
-📈 *Value*: ${trailingValue}${trailingMode === 'rebound_pct' ? '%' : ' ATRP'}
-
-🔍 *Waiting for bounce to execute entry*`;
-
-  const config = await repo.getIdcaConfig();
-  await send(chatId, message, config.telegramThreadId || undefined);
-}
-
-export async function alertTrailingBuyLevel1Triggered(
-  pair: string,
-  mode: string,
-  currentPrice: number,
-  triggerLevel: number,
-  bouncePct: number,
-  localLow: number,
-): Promise<void> {
-  const { chatId, enabled } = await canSend("trailing_buy_level1_triggered");
-  if (!enabled) return;
-
-  const message = `🚀 *TRAILING BUY LEVEL 1 TRIGGERED* ${pair}
-
-📍 *Level*: ${triggerLevel === 0 ? 'Base Buy' : `Safety ${triggerLevel}`}
-💰 *Price*: $${currentPrice.toFixed(2)}
-📈 *Bounce*: ${bouncePct.toFixed(3)}%
-📍 *Local Low*: $${localLow.toFixed(2)}
-
-✅ *Entry executed at level ${triggerLevel} optimal price*`;
-
-  const config = await repo.getIdcaConfig();
-  await send(chatId, message, config.telegramThreadId || undefined);
-}
-
-// ─── Trailing Buy Tracking and Cancelled Alerts ────────────────────────
 
 export async function alertTrailingBuyTracking(
   pair: string,
@@ -816,17 +745,51 @@ export async function alertTrailingBuyTracking(
     maxExecutionPrice?: number;
   },
 ): Promise<void> {
-  // Anti-spam: verificar throttle antes de enviar
-  const check = tbState.shouldNotifyTracking(pair, mode, bestPriceObserved);
-  if (!check.should) {
-    console.debug(`[IDCA][TELEGRAM][TRAILING_BUY] Skipping TRACKING alert for ${pair} - throttle active`);
+  // Siempre registrar log técnico — independientemente de si se envía por Telegram
+  console.log(
+    `[TRAILING_BUY_TRACKING] pair=${pair} currentPrice=$${currentPrice.toFixed(2)}` +
+    ` localLow=$${bestPriceObserved.toFixed(2)} reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
+    (opts?.maxExecutionPrice ? ` maxExecutionPrice=$${opts.maxExecutionPrice.toFixed(2)}` : "") +
+    ` state=tracking`,
+  );
+
+  // Cargar config una sola vez
+  const idcaConfig = await repo.getIdcaConfig();
+  if (!idcaConfig.telegramEnabled || !idcaConfig.telegramChatId) return;
+
+  // Verificar política: si trackingEnabled=false (default), solo log IDCA, no Telegram
+  const tbPolicy = resolveTrailingBuyPolicy(idcaConfig.telegramAlertTogglesJson || {});
+  if (!tbPolicy.trackingEnabled) {
+    console.log(
+      `[TELEGRAM_BLOCKED_BY_POLICY] pair=${pair} alertType=tracking reason=tracking_disabled_by_policy` +
+      ` | El seguimiento técnico está disponible en Logs IDCA`,
+    );
     return;
   }
 
-  const { chatId, enabled } = await canSend("trailing_buy_tracking");
-  if (!enabled) return;
+  // Policy permite tracking: verificar intervalos configurables
+  const tbTelegramState = tbState.getTrailingBuyTelegramState(pair, mode);
+  const timeSinceLastMs = tbTelegramState ? Date.now() - tbTelegramState.lastNotifiedAt : Infinity;
+  const priceImprovementPct =
+    tbTelegramState?.lastNotifiedBestPrice != null
+      ? Math.max(0, ((tbTelegramState.lastNotifiedBestPrice - bestPriceObserved) / tbTelegramState.lastNotifiedBestPrice) * 100)
+      : 100;
 
-  const config = await repo.getIdcaConfig();
+  const policyCheck = shouldSendTrackingTelegram(tbPolicy, timeSinceLastMs, priceImprovementPct);
+  if (!policyCheck.should) {
+    console.debug(
+      `[TELEGRAM_BLOCKED_BY_POLICY] pair=${pair} alertType=tracking reason=${policyCheck.reason}`,
+    );
+    return;
+  }
+
+  // Toggle explícito desactivado por usuario
+  const togglesRaw = (idcaConfig.telegramAlertTogglesJson || {}) as any;
+  if (idcaConfig.mode === "simulation" && !togglesRaw.simulation_alerts_enabled) return;
+  if ("trailing_buy_tracking" in togglesRaw && !togglesRaw.trailing_buy_tracking) return;
+
+  const chatId = idcaConfig.telegramChatId;
+  const config = idcaConfig;
   const maxExec = opts?.maxExecutionPrice;
   const elapsedText = formatElapsed(minutesSinceLastNotify);
 
@@ -836,14 +799,16 @@ export async function alertTrailingBuyTracking(
     : { executable: undefined as boolean | undefined, requiredLocalLow: 0, faltaPct: 0 };
 
   const lines: (string | null)[] = [
-    `🔵 <b>Trailing Buy siguiendo precio</b> — <b>${pair}</b>`,
+    `🔵 <b>Trailing Buy en seguimiento</b> — <b>${pair}</b>`,
     ``,
-    opts?.referencePrice !== undefined ? `� Precio de referencia de entrada: <code>$${opts.referencePrice.toFixed(2)}</code>` : null,
-    opts?.buyThreshold !== undefined   ? `✅ Activación / caída mínima: <code>$${opts.buyThreshold.toFixed(2)}</code>` : null,
-    `�💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
-    `📉 Mejor precio observado: <code>$${bestPriceObserved.toFixed(2)}</code>`,
+    `El bot está midiendo el mínimo del precio. No ha comprado todavía.`,
     ``,
-    `🎯 Rebote técnico calculado: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
+    opts?.referencePrice !== undefined ? `📍 Referencia de entrada: <code>$${opts.referencePrice.toFixed(2)}</code>` : null,
+    opts?.buyThreshold !== undefined   ? `✅ Activación alcanzada: <code>$${opts.buyThreshold.toFixed(2)}</code>` : null,
+    `� Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📉 Mínimo observado: <code>$${bestPriceObserved.toFixed(2)}</code>`,
+    ``,
+    `🎯 Rebote técnico necesario: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
     maxExec !== undefined ? `🚫 Límite máximo de ejecución: <code>$${maxExec.toFixed(2)}</code>` : null,
     ``,
   ];
@@ -854,15 +819,15 @@ export async function alertTrailingBuyTracking(
       `Si rebota hasta <code>$${reboundTriggerPrice.toFixed(2)}</code>, la compra se bloqueará por superar el límite máximo.`,
       `📉 Mínimo necesario para rebote válido: <code>$${requiredLocalLow.toFixed(2)}</code>`,
       faltaPct > 0.001 ? `⏳ Falta bajar: <code>${faltaPct.toFixed(2)}%</code>` : null,
-      `El bot seguirá siguiendo el mínimo para buscar un rebote válido.`,
+      `El bot seguirá siguiendo el mínimo.`,
     );
   } else if (executable === true) {
     lines.push(
       `✅ Rebote válido dentro del límite.`,
-      `No se ejecutó compra todavía. Está esperando confirmación de rebote.`,
+      `Solo compra si el precio rebota hasta la zona técnica y pasan los filtros finales.`,
     );
   } else {
-    lines.push(`No se ejecutó compra todavía.`);
+    lines.push(`Solo compra si el precio rebota y pasan los filtros finales.`);
   }
 
   lines.push(``, `Último aviso hace: ${elapsedText}`, ``, `<i>Modo: ${mode}</i>`);
@@ -870,10 +835,30 @@ export async function alertTrailingBuyTracking(
   const msg = lines.filter(l => l !== null).join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
-  
-  // Marcar como notificado
+
   tbState.markNotifiedTracking(pair, mode, bestPriceObserved);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRACKING notification sent for ${pair} reboundExecutable=${executable} (reason: ${check.reason})`);
+  console.log(
+    `[IDCA][TELEGRAM][TRAILING_BUY] TRACKING notification sent for ${pair} reboundExecutable=${executable} reason=${policyCheck.reason}`,
+  );
+}
+
+// ─── Digest de Trailing Buy (resumen agrupado) ─────────────────────────────
+
+/**
+ * Envía el resumen agrupado de Trailing Buy.
+ * Llamar desde el tick del motor cuando shouldSendDigest() devuelve true.
+ */
+export async function sendTrailingBuyDigest(
+  mode: string,
+  entries: TrailingBuyDigestEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const { chatId, enabled } = await canSend("trailing_buy_digest");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+  const msg = buildDigestMessage(entries, mode);
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] DIGEST sent for mode=${mode} pairs=${entries.map(e => e.pair).join(",")}`);
 }
 
 export async function alertTrailingBuyCancelled(
@@ -916,6 +901,105 @@ export async function alertTrailingBuyCancelled(
   // Marcar como notificado — NO resetear: el cooldown de rearmado (rearmAllowedAfter) debe preservarse
   tbState.markNotifiedCancelled(pair, mode);
   console.log(`[IDCA][TELEGRAM][TRAILING_BUY] CANCELLED notification sent for ${pair} (reason: ${reason}). Cooldown 30min activo.`);
+}
+
+// ─── Trailing Buy Executed ───────────────────────────────────────────
+
+export async function alertTrailingBuyExecuted(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  localLow: number,
+  bouncePct: number,
+  cycleId: number,
+  orderId?: number,
+): Promise<void> {
+  // GUARD OBLIGATORIO: solo notificar si la compra fue realmente persistida
+  if (!cycleId || cycleId <= 0) {
+    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay cycleId (${cycleId}), no se envía Telegram ejecutado`);
+    return;
+  }
+  if (!orderId || orderId <= 0) {
+    console.warn(`[IDCA][TRAILING_BUY] Compra no confirmada: no hay orderId (${orderId}), no se envía Telegram ejecutado`);
+    return;
+  }
+  const { chatId, enabled } = await canSend("trailing_buy_executed");
+  if (!enabled) return;
+
+  const config = await repo.getIdcaConfig();
+  const msg = [
+    `🟢 <b>Compra ejecutada por Trailing Buy</b> — <b>${pair}</b>`,
+    ``,
+    `💵 Precio de compra: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📉 Mínimo previo observado: <code>$${localLow.toFixed(2)}</code>`,
+    `📈 Rebote confirmado: <code>+${bouncePct.toFixed(3)}%</code>`,
+    ``,
+    `Ciclo: <code>${cycleId}</code>`,
+    orderId ? `Orden: <code>${orderId}</code>` : null,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].filter(Boolean).join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] EXECUTED notification sent for ${pair}, cycle ${cycleId}`);
+}
+
+// ─── Trailing Buy Level 1 Alerts ─────────────────────────────────────
+
+export async function alertTrailingBuyLevel1Activated(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  triggerLevel: number,
+  triggerPrice: number,
+  trailingMode: string,
+  trailingValue: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_level1_activated");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+  const nivelLabel = triggerLevel === 0 ? "Compra base" : `Compra de seguridad ${triggerLevel}`;
+  const modoLabel = trailingMode === "rebound_pct" ? `rebote ${trailingValue}%` : `${trailingValue} ATRP`;
+  const msg = [
+    `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
+    ``,
+    `Nivel: ${nivelLabel}`,
+    `📍 Precio de activación: <code>$${triggerPrice.toFixed(2)}</code>`,
+    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `⚙️ Modo de seguimiento: ${modoLabel}`,
+    ``,
+    `El bot está esperando confirmación de rebote antes de comprar.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+  await send(chatId, msg, config.telegramThreadId || undefined);
+}
+
+export async function alertTrailingBuyLevel1Triggered(
+  pair: string,
+  mode: string,
+  currentPrice: number,
+  triggerLevel: number,
+  bouncePct: number,
+  localLow: number,
+): Promise<void> {
+  const { chatId, enabled } = await canSend("trailing_buy_level1_triggered");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+  const nivelLabel = triggerLevel === 0 ? "Compra base" : `Compra de seguridad ${triggerLevel}`;
+  const msg = [
+    `🟡 <b>Rebote detectado — Trailing Buy</b> — <b>${pair}</b>`,
+    ``,
+    `Nivel: ${nivelLabel}`,
+    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📉 Mínimo previo: <code>$${localLow.toFixed(2)}</code>`,
+    `📈 Rebote detectado: <code>+${bouncePct.toFixed(3)}%</code>`,
+    ``,
+    `Rebote detectado — evaluando entrada. El bot comprobará los filtros antes de ejecutar.`,
+    ``,
+    `<i>Modo: ${mode}</i>`,
+  ].join("\n");
+  await send(chatId, msg, config.telegramThreadId || undefined);
 }
 
 // ─── Exit Management Alerts ─────────────────────────────────────────
