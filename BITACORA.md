@@ -1,13 +1,70 @@
-# 📋 BITÁCORA — WINDSURF CHESTER BOT
+# BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-04-19
+> Última actualización: 2026-04-27
 
 ---
 
-## 🏛️ ARQUITECTURA GENERAL
+## 2026-04-27 — Refactor IDCA Telegram Alerts (Sliders UI + Anti-spam)
 
+**Objetivo:** Eliminar spam en alertas Telegram IDCA, proporcionar información accionable, y permitir configuración vía UI con sliders profesionales.
+
+**Commits:**
+- **C** (aa9ea5b): Schema + sliders + derivación
+  - `entryUiJson` + `telegramUiJson` en institutional_dca_config (nullable JSONB)
+  - Migración 031_idca_slider_config.sql
+  - `IdcaSliderConfig.ts` con defaults profesionales (BTC dip 4.20%, ETH dip 4.60%, rebote 0.55%/0.65%)
+  - `IdcaEngine.ts` usa `getEffectiveEntryConfig` en lugar de hardcoded
+  - 32 tests nuevos
+
+- **D** (b6fbb96): UI sliders entrada + alertas Telegram IDCA
+  - ConfigTab: sub-pestaña "Entrada" (por defecto) con 4 sliders + resumen calculado
+  - TelegramTab: card "ALERTAS IDCA" con 3 sliders reemplaza panel complejo de toggles
+  - Helpers client-side `lerpUI`, `deriveEntryPreview`, `deriveAlertPreview`
+
+- **E** (af616c8): Cooldowns dinámicos desde sliders
+  - `IdcaTelegramAlertPolicy.ts`: `resolveTrailingBuyPolicyWithSliders`
+  - `IdcaTrailingBuyTelegramState.ts`: `watchingMinIntervalMs` opcional
+  - `IdcaTelegramNotifier.ts`: WATCHING y TRACKING usan cooldowns dinámicos
+
+- **F** (98ff9e9): Digest usa cooldowns dinámicos
+  - `IdcaEngine.ts`: digest usa `resolveTrailingBuyPolicyWithSliders`
+
+- **Fix** (7c928a0): Auto-migración 031 en storage.ts
+  - Añadido `entryUiJson` y `telegramUiJson` a `runSchemaMigration()`
+
+**Archivos nuevos:**
+- `server/services/institutionalDca/IdcaSliderConfig.ts` — Configuración slider con interpolación
+- `db/migrations/031_idca_slider_config.sql` — Migración DB
+- `server/services/__tests__/idcaSliderConfig.test.ts` — 32 tests
+
+**Archivos modificados:**
+- `shared/schema.ts` — entryUiJson + telegramUiJson
+- `server/services/institutionalDca/IdcaEngine.ts` — usa getEffectiveEntryConfig
+- `server/services/institutionalDca/IdcaTelegramAlertPolicy.ts` — resolveTrailingBuyPolicyWithSliders
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — WATCHING/TRACKING usan sliders
+- `server/services/institutionalDca/IdcaTrailingBuyTelegramState.ts` — watchingMinIntervalMs opcional
+- `server/storage.ts` — auto-migración 031
+- `client/src/hooks/useInstitutionalDca.ts` — IdcaConfig interface
+- `client/src/pages/InstitutionalDca.tsx` — UI sliders entrada + alertas
+
+**Validación:**
+- npm run check: 
+- npm run build: 
+- vitest: 98/98 tests pasando
+
+**Deploy VPS:**
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
 ```
+La migración 031 se aplica automáticamente al arrancar via `storage.ts::runSchemaMigration()`.
+
+---
+
+## ARQUITECTURA GENERAL
+
 ┌──────────────────────────────────────────────────────────────────┐
 │                     ExchangeFactory (singleton)                   │
 │                  Kraken  ←→  RevolutX                             │
