@@ -839,7 +839,9 @@ async function evaluatePair(
                 payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
               }, { eventType: "trailing_buy_activated", pair, mode });
               const reboundTriggerPrice = currentPrice * (1 + reboundMinPct / 100);
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbVwap.lowerBand1, tbVwap.lowerBand1, reboundTriggerPrice)
+              const tbArmedState = TrailingBuyManager.getState(pair);
+              const maxExecPriceArmed = tbArmedState?.maxExecutionPrice ?? (tbVwap.lowerBand1 * (1 + reboundMinPct / 100));
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbVwap.lowerBand1, tbVwap.lowerBand1, reboundTriggerPrice, maxExecPriceArmed)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
 
@@ -856,8 +858,11 @@ async function evaluatePair(
                   const minutesSince = lastTgState ? Math.round((Date.now() - lastTgState.lastNotifiedAt) / 60000) : 15;
                   const reboundMinPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
                   const reboundTriggerPrice = tbManagerState.localLow * (1 + reboundMinPct / 100);
-                  telegram.alertTrailingBuyTracking(pair, mode, currentPrice, tbManagerState.localLow, reboundTriggerPrice, minutesSince)
-                    .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTracking failed: ${e.message}`));
+                  telegram.alertTrailingBuyTracking(pair, mode, currentPrice, tbManagerState.localLow, reboundTriggerPrice, minutesSince, {
+                    referencePrice: tbManagerState.referencePrice,
+                    buyThreshold: tbManagerState.buyThreshold,
+                    maxExecutionPrice: tbManagerState.maxExecutionPrice,
+                  }).catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTracking failed: ${e.message}`));
                 }
               }
               
@@ -879,7 +884,7 @@ async function evaluatePair(
                   message: `Trailing buy triggered: bounce ${tbResult.bouncePct.toFixed(3)}% from low $${tbResult.localLow.toFixed(2)} | buyThreshold=$${tbBuyThreshold.toFixed(2)} maxExec=$${tbMaxExecutionPrice.toFixed(2)}`,
                   payloadJson: { ...tbResult, zone: tbZone, buyThreshold: tbBuyThreshold, maxExecutionPrice: tbMaxExecutionPrice },
                 }, { eventType: "trailing_buy_triggered", pair, mode });
-                telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow)
+                telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow, tbResult.maxExecutionPrice)
                   .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTriggered failed: ${e.message}`));
                 trailingAllowsEntry = true;
               } else if (tbResult.reason === "expired") {
@@ -1053,7 +1058,7 @@ async function evaluatePair(
                 },
               }, { eventType: "trailing_buy_level1_activated", pair, mode });
 
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, effectiveEntryReference, buyThreshold, reboundTriggerPrice)
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, effectiveEntryReference, buyThreshold, reboundTriggerPrice, maxExecutionPrice)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed L1 failed: ${e.message}`));
             }
           }
@@ -1142,8 +1147,10 @@ async function checkEntry(
       const distToBuyPct = ((currentPrice - buyTriggerPrice) / currentPrice) * 100;
 
       // Alerta: precio se acerca al trigger de compra (≤3%)
+      // Suprimir si TB ya está activo (WATCHING/ARMED/TRACKING) — Op.B gestiona sus propios avisos
       if (distToBuyPct >= 0 && distToBuyPct <= 3.0 && check.vwapContext) {
-        telegram.alertApproachingBuy(pair, mode, currentPrice, buyTriggerPrice, distToBuyPct, check.vwapContext.zone)
+        const tbActiveNow = TrailingBuyManager.isArmed(pair);
+        telegram.alertApproachingBuy(pair, mode, currentPrice, buyTriggerPrice, distToBuyPct, check.vwapContext.zone, tbActiveNow)
           .catch(e => console.warn(`${TAG}[TELEGRAM] alertApproachingBuy failed: ${e.message}`));
       }
 

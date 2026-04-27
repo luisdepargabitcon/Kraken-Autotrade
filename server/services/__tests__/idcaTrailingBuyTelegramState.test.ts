@@ -494,3 +494,117 @@ describe("TrailingBuy Opción B — buyThreshold desde effectiveEntryReference",
     }
   });
 });
+
+// ─── Tests Hotfix: formatElapsed, computeReboundStatus, casos BTC/ETH ──────────
+
+import { formatElapsed, computeReboundStatus } from "../institutionalDca/IdcaTelegramNotifier";
+
+describe("Hotfix \u2014 formatElapsed, computeReboundStatus, mensajes TB", () => {
+  // Test H1: formatElapsed
+  it("H1. formatElapsed: < 60 min", () => {
+    expect(formatElapsed(20)).toBe("20 min");
+    expect(formatElapsed(0)).toBe("0 min");
+    expect(formatElapsed(59)).toBe("59 min");
+  });
+
+  it("H2. formatElapsed: >= 60 min", () => {
+    expect(formatElapsed(60)).toBe("1h");
+    expect(formatElapsed(90)).toBe("1h 30min");
+    expect(formatElapsed(442)).toBe("7h 22min");
+    expect(formatElapsed(120)).toBe("2h");
+  });
+
+  // Test H3: computeReboundStatus \u2014 caso BTC real (rebote > maxExec \u2192 bloqueado)
+  it("H3. BTC real: localLow=77957.20, rtp=78424.94, maxExec=78289.17 \u2192 reboundExecutable=false", () => {
+    const rtp = 78424.94;
+    const localLow = 77957.20;
+    const maxExec = 78289.17;
+    const { executable, requiredLocalLow, faltaPct } = computeReboundStatus(rtp, localLow, maxExec);
+    expect(executable).toBe(false);
+    // requiredLocalLow = maxExec * localLow / rtp
+    const expected = maxExec * localLow / rtp;
+    expect(requiredLocalLow).toBeCloseTo(expected, 2);
+    expect(faltaPct).toBeGreaterThan(0);
+  });
+
+  // Test H4: computeReboundStatus \u2014 caso ETH Op.B (rtp <= maxExec \u2192 ejecutable)
+  it("H4. ETH Op.B: localLow=2325.00, rtp=2331.98, maxExec=2346.23 \u2192 reboundExecutable=true", () => {
+    const { executable } = computeReboundStatus(2331.98, 2325.00, 2346.23);
+    expect(executable).toBe(true);
+  });
+
+  // Test H5: computeReboundStatus \u2014 cuando rtp == maxExec exactamente
+  it("H5. rtp === maxExec \u2192 reboundExecutable=true (borde exacto)", () => {
+    const { executable } = computeReboundStatus(2346.23, 2325.00, 2346.23);
+    expect(executable).toBe(true);
+  });
+
+  // Test H6: computeReboundStatus \u2014 requiredLocalLow correcto
+  it("H6. requiredLocalLow = maxExec * localLow / rtp", () => {
+    const rtp = 78424.94;
+    const localLow = 77957.20;
+    const maxExec = 78289.17;
+    const { requiredLocalLow } = computeReboundStatus(rtp, localLow, maxExec);
+    // Factor = rtp/localLow = 78424.94/77957.20
+    // requiredLocalLow = maxExec / factor = maxExec * localLow / rtp
+    const expected = maxExec * localLow / rtp;
+    expect(requiredLocalLow).toBeCloseTo(expected, 1);
+    // Debe ser MENOR que localLow (hay que bajar m\u00e1s)
+    expect(requiredLocalLow).toBeLessThan(localLow);
+  });
+
+  // Test H7: faltaPct > 0 cuando no es ejecutable
+  it("H7. faltaPct > 0 cuando reboundExecutable=false", () => {
+    const { faltaPct } = computeReboundStatus(78424.94, 77957.20, 78289.17);
+    expect(faltaPct).toBeGreaterThan(0);
+  });
+
+  // Test H8: ARMED state con maxExecutionPrice real (no fallback 0.30%)
+  it("H8. armLevel con maxExecutionPrice=2346.23 no usa fallback", () => {
+    const pair = "ETH/USD";
+    TrailingBuyManager.clearAll();
+    TrailingBuyManager.armLevel(pair, 2424.05, 2339.21, 2339.21, 0, {
+      trailingMode: "rebound_pct",
+      trailingValue: 0.3,
+      maxWaitMinutes: 60,
+      cancelOnRecovery: false,
+      maxExecutionPrice: 2346.23,
+    });
+    const state = TrailingBuyManager.getState(pair);
+    expect(state?.maxExecutionPrice).toBeCloseTo(2346.23, 2);
+    // reboundTriggerPrice = 2339.21 * 1.003 = 2346.23 \u2192 reboundExecutable=true
+    const rtp = 2339.21 * 1.003;
+    const { executable } = computeReboundStatus(rtp, state!.localLow, state!.maxExecutionPrice);
+    expect(executable).toBe(true);
+    TrailingBuyManager.clearAll();
+  });
+
+  // Test H9: reboundExecutable=false con TrailingBuyManager BTC
+  it("H9. BTC armado con datos reales \u2192 reboundExecutable=false detectado", () => {
+    const pair = "BTC/USD";
+    TrailingBuyManager.clearAll();
+    // maxExecutionPrice = 78289.17
+    TrailingBuyManager.armLevel(pair, 80000, 77957.20, 77957.20, 0, {
+      trailingMode: "rebound_pct",
+      trailingValue: 0.6,  // 0.6% desde localLow=77957.20 \u2192 rtp=78424.94
+      maxWaitMinutes: 60,
+      cancelOnRecovery: false,
+      maxExecutionPrice: 78289.17,
+    });
+    const state = TrailingBuyManager.getState(pair);
+    const rtp = state!.localLow * (1 + state!.trailingPct / 100); // ~78424.94
+    const { executable } = computeReboundStatus(rtp, state!.localLow, state!.maxExecutionPrice);
+    expect(executable).toBe(false);
+    expect(rtp).toBeGreaterThan(state!.maxExecutionPrice);
+    TrailingBuyManager.clearAll();
+  });
+
+  // Test H10: "Compra ejecutada" solo con cycleId y orderId
+  it("H10. alertTrailingBuyExecuted con cycleId=0 \u2192 warn y sin env\u00edo", async () => {
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { alertTrailingBuyExecuted } = await import("../institutionalDca/IdcaTelegramNotifier");
+    await alertTrailingBuyExecuted("BTC/USD", "simulation", 78300, 77957.20, 0.44, 0, undefined);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("no hay cycleId"));
+    consoleSpy.mockRestore();
+  });
+});

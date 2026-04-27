@@ -156,11 +156,13 @@ class TrailingBuyManagerClass {
       recoveryThreshold: referencePrice * 1.02,
     });
 
+    const reboundExecutableAtArm = reboundTriggerPrice <= maxExecutionPrice;
     console.log(
       `[TRAILING_BUY_ARMED] pair=${pair} level=${triggerLevel}` +
       ` referencePrice=$${referencePrice.toFixed(2)} buyThreshold=$${activationPrice.toFixed(2)}` +
       ` maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} localLow=$${currentPrice.toFixed(2)}` +
-      ` reboundPct=${trailingPct.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)} mode=${opts.trailingMode}`
+      ` reboundPct=${trailingPct.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
+      ` reboundExecutable=${reboundExecutableAtArm} mode=${opts.trailingMode}`
     );
   }
 
@@ -206,9 +208,15 @@ class TrailingBuyManagerClass {
       state.localLow = currentPrice;
       state.localLowAt = now;
       const reboundTriggerPrice = computeReboundTriggerPrice(state.localLow, state.trailingPct);
+      const reboundExecutable = reboundTriggerPrice <= state.maxExecutionPrice;
+      const factor = state.localLow > 0 ? reboundTriggerPrice / state.localLow : 1;
+      const requiredLocalLow = factor > 0 ? state.maxExecutionPrice / factor : state.maxExecutionPrice;
       console.log(
         `[TRAILING_BUY_TRACKING] pair=${pair}` +
-        ` localLow=$${state.localLow.toFixed(2)} reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}`
+        ` currentPrice=$${currentPrice.toFixed(2)} localLow=$${state.localLow.toFixed(2)}` +
+        ` reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)} maxExecutionPrice=$${state.maxExecutionPrice.toFixed(2)}` +
+        ` reboundExecutable=${reboundExecutable}` +
+        (!reboundExecutable ? ` requiredLocalLow=$${requiredLocalLow.toFixed(2)}` : ``)
       );
       return { triggered: false, buyPrice: 0, localLow: state.localLow, bouncePct: 0, reason: "tracking_lower" };
     }

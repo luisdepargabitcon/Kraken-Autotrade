@@ -12,6 +12,32 @@ import * as tbState from "./IdcaTrailingBuyTelegramState";
 
 const lastAlertTimes = new Map<string, number>();
 
+// ─── Helpers ───────────────────────────────────────────────
+
+/** Convierte minutos en texto legible: "20 min" o "7h 22min" */
+export function formatElapsed(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+/** Determina si el rebote calculado puede ejecutarse dentro de maxExecutionPrice.
+ *  requiredLocalLow = precio mínimo necesario para que el rebote entre dentro del límite.
+ *  Fórmula: rtp = localLow * factor  ⇒  requiredLocalLow = maxExec / factor = maxExec * localLow / rtp
+ */
+export function computeReboundStatus(
+  reboundTriggerPrice: number,
+  localLow: number,
+  maxExecutionPrice: number,
+): { executable: boolean; requiredLocalLow: number; faltaPct: number } {
+  const executable = reboundTriggerPrice <= maxExecutionPrice;
+  const factor = localLow > 0 ? reboundTriggerPrice / localLow : 1;
+  const requiredLocalLow = factor > 0 ? maxExecutionPrice / factor : maxExecutionPrice;
+  const faltaPct = localLow > 0 ? ((localLow - requiredLocalLow) / localLow) * 100 : 0;
+  return { executable, requiredLocalLow, faltaPct };
+}
+
 // ─── VWAP Alert State (anti-spam) ─────────────────────────────────
 // Approaching buy: separate 2h cooldown per pair (independent of global cooldown)
 const lastApproachingBuyAlert = new Map<string, number>();
@@ -479,8 +505,14 @@ export async function alertApproachingBuy(
   currentPrice: number,
   buyTriggerPrice: number,
   distToBuyPct: number,
-  zone: string
+  zone: string,
+  trailingBuyActive = false,
 ): Promise<void> {
+  // Si el TB está activo (WATCHING/ARMED/TRACKING), este aviso contradice la lógica Op.B
+  if (trailingBuyActive) {
+    console.debug(`[IDCA][TELEGRAM] Skipping alertApproachingBuy for ${pair} — Trailing Buy activo`);
+    return;
+  }
   // Long cooldown check first — avoid polluting canSend timer
   const lastTime = lastApproachingBuyAlert.get(pair) || 0;
   if (Date.now() - lastTime < APPROACHING_BUY_COOLDOWN_MS) return;
@@ -492,13 +524,13 @@ export async function alertApproachingBuy(
   lastApproachingBuyAlert.set(pair, Date.now());
 
   const msg = [
-    `⚡ <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    `⚡ <b>Precio cerca de zona VWAP</b> — <b>${pair}</b>`,
     ``,
     `📊 Precio actual: <b>$${currentPrice.toFixed(2)}</b>`,
-    `🎯 Precio de entrada: $${buyTriggerPrice.toFixed(2)} (falta ${distToBuyPct.toFixed(2)}% más)`,
     `📍 Zona VWAP: ${zone}`,
+    `🎯 Zona técnica vigilada: $${buyTriggerPrice.toFixed(2)} (falta ${distToBuyPct.toFixed(2)}%)`,
     ``,
-    `Aviso previo — el bot ejecutará la compra cuando se confirme el rebote.`,
+    `Aviso informativo. La entrada real depende de caída mínima, score, Trailing Buy y límite máximo de ejecución.`,
     ``,
     `<i>Modo: ${mode} | Cooldown: 2h</i>`,
   ].join("\n");
@@ -582,6 +614,7 @@ export async function alertTrailingBuyArmed(
   referencePrice: number,
   activationPrice: number,
   reboundTriggerPrice: number,
+  maxExecutionPrice?: number,
 ): Promise<void> {
   // Anti-spam: solo notificar si no estaba ya armado
   if (!tbState.shouldNotifyArmed(pair, mode)) {
@@ -593,16 +626,32 @@ export async function alertTrailingBuyArmed(
   if (!enabled) return;
   const config = await repo.getIdcaConfig();
 
-  const maxExecutionPrice = activationPrice * 1.003; // fallback 0.30% sobre buyThreshold
+  const maxExec = maxExecutionPrice ?? activationPrice * 1.003;
+  const { executable, requiredLocalLow, faltaPct } = computeReboundStatus(reboundTriggerPrice, currentPrice, maxExec);
+
+  const execLines = executable
+    ? [
+        `✅ Rebote válido: si confirma hasta <code>$${reboundTriggerPrice.toFixed(2)}</code>, el bot podrá comprar (si pasan demás filtros).`,
+      ]
+    : [
+        `⚠️ Rebote fuera de rango: si sube hasta <code>$${reboundTriggerPrice.toFixed(2)}</code>, la compra se bloqueará por superar el límite máximo.`,
+        `� Mínimo necesario para rebote válido: <code>$${requiredLocalLow.toFixed(2)}</code>`,
+        faltaPct > 0 ? `⏳ Falta bajar: <code>${faltaPct.toFixed(2)}%</code>` : ``,
+        `El bot seguirá buscando un mínimo más bajo antes de permitir ejecución.`,
+      ].filter(Boolean);
+
   const msg = [
     `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
     ``,
-    `💵 Precio actual (mínimo): <code>$${currentPrice.toFixed(2)}</code>`,
     `📍 Precio de referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
     `✅ Activación alcanzada: <code>$${activationPrice.toFixed(2)}</code>`,
-    `📊 Mínimo observado: <code>$${currentPrice.toFixed(2)}</code>`,
-    `🎯 Compra si rebota a: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
-    `🚫 Límite máximo de ejecución: <code>$${maxExecutionPrice.toFixed(2)}</code>`,
+    `� Precio actual / mínimo inicial: <code>$${currentPrice.toFixed(2)}</code>`,
+    `📉 Mínimo observado: <code>$${currentPrice.toFixed(2)}</code>`,
+    ``,
+    `🎯 Rebote técnico calculado: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
+    `🚫 Límite máximo de ejecución: <code>$${maxExec.toFixed(2)}</code>`,
+    ``,
+    ...execLines,
     ``,
     `El bot no compra todavía. Está esperando confirmación de rebote.`,
     ``,
@@ -612,7 +661,7 @@ export async function alertTrailingBuyArmed(
   await send(chatId, msg, config.telegramThreadId || undefined);
   
   tbState.markNotifiedArmed(pair, mode, referencePrice, currentPrice);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] ARMED notification sent for ${pair}`);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] ARMED notification sent for ${pair} reboundExecutable=${executable}`);
 }
 
 export async function alertTrailingBuyTriggered(
@@ -621,6 +670,7 @@ export async function alertTrailingBuyTriggered(
   currentPrice: number,
   bouncePct: number,
   localLow: number,
+  maxExecutionPrice?: number,
 ): Promise<void> {
   // Anti-spam: solo notificar una vez
   if (!tbState.shouldNotifyTriggered(pair, mode)) {
@@ -633,23 +683,31 @@ export async function alertTrailingBuyTriggered(
 
   const config = await repo.getIdcaConfig();
 
+  const withinLimit = maxExecutionPrice !== undefined ? currentPrice <= maxExecutionPrice : undefined;
+  const statusLine = withinLimit === false
+    ? `⚠️ Precio supera límite máximo de ejecución (<code>$${maxExecutionPrice!.toFixed(2)}</code>). La entrada puede bloquearse.`
+    : withinLimit === true
+    ? `✅ Precio dentro del límite máximo. Validando entrada...`
+    : `Rebote detectado, validando entrada.`;
+
   const msg = [
-    `🟡 <b>Rebote detectado por Trailing Buy</b> — <b>${pair}</b>`,
+    `🟡 <b>Rebote detectado — Trailing Buy</b> — <b>${pair}</b>`,
     ``,
     `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
     `📉 Mejor precio previo (mínimo): <code>$${localLow.toFixed(2)}</code>`,
     `📈 Rebote detectado: <code>+${bouncePct.toFixed(3)}%</code>`,
+    maxExecutionPrice !== undefined ? `🚫 Límite máximo de ejecución: <code>$${maxExecutionPrice.toFixed(2)}</code>` : null,
     ``,
-    `El bot está procesando la compra.`,
+    statusLine,
     ``,
     `<i>Modo: ${mode}</i>`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
   
   // Marcar como notificado
   tbState.markNotifiedTriggered(pair, mode);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRIGGERED notification sent for ${pair}`);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRIGGERED notification sent for ${pair} withinLimit=${withinLimit}`);
 }
 
 export async function alertTrailingBuyExecuted(
@@ -752,6 +810,11 @@ export async function alertTrailingBuyTracking(
   bestPriceObserved: number,
   reboundTriggerPrice: number,
   minutesSinceLastNotify: number,
+  opts?: {
+    referencePrice?: number;
+    buyThreshold?: number;
+    maxExecutionPrice?: number;
+  },
 ): Promise<void> {
   // Anti-spam: verificar throttle antes de enviar
   const check = tbState.shouldNotifyTracking(pair, mode, bestPriceObserved);
@@ -764,25 +827,53 @@ export async function alertTrailingBuyTracking(
   if (!enabled) return;
 
   const config = await repo.getIdcaConfig();
-  const msg = [
+  const maxExec = opts?.maxExecutionPrice;
+  const elapsedText = formatElapsed(minutesSinceLastNotify);
+
+  // reboundExecutable: ¿puede ejecutarse dentro del límite?
+  const { executable, requiredLocalLow, faltaPct } = maxExec !== undefined
+    ? computeReboundStatus(reboundTriggerPrice, bestPriceObserved, maxExec)
+    : { executable: undefined as boolean | undefined, requiredLocalLow: 0, faltaPct: 0 };
+
+  const lines: (string | null)[] = [
     `🔵 <b>Trailing Buy siguiendo precio</b> — <b>${pair}</b>`,
     ``,
-    `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
+    opts?.referencePrice !== undefined ? `� Precio de referencia de entrada: <code>$${opts.referencePrice.toFixed(2)}</code>` : null,
+    opts?.buyThreshold !== undefined   ? `✅ Activación / caída mínima: <code>$${opts.buyThreshold.toFixed(2)}</code>` : null,
+    `�💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
     `📉 Mejor precio observado: <code>$${bestPriceObserved.toFixed(2)}</code>`,
-    `🎯 Compra si rebota hasta: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
     ``,
-    `Último aviso hace: ${minutesSinceLastNotify} min`,
+    `🎯 Rebote técnico calculado: <code>$${reboundTriggerPrice.toFixed(2)}</code>`,
+    maxExec !== undefined ? `🚫 Límite máximo de ejecución: <code>$${maxExec.toFixed(2)}</code>` : null,
     ``,
-    `No se ejecutó compra todavía.`,
-    ``,
-    `<i>Modo: ${mode}</i>`,
-  ].join("\n");
+  ];
+
+  if (executable === false) {
+    lines.push(
+      `⚠️ Rebote actual fuera de rango.`,
+      `Si rebota hasta <code>$${reboundTriggerPrice.toFixed(2)}</code>, la compra se bloqueará por superar el límite máximo.`,
+      `📉 Mínimo necesario para rebote válido: <code>$${requiredLocalLow.toFixed(2)}</code>`,
+      faltaPct > 0.001 ? `⏳ Falta bajar: <code>${faltaPct.toFixed(2)}%</code>` : null,
+      `El bot seguirá siguiendo el mínimo para buscar un rebote válido.`,
+    );
+  } else if (executable === true) {
+    lines.push(
+      `✅ Rebote válido dentro del límite.`,
+      `No se ejecutó compra todavía. Está esperando confirmación de rebote.`,
+    );
+  } else {
+    lines.push(`No se ejecutó compra todavía.`);
+  }
+
+  lines.push(``, `Último aviso hace: ${elapsedText}`, ``, `<i>Modo: ${mode}</i>`);
+
+  const msg = lines.filter(l => l !== null).join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
   
   // Marcar como notificado
   tbState.markNotifiedTracking(pair, mode, bestPriceObserved);
-  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRACKING notification sent for ${pair} (reason: ${check.reason})`);
+  console.log(`[IDCA][TELEGRAM][TRAILING_BUY] TRACKING notification sent for ${pair} reboundExecutable=${executable} (reason: ${check.reason})`);
 }
 
 export async function alertTrailingBuyCancelled(
