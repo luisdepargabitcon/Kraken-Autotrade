@@ -1921,6 +1921,10 @@ export class DatabaseStorage implements IStorage {
         { table: 'institutional_dca_asset_configs', column: 'ladder_atrp_enabled', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS ladder_atrp_enabled BOOLEAN NOT NULL DEFAULT FALSE' },
         { table: 'institutional_dca_asset_configs', column: 'trailing_buy_level_1_config_json', sql: 'ALTER TABLE institutional_dca_asset_configs ADD COLUMN IF NOT EXISTS trailing_buy_level_1_config_json JSONB' },
 
+        // institutional_dca_config — slider config (031)
+        { table: 'institutional_dca_config', column: 'entry_ui_json', sql: 'ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS entry_ui_json JSONB' },
+        { table: 'institutional_dca_config', column: 'telegram_ui_json', sql: 'ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS telegram_ui_json JSONB' },
+
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },
         { table: 'open_positions', column: 'sg_break_even_activated', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_break_even_activated BOOLEAN DEFAULT false' },
