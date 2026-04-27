@@ -48,6 +48,7 @@ import {
   useDeleteOrder,
   useDeleteAllOrders,
   useSetCycleStatus,
+  useUpdateTrailingBuyPolicy,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -3571,9 +3572,33 @@ function EventsLogPanel() {
 // TELEGRAM TAB
 // ════════════════════════════════════════════════════════════════════
 
+// ── defaults must match TB_ALERT_DEFAULTS from IdcaTelegramAlertPolicy.ts ──
+const TB_POLICY_DEFAULTS = {
+  profile: "balanced" as const,
+  armedEnabled: true,
+  watchingEnabled: true,
+  trackingEnabled: false,
+  cancelledEnabled: true,
+  reboundDetectedEnabled: true,
+  executedEnabled: true,
+  blockedExecutionEnabled: true,
+  digestEnabled: true,
+  digestIntervalMinutes: 240,
+  trackingMinMinutes: 60,
+  trackingMinPriceImprovementPct: 0.30,
+};
+
+const PROFILE_LABELS: Record<string, string> = {
+  balanced:     "Equilibrado — recomendado",
+  actions_only: "Solo acciones (rebote, compra, bloqueo)",
+  verbose:      "Detallado — activa todos los toggles",
+  silent:       "Silencioso — solo compra ejecutada",
+};
+
 function TelegramTab() {
   const { data: config } = useIdcaConfig();
   const updateConfig = useUpdateIdcaConfig();
+  const updateTbPolicy = useUpdateTrailingBuyPolicy();
   const testTelegram = useIdcaTelegramTest();
   const { data: telegramStatus, refetch: refetchStatus } = useIdcaTelegramStatus();
   const { toast } = useToast();
@@ -3582,9 +3607,20 @@ function TelegramTab() {
 
   const toggles = (config.telegramAlertTogglesJson || {}) as Record<string, boolean>;
 
+  const tbPolicy = {
+    ...TB_POLICY_DEFAULTS,
+    ...((config.telegramAlertTogglesJson as any)?.trailingBuy ?? {}),
+  };
+
   const updateToggle = (key: string, val: boolean) => {
     updateConfig.mutate({
       telegramAlertTogglesJson: { ...toggles, [key]: val },
+    });
+  };
+
+  const updateTb = (key: string, val: unknown) => {
+    updateTbPolicy.mutate({ [key]: val }, {
+      onError: (e: any) => toast({ title: "Error al guardar", description: e.message, variant: "destructive" }),
     });
   };
 
@@ -3701,6 +3737,132 @@ function TelegramTab() {
             <ToggleField label="Trailing buy disparado" checked={toggles["trailing_buy_triggered"] !== false}
               desc="Rebote confirmado → se evalúa entrada" onChange={(v) => updateToggle("trailing_buy_triggered", v)} />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Política Alertas Trailing Buy ── */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-mono">🤖 POLÍTICA ALERTAS TRAILING BUY</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* Selector de perfil */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground font-mono">Perfil de alertas</Label>
+            <Select value={tbPolicy.profile} onValueChange={(v) => updateTb("profile", v)}>
+              <SelectTrigger className="h-8 text-xs font-mono">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(PROFILE_LABELS).map(([k, label]) => (
+                  <SelectItem key={k} value={k} className="text-xs font-mono">{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground">
+              {tbPolicy.profile === "balanced" && "✅ Sin spam: tracking desactivado, resumen periódico activo."}
+              {tbPolicy.profile === "actions_only" && "Solo rebote detectado, compra ejecutada y bloqueos críticos."}
+              {tbPolicy.profile === "verbose" && "⚠️ Activa todos los toggles. Puede generar spam si el tracking está activo."}
+              {tbPolicy.profile === "silent" && "Solo compras reales ejecutadas. Sin más notificaciones."}
+            </p>
+          </div>
+
+          {/* Toggles principales */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <ToggleField
+              label="Trailing Buy armado"
+              checked={tbPolicy.armedEnabled}
+              desc="Notificar cuando se activa el seguimiento"
+              onChange={(v) => updateTb("armedEnabled", v)} />
+            <ToggleField
+              label="Precio cerca de zona"
+              checked={tbPolicy.watchingEnabled}
+              desc="Precio próximo a activación, sin comprar todavía"
+              onChange={(v) => updateTb("watchingEnabled", v)} />
+            <ToggleField
+              label="Rebote detectado"
+              checked={tbPolicy.reboundDetectedEnabled}
+              desc="Rebote técnico confirmado — evaluando entrada"
+              onChange={(v) => updateTb("reboundDetectedEnabled", v)} />
+            <ToggleField
+              label="Cancelado / desactivado"
+              checked={tbPolicy.cancelledEnabled}
+              desc="Trailing buy se desactiva sin comprar"
+              onChange={(v) => updateTb("cancelledEnabled", v)} />
+            <ToggleField
+              label="Compra ejecutada"
+              checked={tbPolicy.executedEnabled}
+              desc="Compra real confirmada — siempre recomendado"
+              onChange={(v) => updateTb("executedEnabled", v)} />
+            <ToggleField
+              label="Compra bloqueada"
+              checked={tbPolicy.blockedExecutionEnabled}
+              desc="Rebote detectado pero entrada rechazada"
+              onChange={(v) => updateTb("blockedExecutionEnabled", v)} />
+          </div>
+
+          {/* Toggle tracking con advertencia */}
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-mono font-medium">Seguimiento del mínimo (tracking)</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  ⚠️ Desactivado por defecto. Cada tick puede generar una notificación.
+                </p>
+              </div>
+              <Switch
+                checked={tbPolicy.trackingEnabled}
+                onCheckedChange={(v) => updateTb("trackingEnabled", v)}
+              />
+            </div>
+            {tbPolicy.trackingEnabled && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground font-mono">Intervalo mínimo (min)</Label>
+                  <Input
+                    type="number" min={15} max={480}
+                    className="h-7 text-xs font-mono"
+                    value={tbPolicy.trackingMinMinutes}
+                    onChange={(e) => updateTb("trackingMinMinutes", parseInt(e.target.value) || 60)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground font-mono">Mejora mínima (%)</Label>
+                  <Input
+                    type="number" min={0.10} max={5.00} step={0.05}
+                    className="h-7 text-xs font-mono"
+                    value={tbPolicy.trackingMinPriceImprovementPct}
+                    onChange={(e) => updateTb("trackingMinPriceImprovementPct", parseFloat(e.target.value) || 0.30)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Resumen digest */}
+          <div className="grid grid-cols-2 gap-3 items-start">
+            <ToggleField
+              label="Resumen periódico (digest)"
+              checked={tbPolicy.digestEnabled}
+              desc="Envía un resumen agrupado del estado del Trailing Buy"
+              onChange={(v) => updateTb("digestEnabled", v)} />
+            {tbPolicy.digestEnabled && (
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground font-mono">Intervalo resumen (min)</Label>
+                <Input
+                  type="number" min={30} max={1440}
+                  className="h-7 text-xs font-mono"
+                  value={tbPolicy.digestIntervalMinutes}
+                  onChange={(e) => updateTb("digestIntervalMinutes", parseInt(e.target.value) || 240)}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Por defecto: 240 min (4h)
+                </p>
+              </div>
+            )}
+          </div>
+
         </CardContent>
       </Card>
 

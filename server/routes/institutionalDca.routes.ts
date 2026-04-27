@@ -75,6 +75,26 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Telegram Trailing Buy Policy (deep merge del sub-bloque trailingBuy) ──
+
+  app.patch(`${PREFIX}/config/telegram-trailing-buy`, async (req, res) => {
+    try {
+      const current = await repo.getIdcaConfig();
+      const toggles = ((current.telegramAlertTogglesJson ?? {}) as Record<string, unknown>);
+      const currentTb = ((toggles.trailingBuy ?? {}) as Record<string, unknown>);
+      const updated = await repo.updateIdcaConfig({
+        telegramAlertTogglesJson: {
+          ...toggles,
+          trailingBuy: { ...currentTb, ...req.body },
+        } as any,
+      });
+      const result = ((updated.telegramAlertTogglesJson as Record<string, unknown> | null)?.trailingBuy ?? {});
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Asset Configs ─────────────────────────────────────────────
 
   app.get(`${PREFIX}/asset-configs`, async (_req, res) => {

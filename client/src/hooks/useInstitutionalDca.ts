@@ -565,6 +565,19 @@ export function useUpdateAssetConfig() {
   });
 }
 
+export function useUpdateTrailingBuyPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: Record<string, unknown>) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/config/telegram-trailing-buy`, patch);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 export function useEmergencyCloseAll() {
   const qc = useQueryClient();
   return useMutation({
