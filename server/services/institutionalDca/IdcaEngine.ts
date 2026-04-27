@@ -8,6 +8,7 @@ import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
 import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
+import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
@@ -1050,9 +1051,11 @@ async function evaluatePair(
             const effectiveEntryReference = frozenAnchor$?.anchorPrice && frozenAnchor$.anchorPrice > 0
               ? frozenAnchor$.anchorPrice
               : triggerPrice; // fallback al precio del nivel ladder
-            const effectiveMinDipPct = parseFloat(String(assetConfig.minDipPct || "3.5"));
+            // Slider config es fuente de verdad: si entryUiJson existe, sus valores override minDipPct/trailingValue
+            const derived = getEffectiveEntryConfig(config, pair);
+            const effectiveMinDipPct = derived.effectiveMinDipPct;
             const buyThreshold = effectiveEntryReference * (1 - effectiveMinDipPct / 100);
-            const maxOvershootPct = parseFloat(String(trailingBuyLevel1Config.maxTrailingBuyOvershootPct ?? "0.30"));
+            const maxOvershootPct = derived.maxExecutionOvershootPct;
             const maxExecutionPrice = buyThreshold * (1 + maxOvershootPct / 100);
 
             if (currentPrice > buyThreshold) {
@@ -1071,9 +1074,14 @@ async function evaluatePair(
             } else if (!TrailingBuyManager.isArmed(pair)) {
               // ── ARMED: precio llegó al nivel de activación ──
               const atrPct = await getAtrPctForPair(pair);
+              // Para rebound_pct: usar reboundPct derivado de slider (override del valor técnico)
+              const sliderReboundPct = derived.reboundPct;
+              const effectiveTrailingValue = trailingBuyLevel1Config.trailingMode === "rebound_pct"
+                ? sliderReboundPct
+                : trailingBuyLevel1Config.trailingValue; // atrp_fraction: usar valor técnico raw
               TrailingBuyManager.armLevel(pair, effectiveEntryReference, buyThreshold, currentPrice, triggerLevel, {
                 trailingMode: trailingBuyLevel1Config.trailingMode,
-                trailingValue: trailingBuyLevel1Config.trailingValue,
+                trailingValue: effectiveTrailingValue,
                 maxWaitMinutes: trailingBuyLevel1Config.maxWaitMinutes,
                 cancelOnRecovery: trailingBuyLevel1Config.cancelOnRecovery,
                 atrpMultiplier: atrPct,
@@ -1081,8 +1089,8 @@ async function evaluatePair(
               });
 
               const trailingPct = trailingBuyLevel1Config.trailingMode === "rebound_pct"
-                ? trailingBuyLevel1Config.trailingValue
-                : trailingBuyLevel1Config.trailingValue * (atrPct ?? 1);
+                ? sliderReboundPct
+                : effectiveTrailingValue * (atrPct ?? 1);
               const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
 
               await createHumanEvent({

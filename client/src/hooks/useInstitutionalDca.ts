@@ -61,6 +61,8 @@ export interface IdcaConfig {
   orderArchiveDays: number;
   dynamicTpConfigJson: Record<string, any>;
   plusConfigJson: Record<string, any>;
+  entryUiJson: Record<string, number> | null;
+  telegramUiJson: Record<string, number> | null;
   [key: string]: any;
 }
 

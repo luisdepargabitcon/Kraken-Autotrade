@@ -1017,6 +1017,11 @@ export const institutionalDcaConfig = pgTable("institutional_dca_config", {
     autoCloseIfMainClosed: true, autoCloseIfMainRecovers: false,
     maxRecoveryDurationHours: 168,
   }),
+  // ─── Slider-based UI configuration (source of truth for entry and Telegram alerts) ───
+  // When present, these OVERRIDE individual technical params (minDipPct, trailingValue, etc.)
+  // Application defaults (entryPatienceLevel:70, etc.) are applied in IdcaSliderConfig.ts
+  entryUiJson: jsonb("entry_ui_json"),              // EntryUiConfig — sliders de entrada
+  telegramUiJson: jsonb("telegram_ui_json"),         // TelegramUiConfig — sliders de alertas
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
