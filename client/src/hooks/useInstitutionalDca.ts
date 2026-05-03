@@ -260,6 +260,15 @@ export interface LadderPreview {
   sliderIntensity: number;
 }
 
+export interface MarketContextQualityDetail {
+  status: "ok" | "partial" | "poor";
+  reason: "ok" | "warming_up_cache" | "insufficient_candles" | "stale_market_data" | "missing_atrp" | "missing_vwap_zone" | "missing_anchor";
+  candleCount: number;
+  requiredForOptimal: number;
+  hasVwap: boolean;
+  hasAtrp: boolean;
+}
+
 export interface MarketContextPreview {
   pair: string;
   anchorPrice: number;
@@ -273,6 +282,7 @@ export interface MarketContextPreview {
   anchorPriceUpdatedAt?: string;
   anchorAgeHours?: number;
   anchorSource?: "vwap" | "window_high" | "frozen";
+  qualityDetail?: MarketContextQualityDetail;
 }
 
 export interface IdcaSummary {

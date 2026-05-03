@@ -1,10 +1,11 @@
 /**
  * Tests unitarios para los helpers puros de IdcaMarketContextCard
  *
- * getFreshnessState    — 3 casos: realtime / recent / stale
- * getReferencePriceState — 2 casos: recently_changed / stable
- * getZoneVisual        — zona favorable / neutra / sobreextendida
- * buildMarketContextNarrative — varios escenarios
+ * getFreshnessState       — 3 casos: realtime / recent / stale
+ * getReferencePriceState  — 2 casos: recently_changed / stable
+ * getZoneVisual           — zona favorable / neutra / sobreextendida
+ * getQualityBadgeText     — badge compacto con motivo
+ * buildMarketContextNarrative — todos los escenarios
  */
 import { describe, it, expect } from "vitest";
 
@@ -14,8 +15,10 @@ import {
   getReferencePriceState,
   getZoneVisual,
   getAtrpLabel,
+  getQualityBadgeText,
   buildMarketContextNarrative,
   formatAgeLabel,
+  type MarketContextQualityDetail,
 } from "../../../client/src/components/idca/idcaMarketContextHelpers";
 
 // ─── getFreshnessState ────────────────────────────────────────────────────────
@@ -130,107 +133,151 @@ describe("getAtrpLabel", () => {
   });
 });
 
+// ─── getQualityBadgeText ──────────────────────────────────────────────────────
+
+describe("getQualityBadgeText", () => {
+  it("MC20. status=ok → 'Óptima'", () => {
+    const qd: MarketContextQualityDetail = { status: "ok", reason: "ok", candleCount: 120, requiredForOptimal: 100, hasVwap: true, hasAtrp: true };
+    expect(getQualityBadgeText(qd)).toBe("Óptima");
+  });
+
+  it("MC21. status=poor → 'Insuficiente'", () => {
+    const qd: MarketContextQualityDetail = { status: "poor", reason: "insufficient_candles", candleCount: 5, requiredForOptimal: 100, hasVwap: false, hasAtrp: false };
+    expect(getQualityBadgeText(qd)).toBe("Insuficiente");
+  });
+
+  it("MC22. partial + warming_up_cache → 'Parcial: calentando'", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "warming_up_cache", candleCount: 34, requiredForOptimal: 100, hasVwap: false, hasAtrp: true };
+    expect(getQualityBadgeText(qd)).toBe("Parcial: calentando");
+  });
+
+  it("MC23. partial + insufficient_candles → 'Parcial: X/Y velas'", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "insufficient_candles", candleCount: 65, requiredForOptimal: 100, hasVwap: true, hasAtrp: true };
+    expect(getQualityBadgeText(qd)).toBe("Parcial: 65/100 velas");
+  });
+
+  it("MC24. partial + missing_vwap_zone → 'Parcial: falta VWAP'", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "missing_vwap_zone", candleCount: 80, requiredForOptimal: 100, hasVwap: false, hasAtrp: true };
+    expect(getQualityBadgeText(qd)).toBe("Parcial: falta VWAP");
+  });
+
+  it("MC25. partial + missing_atrp → 'Parcial: falta ATRP'", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "missing_atrp", candleCount: 80, requiredForOptimal: 100, hasVwap: true, hasAtrp: false };
+    expect(getQualityBadgeText(qd)).toBe("Parcial: falta ATRP");
+  });
+
+  it("MC26. undefined → 'Parcial' (fallback seguro)", () => {
+    expect(getQualityBadgeText(undefined)).toBe("Parcial");
+  });
+});
+
 // ─── buildMarketContextNarrative ─────────────────────────────────────────────
 
+const freshTs = () => new Date(Date.now() - 1 * 60_000).toISOString();
+const okQd = (): MarketContextQualityDetail => ({ status: "ok", reason: "ok", candleCount: 120, requiredForOptimal: 100, hasVwap: true, hasAtrp: true });
+
 describe("buildMarketContextNarrative", () => {
-  it("MC20. datos stale → título 'Datos desactualizados', icon alert", () => {
+  it("MC27. datos stale → 'Datos desactualizados', icon alert (prioridad máxima)", () => {
     const stale = new Date(Date.now() - 30 * 60_000).toISOString();
-    const r = buildMarketContextNarrative({
-      vwapZone: "between_bands",
-      dataQuality: "good",
-      drawdownPct: 5,
-      lastUpdated: stale,
-    });
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", qualityDetail: okQd(), drawdownPct: 5, lastUpdated: stale });
     expect(r.title).toBe("Datos desactualizados");
     expect(r.icon).toBe("alert");
   });
 
-  it("MC21. calidad poor → 'Datos a revisar', icon warning", () => {
-    const fresh = new Date(Date.now() - 1 * 60_000).toISOString();
-    const r = buildMarketContextNarrative({
-      vwapZone: "between_bands",
-      dataQuality: "poor",
-      drawdownPct: 5,
-      lastUpdated: fresh,
-    });
+  it("MC28. qualityDetail.status=poor → 'Datos a revisar', icon alert", () => {
+    const qd: MarketContextQualityDetail = { status: "poor", reason: "insufficient_candles", candleCount: 5, requiredForOptimal: 100, hasVwap: false, hasAtrp: false };
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", qualityDetail: qd, drawdownPct: 5, lastUpdated: freshTs() });
     expect(r.title).toBe("Datos a revisar");
-    expect(r.icon).toBe("warning");
+    expect(r.icon).toBe("alert");
   });
 
-  it("MC22. zona below_lower3 → 'Contexto favorable', icon ok", () => {
-    const fresh = new Date(Date.now() - 1 * 60_000).toISOString();
-    const r = buildMarketContextNarrative({
-      vwapZone: "below_lower3",
-      dataQuality: "excellent",
-      drawdownPct: 12,
-      lastUpdated: fresh,
-    });
+  it("MC29. warming_up_cache → 'Histórico calentando', icon warning, texto con velas", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "warming_up_cache", candleCount: 34, requiredForOptimal: 100, hasVwap: false, hasAtrp: true };
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", qualityDetail: qd, drawdownPct: 5, lastUpdated: freshTs() });
+    expect(r.title).toBe("Histórico calentando");
+    expect(r.icon).toBe("warning");
+    expect(r.description).toContain("34/100");
+    expect(r.shortText).toContain("34/100");
+  });
+
+  it("MC30. insufficient_candles partial → 'Histórico parcial', texto con X/Y", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "insufficient_candles", candleCount: 65, requiredForOptimal: 100, hasVwap: true, hasAtrp: true };
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", qualityDetail: qd, drawdownPct: 3, lastUpdated: freshTs() });
+    expect(r.title).toBe("Histórico parcial");
+    expect(r.description).toContain("65/100");
+  });
+
+  it("MC31. ok + zona below_lower3 → 'Contexto favorable', icon ok", () => {
+    const r = buildMarketContextNarrative({ vwapZone: "below_lower3", qualityDetail: okQd(), drawdownPct: 12, lastUpdated: freshTs() });
     expect(r.title).toBe("Contexto favorable");
     expect(r.icon).toBe("ok");
   });
 
-  it("MC23. zona between_bands → 'Contexto neutro', icon warning", () => {
-    const fresh = new Date(Date.now() - 1 * 60_000).toISOString();
-    const r = buildMarketContextNarrative({
-      vwapZone: "between_bands",
-      dataQuality: "good",
-      drawdownPct: 3,
-      lastUpdated: fresh,
-    });
-    expect(r.title).toBe("Contexto neutro");
-    expect(r.icon).toBe("warning");
+  it("MC32. ok + zona between_bands → 'Contexto actualizado' (status ok sin zona desfavorable)", () => {
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", qualityDetail: okQd(), drawdownPct: 2, lastUpdated: freshTs() });
+    expect(r.title).toBe("Contexto actualizado");
+    expect(r.icon).toBe("ok");
   });
 
-  it("MC24. zona above_upper2 → 'Contexto exigente', icon caution", () => {
-    const fresh = new Date(Date.now() - 1 * 60_000).toISOString();
-    const r = buildMarketContextNarrative({
-      vwapZone: "above_upper2",
-      dataQuality: "good",
-      drawdownPct: -5,
-      lastUpdated: fresh,
-    });
+  it("MC33. ok + zona above_upper2 → 'Contexto exigente', icon caution", () => {
+    const r = buildMarketContextNarrative({ vwapZone: "above_upper2", qualityDetail: okQd(), drawdownPct: -5, lastUpdated: freshTs() });
     expect(r.title).toBe("Contexto exigente");
     expect(r.icon).toBe("caution");
   });
 
-  it("MC25. referencia cambiada <24h se menciona en descripción", () => {
-    const fresh = new Date(Date.now() - 1 * 60_000).toISOString();
-    const recent = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  it("MC34. parcial con precio + drawdown + ATRP + zona + lastUpdated reciente → NO 'Datos a revisar'", () => {
+    const qd: MarketContextQualityDetail = { status: "partial", reason: "warming_up_cache", candleCount: 40, requiredForOptimal: 100, hasVwap: false, hasAtrp: true };
     const r = buildMarketContextNarrative({
       vwapZone: "between_bands",
-      dataQuality: "good",
-      drawdownPct: 2,
-      lastUpdated: fresh,
+      qualityDetail: qd,
+      drawdownPct: 3,
+      lastUpdated: freshTs(),
+    });
+    expect(r.title).not.toBe("Datos a revisar");
+  });
+
+  it("MC35. referencia cambiada <24h mencionada en descripción (zona favorable)", () => {
+    const recent = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const r = buildMarketContextNarrative({
+      vwapZone: "below_lower3",
+      qualityDetail: okQd(),
+      drawdownPct: 10,
+      lastUpdated: freshTs(),
       anchorPriceUpdatedAt: recent,
     });
     expect(r.description).toContain("revisada recientemente");
+  });
+
+  it("MC36. dataQuality=insufficient sin qualityDetail → 'Datos a revisar'", () => {
+    const r = buildMarketContextNarrative({ vwapZone: "between_bands", dataQuality: "insufficient", drawdownPct: 5, lastUpdated: freshTs() });
+    expect(r.title).toBe("Datos a revisar");
   });
 });
 
 // ─── formatAgeLabel ───────────────────────────────────────────────────────────
 
 describe("formatAgeLabel", () => {
-  it("MC26. < 1 min → 'hace unos segundos'", () => {
+  it("MC37. < 1 min → 'hace unos segundos'", () => {
     const t = new Date(Date.now() - 30_000).toISOString();
     expect(formatAgeLabel(t)).toBe("hace unos segundos");
   });
 
-  it("MC27. 5 min → 'hace 5m'", () => {
+  it("MC38. 5 min → 'hace 5m'", () => {
     const t = new Date(Date.now() - 5 * 60_000).toISOString();
     expect(formatAgeLabel(t)).toBe("hace 5m");
   });
 
-  it("MC28. 3h → 'hace 3h'", () => {
+  it("MC39. 3h → 'hace 3h'", () => {
     const t = new Date(Date.now() - 3 * 3_600_000).toISOString();
     expect(formatAgeLabel(t)).toBe("hace 3h");
   });
 
-  it("MC29. 2d → 'hace 2d'", () => {
+  it("MC40. 2d → 'hace 2d'", () => {
     const t = new Date(Date.now() - 2 * 86_400_000).toISOString();
     expect(formatAgeLabel(t)).toBe("hace 2d");
   });
 
-  it("MC30. undefined → vacío", () => {
+  it("MC41. undefined → vacío", () => {
     expect(formatAgeLabel(undefined)).toBe("");
   });
 });

@@ -1009,6 +1009,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         priceUpdatedAt: preview.priceUpdatedAt.toISOString(),
         lastUpdated: preview.lastUpdated.toISOString(),
         anchorPriceUpdatedAt: preview.anchorPriceUpdatedAt.toISOString(),
+        qualityDetail: preview.qualityDetail,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1032,6 +1033,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         anchorPriceUpdatedAt: r.anchorPriceUpdatedAt instanceof Date ? r.anchorPriceUpdatedAt.toISOString() : r.anchorPriceUpdatedAt,
         anchorAgeHours: r.anchorAgeHours,
         anchorSource: r.anchorSource,
+        qualityDetail: r.qualityDetail,
       }));
       res.json(previews);
     } catch (e: any) {

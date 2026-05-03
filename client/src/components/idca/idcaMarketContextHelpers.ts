@@ -8,6 +8,15 @@ export type ReferencePriceState = "stable" | "recently_changed" | "unknown";
 export type VwapZone = "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
 export type DataQuality = "excellent" | "good" | "poor" | "insufficient";
 
+export interface MarketContextQualityDetail {
+  status: "ok" | "partial" | "poor";
+  reason: "ok" | "warming_up_cache" | "insufficient_candles" | "stale_market_data" | "missing_atrp" | "missing_vwap_zone" | "missing_anchor";
+  candleCount: number;
+  requiredForOptimal: number;
+  hasVwap: boolean;
+  hasAtrp: boolean;
+}
+
 export interface ZoneVisual {
   label: string;
   labelShort: string;
@@ -21,6 +30,8 @@ export interface MarketNarrative {
   title: string;
   description: string;
   icon: "ok" | "warning" | "caution" | "alert";
+  /** Texto corto para modo compacto (≤ 60 chars) */
+  shortText: string;
 }
 
 export function getFreshnessState(lastUpdated?: string): FreshnessState {
@@ -87,9 +98,44 @@ export function formatDateTime(iso?: string): string {
   });
 }
 
+/**
+ * Texto corto para el badge de calidad en modo compacto.
+ * Ej: "Parcial: calentando", "Parcial: 34/100 velas", "Parcial: falta VWAP"
+ */
+export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail): string {
+  if (!qualityDetail) return "Parcial";
+  if (qualityDetail.status === "ok") return "Óptima";
+  if (qualityDetail.status === "poor") return "Insuficiente";
+  // partial
+  switch (qualityDetail.reason) {
+    case "warming_up_cache":
+      return "Parcial: calentando";
+    case "insufficient_candles":
+      return `Parcial: ${qualityDetail.candleCount}/${qualityDetail.requiredForOptimal} velas`;
+    case "missing_vwap_zone":
+      return "Parcial: falta VWAP";
+    case "missing_atrp":
+      return "Parcial: falta ATRP";
+    default:
+      return "Parcial";
+  }
+}
+
+/**
+ * Construye la narrativa interpretativa del contexto de mercado.
+ *
+ * Prioridad:
+ * 1. freshness stale → "Datos desactualizados" (siempre, crítico)
+ * 2. qualityDetail.status === "poor" (< 20 velas) → "Datos a revisar"
+ * 3. qualityDetail.reason === "warming_up_cache" → "Histórico calentando"
+ * 4. qualityDetail.reason === "insufficient_candles" (parcial, ≥ 20 velas) → "Histórico parcial"
+ * 5. qualityDetail.status === "ok" → zona-based narrative
+ * 6. qualityDetail.reason === "missing_vwap_zone" / "missing_atrp" → zona + nota parcial
+ */
 export function buildMarketContextNarrative(data: {
   vwapZone?: VwapZone | string;
-  dataQuality: DataQuality;
+  dataQuality?: DataQuality;
+  qualityDetail?: MarketContextQualityDetail;
   drawdownPct?: number;
   anchorPriceUpdatedAt?: string;
   lastUpdated?: string;
@@ -97,30 +143,59 @@ export function buildMarketContextNarrative(data: {
   const freshness = getFreshnessState(data.lastUpdated);
   const refState = getReferencePriceState(data.anchorPriceUpdatedAt);
   const zone = data.vwapZone;
-  const quality = data.dataQuality;
   const drawdown = data.drawdownPct ?? 0;
+  const qd = data.qualityDetail;
 
+  // 1. Datos desactualizados — señal crítica independiente de calidad
   if (freshness === "stale") {
     return {
       title: "Datos desactualizados",
-      description: "El contexto de mercado no se ha actualizado en los últimos 15 minutos. Los cálculos de entrada pueden estar basados en datos obsoletos. Verificar la conexión del scheduler.",
+      description: "El último contexto de mercado no es reciente. Revisar conexión/caché antes de confiar en esta lectura.",
+      shortText: "Último contexto no reciente",
       icon: "alert",
     };
   }
 
-  if (quality === "poor" || quality === "insufficient") {
+  // 2. Poor quality → verdaderamente faltan datos críticos (< 20 velas)
+  if (qd?.status === "poor" || (!qd && (data.dataQuality === "insufficient"))) {
     return {
       title: "Datos a revisar",
-      description: "El sistema tiene datos de mercado insuficientes para calcular el contexto con precisión. La entrada se evalúa con más margen de seguridad hasta disponer de más velas históricas.",
+      description: "Faltan datos clave para calcular el contexto con precisión. La entrada se evalúa de forma conservadora hasta recuperar datos suficientes.",
+      shortText: "Faltan datos críticos",
+      icon: "alert",
+    };
+  }
+
+  // 3. Caché calentando — tiene datos en tiempo real pero histórico incompleto
+  if (qd?.reason === "warming_up_cache") {
+    const refMsg = refState === "recently_changed" ? " Referencia revisada recientemente." : "";
+    return {
+      title: "Histórico calentando",
+      description: `El sistema ya tiene datos en tiempo real, pero todavía está completando el histórico necesario para afinar bandas, ATRP y referencia (${qd.candleCount}/${qd.requiredForOptimal} velas). La evaluación sigue activa con margen de seguridad.${refMsg}`,
+      shortText: `Calentando: ${qd.candleCount}/${qd.requiredForOptimal} velas`,
       icon: "warning",
     };
   }
 
+  // 4. Histórico parcial (tiene datos pero no los 100 óptimos)
+  if (qd?.status === "partial" && qd.reason === "insufficient_candles") {
+    return {
+      title: "Histórico parcial",
+      description: `Hay datos suficientes para seguimiento básico, pero faltan velas históricas para máxima precisión. Velas disponibles: ${qd.candleCount}/${qd.requiredForOptimal}.`,
+      shortText: `Parcial: ${qd.candleCount}/${qd.requiredForOptimal} velas`,
+      icon: "warning",
+    };
+  }
+
+  // A partir de aquí tenemos datos suficientes para narrativa de zona
+  const refMsg = refState === "recently_changed" ? " Referencia de entrada revisada recientemente." : "";
+
+  // 5. Zona favorable
   if (zone === "below_lower3" || zone === "below_lower2") {
-    const refMsg = refState === "recently_changed" ? " La referencia fue revisada recientemente." : "";
     return {
       title: "Contexto favorable",
       description: `El precio se encuentra en zona de valor ${zone === "below_lower3" ? "profundo" : "fuerte"}, por debajo de las bandas VWAP inferiores (drawdown ${drawdown.toFixed(1)}%). Las condiciones son favorables para evaluar entradas.${refMsg}`,
+      shortText: `Zona de valor — DD ${drawdown.toFixed(1)}%`,
       icon: "ok",
     };
   }
@@ -128,15 +203,18 @@ export function buildMarketContextNarrative(data: {
   if (zone === "below_lower1") {
     return {
       title: "Contexto de valor",
-      description: `El precio está en zona de valor dentro del rango inferior de bandas VWAP (drawdown ${drawdown.toFixed(1)}%). Contexto positivo para entradas con confirmación de rebote.`,
+      description: `El precio está en zona de valor dentro del rango inferior de bandas VWAP (drawdown ${drawdown.toFixed(1)}%). Contexto positivo para entradas con confirmación de rebote.${refMsg}`,
+      shortText: `Zona valor — DD ${drawdown.toFixed(1)}%`,
       icon: "ok",
     };
   }
 
+  // 6. Zona sobreextendida
   if (zone === "above_upper2") {
     return {
       title: "Contexto exigente",
       description: `El precio está muy por encima de las bandas VWAP (drawdown ${drawdown.toFixed(1)}%). El sistema evalúa entradas con máxima prudencia en este nivel de extensión.`,
+      shortText: `Sobreextendido — DD ${drawdown.toFixed(1)}%`,
       icon: "caution",
     };
   }
@@ -145,16 +223,31 @@ export function buildMarketContextNarrative(data: {
     return {
       title: "Contexto exigente",
       description: `El precio se encuentra por encima de la banda superior VWAP. Las entradas se evalúan con criterios más estrictos hasta que el precio corrija hacia zona neutra o de valor.`,
+      shortText: `Sobreextendido leve`,
       icon: "caution",
     };
   }
 
-  const refMsg = refState === "recently_changed"
-    ? " La referencia de entrada fue revisada recientemente."
+  // 7. Estado ok con datos completos — "Contexto actualizado"
+  if (qd?.status === "ok") {
+    return {
+      title: "Contexto actualizado",
+      description: `El sistema dispone de datos suficientes para evaluar entradas con el contexto actual (${qd.candleCount}/${qd.requiredForOptimal} velas, VWAP y ATRP activos).${refMsg}`,
+      shortText: "Datos completos",
+      icon: "ok",
+    };
+  }
+
+  // 8. Zona neutra con calidad parcial (missing_vwap o missing_atrp pero funcional)
+  const partialNote = qd?.reason === "missing_vwap_zone"
+    ? " VWAP no disponible, usando referencia alternativa."
+    : qd?.reason === "missing_atrp"
+    ? " ATRP no calculado, usando configuración fija."
     : "";
   return {
     title: "Contexto neutro",
-    description: `El precio se encuentra entre las bandas VWAP en zona neutra (drawdown ${drawdown.toFixed(1)}%). El sistema evalúa entradas con los criterios estándar configurados.${refMsg}`,
+    description: `El precio se encuentra en zona neutra (drawdown ${drawdown.toFixed(1)}%). El sistema evalúa entradas con los criterios estándar configurados.${partialNote}${refMsg}`,
+    shortText: `Zona neutra — DD ${drawdown.toFixed(1)}%`,
     icon: "warning",
   };
 }

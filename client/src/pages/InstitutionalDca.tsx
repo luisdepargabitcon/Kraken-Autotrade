@@ -359,6 +359,30 @@ function SummaryTab() {
         error={marketCtx.error}
       />
 
+      {/* Active Cycles */}
+      {summary.cycles.length > 0 && (
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono">CICLOS ACTIVOS</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {summary.cycles.map((cycle) => (
+              <CycleDetailRow key={cycle.id} cycle={cycle} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {summary.cycles.length === 0 && (
+        <Card className="border-border/50">
+          <CardContent className="p-6 text-center text-muted-foreground">
+            <Activity className="h-6 w-6 mx-auto mb-1.5 opacity-40" />
+            <p className="text-sm">No hay ciclos activos</p>
+            <p className="text-xs opacity-60">Monitoreando mercado en busca de entradas.</p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Activity indicators */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="border-border/50">
@@ -389,30 +413,6 @@ function SummaryTab() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Active Cycles */}
-      {summary.cycles.length > 0 && (
-        <Card className="border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-mono">CICLOS ACTIVOS</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {summary.cycles.map((cycle) => (
-              <CycleDetailRow key={cycle.id} cycle={cycle} />
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {summary.cycles.length === 0 && (
-        <Card className="border-border/50">
-          <CardContent className="p-8 text-center text-muted-foreground">
-            <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">No hay ciclos activos</p>
-            <p className="text-xs">El módulo está monitoreando el mercado en busca de oportunidades de entrada.</p>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

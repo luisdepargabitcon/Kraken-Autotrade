@@ -40,6 +40,16 @@ export interface MarketContext {
   lastUpdated: Date;
   anchorPriceUpdatedAt: Date;
   anchorSource: "vwap" | "window_high" | "frozen";
+
+  // Calidad de datos estructurada (para UI y narrativa)
+  qualityDetail: {
+    status: "ok" | "partial" | "poor";
+    reason: "ok" | "warming_up_cache" | "insufficient_candles" | "stale_market_data" | "missing_atrp" | "missing_vwap_zone" | "missing_anchor";
+    candleCount: number;
+    requiredForOptimal: number;
+    hasVwap: boolean;
+    hasAtrp: boolean;
+  };
 }
 
 export interface MarketContextOptions {
@@ -153,7 +163,7 @@ class IdcaMarketContextService {
     // Calculate drawdown
     const drawdownPct = ((anchorPrice - currentPrice) / anchorPrice) * 100;
 
-    // Determine data quality
+    // Determine data quality (legacy 4-level, kept for backward compat)
     let dataQuality: MarketContext['dataQuality'];
     if (candles.length >= 100 && vwap?.isReliable && atr) {
       dataQuality = "excellent";
@@ -164,6 +174,39 @@ class IdcaMarketContextService {
     } else {
       dataQuality = "insufficient";
     }
+
+    // Calidad estructurada con motivo específico
+    const hasVwap = !!vwapZone;
+    const hasAtrp = !!atrPct;
+    let qualityStatus: MarketContext['qualityDetail']['status'];
+    let qualityReason: MarketContext['qualityDetail']['reason'];
+    const OPTIMAL_CANDLES = 100;
+
+    if (candles.length >= 50 && vwap?.isReliable && hasAtrp) {
+      qualityStatus = "ok";
+      qualityReason = "ok";
+    } else if (candles.length >= 20) {
+      qualityStatus = "partial";
+      if (candles.length < 50) {
+        qualityReason = "warming_up_cache";
+      } else if (!vwap?.isReliable) {
+        qualityReason = "missing_vwap_zone";
+      } else {
+        qualityReason = "missing_atrp";
+      }
+    } else {
+      qualityStatus = "poor";
+      qualityReason = "insufficient_candles";
+    }
+
+    const qualityDetail: MarketContext['qualityDetail'] = {
+      status: qualityStatus,
+      reason: qualityReason,
+      candleCount: candles.length,
+      requiredForOptimal: OPTIMAL_CANDLES,
+      hasVwap,
+      hasAtrp,
+    };
 
     const ohlcCandles: OhlcCandle[] = candles.map((c: any) => ({
       timestamp: c.timestamp,
@@ -190,6 +233,7 @@ class IdcaMarketContextService {
       lastUpdated: now,
       anchorPriceUpdatedAt,
       anchorSource,
+      qualityDetail,
     };
 
     // Cache result
@@ -240,6 +284,7 @@ class IdcaMarketContextService {
     anchorPriceUpdatedAt: Date;
     anchorAgeHours: number;
     anchorSource: MarketContext['anchorSource'];
+    qualityDetail: MarketContext['qualityDetail'];
   }> {
     const context = await this.getMarketContext(pair);
     return {
@@ -254,6 +299,7 @@ class IdcaMarketContextService {
       anchorPriceUpdatedAt: context.anchorPriceUpdatedAt,
       anchorAgeHours: context.anchorAgeHours,
       anchorSource: context.anchorSource,
+      qualityDetail: context.qualityDetail,
     };
   }
 }
