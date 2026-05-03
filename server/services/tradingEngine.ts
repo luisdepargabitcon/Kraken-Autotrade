@@ -846,6 +846,7 @@ export class TradingEngine {
       sendTelegramAlert: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat as any, sub as any),
       getCurrentPrice: async (pair) => {
         const krakenPair = this.formatKrakenPair(pair);
+        // Direct call justified: exit decisions need the freshest possible price, not cached
         const ticker = await this.getDataExchange().getTicker(krakenPair);
         return Number((ticker as any)?.last ?? 0) || null;
       },
@@ -1080,6 +1081,7 @@ export class TradingEngine {
         // Rehydrate pending exposure so SmartGuard doesn't over-allocate after restart
         try {
           const krakenPair = this.formatKrakenPair(pair);
+          // Direct call justified: one-time startup rehydration, no cache benefit
           const ticker = await this.getDataExchange().getTicker(krakenPair);
           const currentPrice = Number((ticker as any)?.last ?? 0);
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
@@ -1614,6 +1616,7 @@ export class TradingEngine {
     }
     try {
       const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
+      // Direct call justified: getClosedCandle needs the absolute last closed candle, bypassing any stale cache
       const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
       if (!candles || candles.length < 2) return null;
       this.candleFetchBackoff.delete(key); // limpiar backoff al tener éxito
@@ -3762,6 +3765,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         }
 
         // SPREAD FILTER v2: Single decision point (Kraken proxy + RevolutX markup)
+        // Direct call justified: spread check requires real-time bid/ask, cache TTL would cause stale spread decisions
         const spreadTicker = await this.getDataExchange().getTicker(krakenPair);
         const spreadResult = await this.checkSpreadForBuy(pair, spreadTicker, earlyRegime, botConfigCheck);
         if (!spreadResult.ok) {

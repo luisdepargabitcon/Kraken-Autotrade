@@ -20,9 +20,10 @@ function makeCandles(count: number, baseHigh: number, nowMs = Date.now(), interv
 
 function makeCandlesWithOutlier(count: number, baseHigh: number, outlierMultiplier: number, nowMs = Date.now()): TimestampedCandle[] {
   const candles = makeCandles(count, baseHigh, nowMs);
-  // Insert a clear outlier in the middle of the 24h window (last 24 candles)
-  const mid = Math.floor(count / 2);
-  candles[mid] = { ...candles[mid], high: baseHigh * outlierMultiplier, low: baseHigh * 0.96, close: baseHigh * 0.98 };
+  // Insert a clear outlier inside the 24h window — use index at ~12h ago (count-12)
+  // For count=50: candle at index 38 is from nowMs - (50-38)*3600_000 = nowMs - 12h → within 24h ✓
+  const spikeIdx = count - 12;
+  candles[spikeIdx] = { ...candles[spikeIdx], high: baseHigh * outlierMultiplier, low: baseHigh * 0.96, close: baseHigh * 0.98 };
   return candles;
 }
 

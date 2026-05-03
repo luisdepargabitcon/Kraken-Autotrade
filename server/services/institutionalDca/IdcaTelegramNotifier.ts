@@ -286,8 +286,8 @@ export async function alertTrailingExit(cycle: InstitutionalDcaCycle): Promise<v
     : "N/A";
 
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
-  const realized = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  const pnlUsd = realized - capitalUsed;
+  // realizedPnlUsd stores net profit (post-bee8391+)
+  const pnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
 
   // Sum fees from all orders in cycle
@@ -321,8 +321,8 @@ export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<
     : "N/A";
 
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
-  const realized = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  const pnlUsd = realized - capitalUsed;
+  // realizedPnlUsd stores net profit (post-bee8391+)
+  const pnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   // Sum fees from all orders in cycle
   const orders = await repo.getOrdersByCycle(cycle.id);

@@ -67,13 +67,35 @@ export async function updateTradingEngineControls(
 
 // ─── IDCA Config ───────────────────────────────────────────────────
 
+const DEFAULT_EXECUTION_FEES = {
+  exchange: "revolut_x",
+  makerFeePct: 0,
+  takerFeePct: 0.09,
+  defaultFeeMode: "taker",
+  includeEntryFeeInCostBasis: true,
+  includeExitFeeInNetPnlEstimate: true,
+  useRealFeesWhenAvailable: true,
+};
+
 export async function getIdcaConfig(): Promise<InstitutionalDcaConfigRow> {
   const rows = await db.select().from(institutionalDcaConfig).limit(1);
+  let row: InstitutionalDcaConfigRow;
   if (rows.length === 0) {
     const [created] = await db.insert(institutionalDcaConfig).values({}).returning();
-    return created;
+    row = created;
+  } else {
+    row = rows[0];
   }
-  return rows[0];
+  // Auto-inject executionFeesJson default if not set — ensures Revolut X 0.09% without manual UI action
+  if (!row.executionFeesJson) {
+    await db
+      .update(institutionalDcaConfig)
+      .set({ executionFeesJson: DEFAULT_EXECUTION_FEES, updatedAt: new Date() })
+      .where(eq(institutionalDcaConfig.id, row.id));
+    row = { ...row, executionFeesJson: DEFAULT_EXECUTION_FEES };
+    console.log("[IDCA_FEES] Auto-injected default executionFeesJson: exchange=revolut_x maker=0% taker=0.09% source=default");
+  }
+  return row;
 }
 
 export async function updateIdcaConfig(

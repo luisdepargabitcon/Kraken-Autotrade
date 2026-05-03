@@ -77,11 +77,11 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
 
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
-      case 'critical': return 'text-red-600';
-      case 'high': return 'text-orange-600';
-      case 'medium': return 'text-yellow-600';
-      case 'low': return 'text-green-600';
-      default: return 'text-gray-600';
+      case 'critical': return 'text-red-400';
+      case 'high': return 'text-orange-400';
+      case 'medium': return 'text-yellow-400';
+      case 'low': return 'text-green-400';
+      default: return 'text-muted-foreground';
     }
   };
 
@@ -101,38 +101,38 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               <div className="text-center">
                 <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.failSafeArmed)}`} />
                 <div className="text-sm font-medium">Fail-Safe</div>
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-muted-foreground">
                   {exitState.failSafeArmed ? 'Armado' : 'Inactivo'}
                 </div>
               </div>
               <div className="text-center">
                 <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.breakEvenArmed)}`} />
                 <div className="text-sm font-medium">Break-Even</div>
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-muted-foreground">
                   {exitState.breakEvenArmed ? 'Armado' : 'Inactivo'}
                 </div>
               </div>
               <div className="text-center">
                 <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.trailingArmed)}`} />
                 <div className="text-sm font-medium">Trailing</div>
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-muted-foreground">
                   {exitState.trailingArmed ? 'Armado' : 'Inactivo'}
                 </div>
               </div>
               <div className="text-center">
                 <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.tpArmed)}`} />
                 <div className="text-sm font-medium">Take Profit</div>
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-muted-foreground">
                   {exitState.tpArmed ? 'Armado' : 'Inactivo'}
                 </div>
               </div>
             </div>
           )}
           
-          <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+          <div className="mt-4 p-3 bg-muted/20 rounded-lg border border-border/30">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">PnL Actual:</span>
-              <span className={`text-sm font-bold ${exitState?.currentPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <span className={`text-sm font-bold ${exitState?.currentPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {exitState?.currentPnl.toFixed(2)}%
               </span>
             </div>

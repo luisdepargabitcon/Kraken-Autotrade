@@ -556,9 +556,14 @@ export async function startScheduler(): Promise<void> {
   const execFees = (config as any).executionFeesJson as any;
   const entryUi = (config as any).entryUiJson as any;
   const telegramUi = (config as any).telegramUiJson as any;
+  const feeSource = execFees ? "stored" : "default";
+  const feeExchange = execFees?.exchange ?? "revolut_x";
+  const feeMaker = execFees?.makerFeePct ?? 0;
+  const feeTaker = execFees?.takerFeePct ?? 0.09;
+  console.log(`[IDCA_FEES] using executionFeesJson exchange=${feeExchange} maker=${feeMaker}% taker=${feeTaker}% source=${feeSource}`);
   console.log(
     `${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)` +
-    ` | mode=${config.mode} | fees=${execFees ? `${execFees.exchange ?? "revolut_x"} taker=${execFees.takerFeePct ?? 0.09}%` : "default:revolut_x taker=0.09%"}` +
+    ` | mode=${config.mode} | fees=${feeExchange} taker=${feeTaker}%` +
     ` | entrySliders=${entryUi ? `patience=${entryUi.entryPatienceLevel ?? 70}` : "default"}` +
     ` | telegramSliders=${telegramUi ? `freq=${telegramUi.telegramAlertFrequencyLevel ?? 85}` : "default"}`
   );
@@ -2266,11 +2271,13 @@ async function executeTrailingExit(
   const durM = Math.floor((durMs % 3600000) / 60000);
   const durationStr = durH > 24 ? `${Math.floor(durH / 24)}d ${durH % 24}h` : `${durH}h ${durM}m`;
 
+  // Store net profit (proceeds − costBasis) so DB semantic is consistent with all other close types
+  const trailingNetProfitUsd = totalRealized - capitalUsedForPnl;
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "trailing_exit",
     totalQuantity: "0",
-    realizedPnlUsd: totalRealized.toFixed(2),
+    realizedPnlUsd: trailingNetProfitUsd.toFixed(2),
     closedAt,
   });
 
@@ -2353,11 +2360,14 @@ async function executeBreakevenExit(
     }
   }
 
+  // Store net profit (may be near-zero for breakeven)
+  const capitalUsedForBe = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  const beNetProfitUsd = netValue - capitalUsedForBe;
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "breakeven_exit",
     totalQuantity: "0",
-    realizedPnlUsd: netValue.toFixed(2),
+    realizedPnlUsd: beNetProfitUsd.toFixed(2),
     closedAt: new Date(),
   });
 
@@ -4863,11 +4873,12 @@ async function closeRecoveryCycle(
     }
   }
 
+  // Store net profit
   await repo.updateCycle(recoveryCycle.id, {
     status: "closed",
     closeReason,
     totalQuantity: "0",
-    realizedPnlUsd: totalRealized.toFixed(2),
+    realizedPnlUsd: pnlUsd.toFixed(2),
     closedAt,
   });
 
@@ -4980,11 +4991,12 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     await executeRealSell(cycle, "manual_sell", totalQty);
   }
 
+  // Store net profit (realizedPnlUsd local var = totalRealized − capitalUsed, already correct)
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "manual_close",
     totalQuantity: "0",
-    realizedPnlUsd: totalRealized.toFixed(2),
+    realizedPnlUsd: realizedPnlUsd.toFixed(2),
     unrealizedPnlUsd: "0",
     unrealizedPnlPct: "0",
     currentPrice: currentPrice.toFixed(8),
