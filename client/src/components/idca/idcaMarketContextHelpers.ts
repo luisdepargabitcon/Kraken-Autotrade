@@ -102,7 +102,7 @@ export function formatDateTime(iso?: string): string {
  * Texto corto para el badge de calidad en modo compacto.
  * Ej: "Parcial: calentando", "Parcial: 34/100 velas", "Parcial: falta VWAP"
  */
-export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail): string {
+export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail, effectiveReferenceSource?: "vwap_anchor" | "hybrid_v2_fallback"): string {
   if (!qualityDetail) return "Parcial";
   if (qualityDetail.status === "ok") return "Óptima";
   if (qualityDetail.status === "poor") return "Insuficiente";
@@ -113,6 +113,8 @@ export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail):
     case "insufficient_candles":
       return `Parcial: ${qualityDetail.candleCount}/${qualityDetail.requiredForOptimal} velas`;
     case "missing_vwap_zone":
+      // Si la referencia efectiva es VWAP Anchor, no mostrar "falta VWAP"
+      if (effectiveReferenceSource === "vwap_anchor") return "Óptima";
       return "Parcial: falta VWAP";
     case "missing_atrp":
       return "Parcial: falta ATRP";

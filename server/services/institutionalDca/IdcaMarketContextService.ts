@@ -1,39 +1,57 @@
 /**
  * IdcaMarketContextService — Servicio unificado de contexto de mercado
- * 
+ *
  * Consolida en una sola fuente:
  * - Anchor price y timestamp
  * - Current price operativo
  * - A-VWAP con bandas
  * - ATR y ATRP
  * - Drawdown desde ancla
- * 
+ * - Referencia efectiva de entrada (usando resolver canónico)
+ *
  * Reutiliza cálculos existentes sin romper runtime actual.
  */
 import { MarketDataService } from "../MarketDataService";
-import { computeVwapAnchored, getVwapBandPosition, OhlcCandle, computeATR, computeATRPct, type VwapResult } from "./IdcaSmartLayer";
+import { computeVwapAnchored, getVwapBandPosition, OhlcCandle, computeATR, computeATRPct, computeBasePrice, type VwapResult } from "./IdcaSmartLayer";
+import { resolveEffectiveEntryReference, type VwapAnchorState } from "./IdcaEntryReferenceResolver";
+import type { BasePriceResult } from "./IdcaTypes";
 
 export interface MarketContext {
-  // Anchor
+  // Anchor (legacy, mantenido para compatibilidad)
   anchorPrice: number;
   anchorTimestamp: Date;
   anchorAgeHours: number;
-  
+
   // Current price
   currentPrice: number;
   priceUpdatedAt: Date;
-  
+
   // VWAP
   vwap?: VwapResult;
   vwapZone?: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
-  
+
   // ATR
   atr?: number;
   atrPct?: number;
-  
+
   // Drawdown
   drawdownPct?: number;
-  
+
+  // Referencia efectiva de entrada (resolver canónico)
+  effectiveEntryReference: number;
+  effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
+  effectiveReferenceLabel: string;
+  technicalBasePrice: number;
+  technicalBaseType: string;
+  technicalBaseReason?: string;
+  technicalBaseTimestamp?: string;
+  frozenAnchorPrice?: number;
+  frozenAnchorTs?: number;
+  frozenAnchorAgeHours?: number;
+  frozenAnchorCandleAgeHours?: number;
+  referenceChangedRecently: boolean;
+  referenceUpdatedAt?: string;
+
   // Metadata
   pair: string;
   dataQuality: "excellent" | "good" | "poor" | "insufficient";
@@ -223,6 +241,62 @@ class IdcaMarketContextService {
       volume: c.volume,
     }));
 
+    // Calcular basePriceResult para el resolver canónico
+    let basePriceResult: BasePriceResult;
+    try {
+      basePriceResult = computeBasePrice({
+        candles: candles as any, // candles tiene formato TimestampedCandle[]
+        lookbackMinutes: 1440,
+        method: "hybrid",
+        currentPrice,
+        pair,
+      });
+    } catch (error) {
+      console.warn(`[IdcaMarketContextService] Base price calculation failed for ${pair}:`, error);
+      // Fallback a high de ventana
+      const highCandle = candles.reduce((max, c) => c.high > max.high ? c : max, candles[0]);
+      basePriceResult = {
+        price: highCandle.high,
+        type: "swing_high_1h",
+        windowMinutes: 1440,
+        timestamp: new Date(highCandle.time),
+        isReliable: false,
+        reason: "Fallback to window high",
+      };
+    }
+
+    // Obtener frozenAnchor si no se pasó como opción
+    let frozenAnchor: VwapAnchorState | undefined = options.frozenAnchorPrice
+      ? {
+          anchorPrice: options.frozenAnchorPrice,
+          anchorTimestamp: Date.now() - 3600000, // valor por defecto
+          setAt: Date.now() - 3600000,
+          drawdownPct: 0,
+        }
+      : undefined;
+
+    if (!frozenAnchor) {
+      // Intentar obtener desde memoria de IdcaEngine
+      try {
+        const { getFrozenAnchorFromMemory } = await import('./IdcaEngine');
+        frozenAnchor = getFrozenAnchorFromMemory(pair);
+      } catch (error) {
+        // Silencioso - el servicio puede no estar inicializado
+      }
+    }
+
+    // Usar el resolver canónico para obtener la referencia efectiva
+    const vwapEnabled = true; // IDCA siempre tiene VWAP habilitado
+    const refResult = resolveEffectiveEntryReference({
+      pair,
+      currentPrice,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext: vwap ? { isReliable: vwap.isReliable } as any : undefined,
+      vwapEnabled,
+      now: now.getTime(),
+    });
+
     const context: MarketContext = {
       anchorPrice,
       anchorTimestamp,
@@ -234,6 +308,20 @@ class IdcaMarketContextService {
       atr,
       atrPct,
       drawdownPct,
+      // Referencia efectiva de entrada
+      effectiveEntryReference: refResult.effectiveEntryReference,
+      effectiveReferenceSource: refResult.effectiveReferenceSource,
+      effectiveReferenceLabel: refResult.effectiveReferenceLabel,
+      technicalBasePrice: refResult.technicalBasePrice,
+      technicalBaseType: refResult.technicalBaseType,
+      technicalBaseReason: refResult.technicalBaseReason,
+      technicalBaseTimestamp: refResult.technicalBaseTimestamp,
+      frozenAnchorPrice: refResult.frozenAnchorPrice,
+      frozenAnchorTs: refResult.frozenAnchorTs,
+      frozenAnchorAgeHours: refResult.frozenAnchorAgeHours,
+      frozenAnchorCandleAgeHours: refResult.frozenAnchorCandleAgeHours,
+      referenceChangedRecently: refResult.referenceChangedRecently,
+      referenceUpdatedAt: refResult.referenceUpdatedAt,
       pair,
       dataQuality,
       lastUpdated: now,
@@ -291,6 +379,20 @@ class IdcaMarketContextService {
     anchorAgeHours: number;
     anchorSource: MarketContext['anchorSource'];
     qualityDetail: MarketContext['qualityDetail'];
+    // Referencia efectiva de entrada
+    effectiveEntryReference: number;
+    effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
+    effectiveReferenceLabel: string;
+    technicalBasePrice: number;
+    technicalBaseType: string;
+    technicalBaseReason?: string;
+    technicalBaseTimestamp?: string;
+    frozenAnchorPrice?: number;
+    frozenAnchorTs?: number;
+    frozenAnchorAgeHours?: number;
+    frozenAnchorCandleAgeHours?: number;
+    referenceChangedRecently: boolean;
+    referenceUpdatedAt?: string;
   }> {
     const context = await this.getMarketContext(pair);
     return {
@@ -306,6 +408,20 @@ class IdcaMarketContextService {
       anchorAgeHours: context.anchorAgeHours,
       anchorSource: context.anchorSource,
       qualityDetail: context.qualityDetail,
+      // Referencia efectiva de entrada
+      effectiveEntryReference: context.effectiveEntryReference,
+      effectiveReferenceSource: context.effectiveReferenceSource,
+      effectiveReferenceLabel: context.effectiveReferenceLabel,
+      technicalBasePrice: context.technicalBasePrice,
+      technicalBaseType: context.technicalBaseType,
+      technicalBaseReason: context.technicalBaseReason,
+      technicalBaseTimestamp: context.technicalBaseTimestamp,
+      frozenAnchorPrice: context.frozenAnchorPrice,
+      frozenAnchorTs: context.frozenAnchorTs,
+      frozenAnchorAgeHours: context.frozenAnchorAgeHours,
+      frozenAnchorCandleAgeHours: context.frozenAnchorCandleAgeHours,
+      referenceChangedRecently: context.referenceChangedRecently,
+      referenceUpdatedAt: context.referenceUpdatedAt,
     };
   }
 }

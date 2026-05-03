@@ -50,8 +50,8 @@ function FreshnessChip({ lastUpdated }: { lastUpdated?: string }) {
   );
 }
 
-function QualityChip({ qualityDetail, dataQuality }: { qualityDetail?: MarketContextQualityDetail; dataQuality: string }) {
-  const text = getQualityBadgeText(qualityDetail);
+function QualityChip({ qualityDetail, dataQuality, effectiveReferenceSource }: { qualityDetail?: MarketContextQualityDetail; dataQuality: string; effectiveReferenceSource?: "vwap_anchor" | "hybrid_v2_fallback" }) {
+  const text = getQualityBadgeText(qualityDetail, effectiveReferenceSource);
   const isOk = qualityDetail?.status === "ok" || dataQuality === "excellent" || dataQuality === "good";
   const isPoor = qualityDetail?.status === "poor" || dataQuality === "insufficient";
   const cls = isOk
@@ -154,8 +154,9 @@ function IdcaMarketContextCompactRow({
       {/* Precios */}
       <div className="flex items-baseline gap-1 min-w-0">
         <span className={cn("text-xs font-mono font-semibold", refColor)}>
-          Ref ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+          Ref ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
         </span>
+        <span className="text-[9px] text-muted-foreground/50 font-mono">{data.effectiveReferenceLabel}</span>
         <span className="text-[10px] text-muted-foreground/50">·</span>
         <span className="text-xs font-mono text-foreground">
           ${data.currentPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
@@ -173,11 +174,11 @@ function IdcaMarketContextCompactRow({
         </span>
         <FreshnessChip lastUpdated={data.lastUpdated} />
         {(data.qualityDetail?.status !== "ok") && (
-          <QualityChip qualityDetail={data.qualityDetail} dataQuality={data.dataQuality} />
+          <QualityChip qualityDetail={data.qualityDetail} dataQuality={data.dataQuality} effectiveReferenceSource={data.effectiveReferenceSource} />
         )}
         {refState === "recently_changed" && (
           <span className="text-[9px] font-mono px-1 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/20">
-            Ref {formatAgeLabel(data.anchorPriceUpdatedAt)}
+            Ref {formatAgeLabel(data.referenceUpdatedAt)}
           </span>
         )}
       </div>
@@ -194,32 +195,36 @@ function IdcaMarketContextCompactRow({
 
 function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) {
   const zoneVisual = getZoneVisual(data.vwapZone);
-  const refState = getReferencePriceState(data.anchorPriceUpdatedAt);
+  const refState = getReferencePriceState(data.referenceUpdatedAt);
   const atrpLabel = getAtrpLabel(data.atrPct);
   const narrative = buildMarketContextNarrative({
     vwapZone: data.vwapZone,
     dataQuality: data.dataQuality,
     qualityDetail: data.qualityDetail,
     drawdownPct: data.drawdownPct,
-    anchorPriceUpdatedAt: data.anchorPriceUpdatedAt,
+    anchorPriceUpdatedAt: data.referenceUpdatedAt,
     lastUpdated: data.lastUpdated,
   });
 
   const refPriceColor = refState === "recently_changed" ? "text-red-400" : refState === "stable" ? "text-emerald-400" : "text-yellow-400";
   const drawdownColor = (data.drawdownPct ?? 0) > 0 ? "text-red-400" : "text-green-400";
-  const sourceLabel = data.anchorSource === "vwap" ? "VWAP anclado" : data.anchorSource === "frozen" ? "Anclaje fijo" : "Máximo ventana";
+  const sourceLabel = data.effectiveReferenceLabel;
+
+  // Mostrar base técnica secundaria si es distinta de la referencia efectiva
+  const showTechnicalBase = data.technicalBasePrice && Math.abs(data.technicalBasePrice - data.effectiveEntryReference) > 0.01;
 
   return (
     <div className="px-3 pb-3 pt-2 space-y-3">
       {/* Grid de datos */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Referencia</div>
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ref. Efectiva</div>
           <div className={cn("text-base font-bold font-mono", refPriceColor)}>
-            ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
           </div>
           <div className={cn("text-[9px] font-mono", refPriceColor === "text-red-400" ? "text-red-400/70" : "text-muted-foreground/60")}>
-            {refState === "recently_changed" ? `Cambiado ${formatAgeLabel(data.anchorPriceUpdatedAt)}` : `Estable ${formatAgeLabel(data.anchorPriceUpdatedAt)}`}
+            {sourceLabel}
+            {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
           </div>
         </div>
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
@@ -234,7 +239,7 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           <div className={cn("text-base font-bold font-mono", drawdownColor)}>
             {(data.drawdownPct ?? 0) >= 0 ? "+" : ""}{(data.drawdownPct ?? 0).toFixed(2)}%
           </div>
-          <div className="text-[9px] text-muted-foreground/60 font-mono">desde referencia</div>
+          <div className="text-[9px] text-muted-foreground/60 font-mono">desde ref. efectiva</div>
         </div>
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">ATRP (14)</div>
@@ -244,6 +249,24 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           <div className={cn("text-[9px] font-mono", atrpLabel.color)}>Vol. {atrpLabel.label}</div>
         </div>
       </div>
+
+      {/* Base técnica secundaria (Hybrid V2.1) */}
+      {showTechnicalBase && (
+        <div className="rounded border border-border/30 bg-muted/5 p-2.5 space-y-0.5">
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">Base técnica</div>
+          <div className="flex items-baseline gap-2">
+            <div className="text-sm font-bold font-mono text-foreground">
+              ${data.technicalBasePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-[9px] text-muted-foreground/60 font-mono">
+              {data.technicalBaseType}
+            </div>
+          </div>
+          <div className="text-[9px] text-muted-foreground/60 font-mono">
+            {data.technicalBaseReason || "Hybrid V2.1"}
+          </div>
+        </div>
+      )}
 
       {/* Zona VWAP + barra */}
       <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-2">

@@ -2,12 +2,12 @@
 
 ---
 
-## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto + Corrección calidad VWAP (commit pendiente)
+## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto + Corrección calidad VWAP + UI completa (commit pendiente)
 
 ### Estado final verificado (LOCAL)
 - **TSC**: 0 errores (`npm run check` exit 0)
 - **Vite build**: OK — 3788 módulos
-- **Tests idcaEntryReferenceResolver**: 17/17 ✅
+- **Tests idcaEntryReferenceResolver**: 22/22 ✅
 - **Git**: commit pendiente, push a origin/main
 
 ### Funcionalidad implementada
@@ -70,11 +70,45 @@
   - **NUEVO**: Test de vwapContext.isReliable para validar anchor
   - **NUEVO**: Test de comportamiento cuando vwapContext no está disponible
 
-### Fases pendientes (para próxima sesión)
-- FASE 2: Mostrar Hybrid V2.1 como base técnica secundaria en UI
-- FASE 4: Eventos y Resumen deben coincidir en UI
-- FASE 6: Validar que el anchor no se actualiza demasiado pronto (tests adicionales)
-- FASE 7: Ciclos simulación / LIVE no deben desaparecer
+#### 8. UI: Referencia efectiva en Resumen (IdcaMarketContextCard.tsx)
+- Modificado CompactRow para mostrar `effectiveEntryReference` como referencia principal
+- Añadido `effectiveReferenceLabel` (ej: "VWAP Anclado") junto al precio de referencia
+- Modificado DetailPanel para mostrar "Ref. Efectiva" en lugar de "Referencia"
+- Añadido bloque de "Base técnica" cuando `technicalBasePrice` es distinto de `effectiveEntryReference`
+- Muestra Hybrid V2.1 como base técnica secundaria con tipo y razón
+
+#### 9. UI: Eventos coherentes con Resumen (IdcaEventCards.tsx)
+- Modificado formatter de `entry_check_blocked` para usar `effectiveBasePrice` cuando está disponible
+- Esto asegura que eventos muestren la misma referencia efectiva que el Resumen
+
+#### 10. UI: Corrección "Parcial: falta VWAP" (idcaMarketContextHelpers.ts)
+- Modificado `getQualityBadgeText` para aceptar `effectiveReferenceSource`
+- Cuando `effectiveReferenceSource === "vwap_anchor"`, no muestra "falta VWAP" aunque VWAP actual no esté disponible
+- Actualizado `QualityChip` en IdcaMarketContextCard.tsx para pasar `effectiveReferenceSource`
+
+#### 11. Helper de validación de anchor (IdcaEntryReferenceResolver.ts)
+- Añadido `shouldUpdateAnchor()`: determina si el anchor debe actualizarse según threshold y cooldown
+- Añadido `shouldResetAnchor()`: determina si el anchor debe resetearse por breakout
+- Exportado `getFrozenAnchorFromMemory()` en IdcaEngine.ts para uso externo
+
+#### 12. Tests de validación de anchor
+- Añadidos tests para `shouldUpdateAnchor` (cooldown, threshold, success case)
+- Añadidos tests para `shouldResetAnchor` (threshold, success case)
+- Total tests: 22/22 ✅
+
+#### 13. Filtros por mode (ciclos simulación/LIVE)
+- Verificado que el filtro por mode ya existe en InstitutionalDca.tsx con opciones "all" | "simulation" | "live"
+- El backend `getCycles()` devuelve todos los ciclos cuando no se especifica mode
+- El filtro funciona correctamente; los ciclos de simulación no desaparecen al cambiar a LIVE si se selecciona "Todos modos"
+
+### Fases completadas en esta sesión
+- FASE 1: Referencia efectiva en Contexto de mercado / Resumen — COMPLETADA
+- FASE 2: Mostrar Hybrid V2.1 como base técnica secundaria en UI — COMPLETADA
+- FASE 3: Eventos y Resumen deben coincidir en UI — COMPLETADA
+- FASE 4: Terminar "Parcial: falta VWAP" en UI — COMPLETADA
+- FASE 5: Validar anchor robusto en path real (helpers + tests) — COMPLETADA
+- FASE 6: Ciclos simulación / LIVE no deben desaparecer (verificado filtro existente) — COMPLETADA
+- FASE 7: Tests / check / build — COMPLETADA
 
 ---
 

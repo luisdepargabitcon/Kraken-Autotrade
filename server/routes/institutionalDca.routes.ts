@@ -1091,6 +1091,20 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         anchorAgeHours: r.anchorAgeHours,
         anchorSource: r.anchorSource,
         qualityDetail: r.qualityDetail,
+        // Referencia efectiva de entrada
+        effectiveEntryReference: r.effectiveEntryReference,
+        effectiveReferenceSource: r.effectiveReferenceSource,
+        effectiveReferenceLabel: r.effectiveReferenceLabel,
+        technicalBasePrice: r.technicalBasePrice,
+        technicalBaseType: r.technicalBaseType,
+        technicalBaseReason: r.technicalBaseReason,
+        technicalBaseTimestamp: r.technicalBaseTimestamp,
+        frozenAnchorPrice: r.frozenAnchorPrice,
+        frozenAnchorTs: r.frozenAnchorTs,
+        frozenAnchorAgeHours: r.frozenAnchorAgeHours,
+        frozenAnchorCandleAgeHours: r.frozenAnchorCandleAgeHours,
+        referenceChangedRecently: r.referenceChangedRecently,
+        referenceUpdatedAt: r.referenceUpdatedAt,
       }));
       res.json(previews);
     } catch (e: any) {

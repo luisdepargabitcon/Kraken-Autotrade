@@ -283,6 +283,20 @@ export interface MarketContextPreview {
   anchorAgeHours?: number;
   anchorSource?: "vwap" | "window_high" | "frozen";
   qualityDetail?: MarketContextQualityDetail;
+  // Referencia efectiva de entrada
+  effectiveEntryReference: number;
+  effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
+  effectiveReferenceLabel: string;
+  technicalBasePrice: number;
+  technicalBaseType: string;
+  technicalBaseReason?: string;
+  technicalBaseTimestamp?: string;
+  frozenAnchorPrice?: number;
+  frozenAnchorTs?: number;
+  frozenAnchorAgeHours?: number;
+  frozenAnchorCandleAgeHours?: number;
+  referenceChangedRecently: boolean;
+  referenceUpdatedAt?: string;
 }
 
 export interface IdcaSummary {

@@ -560,8 +560,10 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
       const marketCodes = codes.filter((c: string) => c !== "data_not_ready" && c !== "insufficient_base_price_data");
       if (marketCodes.length > 0) {
         const labels = marketCodes.map((c: string) => BLOCK_REASON_LABELS[c] || c);
-        if (p.entryDipPct != null && p.basePrice != null && p.basePrice > 0) {
-          return `No se compró: ${labels.join("; ")}. Caída actual: ${fN(p.entryDipPct)}% desde ${fUsd(p.basePrice)}.`;
+        // Usar effectiveBasePrice si está disponible (coherente con engine), sino basePrice
+        const refPrice = p.effectiveBasePrice || p.basePrice;
+        if (p.entryDipPct != null && refPrice != null && refPrice > 0) {
+          return `No se compró: ${labels.join("; ")}. Caída actual: ${fN(p.entryDipPct)}% desde ${fUsd(refPrice)}.`;
         }
         return `No se compró: ${labels.join("; ")}.`;
       }

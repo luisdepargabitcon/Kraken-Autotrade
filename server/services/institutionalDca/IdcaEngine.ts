@@ -285,6 +285,16 @@ interface VwapAnchorState {
 }
 const vwapAnchorMemory = new Map<string, VwapAnchorState>();
 
+// ─── Helper para obtener frozenAnchor (usado por servicios externos) ─────────
+
+/**
+ * Obtiene el frozenAnchor de memoria para un par específico.
+ * Usado por IdcaMarketContextService para resolver la referencia efectiva.
+ */
+export function getFrozenAnchorFromMemory(pair: string): VwapAnchorState | undefined {
+  return vwapAnchorMemory.get(pair);
+}
+
 // ─── Human Event Helper ───────────────────────────────────────────
 
 async function createHumanEvent(

@@ -223,3 +223,62 @@ export function getAnchorUpdateCooldown(pair: string): number {
 export function getAnchorResetThreshold(pair: string): number {
   return ANCHOR_RESET_THRESHOLDS[pair as keyof typeof ANCHOR_RESET_THRESHOLDS] ?? ANCHOR_RESET_THRESHOLDS.default;
 }
+
+/**
+ * Determina si el anchor debe actualizarse según threshold y cooldown.
+ */
+export function shouldUpdateAnchor(params: {
+  pair: string;
+  currentPrice: number;
+  newSwingPrice: number;
+  anchorPrice: number;
+  anchorSetAt: number;
+  now: number;
+}): { shouldUpdate: boolean; reason: string } {
+  const { pair, currentPrice, newSwingPrice, anchorPrice, anchorSetAt, now } = params;
+  const threshold = getAnchorUpdateThreshold(pair);
+  const cooldown = getAnchorUpdateCooldown(pair);
+
+  // Check cooldown
+  const timeSinceUpdate = now - anchorSetAt;
+  if (timeSinceUpdate < cooldown) {
+    return {
+      shouldUpdate: false,
+      reason: `cooldown (${(timeSinceUpdate / 3600000).toFixed(1)}h < ${(cooldown / 3600000).toFixed(1)}h)`,
+    };
+  }
+
+  // Check threshold
+  const priceChangePct = (newSwingPrice - anchorPrice) / anchorPrice;
+  if (priceChangePct < threshold) {
+    return {
+      shouldUpdate: false,
+      reason: `threshold (${(priceChangePct * 100).toFixed(2)}% < ${(threshold * 100).toFixed(2)}%)`,
+    };
+  }
+
+  return { shouldUpdate: true, reason: "threshold and cooldown satisfied" };
+}
+
+/**
+ * Determina si el anchor debe resetearse por breakout.
+ */
+export function shouldResetAnchor(params: {
+  pair: string;
+  currentPrice: number;
+  anchorPrice: number;
+}): { shouldReset: boolean; reason: string } {
+  const { pair, currentPrice, anchorPrice } = params;
+  const resetThreshold = getAnchorResetThreshold(pair);
+
+  // Check reset threshold
+  const priceChangePct = (currentPrice - anchorPrice) / anchorPrice;
+  if (priceChangePct < resetThreshold) {
+    return {
+      shouldReset: false,
+      reason: `reset threshold (${(priceChangePct * 100).toFixed(2)}% < ${(resetThreshold * 100).toFixed(2)}%)`,
+    };
+  }
+
+  return { shouldReset: true, reason: `price above reset threshold (${(priceChangePct * 100).toFixed(2)}%)` };
+}

@@ -9,6 +9,9 @@ import {
   getAnchorUpdateThreshold,
   getAnchorUpdateCooldown,
   getAnchorResetThreshold,
+  shouldUpdateAnchor,
+  shouldResetAnchor,
+  type VwapAnchorState,
 } from "../institutionalDca/IdcaEntryReferenceResolver";
 import type { BasePriceResult } from "../institutionalDca/IdcaTypes";
 
@@ -276,11 +279,74 @@ describe("Anchor thresholds y cooldowns", () => {
     expect(getAnchorResetThreshold("BTC/USD")).toBe(0.0025); // 0.25%
   });
 
-  it("debe devolver reset threshold correcto para ETH/USD", () => {
+  it("debe devolver threshold correcto para ETH/USD", () => {
     expect(getAnchorResetThreshold("ETH/USD")).toBe(0.0035); // 0.35%
   });
 
-  it("debe devolver reset threshold default para otros pares", () => {
+  it("debe devolver threshold default para par desconocido", () => {
     expect(getAnchorResetThreshold("SOL/USD")).toBe(0.0075); // 0.75%
+  });
+});
+
+describe("shouldUpdateAnchor", () => {
+  it("debe bloquear update por cooldown", () => {
+    const result = shouldUpdateAnchor({
+      pair: "BTC/USD",
+      currentPrice: 80000,
+      newSwingPrice: 80050,
+      anchorPrice: 79000,
+      anchorSetAt: Date.now() - 3600000, // hace 1h
+      now: Date.now(),
+    });
+    expect(result.shouldUpdate).toBe(false);
+    expect(result.reason).toContain("cooldown");
+  });
+
+  it("debe bloquear update por threshold insuficiente", () => {
+    const result = shouldUpdateAnchor({
+      pair: "BTC/USD",
+      currentPrice: 80000,
+      newSwingPrice: 79050, // +0.06% (threshold es 0.35%)
+      anchorPrice: 79000,
+      anchorSetAt: Date.now() - 7 * 3600000, // hace 7h
+      now: Date.now(),
+    });
+    expect(result.shouldUpdate).toBe(false);
+    expect(result.reason).toContain("threshold");
+  });
+
+  it("debe permitir update cuando threshold y cooldown cumplidos", () => {
+    const result = shouldUpdateAnchor({
+      pair: "BTC/USD",
+      currentPrice: 80000,
+      newSwingPrice: 79300, // +0.38% (threshold es 0.35%)
+      anchorPrice: 79000,
+      anchorSetAt: Date.now() - 7 * 3600000, // hace 7h
+      now: Date.now(),
+    });
+    expect(result.shouldUpdate).toBe(true);
+    expect(result.reason).toBe("threshold and cooldown satisfied");
+  });
+});
+
+describe("shouldResetAnchor", () => {
+  it("debe bloquear reset por threshold insuficiente", () => {
+    const result = shouldResetAnchor({
+      pair: "BTC/USD",
+      currentPrice: 79050, // +0.06% (reset threshold es 0.25%)
+      anchorPrice: 79000,
+    });
+    expect(result.shouldReset).toBe(false);
+    expect(result.reason).toContain("reset threshold");
+  });
+
+  it("debe permitir reset cuando threshold cumplido", () => {
+    const result = shouldResetAnchor({
+      pair: "BTC/USD",
+      currentPrice: 79200, // +0.25% (reset threshold es 0.25%)
+      anchorPrice: 79000,
+    });
+    expect(result.shouldReset).toBe(true);
+    expect(result.reason).toContain("above reset threshold");
   });
 });
