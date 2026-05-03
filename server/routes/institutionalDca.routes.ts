@@ -496,6 +496,63 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Toggle TimeStop (manual per-cycle override) ─────────────────
+
+  app.patch(`${PREFIX}/cycles/:id/time-stop`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const cycle = await repo.getCycleById(id);
+      if (!cycle) return res.status(404).json({ error: "Ciclo no encontrado" });
+      if (cycle.status === "closed") return res.status(400).json({ error: "El ciclo ya está cerrado" });
+
+      const disabled = req.body.disabled;
+      if (typeof disabled !== "boolean") return res.status(400).json({ error: "disabled debe ser booleano" });
+
+      // Parse existing exitOverridesJson
+      const overrides = typeof cycle.exitOverridesJson === "string"
+        ? JSON.parse(cycle.exitOverridesJson)
+        : (cycle.exitOverridesJson || {});
+
+      // Update timeStopDisabled
+      overrides.timeStopDisabled = disabled;
+      overrides.timeStopDisabledAt = disabled ? new Date().toISOString() : null;
+      overrides.timeStopDisabledBy = disabled ? "manual" : null;
+
+      await repo.updateCycle(id, { exitOverridesJson: overrides });
+
+      // Create event
+      const eventType = disabled ? "time_stop_disabled" : "time_stop_enabled";
+      const message = disabled
+        ? "TimeStop desactivado manualmente: este ciclo ya no cerrará automáticamente por duración."
+        : "TimeStop reactivado: este ciclo volverá a usar cierre automático por duración.";
+
+      await repo.createEvent({
+        cycleId: id,
+        pair: cycle.pair,
+        mode: cycle.mode,
+        eventType: "cycle_management",
+        message: message,
+        payloadJson: {
+          timeStopDisabled: disabled,
+          timeStopDisabledAt: overrides.timeStopDisabledAt,
+          timeStopDisabledBy: overrides.timeStopDisabledBy,
+        },
+      });
+
+      // Send Telegram alert
+      if (disabled) {
+        await telegram.alertTimeStopDisabled(cycle);
+      } else {
+        await telegram.alertTimeStopEnabled(cycle);
+      }
+
+      const updated = await repo.getCycleById(id);
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Telegram Status & Test ────────────────────────────────────
 
   app.get(`${PREFIX}/telegram/status`, async (_req, res) => {

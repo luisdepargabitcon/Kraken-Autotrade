@@ -40,6 +40,7 @@ import {
   useImportPosition,
   useImportableStatus,
   useToggleSoloSalida,
+  useToggleTimeStop,
   useExchangeFeePresets,
   useDeleteManualCycle,
   useDeleteCycleForce,
@@ -77,6 +78,7 @@ import {
   ShieldAlert,
   Sparkles,
   Terminal,
+  Timer,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -2061,8 +2063,10 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const [showForceDeleteConfirm, setShowForceDeleteConfirm] = useState(false);
   const [showManualCloseConfirm, setShowManualCloseConfirm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showTimeStopDisableConfirm, setShowTimeStopDisableConfirm] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
+  const toggleTimeStop = useToggleTimeStop();
   const deleteManualCycle = useDeleteManualCycle();
   const deleteCycleForce = useDeleteCycleForce();
   const manualCloseCycle = useManualCloseCycle();
@@ -2126,6 +2130,12 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const durationDays = durationMs / 86400000;
   const durationStr = durationDays >= 1 ? `${Math.floor(durationDays)}d ${Math.floor((durationDays % 1) * 24)}h`
     : `${Math.floor(durationMs / 3600000)}h ${Math.floor((durationMs % 3600000) / 60000)}m`;
+
+  // TimeStop override
+  const exitOverrides = typeof cycle.exitOverridesJson === "string"
+    ? JSON.parse(cycle.exitOverridesJson)
+    : (cycle.exitOverridesJson || {});
+  const timeStopDisabled = exitOverrides?.timeStopDisabled === true;
 
   const isManualOrImported = cycle.isImported || cycle.sourceType === 'manual';
   const canSoftDelete = isManualOrImported && cycle.status !== 'closed';
@@ -2504,15 +2514,40 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">⏱️ Duración</span>
-                    <span className="text-xs font-mono text-muted-foreground">{durationStr}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground">{durationStr}</span>
+                      {timeStopDisabled && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
+                          TimeStop desactivado
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
-                    <div className="h-full bg-slate-500/40 rounded-full transition-all"
+                    <div className={cn("h-full rounded-full transition-all", timeStopDisabled ? "bg-amber-500/20" : "bg-slate-500/40")}
                       style={{ width: `${Math.min(100, (durationDays / 30) * 100)}%` }} />
                   </div>
                   <div className="text-[10px] text-muted-foreground">
                     Inicio: {cycle.startedAt ? new Date(cycle.startedAt).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
                     {durationDays > 0 && <span className="ml-2 opacity-60">· {Math.floor(durationDays)}d {Math.floor((durationDays % 1) * 24)}h abierto</span>}
+                    {timeStopDisabled && <span className="ml-2 text-amber-400">· Cierre por duración desactivado</span>}
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (timeStopDisabled) {
+                          toggleTimeStop.mutate({ cycleId: cycle.id, disabled: false });
+                        } else {
+                          setShowTimeStopDisableConfirm(true);
+                        }
+                      }}
+                    >
+                      {timeStopDisabled ? "Reactivar duración" : "Desactivar duración"}
+                    </Button>
                   </div>
                 </div>
 
@@ -2907,6 +2942,61 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Cerrando...</>
                 ) : (
                   <><XCircle className="h-3 w-3 mr-1" /> Confirmar cierre</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TimeStop Disable Confirmation Modal */}
+      {showTimeStopDisableConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowTimeStopDisableConfirm(false)}>
+          <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-full bg-amber-500/10">
+                <Timer className="h-5 w-5 text-amber-400" />
+              </div>
+              <h3 className="text-lg font-semibold">Desactivar cierre por duración</h3>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="text-sm text-muted-foreground space-y-1">
+                <div><strong>Par:</strong> {cycle.pair}</div>
+                <div><strong>Estado:</strong> {cycle.status}</div>
+                <div><strong>Duración actual:</strong> {durationStr}</div>
+              </div>
+
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded text-xs text-amber-300">
+                <strong>⚠️ CONFIRMACIÓN:</strong> Al desactivar el TimeStop, este ciclo ya no cerrará automáticamente por duración máxima. Solo se cerrará por TP, trailing, protección, emergencia o cierre manual.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" size="sm" onClick={() => setShowTimeStopDisableConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-amber-500 hover:bg-amber-600 text-white"
+                disabled={toggleTimeStop.isPending}
+                onClick={() => {
+                  toggleTimeStop.mutate({ cycleId: cycle.id, disabled: true }, {
+                    onSuccess: () => {
+                      setShowTimeStopDisableConfirm(false);
+                      toast({ title: "TimeStop desactivado", description: `Ciclo #${cycle.id} (${cycle.pair}) ya no cerrará por duración.` });
+                    },
+                    onError: (err: any) => {
+                      toast({ title: "Error", description: err.message || "Error al desactivar TimeStop", variant: "destructive" });
+                    },
+                  });
+                }}
+              >
+                {toggleTimeStop.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Desactivando...</>
+                ) : (
+                  <><Timer className="h-3 w-3 mr-1" /> Desactivar</>
                 )}
               </Button>
             </div>

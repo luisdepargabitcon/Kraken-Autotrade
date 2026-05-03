@@ -1573,6 +1573,38 @@ async function manageCycle(
     maxDrawdownPct: maxDD.toFixed(2),
   });
 
+  // ─── TimeStop Check (max cycle duration) ──────────────────────
+  // Only applies to main cycles (recovery has its own check in manageRecoveryCycle)
+  if (cycle.cycleType !== "recovery" && cycle.startedAt) {
+    const maxDurationHours = parseFloat(String(assetConfig.maxCycleDurationHours ?? "0"));
+    if (maxDurationHours > 0) {
+      const ageMs = Date.now() - new Date(cycle.startedAt).getTime();
+      const maxMs = maxDurationHours * 3600000;
+      if (ageMs > maxMs) {
+        // Check if TimeStop is manually disabled for this cycle
+        const overrides = typeof cycle.exitOverridesJson === "string"
+          ? JSON.parse(cycle.exitOverridesJson)
+          : cycle.exitOverridesJson;
+        const timeStopDisabled = overrides?.timeStopDisabled === true;
+
+        if (!timeStopDisabled) {
+          // Close by TimeStop
+          await executeExit(cycle, {
+            shouldExit: true,
+            exitType: "max_duration_reached",
+            exitPrice: currentPrice,
+            exitReason: `Max duration exceeded (${maxDurationHours}h)`,
+            urgency: "medium",
+          }, config, assetConfig, mode);
+          return;
+        } else {
+          // TimeStop disabled by manual override — log once per 24h
+          await logTimeStopIgnoredOnce(cycle.id, pair, mode, ageMs, maxDurationHours);
+        }
+      }
+    }
+  }
+
   // Compute distances for diagnosis BEFORE branching
   const tpTargetPrice = parseFloat(String(cycle.tpTargetPrice || "0"));
   const nextBuyPrice = parseFloat(String(cycle.nextBuyPrice || "0"));
@@ -3243,6 +3275,49 @@ async function logBlock(pair: string, mode: string, code: string, cycle?: Instit
     blockReasons: [{ code, message: code }],
   });
   await telegram.alertBuyBlocked(pair, mode, code, pnlPct, buyCount);
+}
+
+// ─── TimeStop Ignored Logger (anti-spam) ────────────────────────────
+
+const lastTimeStopIgnoredLog = new Map<number, number>(); // cycleId -> last log timestamp
+const TIMESTOP_IGNORED_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function logTimeStopIgnoredOnce(
+  cycleId: number,
+  pair: string,
+  mode: string,
+  ageMs: number,
+  maxDurationHours: number
+): Promise<void> {
+  const now = Date.now();
+  const lastLog = lastTimeStopIgnoredLog.get(cycleId) ?? 0;
+  if (now - lastLog < TIMESTOP_IGNORED_COOLDOWN_MS) {
+    return; // Skip - already logged within cooldown
+  }
+
+  const ageHours = (ageMs / 3600000).toFixed(1);
+  console.log(`${TAG}[TIMESTOP_IGNORED] #${cycleId} ${pair}: TimeStop disabled, age=${ageHours}h > max=${maxDurationHours}h`);
+
+  await createHumanEvent({
+    cycleId,
+    pair,
+    mode,
+    eventType: "cycle_management",
+    severity: "info",
+    message: `TimeStop ignorado por configuración manual: el ciclo superó la duración máxima (${maxDurationHours}h) pero no se cerró porque TimeStop está desactivado.`,
+    payloadJson: {
+      ageHours,
+      maxDurationHours,
+      timeStopDisabled: true,
+    },
+  }, {
+    eventType: "cycle_management",
+    pair,
+    mode,
+    reason: `TimeStop disabled, age=${ageHours}h > max=${maxDurationHours}h`,
+  });
+
+  lastTimeStopIgnoredLog.set(cycleId, now);
 }
 
 // ─── Plus Cycle Config Helper ─────────────────────────────────────

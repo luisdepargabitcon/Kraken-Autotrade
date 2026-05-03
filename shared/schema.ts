@@ -1139,6 +1139,8 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   // Skipped safety levels for imported cycles (when price already below some levels)
   skippedSafetyLevels: integer("skipped_safety_levels").default(0),
   skippedLevelsDetail: jsonb("skipped_levels_detail"),
+  // Per-cycle exit overrides (manual UI toggles)
+  exitOverridesJson: jsonb("exit_overrides_json"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

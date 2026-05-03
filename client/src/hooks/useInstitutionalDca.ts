@@ -744,6 +744,19 @@ export function useToggleSoloSalida() {
   });
 }
 
+export function useToggleTimeStop() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ cycleId, disabled }: { cycleId: number; disabled: boolean }) => {
+      const res = await apiRequest("PATCH", `${PREFIX}/cycles/${cycleId}/time-stop`, { disabled });
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 export function useDeleteManualCycle() {
   const qc = useQueryClient();
   return useMutation({

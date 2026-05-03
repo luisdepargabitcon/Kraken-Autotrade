@@ -977,6 +977,51 @@ export async function alertBreakEvenTriggered(
   await send(chatId, message, config.telegramThreadId || undefined);
 }
 
+// ─── TimeStop Toggle Alerts ─────────────────────────────────────────────
+
+export async function alertTimeStopDisabled(cycle: InstitutionalDcaCycle): Promise<void> {
+  const { chatId, enabled } = await canSend("cycle_management");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const durationStr = cycle.startedAt
+    ? formatDuration(new Date(cycle.startedAt), new Date())
+    : "N/A";
+
+  const message = `⏱️ *TIMESTOP DESACTIVADO* — ${cycle.pair}
+
+🔴 *Ciclo*: #${cycle.id}
+⚙️ *Modo*: ${cycle.mode?.toUpperCase()}
+📊 *Estado*: ${cycle.status?.toUpperCase()}
+⏱️ *Duración actual*: ${durationStr}
+
+⚠️ *Este ciclo ya no cerrará automáticamente por duración máxima.*
+Solo se cerrará por TP, trailing, protección, emergencia o cierre manual.`;
+
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
+export async function alertTimeStopEnabled(cycle: InstitutionalDcaCycle): Promise<void> {
+  const { chatId, enabled } = await canSend("cycle_management");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const durationStr = cycle.startedAt
+    ? formatDuration(new Date(cycle.startedAt), new Date())
+    : "N/A";
+
+  const message = `⏱️ *TIMESTOP REACTIVADO* — ${cycle.pair}
+
+🟢 *Ciclo*: #${cycle.id}
+⚙️ *Modo*: ${cycle.mode?.toUpperCase()}
+📊 *Estado*: ${cycle.status?.toUpperCase()}
+⏱️ *Duración actual*: ${durationStr}
+
+✅ *Este ciclo volverá a usar cierre automático por duración máxima.*`;
+
+  await send(chatId, message, config.telegramThreadId || undefined);
+}
+
 // ─── Trailing Buy Digest ─────────────────────────────────────────────
 
 export async function sendTrailingBuyDigest(mode: string, entries: TrailingBuyDigestEntry[]): Promise<void> {
