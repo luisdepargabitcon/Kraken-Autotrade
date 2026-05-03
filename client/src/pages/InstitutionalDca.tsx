@@ -48,6 +48,7 @@ import {
   useDeleteOrder,
   useDeleteAllOrders,
   useSetCycleStatus,
+  useAllMarketContextPreviews,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -100,6 +101,7 @@ import { EjecucionTab } from "@/components/idca/EjecucionTab";
 import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
+import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -310,6 +312,7 @@ function ControlsBar() {
 function SummaryTab() {
   const { data: summary, isLoading, error } = useIdcaSummary();
   const { data: config } = useIdcaConfig();
+  const marketCtx = useAllMarketContextPreviews();
 
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando resumen...</div>;
@@ -348,6 +351,13 @@ function SummaryTab() {
         <KpiCard icon={BarChart3} label="PnL Realizado" value={fmtUsd(summary.realizedPnlUsd)} color={realizedColor} />
         <KpiCard icon={Activity} label="Ciclos Activos" value={String(summary.activeCyclesCount)} />
       </div>
+
+      {/* Contexto de Mercado */}
+      <IdcaMarketContextSummary
+        previews={marketCtx.data}
+        isLoading={marketCtx.isLoading}
+        error={marketCtx.error}
+      />
 
       {/* Activity indicators */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

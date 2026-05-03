@@ -17,7 +17,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, TrendingUp, TrendingDown, Settings, Play, Pause } from "lucide-react";
+import { AlertCircle, Settings, Play, Pause } from "lucide-react";
 import { 
   useLadderPreview, 
   useMarketContextPreview,
@@ -78,17 +78,6 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       case "balanced": return "text-blue-600 bg-blue-50 border-blue-200";
       case "conservative": return "text-green-600 bg-green-50 border-green-200";
       case "custom": return "text-purple-600 bg-purple-50 border-purple-200";
-    }
-  };
-
-  // Get VWAP zone color
-  const getVwapZoneColor = (zone?: string) => {
-    switch (zone) {
-      case "deep_value": return "text-green-400 bg-green-500/10";
-      case "value": return "text-blue-400 bg-blue-500/10";
-      case "fair": return "text-yellow-400 bg-yellow-500/10";
-      case "overextended": return "text-red-400 bg-red-500/10";
-      default: return "text-slate-400 bg-slate-700/40";
     }
   };
 
@@ -168,72 +157,28 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Market Context Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5" />
-            Contexto de Mercado
-          </CardTitle>
-          <CardDescription>
-            Datos en tiempo real para cálculos de ladder ATRP
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {marketContext.isLoading ? (
-            <div className="text-center py-4">Cargando contexto...</div>
-          ) : marketContext.error ? (
-            <div className="flex items-center gap-2 text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              Error: {marketContext.error.message}
-            </div>
-          ) : marketContext.data ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <Label className="text-xs text-muted-foreground">Precio de referencia de entrada</Label>
-                <div className="font-semibold">${marketContext.data.anchorPrice.toFixed(2)}</div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Precio Actual</Label>
-                <div className="font-semibold">${marketContext.data.currentPrice.toFixed(2)}</div>
-                {marketContext.data.priceUpdatedAt && (
-                  <div className="text-[10px] text-muted-foreground/60">
-                    Actualizado: {new Date(marketContext.data.priceUpdatedAt).toLocaleString("es-ES", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </div>
-                )}
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Drawdown</Label>
-                <div className="font-semibold text-red-600">{marketContext.data.drawdownPct.toFixed(2)}%</div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Zona VWAP</Label>
-                <Badge className={getVwapZoneColor(marketContext.data.vwapZone)}>
-                  {marketContext.data.vwapZone || "N/A"}
-                </Badge>
-              </div>
-              {marketContext.data.atrPct && (
-                <div>
-                  <Label className="text-xs text-muted-foreground">ATRP</Label>
-                  <div className="font-semibold">{marketContext.data.atrPct.toFixed(2)}%</div>
-                </div>
-              )}
-              <div>
-                <Label className="text-xs text-muted-foreground">Calidad Datos</Label>
-                <Badge variant={marketContext.data.dataQuality === "excellent" ? "default" : "secondary"}>
-                  {marketContext.data.dataQuality}
-                </Badge>
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      {/* Contexto de Mercado — movido a pestaña Resumen */}
+      {marketContext.data && (
+        <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground border border-border/30 rounded-md bg-muted/10">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+          <span>
+            Referencia{" "}
+            <span className="font-mono font-semibold text-foreground">
+              ${marketContext.data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </span>
+            {" · "}drawdown{" "}
+            <span className="font-mono font-semibold text-foreground">
+              {(marketContext.data.drawdownPct ?? 0).toFixed(2)}%
+            </span>
+            {" · "}ATRP{" "}
+            <span className="font-mono font-semibold text-foreground">
+              {marketContext.data.atrPct !== undefined ? `${marketContext.data.atrPct.toFixed(2)}%` : "—"}
+            </span>
+            {" — "}
+            <span className="text-muted-foreground/70">Detalle completo en pestaña <strong>Resumen</strong></span>
+          </span>
+        </div>
+      )}
 
       {/* Ladder Configuration */}
       <Card>

@@ -38,6 +38,8 @@ export interface MarketContext {
   pair: string;
   dataQuality: "excellent" | "good" | "poor" | "insufficient";
   lastUpdated: Date;
+  anchorPriceUpdatedAt: Date;
+  anchorSource: "vwap" | "window_high" | "frozen";
 }
 
 export interface MarketContextOptions {
@@ -56,6 +58,8 @@ export interface MarketContextOptions {
 
 class IdcaMarketContextService {
   private cache = new Map<string, { context: MarketContext; expires: number }>();
+  private anchorChangeMap = new Map<string, { price: number; changedAt: Date }>();
+  private readonly ANCHOR_CHANGE_THRESHOLD = 0.005; // 0.5%
   private readonly defaultOptions: Required<MarketContextOptions> = {
     vwapLookbackHours: 24,
     atrLookbackHours: 24,
@@ -120,20 +124,31 @@ class IdcaMarketContextService {
     let anchorTimestamp: Date;
     
     // Prioridad 1: frozenAnchorPrice (VWAP Anchor guardado en memoria) - alineado con IdcaEngine
+    let anchorSource: MarketContext['anchorSource'];
     if (options.frozenAnchorPrice && options.frozenAnchorPrice > 0) {
       anchorPrice = options.frozenAnchorPrice;
       anchorTimestamp = new Date(); // frozenAnchor no tiene timestamp explícito aquí
+      anchorSource = "frozen";
     } else if (vwap?.isReliable) {
       // Prioridad 2: VWAP si es fiable
       anchorPrice = vwap.vwap;
       anchorTimestamp = new Date(vwap.anchorTime);
+      anchorSource = "vwap";
     } else {
       // Prioridad 3: Fallback a high de ventana extendida
       const anchorCandles = candles.slice(-opts.anchorLookbackHours);
       const highCandle = anchorCandles.reduce((max, c) => c.high > max.high ? c : max, anchorCandles[0]);
       anchorPrice = highCandle.high;
       anchorTimestamp = new Date(highCandle.time);
+      anchorSource = "window_high";
     }
+
+    // Track anchor price changes (in-memory, resets on restart)
+    const prevAnchor = this.anchorChangeMap.get(pair);
+    if (!prevAnchor || Math.abs((anchorPrice - prevAnchor.price) / prevAnchor.price) > this.ANCHOR_CHANGE_THRESHOLD) {
+      this.anchorChangeMap.set(pair, { price: anchorPrice, changedAt: new Date() });
+    }
+    const anchorPriceUpdatedAt = this.anchorChangeMap.get(pair)!.changedAt;
 
     // Calculate drawdown
     const drawdownPct = ((anchorPrice - currentPrice) / anchorPrice) * 100;
@@ -173,6 +188,8 @@ class IdcaMarketContextService {
       pair,
       dataQuality,
       lastUpdated: now,
+      anchorPriceUpdatedAt,
+      anchorSource,
     };
 
     // Cache result
@@ -218,6 +235,11 @@ class IdcaMarketContextService {
     vwapZone?: MarketContext['vwapZone'];
     atrPct?: number;
     dataQuality: MarketContext['dataQuality'];
+    priceUpdatedAt: Date;
+    lastUpdated: Date;
+    anchorPriceUpdatedAt: Date;
+    anchorAgeHours: number;
+    anchorSource: MarketContext['anchorSource'];
   }> {
     const context = await this.getMarketContext(pair);
     return {
@@ -227,6 +249,11 @@ class IdcaMarketContextService {
       vwapZone: context.vwapZone,
       atrPct: context.atrPct,
       dataQuality: context.dataQuality,
+      priceUpdatedAt: context.priceUpdatedAt,
+      lastUpdated: context.lastUpdated,
+      anchorPriceUpdatedAt: context.anchorPriceUpdatedAt,
+      anchorAgeHours: context.anchorAgeHours,
+      anchorSource: context.anchorSource,
     };
   }
 }

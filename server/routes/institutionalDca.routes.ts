@@ -1003,7 +1003,13 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const { idcaMarketContextService } = await import('../services/institutionalDca/IdcaMarketContextService');
       const pair = decodeURIComponent(req.params.pair);
       const preview = await idcaMarketContextService.getPreviewContext(pair);
-      res.json({ pair, ...preview });
+      res.json({
+        pair,
+        ...preview,
+        priceUpdatedAt: preview.priceUpdatedAt.toISOString(),
+        lastUpdated: preview.lastUpdated.toISOString(),
+        anchorPriceUpdatedAt: preview.anchorPriceUpdatedAt.toISOString(),
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1021,6 +1027,11 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         vwapZone: r.vwapZone,
         atrPct: r.atrPct,
         dataQuality: r.dataQuality,
+        priceUpdatedAt: r.priceUpdatedAt instanceof Date ? r.priceUpdatedAt.toISOString() : r.priceUpdatedAt,
+        lastUpdated: r.lastUpdated instanceof Date ? r.lastUpdated.toISOString() : r.lastUpdated,
+        anchorPriceUpdatedAt: r.anchorPriceUpdatedAt instanceof Date ? r.anchorPriceUpdatedAt.toISOString() : r.anchorPriceUpdatedAt,
+        anchorAgeHours: r.anchorAgeHours,
+        anchorSource: r.anchorSource,
       }));
       res.json(previews);
     } catch (e: any) {

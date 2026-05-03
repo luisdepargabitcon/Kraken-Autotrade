@@ -265,10 +265,14 @@ export interface MarketContextPreview {
   anchorPrice: number;
   currentPrice: number;
   drawdownPct: number;
-  vwapZone?: "deep_value" | "value" | "fair" | "overextended";
+  vwapZone?: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
   atrPct?: number;
   dataQuality: "excellent" | "good" | "poor" | "insufficient";
   priceUpdatedAt?: string;
+  lastUpdated?: string;
+  anchorPriceUpdatedAt?: string;
+  anchorAgeHours?: number;
+  anchorSource?: "vwap" | "window_high" | "frozen";
 }
 
 export interface IdcaSummary {
