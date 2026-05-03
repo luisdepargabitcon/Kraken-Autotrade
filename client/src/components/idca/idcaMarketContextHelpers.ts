@@ -113,8 +113,9 @@ export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail, 
     case "insufficient_candles":
       return `Parcial: ${qualityDetail.candleCount}/${qualityDetail.requiredForOptimal} velas`;
     case "missing_vwap_zone":
-      // Si la referencia efectiva es VWAP Anchor, no mostrar "falta VWAP"
-      if (effectiveReferenceSource === "vwap_anchor") return "Óptima";
+      // Si la referencia efectiva es VWAP Anchor, mostrar "Ref. VWAP anclada" en lugar de "falta VWAP"
+      // pero no mentir diciendo "Óptima" si faltan bandas actuales
+      if (effectiveReferenceSource === "vwap_anchor") return "Ref. VWAP anclada";
       return "Parcial: falta VWAP";
     case "missing_atrp":
       return "Parcial: falta ATRP";

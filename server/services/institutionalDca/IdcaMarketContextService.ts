@@ -15,6 +15,7 @@ import { MarketDataService } from "../MarketDataService";
 import { computeVwapAnchored, getVwapBandPosition, OhlcCandle, computeATR, computeATRPct, computeBasePrice, type VwapResult } from "./IdcaSmartLayer";
 import { resolveEffectiveEntryReference, type VwapAnchorState } from "./IdcaEntryReferenceResolver";
 import type { BasePriceResult } from "./IdcaTypes";
+import { getAssetConfig, getVwapAnchor } from "./IdcaRepository";
 
 export interface MarketContext {
   // Anchor (legacy, mantenido para compatibilidad)
@@ -265,28 +266,33 @@ class IdcaMarketContextService {
       };
     }
 
-    // Obtener frozenAnchor si no se pasó como opción
-    let frozenAnchor: VwapAnchorState | undefined = options.frozenAnchorPrice
-      ? {
-          anchorPrice: options.frozenAnchorPrice,
-          anchorTimestamp: Date.now() - 3600000, // valor por defecto
-          setAt: Date.now() - 3600000,
-          drawdownPct: 0,
-        }
-      : undefined;
-
-    if (!frozenAnchor) {
-      // Intentar obtener desde memoria de IdcaEngine
+    // Obtener frozenAnchor para el resolver (desde DB para evitar circular import)
+    let frozenAnchor: VwapAnchorState | undefined = undefined;
+    if (vwap && vwap.isReliable) {
       try {
-        const { getFrozenAnchorFromMemory } = await import('./IdcaEngine');
-        frozenAnchor = getFrozenAnchorFromMemory(pair);
+        const dbAnchor = await getVwapAnchor(pair);
+        if (dbAnchor) {
+          frozenAnchor = {
+            anchorPrice: dbAnchor.anchor_price,
+            anchorTimestamp: dbAnchor.anchor_ts,
+            setAt: dbAnchor.set_at,
+            drawdownPct: dbAnchor.drawdown_pct,
+            previous: dbAnchor.prev_price ? {
+              anchorPrice: dbAnchor.prev_price,
+              anchorTimestamp: dbAnchor.prev_ts!,
+              setAt: dbAnchor.prev_set_at!,
+              replacedAt: dbAnchor.prev_replaced_at!,
+            } : undefined,
+          };
+        }
       } catch (error) {
-        // Silencioso - el servicio puede no estar inicializado
+        // Silencioso - puede no haber anchor persistido
       }
     }
 
     // Usar el resolver canónico para obtener la referencia efectiva
-    const vwapEnabled = true; // IDCA siempre tiene VWAP habilitado
+    const assetConfig = await getAssetConfig(pair);
+    const vwapEnabled = assetConfig?.vwapEnabled ?? true; // Usar config del asset, fallback true para compatibilidad
     const refResult = resolveEffectiveEntryReference({
       pair,
       currentPrice,

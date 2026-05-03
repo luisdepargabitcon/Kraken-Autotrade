@@ -1214,6 +1214,33 @@ export async function getPriceContextStatic(
 
 // ─── VWAP Anchor Persistence ───────────────────────────────────────
 
+export async function getVwapAnchor(pair: string): Promise<{
+  anchor_price: number;
+  anchor_ts: number;
+  set_at: number;
+  drawdown_pct: number;
+  prev_price?: number | null;
+  prev_ts?: number | null;
+  prev_set_at?: number | null;
+  prev_replaced_at?: number | null;
+} | null> {
+  const rows = await db.select()
+    .from(idcaVwapAnchors)
+    .where(eq(idcaVwapAnchors.pair, pair))
+    .limit(1);
+  if (!rows[0]) return null;
+  return {
+    anchor_price: parseFloat(String(rows[0].anchorPrice)),
+    anchor_ts: rows[0].anchorTs,
+    set_at: rows[0].setAt,
+    drawdown_pct: parseFloat(String(rows[0].drawdownPct)),
+    prev_price: rows[0].prevPrice ? parseFloat(String(rows[0].prevPrice)) : null,
+    prev_ts: rows[0].prevTs || null,
+    prev_set_at: rows[0].prevSetAt || null,
+    prev_replaced_at: rows[0].prevReplacedAt || null,
+  };
+}
+
 export async function upsertVwapAnchor(anchor: {
   pair: string;
   anchorPrice: number;
