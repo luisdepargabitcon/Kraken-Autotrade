@@ -186,7 +186,7 @@ describe("IdcaEntryReferenceResolver", () => {
     expect(result.frozenAnchorAgeHours).toBeGreaterThan(0); // fijada hace 1h
   });
 
-  it("debe usar vwapContext.isReliable para determinar validez de anchor", () => {
+  it("debe mantener frozenAnchor efectivo aunque vwapContext.isReliable=false", () => {
     const basePriceResult: BasePriceResult = {
       price: 79000,
       type: "hybrid_v2",
@@ -203,7 +203,7 @@ describe("IdcaEntryReferenceResolver", () => {
       drawdownPct: 0.5,
     };
 
-    // vwapContext.isReliable = false debe invalidar el anchor
+    // vwapContext.isReliable = false NO debe invalidar el anchor persistido
     const vwapContext = { isReliable: false } as any;
 
     const result = resolveEffectiveEntryReference({
@@ -215,8 +215,10 @@ describe("IdcaEntryReferenceResolver", () => {
       vwapEnabled: true,
     });
 
-    // Si vwapContext.isReliable es false, debe usar fallback
-    expect(result.effectiveReferenceSource).toBe("hybrid_v2_fallback");
+    // Frozen anchor debe seguir siendo la referencia efectiva
+    expect(result.effectiveReferenceSource).toBe("vwap_anchor");
+    expect(result.effectiveEntryReference).toBe(79500);
+    expect(result.technicalBasePrice).toBe(79000);
   });
 
   it("debe usar anchor si vwapContext no está disponible", () => {
@@ -247,6 +249,98 @@ describe("IdcaEntryReferenceResolver", () => {
 
     // Sin vwapContext, debe usar anchor si está disponible
     expect(result.effectiveReferenceSource).toBe("vwap_anchor");
+  });
+
+  it("caso específico ETH: frozenAnchor=2424.05, basePrice=2341.44, vwapContext.isReliable=false -> debe usar vwap_anchor", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 2341.44,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const frozenAnchor = {
+      anchorPrice: 2424.05,
+      anchorTimestamp: Date.now() - 3600000,
+      setAt: Date.now() - 3600000,
+      drawdownPct: 3.4,
+    };
+
+    const vwapContext = { isReliable: false } as any;
+
+    const result = resolveEffectiveEntryReference({
+      pair: "ETH/USD",
+      currentPrice: 2345.00,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext,
+      vwapEnabled: true,
+    });
+
+    // Frozen anchor debe seguir siendo la referencia efectiva aunque VWAP actual no sea fiable
+    expect(result.effectiveReferenceSource).toBe("vwap_anchor");
+    expect(result.effectiveEntryReference).toBe(2424.05);
+    expect(result.technicalBasePrice).toBe(2341.44);
+    expect(result.effectiveReferenceLabel).toBe("VWAP Anclado");
+  });
+
+  it("vwapEnabled=false + frozenAnchor existente -> fallback a Hybrid V2.1", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 79000,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const frozenAnchor = {
+      anchorPrice: 79500,
+      anchorTimestamp: Date.now() - 3600000,
+      setAt: Date.now() - 3600000,
+      drawdownPct: 0.5,
+    };
+
+    const result = resolveEffectiveEntryReference({
+      pair: "BTC/USD",
+      currentPrice: 78500,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext: undefined,
+      vwapEnabled: false, // VWAP deshabilitado
+    });
+
+    // Si vwapEnabled=false, debe usar fallback a Hybrid V2.1
+    expect(result.effectiveReferenceSource).toBe("hybrid_v2_fallback");
+    expect(result.effectiveEntryReference).toBe(79000);
+    expect(result.effectiveReferenceLabel).toBe("Hybrid V2.1");
+  });
+
+  it("vwapEnabled=true + sin frozenAnchor -> fallback a Hybrid V2.1", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 79000,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const result = resolveEffectiveEntryReference({
+      pair: "BTC/USD",
+      currentPrice: 78500,
+      basePriceResult,
+      frozenAnchor: undefined, // no hay anchor
+      vwapContext: undefined,
+      vwapEnabled: true,
+    });
+
+    // Si no hay frozenAnchor, debe usar fallback a Hybrid V2.1
+    expect(result.effectiveReferenceSource).toBe("hybrid_v2_fallback");
+    expect(result.effectiveEntryReference).toBe(79000);
+    expect(result.effectiveReferenceLabel).toBe("Hybrid V2.1");
   });
 });
 

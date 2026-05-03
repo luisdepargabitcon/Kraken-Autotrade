@@ -88,12 +88,11 @@ export function resolveEffectiveEntryReference(input: ResolveReferenceInput): Ef
   } = input;
 
   // Check if VWAP Anchor is available and valid
-  // Priority: VWAP Anchor if vwapEnabled AND frozenAnchor exists AND (vwapContext is reliable OR no vwapContext available)
-  // This allows persisted anchors to remain valid even if current VWAP calculation is unavailable
+  // Priority: VWAP Anchor if vwapEnabled AND frozenAnchor exists
+  // Frozen anchor remains valid even if current VWAP calculation is unavailable or not reliable
   const vwapAnchorAvailable = vwapEnabled
     && frozenAnchor?.anchorPrice
-    && frozenAnchor.anchorPrice > 0
-    && (!vwapContext || vwapContext.isReliable !== false);
+    && frozenAnchor.anchorPrice > 0;
 
   let effectiveEntryReference: number;
   let effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
