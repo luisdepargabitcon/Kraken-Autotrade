@@ -2,63 +2,81 @@
 
 ---
 
-## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto (commit pendiente)
+## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto + Corrección calidad VWAP (commit pendiente)
 
 ### Estado final verificado (LOCAL)
 - **TSC**: 0 errores (`npm run check` exit 0)
 - **Vite build**: OK — 3788 módulos
-- **Tests idcaEntryReferenceResolver**: 14/14 ✅
+- **Tests idcaEntryReferenceResolver**: 17/17 ✅
 - **Git**: commit pendiente, push a origin/main
 
 ### Funcionalidad implementada
 
 #### 1. Función canónica de resolución de referencia
-- `server/services/institutionalDca/IdcaEntryReferenceResolver.ts`: nueva función `resolveEffectiveEntryReference()`
+- `server/services/institutionalDca/IdcaEntryReferenceResolver.ts`: función `resolveEffectiveEntryReference()`
 - Devuelve `EffectiveEntryReferenceResult` con:
   - `effectiveEntryReference`: referencia efectiva real (frozenAnchor o Hybrid V2.1 fallback)
   - `effectiveReferenceSource`: "vwap_anchor" o "hybrid_v2_fallback"
   - `effectiveReferenceLabel`: "VWAP Anclado" o "Hybrid V2.1"
   - `technicalBasePrice`: base técnica Hybrid V2.1 (siempre presente)
   - `technicalBaseType`: tipo de base técnica
-  - `frozenAnchorPrice`, `frozenAnchorTs`, `frozenAnchorAgeHours`: detalles del anchor
+  - `technicalBaseTimestamp`: timestamp de cuándo se calculó Hybrid V2.1 (CORREGIDO: antes usaba referenceUpdatedAt)
+  - `frozenAnchorPrice`, `frozenAnchorTs`: detalles del anchor
+  - `frozenAnchorAgeHours`: edad desde que se fijó el anchor (setAt)
+  - `frozenAnchorCandleAgeHours`: edad de la vela/ancla (anchorTimestamp) - NUEVO
   - `previousAnchor`: anchor anterior invalidado
   - `atrPct`: volatilidad ATR
   - `referenceChangedRecently`: true si cambió hace <24h
   - `referenceUpdatedAt`: timestamp de último cambio
 
-#### 2. Constantes de robustez de anchor
+#### 2. Correcciones en FASE 0 (verificación del commit 26659cc)
+- **technicalBaseTimestamp**: CORREGIDO para usar `basePriceResult.timestamp` en lugar de `referenceUpdatedAt`
+- **frozenAnchorCandleAgeHours**: AÑADIDO para distinguir edad de vela vs edad de fijación
+- **Validez de VWAP Anchor**: MEJORADO para usar `vwapContext.isReliable` en la validación
+- **Rehidratación de previous desde DB**: VERIFICADO que `loadAnchorsFromDb()` ya reconstruye previous desde DB
+
+#### 3. Constantes de robustez de anchor
 - `ANCHOR_UPDATE_THRESHOLDS`: BTC 0.35%, ETH 0.50%, default 1.00%
 - `ANCHOR_UPDATE_COOLDOWNS`: BTC/ETH 6h, default 12h
 - `ANCHOR_RESET_THRESHOLDS`: BTC 0.25%, ETH 0.35%, default 0.75%
 - Funciones helper: `getAnchorUpdateThreshold()`, `getAnchorUpdateCooldown()`, `getAnchorResetThreshold()`
 
-#### 3. Integración en Engine
+#### 4. Integración en Engine
 - `IdcaEngine.ts performEntryCheck()`: usa `resolveEffectiveEntryReference()` en lugar de lógica duplicada
 - Reglas de actualización de anchor mejoradas:
   - **Histéresis en reset**: solo resetea si `currentPrice > anchor * (1 + resetThreshold)`
   - **Threshold en update**: solo actualiza si `newSwingPrice > anchor * (1 + updateThreshold)`
   - **Cooldown en update**: solo actualiza si `timeSinceUpdate >= cooldown`
   - Logs debug compactos cuando se salta update por cooldown o threshold
-- Campos adicionales en `IdcaEntryCheckResult`: technicalBasePrice, technicalBaseType, previousAnchor, atrPct, referenceChangedRecently, referenceUpdatedAt
+- Campos adicionales en `IdcaEntryCheckResult`: technicalBasePrice, technicalBaseType, previousAnchor, atrPct, referenceChangedRecently, referenceUpdatedAt, frozenAnchorCandleAgeHours
 
-#### 4. Actualización de tipos
-- `IdcaTypes.ts`: añadidos campos a `IdcaEntryCheckResult` para incluir todos los campos del resolver canónico
+#### 5. Corrección de "Parcial: falta VWAP" (FASE 3)
+- `IdcaMarketContextService.ts`: MODIFICADO para no marcar como "falta VWAP" cuando se usa frozenAnchor
+- Si `usingFrozenAnchor` es true, la calidad se marca como "ok" incluso si VWAP actual no está disponible
+- Esto corrige el problema donde la UI mostraba "Parcial: falta VWAP" aunque el engine estaba usando VWAP Anclado como referencia efectiva
 
-#### 5. Tests
-- `server/services/__tests__/idcaEntryReferenceResolver.test.ts`: 14 tests
+#### 6. Actualización de tipos
+- `IdcaTypes.ts`: añadido campo `frozenAnchorCandleAgeHours` a `IdcaEntryCheckResult`
+- Comentarios aclarando la diferencia entre edad desde setAt y edad de vela
+
+#### 7. Tests
+- `server/services/__tests__/idcaEntryReferenceResolver.test.ts`: 17 tests (antes 14)
   - Tests de resolución de referencia con frozenAnchor
   - Tests de fallback a Hybrid V2.1
   - Tests de referenceChangedRecently
   - Tests de previousAnchor
   - Tests de thresholds y cooldowns por par
+  - **NUEVO**: Test de frozenAnchorCandleAgeHours
+  - **NUEVO**: Test de vwapContext.isReliable para validar anchor
+  - **NUEVO**: Test de comportamiento cuando vwapContext no está disponible
 
 ### Fases pendientes (para próxima sesión)
-- FASE 3: Usar misma referencia en Contexto de mercado / Resumen
-- FASE 4: Corregir "Parcial: falta VWAP" en UI
-- FASE 5: Documentar rol correcto de VWAP y ATR
-- FASE 7: Verificar/corregir rehidratación de previous desde DB
-- FASE 8: Frontend UI clara en Resumen (referencia efectiva + base técnica)
-- FASE 9: Eventos coherencia visual con Resumen
+- FASE 2: Mostrar Hybrid V2.1 como base técnica secundaria en UI
+- FASE 4: Eventos y Resumen deben coincidir en UI
+- FASE 6: Validar que el anchor no se actualiza demasiado pronto (tests adicionales)
+- FASE 7: Ciclos simulación / LIVE no deben desaparecer
+
+---
 
 ---
 

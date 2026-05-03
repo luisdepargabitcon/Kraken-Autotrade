@@ -150,6 +150,101 @@ describe("IdcaEntryReferenceResolver", () => {
     expect(result.previousAnchor).toBeDefined();
     expect(result.previousAnchor?.anchorPrice).toBe(79000);
   });
+
+  it("debe incluir frozenAnchorCandleAgeHours cuando existe frozenAnchor", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 79000,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const frozenAnchor = {
+      anchorPrice: 79500,
+      anchorTimestamp: Date.now() - 7200000, // hace 2h
+      setAt: Date.now() - 3600000, // hace 1h
+      drawdownPct: 0.5,
+    };
+
+    const result = resolveEffectiveEntryReference({
+      pair: "BTC/USD",
+      currentPrice: 78500,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext: undefined,
+      vwapEnabled: true,
+    });
+
+    expect(result.frozenAnchorCandleAgeHours).toBeDefined();
+    expect(result.frozenAnchorCandleAgeHours).toBeGreaterThan(1); // vela de hace 2h
+    expect(result.frozenAnchorAgeHours).toBeDefined();
+    expect(result.frozenAnchorAgeHours).toBeGreaterThan(0); // fijada hace 1h
+  });
+
+  it("debe usar vwapContext.isReliable para determinar validez de anchor", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 79000,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const frozenAnchor = {
+      anchorPrice: 79500,
+      anchorTimestamp: Date.now() - 3600000,
+      setAt: Date.now() - 3600000,
+      drawdownPct: 0.5,
+    };
+
+    // vwapContext.isReliable = false debe invalidar el anchor
+    const vwapContext = { isReliable: false } as any;
+
+    const result = resolveEffectiveEntryReference({
+      pair: "BTC/USD",
+      currentPrice: 78500,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext,
+      vwapEnabled: true,
+    });
+
+    // Si vwapContext.isReliable es false, debe usar fallback
+    expect(result.effectiveReferenceSource).toBe("hybrid_v2_fallback");
+  });
+
+  it("debe usar anchor si vwapContext no está disponible", () => {
+    const basePriceResult: BasePriceResult = {
+      price: 79000,
+      type: "hybrid_v2",
+      windowMinutes: 1440,
+      timestamp: new Date(),
+      isReliable: true,
+      reason: "Hybrid V2.1 calculated",
+    };
+
+    const frozenAnchor = {
+      anchorPrice: 79500,
+      anchorTimestamp: Date.now() - 3600000,
+      setAt: Date.now() - 3600000,
+      drawdownPct: 0.5,
+    };
+
+    const result = resolveEffectiveEntryReference({
+      pair: "BTC/USD",
+      currentPrice: 78500,
+      basePriceResult,
+      frozenAnchor,
+      vwapContext: undefined, // no disponible
+      vwapEnabled: true,
+    });
+
+    // Sin vwapContext, debe usar anchor si está disponible
+    expect(result.effectiveReferenceSource).toBe("vwap_anchor");
+  });
 });
 
 describe("Anchor thresholds y cooldowns", () => {

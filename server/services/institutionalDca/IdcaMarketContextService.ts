@@ -182,17 +182,23 @@ class IdcaMarketContextService {
     let qualityReason: MarketContext['qualityDetail']['reason'];
     const OPTIMAL_CANDLES = 100;
 
-    if (candles.length >= 50 && vwap?.isReliable && hasAtrp) {
+    // Si la referencia efectiva viene de frozenAnchor (VWAP Anclado), no marcar como "falta VWAP"
+    // incluso si el cálculo actual de VWAP no está disponible
+    const usingFrozenAnchor = options.frozenAnchorPrice && options.frozenAnchorPrice > 0;
+
+    if (candles.length >= 50 && (vwap?.isReliable || usingFrozenAnchor) && hasAtrp) {
       qualityStatus = "ok";
       qualityReason = "ok";
     } else if (candles.length >= 20) {
       qualityStatus = "partial";
       if (candles.length < 50) {
         qualityReason = "warming_up_cache";
-      } else if (!vwap?.isReliable) {
+      } else if (!vwap?.isReliable && !usingFrozenAnchor) {
         qualityReason = "missing_vwap_zone";
-      } else {
+      } else if (!hasAtrp) {
         qualityReason = "missing_atrp";
+      } else {
+        qualityReason = "ok"; // Tiene frozenAnchor, calidad aceptable
       }
     } else {
       qualityStatus = "poor";

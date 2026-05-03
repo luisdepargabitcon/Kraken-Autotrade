@@ -42,7 +42,8 @@ export interface EffectiveEntryReferenceResult {
   // Frozen anchor details
   frozenAnchorPrice?: number;
   frozenAnchorTs?: number;
-  frozenAnchorAgeHours?: number;
+  frozenAnchorAgeHours?: number; // age since anchor was set (setAt)
+  frozenAnchorCandleAgeHours?: number; // age of the candle/anchor itself (anchorTimestamp)
 
   // Previous anchor (invalidated)
   previousAnchor?: {
@@ -87,9 +88,12 @@ export function resolveEffectiveEntryReference(input: ResolveReferenceInput): Ef
   } = input;
 
   // Check if VWAP Anchor is available and valid
+  // Priority: VWAP Anchor if vwapEnabled AND frozenAnchor exists AND (vwapContext is reliable OR no vwapContext available)
+  // This allows persisted anchors to remain valid even if current VWAP calculation is unavailable
   const vwapAnchorAvailable = vwapEnabled
     && frozenAnchor?.anchorPrice
-    && frozenAnchor.anchorPrice > 0;
+    && frozenAnchor.anchorPrice > 0
+    && (!vwapContext || vwapContext.isReliable !== false);
 
   let effectiveEntryReference: number;
   let effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
@@ -122,8 +126,13 @@ export function resolveEffectiveEntryReference(input: ResolveReferenceInput): Ef
   // Frozen anchor details
   const frozenAnchorPrice = frozenAnchor?.anchorPrice;
   const frozenAnchorTs = frozenAnchor?.anchorTimestamp;
+  // frozenAnchorAgeHours: age since the anchor was set (setAt)
   const frozenAnchorAgeHours = frozenAnchor
     ? Math.round((now - frozenAnchor.setAt) / (1000 * 60 * 60) * 10) / 10
+    : undefined;
+  // frozenAnchorCandleAgeHours: age of the candle/anchor itself (anchorTimestamp)
+  const frozenAnchorCandleAgeHours = frozenAnchor?.anchorTimestamp
+    ? Math.round((now - frozenAnchor.anchorTimestamp) / (1000 * 60 * 60) * 10) / 10
     : undefined;
 
   // Previous anchor
@@ -140,6 +149,13 @@ export function resolveEffectiveEntryReference(input: ResolveReferenceInput): Ef
   // ATR from base price meta
   const atrPct = basePriceResult.meta?.atrPct;
 
+  // technicalBaseTimestamp: always from basePriceResult.timestamp (when Hybrid V2.1 was calculated)
+  const technicalBaseTimestamp = basePriceResult.timestamp instanceof Date
+    ? basePriceResult.timestamp.toISOString()
+    : typeof basePriceResult.timestamp === "string"
+      ? basePriceResult.timestamp
+      : new Date(basePriceResult.timestamp).toISOString();
+
   return {
     effectiveEntryReference,
     effectiveReferenceSource,
@@ -147,10 +163,11 @@ export function resolveEffectiveEntryReference(input: ResolveReferenceInput): Ef
     technicalBasePrice: basePriceResult.price,
     technicalBaseType: basePriceResult.type,
     technicalBaseReason: basePriceResult.reason,
-    technicalBaseTimestamp: referenceUpdatedAt,
+    technicalBaseTimestamp,
     frozenAnchorPrice,
     frozenAnchorTs,
     frozenAnchorAgeHours,
+    frozenAnchorCandleAgeHours,
     previousAnchor,
     vwapContext,
     atrPct,

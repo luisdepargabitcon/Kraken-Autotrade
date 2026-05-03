@@ -234,7 +234,8 @@ export interface IdcaEntryCheckResult {
   technicalBaseTimestamp?: string;
   frozenAnchorPrice?: number;
   frozenAnchorTs?: number;
-  frozenAnchorAgeHours?: number;
+  frozenAnchorAgeHours?: number; // edad desde que se fijó el anchor (setAt)
+  frozenAnchorCandleAgeHours?: number; // edad de la vela/ancla (anchorTimestamp)
   previousAnchor?: {
     anchorPrice: number;
     anchorTimestamp: number;

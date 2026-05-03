@@ -2868,6 +2868,7 @@ async function performEntryCheck(
     frozenAnchorPrice: refResult.frozenAnchorPrice,
     frozenAnchorTs: refResult.frozenAnchorTs,
     frozenAnchorAgeHours: refResult.frozenAnchorAgeHours,
+    frozenAnchorCandleAgeHours: refResult.frozenAnchorCandleAgeHours,
     previousAnchor: refResult.previousAnchor,
     atrPct: refResult.atrPct,
     referenceChangedRecently: refResult.referenceChangedRecently,
