@@ -10,7 +10,7 @@ import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
-import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold } from "./IdcaEntryReferenceResolver";
+import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold, shouldUpdateAnchor, shouldResetAnchor } from "./IdcaEntryReferenceResolver";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
 import { idcaMigrationService } from "./IdcaMigrationService";
@@ -2535,51 +2535,64 @@ async function performEntryCheck(
 
       // Regla 1: resetear si precio supera la ancla CON HISTÉRESIS
       const currentAnchor = vwapAnchorMemory.get(pair);
-      const resetThreshold = getAnchorResetThreshold(pair);
-      if (currentAnchor && currentPrice > currentAnchor.anchorPrice * (1 + resetThreshold)) {
-        vwapAnchorMemory.delete(pair);
-        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — curPrice=${currentPrice.toFixed(2)} > anchor=${currentAnchor.anchorPrice.toFixed(2)} * (1+${(resetThreshold*100).toFixed(2)}%)`);
-        
-        // Limpiar estado de trailing buy si la referencia cambia
-        if (TrailingBuyManager.isArmed(pair)) {
-          TrailingBuyManager.disarm(pair);
-          telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "reference_changed")
-            .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(anchor_reset) failed: ${e.message}`));
+      if (currentAnchor) {
+        const resetCheck = shouldResetAnchor({
+          pair,
+          currentPrice,
+          anchorPrice: currentAnchor.anchorPrice,
+        });
+        if (resetCheck.shouldReset) {
+          vwapAnchorMemory.delete(pair);
+          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — ${resetCheck.reason}`);
+          
+          // Limpiar estado de trailing buy si la referencia cambia
+          if (TrailingBuyManager.isArmed(pair)) {
+            TrailingBuyManager.disarm(pair);
+            telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "reference_changed")
+              .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(anchor_reset) failed: ${e.message}`));
+          }
+          tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
         }
-        tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
       }
 
       // Regla 2: ancla solo sube, nunca baja CON THRESHOLD Y COOLDOWN
       const anchorAfterReset = vwapAnchorMemory.get(pair);
-      const updateThreshold = getAnchorUpdateThreshold(pair);
-      const cooldownMs = getAnchorUpdateCooldown(pair);
-      const timeSinceUpdate = anchorAfterReset ? (Date.now() - anchorAfterReset.setAt) : Infinity;
-      const minPriceForUpdate = anchorAfterReset ? anchorAfterReset.anchorPrice * (1 + updateThreshold) : 0;
-
-      if (!anchorAfterReset || (newSwingPrice > minPriceForUpdate && timeSinceUpdate >= cooldownMs)) {
+      if (!anchorAfterReset) {
+        // No hay anchor, crear uno nuevo
         vwapAnchorMemory.set(pair, {
           anchorPrice: newSwingPrice,
           anchorTimestamp: newSwingTs,
           setAt: Date.now(),
           drawdownPct: 0,
-          previous: anchorAfterReset ? {
-            anchorPrice:     anchorAfterReset.anchorPrice,
-            anchorTimestamp: anchorAfterReset.anchorTimestamp,
-            setAt:           anchorAfterReset.setAt,
-            replacedAt:      Date.now(),
-          } : currentAnchor ? {
-            anchorPrice:     currentAnchor.anchorPrice,
-            anchorTimestamp: currentAnchor.anchorTimestamp,
-            setAt:           currentAnchor.setAt,
-            replacedAt:      Date.now(),
-          } : undefined,
         });
-      } else if (newSwingPrice > anchorAfterReset?.anchorPrice && timeSinceUpdate < cooldownMs) {
-        // Log debug compacto cuando se salta update por cooldown
-        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE (cooldown) — newSwing=${newSwingPrice.toFixed(2)} > anchor=${anchorAfterReset.anchorPrice.toFixed(2)} but timeSince=${Math.round(timeSinceUpdate/60000)}m < ${Math.round(cooldownMs/60000)}m`);
-      } else if (newSwingPrice <= minPriceForUpdate && anchorAfterReset) {
-        // Log debug compacto cuando se salta update por threshold
-        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE (threshold) — newSwing=${newSwingPrice.toFixed(2)} <= min=${minPriceForUpdate.toFixed(2)} (anchor=${anchorAfterReset.anchorPrice.toFixed(2)} * 1+${(updateThreshold*100).toFixed(2)}%)`);
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: NEW — price=${newSwingPrice.toFixed(2)} ts=${new Date(newSwingTs).toISOString()}`);
+      } else {
+        // Verificar si se debe actualizar usando el helper
+        const updateCheck = shouldUpdateAnchor({
+          pair,
+          currentPrice,
+          newSwingPrice,
+          anchorPrice: anchorAfterReset.anchorPrice,
+          anchorSetAt: anchorAfterReset.setAt,
+          now: Date.now(),
+        });
+        if (updateCheck.shouldUpdate) {
+          vwapAnchorMemory.set(pair, {
+            anchorPrice: newSwingPrice,
+            anchorTimestamp: newSwingTs,
+            setAt: Date.now(),
+            drawdownPct: 0,
+            previous: {
+              anchorPrice: anchorAfterReset.anchorPrice,
+              anchorTimestamp: anchorAfterReset.anchorTimestamp,
+              setAt: anchorAfterReset.setAt,
+              replacedAt: Date.now(),
+            },
+          });
+          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: UPDATE — ${updateCheck.reason}`);
+        } else {
+          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE — ${updateCheck.reason}`);
+        }
       }
 
       // Actualizar drawdown acumulado
@@ -2608,9 +2621,9 @@ async function performEntryCheck(
           .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapDrawdownMilestone failed: ${e.message}`));
       }
 
-      // Persist to DB (fire-and-forget — do NOT await to avoid blocking tick)
+      // Persist to DB (await to ensure memory/DB sync for UI consistency)
       if (fa) {
-        repo.upsertVwapAnchor({
+        await repo.upsertVwapAnchor({
           pair,
           anchorPrice:    fa.anchorPrice,
           anchorTs:       fa.anchorTimestamp,

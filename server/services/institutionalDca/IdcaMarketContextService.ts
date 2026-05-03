@@ -268,26 +268,24 @@ class IdcaMarketContextService {
 
     // Obtener frozenAnchor para el resolver (desde DB para evitar circular import)
     let frozenAnchor: VwapAnchorState | undefined = undefined;
-    if (vwap && vwap.isReliable) {
-      try {
-        const dbAnchor = await getVwapAnchor(pair);
-        if (dbAnchor) {
-          frozenAnchor = {
-            anchorPrice: dbAnchor.anchor_price,
-            anchorTimestamp: dbAnchor.anchor_ts,
-            setAt: dbAnchor.set_at,
-            drawdownPct: dbAnchor.drawdown_pct,
-            previous: dbAnchor.prev_price ? {
-              anchorPrice: dbAnchor.prev_price,
-              anchorTimestamp: dbAnchor.prev_ts!,
-              setAt: dbAnchor.prev_set_at!,
-              replacedAt: dbAnchor.prev_replaced_at!,
-            } : undefined,
-          };
-        }
-      } catch (error) {
-        // Silencioso - puede no haber anchor persistido
+    try {
+      const dbAnchor = await getVwapAnchor(pair);
+      if (dbAnchor) {
+        frozenAnchor = {
+          anchorPrice: dbAnchor.anchor_price,
+          anchorTimestamp: dbAnchor.anchor_ts,
+          setAt: dbAnchor.set_at,
+          drawdownPct: dbAnchor.drawdown_pct,
+          previous: dbAnchor.prev_price ? {
+            anchorPrice: dbAnchor.prev_price,
+            anchorTimestamp: dbAnchor.prev_ts!,
+            setAt: dbAnchor.prev_set_at!,
+            replacedAt: dbAnchor.prev_replaced_at!,
+          } : undefined,
+        };
       }
+    } catch (error) {
+      // Silencioso - puede no haber anchor persistido
     }
 
     // Usar el resolver canónico para obtener la referencia efectiva
