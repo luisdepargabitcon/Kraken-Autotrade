@@ -2063,7 +2063,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
-  const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const realizedPnlRaw = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const capitalUsedDisp = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  // plus cycles store profit directly; v1/recovery store sell proceeds
+  const isPlusCycle = String(cycle.strategy || "").includes("plus");
+  // For closed standard cycles: profit = proceeds - capitalUsed
+  const realizedPnl = cycle.status === "closed" && !isPlusCycle && capitalUsedDisp > 0
+    ? realizedPnlRaw - capitalUsedDisp
+    : realizedPnlRaw;
+  // Active cycles with partial TP: realizedPnlRaw = partial sell proceeds (not profit yet)
+  const isPartialTpActive = cycle.status !== "closed" && realizedPnlRaw > 0;
 
   // Net PnL estimate: deduct estimated exit fee (Revolut X taker 0.09% default)
   const execFees = (idcaConfig?.executionFeesJson as any) || null;
@@ -2343,8 +2352,8 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
               </div>
             )}
             {realizedPnl !== 0 && (
-              <div className={cn("text-[10px] font-mono", realizedPnl >= 0 ? "text-green-300" : "text-red-300")}>
-                Realizado: {fmtUsd(realizedPnl)}
+              <div className={cn("text-[10px] font-mono", realizedPnl >= 0 ? "text-green-300" : "text-red-300")} title={isPartialTpActive ? `TP parcial: ~$${realizedPnlRaw.toFixed(2)} cobrado (${capitalUsedDisp > 0 ? ((realizedPnlRaw / capitalUsedDisp) * 100).toFixed(1) : "?"}% del capital)` : undefined}>
+                {isPartialTpActive ? "TP parcial:" : "Realizado:"} {realizedPnl >= 0 ? "+" : ""}{fmtUsd(realizedPnl)}
               </div>
             )}
             <div className="text-[10px] text-muted-foreground">

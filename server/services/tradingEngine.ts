@@ -765,15 +765,15 @@ export class TradingEngine {
     // Initialize ExitManager with host adapter
     this.exitManager = new ExitManager(this.createExitHost());
     
-    // Initialize RegimeManager with host adapter
+    // Initialize RegimeManager with host adapter (via MarketDataService cache)
     this.regimeManager = new RegimeManager({
-      getOHLC: (pair, interval) => this.getDataExchange().getOHLC(pair, interval),
+      getOHLC: (pair, interval) => this.getCachedOHLC(pair, interval),
       sendAlertWithSubtype: (msg, cat, sub) => this.telegramService.sendAlertWithSubtype(msg, cat, sub),
     });
     
-    // Initialize MtfAnalyzer with host adapter
+    // Initialize MtfAnalyzer with host adapter (via MarketDataService cache)
     this.mtfAnalyzer = new MtfAnalyzer({
-      getOHLC: (pair, interval) => this.getDataExchange().getOHLC(pair, interval),
+      getOHLC: (pair, interval) => this.getCachedOHLC(pair, interval),
     });
     
     // Initialize SpreadFilter with host adapter

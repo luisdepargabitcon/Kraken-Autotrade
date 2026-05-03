@@ -719,16 +719,18 @@ export async function alertTrailingBuyExecuted(
   bouncePct: number,
   cycleId: number | undefined,
   orderId: number | undefined,
+  tradeId?: string | undefined,
 ): Promise<void> {
-  // Guard: only notify if both cycle and order are confirmed persisted
-  if (!cycleId || !orderId) {
-    console.warn(`[IDCA][TELEGRAM][TRAILING_BUY_EXECUTED] BLOCKED — cycleId=${cycleId} orderId=${orderId} not persisted yet. Will not send.`);
+  // Guard: only notify if cycle is persisted AND at least orderId or tradeId exists
+  if (!cycleId || (!orderId && !tradeId)) {
+    console.warn(`[IDCA][TELEGRAM][TRAILING_BUY_EXECUTED] BLOCKED — cycleId=${cycleId} orderId=${orderId} tradeId=${tradeId} not persisted yet. Will not send.`);
     return;
   }
 
   const { chatId, enabled } = await canSend("trailing_buy_executed");
   if (!enabled) return;
 
+  const orderRef = orderId ? `Orden: <code>#${orderId}</code>` : `Trade: <code>${tradeId}</code>`;
   const config = await repo.getIdcaConfig();
   const msg = [
     `✅ <b>Trailing Buy EJECUTADO</b> — <b>${pair}</b>`,
@@ -737,7 +739,7 @@ export async function alertTrailingBuyExecuted(
     `📉 Mínimo local: <code>$${localLow.toFixed(2)}</code>`,
     `📈 Rebote capturado: <code>+${bouncePct.toFixed(3)}%</code>`,
     ``,
-    `🆔 Ciclo: <code>#${cycleId}</code> | Orden: <code>#${orderId}</code>`,
+    `🆔 Ciclo: <code>#${cycleId}</code> | ${orderRef}`,
     `<i>Modo: ${mode}</i>`,
   ].join("\n");
 

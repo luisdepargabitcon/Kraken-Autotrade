@@ -446,7 +446,7 @@ describe("TrailingBuy Opción B — buyThreshold desde effectiveEntryReference",
     const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { alertTrailingBuyExecuted } = await import("../institutionalDca/IdcaTelegramNotifier");
     await alertTrailingBuyExecuted(pair, mode, 2331.98, 2325.00, REBOUND_PCT, 0, undefined);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("no hay cycleId"));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("BLOCKED"));
     consoleSpy.mockRestore();
   });
 
@@ -604,7 +604,7 @@ describe("Hotfix \u2014 formatElapsed, computeReboundStatus, mensajes TB", () =>
     const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { alertTrailingBuyExecuted } = await import("../institutionalDca/IdcaTelegramNotifier");
     await alertTrailingBuyExecuted("BTC/USD", "simulation", 78300, 77957.20, 0.44, 0, undefined);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("no hay cycleId"));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("BLOCKED"));
     consoleSpy.mockRestore();
   });
 });

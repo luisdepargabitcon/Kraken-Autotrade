@@ -1422,7 +1422,7 @@ async function checkEntry(
   let slippage = 0;
   let netValue = baseBuyUsd;
   if (mode === "simulation") {
-    fees = baseBuyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
     slippage = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = baseBuyUsd + fees + slippage;
   }
@@ -1936,7 +1936,7 @@ async function checkSafetyBuy(
   // Simulation fees
   let fees = 0, slippage = 0, netValue = buyUsd;
   if (mode === "simulation") {
-    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
     slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = buyUsd + fees + slippage;
   }
@@ -2088,7 +2088,7 @@ async function armTakeProfit(
   // Execute partial sell
   let fees = 0, slippage = 0, netValue = partialValueUsd;
   if (mode === "simulation") {
-    fees = partialValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = partialValueUsd * (resolveSimulationFeePct(config) / 100);
     slippage = partialValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = partialValueUsd - fees - slippage;
   }
@@ -2216,7 +2216,7 @@ async function executeTrailingExit(
 
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
-    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
     slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = sellValueUsd - fees - slippage;
   }
@@ -2315,7 +2315,7 @@ async function executeBreakevenExit(
 
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
-    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
     slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = sellValueUsd - fees - slippage;
   }
@@ -2867,6 +2867,22 @@ async function checkModuleDrawdown(config: InstitutionalDcaConfigRow, mode: Idca
   return true;
 }
 
+// ─── Fee Helpers ────────────────────────────────────────────────────
+
+/**
+ * Resolve the simulation fee percentage.
+ * Priority: executionFeesJson.takerFeePct > config.simulationFeePct > 0.09 (Revolut X default).
+ * NOTE: Live mode fees are handled by the exchange — never applied here.
+ */
+function resolveSimulationFeePct(config: InstitutionalDcaConfigRow): number {
+  const execFees = (config as any).executionFeesJson as any;
+  if (execFees && typeof execFees.takerFeePct === "number") {
+    return execFees.takerFeePct;
+  }
+  const legacy = parseFloat(String(config.simulationFeePct));
+  return Number.isFinite(legacy) && legacy >= 0 ? legacy : 0.09;
+}
+
 // ─── Market Data Helpers ───────────────────────────────────────────
 
 async function getCurrentPrice(pair: string): Promise<number> {
@@ -3339,7 +3355,7 @@ async function checkPlusActivation(
   // Simulation fees
   let fees = 0, slippage = 0, netValue = baseBuyUsd;
   if (mode === "simulation") {
-    fees = baseBuyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
     slippage = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = baseBuyUsd + fees + slippage;
   }
@@ -3532,7 +3548,7 @@ async function checkPlusSafetyBuy(
 
   let fees = 0, slippageVal = 0, netValue = buyUsd;
   if (mode === "simulation") {
-    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
     slippageVal = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = buyUsd + fees + slippageVal;
   }
@@ -3640,7 +3656,7 @@ async function closePlusCycle(
 
   let fees = 0, slippageVal = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
-    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
     slippageVal = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = sellValueUsd - fees - slippageVal;
   }
@@ -4503,7 +4519,7 @@ async function executeRecoveryEntry(
   // Simulation fees
   let fees = 0, slippage = 0, netValue = buyUsd;
   if (mode === "simulation") {
-    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
     slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = buyUsd + fees + slippage;
   }
@@ -4720,7 +4736,7 @@ async function checkRecoverySafetyBuy(
 
   let fees = 0, slippage = 0, netValue = buyUsd;
   if (mode === "simulation") {
-    fees = buyUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
     slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = buyUsd + fees + slippage;
   }
@@ -4810,7 +4826,7 @@ async function closeRecoveryCycle(
 
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
-    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
     slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = sellValueUsd - fees - slippage;
   }
@@ -4933,7 +4949,7 @@ export async function manualCloseCycle(cycleId: number): Promise<{
 
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
-    fees = sellValueUsd * (parseFloat(String(config.simulationFeePct)) / 100);
+    fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
     slippage = sellValueUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
     netValue = sellValueUsd - fees - slippage;
   }

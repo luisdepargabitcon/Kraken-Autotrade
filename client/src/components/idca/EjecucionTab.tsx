@@ -211,7 +211,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-slate-400">Fee compra / maker (%)</Label>
+              <Label className="text-xs text-slate-400">Fee maker (%)</Label>
               <Input
                 type="number" step="0.001" min="0" value={feeMakerPct}
                 onChange={(e) => setFeeMakerPct(e.target.value)}
@@ -219,7 +219,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-slate-400">Fee venta / taker (%)</Label>
+              <Label className="text-xs text-slate-400">Fee taker (%)</Label>
               <Input
                 type="number" step="0.001" min="0" value={feeTakerPct}
                 onChange={(e) => setFeeTakerPct(e.target.value)}
@@ -248,11 +248,11 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
           {/* Resumen estimado para 600 USD */}
           <div className="rounded-md bg-slate-800/40 border border-slate-700/40 p-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
             <div>
-              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee compra (600 USD)</div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee compra estimado</div>
               <div className="text-sm font-mono text-slate-200">${entryFeeEst.toFixed(3)}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee venta (600 USD)</div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee venta estimado</div>
               <div className="text-sm font-mono text-slate-200">${exitFeeEst.toFixed(3)}</div>
             </div>
             <div>
