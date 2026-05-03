@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Shield, Target, TrendingUp, AlertTriangle, Zap, Clock, Layers } from 'lucide-react';
-import { useUpdateAssetConfig } from '@/hooks/useInstitutionalDca';
+import { Shield, Target, TrendingUp, AlertTriangle, Zap, Clock, Layers, DollarSign, Info, Save } from 'lucide-react';
+import { useUpdateAssetConfig, useIdcaConfig, useUpdateIdcaConfig, useExchangeFeePresets } from '@/hooks/useInstitutionalDca';
+import { useToast } from '@/hooks/use-toast';
 
 interface EjecucionTabProps {
   pair: string;
@@ -24,15 +25,12 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
     slippageTolerancePct: 0.5,
     maxRetries: 3,
     retryDelayMs: 1000,
-    
     childOrderCount: 3,
     childOrderDelayMs: 500,
     minChildSizeUsd: 10,
-    
     twapDurationMinutes: 5,
     twapSliceCount: 10,
     twapVariancePct: 20,
-    
     adaptiveEnabled: true,
     volatilityThreshold: 2.0,
     volumeThreshold: 10000,
@@ -41,8 +39,72 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
   const [executionState, setExecutionState] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [feesSaving, setFeesSaving] = useState(false);
 
-  const updateConfig = useUpdateAssetConfig();
+  const updateAssetConfig = useUpdateAssetConfig();
+  const { data: idcaConfig } = useIdcaConfig();
+  const updateIdcaConfig = useUpdateIdcaConfig();
+  const { data: presetsData } = useExchangeFeePresets();
+  const { toast } = useToast();
+
+  const storedFees = (idcaConfig?.executionFeesJson as any) || null;
+  const [feeExchange, setFeeExchange] = useState<string>(storedFees?.exchange ?? "revolut_x");
+  const [feeMakerPct, setFeeMakerPct] = useState<string>(String(storedFees?.makerFeePct ?? "0.00"));
+  const [feeTakerPct, setFeeTakerPct] = useState<string>(String(storedFees?.takerFeePct ?? "0.09"));
+  const [feeModeDefault, setFeeModeDefault] = useState<string>(storedFees?.defaultFeeMode ?? "taker");
+  const [feeIncludeExitInPnl, setFeeIncludeExitInPnl] = useState<boolean>(storedFees?.includeExitFeeInNetPnlEstimate ?? true);
+  const [feeUseReal, setFeeUseReal] = useState<boolean>(storedFees?.useRealFeesWhenAvailable ?? true);
+
+  useEffect(() => {
+    if (storedFees) {
+      setFeeExchange(storedFees.exchange ?? "revolut_x");
+      setFeeMakerPct(String(storedFees.makerFeePct ?? "0.00"));
+      setFeeTakerPct(String(storedFees.takerFeePct ?? "0.09"));
+      setFeeModeDefault(storedFees.defaultFeeMode ?? "taker");
+      setFeeIncludeExitInPnl(storedFees.includeExitFeeInNetPnlEstimate ?? true);
+      setFeeUseReal(storedFees.useRealFeesWhenAvailable ?? true);
+    }
+  }, [idcaConfig?.id]);
+
+  const handleApplyPreset = (key: string) => {
+    const preset = presetsData?.presets?.[key];
+    if (!preset) return;
+    setFeeExchange(key);
+    setFeeMakerPct(String(preset.makerFeePct ?? "0.00"));
+    setFeeTakerPct(String(preset.defaultFeePct ?? "0.09"));
+    setFeeModeDefault(preset.defaultFeeMode ?? "taker");
+  };
+
+  const handleSaveFees = async () => {
+    setFeesSaving(true);
+    try {
+      await updateIdcaConfig.mutateAsync({
+        executionFeesJson: {
+          exchange: feeExchange,
+          makerFeePct: parseFloat(feeMakerPct) || 0,
+          takerFeePct: parseFloat(feeTakerPct) || 0.09,
+          defaultFeeMode: feeModeDefault,
+          includeEntryFeeInCostBasis: true,
+          includeExitFeeInNetPnlEstimate: feeIncludeExitInPnl,
+          useRealFeesWhenAvailable: feeUseReal,
+        },
+      });
+      toast({ title: "Fees guardados", description: "Costes Revolut X actualizados" });
+    } catch {
+      toast({ title: "Error al guardar fees", variant: "destructive" });
+    } finally {
+      setFeesSaving(false);
+    }
+  };
+
+  const refCapital = 600;
+  const takerPct = parseFloat(feeTakerPct) || 0.09;
+  const makerPct = parseFloat(feeMakerPct) || 0.0;
+  const activePct = feeModeDefault === "maker" ? makerPct : takerPct;
+  const entryFeeEst = (refCapital * activePct / 100);
+  const exitFeeEst = (refCapital * activePct / 100);
+  const roundTripEst = entryFeeEst + exitFeeEst;
+  const breakEvenNeeded = roundTripEst / refCapital * 100;
 
   useEffect(() => {
     // Simular obtención de estado de ejecución
@@ -101,22 +163,122 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
 
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
-      case 'critical': return 'text-red-600';
-      case 'high': return 'text-orange-600';
-      case 'medium': return 'text-yellow-600';
-      case 'low': return 'text-green-600';
-      default: return 'text-gray-600';
+      case 'critical': return 'text-red-400';
+      case 'high': return 'text-orange-400';
+      case 'medium': return 'text-yellow-400';
+      case 'low': return 'text-green-400';
+      default: return 'text-slate-400';
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Banner Roadmap */}
-      <Alert className="bg-blue-500/10 border-blue-500/30">
-        <AlertTriangle className="h-4 w-4 text-blue-500" />
-        <AlertDescription className="text-blue-200">
-          <strong>ROADMAP - Preview</strong>: Esta pestaña muestra el diseño futuro de configuración de ejecución. 
-          Actualmente no tiene endpoint backend, por lo que los cambios no se guardan ni afectan el runtime.
+
+      {/* ── Costes de ejecución — Revolut X (FUNCIONAL) ── */}
+      <Card className="border-cyan-500/30">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <DollarSign className="h-4 w-4 text-cyan-400" />
+            Costes de ejecución — Revolut X
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs text-slate-400">Exchange de ejecución</Label>
+              <Select value={feeExchange} onValueChange={(v) => { setFeeExchange(v); handleApplyPreset(v); }}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(presetsData?.presets ?? { revolut_x: { label: "Revolut X" }, kraken: { label: "Kraken" }, other: { label: "Otro" } }).map(([k, p]: any) => (
+                    <SelectItem key={k} value={k}>{p.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-slate-400">Modo fee por defecto</Label>
+              <Select value={feeModeDefault} onValueChange={setFeeModeDefault}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="taker">Taker (market orders)</SelectItem>
+                  <SelectItem value="maker">Maker (limit orders)</SelectItem>
+                  <SelectItem value="auto">Auto / conservador</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-slate-400">Fee compra / maker (%)</Label>
+              <Input
+                type="number" step="0.001" min="0" value={feeMakerPct}
+                onChange={(e) => setFeeMakerPct(e.target.value)}
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-slate-400">Fee venta / taker (%)</Label>
+              <Input
+                type="number" step="0.001" min="0" value={feeTakerPct}
+                onChange={(e) => setFeeTakerPct(e.target.value)}
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">Incluir fee de salida estimado en PnL abierto</div>
+                <div className="text-xs text-slate-400">El PnL no realizado mostrará estimación neta</div>
+              </div>
+              <Switch checked={feeIncludeExitInPnl} onCheckedChange={setFeeIncludeExitInPnl} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">Usar fees reales cuando existan en operación</div>
+                <div className="text-xs text-slate-400">Ciclos importados usan su fee real registrado</div>
+              </div>
+              <Switch checked={feeUseReal} onCheckedChange={setFeeUseReal} />
+            </div>
+          </div>
+
+          {/* Resumen estimado para 600 USD */}
+          <div className="rounded-md bg-slate-800/40 border border-slate-700/40 p-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee compra (600 USD)</div>
+              <div className="text-sm font-mono text-slate-200">${entryFeeEst.toFixed(3)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Fee venta (600 USD)</div>
+              <div className="text-sm font-mono text-slate-200">${exitFeeEst.toFixed(3)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Ida + vuelta</div>
+              <div className="text-sm font-mono text-amber-300">${roundTripEst.toFixed(3)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wide">Break-even mínimo</div>
+              <div className="text-sm font-mono text-cyan-300">{breakEvenNeeded.toFixed(3)}%</div>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500">Ajusta estos valores si tu plan/tarifa Revolut X cambia. Revolut X: maker 0%, taker 0.09%.</p>
+
+          <Button onClick={handleSaveFees} disabled={feesSaving} size="sm" className="w-full gap-2">
+            <Save className="h-3.5 w-3.5" />
+            {feesSaving ? "Guardando..." : "Guardar costes Revolut X"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Banner estrategia — preview */}
+      <Alert className="bg-slate-700/20 border-slate-700/40">
+        <Info className="h-4 w-4 text-slate-400" />
+        <AlertDescription className="text-slate-300">
+          <strong>Estrategia de ejecución — Preview</strong>: Los ajustes de estrategia (TWAP, Child Orders, Adaptive)
+          son visuales y no afectan el runtime actualmente. Se implementarán en una próxima versión.
         </AlertDescription>
       </Alert>
 
@@ -136,35 +298,35 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
                   {getStrategyIcon(executionState.currentStrategy)}
                   <span className="text-sm font-medium">Estrategia</span>
                 </div>
-                <div className="text-xs text-gray-500 capitalize">
+                <div className="text-xs text-slate-400 capitalize">
                   {executionState.currentStrategy}
                 </div>
               </div>
               <div className="text-center">
                 <div className="text-sm font-medium mb-2">Órdenes Activas</div>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-blue-400">
                   {executionState.activeOrders}
                 </div>
               </div>
               <div className="text-center">
                 <div className="text-sm font-medium mb-2">Ejecutadas Hoy</div>
-                <div className="text-2xl font-bold text-green-600">
+                <div className="text-2xl font-bold text-green-400">
                   {executionState.totalExecutedToday}
                 </div>
               </div>
               <div className="text-center">
                 <div className="text-sm font-medium mb-2">Tiempo Promedio</div>
-                <div className="text-2xl font-bold text-purple-600">
+                <div className="text-2xl font-bold text-purple-400">
                   {executionState.avgExecutionTime}ms
                 </div>
               </div>
             </div>
           )}
           
-          <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+          <div className="mt-4 p-3 bg-slate-800/40 rounded-lg border border-slate-700/40">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Slippage Acumulado:</span>
-              <span className={`text-sm font-bold ${executionState?.totalSlippage > 0.5 ? 'text-red-600' : 'text-green-600'}`}>
+              <span className={`text-sm font-bold ${executionState?.totalSlippage > 0.5 ? 'text-red-400' : 'text-green-400'}`}>
                 {executionState?.totalSlippage.toFixed(3)}%
               </span>
             </div>
@@ -188,7 +350,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
                 <Badge variant="outline" className="ml-2">
                   {diagnostics.recommendation}
                 </Badge>
-                <span className="text-sm text-gray-500 ml-2">
+                <span className="text-sm text-slate-400 ml-2">
                   ({getStrategyDescription(diagnostics.recommendation)})
                 </span>
               </div>
@@ -203,7 +365,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
                   <span className="text-sm font-medium">Factores de riesgo:</span>
                   <ul className="mt-1 space-y-1">
                     {diagnostics.riskFactors.map((factor: string, index: number) => (
-                      <li key={index} className="text-sm text-orange-600 flex items-center gap-2">
+                      <li key={index} className="text-sm text-orange-400 flex items-center gap-2">
                         <span className="w-1 h-1 bg-orange-600 rounded-full"></span>
                         {factor}
                       </li>
@@ -447,7 +609,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">Ajuste Adaptativo</div>
-                <div className="text-sm text-gray-500">Selecciona estrategia automáticamente</div>
+                <div className="text-sm text-slate-400">Selecciona estrategia automáticamente</div>
               </div>
               <Switch 
                 checked={localConfig.adaptiveEnabled}
@@ -497,16 +659,6 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
       </Alert>
 
       {/* Botones de acción */}
-      <div className="flex gap-4">
-        <Button
-          onClick={handleSave}
-          disabled={true}
-          className="flex-1"
-          variant="outline"
-        >
-          Preview - No disponible aún
-        </Button>
-      </div>
     </div>
   );
 };

@@ -63,6 +63,7 @@ export interface IdcaConfig {
   plusConfigJson: Record<string, any>;
   entryUiJson: Record<string, number> | null;
   telegramUiJson: Record<string, number> | null;
+  executionFeesJson: Record<string, any> | null;
   [key: string]: any;
 }
 

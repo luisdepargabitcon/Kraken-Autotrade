@@ -552,7 +552,16 @@ export async function startScheduler(): Promise<void> {
   const active = (config as any).schedulerActiveSeconds ?? 300;
   const protectedSec = (config as any).schedulerProtectedSeconds ?? 120;
 
-  console.log(`${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)`);
+  // ── Startup config log ──────────────────────────────────────────
+  const execFees = (config as any).executionFeesJson as any;
+  const entryUi = (config as any).entryUiJson as any;
+  const telegramUi = (config as any).telegramUiJson as any;
+  console.log(
+    `${TAG} Scheduler starting (adaptive: idle=${idle}s, active=${active}s, protected=${protectedSec}s)` +
+    ` | mode=${config.mode} | fees=${execFees ? `${execFees.exchange ?? "revolut_x"} taker=${execFees.takerFeePct ?? 0.09}%` : "default:revolut_x taker=0.09%"}` +
+    ` | entrySliders=${entryUi ? `patience=${entryUi.entryPatienceLevel ?? 70}` : "default"}` +
+    ` | telegramSliders=${telegramUi ? `freq=${telegramUi.telegramAlertFrequencyLevel ?? 85}` : "default"}`
+  );
   await loadAnchorsFromDb();
   // Reconstruct anti-spam Trailing Buy state from DB so ARMED is not re-sent after restart
   for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
@@ -726,8 +735,8 @@ async function runTick(): Promise<void> {
           .filter(e => e !== null)) as TrailingBuyDigestEntry[];
         if (digestEntries.length > 0) {
           telegram.sendTrailingBuyDigest(mode, digestEntries)
-            .catch(e2 => console.warn(`${TAG}[TELEGRAM] digest failed: ${(e2 as Error).message}`));
-          console.log(`${TAG}[TELEGRAM_DIGEST_SENT] mode=${mode} pairs=${digestEntries.map(e2 => e2.pair).join(",")}`);
+            .catch((e2: unknown) => console.warn(`${TAG}[TELEGRAM] digest failed: ${(e2 as Error).message}`));
+          console.log(`${TAG}[TELEGRAM_DIGEST_SENT] mode=${mode} pairs=${digestEntries.map(de => de.pair).join(",")}`);
         }
       }
     } catch (digestErr: any) {

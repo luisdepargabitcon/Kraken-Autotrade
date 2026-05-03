@@ -1022,6 +1022,7 @@ export const institutionalDcaConfig = pgTable("institutional_dca_config", {
   // Application defaults (entryPatienceLevel:70, etc.) are applied in IdcaSliderConfig.ts
   entryUiJson: jsonb("entry_ui_json"),              // EntryUiConfig — sliders de entrada
   telegramUiJson: jsonb("telegram_ui_json"),         // TelegramUiConfig — sliders de alertas
+  executionFeesJson: jsonb("execution_fees_json"),   // ExecutionFeesConfig — fees Revolut X / exchange
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

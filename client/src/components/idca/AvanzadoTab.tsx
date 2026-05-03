@@ -107,19 +107,19 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
 
   const getHealthColor = (status: string) => {
     switch (status) {
-      case 'healthy': return 'text-green-600';
-      case 'warning': return 'text-yellow-600';
-      case 'error': return 'text-red-600';
-      default: return 'text-gray-600';
+      case 'healthy': return 'text-green-400';
+      case 'warning': return 'text-yellow-400';
+      case 'error': return 'text-red-400';
+      default: return 'text-slate-400';
     }
   };
 
   const getHealthBadge = (status: string) => {
     switch (status) {
-      case 'healthy': return 'bg-green-100 text-green-800';
-      case 'warning': return 'bg-yellow-100 text-yellow-800';
-      case 'error': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'healthy': return 'bg-green-500/15 text-green-400';
+      case 'warning': return 'bg-yellow-500/15 text-yellow-400';
+      case 'error': return 'bg-red-500/15 text-red-400';
+      default: return 'bg-slate-700/50 text-slate-400';
     }
   };
 
@@ -319,10 +319,10 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
                     <span className="text-sm font-medium">Servicios:</span>
                     <div className="mt-2 space-y-2">
                       {systemHealth.services.map((service: any, index: number) => (
-                        <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <div key={index} className="flex items-center justify-between p-2 bg-slate-800/40 rounded border border-slate-700/40">
                           <span className="text-sm">{service.name}</span>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">{service.uptime}</span>
+                            <span className="text-xs text-slate-400">{service.uptime}</span>
                             <Badge className={getHealthBadge(service.status)}>
                               {service.status}
                             </Badge>
@@ -334,11 +334,11 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
                   
                   {systemHealth.warnings.length > 0 && (
                     <div>
-                      <span className="text-sm font-medium text-yellow-600">Advertencias:</span>
+                      <span className="text-sm font-medium text-yellow-400">Advertencias:</span>
                       <ul className="mt-1 space-y-1">
                         {systemHealth.warnings.map((warning: string, index: number) => (
-                          <li key={index} className="text-sm text-yellow-600 flex items-center gap-2">
-                            <span className="w-1 h-1 bg-yellow-600 rounded-full"></span>
+                          <li key={index} className="text-sm text-yellow-400 flex items-center gap-2">
+                            <span className="w-1 h-1 bg-yellow-400 rounded-full"></span>
                             {warning}
                           </li>
                         ))}
@@ -348,11 +348,11 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
                   
                   {systemHealth.errors.length > 0 && (
                     <div>
-                      <span className="text-sm font-medium text-red-600">Errores:</span>
+                      <span className="text-sm font-medium text-red-400">Errores:</span>
                       <ul className="mt-1 space-y-1">
                         {systemHealth.errors.map((error: string, index: number) => (
-                          <li key={index} className="text-sm text-red-600 flex items-center gap-2">
-                            <span className="w-1 h-1 bg-red-600 rounded-full"></span>
+                          <li key={index} className="text-sm text-red-400 flex items-center gap-2">
+                            <span className="w-1 h-1 bg-red-400 rounded-full"></span>
                             {error}
                           </li>
                         ))}
@@ -376,7 +376,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Logging Detallado</div>
-                  <div className="text-sm text-gray-500">Registra información detallada</div>
+                  <div className="text-sm text-slate-400">Registra información detallada</div>
                 </div>
                 <Switch 
                   checked={localConfig.enableDetailedLogging}
@@ -387,7 +387,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Métricas de Rendimiento</div>
-                  <div className="text-sm text-gray-500">Mide rendimiento del sistema</div>
+                  <div className="text-sm text-slate-400">Mide rendimiento del sistema</div>
                 </div>
                 <Switch 
                   checked={localConfig.enablePerformanceMetrics}
@@ -426,7 +426,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Diagnósticos del Sistema</div>
-                  <div className="text-sm text-gray-500">Alertas de salud y diagnóstico</div>
+                  <div className="text-sm text-slate-400">Alertas de salud y diagnóstico</div>
                 </div>
                 <Switch 
                   checked={localConfig.telegramDiagnosticsEnabled}
@@ -437,7 +437,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Reportes de Ejecución</div>
-                  <div className="text-sm text-gray-500">Notificaciones de órdenes ejecutadas</div>
+                  <div className="text-sm text-slate-400">Notificaciones de órdenes ejecutadas</div>
                 </div>
                 <Switch 
                   checked={localConfig.telegramExecutionReports}
@@ -448,7 +448,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Reportes de Estrategia de Salida</div>
-                  <div className="text-sm text-gray-500">Estado de protecciones y triggers</div>
+                  <div className="text-sm text-slate-400">Estado de protecciones y triggers</div>
                 </div>
                 <Switch 
                   checked={localConfig.telegramExitStrategyReports}
@@ -459,7 +459,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">Alertas de Contexto de Mercado</div>
-                  <div className="text-sm text-gray-500">Cambios significativos en mercado</div>
+                  <div className="text-sm text-slate-400">Cambios significativos en mercado</div>
                 </div>
                 <Switch 
                   checked={localConfig.telegramMarketContextAlerts}

@@ -1,5 +1,67 @@
 # Este archivo ha sido unificado con BITACORA.md
 
+---
+
+## 2026-05-XX — IDCA Auditoría y Refactor (Fases 1-11: UI + Fees + Telegram)
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Vite build**: OK — 3786 módulos
+- **Tests idcaExchangeFees**: 12/12 ✅
+
+### Bugs reales corregidos
+
+#### 1. UI — Fondos blancos / texto gris en tema oscuro
+- **EjecucionTab.tsx**: `bg-gray-50` → `bg-slate-800/40`, `text-gray-600/500` → `text-slate-400`, colores `-600` → `-400` (dark mode)
+- **AvanzadoTab.tsx**: `bg-green/yellow/red/gray-100 text-*-800` → `bg-*/15 text-*-400`, `text-gray-500` → `text-slate-400`
+- **EntradasTab.tsx**: `bg-yellow/gray-50 border-*-200` → `bg-*/10 border-*/30`, VWAP zone colors → dark variants
+
+#### 2. EjecucionTab — Sección fees Revolut X FUNCIONAL
+- Añadida tarjeta "Costes de ejecución — Revolut X" con selector exchange, maker/taker %, modo fee
+- Lee y guarda `executionFeesJson` en config global IDCA (backend + DB)
+- Resumen estimado de fees para 600 USD de referencia y break-even
+- Botón "Guardar" con feedback toast
+
+#### 3. Schema + DB — `execution_fees_json`
+- `shared/schema.ts`: añadido campo `executionFeesJson` a `institutionalDcaConfig`
+- `server/storage.ts`: migración 032 auto-run `ALTER TABLE ADD COLUMN IF NOT EXISTS execution_fees_json JSONB`
+- `useInstitutionalDca.ts`: interfaz `IdcaConfig` incluye `executionFeesJson`
+
+#### 4. PnL neto estimado en CycleCard
+- `InstitutionalDca.tsx CycleDetailRow`: muestra "neto ≈ +$X.XX" deduciendo fee de salida estimado (revolut_x 0.09%)
+- Configurable via `executionFeesJson.includeExitFeeInNetPnlEstimate` y `takerFeePct`
+
+#### 5. IdcaEngine — Log de startup config
+- `IdcaEngine.ts startScheduler()`: log compacto `[IDCA] mode= | fees= | entrySliders= | telegramSliders=`
+
+#### 6. Telegram — Bugfixes
+- `alertTrailingBuyExecuted`: función reconstruida (estaba corrupta / cuerpo faltante de sesión anterior)
+  - Guard fuerte: no envía si `cycleId` u `orderId` faltan
+  - Usa `resetTrailingBuyTelegramState("executed")` al enviar
+- `alertTrailingBuyLevel1Triggered`: convertido de Markdown a HTML (parseMode era HTML pero usaba `*bold*`)
+- `sendTrailingBuyDigest`: función añadida (faltaba, era llamada desde engine pero no existía)
+  - Usa `buildDigestMessage` de `IdcaTelegramAlertPolicy`
+
+#### 7. Tests nuevos
+- `idcaExchangeFees.test.ts`: 12 tests para fees Revolut X, cálculos, PnL neto estimado
+
+### Archivos modificados
+- `client/src/components/idca/EjecucionTab.tsx` (dark mode + fee config funcional)
+- `client/src/components/idca/AvanzadoTab.tsx` (dark mode)
+- `client/src/components/idca/EntradasTab.tsx` (dark mode)
+- `client/src/pages/InstitutionalDca.tsx` (PnL neto estimado en CycleDetailRow)
+- `client/src/hooks/useInstitutionalDca.ts` (executionFeesJson en IdcaConfig)
+- `shared/schema.ts` (executionFeesJson field)
+- `server/storage.ts` (migración 032)
+- `server/services/institutionalDca/IdcaEngine.ts` (startup log + fix digest catch)
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` (3 funciones Telegram)
+
+### Archivos nuevos
+- `server/services/__tests__/idcaExchangeFees.test.ts` (12 tests)
+
+### No requiere migración manual
+- La columna `execution_fees_json` se añade automáticamente al arrancar el contenedor
+
 Ver **BITACORA.md** para toda la documentación técnica y operativa del proyecto.
 
 ---

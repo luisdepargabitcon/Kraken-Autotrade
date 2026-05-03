@@ -1924,6 +1924,8 @@ export class DatabaseStorage implements IStorage {
         // institutional_dca_config — slider config (031)
         { table: 'institutional_dca_config', column: 'entry_ui_json', sql: 'ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS entry_ui_json JSONB' },
         { table: 'institutional_dca_config', column: 'telegram_ui_json', sql: 'ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS telegram_ui_json JSONB' },
+        // institutional_dca_config — execution fees Revolut X (032)
+        { table: 'institutional_dca_config', column: 'execution_fees_json', sql: 'ALTER TABLE institutional_dca_config ADD COLUMN IF NOT EXISTS execution_fees_json JSONB' },
 
         // open_positions columns
         { table: 'open_positions', column: 'lot_id', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS lot_id TEXT' },

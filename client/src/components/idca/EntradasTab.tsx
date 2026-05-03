@@ -84,11 +84,11 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
   // Get VWAP zone color
   const getVwapZoneColor = (zone?: string) => {
     switch (zone) {
-      case "deep_value": return "text-green-600 bg-green-50";
-      case "value": return "text-blue-600 bg-blue-50";
-      case "fair": return "text-yellow-600 bg-yellow-50";
-      case "overextended": return "text-red-600 bg-red-50";
-      default: return "text-gray-600 bg-gray-50";
+      case "deep_value": return "text-green-400 bg-green-500/10";
+      case "value": return "text-blue-400 bg-blue-500/10";
+      case "fair": return "text-yellow-400 bg-yellow-500/10";
+      case "overextended": return "text-red-400 bg-red-500/10";
+      default: return "text-slate-400 bg-slate-700/40";
     }
   };
 
@@ -463,8 +463,8 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                     key={level.level}
                     className={`p-3 rounded-lg border ${
                       level.isActive 
-                        ? 'bg-yellow-50 border-yellow-200' 
-                        : 'bg-gray-50 border-gray-200'
+                        ? 'bg-yellow-500/10 border-yellow-500/30' 
+                        : 'bg-slate-800/40 border-slate-700/40'
                     }`}
                   >
                     <div className="flex justify-between items-center">
@@ -482,7 +482,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
                         </div>
                       </div>
                       {level.isActive && (
-                        <Badge className="bg-yellow-100 text-yellow-800">
+                        <Badge className="bg-yellow-500/15 text-yellow-400">
                           ACTIVO
                         </Badge>
                       )}

@@ -2059,10 +2059,20 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const editImportedCycle = useEditImportedCycle();
   const setCycleStatus = useSetCycleStatus();
   const { data: assetConfigs } = useIdcaAssetConfigs();
+  const { data: idcaConfig } = useIdcaConfig();
   const { toast } = useToast();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
   const realizedPnl = parseFloat(String(cycle.realizedPnlUsd || "0"));
+
+  // Net PnL estimate: deduct estimated exit fee (Revolut X taker 0.09% default)
+  const execFees = (idcaConfig?.executionFeesJson as any) || null;
+  const includeExitFee = execFees?.includeExitFeeInNetPnlEstimate !== false;
+  const exitFeePct = execFees?.takerFeePct ?? 0.09;
+  const mktVal = parseFloat(String(cycle.totalQuantity || "0")) * parseFloat(String(cycle.currentPrice || "0"));
+  const exitFeeEstUsd = includeExitFee && mktVal > 0 ? mktVal * exitFeePct / 100 : 0;
+  const netPnlUsd = cycle.status !== "closed" ? pnlUsd - exitFeeEstUsd : pnlUsd;
+  const showNetPnl = includeExitFee && cycle.status !== "closed" && exitFeeEstUsd > 0;
 
   // ─── Exit strategy calculations ──────────────────────────────
   const assetCfg = assetConfigs?.find((a: any) => a.pair === cycle.pair);
@@ -2327,6 +2337,11 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
               {fmtPct(cycle.unrealizedPnlPct)}
               {cycle.status !== "closed" && <span className="text-[10px] opacity-80"> ({pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)})</span>}
             </div>
+            {showNetPnl && (
+              <div className={cn("text-[10px] font-mono", netPnlUsd >= 0 ? "text-green-300/80" : "text-red-300/80")} title={`PnL neto estimado: ${pnlUsd >= 0 ? "+" : ""}${fmtUsd(pnlUsd)} - ${fmtUsd(exitFeeEstUsd)} fee (${exitFeePct}%)`}>
+                neto ≈ {netPnlUsd >= 0 ? "+" : ""}{fmtUsd(netPnlUsd)}
+              </div>
+            )}
             {realizedPnl !== 0 && (
               <div className={cn("text-[10px] font-mono", realizedPnl >= 0 ? "text-green-300" : "text-red-300")}>
                 Realizado: {fmtUsd(realizedPnl)}
