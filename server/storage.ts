@@ -1860,6 +1860,7 @@ export class DatabaseStorage implements IStorage {
         { table: 'bot_config', column: 'last_log_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_log_purge_count INTEGER DEFAULT 0' },
         { table: 'bot_config', column: 'last_events_purge_at', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_at TIMESTAMP' },
         { table: 'bot_config', column: 'last_events_purge_count', sql: 'ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS last_events_purge_count INTEGER DEFAULT 0' },
+        { table: 'bot_config', column: 'smart_exit_config', sql: "ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS smart_exit_config jsonb NOT NULL DEFAULT '{}'::jsonb" },
         
         // institutional_dca_cycles — all import + manual cycle + exchange + fees columns
         { table: 'institutional_dca_cycles', column: 'cycle_type', sql: "ALTER TABLE institutional_dca_cycles ADD COLUMN IF NOT EXISTS cycle_type TEXT NOT NULL DEFAULT 'main'" },
