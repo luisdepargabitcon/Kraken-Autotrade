@@ -10,6 +10,7 @@ import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
+import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold } from "./IdcaEntryReferenceResolver";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
 import { idcaMigrationService } from "./IdcaMigrationService";
@@ -2522,11 +2523,12 @@ async function performEntryCheck(
     if (!isNaN(newSwingTs)) {
       const newSwingPrice = basePriceResult.price;
 
-      // Regla 1: resetear si precio supera la ancla
+      // Regla 1: resetear si precio supera la ancla CON HISTÉRESIS
       const currentAnchor = vwapAnchorMemory.get(pair);
-      if (currentAnchor && currentPrice > currentAnchor.anchorPrice) {
+      const resetThreshold = getAnchorResetThreshold(pair);
+      if (currentAnchor && currentPrice > currentAnchor.anchorPrice * (1 + resetThreshold)) {
         vwapAnchorMemory.delete(pair);
-        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — curPrice=${currentPrice.toFixed(2)} > anchor=${currentAnchor.anchorPrice.toFixed(2)}`);
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — curPrice=${currentPrice.toFixed(2)} > anchor=${currentAnchor.anchorPrice.toFixed(2)} * (1+${(resetThreshold*100).toFixed(2)}%)`);
         
         // Limpiar estado de trailing buy si la referencia cambia
         if (TrailingBuyManager.isArmed(pair)) {
@@ -2537,9 +2539,14 @@ async function performEntryCheck(
         tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
       }
 
-      // Regla 2: ancla solo sube, nunca baja
+      // Regla 2: ancla solo sube, nunca baja CON THRESHOLD Y COOLDOWN
       const anchorAfterReset = vwapAnchorMemory.get(pair);
-      if (!anchorAfterReset || newSwingPrice > anchorAfterReset.anchorPrice) {
+      const updateThreshold = getAnchorUpdateThreshold(pair);
+      const cooldownMs = getAnchorUpdateCooldown(pair);
+      const timeSinceUpdate = anchorAfterReset ? (Date.now() - anchorAfterReset.setAt) : Infinity;
+      const minPriceForUpdate = anchorAfterReset ? anchorAfterReset.anchorPrice * (1 + updateThreshold) : 0;
+
+      if (!anchorAfterReset || (newSwingPrice > minPriceForUpdate && timeSinceUpdate >= cooldownMs)) {
         vwapAnchorMemory.set(pair, {
           anchorPrice: newSwingPrice,
           anchorTimestamp: newSwingTs,
@@ -2557,6 +2564,12 @@ async function performEntryCheck(
             replacedAt:      Date.now(),
           } : undefined,
         });
+      } else if (newSwingPrice > anchorAfterReset?.anchorPrice && timeSinceUpdate < cooldownMs) {
+        // Log debug compacto cuando se salta update por cooldown
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE (cooldown) — newSwing=${newSwingPrice.toFixed(2)} > anchor=${anchorAfterReset.anchorPrice.toFixed(2)} but timeSince=${Math.round(timeSinceUpdate/60000)}m < ${Math.round(cooldownMs/60000)}m`);
+      } else if (newSwingPrice <= minPriceForUpdate && anchorAfterReset) {
+        // Log debug compacto cuando se salta update por threshold
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE (threshold) — newSwing=${newSwingPrice.toFixed(2)} <= min=${minPriceForUpdate.toFixed(2)} (anchor=${anchorAfterReset.anchorPrice.toFixed(2)} * 1+${(updateThreshold*100).toFixed(2)}%)`);
       }
 
       // Actualizar drawdown acumulado
@@ -2648,22 +2661,19 @@ async function performEntryCheck(
   }
 
   // ── Effective base price: VWAP Anchor manda, Hybrid V2.1 es fallback ──
-  // Si VWAP Anchored está activo y es fiable, usa frozenAnchorPrice
-  // Si NO, usa Hybrid V2.1 como fallback
-  const vwapAnchorAvailable = assetConfig.vwapEnabled && frozenAnchor?.anchorPrice && frozenAnchor.anchorPrice > 0;
-  
-  let effectiveBasePrice: number;
-  let basePriceMethod: string;
+  // Usar función canónica para resolver la referencia efectiva de entrada
+  const refResult = resolveEffectiveEntryReference({
+    pair,
+    currentPrice,
+    basePriceResult,
+    frozenAnchor,
+    vwapContext,
+    vwapEnabled: assetConfig.vwapEnabled,
+    now: typeof now === "number" ? now : Date.now(),
+  });
 
-  if (vwapAnchorAvailable) {
-    // VWAP Anchor es la referencia principal cuando está activo y fiable
-    effectiveBasePrice = frozenAnchor.anchorPrice;
-    basePriceMethod = "vwap_anchor";
-  } else {
-    // Hybrid V2.1 como fallback si VWAP Anchor no está disponible o no es fiable
-    effectiveBasePrice = basePriceResult.price;
-    basePriceMethod = "hybrid_v2_fallback";
-  }
+  const effectiveBasePrice = refResult.effectiveEntryReference;
+  const basePriceMethod = refResult.effectiveReferenceSource;
 
   const entryDipPct = effectiveBasePrice > 0
     ? ((effectiveBasePrice - currentPrice) / effectiveBasePrice) * 100
@@ -2850,6 +2860,18 @@ async function performEntryCheck(
     monthlyBias,
     entrySource: trailingBuyEntry ? "trailing_buy" : "normal",
     dipValidatedBy: trailingBuyEntry ? "localLow" : "currentPrice",
+    // Campos adicionales del resolver canónico
+    technicalBasePrice: refResult.technicalBasePrice,
+    technicalBaseType: refResult.technicalBaseType,
+    technicalBaseReason: refResult.technicalBaseReason,
+    technicalBaseTimestamp: refResult.technicalBaseTimestamp,
+    frozenAnchorPrice: refResult.frozenAnchorPrice,
+    frozenAnchorTs: refResult.frozenAnchorTs,
+    frozenAnchorAgeHours: refResult.frozenAnchorAgeHours,
+    previousAnchor: refResult.previousAnchor,
+    atrPct: refResult.atrPct,
+    referenceChangedRecently: refResult.referenceChangedRecently,
+    referenceUpdatedAt: refResult.referenceUpdatedAt,
   };
 }
 

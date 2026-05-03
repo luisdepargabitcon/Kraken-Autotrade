@@ -227,6 +227,24 @@ export interface IdcaEntryCheckResult {
   monthlyBias?: "aggressive" | "balanced" | "defensive" | "unknown";
   entrySource?: "normal" | "trailing_buy";
   dipValidatedBy?: "currentPrice" | "localLow";
+  // Campos adicionales del resolver canónico
+  technicalBasePrice?: number;
+  technicalBaseType?: string;
+  technicalBaseReason?: string;
+  technicalBaseTimestamp?: string;
+  frozenAnchorPrice?: number;
+  frozenAnchorTs?: number;
+  frozenAnchorAgeHours?: number;
+  previousAnchor?: {
+    anchorPrice: number;
+    anchorTimestamp: number;
+    setAt?: number;
+    replacedAt?: number;
+    invalidationReason?: string;
+  };
+  atrPct?: number;
+  referenceChangedRecently?: boolean;
+  referenceUpdatedAt?: string;
 }
 
 export interface IdcaPairEvaluation {

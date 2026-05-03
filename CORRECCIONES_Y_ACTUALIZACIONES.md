@@ -2,6 +2,140 @@
 
 ---
 
+## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto (commit pendiente)
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Vite build**: OK — 3788 módulos
+- **Tests idcaEntryReferenceResolver**: 14/14 ✅
+- **Git**: commit pendiente, push a origin/main
+
+### Funcionalidad implementada
+
+#### 1. Función canónica de resolución de referencia
+- `server/services/institutionalDca/IdcaEntryReferenceResolver.ts`: nueva función `resolveEffectiveEntryReference()`
+- Devuelve `EffectiveEntryReferenceResult` con:
+  - `effectiveEntryReference`: referencia efectiva real (frozenAnchor o Hybrid V2.1 fallback)
+  - `effectiveReferenceSource`: "vwap_anchor" o "hybrid_v2_fallback"
+  - `effectiveReferenceLabel`: "VWAP Anclado" o "Hybrid V2.1"
+  - `technicalBasePrice`: base técnica Hybrid V2.1 (siempre presente)
+  - `technicalBaseType`: tipo de base técnica
+  - `frozenAnchorPrice`, `frozenAnchorTs`, `frozenAnchorAgeHours`: detalles del anchor
+  - `previousAnchor`: anchor anterior invalidado
+  - `atrPct`: volatilidad ATR
+  - `referenceChangedRecently`: true si cambió hace <24h
+  - `referenceUpdatedAt`: timestamp de último cambio
+
+#### 2. Constantes de robustez de anchor
+- `ANCHOR_UPDATE_THRESHOLDS`: BTC 0.35%, ETH 0.50%, default 1.00%
+- `ANCHOR_UPDATE_COOLDOWNS`: BTC/ETH 6h, default 12h
+- `ANCHOR_RESET_THRESHOLDS`: BTC 0.25%, ETH 0.35%, default 0.75%
+- Funciones helper: `getAnchorUpdateThreshold()`, `getAnchorUpdateCooldown()`, `getAnchorResetThreshold()`
+
+#### 3. Integración en Engine
+- `IdcaEngine.ts performEntryCheck()`: usa `resolveEffectiveEntryReference()` en lugar de lógica duplicada
+- Reglas de actualización de anchor mejoradas:
+  - **Histéresis en reset**: solo resetea si `currentPrice > anchor * (1 + resetThreshold)`
+  - **Threshold en update**: solo actualiza si `newSwingPrice > anchor * (1 + updateThreshold)`
+  - **Cooldown en update**: solo actualiza si `timeSinceUpdate >= cooldown`
+  - Logs debug compactos cuando se salta update por cooldown o threshold
+- Campos adicionales en `IdcaEntryCheckResult`: technicalBasePrice, technicalBaseType, previousAnchor, atrPct, referenceChangedRecently, referenceUpdatedAt
+
+#### 4. Actualización de tipos
+- `IdcaTypes.ts`: añadidos campos a `IdcaEntryCheckResult` para incluir todos los campos del resolver canónico
+
+#### 5. Tests
+- `server/services/__tests__/idcaEntryReferenceResolver.test.ts`: 14 tests
+  - Tests de resolución de referencia con frozenAnchor
+  - Tests de fallback a Hybrid V2.1
+  - Tests de referenceChangedRecently
+  - Tests de previousAnchor
+  - Tests de thresholds y cooldowns por par
+
+### Fases pendientes (para próxima sesión)
+- FASE 3: Usar misma referencia en Contexto de mercado / Resumen
+- FASE 4: Corregir "Parcial: falta VWAP" en UI
+- FASE 5: Documentar rol correcto de VWAP y ATR
+- FASE 7: Verificar/corregir rehidratación de previous desde DB
+- FASE 8: Frontend UI clara en Resumen (referencia efectiva + base técnica)
+- FASE 9: Eventos coherencia visual con Resumen
+
+---
+
+## 2026-05-03 — IDCA: Botón manual para desactivar TimeStop por ciclo (commit 6b82c7a)
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Vite build**: OK — 3788 módulos
+- **Tests idcaTimeStop**: 5/5 ✅
+- **Git**: commit 6b82c7a, push a origin/main
+
+### Funcionalidad implementada
+
+#### 1. Schema + DB — `exit_overrides_json`
+- `shared/schema.ts`: añadido campo `exitOverridesJson` JSONB a `institutionalDcaCycles`
+- `db/migrations/032_idca_exit_overrides.sql`: migración para añadir columna (idempotente con IF NOT EXISTS)
+- Shape: `{ timeStopDisabled: bool, timeStopDisabledAt: ISO, timeStopDisabledBy: "manual" }`
+
+#### 2. Engine — Check de TimeStop en manageCycle
+- `IdcaEngine.ts manageCycle()`: añadido check de duración máxima para ciclos principales (no recovery)
+- Lee `assetConfig.maxCycleDurationHours` y calcula edad del ciclo
+- Si supera duración y `timeStopDisabled=false` → cierra con `executeExit({ exitType: "max_duration_reached" })`
+- Si `timeStopDisabled=true` → llama `logTimeStopIgnoredOnce` (anti-spam 24h)
+- Función `logTimeStopIgnoredOnce`: crea evento humanizado con cooldown 24h por ciclo
+
+#### 3. API — PATCH /cycles/:id/time-stop
+- `institutionalDca.routes.ts`: endpoint para toggle manual de TimeStop
+- Body: `{ "disabled": true|false }`
+- Actualiza `exitOverridesJson` en DB
+- Crea evento `cycle_management` en `institutional_dca_events`
+- Envía alerta Telegram (`alertTimeStopDisabled` o `alertTimeStopEnabled`)
+
+#### 4. Frontend — Botón + Badge en CycleCard
+- `useInstitutionalDca.ts`: hook `useToggleTimeStop` (sigue patrón `useToggleSoloSalida`)
+- `InstitutionalDca.tsx CycleDetailRow`:
+  - Parsea `exitOverridesJson` para determinar `timeStopDisabled`
+  - Badge "TimeStop desactivado" cuando está activo (color amber)
+  - Barra de progreso de duración cambia a amber cuando desactivado
+  - Botón "Desactivar duración" / "Reactivar duración"
+  - Dialogo de confirmación al desactivar (sin confirmación al reactivar)
+  - Icono Timer añadido a imports lucide-react
+
+#### 5. Telegram — Alertas de toggle
+- `IdcaTelegramNotifier.ts`:
+  - `alertTimeStopDisabled(cycle)`: envía mensaje con ciclo #ID, modo, estado, duración actual
+  - `alertTimeStopEnabled(cycle)`: envía mensaje de reactivación
+  - Ambas usan `canSend("cycle_management")`
+
+#### 6. Tests
+- `server/services/__tests__/idcaTimeStop.test.ts`: 5 tests básicos
+  - Parseo de JSON string
+  - Parseo de object
+  - Manejo de null/undefined
+  - Determinación de timeStopDisabled
+  - Cálculo de cooldown 24h
+
+### Archivos nuevos
+- `db/migrations/032_idca_exit_overrides.sql`
+- `server/services/__tests__/idcaTimeStop.test.ts`
+
+### Archivos modificados
+- `shared/schema.ts` (exitOverridesJson)
+- `server/services/institutionalDca/IdcaEngine.ts` (manageCycle + logTimeStopIgnoredOnce)
+- `server/routes/institutionalDca.routes.ts` (endpoint PATCH /cycles/:id/time-stop)
+- `client/src/hooks/useInstitutionalDca.ts` (useToggleTimeStop)
+- `client/src/pages/InstitutionalDca.tsx` (botón + badge + dialogo + Timer icon)
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` (alertTimeStopDisabled/Enabled)
+
+### Notas de implementación
+- TimeStop para ciclos principales NO estaba implementado anteriormente (solo definido pero no usado)
+- Recovery cycles tienen su propio check en `manageRecoveryCycle`, no afectado
+- El override es persistente (se guarda en DB) y sobrevive reinicios
+- Anti-spam en engine: solo loguea "TimeStop ignorado" una vez cada 24h por ciclo
+- Confirmación de seguridad en frontend solo al desactivar (no al reactivar)
+
+---
+
 ## 2026-05-XX — IDCA Auditoría y Refactor (Fases 1-11: UI + Fees + Telegram)
 
 ### Estado final verificado (LOCAL)
