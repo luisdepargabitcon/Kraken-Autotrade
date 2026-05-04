@@ -2,6 +2,61 @@
 
 ---
 
+## 2026-05-05 — feat(idca): referenceContext enriquecido con fiabilidad VWAP, motivos y estado de ancla
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Tests (41 en 3 suites)**: ✅ 19/19 nuevos + 22 existentes
+
+### Archivos nuevos
+- **`server/services/institutionalDca/IdcaReferenceContext.ts`**
+  - Tipos exportados: `VwapReliabilityStatus` (17 valores), `AnchorStatus`, `ReferenceSource`, `VwapReliability`, `ReferenceContext`
+  - Constantes: `MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT=24`, `ANCHOR_STALE_HOURS=72`, `ANCHOR_VERY_STALE_HOURS=168`
+  - `getVwapReliabilityReason(status, details?)` — 18 motivos humanos para VWAP no usado/usado
+  - `buildReferenceContext(input)` — construye el contexto enriquecido (solo metadata, NO altera trading)
+- **`server/services/__tests__/idcaReferenceContext.test.ts`** — 19 tests
+
+### Backend modificado
+- **`server/services/institutionalDca/IdcaTypes.ts`**: `referenceContext?: ReferenceContext` añadido a `IdcaEntryCheckResult`
+- **`server/services/institutionalDca/IdcaEngine.ts`**:
+  - Import de `buildReferenceContext, MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT`
+  - El bloque `REFERENCE_CONTEXT`+`ANCHOR_METADATA_WARNING` usa ahora el builder enriquecido
+  - Log `[REFERENCE_CONTEXT]` incluye: `source`, `label`, `vwapUsed`, `vwapStatus`, `usableForEntry`, `anchorAgeHours`, `reason`
+  - Log `[ANCHOR_METADATA_WARNING]` incluye: `vwapStatus`, `candlesUsed`, `minRequired`, `reason`
+  - `referenceContext` añadido al return de `checkEntryConditions` y al payload de `entry_check_blocked`
+- **`server/services/institutionalDca/IdcaMarketContextService.ts`**:
+  - Import de `buildReferenceContext, ReferenceContext`
+  - `referenceContext?: ReferenceContext` añadido a `MarketContext` interface
+  - `buildReferenceContext()` llamado en `getMarketContext` y `getPreviewContext`
+- **`server/routes/institutionalDca.routes.ts`**:
+  - `/market-context/preview/:pair` y `/market-context/preview` exponen `referenceContext`
+
+### Frontend modificado
+- **`client/src/hooks/useInstitutionalDca.ts`**:
+  - Nuevas interfaces `IdcaVwapReliability` e `IdcaReferenceContext`
+  - `referenceContext?: IdcaReferenceContext | null` añadido a `MarketContextPreview`
+- **`client/src/components/idca/IdcaMarketContextCard.tsx`** (DetailPanel "Ref. Efectiva"):
+  - Badge de fuente: verde (VWAP activo) / ámbar (VWAP stale/no usado) / azul (Hybrid V2.1)
+  - "Motivo" row con `referenceReason`
+  - "VWAP no usado" row con `vwapRejectReason` cuando aplica
+- **`client/src/components/idca/IdcaEventCards.tsx`** (VWAP Anchor Panel):
+  - Import de `IdcaReferenceContext` type
+  - `referenceContext?: IdcaReferenceContext | null` añadido a `ParsedPayload`
+  - Sección "Motivo:" con `referenceReason` (fallback: "Motivo no disponible")
+  - Sección "Fiabilidad:" (cian) si vwapUsed=true, o "VWAP no usado:" (ámbar) si vwapUsed=false
+
+### Casos cubiertos (8 casos del spec)
+1. VWAP usado — ancla activa < 72h
+2. VWAP usado — ancla antigua > 72h (stale, warning visual)
+3. VWAP usado — TB armado (locked)
+4. Hybrid porque VWAP no habilitado
+5. Hybrid porque no hay ancla VWAP (missing_anchor)
+6. Hybrid porque pocas velas (insufficient_candles con candleCount)
+7. Hybrid porque VWAP cálculo falló (calculation_error)
+8. Unknown (fallback seguro)
+
+---
+
 ## 2026-05-05 — IDCA Hotfix Audit II: endpoint config/effective + doble prefijo + fecha ancla uniforme
 
 ### Estado final verificado (LOCAL)

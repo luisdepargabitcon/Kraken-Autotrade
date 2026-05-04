@@ -226,14 +226,14 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
             {sourceLabel}
             {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
           </div>
-          {/* Fecha/edad del ancla \u2014 uniforme BTC y ETH */}
+          {/* Fecha/edad del ancla — uniforme BTC y ETH */}
           {data.frozenAnchorTs ? (
             <div className="text-[9px] text-muted-foreground/50 font-mono">
               Fijada: {new Date(data.frozenAnchorTs).toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}{" "}
               {new Date(data.frozenAnchorTs).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
               {data.frozenAnchorAgeHours != null && (
                 <span className={data.frozenAnchorAgeHours > 168 ? " text-amber-400/70" : ""}>
-                  {" "}\u00b7 hace {data.frozenAnchorAgeHours > 48
+                  {" "}· hace {data.frozenAnchorAgeHours > 48
                     ? `${(data.frozenAnchorAgeHours / 24).toFixed(1)}d`
                     : `${data.frozenAnchorAgeHours.toFixed(1)}h`}
                 </span>
@@ -246,6 +246,37 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           ) : (
             <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
           )}
+          {/* Badge de fuente + Motivo + VWAP no usado */}
+          {data.referenceContext && (() => {
+            const rc = data.referenceContext!;
+            const isVwap   = rc.vwapUsed;
+            const isStale  = rc.anchorStatus === "stale";
+            const isHybrid = rc.referenceSource === "hybrid_v2" || rc.referenceSource === "hybrid_fallback";
+            const badgeCls = isVwap && !isStale
+              ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20"
+              : isVwap && isStale
+                ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
+                : isHybrid
+                  ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
+                  : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
+            return (
+              <div className="mt-0.5 space-y-0.5">
+                <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${badgeCls}`}>
+                  {rc.referenceLabel}
+                </div>
+                {rc.referenceReason && (
+                  <div className="text-[8px] text-muted-foreground/50 font-mono leading-tight">
+                    {rc.referenceReason}
+                  </div>
+                )}
+                {!rc.vwapUsed && rc.vwapRejectReason && (
+                  <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
+                    {rc.vwapRejectReason}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">Actual</div>

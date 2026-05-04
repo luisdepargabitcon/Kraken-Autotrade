@@ -269,6 +269,46 @@ export interface MarketContextQualityDetail {
   hasAtrp: boolean;
 }
 
+export interface IdcaVwapReliability {
+  usableForEntry: boolean;
+  usableForContext: boolean;
+  status: string;
+  reason: string;
+  candlesUsed?: number;
+  minCandlesRequired?: number;
+  anchorAgeHours?: number;
+  volumeQualityScore?: number;
+  divergencePctVsHybrid?: number;
+  checkedAt?: string;
+}
+
+export interface IdcaReferenceContext {
+  pair: string;
+  effectiveEntryReference: number;
+  referenceSource: "vwap_anchor" | "smart_anchor" | "hybrid_v2" | "hybrid_fallback" | "manual_imported" | "unknown";
+  referenceLabel: string;
+  referenceReason: string;
+  vwapUsed: boolean;
+  vwapReliability: IdcaVwapReliability;
+  vwapStatus: string;
+  vwapRejectReason: string | null;
+  hybridCandidatePrice: number | null;
+  hybridCandidateMethod: string | null;
+  hybridReason: string | null;
+  anchorPrice: number | null;
+  anchorTimestamp: string | null;
+  anchorUpdatedAt: string | null;
+  anchorAgeHours: number | null;
+  anchorStatus: "active" | "stale" | "locked" | "fallback" | "imported" | "unknown";
+  anchorReason: string;
+  previousAnchor: {
+    anchorPrice: number;
+    anchorTimestamp: number;
+    replacedAt?: number;
+    invalidationReason?: string;
+  } | null;
+}
+
 export interface MarketContextPreview {
   pair: string;
   anchorPrice: number;
@@ -297,6 +337,7 @@ export interface MarketContextPreview {
   frozenAnchorCandleAgeHours?: number;
   referenceChangedRecently: boolean;
   referenceUpdatedAt?: string;
+  referenceContext?: IdcaReferenceContext | null;
 }
 
 export interface IdcaSummary {

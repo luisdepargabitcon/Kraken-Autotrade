@@ -14,6 +14,7 @@
 import { MarketDataService } from "../MarketDataService";
 import { computeVwapAnchored, getVwapBandPosition, OhlcCandle, computeATR, computeATRPct, computeBasePrice, type VwapResult } from "./IdcaSmartLayer";
 import { resolveEffectiveEntryReference, type VwapAnchorState } from "./IdcaEntryReferenceResolver";
+import { buildReferenceContext, type ReferenceContext } from "./IdcaReferenceContext";
 import type { BasePriceResult } from "./IdcaTypes";
 import { getAssetConfig, getVwapAnchor } from "./IdcaRepository";
 
@@ -52,6 +53,7 @@ export interface MarketContext {
   frozenAnchorCandleAgeHours?: number;
   referenceChangedRecently: boolean;
   referenceUpdatedAt?: string;
+  referenceContext?: ReferenceContext;
 
   // Metadata
   pair: string;
@@ -326,6 +328,14 @@ class IdcaMarketContextService {
       frozenAnchorCandleAgeHours: refResult.frozenAnchorCandleAgeHours,
       referenceChangedRecently: refResult.referenceChangedRecently,
       referenceUpdatedAt: refResult.referenceUpdatedAt,
+      referenceContext: buildReferenceContext({
+        pair,
+        refResult,
+        basePriceResult,
+        vwapEnabled,
+        frozenAnchor,
+        vwapContext: vwap ? { isReliable: vwap.isReliable, candlesUsed: (vwap as any).candlesUsed } as any : undefined,
+      }),
       pair,
       dataQuality,
       lastUpdated: now,
@@ -397,6 +407,7 @@ class IdcaMarketContextService {
     frozenAnchorCandleAgeHours?: number;
     referenceChangedRecently: boolean;
     referenceUpdatedAt?: string;
+    referenceContext?: ReferenceContext;
   }> {
     const context = await this.getMarketContext(pair);
     return {
@@ -426,6 +437,7 @@ class IdcaMarketContextService {
       frozenAnchorCandleAgeHours: context.frozenAnchorCandleAgeHours,
       referenceChangedRecently: context.referenceChangedRecently,
       referenceUpdatedAt: context.referenceUpdatedAt,
+      referenceContext: context.referenceContext,
     };
   }
 }

@@ -246,6 +246,7 @@ export interface IdcaEntryCheckResult {
   atrPct?: number;
   referenceChangedRecently?: boolean;
   referenceUpdatedAt?: string;
+  referenceContext?: import("./IdcaReferenceContext").ReferenceContext;
 }
 
 export interface IdcaPairEvaluation {

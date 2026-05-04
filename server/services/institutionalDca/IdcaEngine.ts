@@ -12,6 +12,7 @@ import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSe
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
 import * as smart from "./IdcaSmartLayer";
 import { resolveEffectiveEntryReference, type EffectiveEntryReferenceResult, getAnchorUpdateThreshold, getAnchorUpdateCooldown, getAnchorResetThreshold, shouldUpdateAnchor, shouldResetAnchor } from "./IdcaEntryReferenceResolver";
+import { buildReferenceContext, type ReferenceContext, MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT } from "./IdcaReferenceContext";
 import { OhlcCandle, computeATRPct } from "./IdcaSmartLayer";
 import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./IdcaMessageFormatter";
 import { idcaMigrationService } from "./IdcaMigrationService";
@@ -1354,6 +1355,7 @@ async function checkEntry(
           frozenAnchorAgeHours: frozenAnchor ? Math.round((Date.now() - frozenAnchor.setAt) / 36000) / 100 : null,
           drawdownFromAnchorPct: frozenAnchor?.drawdownPct ?? null,
           frozenAnchorPrevious: frozenAnchor?.previous ?? null,
+          referenceContext: check.referenceContext ?? null,
           buyTriggerPrice,
           distToBuyPct,
           trailingBuyArmed,
@@ -2742,26 +2744,41 @@ async function performEntryCheck(
   const minDip = sliderDerivedEntry.effectiveMinDipPct;
   console.log(`${TAG}[EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
 
-  // FASE 7: Log REFERENCE_CONTEXT para auditabilidad del ancla
-  const _anchorTsMs = refResult.frozenAnchorTs ?? null;
-  const _anchorTsIso = _anchorTsMs ? new Date(_anchorTsMs).toISOString() : null;
-  if (_anchorTsIso) {
-    console.log(
-      `${TAG}[REFERENCE_CONTEXT]` +
-      ` pair=${pair}` +
-      ` effectiveEntryReference=${effectiveBasePrice.toFixed(2)}` +
-      ` referenceSource=${basePriceMethod}` +
-      ` anchorTimestamp=${_anchorTsIso}` +
-      ` anchorAgeHours=${(refResult.frozenAnchorAgeHours ?? 0).toFixed(1)}` +
-      ` fallbackUsed=false`
-    );
-  } else {
+  // Construir referenceContext enriquecido (solo metadata — no altera trading logic)
+  const referenceContext: ReferenceContext = buildReferenceContext({
+    pair,
+    refResult,
+    basePriceResult,
+    vwapEnabled: assetConfig.vwapEnabled,
+    frozenAnchor,
+    vwapContext,
+    minCandlesForEntry: MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT,
+    hasActiveCycle: false,
+    trailingArmed: TrailingBuyManager.isArmed(pair),
+  });
+
+  console.log(
+    `${TAG}[REFERENCE_CONTEXT]` +
+    ` pair=${pair}` +
+    ` source=${referenceContext.referenceSource}` +
+    ` label="${referenceContext.referenceLabel}"` +
+    ` vwapUsed=${referenceContext.vwapUsed}` +
+    ` vwapStatus=${referenceContext.vwapStatus}` +
+    ` usableForEntry=${referenceContext.vwapReliability.usableForEntry}` +
+    ` effectiveEntryReference=${effectiveBasePrice.toFixed(2)}` +
+    ` anchorAgeHours=${referenceContext.anchorAgeHours?.toFixed(1) ?? "n/a"}` +
+    ` reason="${referenceContext.referenceReason}"`
+  );
+
+  if (!referenceContext.vwapUsed && referenceContext.vwapRejectReason) {
     console.warn(
       `${TAG}[ANCHOR_METADATA_WARNING]` +
       ` pair=${pair}` +
-      ` source=${basePriceMethod}` +
-      ` reason=missing_anchor_timestamp` +
-      ` fallbackChecked=frozenAnchorTs,basePriceTimestamp,selectedAnchorTime`
+      ` source=${referenceContext.referenceSource}` +
+      ` vwapStatus=${referenceContext.vwapStatus}` +
+      ` candlesUsed=${referenceContext.vwapReliability.candlesUsed ?? "n/a"}` +
+      ` minRequired=${referenceContext.vwapReliability.minCandlesRequired}` +
+      ` reason="${referenceContext.vwapRejectReason}"`
     );
   }
 
@@ -2954,6 +2971,7 @@ async function performEntryCheck(
     atrPct: refResult.atrPct,
     referenceChangedRecently: refResult.referenceChangedRecently,
     referenceUpdatedAt: refResult.referenceUpdatedAt,
+    referenceContext,
   };
 }
 

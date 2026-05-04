@@ -15,6 +15,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { IdcaReferenceContext } from "@/hooks/useInstitutionalDca";
 
 // ════════════════════════════════════════════════════════════════════
 // VISUAL CATALOG — cada eventType tiene su identidad visual
@@ -107,6 +108,7 @@ interface ParsedPayload {
   trailingBuyArmed?: boolean;
   trailingBuyLocalLow?: number;
   trailingBuyTriggerAt?: number;
+  referenceContext?: IdcaReferenceContext | null;
   [key: string]: any;
 }
 
@@ -1053,6 +1055,27 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                           </div>
                         ) : (
                           <div className="text-muted-foreground/50 italic">Fecha no disponible</div>
+                        )}
+
+                        {/* Motivo y fiabilidad VWAP — enriquecido */}
+                        {parsed.referenceContext ? (
+                          <>
+                            <div className="mt-1 pt-1 border-t border-white/5">
+                              <span className="text-muted-foreground/60">Motivo: </span>
+                              {parsed.referenceContext.referenceReason ?? "Motivo no disponible"}
+                            </div>
+                            {parsed.referenceContext.vwapUsed ? (
+                              <div className="text-cyan-400/70">
+                                {parsed.referenceContext.vwapReliability?.reason}
+                              </div>
+                            ) : parsed.referenceContext.vwapRejectReason ? (
+                              <div className="text-amber-400/80">
+                                {parsed.referenceContext.vwapRejectReason}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="text-muted-foreground/40 italic text-[10px] mt-1">Motivo no disponible</div>
                         )}
 
                         {parsed.drawdownFromAnchorPct != null && (

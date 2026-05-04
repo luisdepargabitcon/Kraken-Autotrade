@@ -1128,6 +1128,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         lastUpdated: preview.lastUpdated.toISOString(),
         anchorPriceUpdatedAt: preview.anchorPriceUpdatedAt.toISOString(),
         qualityDetail: preview.qualityDetail,
+        referenceContext: preview.referenceContext ?? null,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1166,6 +1167,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         frozenAnchorCandleAgeHours: r.frozenAnchorCandleAgeHours,
         referenceChangedRecently: r.referenceChangedRecently,
         referenceUpdatedAt: r.referenceUpdatedAt,
+        referenceContext: r.referenceContext ?? null,
       }));
       res.json(previews);
     } catch (e: any) {
