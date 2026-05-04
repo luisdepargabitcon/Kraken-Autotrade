@@ -301,6 +301,10 @@ export interface MarketContextPreview {
 
 export interface IdcaSummary {
   mode: string;
+  schedulerMode?: string;
+  liveCyclesCount?: number;
+  liveCapitalUsedUsd?: number;
+  hasLiveCyclesWithSimulationScheduler?: boolean;
   allocatedCapitalUsd: number;
   capitalUsedUsd: number;
   capitalFreeUsd: number;

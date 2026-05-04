@@ -6,6 +6,7 @@
 import * as repo from "./IdcaRepository";
 import { TrailingBuyManager } from "./TrailingBuyManager";
 import * as telegram from "./IdcaTelegramNotifier";
+import { getNearZoneThresholdPct } from "./IdcaTelegramNotifier";
 import * as tbState from "./IdcaTrailingBuyTelegramState";
 import { resolveTrailingBuyPolicy, resolveTrailingBuyPolicyWithSliders, shouldSendDigest, type TrailingBuyDigestEntry } from "./IdcaTelegramAlertPolicy";
 import { getEffectiveEntryConfig } from "./IdcaSliderConfig";
@@ -1244,9 +1245,10 @@ async function checkEntry(
       const buyTriggerPrice = effectiveBasePrice * (1 - minDip / 100);
       const distToBuyPct = ((currentPrice - buyTriggerPrice) / currentPrice) * 100;
 
-      // Alerta: precio se acerca al trigger de compra (≤3%)
+      // Alerta: precio se acerca al trigger de compra (par-específico: BTC 0.75%, ETH 1.00%, gen 1.50%)
       // Suprimir si TB ya está activo (WATCHING/ARMED/TRACKING) — Op.B gestiona sus propios avisos
-      if (distToBuyPct >= 0 && distToBuyPct <= 3.0 && check.vwapContext) {
+      const nearZoneThresholdPct = getNearZoneThresholdPct(pair);
+      if (distToBuyPct >= 0 && distToBuyPct <= nearZoneThresholdPct && check.vwapContext) {
         const tbActiveNow = TrailingBuyManager.isArmed(pair);
         telegram.alertApproachingBuy(pair, mode, currentPrice, buyTriggerPrice, distToBuyPct, check.vwapContext.zone, tbActiveNow)
           .catch(e => console.warn(`${TAG}[TELEGRAM] alertApproachingBuy failed: ${e.message}`));

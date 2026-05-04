@@ -135,9 +135,28 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
   app.get(`${PREFIX}/summary`, async (_req, res) => {
     try {
       const config = await repo.getIdcaConfig();
-      const mode = config.mode === "disabled" ? "simulation" : config.mode;
-      const summary = await repo.getModuleSummary(mode);
-      res.json(summary);
+      const schedulerMode = config.mode;
+      const effectiveMode = schedulerMode === "disabled" ? "simulation" : schedulerMode;
+      const summary = await repo.getModuleSummary(effectiveMode);
+
+      // FASE 8: Siempre calcular ciclos live para mostrar warning si scheduler != live
+      let liveCyclesCount = summary.activeCyclesCount;
+      let liveCapitalUsedUsd = summary.capitalUsedUsd;
+      if (effectiveMode !== "live") {
+        const liveCycles = await repo.getAllActiveCycles("live");
+        liveCyclesCount = liveCycles.length;
+        liveCapitalUsedUsd = liveCycles.reduce(
+          (acc, c) => acc + parseFloat(String(c.capitalUsedUsd || "0")), 0
+        );
+      }
+
+      res.json({
+        ...summary,
+        schedulerMode,
+        liveCyclesCount,
+        liveCapitalUsedUsd,
+        hasLiveCyclesWithSimulationScheduler: liveCyclesCount > 0 && effectiveMode !== "live",
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

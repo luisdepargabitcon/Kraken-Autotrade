@@ -344,6 +344,24 @@ function SummaryTab() {
 
   return (
     <div className="space-y-4">
+      {/* Warning: ciclos live con scheduler en simulación */}
+      {summary.hasLiveCyclesWithSimulationScheduler && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="p-3 flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+            <div className="text-xs space-y-1">
+              <p className="font-semibold text-amber-300">
+                {summary.liveCyclesCount} ciclo{(summary.liveCyclesCount ?? 0) > 1 ? "s" : ""} LIVE activo{(summary.liveCyclesCount ?? 0) > 1 ? "s" : ""} — scheduler en modo <span className="font-mono">{summary.schedulerMode?.toUpperCase()}</span>
+              </p>
+              <p className="text-amber-200/70">
+                Capital LIVE en uso: <span className="font-mono text-amber-300">{fmtUsd(summary.liveCapitalUsedUsd ?? 0)}</span>.
+                Los ciclos live NO están siendo gestionados activamente. Cambia el scheduler a <span className="font-mono">live</span> para reanudar gestión automática.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         <KpiCard icon={CircleDollarSign} label="Capital Asignado" value={fmtUsd(summary.allocatedCapitalUsd)} />

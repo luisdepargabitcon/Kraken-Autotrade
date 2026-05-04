@@ -43,7 +43,20 @@ export function computeReboundStatus(
 // Approaching buy: separate 2h cooldown per pair (independent of global cooldown)
 const lastApproachingBuyAlert = new Map<string, number>();
 const APPROACHING_BUY_COOLDOWN_MS = 2 * 60 * 60 * 1000;
-const APPROACHING_BUY_THRESHOLD_PCT = 3.0;
+
+/** Umbral near-zone por par — exportado para uso en IdcaEngine */
+export function getNearZoneThresholdPct(pair: string): number {
+  if (pair === "BTC/USD") return 0.75;
+  if (pair === "ETH/USD") return 1.00;
+  return 1.50;
+}
+
+/** Prefijo de modo para títulos de alertas Telegram */
+function getModeLabel(mode: string): string {
+  if (mode === "simulation") return "[SIM] ";
+  if (mode === "live") return "[LIVE] ";
+  return "";
+}
 
 // Drawdown milestones: track highest milestone fired per pair; resets on anchor change
 const lastDrawdownMilestone = new Map<string, number>();
@@ -525,7 +538,7 @@ export async function alertApproachingBuy(
   lastApproachingBuyAlert.set(pair, Date.now());
 
   const msg = [
-    `⚡ <b>Precio cerca de zona VWAP</b> — <b>${pair}</b>`,
+    `⚡ ${getModeLabel(mode)}<b>Precio cerca de zona VWAP</b> — <b>${pair}</b>`,
     ``,
     `📊 Precio actual: <b>$${currentPrice.toFixed(2)}</b>`,
     `📍 Zona VWAP: ${zone}`,
@@ -533,7 +546,7 @@ export async function alertApproachingBuy(
     ``,
     `Aviso informativo. La entrada real depende de caída mínima, score, Trailing Buy y límite máximo de ejecución.`,
     ``,
-    `<i>Modo: ${mode} | Cooldown: 2h</i>`,
+    `<i>Modo: ${mode} | Cooldown: 2h | Near-zone: ≤${getNearZoneThresholdPct(pair)}%</i>`,
   ].join("\n");
 
   await send(chatId, msg, config.telegramThreadId || undefined);
@@ -591,7 +604,7 @@ export async function alertTrailingBuyWatching(
   const config = await repo.getIdcaConfig();
   const missingPct = ((currentPrice - buyThreshold) / currentPrice * 100).toFixed(2);
   const msg = [
-    `⚡ <b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
+    `⚡ ${getModeLabel(mode)}<b>Precio cerca de zona de compra</b> — <b>${pair}</b>`,
     ``,
     `💵 Precio actual: <code>$${currentPrice.toFixed(2)}</code>`,
     `📍 Precio de referencia: <code>$${referencePrice.toFixed(2)}</code>`,
@@ -642,7 +655,7 @@ export async function alertTrailingBuyArmed(
       ].filter(Boolean);
 
   const msg = [
-    `🔵 <b>Trailing Buy armado</b> — <b>${pair}</b>`,
+    `🔵 ${getModeLabel(mode)}<b>Trailing Buy armado</b> — <b>${pair}</b>`,
     ``,
     `📍 Precio de referencia de entrada: <code>$${referencePrice.toFixed(2)}</code>`,
     `✅ Activación alcanzada: <code>$${activationPrice.toFixed(2)}</code>`,

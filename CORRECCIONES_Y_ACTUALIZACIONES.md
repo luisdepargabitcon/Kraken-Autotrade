@@ -2,6 +2,34 @@
 
 ---
 
+## 2026-05-04 — IDCA Hotfix FASES 8+9: Resumen coherencia + Telegram ruido/prefijos
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Vite build**: OK — 3788 módulos
+- **Tests (120 en 5 suites)**: ✅ TODOS PASAN
+
+### Fix 8 — Resumen/Ciclos/Modo coherencia (FASE 8)
+**Archivos**: `server/routes/institutionalDca.routes.ts`, `client/src/hooks/useInstitutionalDca.ts`, `client/src/pages/InstitutionalDca.tsx`
+- **Causa raíz**: El endpoint `/summary` solo cargaba ciclos del modo del scheduler. Si scheduler=simulation, los ciclos live nunca aparecían.
+- **Fix**: Route `/summary` siempre calcula `liveCyclesCount` y `liveCapitalUsedUsd` independientemente del scheduler mode.
+- Nuevo campo `hasLiveCyclesWithSimulationScheduler: boolean` — `true` si hay ciclos live con scheduler ≠ live.
+- UI: Banner ámbar visible en `SummaryTab` cuando se detecta esa inconsistencia.
+- Interface `IdcaSummary` actualizada: `schedulerMode?`, `liveCyclesCount?`, `liveCapitalUsedUsd?`, `hasLiveCyclesWithSimulationScheduler?`.
+
+### Fix 9 — Telegram: near-zone par-específico + prefijos modo (FASE 9)
+**Archivos**: `server/services/institutionalDca/IdcaTelegramNotifier.ts`, `server/services/institutionalDca/IdcaEngine.ts`
+- **Causa raíz**: Near-zone threshold era 3.0% para todos los pares (demasiado ruidoso), y los alertas no tenían prefijo de modo en el título.
+- **Fix**: Función `getNearZoneThresholdPct(pair)` exportada:
+  - BTC/USD → 0.75%
+  - ETH/USD → 1.00%
+  - generic → 1.50%
+- Función `getModeLabel(mode)` interna: `[SIM]` o `[LIVE]` prefijado en títulos de alertas.
+- IdcaEngine usa `getNearZoneThresholdPct(pair)` en lugar del hardcoded 3.0%.
+- Alertas actualizadas con `getModeLabel`: `alertApproachingBuy`, `alertTrailingBuyWatching`, `alertTrailingBuyArmed`.
+
+---
+
 ## 2026-05-04 — IDCA Hotfix: Trailing Buy prematuro + Config efectiva + VWAP fiabilidad + Logs + OBSERVE event
 
 ### Estado final verificado (LOCAL)
