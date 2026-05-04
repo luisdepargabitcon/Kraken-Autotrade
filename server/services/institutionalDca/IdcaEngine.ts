@@ -265,6 +265,8 @@ const lastDailyFetchMs = new Map<string, number>();             // throttle: max
 const DAILY_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000;            // 6 hours
 const lastEntryEventMs = new Map<string, number>();             // throttle: max 1 entry_evaluated DB event per 5min per pair
 const ENTRY_EVENT_THROTTLE_MS = 5 * 60 * 1000;                 // 5 minutes
+const lastObservedEventMs = new Map<string, number>();          // throttle: max 1 entry_observed event per 30min per pair
+const OBSERVE_EVENT_THROTTLE_MS = 30 * 60 * 1000;              // 30 minutes
 const migrationWarnedPairs = new Set<string>();                 // only warn ONCE per pair per process lifetime
 // TODO: persistir en DB si se quiere sobrevivir reinicios (actualmente en memoria con TTL)
 const lastDigestSentAt = new Map<string, number>();             // por modo: last time digest was sent
@@ -893,6 +895,7 @@ async function evaluatePair(
         let trailingAllowsEntry = false; // true only when trailing buy fires
         let trailingBuyTriggerData: { localLow: number; bouncePct: number; buyThreshold: number; maxExecutionPrice: number } | undefined;
 
+        const MIN_VWAP_CANDLES_FOR_ENTRY = 24;
         if (tbCandles.length >= 7) {
           const anchor24h = Date.now() - 24 * 60 * 60 * 1000;
           const tbVwap = smart.computeVwapAnchored(tbCandles, anchor24h);
@@ -901,21 +904,35 @@ async function evaluatePair(
             const inInterestZone = tbZone === "below_lower1" || tbZone === "below_lower2" || tbZone === "below_lower3";
             const inNeutralOrAbove = tbZone === "between_bands" || tbZone === "above_upper1" || tbZone === "above_upper2";
 
-            // Arm: precio entra en zona de interés
-            if (inInterestZone && !TrailingBuyManager.isArmed(pair)) {
-              const reboundMinPct = parseFloat(String(assetConfig.reboundMinPct ?? "0.50"));
-              TrailingBuyManager.arm(pair, tbVwap.lowerBand1, currentPrice, { trailingPct: reboundMinPct });
+            // Guard FASE 5: VWAP solo puede armar TB si tiene suficientes candles (datos maduros)
+            const vwapReliableForEntry = tbVwap.candlesUsed >= MIN_VWAP_CANDLES_FOR_ENTRY;
+            if (!vwapReliableForEntry) {
+              console.log(`${TAG}[IDCA][VWAP_RELIABILITY] pair=${pair} candlesUsed=${tbVwap.candlesUsed} reliableForEntry=false reliableForContext=true reason=insufficient_vwap_candles minRequired=${MIN_VWAP_CANDLES_FOR_ENTRY}`);
+            }
+
+            // Guard FASE 2: computar buyThreshold real desde sliders para validar arm
+            const tbDerived = getEffectiveEntryConfig(config, pair);
+            const tbFrozenAnchor = vwapAnchorMemory.get(pair);
+            const tbEffectiveRef = tbFrozenAnchor?.anchorPrice && tbFrozenAnchor.anchorPrice > 0
+              ? tbFrozenAnchor.anchorPrice
+              : tbVwap.lowerBand1;
+            const tbBuyThreshold = tbEffectiveRef * (1 - tbDerived.effectiveMinDipPct / 100);
+
+            // Arm: precio entra en zona VWAP Y toca buyThreshold real Y VWAP tiene datos maduros
+            if (inInterestZone && vwapReliableForEntry && currentPrice <= tbBuyThreshold && !TrailingBuyManager.isArmed(pair)) {
+              const reboundMinPct = tbDerived.reboundPct;
+              TrailingBuyManager.arm(pair, tbEffectiveRef, currentPrice, { trailingPct: reboundMinPct });
               await createHumanEvent({
                 pair, mode,
                 eventType: "trailing_buy_activated",
                 severity: "info",
                 message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}`,
-                payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct: parseFloat(String(assetConfig.reboundMinPct ?? "0.50")) },
+                payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct, effectiveRef: tbEffectiveRef, buyThreshold: tbBuyThreshold, candlesUsed: tbVwap.candlesUsed },
               }, { eventType: "trailing_buy_activated", pair, mode });
               const reboundTriggerPrice = currentPrice * (1 + reboundMinPct / 100);
               const tbArmedState = TrailingBuyManager.getState(pair);
-              const maxExecPriceArmed = tbArmedState?.maxExecutionPrice ?? (tbVwap.lowerBand1 * (1 + reboundMinPct / 100));
-              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbVwap.lowerBand1, tbVwap.lowerBand1, reboundTriggerPrice, maxExecPriceArmed)
+              const maxExecPriceArmed = tbArmedState?.maxExecutionPrice ?? (tbBuyThreshold * (1 + reboundMinPct / 100));
+              telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbEffectiveRef, tbBuyThreshold, reboundTriggerPrice, maxExecPriceArmed)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
 
@@ -1297,9 +1314,18 @@ async function checkEntry(
           `   Sesgo mensual: ${check.monthlyBias}`,
         ].join("\n") : null,
         ``,
-        trailingArmed && localLow
-          ? `🔵 Trailing Buy ARMADO | Mínimo: $${localLow.toFixed(2)} | Compra si rebota a: $${trailingBuyAt?.toFixed(2)}`
-          : `⚪ Trailing Buy en espera (precio no en zona de interés aún)`,
+        (() => {
+          if (!trailingArmed) return `⚪ Trailing Buy en vigilancia (precio no ha alcanzado zona de activación)`;
+          const tbStateNow = TrailingBuyManager.getState(pair);
+          const tbBuyThreshNow = tbStateNow ? tbStateNow.buyThreshold : 0;
+          const priceAboveThreshold = tbBuyThreshNow > 0 && currentPrice > tbBuyThreshNow;
+          if (priceAboveThreshold) {
+            return `⚠️ Trailing Buy revalidándose (precio sobre umbral $${tbBuyThreshNow.toFixed(2)}) — no se ejecutará compra`;
+          }
+          return localLow
+            ? `🔵 Trailing Buy ARMADO | Mínimo: $${localLow.toFixed(2)} | Compra si rebota a: $${trailingBuyAt?.toFixed(2)}`
+            : `🔵 Trailing Buy ARMADO`;
+        })(),
       ].filter(Boolean).join("\n");
 
       await createHumanEvent({
@@ -1347,16 +1373,23 @@ async function checkEntry(
     return;
   }
 
-  // In observe-only mode, log that entry would be allowed but do NOT execute
+  // In observe-only mode, log that entry would be allowed but do NOT execute.
+  // Throttled to 30min to avoid spamming DB every tick when cycle is active.
   if (observeOnly) {
     const bp = check.basePrice!;
-    await createHumanEvent({
-      pair, mode,
-      eventType: "entry_check_passed",
-      severity: "info",
-      message: `[OBSERVE] Entry would be allowed (cycle active): BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
-      payloadJson: { observeOnly: true, marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias },
-    }, { eventType: "entry_check_passed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
+    const now$ = Date.now();
+    const throttleKey = `${pair}:${mode}`;
+    const lastObserved = lastObservedEventMs.get(throttleKey) ?? 0;
+    if (now$ - lastObserved >= OBSERVE_EVENT_THROTTLE_MS) {
+      lastObservedEventMs.set(throttleKey, now$);
+      await createHumanEvent({
+        pair, mode,
+        eventType: "entry_observed",
+        severity: "info",
+        message: `[OBSERVE] Condición detectada, sin acción — ciclo activo. BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
+        payloadJson: { observeOnly: true, marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias },
+      }, { eventType: "entry_observed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
+    }
     return;
   }
 
@@ -2703,9 +2736,9 @@ async function performEntryCheck(
     : 0;
 
   const atrPct = basePriceResult.meta?.atrPct ?? 0;
-  const minDip = assetConfig.vwapEnabled
-    ? Math.max(atrPct * 1.5, parseFloat(String(assetConfig.minDipPct)))
-    : parseFloat(String(assetConfig.minDipPct));
+  const sliderDerivedEntry = getEffectiveEntryConfig(config, pair);
+  const minDip = sliderDerivedEntry.effectiveMinDipPct;
+  console.log(`${TAG}[IDCA][EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
 
   if (trailingBuyEntry) {
     // ── Trailing Buy entry: la caída mínima ya fue validada al armar el TB ──

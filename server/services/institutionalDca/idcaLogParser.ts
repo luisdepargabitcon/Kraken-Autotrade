@@ -115,6 +115,16 @@ const EVENT_PATTERNS: Array<{ re: RegExp; event: string }> = [
   { re: /\[TRAILING_BUY_L1\]/i,             event: "TRAILING_BUY_L1" },
   { re: /\[TELEGRAM\]\[TRAILING_BUY\]/i,    event: "TELEGRAM_TRAILING_BUY" },
   { re: /\[TELEGRAM\]\[BLOCKED\]/i,         event: "TELEGRAM_BLOCKED" },
+  // Formato nuevo [IDCA][EVENT] — debe ir ANTES de los patterns genéricos
+  { re: /\[IDCA\]\[TRAILING_BUY_ARMED\]/i,           event: "TRAILING_BUY_ARMED" },
+  { re: /\[IDCA\]\[TRAILING_BUY_TRACKING\]/i,        event: "TRAILING_BUY_TRACKING" },
+  { re: /\[IDCA\]\[TRAILING_BUY_CANCELLED\]/i,       event: "TRAILING_BUY_CANCELLED" },
+  { re: /\[IDCA\]\[TRAILING_BUY_DISARMED\]/i,        event: "TRAILING_BUY_DISARMED" },
+  { re: /\[IDCA\]\[TRAILING_BUY_REBOUND_DETECTED\]/i, event: "TRAILING_BUY_REBOUND_DETECTED" },
+  { re: /\[IDCA\]\[VWAP_RELIABILITY\]/i,             event: "VWAP_RELIABILITY" },
+  { re: /\[IDCA\]\[EFFECTIVE_CONFIG\]/i,             event: "EFFECTIVE_CONFIG" },
+  { re: /\[IDCA\]\[TRAILING_BUY_STATE_INVALIDATED\]/i, event: "TRAILING_BUY_STATE_INVALIDATED" },
+  // Formato antiguo — compatibilidad backward
   { re: /TRAILING_BUY\] ARMED/i,            event: "TRAILING_BUY_ARMED" },
   { re: /TRAILING_BUY\] TRIGGERED/i,        event: "TRAILING_BUY_TRIGGERED" },
   { re: /TRAILING_BUY\] CANCELLED/i,        event: "TRAILING_BUY_CANCELLED" },

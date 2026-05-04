@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-05-04 — IDCA Hotfix: Trailing Buy prematuro + Config efectiva + VWAP fiabilidad + Logs + OBSERVE event
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Vite build**: OK — 3788 módulos
+- **Tests existentes (221 tests en 6 suites)**: ✅ TODOS PASAN
+- **Tests nuevos (22 tests en 2 suites)**: ✅ idcaVwapReliability (7/7) + idcaEffectiveConfig (15/15)
+
+### Fix 1 — Trailing Buy no se arma si currentPrice > buyThreshold (CRÍTICO)
+**Archivo**: `server/services/institutionalDca/IdcaEngine.ts` (~línea 919)
+- **Causa raíz**: El TB se armaba solo por estar en zona VWAP `below_lower1/2/3`, ignorando el `buyThreshold` real derivado de sliders.
+- **Fix**: Antes de armar, se computa `tbBuyThreshold = tbEffectiveRef * (1 - tbDerived.effectiveMinDipPct / 100)` y solo se arma si `currentPrice <= tbBuyThreshold`.
+- **Nuevo campo en payloadJson**: `effectiveRef`, `buyThreshold`, `candlesUsed` para trazabilidad.
+
+### Fix 2 — Config efectiva: sliders como fuente única de minDip (CRÍTICO)
+**Archivo**: `server/services/institutionalDca/IdcaEngine.ts` (~línea 2721)
+- **Causa raíz**: `performEntryCheck()` usaba `assetConfig.minDipPct` (campo legacy en DB, podía estar en 1.50% para ETH).
+- **Fix**: Reemplazado por `getEffectiveEntryConfig(config, pair).effectiveMinDipPct` (sliders).
+- ETH con patience=70 ahora usa 4.60% (en lugar de 1.50% legacy).
+- BTC con patience=70 ahora usa 4.20% (en lugar de valores ad-hoc).
+- **Log añadido**: `[IDCA][EFFECTIVE_CONFIG]` con source, sliderMinDip, legacyMinDip, atrPct.
+
+### Fix 3 — VWAP fiabilidad: mínimo 24 candles para armar TB (CRÍTICO)
+**Archivo**: `server/services/institutionalDca/IdcaEngine.ts` (~línea 896)
+- **Causa raíz**: `VWAP_MIN_CANDLES=5` permite `isReliable=true` con solo 9 candles, activando TB con datos inmaduros.
+- **Fix**: Constante `MIN_VWAP_CANDLES_FOR_ENTRY=24`. Si `tbVwap.candlesUsed < 24`, el VWAP es válido para contexto pero NO arma TB.
+- **Log añadido**: `[IDCA][VWAP_RELIABILITY]` cuando `candlesUsed < 24`.
+
+### Fix 4 — Logs homogéneos con prefijo [IDCA] (FASE 7)
+**Archivo**: `server/services/institutionalDca/TrailingBuyManager.ts`
+- Todos los console.log ahora tienen prefijo `[IDCA][...]`:
+  - `[IDCA][TRAILING_BUY_ARMED]`
+  - `[IDCA][TRAILING_BUY_TRACKING]`
+  - `[IDCA][TRAILING_BUY_REBOUND_DETECTED]`
+  - `[IDCA][TRAILING_BUY_DISARMED]`
+  - `[IDCA][TRAILING_BUY_CANCELLED]`
+
+### Fix 5 — OBSERVE genera entry_observed (no entry_check_passed) + throttle 30min (FASE 6)
+**Archivo**: `server/services/institutionalDca/IdcaEngine.ts`, `IdcaReasonCatalog.ts`
+- **Causa raíz**: OBSERVE (ciclo activo) generaba `entry_check_passed` idéntico a cuando se iba a ejecutar compra real. Ruido en UI cada tick.
+- **Fix**: Nuevo tipo `entry_observed` con throttle de 30 minutos. Map `lastObservedEventMs`.
+- Catálogo actualizado con descripción diferenciada.
+
+### Fix 6 — Mensaje "Trailing Buy ARMADO" solo si precio < buyThreshold real (FASE 3)
+**Archivo**: `server/services/institutionalDca/IdcaEngine.ts` (~línea 1317)
+- Si TB está armado pero `currentPrice > tbStateNow.buyThreshold`: muestra `⚠️ Trailing Buy revalidándose`.
+- Si TB no está armado: `⚪ Trailing Buy en vigilancia`.
+- Si TB correctamente armado: `🔵 Trailing Buy ARMADO | Mínimo: $X | Compra si rebota a: $Y`.
+
+### Fix 7 — Log parser actualizado para nuevos prefijos (FASE 7)
+**Archivo**: `server/services/institutionalDca/idcaLogParser.ts`
+- Añadidos patrones `[IDCA][TRAILING_BUY_*]`, `[IDCA][VWAP_RELIABILITY]`, `[IDCA][EFFECTIVE_CONFIG]`.
+- Compatibilidad backward con formatos antiguos mantenida.
+
+### Tests nuevos creados
+- `server/services/__tests__/idcaVwapReliability.test.ts` — 7 tests VWAP candles guard
+- `server/services/__tests__/idcaEffectiveConfig.test.ts` — 15 tests sliders como fuente única
+
+---
+
 ## 2026-05-03 — IDCA: Referencia efectiva unificada + Anchor robusto + Corrección calidad VWAP + UI completa (commit pendiente)
 
 ### Estado final verificado (LOCAL)

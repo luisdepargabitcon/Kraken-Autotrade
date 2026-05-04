@@ -37,6 +37,13 @@ export const IDCA_EVENT_CATALOG: Record<string, CatalogEntry> = {
     defaultSeverity: "info",
   },
 
+  entry_observed: {
+    humanTitle: "Condición detectada, sin acción",
+    humanTemplate: "Se detectó condición de entrada para {pair} pero no se abrirá ciclo: hay ciclo activo, modo observación o pausa. Seguimiento activo.",
+    emoji: "👁",
+    defaultSeverity: "info",
+  },
+
   entry_check_blocked: {
     humanTitle: "Entrada bloqueada",
     humanTemplate: "No se compró {pair} porque no se cumplieron las condiciones de entrada. Ver detalles en los bloqueos activos.",
