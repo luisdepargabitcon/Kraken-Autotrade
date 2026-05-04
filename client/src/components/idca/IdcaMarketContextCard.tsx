@@ -226,6 +226,26 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
             {sourceLabel}
             {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
           </div>
+          {/* Fecha/edad del ancla \u2014 uniforme BTC y ETH */}
+          {data.frozenAnchorTs ? (
+            <div className="text-[9px] text-muted-foreground/50 font-mono">
+              Fijada: {new Date(data.frozenAnchorTs).toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}{" "}
+              {new Date(data.frozenAnchorTs).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
+              {data.frozenAnchorAgeHours != null && (
+                <span className={data.frozenAnchorAgeHours > 168 ? " text-amber-400/70" : ""}>
+                  {" "}\u00b7 hace {data.frozenAnchorAgeHours > 48
+                    ? `${(data.frozenAnchorAgeHours / 24).toFixed(1)}d`
+                    : `${data.frozenAnchorAgeHours.toFixed(1)}h`}
+                </span>
+              )}
+            </div>
+          ) : data.anchorPriceUpdatedAt ? (
+            <div className="text-[9px] text-muted-foreground/50 font-mono">
+              Actualizada: {formatDateTime(data.anchorPriceUpdatedAt)}
+            </div>
+          ) : (
+            <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
+          )}
         </div>
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">Actual</div>

@@ -124,6 +124,8 @@ const EVENT_PATTERNS: Array<{ re: RegExp; event: string }> = [
   { re: /\[IDCA\]\[VWAP_RELIABILITY\]/i,             event: "VWAP_RELIABILITY" },
   { re: /\[IDCA\]\[EFFECTIVE_CONFIG\]/i,             event: "EFFECTIVE_CONFIG" },
   { re: /\[IDCA\]\[TRAILING_BUY_STATE_INVALIDATED\]/i, event: "TRAILING_BUY_STATE_INVALIDATED" },
+  { re: /\[IDCA\]\[REFERENCE_CONTEXT\]/i,            event: "REFERENCE_CONTEXT" },
+  { re: /\[IDCA\]\[ANCHOR_METADATA_WARNING\]/i,      event: "ANCHOR_METADATA_WARNING" },
   // Formato antiguo — compatibilidad backward
   { re: /TRAILING_BUY\] ARMED/i,            event: "TRAILING_BUY_ARMED" },
   { re: /TRAILING_BUY\] TRIGGERED/i,        event: "TRAILING_BUY_TRIGGERED" },

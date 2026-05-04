@@ -1037,7 +1037,8 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                           </span>
                         </div>
 
-                        {parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor" && (
+                        {/* Fecha/edad del ancla — uniforme para BTC y ETH independiente del method */}
+                        {parsed.frozenAnchorTs ? (
                           <div>
                             Fijada:{" "}
                             {new Date(parsed.frozenAnchorTs).toLocaleString("es-ES", {
@@ -1050,6 +1051,8 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                               <span> · hace {parsed.frozenAnchorAgeHours.toFixed(1)}h</span>
                             )}
                           </div>
+                        ) : (
+                          <div className="text-muted-foreground/50 italic">Fecha no disponible</div>
                         )}
 
                         {parsed.drawdownFromAnchorPct != null && (
@@ -1063,7 +1066,7 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                       </div>
 
                       {/* Ancla anterior (si existe) */}
-                      {parsed.frozenAnchorPrevious && parsed.basePriceMethod === "vwap_anchor" && (
+                      {parsed.frozenAnchorPrevious && (
                         <div className="mt-3 pt-2 border-t border-white/5">
                           <div className="text-[9px] uppercase tracking-wider text-muted-foreground/50 mb-1">
                             Referencia anterior (inválida)

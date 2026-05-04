@@ -2,6 +2,53 @@
 
 ---
 
+## 2026-05-05 — IDCA Hotfix Audit II: endpoint config/effective + doble prefijo + fecha ancla uniforme
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Tests (22 en 2 suites nuevas)**: ✅ TODOS PASAN
+
+### Fix A — Endpoint GET /api/institutional-dca/config/effective (FASE 2)
+**Archivos**: `server/routes/institutionalDca.routes.ts`, import de `IdcaSliderConfig`
+- **Causa raíz**: Endpoint faltante. La UI/curl no podía auditar la configuración efectiva de runtime.
+- **Fix**: Nuevo endpoint `GET /api/institutional-dca/config/effective`.
+  - Para BTC/USD y ETH/USD retorna `{ success, mode, pairs[] }`.
+  - Cada pair incluye: `source="sliders"`, `entryUi` (con defaults), `derived` (parámetros técnicos), `legacy.minDipPct`, `legacyIgnored`, `advancedOverrideActive`.
+  - `legacyIgnored=true` cuando el slider-derived `effectiveMinDipPct` difiere del legacy en > 0.01%.
+
+### Fix B — Doble prefijo [IDCA][IDCA] en logs (FASE 3)
+**Archivos**: `server/services/institutionalDca/IdcaEngine.ts`
+- **Causa raíz**: `TAG = "[IDCA]"` pero los console.log incluían `${TAG}[IDCA][VWAP_RELIABILITY]` y `${TAG}[IDCA][EFFECTIVE_CONFIG]`.
+- **Fix**: Eliminado el `[IDCA]` redundante → `${TAG}[VWAP_RELIABILITY]` y `${TAG}[EFFECTIVE_CONFIG]`.
+- **Backward compat**: Los regex del parser `\[IDCA\]\[EFFECTIVE_CONFIG\]` ya matcheaban el substring dentro del doble prefijo, por lo que el parser sigue siendo compatible con logs históricos.
+
+### Fix C — Logs REFERENCE_CONTEXT y ANCHOR_METADATA_WARNING (FASE 7)
+**Archivos**: `server/services/institutionalDca/IdcaEngine.ts`, `server/services/institutionalDca/idcaLogParser.ts`
+- **Fix**: Añadidos dos logs después del EFFECTIVE_CONFIG:
+  - `[IDCA][REFERENCE_CONTEXT]`: emitido cuando `frozenAnchorTs` está disponible. Incluye `effectiveEntryReference`, `referenceSource`, `anchorTimestamp` (ISO), `anchorAgeHours`.
+  - `[IDCA][ANCHOR_METADATA_WARNING]`: emitido como `console.warn` cuando no hay `frozenAnchorTs`. Incluye `source` y `fallbackChecked`.
+- Parser actualizado: nuevos patrones `REFERENCE_CONTEXT` y `ANCHOR_METADATA_WARNING`.
+
+### Fix D — Fecha/edad del ancla uniforme en EventCards para BTC y ETH (FASES 4+5)
+**Archivos**: `client/src/components/idca/IdcaEventCards.tsx`
+- **Causa raíz**: Condición `parsed.frozenAnchorTs && parsed.basePriceMethod === "vwap_anchor"` bloqueaba la fecha para ETH cuando usaba `hybrid_v2_fallback`.
+- **Fix**: Eliminado el guard `basePriceMethod === "vwap_anchor"`. Ahora muestra la fecha si `frozenAnchorTs` está presente (independiente del método). Si falta: `<div class="italic">Fecha no disponible</div>`.
+- Mismo fix aplicado al bloque de ancla anterior (`frozenAnchorPrevious`).
+
+### Fix E — Fecha/edad del ancla en MarketContextCard DetailPanel (FASE 5)
+**Archivos**: `client/src/components/idca/IdcaMarketContextCard.tsx`
+- **Causa raíz**: El panel de detalle no mostraba la fecha ni la edad de la referencia efectiva.
+- **Fix**: Añadida fila de fecha bajo "Ref. Efectiva":
+  - Si `data.frozenAnchorTs`: `Fijada: dd/mm HH:MM · hace Xh` (o `Xd` si > 48h; ámbar si > 7d).
+  - Si no hay frozenAnchorTs pero sí `anchorPriceUpdatedAt`: `Actualizada: <datetime>`.
+  - Si no hay nada: `Fecha no disponible`.
+
+### Tests nuevos (FASE 8)
+- `server/services/__tests__/idcaEffectiveConfigEndpoint.test.ts` — 10 tests: schema, ETH≥3.3%, BTC≥3.0%, legacyIgnored, defaults, campos requeridos.
+- `server/services/__tests__/idcaLogPrefixes.test.ts` — 12 tests: no doble prefijo, extractEvent con formatos nuevo y legacy, isIdcaLine.
+
+---
+
 ## 2026-05-04 — IDCA Hotfix FASES 8+9: Resumen coherencia + Telegram ruido/prefijos
 
 ### Estado final verificado (LOCAL)

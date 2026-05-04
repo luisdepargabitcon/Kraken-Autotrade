@@ -10,6 +10,7 @@ import * as telegram from "../services/institutionalDca/IdcaTelegramNotifier";
 import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
 import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
+import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -70,6 +71,47 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       
       const updated = await repo.updateIdcaConfig(req.body);
       res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Config efectiva (auditoria de runtime) ──────────────────────────────
+
+  app.get(`${PREFIX}/config/effective`, async (_req, res) => {
+    try {
+      const config = await repo.getIdcaConfig();
+      const pairs = ["BTC/USD", "ETH/USD"] as const;
+
+      const pairsData = await Promise.all(pairs.map(async (pair) => {
+        const assetConfig = await repo.getAssetConfig(pair);
+        const derived = getEffectiveEntryConfig(config, pair);
+
+        const stored = ((config.entryUiJson ?? {}) as Partial<EntryUiConfig>);
+        const entryUi: EntryUiConfig = { ...ENTRY_SLIDER_DEFAULTS, ...stored };
+
+        const legacyMinDipPct  = parseFloat(String(assetConfig?.minDipPct   ?? "1.50"));
+        const legacyReboundPct = parseFloat(String(assetConfig?.reboundMinPct ?? "0.30"));
+        const legacyIgnored    = Math.abs(derived.effectiveMinDipPct - legacyMinDipPct) > 0.01;
+        const advancedOverrideActive = !!(
+          assetConfig?.vwapEnabled && assetConfig?.vwapDynamicSafetyEnabled
+        );
+
+        return {
+          pair,
+          source: "sliders",
+          entryUi,
+          derived,
+          legacy: {
+            minDipPct:     legacyMinDipPct,
+            reboundMinPct: legacyReboundPct,
+          },
+          legacyIgnored,
+          advancedOverrideActive,
+        };
+      }));
+
+      res.json({ success: true, mode: config.mode, pairs: pairsData });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

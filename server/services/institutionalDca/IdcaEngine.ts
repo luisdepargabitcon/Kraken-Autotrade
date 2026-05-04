@@ -908,7 +908,7 @@ async function evaluatePair(
             // Guard FASE 5: VWAP solo puede armar TB si tiene suficientes candles (datos maduros)
             const vwapReliableForEntry = tbVwap.candlesUsed >= MIN_VWAP_CANDLES_FOR_ENTRY;
             if (!vwapReliableForEntry) {
-              console.log(`${TAG}[IDCA][VWAP_RELIABILITY] pair=${pair} candlesUsed=${tbVwap.candlesUsed} reliableForEntry=false reliableForContext=true reason=insufficient_vwap_candles minRequired=${MIN_VWAP_CANDLES_FOR_ENTRY}`);
+              console.log(`${TAG}[VWAP_RELIABILITY] pair=${pair} candlesUsed=${tbVwap.candlesUsed} reliableForEntry=false reliableForContext=true reason=insufficient_vwap_candles minRequired=${MIN_VWAP_CANDLES_FOR_ENTRY}`);
             }
 
             // Guard FASE 2: computar buyThreshold real desde sliders para validar arm
@@ -2740,7 +2740,30 @@ async function performEntryCheck(
   const atrPct = basePriceResult.meta?.atrPct ?? 0;
   const sliderDerivedEntry = getEffectiveEntryConfig(config, pair);
   const minDip = sliderDerivedEntry.effectiveMinDipPct;
-  console.log(`${TAG}[IDCA][EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
+  console.log(`${TAG}[EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
+
+  // FASE 7: Log REFERENCE_CONTEXT para auditabilidad del ancla
+  const _anchorTsMs = refResult.frozenAnchorTs ?? null;
+  const _anchorTsIso = _anchorTsMs ? new Date(_anchorTsMs).toISOString() : null;
+  if (_anchorTsIso) {
+    console.log(
+      `${TAG}[REFERENCE_CONTEXT]` +
+      ` pair=${pair}` +
+      ` effectiveEntryReference=${effectiveBasePrice.toFixed(2)}` +
+      ` referenceSource=${basePriceMethod}` +
+      ` anchorTimestamp=${_anchorTsIso}` +
+      ` anchorAgeHours=${(refResult.frozenAnchorAgeHours ?? 0).toFixed(1)}` +
+      ` fallbackUsed=false`
+    );
+  } else {
+    console.warn(
+      `${TAG}[ANCHOR_METADATA_WARNING]` +
+      ` pair=${pair}` +
+      ` source=${basePriceMethod}` +
+      ` reason=missing_anchor_timestamp` +
+      ` fallbackChecked=frozenAnchorTs,basePriceTimestamp,selectedAnchorTime`
+    );
+  }
 
   if (trailingBuyEntry) {
     // ── Trailing Buy entry: la caída mínima ya fue validada al armar el TB ──
