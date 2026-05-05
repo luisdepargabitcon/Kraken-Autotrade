@@ -152,10 +152,12 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
     setAdaptiveTab: setAdaptiveTab,
+    setConfigSubTab: setConfigSubTab,
     setSelectedPair: setSelectedPair,
   });
 
@@ -189,7 +191,7 @@ export default function InstitutionalDca() {
             </TabsList>
 
             <TabsContent value="summary"><SummaryTab /></TabsContent>
-            <TabsContent value="config"><ConfigTab /></TabsContent>
+            <TabsContent value="config"><ConfigTab configSubTab={configSubTab} setConfigSubTab={setConfigSubTab} /></TabsContent>
             <TabsContent value="adaptive"><AdaptiveTab
               externalSubTab={adaptiveTab}
               setExternalSubTab={setAdaptiveTab}
@@ -811,13 +813,12 @@ function deriveAlertPreview(freq: number, detail: number, grouping: number) {
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab() {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap"; setConfigSubTab: (tab: "entrada" | "general" | "vwap") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
   const updateAsset = useUpdateAssetConfig();
   const [showAdvancedTp, setShowAdvancedTp] = useState(false);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
 
   if (!config) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
 

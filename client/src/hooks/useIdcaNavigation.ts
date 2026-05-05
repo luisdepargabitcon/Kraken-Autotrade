@@ -26,26 +26,31 @@ export type IdcaConfigTarget =
 export interface NavigateResult {
   mainTab: "adaptativo" | "config" | "telegram" | "eventos";
   adaptiveTab?: "entradas" | "salidas" | "ejecucion" | "avanzado";
+  configSubTab?: "entrada" | "general" | "vwap";
   sectionId: string;
   pair?: string;
 }
 
 const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
-  // Entradas - Config real está en ConfigTab → Cuándo comprar
+  // Entradas - Config real está en ConfigTab → Entrada automática
   "entry-patience": {
     mainTab: "config",
+    configSubTab: "entrada",
     sectionId: "idca-config-entry",
   },
   "entry-rebound": {
     mainTab: "config",
+    configSubTab: "entrada",
     sectionId: "idca-config-entry",
   },
   "entry-quality": {
     mainTab: "config",
+    configSubTab: "entrada",
     sectionId: "idca-config-entry",
   },
   "entry-size": {
     mainTab: "config",
+    configSubTab: "entrada",
     sectionId: "idca-config-entry",
   },
   "safety-ladder": {
@@ -59,7 +64,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
     sectionId: "idca-config-safety-ladder",
   },
 
-  // Salidas - Config real está en ConfigTab → Cuándo vender
+  // Salidas - Config real está en ConfigTab → General (Cuándo vender)
   "take-profit": {
     mainTab: "adaptativo",
     adaptiveTab: "salidas",
@@ -72,14 +77,17 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
   },
   "break-even": {
     mainTab: "config",
+    configSubTab: "general",
     sectionId: "idca-config-break-even",
   },
   "trailing-activation": {
     mainTab: "config",
+    configSubTab: "general",
     sectionId: "idca-config-trailing-activation",
   },
   "trailing-margin": {
     mainTab: "config",
+    configSubTab: "general",
     sectionId: "idca-config-trailing-margin",
   },
 
@@ -91,6 +99,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
   },
   "capital": {
     mainTab: "config",
+    configSubTab: "general",
     sectionId: "idca-config-capital",
   },
 
@@ -102,6 +111,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
   },
   "vwap-anchor": {
     mainTab: "config",
+    configSubTab: "vwap",
     sectionId: "idca-config-vwap-anchor",
   },
   "advanced": {
@@ -114,11 +124,12 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
 export interface UseIdcaNavigationOptions {
   setMainTab: (tab: string) => void;
   setAdaptiveTab?: (tab: string) => void;
+  setConfigSubTab?: (tab: "entrada" | "general" | "vwap") => void;
   setSelectedPair?: (pair: string) => void;
 }
 
 export function useIdcaNavigation(options: UseIdcaNavigationOptions) {
-  const { setMainTab, setAdaptiveTab, setSelectedPair } = options;
+  const { setMainTab, setAdaptiveTab, setConfigSubTab, setSelectedPair } = options;
 
   const navigateToConfig = useCallback(
     (target: IdcaConfigTarget, pair?: string) => {
@@ -130,6 +141,13 @@ export function useIdcaNavigation(options: UseIdcaNavigationOptions) {
 
       // Cambiar pestaña principal
       setMainTab(result.mainTab);
+
+      // Cambiar subpestaña de ConfigTab si aplica
+      if (result.configSubTab && setConfigSubTab) {
+        setTimeout(() => {
+          setConfigSubTab(result.configSubTab!);
+        }, 0);
+      }
 
       // Cambiar subpestaña adaptativa si aplica
       if (result.adaptiveTab && setAdaptiveTab) {
@@ -165,7 +183,7 @@ export function useIdcaNavigation(options: UseIdcaNavigationOptions) {
 
       setTimeout(() => scrollAndHighlight(), 0);
     },
-    [setMainTab, setAdaptiveTab, setSelectedPair]
+    [setMainTab, setAdaptiveTab, setConfigSubTab, setSelectedPair]
   );
 
   return { navigateToConfig, TARGET_MAP };
