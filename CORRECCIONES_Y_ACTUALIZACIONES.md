@@ -157,6 +157,35 @@ if (trailingMarginChanged && patch.trailingMarginPct) {
 
 ---
 
+## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
+
+### Problema detectado
+Al cambiar el margen trailing en configuración, el backend actualizaba `cycle.trailingPct` pero la UI no refrescaba los datos del ciclo, mostrando el valor antiguo (0.5%) en lugar del nuevo valor.
+
+### Solución implementada
+**Archivo modificado:** `client/src/hooks/useInstitutionalDca.ts`
+
+**Cambio en `useUpdateAssetConfig`:**
+- Añadir invalidación de queries de ciclos en `onSuccess`
+- Esto refresca datos actualizados (ej: trailingPct) en UI después de cambiar configuración
+
+**Código implementado:**
+```typescript
+onSuccess: () => {
+  qc.invalidateQueries({ queryKey: ["idca", "assetConfigs"] });
+  // Invalidar queries de ciclos para refrescar datos actualizados (ej: trailingPct)
+  qc.invalidateQueries({ queryKey: ["idca", "cycles"] });
+}
+```
+
+### Resultado
+- Usuario cambia margen en Config → general
+- Backend actualiza config y ciclos activos
+- UI refresca datos del ciclo automáticamente
+- Margen nuevo se muestra inmediatamente en UI
+
+---
+
 ## 2026-05-05 — fix(idca): eliminar ciclo #21 + guard de balance en ventas (hotfix crítico)
 
 ### Causa raíz detectada
