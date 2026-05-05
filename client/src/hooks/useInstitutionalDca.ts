@@ -637,6 +637,8 @@ export function useUpdateAssetConfig() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["idca", "assetConfigs"] });
+      // Invalidar queries de ciclos para refrescar datos actualizados (ej: trailingPct)
+      qc.invalidateQueries({ queryKey: ["idca", "cycles"] });
     },
   });
 }
