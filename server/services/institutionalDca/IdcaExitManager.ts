@@ -252,14 +252,38 @@ class IdcaExitManager {
 
   /**
    * Evalúa señal de take profit
+   * GUARD: tpTargetPrice debe ser > avgEntryPrice * 1.03 (mínimo 3% ganancia)
+   * Esto evita falso TP cuando takeProfitPct está mal configurado igual a protectionActivationPct
    */
   private evaluateTakeProfit(
     state: ExitState,
     config: ExitConfig,
     context: MarketContext
   ): ExitSignal | null {
-    if (!state.tpTargetPrice) return null;
-    
+    if (!state.tpTargetPrice || !state.avgEntryPrice) return null;
+
+    // GUARD CRÍTICO: evitar TP si el precio objetivo está demasiado cerca del entrada
+    // (indica configuración incorrecta: takeProfitPct ≈ protectionActivationPct)
+    const minValidTpPrice = state.avgEntryPrice * 1.03; // mínimo 3% sobre entrada
+    if (state.tpTargetPrice < minValidTpPrice) {
+      console.warn(
+        `[IDCA][EXIT_GUARD] cycleId=${state.cycleId} pair=${state.pair} ` +
+        `TP_BLOCKED: tpTargetPrice (${state.tpTargetPrice.toFixed(2)}) < minValid (${minValidTpPrice.toFixed(2)}). ` +
+        `Config takeProfitPct (${config.takeProfitPct}%) parece estar mal configurado igual a protectionActivationPct. ` +
+        `Protección debe activarse primero, no TP.`
+      );
+      return null;
+    }
+
+    // GUARD: verificar que currentPrice realmente >= tpTargetPrice
+    if (state.currentPrice < state.tpTargetPrice) {
+      console.log(
+        `[IDCA][EXIT_GUARD] cycleId=${state.cycleId} pair=${state.pair} ` +
+        `TP_NOT_READY: currentPrice (${state.currentPrice.toFixed(2)}) < tpTargetPrice (${state.tpTargetPrice.toFixed(2)})`
+      );
+      return null;
+    }
+
     if (state.currentPrice >= state.tpTargetPrice) {
       return {
         shouldExit: true,
@@ -274,7 +298,7 @@ class IdcaExitManager {
         },
       };
     }
-    
+
     return null;
   }
 
@@ -343,11 +367,17 @@ class IdcaExitManager {
 
   /**
    * Verifica activación de TP
+   * GUARD: TP solo se arma cuando se alcanza el % configurado (no con cualquier ganancia)
    */
   private checkTpActivation(state: ExitState, config: ExitConfig, context: MarketContext): void {
-    if (state.unrealizedPnlPct >= 0) { // TP se activa en ganancia
+    // GUARD: tpArmed solo si se alcanza el umbral configurado
+    if (state.unrealizedPnlPct >= config.takeProfitPct) {
       state.tpArmed = true;
       state.tpArmedAt = new Date();
+      console.log(
+        `[IDCA][TP_ARMED] cycleId=${state.cycleId} pair=${state.pair} ` +
+        `TP armed at +${state.unrealizedPnlPct.toFixed(2)}% (target: ${config.takeProfitPct}%)`
+      );
     }
   }
 

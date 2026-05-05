@@ -68,6 +68,7 @@ async function getAtrPctForPair(pair: string): Promise<number> {
 
 /**
  * Ejecuta una salida basada en señal del ExitManager
+ * GUARD CRÍTICO: Solo cierra ciclo en BD si hay confirmación de venta real (orderId/filled)
  */
 async function executeExit(
   cycle: InstitutionalDcaCycle,
@@ -78,40 +79,100 @@ async function executeExit(
 ): Promise<void> {
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
-  
+
   try {
     // Crear orden de salida
     const exchange = ExchangeFactory.getTradingExchange();
     const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: totalQty.toFixed(8) });
-    
+
     if (!sellOrder) {
       throw new Error("Failed to create sell order");
     }
-    
-    // Actualizar ciclo
+
+    // ─── GUARD CRÍTICO: Verificar confirmación de venta antes de cerrar ciclo ───
+    // OrderResult tiene orderId, txid, success - NO tiene id, filledQty, status
+    const hasOrderId = !!(sellOrder.orderId || sellOrder.txid);
+
+    // Para LIVE: exigir confirmación real antes de cerrar ciclo
+    if (mode === "live" && !hasOrderId) {
+      console.error(
+        `${TAG}[EXIT_BLOCKED] cycleId=${cycle.id} pair=${pair} ` +
+        `mode=live reason=no_confirmed_order_id ` +
+        `exitType=${signal.exitType} price=${signal.exitPrice.toFixed(2)} ` +
+        `sellOrder.success=${sellOrder.success}`
+      );
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "exit_blocked",
+        severity: "critical",
+        message: `Cierre bloqueado: orden creada pero sin orderId confirmado. Ciclo sigue activo.`,
+        payloadJson: {
+          exitType: signal.exitType,
+          exitPrice: signal.exitPrice,
+          sellOrderSuccess: sellOrder.success,
+          warning: "Ciclo NO cerrado - verificar orden manualmente en exchange",
+        },
+      }, { eventType: "exit_blocked", pair, mode, price: signal.exitPrice });
+      await telegram.sendRawMessage(
+        `🚨 <b>[IDCA][LIVE] EXIT BLOCKED</b>\n\n` +
+        `Par: <b>${pair}</b> #${cycle.id}<br>\n` +
+        `Tipo: <code>${signal.exitType}</code><br>\n` +
+        `Precio: <code>$${signal.exitPrice.toFixed(2)}</code><br>\n` +
+        `⚠️ Orden creada pero SIN orderId confirmado. Ciclo sigue ACTIVO.<br>\n` +
+        `Revisar manualmente en Revolut X.`
+      );
+      return; // NO cerrar ciclo - mantiene activo
+    }
+
+    // Nota: OrderResult no tiene filledQty/status - asumimos market order se llena
+    // Si sellOrder.success=true y tiene orderId, consideramos exitoso
+    const isConfirmed = sellOrder.success && hasOrderId;
+
+    // Solo cerrar ciclo si hay confirmación suficiente
     await repo.updateCycle(cycle.id, {
       status: "closed",
       closeReason: signal.exitType,
       closedAt: new Date(),
     });
-    
+
+    // Guardar referencia a la orden de venta
+    const grossValueUsd = totalQty * signal.exitPrice;
+    const feesUsd = grossValueUsd * 0.09 / 100; // 0.09% taker fee
+    const netValueUsd = grossValueUsd - feesUsd;
+
+    await repo.createOrder({
+      cycleId: cycle.id,
+      pair,
+      mode,
+      orderType: signal.exitType === "take_profit" ? "final_sell" : "breakeven_sell",
+      side: "sell",
+      price: signal.exitPrice.toFixed(8),
+      quantity: totalQty.toFixed(8),
+      grossValueUsd: grossValueUsd.toFixed(2),
+      netValueUsd: netValueUsd.toFixed(2),
+      exchangeOrderId: sellOrder.orderId || sellOrder.txid || null,
+      triggerReason: signal.exitType,
+      humanReason: `Exit: ${signal.exitType} - ${signal.exitReason}`,
+    });
+
     // Limpiar estado de salida
     idcaExitManager.clearExitState(cycle.id);
-    
+
     // Eventos y notificaciones
     await createHumanEvent({
       pair, mode,
       eventType: "exit_executed",
       severity: "info",
-      message: `Exit executed: ${signal.exitType} at $${signal.exitPrice.toFixed(2)}`,
+      message: `Exit confirmed: ${signal.exitType} at $${signal.exitPrice.toFixed(2)} (orderId: ${sellOrder.orderId || sellOrder.txid || "n/a"})`,
       payloadJson: {
         exitType: signal.exitType,
         exitPrice: signal.exitPrice,
         exitReason: signal.exitReason,
         urgency: signal.urgency,
+        orderId: sellOrder.orderId || sellOrder.txid || null,
       },
     }, { eventType: "exit_executed", pair, mode });
-    
+
     // Alerta Telegram según tipo de salida
     switch (signal.exitType) {
       case "fail_safe":
@@ -127,24 +188,27 @@ async function executeExit(
         await telegram.alertBreakEvenTriggered(pair, mode, signal.exitPrice);
         break;
     }
-    
+
     console.log(
-      `[IDCA][EXIT] ${pair}: ${signal.exitType} executed at $${signal.exitPrice.toFixed(2)} ` +
+      `${TAG}[EXIT_CONFIRMED] cycleId=${cycle.id} pair=${pair} ` +
+      `exitType=${signal.exitType} price=${signal.exitPrice.toFixed(2)} ` +
+      `orderId=${sellOrder.orderId || sellOrder.txid || "n/a"} ` +
       `(${signal.metadata.currentState.unrealizedPnlPct?.toFixed(2)}% PnL)`
     );
-    
+
   } catch (error) {
-    console.error(`[IDCA][EXIT] Failed to execute exit for ${pair}:`, error);
-    
+    console.error(`${TAG}[EXIT_FAILED] cycleId=${cycle.id} pair=${pair}:`, error);
+
     await createHumanEvent({
-      pair, mode,
+      cycleId: cycle.id, pair, mode,
       eventType: "exit_failed",
       severity: "error",
-      message: `Exit execution failed: ${(error as Error).message}`,
+      message: `Exit execution failed: ${(error as Error).message}. Ciclo sigue activo.`,
       payloadJson: {
         exitType: signal.exitType,
         exitPrice: signal.exitPrice,
         error: (error as Error).message,
+        cycleStatus: "active", // Siguie activo
       },
     }, { eventType: "exit_failed", pair, mode });
   }
