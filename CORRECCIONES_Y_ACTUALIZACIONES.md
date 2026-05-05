@@ -2,6 +2,78 @@
 
 ---
 
+## 2026-05-05 — fix(idca): separar ancla VWAP, VWAP actual y decisión de trading (hotfix completo)
+
+### Causa raíz detectada (VPS staging)
+- **candlesUsed=0 + usableForEntry=true**: `IdcaMarketContextService` pasaba velas de MDS a `computeBasePrice` sin convertir `time` de segundos (Kraken) a milisegundos → `filterWindow` siempre fallaba → 0 velas → `price:0`, `candleCount:0`
+- **hybridCandidatePrice=0**: `computeHybridV2` devuelve `price:0` cuando hay <7 velas 24h, y este valor 0 se propagaba sin validación
+- **Estado used_frozen_anchor ausente**: No existía distinción entre ancla VWAP persistida válida pero sin velas actuales suficientes vs VWAP actual fiable
+
+### Solución implementada (3 capas)
+- **CAPA 1 (ancla persistida)**: `referenceSource`, `referenceLabel`, `anchorPrice`, `anchorTimestamp`, `anchorAgeHours`, `anchorStatus` — referencia usada por la estrategia
+- **CAPA 2 (VWAP actual recalculado)**: `vwapStatus`, `vwapReliability.candlesUsed`, `currentVwapUsableForEntry`, `currentVwapUsableForContext` — fiabilidad del cálculo actual
+- **CAPA 3 (decisión de trading)**: NO modificada — la lógica de compra/venta sigue igual, solo se corrige metadata
+
+### Archivos backend modificados
+- **`server/services/institutionalDca/IdcaReferenceContext.ts`**:
+  - Añadir estados `used_frozen_anchor` y `warming_up` a `VwapReliabilityStatus`
+  - Añadir campos `currentVwapUsableForEntry`, `currentVwapUsableForContext` a `VwapReliability`
+  - Reescribir lógica `buildReferenceContext`:
+    - Guardrail duro: `candlesUsed=0` nunca puede ser `usableForEntry=true`
+    - `used_frozen_anchor` cuando `referenceSource=vwap_anchor` y `candlesUsed < minCandlesForEntry`
+    - `warming_up` cuando sin ancla y `candlesUsed=0`
+    - `hybridCandidatePrice=null` si `price <= 0` (evitar $0 en UI)
+  - Actualizar `getVwapReliabilityReason` con textos humanos para nuevos estados
+
+- **`server/services/institutionalDca/IdcaMarketContextService.ts`**:
+  - Convertir `OHLC.time` de segundos (Kraken) a milisegundos antes de pasar a `computeBasePrice` y `computeVwapAnchored`
+  - Añadir `LastValidVwapSnapshot` cache en memoria (último VWAP válido por par)
+  - Añadir contador `candlesZeroCounter` por par → log warning tras 3 repeticiones de `candlesUsed=0`
+  - Log `[IDCA][MARKET_DATA_WARMUP]` cuando carga velas (status=warming_up/ready)
+  - Propagar `vwapContextForRef` con `candlesUsed` real a `buildReferenceContext`
+  - Añadir método público `getLastValidVwap(pair)`
+
+- **`server/services/institutionalDca/IdcaEngine.ts`**:
+  - Enriquecer log `[IDCA][REFERENCE_CONTEXT]` con `usableForContext`, `candlesUsed`, `minCandlesRequired`
+
+### Archivos frontend modificados
+- **`client/src/components/idca/IdcaMarketContextCard.tsx`**:
+  - Distingir badge colores: verde (`used`), ámbar (`used_frozen_anchor`), gris (`warming_up`), azul (`hybrid`)
+  - Mostrar "VWAP Anclado congelado" / "VWAP cargando datos" según estado
+  - No mostrar $0 como candidato Hybrid → mostrar "Hybrid no disponible"
+
+- **`client/src/components/idca/IdcaEventCards.tsx`**:
+  - Añadir display para `warming_up` y `used_frozen_anchor` con textos explicativos
+
+### Tests
+- **`server/services/__tests__/idcaReferenceContext.test.ts`**:
+  - Añadir 12 tests nuevos (total 31):
+    - `used_frozen_anchor` (tests 19-22)
+    - `warming_up` (tests 23-24)
+    - `hybridCandidatePrice=null` (tests 25-26)
+    - guardrail `candlesUsed=0` (tests 27-28)
+    - reason textos (tests 29-30)
+  - Todos pasan ✅
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check` exit 0)
+- **Tests**: ✅ 31/31 en `idcaReferenceContext.test.ts`
+
+### Validación esperada en VPS
+```bash
+# Ver preview BTC
+curl -s "http://localhost:3020/api/institutional-dca/market-context/preview/BTC%2FUSD" | jq '.referenceContext'
+
+# Si candlesUsed=0 pero hay ancla: vwapStatus="used_frozen_anchor", usableForEntry=false
+# Si >=24 velas: vwapStatus="used", usableForEntry=true
+# hybridCandidatePrice=null si no hay candidato real (nunca 0)
+
+# Ver logs
+docker compose -f docker-compose.staging.yml logs --tail=800 krakenbot-staging-app | grep -E "MARKET_DATA_WARMUP|MARKET_DATA_WARNING|REFERENCE_CONTEXT"
+```
+
+---
+
 ## 2026-05-05 — feat(idca): referenceContext enriquecido con fiabilidad VWAP, motivos y estado de ancla
 
 ### Estado final verificado (LOCAL)

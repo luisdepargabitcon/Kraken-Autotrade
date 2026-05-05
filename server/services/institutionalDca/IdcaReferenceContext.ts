@@ -22,7 +22,9 @@ export const ANCHOR_VERY_STALE_HOURS  = 168;
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type VwapReliabilityStatus =
-  | "used"
+  | "used"                        // VWAP anchor usado, velas actuales suficientes
+  | "used_frozen_anchor"          // VWAP anchor usado pero velas actuales insuficientes — se usa ancla congelada
+  | "warming_up"                  // Sin ancla y sin velas actuales — sistema cargando
   | "insufficient_candles"
   | "incomplete_window"
   | "low_or_abnormal_volume"
@@ -52,7 +54,9 @@ export type ReferenceSource =
   | "unknown";
 
 export interface VwapReliability {
+  /** La referencia (ancla persistida) puede usarse para evaluar entradas */
   usableForEntry: boolean;
+  /** Hay suficiente contexto VWAP para visualización */
   usableForContext: boolean;
   status: VwapReliabilityStatus;
   reason: string;
@@ -62,6 +66,10 @@ export interface VwapReliability {
   volumeQualityScore?: number;
   divergencePctVsHybrid?: number;
   checkedAt?: string;
+  /** CAPA 2: el VWAP actual recalculado es fiable para entrada (puede ser false aunque haya ancla válida) */
+  currentVwapUsableForEntry?: boolean;
+  /** CAPA 2: el VWAP actual recalculado es fiable para contexto visual */
+  currentVwapUsableForContext?: boolean;
 }
 
 export interface ReferenceContext {
@@ -116,10 +124,20 @@ export function getVwapReliabilityReason(
   switch (status) {
     case "used":
       if (ageH != null && ageH > ANCHOR_VERY_STALE_HOURS)
-        return `VWAP usado como referencia congelada.${ageTxt} Revisar si sigue siendo representativa del mercado actual.`;
+        return `VWAP usado: existe una referencia válida y el VWAP actual tiene datos suficientes.${ageTxt} Referencia muy antigua: revisar con especial cuidado.`;
       if (ageH != null && ageH > ANCHOR_STALE_HOURS)
-        return `VWAP usado como referencia congelada.${ageTxt}`;
-      return "VWAP usado: existe una referencia válida y se evalúa la entrada contra esa ancla.";
+        return `VWAP usado: existe una referencia válida y el VWAP actual tiene datos suficientes.${ageTxt} Referencia antigua: revisar si sigue representando la estructura actual.`;
+      return "VWAP usado: existe una referencia válida y el VWAP actual tiene datos suficientes.";
+    case "used_frozen_anchor": {
+      const base = "VWAP Anclado usado como referencia congelada. El VWAP actual no tiene suficientes velas para recalcular fiabilidad, pero la ancla existente sigue activa según la política de referencia.";
+      if (ageH != null && ageH > ANCHOR_VERY_STALE_HOURS)
+        return `${base}${ageTxt} Referencia muy antigua: revisar con especial cuidado.`;
+      if (ageH != null && ageH > ANCHOR_STALE_HOURS)
+        return `${base}${ageTxt} Referencia antigua: revisar si sigue representando la estructura actual.`;
+      return ageH != null ? `${base}${ageTxt}` : base;
+    }
+    case "warming_up":
+      return "VWAP actual pendiente de datos: el sistema está cargando velas.";
     case "insufficient_candles":
       return `VWAP no usado: solo hay ${c} velas y se requieren al menos ${m} para entrada.`;
     case "incomplete_window":
@@ -214,10 +232,15 @@ export function buildReferenceContext(input: BuildReferenceContextInput): Refere
   const referenceSource: ReferenceSource =
     rawSource === "vwap_anchor" ? "vwap_anchor" : "hybrid_v2";
 
-  // ── Hybrid metadata ────────────────────────────────────────────────────────
-  const hybridCandidatePrice  = basePriceResult.meta?.selectedAnchorPrice ?? basePriceResult.price ?? null;
-  const hybridCandidateMethod = basePriceResult.meta?.selectedMethod ?? (basePriceResult.type as string) ?? null;
-  const hybridReason          = basePriceResult.meta?.selectedReason ?? basePriceResult.reason ?? null;
+  // ── Hybrid metadata — FASE 5: hybridCandidatePrice=null si <=0 ──────────
+  const _rawHybridPrice = basePriceResult.meta?.selectedAnchorPrice ?? basePriceResult.price;
+  const hybridCandidatePrice  = (_rawHybridPrice != null && _rawHybridPrice > 0) ? _rawHybridPrice : null;
+  const hybridCandidateMethod = hybridCandidatePrice != null
+    ? (basePriceResult.meta?.selectedMethod ?? (basePriceResult.type as string) ?? null)
+    : "unavailable";
+  const hybridReason          = hybridCandidatePrice != null
+    ? (basePriceResult.meta?.selectedReason ?? basePriceResult.reason ?? null)
+    : "Hybrid no disponible: no hay suficientes velas para calcular candidato.";
 
   // ── Anchor timestamps ──────────────────────────────────────────────────────
   const anchorAgeHours  = refResult.frozenAnchorAgeHours ?? null;
@@ -228,21 +251,42 @@ export function buildReferenceContext(input: BuildReferenceContextInput): Refere
     ? new Date(frozenAnchor.setAt).toISOString()
     : refResult.referenceUpdatedAt ?? null;
 
-  // ── VWAP status and reliability ────────────────────────────────────────────
-  const candlesUsed = vwapContext?.candlesUsed ?? basePriceResult.meta?.candleCount;
+  // ── CAPA 2: VWAP actual recalculado ──────────────────────────────────────
+  // candlesUsed viene del vwapContext actual (si se calculó) o del basePriceResult
+  // Nota: basePriceResult.meta?.candleCount es el conteo de velas 24h del Hybrid V2.1
+  const candlesUsed = vwapContext?.candlesUsed != null
+    ? vwapContext.candlesUsed
+    : (basePriceResult.meta?.candleCount != null ? basePriceResult.meta.candleCount : undefined);
 
+  // VWAP actual fiable solo si hay suficientes velas
+  const currentCandlesOk = candlesUsed != null && candlesUsed >= minCandlesForEntry;
+  const currentVwapUsableForEntry  = currentCandlesOk && (vwapContext?.isReliable ?? false);
+  const currentVwapUsableForContext = currentCandlesOk || (vwapContext?.isReliable ?? false);
+
+  // ── CAPA 1 + estado VWAP ────────────────────────────────────────────────
   let vwapStatus: VwapReliabilityStatus;
   let vwapUsed: boolean;
 
   if (referenceSource === "vwap_anchor") {
-    vwapUsed   = true;
-    vwapStatus = "used";
+    vwapUsed = true;
+    // Si no hay velas actuales suficientes, es ancla congelada — NO marcar como "used"
+    if (candlesUsed === 0 || (candlesUsed != null && candlesUsed < minCandlesForEntry)) {
+      vwapStatus = "used_frozen_anchor";
+    } else if (candlesUsed == null) {
+      // No tenemos info de velas — asumir ancla congelada para ser conservadores
+      vwapStatus = "used_frozen_anchor";
+    } else {
+      // candlesUsed >= minCandlesForEntry
+      vwapStatus = "used";
+    }
   } else {
     vwapUsed = false;
     if (!vwapEnabled) {
       vwapStatus = "missing_anchor";
     } else if (!frozenAnchor || !(frozenAnchor.anchorPrice > 0)) {
-      if (candlesUsed != null && candlesUsed < minCandlesForEntry) {
+      if (candlesUsed === 0 || candlesUsed == null) {
+        vwapStatus = "warming_up";
+      } else if (candlesUsed < minCandlesForEntry) {
         vwapStatus = "insufficient_candles";
       } else if (!basePriceResult.isReliable) {
         vwapStatus = "calculation_error";
@@ -260,15 +304,30 @@ export function buildReferenceContext(input: BuildReferenceContextInput): Refere
     anchorAgeHours: anchorAgeHours ?? undefined,
   });
 
+  // ── GUARDRAIL DURO: candlesUsed=0 nunca puede ser usableForEntry=true ──
+  // La ancla persistida puede ser usada para decisiones de trading (eso no cambia),
+  // pero el campo usableForEntry en vwapReliability refleja si el VWAP ACTUAL es fiable.
+  // Con vwapStatus="used_frozen_anchor", usableForEntry=false indica que el VWAP actual
+  // no es recalculable, aunque la referencia siga activa.
+  const usableForEntry =
+    vwapStatus === "used" &&
+    currentCandlesOk;
+
+  const usableForContext =
+    (vwapStatus === "used" && currentCandlesOk) ||
+    (vwapStatus === "used_frozen_anchor" && (frozenAnchor?.anchorPrice ?? 0) > 0);
+
   const vwapReliability: VwapReliability = {
-    usableForEntry:    vwapUsed,
-    usableForContext:  vwapUsed || (vwapContext?.isReliable ?? false),
+    usableForEntry,
+    usableForContext,
     status:            vwapStatus,
     reason:            vwapReliabilityReason,
     candlesUsed,
     minCandlesRequired: minCandlesForEntry,
     anchorAgeHours:    anchorAgeHours ?? undefined,
     checkedAt:         new Date(now).toISOString(),
+    currentVwapUsableForEntry,
+    currentVwapUsableForContext,
   };
 
   const vwapRejectReason = vwapUsed ? null : vwapReliabilityReason;
@@ -291,14 +350,23 @@ export function buildReferenceContext(input: BuildReferenceContextInput): Refere
         anchorReason    = "Referencia congelada por Trailing Buy activo.";
       }
     } else if (anchorStatus === "stale") {
-      referenceReason = "Se usa VWAP Anclado porque está congelado como referencia de entrada, aunque es una referencia antigua.";
+      if (vwapStatus === "used_frozen_anchor") {
+        referenceReason = "Se usa VWAP Anclado congelado (ancla persistida). El VWAP actual no tiene velas suficientes y la ancla es antigua.";
+      } else {
+        referenceReason = "Se usa VWAP Anclado porque está congelado como referencia de entrada, aunque es una referencia antigua.";
+      }
       anchorReason    = anchorAgeHours != null
         ? `Referencia activa pero antigua. Edad: ${anchorAgeHours.toFixed(1)}h.${
             anchorAgeHours > ANCHOR_VERY_STALE_HOURS ? " Revisar si sigue siendo representativa." : ""
           }`
         : "Referencia activa con edad no determinada.";
+    } else if (vwapStatus === "used_frozen_anchor") {
+      referenceReason = "Se usa VWAP Anclado congelado (ancla persistida). El VWAP actual no tiene suficientes velas para recalcular fiabilidad.";
+      anchorReason    = anchorAgeHours != null
+        ? `Referencia activa (ancla congelada). Edad: ${anchorAgeHours.toFixed(1)}h.`
+        : "Referencia activa (ancla congelada). Edad no determinada.";
     } else {
-      referenceReason = "Se usa VWAP Anclado porque existe una referencia válida y está activa.";
+      referenceReason = "Se usa VWAP Anclado porque existe una referencia válida y el VWAP actual tiene datos suficientes.";
       anchorReason    = "Referencia activa usada para medir caída de entrada.";
     }
   } else {

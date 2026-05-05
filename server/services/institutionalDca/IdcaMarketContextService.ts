@@ -87,10 +87,30 @@ export interface MarketContextOptions {
   cacheTtl?: number;                 // Default: 30s
 }
 
+// ─── FASE 8: Snapshot compacto del último VWAP válido (en memoria) ────────────
+export interface LastValidVwapSnapshot {
+  pair: string;
+  computedAt: number;
+  candlesUsed: number;
+  minCandlesRequired: number;
+  vwap: number;
+  lowerBand1: number;
+  lowerBand2: number;
+  upperBand1: number;
+  upperBand2: number;
+  usableForEntry: boolean;
+  source: "market_context_service";
+}
+
 class IdcaMarketContextService {
   private cache = new Map<string, { context: MarketContext; expires: number }>();
   private anchorChangeMap = new Map<string, { price: number; changedAt: Date }>();
   private readonly ANCHOR_CHANGE_THRESHOLD = 0.005; // 0.5%
+  // FASE 8: último VWAP válido por par
+  private lastValidVwap = new Map<string, LastValidVwapSnapshot>();
+  // FASE 10: contador de ticks con candlesUsed=0 por par
+  private candlesZeroCounter = new Map<string, number>();
+  private readonly CANDLES_ZERO_WARN_THRESHOLD = 3;
   private readonly defaultOptions: Required<MarketContextOptions> = {
     vwapLookbackHours: 24,
     atrLookbackHours: 24,
@@ -120,19 +140,39 @@ class IdcaMarketContextService {
       throw new Error(`No current price available for ${pair}`);
     }
 
-    const candles = await MarketDataService.getCandles(pair, "1h");
-    if (candles.length < opts.minCandlesForAtr) {
-      throw new Error(`Insufficient candles for ${pair}: ${candles.length} < ${opts.minCandlesForAtr}`);
+    const rawCandles = await MarketDataService.getCandles(pair, "1h");
+    if (rawCandles.length < opts.minCandlesForAtr) {
+      throw new Error(`Insufficient candles for ${pair}: ${rawCandles.length} < ${opts.minCandlesForAtr}`);
+    }
+
+    // FASE 7: Convertir OHLC.time de segundos (Kraken) a milisegundos para computeBasePrice y computeVwapAnchored.
+    // IdcaEngine hace esta conversión via mapKrakenCandles(c.time * 1000).
+    // MarketDataService.getCandles devuelve OHLC[] directamente del exchange con time en segundos.
+    const candles = rawCandles.map((c: any) => ({
+      ...c,
+      time: c.time > 1e12 ? c.time : c.time * 1000,
+    }));
+
+    // FASE 6: Log warm-up si hay pocas velas
+    const MIN_WARMUP_CANDLES = 24;
+    if (candles.length < MIN_WARMUP_CANDLES) {
+      console.log(
+        `[IDCA][MARKET_DATA_WARMUP] pair=${pair}` +
+        ` candlesLoaded=${candles.length} required=${MIN_WARMUP_CANDLES}` +
+        ` status=warming_up reason=insufficient_candles_in_mds`
+      );
     }
 
     // Calculate VWAP (si hay suficientes velas)
     let vwap: VwapResult | undefined;
     let vwapZone: MarketContext['vwapZone'] | undefined;
+    let vwapCandlesUsed = 0;
     
     if (candles.length >= opts.minCandlesForVwap) {
       try {
         const anchorTimeMs = Date.now() - opts.vwapLookbackHours * 60 * 60 * 1000;
         vwap = computeVwapAnchored(candles, anchorTimeMs);
+        vwapCandlesUsed = (vwap as any).candlesUsed ?? 0;
         vwapZone = getVwapBandPosition(currentPrice, vwap).zone;
       } catch (error) {
         console.warn(`[IdcaMarketContextService] VWAP calculation failed for ${pair}:`, error);
@@ -244,11 +284,11 @@ class IdcaMarketContextService {
       volume: c.volume,
     }));
 
-    // Calcular basePriceResult para el resolver canónico
+    // FASE 7: Calcular basePriceResult con velas ya convertidas a ms
     let basePriceResult: BasePriceResult;
     try {
       basePriceResult = computeBasePrice({
-        candles: candles as any, // candles tiene formato TimestampedCandle[]
+        candles: candles as any, // candles ya tienen time en ms
         lookbackMinutes: 1440,
         method: "hybrid",
         currentPrice,
@@ -266,6 +306,32 @@ class IdcaMarketContextService {
         isReliable: false,
         reason: "Fallback to window high",
       };
+    }
+
+    // FASE 6: Log warm-up OK cuando hay velas suficientes
+    const hybridCandleCount = basePriceResult.meta?.candleCount ?? 0;
+    if (hybridCandleCount >= MIN_WARMUP_CANDLES) {
+      console.log(
+        `[IDCA][MARKET_DATA_WARMUP] pair=${pair}` +
+        ` candlesLoaded=${hybridCandleCount} required=${MIN_WARMUP_CANDLES}` +
+        ` status=ready`
+      );
+    }
+
+    // FASE 10: Contador candlesUsed=0 por par — warning tras 3 repeticiones
+    const effectiveCandlesUsed = vwapCandlesUsed > 0 ? vwapCandlesUsed : hybridCandleCount;
+    if (effectiveCandlesUsed === 0) {
+      const prev = this.candlesZeroCounter.get(pair) ?? 0;
+      const next = prev + 1;
+      this.candlesZeroCounter.set(pair, next);
+      if (next >= this.CANDLES_ZERO_WARN_THRESHOLD) {
+        console.warn(
+          `[IDCA][MARKET_DATA_WARNING] pair=${pair}` +
+          ` reason=vwap_candles_zero repeated=${next}`
+        );
+      }
+    } else {
+      this.candlesZeroCounter.set(pair, 0);
     }
 
     // Obtener frozenAnchor para el resolver (desde DB para evitar circular import)
@@ -293,14 +359,46 @@ class IdcaMarketContextService {
     // Usar el resolver canónico para obtener la referencia efectiva
     const assetConfig = await getAssetConfig(pair);
     const vwapEnabled = assetConfig?.vwapEnabled ?? true; // Usar config del asset, fallback true para compatibilidad
+
+    // FASE 7: Construir vwapContextForRef con candlesUsed real para buildReferenceContext
+    const vwapContextForRef = vwap
+      ? { isReliable: vwap.isReliable, candlesUsed: vwapCandlesUsed } as any
+      : (hybridCandleCount > 0 ? { isReliable: false, candlesUsed: hybridCandleCount } as any : undefined);
+
     const refResult = resolveEffectiveEntryReference({
       pair,
       currentPrice,
       basePriceResult,
       frozenAnchor,
-      vwapContext: vwap ? { isReliable: vwap.isReliable } as any : undefined,
+      vwapContext: vwapContextForRef,
       vwapEnabled,
       now: now.getTime(),
+    });
+
+    // FASE 8: Actualizar lastValidVwap si VWAP actual es fiable
+    if (vwap?.isReliable && vwapCandlesUsed >= 24) {
+      this.lastValidVwap.set(pair, {
+        pair,
+        computedAt: now.getTime(),
+        candlesUsed: vwapCandlesUsed,
+        minCandlesRequired: 24,
+        vwap: vwap.vwap,
+        lowerBand1: vwap.lowerBand1,
+        lowerBand2: vwap.lowerBand2,
+        upperBand1: vwap.upperBand1,
+        upperBand2: vwap.upperBand2,
+        usableForEntry: vwapCandlesUsed >= 24,
+        source: "market_context_service",
+      });
+    }
+
+    const referenceContext = buildReferenceContext({
+      pair,
+      refResult,
+      basePriceResult,
+      vwapEnabled,
+      frozenAnchor,
+      vwapContext: vwapContextForRef,
     });
 
     const context: MarketContext = {
@@ -328,14 +426,7 @@ class IdcaMarketContextService {
       frozenAnchorCandleAgeHours: refResult.frozenAnchorCandleAgeHours,
       referenceChangedRecently: refResult.referenceChangedRecently,
       referenceUpdatedAt: refResult.referenceUpdatedAt,
-      referenceContext: buildReferenceContext({
-        pair,
-        refResult,
-        basePriceResult,
-        vwapEnabled,
-        frozenAnchor,
-        vwapContext: vwap ? { isReliable: vwap.isReliable, candlesUsed: (vwap as any).candlesUsed } as any : undefined,
-      }),
+      referenceContext,
       pair,
       dataQuality,
       lastUpdated: now,
@@ -359,6 +450,13 @@ class IdcaMarketContextService {
   async getMultipleContexts(pairs: string[], options: MarketContextOptions = {}): Promise<MarketContext[]> {
     const promises = pairs.map(pair => this.getMarketContext(pair, options));
     return Promise.all(promises);
+  }
+
+  /**
+   * FASE 8: Obtiene el último snapshot de VWAP válido para un par (solo informativo/visual)
+   */
+  getLastValidVwap(pair: string): LastValidVwapSnapshot | undefined {
+    return this.lastValidVwap.get(pair);
   }
 
   /**

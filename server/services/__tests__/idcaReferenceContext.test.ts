@@ -158,7 +158,7 @@ describe("buildReferenceContext — vwapStatus and vwapRejectReason", () => {
     }));
     expect(rc.anchorStatus).toBe("stale");
     expect(rc.vwapReliability.reason).toContain("291.6h");
-    expect(rc.vwapReliability.reason).toContain("Revisar");
+    expect(rc.vwapReliability.reason).toContain("revisar");
     // No altera lógica de trading
     expect(rc.vwapUsed).toBe(true);  // sigue usándose
   });
@@ -242,5 +242,171 @@ describe("buildReferenceContext — UI safety", () => {
   it("18b. ANCHOR_STALE_HOURS y ANCHOR_VERY_STALE_HOURS son valores numéricos positivos", () => {
     expect(ANCHOR_STALE_HOURS).toBeGreaterThan(0);
     expect(ANCHOR_VERY_STALE_HOURS).toBeGreaterThan(ANCHOR_STALE_HOURS);
+  });
+});
+
+describe("buildReferenceContext — HOTFIX: used_frozen_anchor", () => {
+  it("19. vwap_anchor con anchor válido y candlesUsed=0 → vwapStatus=used_frozen_anchor", () => {
+    const rc = buildReferenceContext(makeInput({
+      refResult: makeRefResult({
+        effectiveReferenceSource: "vwap_anchor",
+        effectiveReferenceLabel: "VWAP Anclado",
+        frozenAnchorPrice: 2424.05,
+        frozenAnchorTs: NOW - 5 * 3600_000,
+        frozenAnchorAgeHours: 5,
+      }),
+      frozenAnchor: { anchorPrice: 2424.05, anchorTimestamp: NOW - 5 * 3600_000, setAt: NOW - 5 * 3600_000, drawdownPct: 0 },
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapStatus).toBe("used_frozen_anchor");
+    expect(rc.vwapUsed).toBe(true);
+  });
+
+  it("20. used_frozen_anchor → usableForEntry=false, usableForContext=true", () => {
+    const rc = buildReferenceContext(makeInput({
+      refResult: makeRefResult({
+        effectiveReferenceSource: "vwap_anchor",
+        effectiveReferenceLabel: "VWAP Anclado",
+        frozenAnchorPrice: 2424.05,
+        frozenAnchorTs: NOW - 5 * 3600_000,
+        frozenAnchorAgeHours: 5,
+      }),
+      frozenAnchor: { anchorPrice: 2424.05, anchorTimestamp: NOW - 5 * 3600_000, setAt: NOW - 5 * 3600_000, drawdownPct: 0 },
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapReliability.usableForEntry).toBe(false);
+    expect(rc.vwapReliability.usableForContext).toBe(true);
+  });
+
+  it("21. vwap_anchor con anchor válido y candlesUsed=10 (<24) → used_frozen_anchor", () => {
+    const rc = buildReferenceContext(makeInput({
+      refResult: makeRefResult({
+        effectiveReferenceSource: "vwap_anchor",
+        effectiveReferenceLabel: "VWAP Anclado",
+        frozenAnchorPrice: 2424.05,
+        frozenAnchorTs: NOW - 5 * 3600_000,
+        frozenAnchorAgeHours: 5,
+      }),
+      frozenAnchor: { anchorPrice: 2424.05, anchorTimestamp: NOW - 5 * 3600_000, setAt: NOW - 5 * 3600_000, drawdownPct: 0 },
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 10, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapStatus).toBe("used_frozen_anchor");
+    expect(rc.vwapReliability.usableForEntry).toBe(false);
+  });
+
+  it("22. vwap_anchor con anchor válido y candlesUsed=48 (>=24) → used, usableForEntry=true", () => {
+    const rc = buildReferenceContext(makeInput({
+      refResult: makeRefResult({
+        effectiveReferenceSource: "vwap_anchor",
+        effectiveReferenceLabel: "VWAP Anclado",
+        frozenAnchorPrice: 2424.05,
+        frozenAnchorTs: NOW - 5 * 3600_000,
+        frozenAnchorAgeHours: 5,
+      }),
+      frozenAnchor: { anchorPrice: 2424.05, anchorTimestamp: NOW - 5 * 3600_000, setAt: NOW - 5 * 3600_000, drawdownPct: 0 },
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 48, swingHighsFound: 3 },
+      }),
+      vwapContext: { isReliable: true, candlesUsed: 48 } as any,
+    }));
+    expect(rc.vwapStatus).toBe("used");
+    expect(rc.vwapReliability.usableForEntry).toBe(true);
+  });
+});
+
+describe("buildReferenceContext — HOTFIX: warming_up", () => {
+  it("23. sin anchor y candlesUsed=0 → vwapStatus=warming_up", () => {
+    const rc = buildReferenceContext(makeInput({
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapStatus).toBe("warming_up");
+    expect(rc.vwapUsed).toBe(false);
+    expect(rc.vwapReliability.usableForEntry).toBe(false);
+    expect(rc.vwapReliability.usableForContext).toBe(false);
+  });
+
+  it("24. warming_up reason contiene 'sistema está cargando velas'", () => {
+    const reason = getVwapReliabilityReason("warming_up");
+    expect(reason).toContain("sistema está cargando velas");
+  });
+});
+
+describe("buildReferenceContext — HOTFIX: hybridCandidatePrice null guardrail", () => {
+  it("25. basePriceResult.price=0 → hybridCandidatePrice=null", () => {
+    const rc = buildReferenceContext(makeInput({
+      basePriceResult: makeBasePriceResult({
+        price: 0,
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.hybridCandidatePrice).toBeNull();
+    expect(rc.hybridCandidateMethod).toBe("unavailable");
+    expect(rc.hybridReason).toContain("no hay suficientes velas");
+  });
+
+  it("26. selectedAnchorPrice=0 → hybridCandidatePrice=null", () => {
+    const rc = buildReferenceContext(makeInput({
+      basePriceResult: makeBasePriceResult({
+        price: 80000,
+        meta: {
+          candleCount: 48,
+          swingHighsFound: 3,
+          selectedAnchorPrice: 0,
+        },
+      }),
+    }));
+    expect(rc.hybridCandidatePrice).toBeNull();
+  });
+});
+
+describe("buildReferenceContext — HOTFIX: guardrail candlesUsed=0", () => {
+  it("27. candlesUsed=0 nunca puede ser usableForEntry=true", () => {
+    const rc = buildReferenceContext(makeInput({
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapReliability.candlesUsed).toBe(0);
+    expect(rc.vwapReliability.usableForEntry).toBe(false);
+  });
+
+  it("28. vwap_anchor con candlesUsed=0 → usableForEntry=false aunque anchor válido", () => {
+    const rc = buildReferenceContext(makeInput({
+      refResult: makeRefResult({
+        effectiveReferenceSource: "vwap_anchor",
+        effectiveReferenceLabel: "VWAP Anclado",
+        frozenAnchorPrice: 2424.05,
+        frozenAnchorTs: NOW - 5 * 3600_000,
+        frozenAnchorAgeHours: 5,
+      }),
+      frozenAnchor: { anchorPrice: 2424.05, anchorTimestamp: NOW - 5 * 3600_000, setAt: NOW - 5 * 3600_000, drawdownPct: 0 },
+      basePriceResult: makeBasePriceResult({
+        meta: { candleCount: 0, swingHighsFound: 0 },
+      }),
+    }));
+    expect(rc.vwapReliability.candlesUsed).toBe(0);
+    expect(rc.vwapReliability.usableForEntry).toBe(false);
+  });
+});
+
+describe("buildReferenceContext — HOTFIX: used_frozen_anchor reason", () => {
+  it("29. used_frozen_anchor reason contiene 'referencia congelada'", () => {
+    const reason = getVwapReliabilityReason("used_frozen_anchor", { anchorAgeHours: 5 });
+    expect(reason).toContain("referencia congelada");
+    expect(reason).toContain("5.0h");
+  });
+
+  it("30. used_frozen_anchor con anchorAgeHours=291.6 contiene 'muy antigua'", () => {
+    const reason = getVwapReliabilityReason("used_frozen_anchor", { anchorAgeHours: 291.6 });
+    expect(reason).toContain("291.6h");
+    expect(reason).toContain("muy antigua");
   });
 });

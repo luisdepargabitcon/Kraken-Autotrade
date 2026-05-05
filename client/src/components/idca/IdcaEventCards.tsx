@@ -1064,7 +1064,15 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                               <span className="text-muted-foreground/60">Motivo: </span>
                               {parsed.referenceContext.referenceReason ?? "Motivo no disponible"}
                             </div>
-                            {parsed.referenceContext.vwapUsed ? (
+                            {parsed.referenceContext.vwapStatus === "warming_up" ? (
+                              <div className="text-zinc-400/70">
+                                VWAP actual pendiente de datos: el sistema está cargando velas.
+                              </div>
+                            ) : parsed.referenceContext.vwapStatus === "used_frozen_anchor" ? (
+                              <div className="text-amber-400/70">
+                                {parsed.referenceContext.vwapReliability?.reason}
+                              </div>
+                            ) : parsed.referenceContext.vwapUsed ? (
                               <div className="text-cyan-400/70">
                                 {parsed.referenceContext.vwapReliability?.reason}
                               </div>

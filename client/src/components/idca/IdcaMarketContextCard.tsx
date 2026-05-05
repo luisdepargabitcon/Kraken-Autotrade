@@ -249,29 +249,61 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           {/* Badge de fuente + Motivo + VWAP no usado */}
           {data.referenceContext && (() => {
             const rc = data.referenceContext!;
-            const isVwap   = rc.vwapUsed;
-            const isStale  = rc.anchorStatus === "stale";
-            const isHybrid = rc.referenceSource === "hybrid_v2" || rc.referenceSource === "hybrid_fallback";
-            const badgeCls = isVwap && !isStale
+            const vwapStatus   = rc.vwapStatus;
+            const isFrozen     = vwapStatus === "used_frozen_anchor";
+            const isWarmingUp  = vwapStatus === "warming_up";
+            const isVwapFull   = vwapStatus === "used";
+            const isHybrid     = rc.referenceSource === "hybrid_v2" || rc.referenceSource === "hybrid_fallback";
+
+            const badgeLabel = isFrozen
+              ? "VWAP Anclado congelado"
+              : isWarmingUp
+                ? "VWAP cargando datos"
+                : rc.referenceLabel;
+
+            const badgeCls = isVwapFull
               ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20"
-              : isVwap && isStale
+              : isFrozen
                 ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
-                : isHybrid
-                  ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
-                  : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
+                : isWarmingUp
+                  ? "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20"
+                  : isHybrid
+                    ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
+                    : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
+
             return (
               <div className="mt-0.5 space-y-0.5">
                 <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${badgeCls}`}>
-                  {rc.referenceLabel}
+                  {badgeLabel}
                 </div>
                 {rc.referenceReason && (
                   <div className="text-[8px] text-muted-foreground/50 font-mono leading-tight">
                     {rc.referenceReason}
                   </div>
                 )}
-                {!rc.vwapUsed && rc.vwapRejectReason && (
+                {isFrozen && (
+                  <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
+                    {rc.vwapReliability?.reason}
+                  </div>
+                )}
+                {isWarmingUp && (
+                  <div className="text-[8px] text-zinc-400/70 font-mono leading-tight">
+                    VWAP actual pendiente de datos: el sistema está cargando velas.
+                  </div>
+                )}
+                {!rc.vwapUsed && !isWarmingUp && rc.vwapRejectReason && (
                   <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
                     {rc.vwapRejectReason}
+                  </div>
+                )}
+                {isHybrid && rc.hybridCandidatePrice != null && rc.hybridCandidatePrice > 0 && (
+                  <div className="text-[8px] text-blue-400/60 font-mono leading-tight">
+                    Hybrid: ${rc.hybridCandidatePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  </div>
+                )}
+                {isHybrid && (rc.hybridCandidatePrice == null || rc.hybridCandidatePrice <= 0) && (
+                  <div className="text-[8px] text-zinc-500/60 font-mono leading-tight">
+                    Hybrid no disponible
                   </div>
                 )}
               </div>

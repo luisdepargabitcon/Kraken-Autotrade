@@ -2765,6 +2765,9 @@ async function performEntryCheck(
     ` vwapUsed=${referenceContext.vwapUsed}` +
     ` vwapStatus=${referenceContext.vwapStatus}` +
     ` usableForEntry=${referenceContext.vwapReliability.usableForEntry}` +
+    ` usableForContext=${referenceContext.vwapReliability.usableForContext}` +
+    ` candlesUsed=${referenceContext.vwapReliability.candlesUsed ?? "n/a"}` +
+    ` minCandlesRequired=${referenceContext.vwapReliability.minCandlesRequired}` +
     ` effectiveEntryReference=${effectiveBasePrice.toFixed(2)}` +
     ` anchorAgeHours=${referenceContext.anchorAgeHours?.toFixed(1) ?? "n/a"}` +
     ` reason="${referenceContext.referenceReason}"`
