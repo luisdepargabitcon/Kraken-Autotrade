@@ -109,6 +109,33 @@ await repo.updateCycle(cycle.id, {
 
 ---
 
+## 2026-05-05 — TODO(idca): actualizar margen trailing dinámicamente al cambiar config
+
+### Problema identificado
+El margen trailing usa snapshot por ciclo (`cycle.trailingPct`) que no se actualiza cuando el usuario cambia la configuración global (`assetCfg.trailingMarginPct`). Esto crea discrepancia entre valor mostrado en ciclo (0.5%) y valor actual en config (1.6%).
+
+### Solución recomendada (Opción 2)
+Actualizar snapshot al cambiar configuración:
+
+1. Al cambiar `trailingMarginPct` en UI para un par
+2. Backend detecta cambio en `useUpdateAssetConfig`
+3. Actualizar `cycle.trailingPct` en DB para todos los ciclos activos de ese par en estado "trailing_active"
+4. Mostrar indicador visual en UI cuando config difiere del snapshot del ciclo
+
+### Ventajas
+- Mantiene invarianza por ciclo (diseño actual)
+- Usuario controla cuándo actualizar (cambio intencional)
+- Permite override manual en medio del ciclo
+- No rompe ciclos activos inesperadamente
+
+### Pendiente de implementación
+- [ ] Modificar `useUpdateAssetConfig` para detectar cambio en `trailingMarginPct`
+- [ ] Añadir endpoint backend para actualizar `cycle.trailingPct` en ciclos activos
+- [ ] Añadir indicador visual en UI cuando config ≠ snapshot
+- [ ] Test de actualización de trailing margin en ciclo activo
+
+---
+
 ## 2026-05-05 — fix(idca): eliminar ciclo #21 + guard de balance en ventas (hotfix crítico)
 
 ### Causa raíz detectada
