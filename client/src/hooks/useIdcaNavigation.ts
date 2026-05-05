@@ -31,26 +31,22 @@ export interface NavigateResult {
 }
 
 const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
-  // Entradas
+  // Entradas - Config real está en ConfigTab → Cuándo comprar
   "entry-patience": {
-    mainTab: "adaptativo",
-    adaptiveTab: "entradas",
-    sectionId: "idca-config-entry-patience",
+    mainTab: "config",
+    sectionId: "idca-config-entry",
   },
   "entry-rebound": {
-    mainTab: "adaptativo",
-    adaptiveTab: "entradas",
-    sectionId: "idca-config-entry-rebound",
+    mainTab: "config",
+    sectionId: "idca-config-entry",
   },
   "entry-quality": {
-    mainTab: "adaptativo",
-    adaptiveTab: "entradas",
-    sectionId: "idca-config-entry-quality",
+    mainTab: "config",
+    sectionId: "idca-config-entry",
   },
   "entry-size": {
-    mainTab: "adaptativo",
-    adaptiveTab: "entradas",
-    sectionId: "idca-config-entry-size",
+    mainTab: "config",
+    sectionId: "idca-config-entry",
   },
   "safety-ladder": {
     mainTab: "adaptativo",
@@ -60,10 +56,10 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
   "next-buy": {
     mainTab: "adaptativo",
     adaptiveTab: "entradas",
-    sectionId: "idca-config-next-buy",
+    sectionId: "idca-config-safety-ladder",
   },
 
-  // Salidas
+  // Salidas - Config real está en ConfigTab → Cuándo vender
   "take-profit": {
     mainTab: "adaptativo",
     adaptiveTab: "salidas",
@@ -72,21 +68,18 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
   "dynamic-tp": {
     mainTab: "adaptativo",
     adaptiveTab: "salidas",
-    sectionId: "idca-config-dynamic-tp",
+    sectionId: "idca-config-take-profit",
   },
   "break-even": {
-    mainTab: "adaptativo",
-    adaptiveTab: "salidas",
+    mainTab: "config",
     sectionId: "idca-config-break-even",
   },
   "trailing-activation": {
-    mainTab: "adaptativo",
-    adaptiveTab: "salidas",
+    mainTab: "config",
     sectionId: "idca-config-trailing-activation",
   },
   "trailing-margin": {
-    mainTab: "adaptativo",
-    adaptiveTab: "salidas",
+    mainTab: "config",
     sectionId: "idca-config-trailing-margin",
   },
 
@@ -97,8 +90,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
     sectionId: "idca-config-execution-slippage",
   },
   "capital": {
-    mainTab: "adaptativo",
-    adaptiveTab: "ejecucion",
+    mainTab: "config",
     sectionId: "idca-config-capital",
   },
 
@@ -109,8 +101,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
     sectionId: "idca-config-cooldown",
   },
   "vwap-anchor": {
-    mainTab: "adaptativo",
-    adaptiveTab: "avanzado",
+    mainTab: "config",
     sectionId: "idca-config-vwap-anchor",
   },
   "advanced": {
@@ -144,55 +135,35 @@ export function useIdcaNavigation(options: UseIdcaNavigationOptions) {
       if (result.adaptiveTab && setAdaptiveTab) {
         setTimeout(() => {
           setAdaptiveTab(result.adaptiveTab!);
-        }, 50);
+        }, 0);
       }
 
       // Seleccionar par si se proporciona
       if (pair && setSelectedPair) {
         setTimeout(() => {
           setSelectedPair(pair);
-        }, 100);
+        }, 0);
       }
 
-      // Hacer scroll y resaltar la sección
-      setTimeout(() => {
+      // Hacer scroll y resaltar la sección con reintentos
+      const scrollAndHighlight = (attempt = 0) => {
         const element = document.getElementById(result.sectionId);
         if (element) {
           element.scrollIntoView({ behavior: "smooth", block: "center" });
-
-          // Añadir clase de resaltado
           element.classList.add("idca-config-highlight");
-
-          // Mostrar toast opcional
-          const targetLabels: Record<IdcaConfigTarget, string> = {
-            "entry-patience": "Paciencia de entrada",
-            "entry-rebound": "Rebote mínimo",
-            "entry-quality": "Calidad de entrada",
-            "entry-size": "Tamaño de entrada",
-            "safety-ladder": "Ladder de compras",
-            "next-buy": "Próxima compra",
-            "take-profit": "Take Profit",
-            "dynamic-tp": "TP Dinámico",
-            "break-even": "Break-Even",
-            "trailing-activation": "Activación Trailing",
-            "trailing-margin": "Margen Trailing",
-            "capital": "Capital",
-            "cooldown": "Cooldown",
-            "execution-slippage": "Slippage",
-            "vwap-anchor": "Ancla VWAP",
-            "advanced": "Avanzado",
-          };
-
-          // Remover clase después de 3 segundos
           setTimeout(() => {
             element.classList.remove("idca-config-highlight");
-          }, 3000);
+          }, 2500);
+        } else if (attempt < 8) {
+          setTimeout(() => scrollAndHighlight(attempt + 1), 120);
         } else {
           console.warn(
-            `[IDCA_UI_NAV] section_not_found target=${target} sectionId=${result.sectionId}`
+            `[IDCA_UI_NAV] section_not_found target=${target} sectionId=${result.sectionId} pair=${pair}`
           );
         }
-      }, 200);
+      };
+
+      setTimeout(() => scrollAndHighlight(), 0);
     },
     [setMainTab, setAdaptiveTab, setSelectedPair]
   );

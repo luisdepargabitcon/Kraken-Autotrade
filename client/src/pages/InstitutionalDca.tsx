@@ -1000,7 +1000,7 @@ function ConfigTab() {
       <ConfigBlock icon={Wallet} title="Dinero y límites"
         desc="Aquí decides cuánto dinero puede usar el sistema y hasta dónde le permites arriesgar.">
 
-        <div className="space-y-1.5">
+        <div id="idca-config-capital" className="space-y-1.5">
           <Label className="flex items-center gap-2 text-sm">
             <div className="w-2.5 h-2.5 rounded-full bg-primary" />
             Capital asignado
@@ -1047,7 +1047,7 @@ function ConfigTab() {
       <ConfigBlock icon={TrendingDown} title="Cuándo comprar"
         desc="Aquí decides en qué condiciones el sistema puede abrir compras y cuándo debe esperar.">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+        <div id="idca-config-entry" className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
           {btc && (
             <ColorSlider label="Min Dip BTC" color="blue"
               value={parseFloat(btc.minDipPct)} min={1} max={20} step={0.5}
@@ -1106,7 +1106,7 @@ function ConfigTab() {
         desc="Controla la salida del ciclo: primero protección, después trailing, cierre al romper el trailing.">
 
         {/* ── SLIDER 1: Activación de protección ── */}
-        <div className="space-y-4">
+        <div id="idca-config-break-even" className="space-y-4">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="flex items-center gap-2 text-sm font-semibold">
@@ -1172,7 +1172,7 @@ function ConfigTab() {
         </div>
 
         {/* ── SLIDER 2: Activación del trailing ── */}
-        <div className="space-y-4 border-t border-border/30 pt-4">
+        <div id="idca-config-trailing-activation" className="space-y-4 border-t border-border/30 pt-4">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="flex items-center gap-2 text-sm font-semibold">
@@ -1238,7 +1238,7 @@ function ConfigTab() {
         </div>
 
         {/* ── SLIDER 3: Margen del trailing ── */}
-        <div className="space-y-4 border-t border-border/30 pt-4">
+        <div id="idca-config-trailing-margin" className="space-y-4 border-t border-border/30 pt-4">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="flex items-center gap-2 text-sm font-semibold">
@@ -1644,60 +1644,55 @@ function ConfigTab() {
         <ConfigBlock icon={Activity} title="VWAP Anchored & Rebound"
           desc="Configuración avanzada: VWAP anclado al swing high, rebote mínimo configurable y safety orders dinámicas basadas en bandas VWAP.">
 
-          {/* ── Rebound mínimo ── */}
-          <div className="space-y-1">
-            <p className="text-xs font-semibold text-muted-foreground">Rebote mínimo por par</p>
-            <p className="text-xs text-muted-foreground">
-              Porcentaje mínimo de rebote desde el mínimo local para confirmar entrada. Solo aplica si "Confirmar rebote" está activo en General.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-            {btc && (
-              <ColorSlider label="Rebote mínimo BTC" color="cyan"
-                value={parseFloat(btc.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
-                onChange={(v) => updateAsset.mutate({ pair: btc.pair, reboundMinPct: String(v) })}
-                desc="Porcentaje mínimo de bounce desde el low local para BTC." />
-            )}
-            {eth && (
-              <ColorSlider label="Rebote mínimo ETH" color="cyan"
-                value={parseFloat(eth.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
-                onChange={(v) => updateAsset.mutate({ pair: eth.pair, reboundMinPct: String(v) })}
-                desc="Porcentaje mínimo de bounce desde el low local para ETH." />
-            )}
-          </div>
-
-          {/* ── VWAP Anchored ── */}
-          <div className="border-t border-border/30 pt-4 space-y-3">
-            <div className="space-y-1">
-              <p className="text-xs font-semibold text-muted-foreground">VWAP Anchored</p>
-              <p className="text-xs text-muted-foreground">
-                Calcula el VWAP anclado al swing high del base price con bandas de desviación estándar (±1σ, ±2σ). Enriquece el contexto de entrada con zona VWAP.
-              </p>
+          <div id="idca-config-vwap-anchor" className="space-y-6">
+            {/* ── Rebound mínimo ── */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              {btc && (
+                <ColorSlider label="Rebote mínimo BTC" color="cyan"
+                  value={parseFloat(btc.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
+                  onChange={(v) => updateAsset.mutate({ pair: btc.pair, reboundMinPct: String(v) })}
+                  desc="Porcentaje mínimo de bounce desde el low local para BTC." />
+              )}
+              {eth && (
+                <ColorSlider label="Rebote mínimo ETH" color="cyan"
+                  value={parseFloat(eth.reboundMinPct ?? "0.30")} min={0.1} max={2.0} step={0.05}
+                  onChange={(v) => updateAsset.mutate({ pair: eth.pair, reboundMinPct: String(v) })}
+                  desc="Porcentaje mínimo de bounce desde el low local para ETH." />
+              )}
             </div>
-            {btc && (
-              <ToggleField label="VWAP Anchored BTC" checked={btc.vwapEnabled ?? false}
-                onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapEnabled: v })}
-                desc="Activa el análisis VWAP anclado al swing high para BTC." />
-            )}
-            {eth && (
-              <ToggleField label="VWAP Anchored ETH" checked={eth.vwapEnabled ?? false}
-                onChange={(v) => updateAsset.mutate({ pair: eth.pair, vwapEnabled: v })}
-                desc="Activa el análisis VWAP anclado al swing high para ETH." />
-            )}
-          </div>
 
-          {/* ── Safety Orders dinámicas ── */}
-          <div className="border-t border-border/30 pt-4 space-y-3">
-            <div className="space-y-1">
-              <p className="text-xs font-semibold text-muted-foreground">Safety Orders dinámicas (VWAP)</p>
-              <p className="text-xs text-muted-foreground">
-                Ajusta automáticamente los niveles de safety orders según la zona VWAP actual. Requiere VWAP Anchored activo.
-              </p>
+            {/* ── VWAP Anchored ── */}
+            <div className="border-t border-border/30 pt-4 space-y-3">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-muted-foreground">VWAP Anchored</p>
+                <p className="text-xs text-muted-foreground">
+                  Calcula el VWAP anclado al swing high del base price con bandas de desviación estándar (±1σ, ±2σ). Enriquece el contexto de entrada con zona VWAP.
+                </p>
+              </div>
+              {btc && (
+                <ToggleField label="VWAP Anchored BTC" checked={btc.vwapEnabled ?? false}
+                  onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapEnabled: v })}
+                  desc="Activa el análisis VWAP anclado al swing high para BTC." />
+              )}
+              {eth && (
+                <ToggleField label="VWAP Anchored ETH" checked={eth.vwapEnabled ?? false}
+                  onChange={(v) => updateAsset.mutate({ pair: eth.pair, vwapEnabled: v })}
+                  desc="Activa el análisis VWAP anclado al swing high para ETH." />
+              )}
             </div>
-            {btc && (
-              <ToggleField label="Safety dinámicas VWAP BTC" checked={btc.vwapDynamicSafetyEnabled ?? false}
-                onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapDynamicSafetyEnabled: v })}
-                desc="Deep value → tighten levels (compra antes). Overextended → widen levels." />
+
+            {/* ── Safety Orders dinámicas ── */}
+            <div className="border-t border-border/30 pt-4 space-y-3">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-muted-foreground">Safety Orders dinámicas (VWAP)</p>
+                <p className="text-xs text-muted-foreground">
+                  Ajusta automáticamente los niveles de safety orders según la zona VWAP actual. Requiere VWAP Anchored activo.
+                </p>
+              </div>
+              {btc && (
+                <ToggleField label="Safety dinámicas VWAP BTC" checked={btc.vwapDynamicSafetyEnabled ?? false}
+                  onChange={(v) => updateAsset.mutate({ pair: btc.pair, vwapDynamicSafetyEnabled: v })}
+                  desc="Deep value → tighten levels (compra antes). Overextended → widen levels." />
             )}
             {eth && (
               <ToggleField label="Safety dinámicas VWAP ETH" checked={eth.vwapDynamicSafetyEnabled ?? false}
@@ -1719,6 +1714,7 @@ function ConfigTab() {
                 Los eventos entry_check_passed/blocked incluirán vwapContext en el payload JSON expandible del Monitor Tiempo Real.
               </p>
             </div>
+          </div>
           </div>
         </ConfigBlock>
       )}
@@ -2272,30 +2268,18 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   {cycle.soloSalida ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span
-                        className="text-[10px] font-mono text-yellow-400/60 idca-clickable-param"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          nav?.navigateToConfig("safety-ladder", cycle.pair);
-                        }}
-                        title="Click para editar configuración de Safety/Ladder"
-                      >
+                      <span className="text-[10px] font-mono text-yellow-400/60">
                         🛒 Próx. compra: solo salida
+                        <ConfigJumpButton target="safety-ladder" pair={cycle.pair} label="Safety/Ladder" />
                       </span>
                     </>
                   ) : cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span
-                        className="text-[10px] font-mono text-muted-foreground idca-clickable-param"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          nav?.navigateToConfig("safety-ladder", cycle.pair);
-                        }}
-                        title="Click para editar configuración de Safety/Ladder"
-                      >
+                      <span className="text-[10px] font-mono text-muted-foreground">
                         🛒 Próx. compra: <span className="text-blue-400 font-semibold">${fmtPrice(cycle.nextBuyPrice)}</span>
                         {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
+                        <ConfigJumpButton target="safety-ladder" pair={cycle.pair} label="Safety/Ladder" />
                       </span>
                       {cycle.skippedSafetyLevels > 0 && (
                         <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
@@ -2413,15 +2397,9 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
             </div>
           </div>
           <div className="text-right">
-            <div
-              className="text-sm font-mono idca-clickable-param"
-              onClick={(e) => {
-                e.stopPropagation();
-                nav?.navigateToConfig("capital", cycle.pair);
-              }}
-              title="Click para editar configuración de Capital"
-            >
+            <div className="text-sm font-mono">
               {fmtUsd(cycle.capitalUsedUsd)}
+              <ConfigJumpButton target="capital" pair={cycle.pair} label="Capital" />
             </div>
             <div className={cn("text-xs font-mono", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
               {fmtPct(cycle.unrealizedPnlPct)}
@@ -2512,15 +2490,9 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {/* Break-Even Protection */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span
-                      className="text-xs text-muted-foreground idca-clickable-param"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        nav?.navigateToConfig("break-even", cycle.pair);
-                      }}
-                      title="Click para editar configuración de Break-Even"
-                    >
+                    <span className="text-xs text-muted-foreground">
                       🛡️ Break-Even <span className="text-muted-foreground/60">(activa a +{beActPct.toFixed(1)}%)</span>
+                      <ConfigJumpButton target="break-even" pair={cycle.pair} label="Break-Even" />
                     </span>
                     <span className={cn("text-xs font-mono", beArmed ? "text-emerald-400" : "text-muted-foreground")}>
                       {beArmed
@@ -2541,15 +2513,10 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {/* Trailing Stop */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span
-                      className="text-xs text-muted-foreground idca-clickable-param"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        nav?.navigateToConfig("trailing-margin", cycle.pair);
-                      }}
-                      title="Click para editar configuración de Trailing Stop"
-                    >
+                    <span className="text-xs text-muted-foreground">
                       🎯 Trailing Stop <span className="text-muted-foreground/60">(activa a +{trailActPct.toFixed(1)}% · margen {trailMarginPct.toFixed(1)}%)</span>
+                      <ConfigJumpButton target="trailing-activation" pair={cycle.pair} label="Activación Trailing" />
+                      <ConfigJumpButton target="trailing-margin" pair={cycle.pair} label="Margen Trailing" />
                     </span>
                     <span className={cn("text-xs font-mono", trailActive ? "text-amber-400" : "text-muted-foreground")}>
                       {trailActive
@@ -2573,15 +2540,9 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {tpPct > 0 && (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span
-                        className="text-xs text-muted-foreground idca-clickable-param"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          nav?.navigateToConfig("take-profit", cycle.pair);
-                        }}
-                        title="Click para editar configuración de Take Profit"
-                      >
+                      <span className="text-xs text-muted-foreground">
                         🏆 Objetivo TP <span className="text-muted-foreground/60">(+{tpPct.toFixed(1)}%{tpTargetPrice > 0 ? ` · $${fmtPrice(tpTargetPrice)}` : ""})</span>
+                        <ConfigJumpButton target="dynamic-tp" pair={cycle.pair} label="Take Profit" />
                       </span>
                       <span className={cn("text-xs font-mono", tpReached ? "text-green-400" : "text-muted-foreground")}>
                         {tpReached ? `✓ SUPERADO (+${pnlPct.toFixed(2)}%)` : `falta +${tpRemaining.toFixed(2)}%`}
@@ -4866,5 +4827,42 @@ function AdaptiveTab({ externalSubTab, setExternalSubTab, externalPair, setExter
         </Tabs>
       )}
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CONFIG JUMP BUTTON - Engranaje para navegar a configuración
+// ════════════════════════════════════════════════════════════════════
+
+interface ConfigJumpButtonProps {
+  target: string;
+  pair: string;
+  label: string;
+  navigateFn?: (target: string, pair?: string) => void;
+}
+
+function ConfigJumpButton({ target, pair, label, navigateFn }: ConfigJumpButtonProps) {
+  const nav = useOptionalIdcaNavigation();
+  
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (navigateFn) {
+      navigateFn(target, pair);
+    } else if (nav) {
+      nav.navigateToConfig(target as any, pair);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      title={`Editar ${label}`}
+      aria-label={`Editar ${label}`}
+      className="inline-flex items-center justify-center ml-1 rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-400/10 focus:outline-none focus:ring-1 focus:ring-cyan-400/60 p-0.5"
+      onClick={handleClick}
+    >
+      <Settings2 className="h-3 w-3" />
+    </button>
   );
 }

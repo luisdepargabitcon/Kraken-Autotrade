@@ -2,47 +2,110 @@
 
 ---
 
-## 2026-05-05 — feat(idca): navegar desde parámetros del ciclo a su configuración (UX)
+## 2026-05-05 — fix(idca-ui): mapear configuración real y navegar desde engranajes del ciclo
 
 ### Objetivo
-Hacer clicables los parámetros configurables del ciclo activo IDCA para navegar directamente a su sección de configuración.
+Auditar la ubicación real de cada parámetro de configuración IDCA y corregir la navegación UX desde el ciclo activo usando engranajes discretos en lugar de texto clicable.
 
-### Parámetros clicables implementados
+### Auditoría de configuración real
 
-| Parámetro | Destino | Sección ID |
-|-----------|---------|------------|
-| Break-Even (+X%) | Adaptativo → Salidas | `idca-config-break-even` |
-| Trailing Stop (activa/margen) | Adaptativo → Salidas | `idca-config-trailing-margin` |
-| Take Profit / TP Dinámico | Adaptativo → Salidas | `idca-config-take-profit` |
-| Próx. compra / Safety | Adaptativo → Entradas | `idca-config-safety-ladder` |
-| Capital | Adaptativo → Ejecución | `idca-config-capital` |
+| Función visible en ciclo | Campo DB | Config runtime | Archivo backend | Sección UI real | ID destino |
+|---|---|---|---|---|---|
+| Break-Even / protección | `protectionActivationPct` (asset config) | `protection_armed_at`, `protection_stop_price` (cycle) | IdcaEngine.ts | Config → Cuándo vender | `idca-config-break-even` |
+| Activación trailing | `trailingActivationPct` (asset config) | `tp_armed_at`, `highest_price_after_tp` (cycle) | IdcaEngine.ts | Config → Cuándo vender | `idca-config-trailing-activation` |
+| Margen trailing | `trailingMarginPct` (asset config) | `trailing_pct` (cycle snapshot) | IdcaEngine.ts:2309 | Config → Cuándo vender | `idca-config-trailing-margin` |
+| Take Profit / TP dinámico | `takeProfitPct`, `dynamicTakeProfit` (asset config) | `tp_target_pct`, `tp_breakdown_json` (cycle) | IdcaSmartLayer.ts | Adaptativo → Salidas | `idca-config-take-profit` |
+| Safety orders / próxima compra | `safetyOrdersJson`, `ladderAtrpConfigJson` (asset config) | `next_buy_price`, `next_buy_level_pct` (cycle) | IdcaLadderAtrp.ts | Adaptativo → Entradas | `idca-config-safety-ladder` |
+| Ladder ATRP | `ladderAtrpConfigJson`, `ladderAtrpEnabled` (asset config) | - | IdcaLadderAtrp.ts | Adaptativo → Entradas | `idca-config-safety-ladder` |
+| Capital | `allocatedCapitalUsd` (config) | `capitalReservedUsd`, `capitalUsedUsd` (cycle) | IdcaEngine.ts | Config → Dinero y límites | `idca-config-capital` |
+| Cooldown | `cooldownMinutesBetweenBuys` (asset config) | - | IdcaEngine.ts | Adaptativo → Avanzado | `idca-config-cooldown` |
+| Ejecución / slippage | `executionFeesJson` (config) | - | IdcaExchangeFeePresets.ts | Adaptativo → Ejecución | `idca-config-execution-slippage` |
+| VWAP anchor | `vwapEnabled`, `vwapDynamicSafetyEnabled` (asset config) | - | IdcaSmartLayer.ts | Config → VWAP & Rebound | `idca-config-vwap-anchor` |
 
-### Archivos creados
-- `client/src/hooks/useIdcaNavigation.ts` — Hook de navegación con targets definidos
-- `client/src/hooks/IdcaNavigationContext.tsx` — Contexto React para navegación global
+### Auditoría margen trailing 0.5% vs 1.6%
+
+**Hallazgo clave:**
+- El ciclo tiene un **snapshot** de `trailingPct` guardado en `institutional_dca_cycles.trailing_pct` (DB)
+- La configuración actual está en `institutional_dca_asset_configs.trailingMarginPct` (DB)
+- El motor usa **primero el valor del ciclo** (snapshot), fallback a config actual
+- El 0.5% mostrado en el ciclo viene de `cycle.trailingPct` (snapshot cuando se armó el trailing)
+- El 1.6% en configuración UI es `assetCfg.trailingMarginPct` (valor actual)
+
+**Código backend (IdcaEngine.ts:2309):**
+```typescript
+const trailMarginPct = parseFloat(String(cycle.trailingPct || assetCfg?.trailingMarginPct || "1.50"));
+```
+
+**Código frontend (InstitutionalDca.tsx:2140):**
+```typescript
+const trailMarginPct = parseFloat(String(cycle.trailingPct || assetCfg?.trailingMarginPct || "1.50"));
+```
+
+**Asignación del snapshot (IdcaEngine.ts:2326):**
+```typescript
+await repo.updateCycle(cycle.id, {
+  status: "trailing_active",
+  trailingPct: trailingPct.toFixed(2),  // Snapshot del valor al armar
+  // ...
+});
+```
+
+**Recomendación técnica:**
+- Mantener snapshot por ciclo para consistencia (ciclo no cambia si config cambia)
+- Mostrar indicador visual "valor del ciclo" vs "config actual" si difieren
+- Permitir override manual por ciclo si el usuario quiere cambiar el margen en medio del ciclo
+- NO sincronizar automáticamente ciclos activos con config actual (rompería la invarianza del ciclo)
+
+### Cambios UX realizados
+
+**Componente ConfigJumpButton creado:**
+- Icono engranaje (Settings2) discreto junto a parámetros configurables
+- Tooltip "Editar X" y aria-label
+- stopPropagation para no expandir/colapsar el ciclo
+- Clases CSS cyan hover/focus consistentes con dark UI
+
+**Parámetros con engranajes:**
+- Break-Even → Config → Cuándo vender
+- Activación Trailing → Config → Cuándo vender
+- Margen Trailing → Config → Cuándo vender
+- Take Profit → Adaptativo → Salidas
+- Próx. compra → Adaptativo → Entradas
+- Capital → Config → Dinero y límites
+
+**IDs estables añadidos en ConfigTab:**
+- `idca-config-break-even` — Activación de protección
+- `idca-config-trailing-activation` — Activación del trailing
+- `idca-config-trailing-margin` — Margen del trailing
+- `idca-config-entry` — Cuándo comprar (min dip, smart mode, etc.)
+- `idca-config-capital` — Capital asignado
+- `idca-config-vwap-anchor` — VWAP & Rebound
+
+**Mapa de navegación actualizado (useIdcaNavigation.ts):**
+- `break-even` → Config → `idca-config-break-even`
+- `trailing-activation` → Config → `idca-config-trailing-activation`
+- `trailing-margin` → Config → `idca-config-trailing-margin`
+- `dynamic-tp` → Adaptativo → Salidas → `idca-config-take-profit`
+- `safety-ladder` → Adaptativo → Entradas → `idca-config-safety-ladder`
+- `capital` → Config → `idca-config-capital`
+- `vwap-anchor` → Config → `idca-config-vwap-anchor`
+
+**Navegación mejorada con reintentos:**
+- Scroll con reintentos (8 intentos, 120ms delay) para evitar pestaña vacía
+- Highlight temporal (2.5s) con clase `.idca-config-highlight`
+- console.warn si no encuentra sección después de reintentos
 
 ### Archivos modificados
-- `client/src/index.css` — Estilos CSS para highlight y elementos clicables
-- `client/src/pages/InstitutionalDca.tsx` — Integración del sistema de navegación, parámetros clicables
-- `client/src/components/idca/SalidasTab.tsx` — IDs en tarjetas de configuración
-- `client/src/components/idca/EntradasTab.tsx` — IDs en tarjetas de configuración
-- `client/src/components/idca/EjecucionTab.tsx` — IDs en tarjetas de configuración
-- `client/src/components/idca/AvanzadoTab.tsx` — IDs en tarjetas de configuración
+- `client/src/hooks/useIdcaNavigation.ts` — Actualizado TARGET_MAP con destinos reales, navegación con reintentos
+- `client/src/pages/InstitutionalDca.tsx` — Añadidos IDs en ConfigTab, componente ConfigJumpButton, reemplazado texto clicable por engranajes
+- `client/src/index.css` — CSS highlight ya existente (no modificado)
 
-### Características implementadas
-- **Navegación**: Click en parámetro → cambio de pestaña → scroll a sección → resaltado temporal
-- **Highlight**: Outline cyan con box-shadow durante 3 segundos
-- **Tooltips**: Cada elemento clicable muestra tooltip indicando el destino
-- **Indicador visual**: Icono ⚙ aparece al hacer hover (desktop) o visible siempre (móvil)
-- **Control externo**: `AdaptiveTab` acepta props `externalSubTab`/`externalPair` para control desde padre
-- **Sin modificar estado**: Navegación pura, no modifica configuración ni valores
-
-### CSS añadido
-```css
-.idca-config-highlight { outline + box-shadow cyan }
-.idca-clickable-param { cursor pointer + hover underline }
-.idca-clickable-badge { hover border/background cyan }
-```
+### Confirmación
+- ✅ No se tocó lógica de trading
+- ✅ No se tocaron valores de configuración
+- ✅ No se tocaron órdenes
+- ✅ No se modificó DB
+- ✅ Build frontend exitoso
+- ⚠️ Error preexistente en backend (IdcaEngine.ts:89) no relacionado con cambios UX
 
 ---
 
