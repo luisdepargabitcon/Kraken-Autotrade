@@ -2,6 +2,184 @@
 
 ---
 
+## 2026-05-05 — fix(idca): eliminar ciclo #21 + guard de balance en ventas (hotfix crítico)
+
+### Causa raíz detectada
+- **Ciclo #21 con 31 ventas fallidas falsas**: Todas las órdenes en `institutional_dca_orders` tenían `exchange_order_id = NULL` (sin fill real en Revolut X)
+- **Cantidad incorrecta guardada**: `total_quantity = 0.00792255` (cantidad bruta solicitada) vs disponible en exchange = `0.00791541` (cantidad neta real)
+- **Diferencia**: 0.00000714 BTC (probable fee en BTC/base o redondeo)
+- **No había trades reales** del ciclo #21 en tablas `trades` o `trade_fills`
+- **OrderResult del exchange no devuelve cantidad ejecutada real ni fees** → no se puede calcular automáticamente la cantidad neta desde la respuesta
+
+### Solución implementada
+
+#### Acción 1: Eliminar ciclo #21 y sus 31 órdenes falsas
+```sql
+BEGIN;
+DELETE FROM institutional_dca_orders WHERE cycle_id = 21; -- 31 filas
+DELETE FROM institutional_dca_cycles WHERE id = 21; -- 1 fila
+COMMIT;
+```
+- Verificado: ciclo eliminado, 0 órdenes restantes
+
+#### Acción 2: Guard de balance en executeExit (IdcaEngine.ts)
+- **Nuevo guard antes de vender**: Verificar balance disponible en exchange
+- **Lógica**:
+  - Obtener balance del exchange via `exchange.getBalance()`
+  - Extraer asset del par (BTC/USD → BTC)
+  - Comparar `availableQty` vs `cycle.totalQuantity`
+  - Si `availableQty < totalQty * 0.95` (tolerancia 5% por fees/redondeo):
+    - Bloquear venta
+    - Log `[IDCA][EXIT_BLOCKED]` con `reason=insufficient_balance`
+    - Crear evento `exit_blocked` con severidad `critical`
+    - Enviar alerta Telegram con detalle de shortage
+    - Mantener ciclo activo
+- **Solo aplica en modo LIVE** (simulation no tiene balance real)
+
+#### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts` — Guard de balance en `executeExit` (líneas 84-125)
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check`)
+- **Ciclo #21 eliminado**: ✅ (31 órdenes + 1 ciclo)
+
+### Validación esperada en VPS
+```bash
+# Verificar ciclo #21 eliminado
+docker compose -f docker-compose.staging.yml exec -T krakenbot-staging-db sh -lc '
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT id, pair, status FROM institutional_dca_cycles WHERE id = 21;
+"'
+# Debe retornar 0 filas
+
+# Verificar órdenes eliminadas
+docker compose -f docker-compose.staging.yml exec -T krakenbot-staging-db sh -lc '
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT COUNT(*) FROM institutional_dca_orders WHERE cycle_id = 21;
+"'
+# Debe retornar 0
+
+# Deploy
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+---
+
+## 2026-05-05 — fix(idca): restaurar ciclo BTC #21 y corregir falso take_profit (hotfix crítico)
+
+### Causa raíz detectada
+- **takeProfitPct mal configurado**: Para BTC/USD, `takeProfitPct` estaba configurado como 2.5% (igual a `protectionActivationPct`) en lugar de 4% o más
+- **Resultado**: tpTargetPrice = $78989.70 * 1.025 = $80964.44, coincidiendo con el precio de BE/protección
+- **Falso cierre**: El ciclo BTC/USD #21 se cerró como "take_profit" en $80964.10 cuando el TP real debería haber sido ~$81438 (3.1%+)
+- **Posición real**: Revolut X seguía mostrando la posición abierta → cierre fue falso en BD/UI
+
+### Solución implementada
+
+#### IdcaExitManager.ts
+- **Guard crítico en `evaluateTakeProfit`**: Bloquear TP si `tpTargetPrice < avgEntryPrice * 1.03` (mínimo 3% ganancia)
+  - Evita TP cuando `takeProfitPct` está mal configurado igual a `protectionActivationPct`
+  - Log `[IDCA][EXIT_GUARD] TP_BLOCKED` con advertencia de config incorrecta
+- **Corrección en `checkTpActivation`**: TP solo se arma cuando `unrealizedPnlPct >= takeProfitPct` configurado
+  - Antes: se armaba con cualquier ganancia >= 0
+  - Ahora: respeta el umbral configurado
+
+#### IdcaEngine.ts
+- **Guard crítico en `executeExit`**: Exigir `orderId`/`txid` confirmado antes de cerrar ciclo en modo LIVE
+  - Si no hay orderId: mantener ciclo activo, log `[IDCA][EXIT_BLOCKED]`, enviar alerta Telegram
+  - Si hay orderId y success=true: cerrar ciclo
+- **Crear orden en BD**: Agregar `grossValueUsd` y `netValueUsd` al crear orden de venta
+- **Log enriquecido**: `[IDCA][EXIT_CONFIRMED]` con orderId, precio, PnL
+
+#### Tests
+- **`server/services/__tests__/idcaExitGuards.test.ts`** (nuevo archivo):
+  - 9 tests para guards de TP y venta confirmada
+  - Test 1-2: Guard TP_BLOCKED vs TP_ALLOWED
+  - Test 3: Guard TP_NOT_READY (currentPrice < tpTargetPrice)
+  - Test 4-5: Guard EXIT_BLOCKED vs EXIT_CONFIRMED
+  - Test 6-7: Cálculo PnL correcto
+  - Test 8-9: Lógica de arming de TP y protección
+
+### SQL para restaurar ciclo #21 (ejecutar manualmente en VPS)
+```sql
+BEGIN;
+
+UPDATE institutional_dca_cycles
+SET
+  status = 'active',
+  close_reason = NULL,
+  closed_at = NULL,
+  realized_pnl_usd = '0.00',
+  trailing_active_at = NULL,
+  highest_price_after_tp = NULL,
+  updated_at = NOW(),
+  edit_history_json = COALESCE(edit_history_json, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+    'at', NOW(),
+    'action', 'restore_cycle',
+    'reason', 'false_take_profit_without_real_sell',
+    'falseClosePrice', '80964.10',
+    'beTriggerPrice', '80964.44',
+    'realTpTargetPrice', '81438.38',
+    'note', 'Ciclo BTC/USD #21 restaurado: takeProfitPct estaba configurado como 2.5% (BE) en lugar de 4% (TP real).'
+  ))
+WHERE id = 21
+AND pair = 'BTC/USD'
+AND status = 'closed'
+AND close_reason = 'take_profit';
+
+INSERT INTO idca_events (
+  created_at, pair, mode, event_type, severity, message, payload_json, cycle_id
+) VALUES (
+  NOW(), 'BTC/USD', 'live', 'cycle_restored', 'warning',
+  'Ciclo BTC/USD #21 restaurado: fue marcado como take_profit sin venta real confirmada. Configuración incorrecta: takeProfitPct=2.5% igual a protectionActivationPct.',
+  jsonb_build_object(
+    'cycleId', 21,
+    'reason', 'false_take_profit_without_real_sell',
+    'restoredStatus', 'active',
+    'exchangePositionStillOpen', true,
+    'rootCause', 'takeProfitPct misconfigured as 2.5% (same as protectionActivationPct)',
+    'falseTpPrice', 80964.10,
+    'expectedTpPrice', 81438.38
+  ),
+  21
+);
+
+COMMIT;
+```
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaExitManager.ts` — Guards TP y arming
+- `server/services/institutionalDca/IdcaEngine.ts` — Guard venta confirmada en executeExit
+- `server/services/__tests__/idcaExitGuards.test.ts` — Tests nuevos
+
+### Estado final verificado (LOCAL)
+- **TSC**: 0 errores (`npm run check`)
+- **Tests**: ✅ 9/9 en `idcaExitGuards.test.ts`
+- **Commit**: 868a958
+
+### Validación esperada en VPS
+```bash
+# Ejecutar SQL de restauración (ver arriba)
+
+# Verificar ciclo #21 restaurado
+docker compose -f docker-compose.staging.yml exec -T krakenbot-staging-db sh -lc '
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT id, pair, status, close_reason, total_quantity, avg_entry_price, 
+       realized_pnl_usd, closed_at FROM institutional_dca_cycles WHERE id = 21;
+"'
+
+# Ver logs de guards
+docker compose -f docker-compose.staging.yml logs --tail=500 krakenbot-staging-app | grep -E "EXIT_GUARD|EXIT_BLOCKED|EXIT_CONFIRMED|TP_BLOCKED|TP_ARMED"
+
+# Deploy
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+---
+
 ## 2026-05-05 — fix(idca): separar ancla VWAP, VWAP actual y decisión de trading (hotfix completo)
 
 ### Causa raíz detectada (VPS staging)

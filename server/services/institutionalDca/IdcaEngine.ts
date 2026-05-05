@@ -81,6 +81,49 @@ async function executeExit(
   const totalQty = parseFloat(String(cycle.totalQuantity));
 
   try {
+    // ─── GUARD: Verificar balance disponible en exchange antes de vender ───
+    if (mode === "live") {
+      const exchange = ExchangeFactory.getTradingExchange();
+      const balance = await exchange.getBalance();
+      const asset = pair.split("/")[0]; // BTC/USD -> BTC
+      const availableQty = parseFloat(String(balance[asset]?.available || "0"));
+
+      if (availableQty < totalQty * 0.95) {
+        // Tolerancia 5% por fees/redondeo
+        const shortagePct = ((totalQty - availableQty) / totalQty * 100).toFixed(2);
+        console.error(
+          `${TAG}[EXIT_BLOCKED] cycleId=${cycle.id} pair=${pair} ` +
+          `mode=live reason=insufficient_balance ` +
+          `cycleQty=${totalQty.toFixed(8)} available=${availableQty.toFixed(8)} ` +
+          `shortage=${shortagePct}%`
+        );
+        await createHumanEvent({
+          cycleId: cycle.id, pair, mode,
+          eventType: "exit_blocked",
+          severity: "critical",
+          message: `Cierre bloqueado: balance insuficiente en exchange. Ciclo=${totalQty.toFixed(8)} ${asset}, disponible=${availableQty.toFixed(8)} ${asset} (falta ${shortagePct}%)`,
+          payloadJson: {
+            exitType: signal.exitType,
+            exitPrice: signal.exitPrice,
+            cycleQuantity: totalQty.toFixed(8),
+            availableBalance: availableQty.toFixed(8),
+            shortagePct: shortagePct,
+            warning: "Ciclo NO cerrado - verificar balance manualmente en exchange",
+          },
+        }, { eventType: "exit_blocked", pair, mode, price: signal.exitPrice });
+        await telegram.sendRawMessage(
+          `🚨 <b>[IDCA][LIVE] EXIT BLOCKED</b>\n\n` +
+          `Par: <b>${pair}</b> #${cycle.id}<br>\n` +
+          `Tipo: <code>${signal.exitType}</code><br>\n` +
+          `Precio: <code>$${signal.exitPrice.toFixed(2)}</code><br>\n` +
+          `⚠️ Balance insuficiente: ciclo=${totalQty.toFixed(8)} ${asset}, disponible=${availableQty.toFixed(8)} ${asset}<br>\n` +
+          `Falta: <b>${shortagePct}%</b><br>\n` +
+          `Ciclo sigue ACTIVO. Revisar manualmente en Revolut X.`
+        );
+        return; // NO cerrar ciclo - mantiene activo
+      }
+    }
+
     // Crear orden de salida
     const exchange = ExchangeFactory.getTradingExchange();
     const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: totalQty.toFixed(8) });
