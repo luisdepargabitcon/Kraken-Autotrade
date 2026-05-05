@@ -137,11 +137,30 @@ export async function upsertAssetConfig(
       .returning();
     return created;
   }
+  
+  // Detectar cambio en trailingMarginPct para actualizar ciclos activos
+  const trailingMarginChanged = patch.trailingMarginPct && 
+    patch.trailingMarginPct !== existing.trailingMarginPct;
+  
   const [updated] = await db
     .update(institutionalDcaAssetConfigs)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(institutionalDcaAssetConfigs.id, existing.id))
     .returning();
+  
+  // Si cambió trailingMarginPct, actualizar ciclos activos en trailing
+  if (trailingMarginChanged && patch.trailingMarginPct) {
+    await db
+      .update(institutionalDcaCycles)
+      .set({ trailingPct: patch.trailingMarginPct })
+      .where(
+        and(
+          eq(institutionalDcaCycles.pair, pair),
+          eq(institutionalDcaCycles.status, "trailing_active")
+        )
+      );
+  }
+  
   return updated;
 }
 

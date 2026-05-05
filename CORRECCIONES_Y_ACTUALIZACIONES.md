@@ -109,29 +109,50 @@ await repo.updateCycle(cycle.id, {
 
 ---
 
-## 2026-05-05 — TODO(idca): actualizar margen trailing dinámicamente al cambiar config
+## 2026-05-05 — feat(idca): actualizar margen trailing dinámicamente al cambiar config
 
 ### Problema identificado
 El margen trailing usa snapshot por ciclo (`cycle.trailingPct`) que no se actualiza cuando el usuario cambia la configuración global (`assetCfg.trailingMarginPct`). Esto crea discrepancia entre valor mostrado en ciclo (0.5%) y valor actual en config (1.6%).
 
-### Solución recomendada (Opción 2)
-Actualizar snapshot al cambiar configuración:
+### Solución implementada (Opción 2)
+Actualizar snapshot al cambiar configuración en backend:
 
-1. Al cambiar `trailingMarginPct` en UI para un par
-2. Backend detecta cambio en `useUpdateAssetConfig`
-3. Actualizar `cycle.trailingPct` en DB para todos los ciclos activos de ese par en estado "trailing_active"
-4. Mostrar indicador visual en UI cuando config difiere del snapshot del ciclo
+**Archivo modificado:** `server/services/institutionalDca/IdcaRepository.ts`
+
+**Cambio en `upsertAssetConfig`:**
+- Detectar cambio en `trailingMarginPct` comparando con valor existente
+- Si cambió, actualizar `cycle.trailingPct` en DB para todos los ciclos activos de ese par en estado "trailing_active"
+- Actualización automática y transparente para el usuario
+
+**Código implementado:**
+```typescript
+// Detectar cambio en trailingMarginPct para actualizar ciclos activos
+const trailingMarginChanged = patch.trailingMarginPct && 
+  patch.trailingMarginPct !== existing.trailingMarginPct;
+
+// Si cambió trailingMarginPct, actualizar ciclos activos en trailing
+if (trailingMarginChanged && patch.trailingMarginPct) {
+  await db
+    .update(institutionalDcaCycles)
+    .set({ trailingPct: patch.trailingMarginPct })
+    .where(
+      and(
+        eq(institutionalDcaCycles.pair, pair),
+        eq(institutionalDcaCycles.status, "trailing_active")
+      )
+    );
+}
+```
 
 ### Ventajas
 - Mantiene invarianza por ciclo (diseño actual)
-- Usuario controla cuándo actualizar (cambio intencional)
+- Usuario controla cuándo actualizar (cambio intencional en config)
 - Permite override manual en medio del ciclo
 - No rompe ciclos activos inesperadamente
+- Implementación simple en backend, sin cambios en UI
 
-### Pendiente de implementación
-- [ ] Modificar `useUpdateAssetConfig` para detectar cambio en `trailingMarginPct`
-- [ ] Añadir endpoint backend para actualizar `cycle.trailingPct` en ciclos activos
-- [ ] Añadir indicador visual en UI cuando config ≠ snapshot
+### Pendiente (opcional)
+- [ ] Añadir indicador visual en UI cuando config ≠ snapshot (no crítico)
 - [ ] Test de actualización de trailing margin en ciclo activo
 
 ---
