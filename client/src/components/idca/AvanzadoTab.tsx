@@ -136,7 +136,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
         {/* Tab General */}
         <TabsContent value="general" className="space-y-6">
           {/* Configuración Básica */}
-          <Card>
+          <Card id="idca-config-cooldown">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings className="h-5 w-5" />
@@ -175,7 +175,7 @@ export const AvanzadoTab: React.FC<AvanzadoTabProps> = ({ pair, assetConfig, onC
           </Card>
 
           {/* Límites y Restricciones */}
-          <Card>
+          <Card id="idca-config-advanced">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />

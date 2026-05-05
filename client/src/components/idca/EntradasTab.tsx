@@ -181,7 +181,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       )}
 
       {/* Ladder Configuration */}
-      <Card>
+      <Card id="idca-config-safety-ladder">
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -485,7 +485,7 @@ export function EntradasTab({ assetConfig, pair }: EntradasTabProps) {
       </Card>
 
       {/* Trailing Buy Level 1 */}
-      <Card>
+      <Card id="idca-config-entry-patience">
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2">

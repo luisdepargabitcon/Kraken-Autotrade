@@ -2,6 +2,50 @@
 
 ---
 
+## 2026-05-05 — feat(idca): navegar desde parámetros del ciclo a su configuración (UX)
+
+### Objetivo
+Hacer clicables los parámetros configurables del ciclo activo IDCA para navegar directamente a su sección de configuración.
+
+### Parámetros clicables implementados
+
+| Parámetro | Destino | Sección ID |
+|-----------|---------|------------|
+| Break-Even (+X%) | Adaptativo → Salidas | `idca-config-break-even` |
+| Trailing Stop (activa/margen) | Adaptativo → Salidas | `idca-config-trailing-margin` |
+| Take Profit / TP Dinámico | Adaptativo → Salidas | `idca-config-take-profit` |
+| Próx. compra / Safety | Adaptativo → Entradas | `idca-config-safety-ladder` |
+| Capital | Adaptativo → Ejecución | `idca-config-capital` |
+
+### Archivos creados
+- `client/src/hooks/useIdcaNavigation.ts` — Hook de navegación con targets definidos
+- `client/src/hooks/IdcaNavigationContext.tsx` — Contexto React para navegación global
+
+### Archivos modificados
+- `client/src/index.css` — Estilos CSS para highlight y elementos clicables
+- `client/src/pages/InstitutionalDca.tsx` — Integración del sistema de navegación, parámetros clicables
+- `client/src/components/idca/SalidasTab.tsx` — IDs en tarjetas de configuración
+- `client/src/components/idca/EntradasTab.tsx` — IDs en tarjetas de configuración
+- `client/src/components/idca/EjecucionTab.tsx` — IDs en tarjetas de configuración
+- `client/src/components/idca/AvanzadoTab.tsx` — IDs en tarjetas de configuración
+
+### Características implementadas
+- **Navegación**: Click en parámetro → cambio de pestaña → scroll a sección → resaltado temporal
+- **Highlight**: Outline cyan con box-shadow durante 3 segundos
+- **Tooltips**: Cada elemento clicable muestra tooltip indicando el destino
+- **Indicador visual**: Icono ⚙ aparece al hacer hover (desktop) o visible siempre (móvil)
+- **Control externo**: `AdaptiveTab` acepta props `externalSubTab`/`externalPair` para control desde padre
+- **Sin modificar estado**: Navegación pura, no modifica configuración ni valores
+
+### CSS añadido
+```css
+.idca-config-highlight { outline + box-shadow cyan }
+.idca-clickable-param { cursor pointer + hover underline }
+.idca-clickable-badge { hover border/background cyan }
+```
+
+---
+
 ## 2026-05-05 — fix(idca): eliminar ciclo #21 + guard de balance en ventas (hotfix crítico)
 
 ### Causa raíz detectada

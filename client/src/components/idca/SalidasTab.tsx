@@ -200,7 +200,7 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
       </Card>
 
       {/* Configuración Break-Even */}
-      <Card>
+      <Card id="idca-config-break-even">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-blue-500" />
@@ -228,7 +228,7 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
       </Card>
 
       {/* Configuración Trailing */}
-      <Card>
+      <Card id="idca-config-trailing-margin">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-green-500" />
@@ -256,7 +256,7 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
       </Card>
 
       {/* Configuración Take Profit */}
-      <Card>
+      <Card id="idca-config-take-profit">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Target className="h-5 w-5 text-purple-500" />

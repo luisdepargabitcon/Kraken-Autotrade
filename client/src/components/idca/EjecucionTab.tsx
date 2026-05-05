@@ -175,7 +175,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
     <div className="space-y-6">
 
       {/* ── Costes de ejecución — Revolut X (FUNCIONAL) ── */}
-      <Card className="border-cyan-500/30">
+      <Card id="idca-config-execution-slippage" className="border-cyan-500/30">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <DollarSign className="h-4 w-4 text-cyan-400" />
@@ -379,7 +379,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
       )}
 
       {/* Configuración General */}
-      <Card>
+      <Card id="idca-config-capital">
         <CardHeader>
           <CardTitle>Configuración General</CardTitle>
         </CardHeader>

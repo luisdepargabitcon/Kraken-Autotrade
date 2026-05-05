@@ -176,3 +176,58 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* ─── IDCA Config Navigation Highlight ─────────────────────────────── */
+/* FASE UX IDCA: Resaltado temporal al navegar a configuración desde ciclo */
+
+.idca-config-highlight {
+  outline: 1px solid rgba(34, 211, 238, 0.9) !important;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18), 0 0 15px rgba(34, 211, 238, 0.15) !important;
+  transition: box-shadow 0.3s ease, outline 0.3s ease !important;
+  border-radius: 4px;
+}
+
+/* Elementos clicables del ciclo */
+.idca-clickable-param {
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.idca-clickable-param:hover {
+  color: hsl(180 100% 50%);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.idca-clickable-param::after {
+  content: "⚙";
+  font-size: 0.7em;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  vertical-align: super;
+}
+
+.idca-clickable-param:hover::after {
+  opacity: 0.7;
+}
+
+/* Badge/Chip clicables */
+.idca-clickable-badge {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.idca-clickable-badge:hover {
+  border-color: rgba(34, 211, 238, 0.5);
+  background-color: rgba(34, 211, 238, 0.1);
+}
+
+/* En móvil, mostrar siempre el indicador */
+@media (pointer: coarse) {
+  .idca-clickable-param::after {
+    opacity: 0.5;
+  }
+}

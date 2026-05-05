@@ -104,6 +104,8 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
+import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
+import { IhcaNavigationProvider, useOptionalIdcaNavigation } from "@/hooks/IdcaNavigationContext";
 
 function fmtUsd(val: string | number | null | undefined): string {
   const n = parseFloat(String(val || "0"));
@@ -148,48 +150,63 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
+  const [adaptiveTab, setAdaptiveTab] = useState("entradas");
+  const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
+
+  const { navigateToConfig } = useIdcaNavigation({
+    setMainTab: setActiveTab,
+    setAdaptiveTab: setAdaptiveTab,
+    setSelectedPair: setSelectedPair,
+  });
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <Nav />
-      <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <CircleDollarSign className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold font-mono">INSTITUTIONAL DCA</h1>
+    <IhcaNavigationProvider navigateToConfig={navigateToConfig}>
+      <div className="min-h-screen bg-background flex flex-col">
+        <Nav />
+        <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <CircleDollarSign className="h-6 w-6 text-primary" />
+              <h1 className="text-xl font-bold font-mono">INSTITUTIONAL DCA</h1>
+            </div>
+            <HealthBadge />
           </div>
-          <HealthBadge />
+
+          <ControlsBar />
+
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid grid-cols-5 md:grid-cols-10 gap-1 h-auto p-1">
+              <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
+              <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
+              <TabsTrigger value="adaptive" className="text-xs gap-1" data-testid="tab-adaptive"><Sparkles className="h-3 w-3" /> Adaptativo</TabsTrigger>
+              <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
+              <TabsTrigger value="history" className="text-xs gap-1"><ListOrdered className="h-3 w-3" /> Historial</TabsTrigger>
+              <TabsTrigger value="legend" className="text-xs gap-1"><Info className="h-3 w-3" /> Leyenda</TabsTrigger>
+              <TabsTrigger value="simulation" className="text-xs gap-1"><Wallet className="h-3 w-3" /> Simulación</TabsTrigger>
+              <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
+              <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
+              <TabsTrigger value="guide" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Guía</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="summary"><SummaryTab /></TabsContent>
+            <TabsContent value="config"><ConfigTab /></TabsContent>
+            <TabsContent value="adaptive"><AdaptiveTab
+              externalSubTab={adaptiveTab}
+              setExternalSubTab={setAdaptiveTab}
+              externalPair={selectedPair}
+              setExternalPair={setSelectedPair}
+            /></TabsContent>
+            <TabsContent value="cycles"><CyclesTab /></TabsContent>
+            <TabsContent value="history"><HistoryTab /></TabsContent>
+            <TabsContent value="legend"><LegendTab /></TabsContent>
+            <TabsContent value="simulation"><SimulationTab /></TabsContent>
+            <TabsContent value="events"><EventsTab /></TabsContent>
+            <TabsContent value="telegram"><TelegramTab /></TabsContent>
+            <TabsContent value="guide"><GuideTab /></TabsContent>
+          </Tabs>
         </div>
-
-        <ControlsBar />
-
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-5 md:grid-cols-10 gap-1 h-auto p-1">
-            <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
-            <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
-            <TabsTrigger value="adaptive" className="text-xs gap-1" data-testid="tab-adaptive"><Sparkles className="h-3 w-3" /> Adaptativo</TabsTrigger>
-            <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
-            <TabsTrigger value="history" className="text-xs gap-1"><ListOrdered className="h-3 w-3" /> Historial</TabsTrigger>
-            <TabsTrigger value="legend" className="text-xs gap-1"><Info className="h-3 w-3" /> Leyenda</TabsTrigger>
-            <TabsTrigger value="simulation" className="text-xs gap-1"><Wallet className="h-3 w-3" /> Simulación</TabsTrigger>
-            <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
-            <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
-            <TabsTrigger value="guide" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Guía</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="summary"><SummaryTab /></TabsContent>
-          <TabsContent value="config"><ConfigTab /></TabsContent>
-          <TabsContent value="adaptive"><AdaptiveTab /></TabsContent>
-          <TabsContent value="cycles"><CyclesTab /></TabsContent>
-          <TabsContent value="history"><HistoryTab /></TabsContent>
-          <TabsContent value="legend"><LegendTab /></TabsContent>
-          <TabsContent value="simulation"><SimulationTab /></TabsContent>
-          <TabsContent value="events"><EventsTab /></TabsContent>
-          <TabsContent value="telegram"><TelegramTab /></TabsContent>
-          <TabsContent value="guide"><GuideTab /></TabsContent>
-        </Tabs>
       </div>
-    </div>
+    </IhcaNavigationProvider>
   );
 }
 
@@ -2093,6 +2110,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const { data: idcaConfig } = useIdcaConfig();
   const { toast } = useToast();
+  const nav = useOptionalIdcaNavigation();
   const pnlPct = parseFloat(String(cycle.unrealizedPnlPct || "0"));
   const pnlUsd = parseFloat(String(cycle.unrealizedPnlUsd || "0"));
   const realizedPnlRaw = parseFloat(String(cycle.realizedPnlUsd || "0"));
@@ -2254,12 +2272,28 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   {cycle.soloSalida ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-yellow-400/60">🛒 Próx. compra: solo salida</span>
+                      <span
+                        className="text-[10px] font-mono text-yellow-400/60 idca-clickable-param"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          nav?.navigateToConfig("safety-ladder", cycle.pair);
+                        }}
+                        title="Click para editar configuración de Safety/Ladder"
+                      >
+                        🛒 Próx. compra: solo salida
+                      </span>
                     </>
                   ) : cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
                     <>
                       <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground">
+                      <span
+                        className="text-[10px] font-mono text-muted-foreground idca-clickable-param"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          nav?.navigateToConfig("safety-ladder", cycle.pair);
+                        }}
+                        title="Click para editar configuración de Safety/Ladder"
+                      >
                         🛒 Próx. compra: <span className="text-blue-400 font-semibold">${fmtPrice(cycle.nextBuyPrice)}</span>
                         {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
                       </span>
@@ -2379,7 +2413,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-sm font-mono">{fmtUsd(cycle.capitalUsedUsd)}</div>
+            <div
+              className="text-sm font-mono idca-clickable-param"
+              onClick={(e) => {
+                e.stopPropagation();
+                nav?.navigateToConfig("capital", cycle.pair);
+              }}
+              title="Click para editar configuración de Capital"
+            >
+              {fmtUsd(cycle.capitalUsedUsd)}
+            </div>
             <div className={cn("text-xs font-mono", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
               {fmtPct(cycle.unrealizedPnlPct)}
               {cycle.status !== "closed" && <span className="text-[10px] opacity-80"> ({pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)})</span>}
@@ -2469,7 +2512,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {/* Break-Even Protection */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">🛡️ Break-Even <span className="text-muted-foreground/60">(activa a +{beActPct.toFixed(1)}%)</span></span>
+                    <span
+                      className="text-xs text-muted-foreground idca-clickable-param"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        nav?.navigateToConfig("break-even", cycle.pair);
+                      }}
+                      title="Click para editar configuración de Break-Even"
+                    >
+                      🛡️ Break-Even <span className="text-muted-foreground/60">(activa a +{beActPct.toFixed(1)}%)</span>
+                    </span>
                     <span className={cn("text-xs font-mono", beArmed ? "text-emerald-400" : "text-muted-foreground")}>
                       {beArmed
                         ? `✓ ARMADO${beStopPrice > 0 ? ` · stop $${fmtPrice(beStopPrice)}` : ""}`
@@ -2489,7 +2541,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {/* Trailing Stop */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">🎯 Trailing Stop <span className="text-muted-foreground/60">(activa a +{trailActPct.toFixed(1)}% · margen {trailMarginPct.toFixed(1)}%)</span></span>
+                    <span
+                      className="text-xs text-muted-foreground idca-clickable-param"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        nav?.navigateToConfig("trailing-margin", cycle.pair);
+                      }}
+                      title="Click para editar configuración de Trailing Stop"
+                    >
+                      🎯 Trailing Stop <span className="text-muted-foreground/60">(activa a +{trailActPct.toFixed(1)}% · margen {trailMarginPct.toFixed(1)}%)</span>
+                    </span>
                     <span className={cn("text-xs font-mono", trailActive ? "text-amber-400" : "text-muted-foreground")}>
                       {trailActive
                         ? `✓ ACTIVO · stop $${fmtPrice(trailStopPrice)}`
@@ -2512,7 +2573,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 {tpPct > 0 && (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">🏆 Objetivo TP <span className="text-muted-foreground/60">(+{tpPct.toFixed(1)}%{tpTargetPrice > 0 ? ` · $${fmtPrice(tpTargetPrice)}` : ""})</span></span>
+                      <span
+                        className="text-xs text-muted-foreground idca-clickable-param"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          nav?.navigateToConfig("take-profit", cycle.pair);
+                        }}
+                        title="Click para editar configuración de Take Profit"
+                      >
+                        🏆 Objetivo TP <span className="text-muted-foreground/60">(+{tpPct.toFixed(1)}%{tpTargetPrice > 0 ? ` · $${fmtPrice(tpTargetPrice)}` : ""})</span>
+                      </span>
                       <span className={cn("text-xs font-mono", tpReached ? "text-green-400" : "text-muted-foreground")}>
                         {tpReached ? `✓ SUPERADO (+${pnlPct.toFixed(2)}%)` : `falta +${tpRemaining.toFixed(2)}%`}
                       </span>
@@ -4657,12 +4727,25 @@ function GuideTab() {
 // MarketContext, ExitManager).
 // ════════════════════════════════════════════════════════════════════
 
-function AdaptiveTab() {
+interface AdaptiveTabProps {
+  externalSubTab?: string;
+  setExternalSubTab?: (tab: string) => void;
+  externalPair?: string;
+  setExternalPair?: (pair: string) => void;
+}
+
+function AdaptiveTab({ externalSubTab, setExternalSubTab, externalPair, setExternalPair }: AdaptiveTabProps = {}) {
   const { data: assetConfigs, isLoading, isError, error } = useIdcaAssetConfigs();
   const { toast } = useToast();
   const updateAsset = useUpdateAssetConfig();
-  const [selectedPair, setSelectedPair] = useState<string>("");
-  const [activeSub, setActiveSub] = useState<string>("entradas");
+  const [internalSelectedPair, setInternalSelectedPair] = useState<string>("");
+  const [internalActiveSub, setInternalActiveSub] = useState<string>("entradas");
+
+  // Use external state if provided, otherwise use internal
+  const selectedPair = externalPair !== undefined ? externalPair : internalSelectedPair;
+  const setSelectedPair = setExternalPair || setInternalSelectedPair;
+  const activeSub = externalSubTab !== undefined ? externalSubTab : internalActiveSub;
+  const setActiveSub = setExternalSubTab || setInternalActiveSub;
 
   // Default to first enabled asset, or first
   useEffect(() => {
