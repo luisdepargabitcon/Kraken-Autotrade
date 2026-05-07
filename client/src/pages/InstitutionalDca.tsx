@@ -3098,6 +3098,7 @@ function HistoryTab() {
 
 function HistoryCyclesView({ cycles }: { cycles: any[] }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const { data: allOrders } = useIdcaOrders({ limit: 500 });
 
   if (cycles.length === 0) {
     return (
@@ -3109,18 +3110,27 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
     );
   }
 
+  // Usar función canónica para calcular PnL de cada ciclo
+  const { calculateIdcaCycleRealizedPnl } = require("../../utils/idcaPnlCalculator");
+  const cyclePnlMap = new Map<number, any>();
+  cycles.forEach(cycle => {
+    const cycleOrders = (allOrders || []).filter((o: any) => o.cycleId === cycle.id);
+    const pnlResult = calculateIdcaCycleRealizedPnl(cycle, cycleOrders);
+    cyclePnlMap.set(cycle.id, pnlResult);
+  });
+
   // Aggregate stats
   const totalPnl = cycles.reduce((s, c) => {
-    const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return s + real;  // CORRECCIÓN: real ya es NET PROFIT
+    const pnlResult = cyclePnlMap.get(c.id);
+    return s + (pnlResult?.realizedNetUsd || 0);
   }, 0);
   const wins = cycles.filter(c => {
-    const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return real > 1;  // CORRECCIÓN: real ya es NET PROFIT
+    const pnlResult = cyclePnlMap.get(c.id);
+    return (pnlResult?.realizedNetUsd || 0) > 1;
   }).length;
   const losses = cycles.filter(c => {
-    const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return real < -1;  // CORRECCIÓN: real ya es NET PROFIT
+    const pnlResult = cyclePnlMap.get(c.id);
+    return (pnlResult?.realizedNetUsd || 0) < -1;
   }).length;
   const neutral = cycles.length - wins - losses;
 
@@ -3139,10 +3149,10 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
 
       {/* Cycle cards */}
       {cycles.map((cycle) => {
-        const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
-        const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
-        const pnlUsd = real;  
-        const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
+        const pnlResult = cyclePnlMap.get(cycle.id);
+        const cap = pnlResult?.capitalInvestedUsd || 0;
+        const pnlUsd = pnlResult?.realizedNetUsd || 0;
+        const pnlPct = pnlResult?.realizedPnlPct || 0;
         const isProfit = pnlUsd > 1;
         const isLoss = pnlUsd < -1;
         const resultIcon = isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
@@ -3223,13 +3233,15 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(cycleId);
   const { data: events, isLoading: eventsLoading } = useIdcaCycleEvents(cycleId);
 
-  const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
-  const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  // CORRECCIÓN: real ya es NET PROFIT (según IdcaPnlCalculator.ts)
-  // No restar cap de nuevo (causaba doble descuento)
-  const pnlUsd = real;
-  const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
-  const totalFees = (orders || []).reduce((s: number, o: any) => s + parseFloat(String(o.feesUsd || "0")), 0);
+  // Usar función canónica para calcular PnL (soporta legacy/importados sin BUY orders)
+  const { calculateIdcaCycleRealizedPnl } = require("../../utils/idcaPnlCalculator");
+  const pnlResult = calculateIdcaCycleRealizedPnl(cycle, orders || []);
+
+  const cap = pnlResult.capitalInvestedUsd;
+  const pnlUsd = pnlResult.realizedNetUsd;
+  const pnlPct = pnlResult.realizedPnlPct;
+  const totalFees = pnlResult.totalFeesUsd;
+  const sellValue = pnlResult.totalSellValueUsd;
 
   return (
     <div className="border-t border-border/30 p-3 space-y-3 bg-muted/5">
@@ -3240,8 +3252,8 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
           <div className="font-bold">{fmtUsd(cap)}</div>
         </div>
         <div className="bg-background/50 rounded p-2 border border-border/30">
-          <div className="text-[10px] text-muted-foreground">Realizado bruto</div>
-          <div className="font-bold">{fmtUsd(real)}</div>
+          <div className="text-[10px] text-muted-foreground">Valor vendido</div>
+          <div className="font-bold">{fmtUsd(sellValue)}</div>
         </div>
         <div className="bg-background/50 rounded p-2 border border-border/30">
           <div className="text-[10px] text-muted-foreground">Fees totales</div>

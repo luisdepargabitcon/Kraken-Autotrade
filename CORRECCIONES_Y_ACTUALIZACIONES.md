@@ -235,6 +235,87 @@ const pnlUsd = real;
 
 ---
 
+## 2026-05-07 — fix(idca): corregir PnL porcentual en ciclos cerrados legacy/importados
+
+### Problema detectado
+El fix anterior corrigió el PnL del ciclo BTC/USD nuevo (+$22.25, +3.56%), pero rompió los ciclos antiguos/importados:
+
+**ETH/USD cerrado:**
+- Antes (correcto): +$85.01, +8.15%
+- Después (incorrecto): +$1128.01, +108.15%
+
+**BTC/USD importado:**
+- Antes (correcto): +$44.37, +3.84%
+- Después (incorrecto): +$1198.41, +103.84%
+
+**Causa raíz:**
+El cálculo anterior asumía que `realizedPnlUsd` siempre es NET PROFIT (según IdcaPnlCalculator.ts post-bee8391+), pero para ciclos legacy/importados (pre-bee8391) `realizedPnlUsd` almacena SELL PROCEEDS (valor total de venta), no NET PROFIT.
+
+El cálculo incorrecto era:
+```typescript
+pnlUsd = realizedPnlRaw;  // SELL PROCEEDS para legacy
+pnlPct = pnlUsd / cap * 100;  // 1198.41 / 1154.04 * 100 = 103.84%
+```
+
+### Solución implementada
+**Archivo nuevo:** `client/src/utils/idcaPnlCalculator.ts`
+
+Función canónica `calculateIdcaCycleRealizedPnl(cycle, orders)`:
+
+**Jerarquía de coste base:**
+1. **BUY orders** (preferred): suma de valueUsd + fees de órdenes BUY
+2. **cycle.capitalUsedUsd / totalQuantity**: para ciclos importados/manuales sin BUY orders
+3. **cycle.avgEntryPrice**: fallback
+4. **insufficient**: no hay datos suficientes
+
+**Cálculo canónico:**
+```typescript
+realizedNetUsd = totalSellValueUsd - soldCostBasisUsd - totalFeesUsd
+realizedPnlPct = realizedNetUsd / soldCostBasisUsd * 100
+```
+
+**Tolerancia dust:**
+- BTC: absolute <= 0.00001 BTC o relative <= 0.20%
+- ETH: absolute <= 0.0001 ETH o relative <= 0.20%
+- Si sellQty está dentro de tolerancia, usar costBasis total del ciclo
+
+**Archivos modificados:**
+- `client/src/pages/InstitutionalDca.tsx`:
+  - Integrar función canónica en HistoryCycleDetail
+  - Integrar función canónica en HistoryCyclesView (agregación y listado)
+  - Cargar órdenes de todos los ciclos con useIdcaOrders({ limit: 500 })
+  - Corregir label "Realizado bruto" → "Valor vendido"
+  - Usar cyclePnlMap para almacenar resultados por ciclo
+
+### Resultado esperado
+**BTC/USD nuevo:**
+- Capital invertido: $625.80
+- Valor vendido: $648.05
+- PnL neto: +$22.25
+- PnL %: +3.56%
+
+**ETH/USD cerrado:**
+- Capital invertido: ~$1043.00
+- Valor vendido: $1128.01
+- PnL neto: +$85.01
+- PnL %: +8.15%
+
+**BTC/USD importado:**
+- Capital invertido: $1154.04
+- Valor vendido: $1198.41
+- PnL neto: +$44.37
+- PnL %: +3.84%
+
+**PnL Total de los tres:**
+- +$151.63 (suma de beneficios netos)
+- NO debe mostrar +$2348.67 (suma de valores vendidos)
+
+### Pendiente
+- [ ] Tests obligatorios (idcaCyclePnl.test.ts)
+- [ ] Validación VPS
+
+---
+
 ## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
 
 ### Problema detectado
