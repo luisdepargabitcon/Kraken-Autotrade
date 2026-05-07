@@ -3111,10 +3111,48 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
     );
   }
 
+  // Helper para obtener cycleId de una orden (soporta variantes)
+  const getOrderCycleId = (order: any): number => {
+    return Number(
+      order.cycleId ??
+      order.cycle_id ??
+      order.cycleID ??
+      order.idcaCycleId ??
+      order.idca_cycle_id ??
+      0
+    );
+  };
+
   // Usar función canónica para calcular PnL de cada ciclo
   const cyclePnlMap = new Map<number, any>();
   cycles.forEach(cycle => {
-    const cycleOrders = (allOrders || []).filter((o: any) => o.cycleId === cycle.id);
+    const cycleId = Number(cycle.id ?? cycle.cycleId ?? cycle.cycle_id ?? 0);
+    const cycleOrders = (allOrders || []).filter((o: any) => getOrderCycleId(o) === cycleId);
+
+    // Log de auditoría para debug
+    console.debug("[IDCA][PNL_HISTORY_INPUT]", {
+      cycleId,
+      pair: cycle.pair,
+      capitalUsedUsd: cycle.capitalUsedUsd,
+      totalQuantity: cycle.totalQuantity,
+      avgEntryPrice: cycle.avgEntryPrice,
+      realizedPnlUsd: cycle.realizedPnlUsd,
+      ordersCount: cycleOrders.length,
+      orders: cycleOrders.map((o: any) => ({
+        id: o.id,
+        cycleId: getOrderCycleId(o),
+        pair: o.pair,
+        side: o.side,
+        type: o.type,
+        price: o.price,
+        quantity: o.quantity,
+        valueUsd: o.valueUsd,
+        value_usd: o.value_usd,
+        feeUsd: o.feeUsd,
+        fee_usd: o.fee_usd,
+      })),
+    });
+
     const pnlResult = calculateIdcaCycleRealizedPnl(cycle, cycleOrders);
     cyclePnlMap.set(cycle.id, pnlResult);
 

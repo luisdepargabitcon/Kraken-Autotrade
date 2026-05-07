@@ -25,17 +25,38 @@ export interface IdcaCyclePnlResult {
 }
 
 export interface IdcaCyclePnlOrder {
-  side: string;
+  side?: string;
   status?: string;
   type?: string;
   reason?: string;
+  label?: string;
+  title?: string;
   price?: number | string | null;
+  executionPrice?: number | string | null;
+  execution_price?: number | string | null;
   quantity?: number | string | null;
+  qty?: number | string | null;
+  amount?: number | string | null;
+  baseAmount?: number | string | null;
+  base_amount?: number | string | null;
+  executedQty?: number | string | null;
+  executed_qty?: number | string | null;
   valueUsd?: number | string | null;
   value_usd?: number | string | null;
+  valueUSD?: number | string | null;
+  totalValueUsd?: number | string | null;
+  total_value_usd?: number | string | null;
+  value?: number | string | null;
+  notionalUsd?: number | string | null;
+  notional_usd?: number | string | null;
+  amountUsd?: number | string | null;
+  amount_usd?: number | string | null;
   feesUsd?: number | string | null;
   feeUsd?: number | string | null;
   fee_usd?: number | string | null;
+  fees_usd?: number | string | null;
+  fee?: number | string | null;
+  fees?: number | string | null;
 }
 
 export interface IdcaCyclePnlInput {
@@ -51,25 +72,103 @@ export interface IdcaCyclePnlInput {
 }
 
 /**
+ * Read number from multiple possible field variants.
+ */
+function readNumber(...values: (number | string | null | undefined)[]): number {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const n = Number(String(value).replace(/[$,]/g, ""));
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
+}
+
+/**
+ * Get order value USD from multiple field variants.
+ */
+function getOrderValueUsd(order: IdcaCyclePnlOrder): number {
+  return readNumber(
+    order.valueUsd,
+    order.value_usd,
+    order.valueUSD,
+    order.totalValueUsd,
+    order.total_value_usd,
+    order.value,
+    order.notionalUsd,
+    order.notional_usd,
+    order.amountUsd,
+    order.amount_usd
+  );
+}
+
+/**
+ * Get order quantity from multiple field variants.
+ */
+function getOrderQuantity(order: IdcaCyclePnlOrder): number {
+  return readNumber(
+    order.quantity,
+    order.qty,
+    order.amount,
+    order.baseAmount,
+    order.base_amount,
+    order.executedQty,
+    order.executed_qty
+  );
+}
+
+/**
+ * Get order fee USD from multiple field variants.
+ */
+function getOrderFeeUsd(order: IdcaCyclePnlOrder): number {
+  return readNumber(
+    order.feeUsd,
+    order.feesUsd,
+    order.fee_usd,
+    order.fees_usd,
+    order.fee,
+    order.fees
+  );
+}
+
+/**
+ * Get order price from multiple field variants.
+ */
+function getOrderPrice(order: IdcaCyclePnlOrder): number {
+  return readNumber(order.price, order.executionPrice, order.execution_price);
+}
+
+/**
  * Normalize order side/type to "buy" | "sell" | "unknown"
  * Handles English and Spanish variants.
  */
 function normalizeOrderSide(order: IdcaCyclePnlOrder): "buy" | "sell" | "unknown" {
-  const side = order.side?.toLowerCase() || "";
-  const type = order.type?.toLowerCase() || "";
-  const reason = order.reason?.toLowerCase() || "";
+  const raw = [
+    order.side,
+    order.type,
+    order.reason,
+    order.label,
+    order.title
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
-  // Check side field
-  if (side === "buy" || side === "buy") return "buy";
-  if (side === "sell" || side === "sell") return "sell";
+  if (
+    raw.includes("buy") ||
+    raw.includes("compra") ||
+    raw.includes("entrada") ||
+    raw.includes("initial")
+  ) return "buy";
 
-  // Check type field (Spanish)
-  if (type.includes("compra") || type.includes("buy")) return "buy";
-  if (type.includes("venta") || type.includes("sell")) return "sell";
-
-  // Check reason field
-  if (reason.includes("compra") || reason.includes("buy")) return "buy";
-  if (reason.includes("venta") || reason.includes("sell")) return "sell";
+  if (
+    raw.includes("sell") ||
+    raw.includes("venta") ||
+    raw.includes("salida") ||
+    raw.includes("trailing") ||
+    raw.includes("close") ||
+    raw.includes("cerró") ||
+    raw.includes("cerro")
+  ) return "sell";
 
   return "unknown";
 }
@@ -127,13 +226,35 @@ export function calculateIdcaCycleRealizedPnl(
   const status = cycle.status || "active";
   const pair = cycle.pair || "";
 
+  // Normalize orders (read all field variants, reconstruct value if missing)
+  const normalizedOrders = orders.map((o: IdcaCyclePnlOrder) => {
+    const valueUsd = getOrderValueUsd(o);
+    const price = getOrderPrice(o);
+    const quantity = getOrderQuantity(o);
+
+    // Reconstruct value from price * quantity if missing
+    let finalValueUsd = valueUsd;
+    if (finalValueUsd <= 0 && price > 0 && quantity > 0) {
+      finalValueUsd = price * quantity;
+      warnings.push(`Reconstructed value from price*quantity: ${finalValueUsd}`);
+    }
+
+    return {
+      side: normalizeOrderSide(o),
+      quantity,
+      price,
+      valueUsd: finalValueUsd,
+      feeUsd: getOrderFeeUsd(o),
+    };
+  });
+
   // Separate BUY and SELL orders (normalized)
-  const buyOrders = orders.filter((o: IdcaCyclePnlOrder) => {
+  const buyOrders = normalizedOrders.filter((o: any) => {
     const normalizedSide = normalizeOrderSide(o);
     const isFilled = !o.status || o.status.toLowerCase() === "filled";
     return normalizedSide === "buy" && isFilled;
   });
-  const sellOrders = orders.filter((o: IdcaCyclePnlOrder) => {
+  const sellOrders = normalizedOrders.filter((o: any) => {
     const normalizedSide = normalizeOrderSide(o);
     const isFilled = !o.status || o.status.toLowerCase() === "filled";
     return normalizedSide === "sell" && isFilled;
@@ -145,32 +266,25 @@ export function calculateIdcaCycleRealizedPnl(
   let avgCostUsd = 0;
 
   if (buyOrders.length > 0) {
-    totalBuyQty = buyOrders.reduce((sum, o) => sum + parseFloat(String(o.quantity || "0")), 0);
-    totalBuyCostUsd = buyOrders.reduce((sum, o) => {
-      const value = parseFloat(String(o.valueUsd || o.value_usd || "0"));
-      return sum + value;
-    }, 0);
-    const buyFeesUsd = buyOrders.reduce((sum, o) => {
-      const fee = parseFloat(String(o.feesUsd || o.feeUsd || o.fee_usd || "0"));
-      return sum + fee;
-    }, 0);
+    totalBuyQty = buyOrders.reduce((sum, o) => sum + (o.quantity || 0), 0);
+    totalBuyCostUsd = buyOrders.reduce((sum, o) => sum + (o.valueUsd || 0), 0);
+    const buyFeesUsd = buyOrders.reduce((sum, o) => sum + (o.feeUsd || 0), 0);
     totalBuyCostUsd += buyFeesUsd; // Include fees in cost basis
     avgCostUsd = totalBuyQty > 0 ? totalBuyCostUsd / totalBuyQty : 0;
   }
 
   // Calculate SELL stats
-  const totalSellQty = sellOrders.reduce((sum, o) => sum + parseFloat(String(o.quantity || "0")), 0);
-  const totalSellValueUsd = sellOrders.reduce((sum, o) => {
-    const value = parseFloat(String(o.valueUsd || o.value_usd || "0"));
-    return sum + value;
-  }, 0);
-  const totalSellFeesUsd = sellOrders.reduce((sum, o) => {
-    const fee = parseFloat(String(o.feesUsd || o.feeUsd || o.fee_usd || "0"));
-    return sum + fee;
-  }, 0);
+  const totalSellQty = sellOrders.reduce((sum, o) => sum + (o.quantity || 0), 0);
+  const totalSellValueUsd = sellOrders.reduce((sum, o) => sum + (o.valueUsd || 0), 0);
+  const totalSellFeesUsd = sellOrders.reduce((sum, o) => sum + (o.feeUsd || 0), 0);
 
   const hasSellOrders = sellOrders.length > 0 && totalSellValueUsd > 0;
   const hasBuyOrders = buyOrders.length > 0 && totalBuyCostUsd > 0 && totalBuyQty > 0;
+
+  // Guardrail: if sell orders detected but totalSellValueUsd is 0, warn
+  if (sellOrders.length > 0 && totalSellValueUsd <= 0) {
+    warnings.push("Sell orders detected but totalSellValueUsd is 0 - check order fields");
+  }
 
   // PRIORITY 1: Calculate from orders when SELL orders exist
   if (hasSellOrders) {
