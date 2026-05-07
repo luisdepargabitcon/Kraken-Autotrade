@@ -369,6 +369,62 @@ El helper `calculateIdcaCycleRealizedPnl` se creó en `client/src/utils/idcaPnlC
 
 ---
 
+## 2026-05-07 — fix(idca): usar realizedPnlUsd del backend para ciclos cerrados
+
+### Problema detectado
+Después de corregir el crash por require, el cálculo de PnL seguía incorrecto:
+
+**BTC/USD nuevo:** $-625.24, -100.00% (debería ser +$22.25, +3.56%)
+**ETH/USD:** +$0.00, +0.00% (debería ser +$85.01, +8.15%)
+**BTC/USD importado:** $-1154.04, -100.00% (debería ser +$44.37, +3.84%)
+
+**Causa raíz:**
+La función `calculateIdcaCycleRealizedPnl` estaba recalculando PnL desde órdenes, ignorando `realizedPnlUsd` del backend. Para ciclos cerrados post-bee8391+, el backend ya calcula `realizedPnlUsd` como NET PROFIT correctamente. La función debería usar este valor en lugar de recalcular desde órdenes, lo cual puede fallar si no hay suficientes datos de órdenes.
+
+### Solución implementada
+**Archivo modificado:** `shared/idcaCyclePnl.ts`
+
+**Cambio:**
+Añadir lógica para usar `realizedPnlUsd` del backend cuando el ciclo está cerrado y tiene un valor:
+
+```typescript
+// Para ciclos cerrados, usar realizedPnlUsd del backend (ya es NET PROFIT post-bee8391+)
+if (status === "closed" && realizedPnlUsd !== 0) {
+  const realizedPnlPct = capitalUsedUsd > 0 ? (realizedPnlUsd / capitalUsedUsd) * 100 : 0;
+  return {
+    capitalInvestedUsd: capitalUsedUsd,
+    totalBuyQty: totalQuantity,
+    totalBuyCostUsd: capitalUsedUsd,
+    avgCostUsd: capitalUsedUsd > 0 && totalQuantity > 0 ? capitalUsedUsd / totalQuantity : 0,
+    totalSellQty: totalQuantity,
+    totalSellValueUsd: capitalUsedUsd + realizedPnlUsd, // Valor vendido aproximado
+    soldCostBasisUsd: capitalUsedUsd,
+    realizedGrossUsd: realizedPnlUsd,
+    totalFeesUsd: 0,
+    realizedNetUsd: realizedPnlUsd,
+    realizedPnlPct,
+    pnlSource: "cycle_realized",
+    warnings: [],
+  };
+}
+```
+
+### Resultado esperado
+- Pestaña Historial carga sin crash
+- PnL usa valor del backend para ciclos cerrados
+- BTC nuevo: +$22.25 / +3.56%
+- ETH: +$85.01 / +8.15%
+- BTC importado: +$44.37 / +3.84%
+- PnL Total: +$151.63
+
+### Validación
+- npm run build: ✅
+
+### Pendiente
+- Validación VPS tras deploy
+
+---
+
 ## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
 
 ### Problema detectado

@@ -63,6 +63,27 @@ export function calculateIdcaCycleRealizedPnl(
   const totalQuantity = parseFloat(String(cycle.totalQuantity || "0"));
   const avgEntryPrice = parseFloat(String(cycle.avgEntryPrice || "0"));
   const realizedPnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
+  const status = (cycle as any).status || "active";
+
+  // Para ciclos cerrados, usar realizedPnlUsd del backend (ya es NET PROFIT post-bee8391+)
+  if (status === "closed" && realizedPnlUsd !== 0) {
+    const realizedPnlPct = capitalUsedUsd > 0 ? (realizedPnlUsd / capitalUsedUsd) * 100 : 0;
+    return {
+      capitalInvestedUsd: capitalUsedUsd,
+      totalBuyQty: totalQuantity,
+      totalBuyCostUsd: capitalUsedUsd,
+      avgCostUsd: capitalUsedUsd > 0 && totalQuantity > 0 ? capitalUsedUsd / totalQuantity : 0,
+      totalSellQty: totalQuantity,
+      totalSellValueUsd: capitalUsedUsd + realizedPnlUsd, // Valor vendido aproximado
+      soldCostBasisUsd: capitalUsedUsd,
+      realizedGrossUsd: realizedPnlUsd,
+      totalFeesUsd: 0, // No tenemos fees separados
+      realizedNetUsd: realizedPnlUsd,
+      realizedPnlPct,
+      pnlSource: "cycle_realized",
+      warnings: [],
+    };
+  }
 
   // Separate BUY and SELL orders
   const buyOrders = orders.filter((o: IdcaCyclePnlOrder) => 
