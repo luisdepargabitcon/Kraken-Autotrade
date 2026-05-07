@@ -64,9 +64,11 @@ export function calculateIdcaCycleRealizedPnl(
   const avgEntryPrice = parseFloat(String(cycle.avgEntryPrice || "0"));
   const realizedPnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const status = (cycle as any).status || "active";
+  const isImported = (cycle as any).isImported || (cycle as any).sourceType === "manual" || (cycle as any).isManualCycle;
 
-  // Para ciclos cerrados, usar realizedPnlUsd del backend (ya es NET PROFIT post-bee8391+)
-  if (status === "closed" && realizedPnlUsd !== 0) {
+  // Para ciclos cerrados NUEVOS (no legacy/importados), usar realizedPnlUsd del backend (ya es NET PROFIT post-bee8391+)
+  // Para ciclos legacy/importados, calcular desde órdenes (realizedPnlUsd puede ser SELL PROCEEDS)
+  if (status === "closed" && !isImported && realizedPnlUsd !== 0) {
     const realizedPnlPct = capitalUsedUsd > 0 ? (realizedPnlUsd / capitalUsedUsd) * 100 : 0;
     return {
       capitalInvestedUsd: capitalUsedUsd,

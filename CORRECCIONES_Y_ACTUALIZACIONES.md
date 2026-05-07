@@ -425,6 +425,51 @@ if (status === "closed" && realizedPnlUsd !== 0) {
 
 ---
 
+## 2026-05-07 — fix(idca): detectar ciclos legacy/importados para usar cálculo correcto
+
+### Problema detectado
+Después de usar realizedPnlUsd del backend para ciclos cerrados, los resultados fueron:
+
+**BTC/USD nuevo:** ✅ +$22.25 +3.56% — CORRECTO
+**ETH/USD:** ✅ +$1128.01 +108.15% — INCORRECTO (debería ser +$85.01 +8.15%)
+**BTC/USD importado:** ✅ +$1198.41 +103.84% — INCORRECTO (debería ser +$44.37 +3.84%)
+
+**Causa raíz:**
+Para ciclos legacy/importados (pre-bee8391), `realizedPnlUsd` está guardando SELL PROCEEDS (valor total de venta), no NET PROFIT. Mi lógica anterior usaba `realizedPnlUsd` para todos los ciclos cerrados, lo cual es incorrecto para legacy/importados.
+
+### Solución implementada
+**Archivo modificado:** `shared/idcaCyclePnl.ts`
+
+**Cambio:**
+Detectar ciclos legacy/importados usando `isImported`, `sourceType === "manual"`, o `isManualCycle`:
+
+```typescript
+const isImported = (cycle as any).isImported || (cycle as any).sourceType === "manual" || (cycle as any).isManualCycle;
+
+// Para ciclos cerrados NUEVOS (no legacy/importados), usar realizedPnlUsd del backend
+// Para ciclos legacy/importados, calcular desde órdenes (realizedPnlUsd puede ser SELL PROCEEDS)
+if (status === "closed" && !isImported && realizedPnlUsd !== 0) {
+  // Usar realizedPnlUsd del backend (NET PROFIT)
+} else {
+  // Calcular desde órdenes o capitalUsedUsd (para legacy/importados)
+}
+```
+
+### Resultado esperado
+- Pestaña Historial carga sin crash
+- BTC nuevo: +$22.25 / +3.56% (usa realizedPnlUsd del backend)
+- ETH: +$85.01 / +8.15% (calcula desde órdenes/capitalUsedUsd)
+- BTC importado: +$44.37 / +3.84% (calcula desde órdenes/capitalUsedUsd)
+- PnL Total: +$151.63
+
+### Validación
+- npm run build: ✅
+
+### Pendiente
+- Validación VPS tras deploy
+
+---
+
 ## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
 
 ### Problema detectado
