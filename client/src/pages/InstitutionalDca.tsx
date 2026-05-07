@@ -2114,10 +2114,9 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const capitalUsedDisp = parseFloat(String(cycle.capitalUsedUsd || "0"));
   // plus cycles store profit directly; v1/recovery store sell proceeds
   const isPlusCycle = String(cycle.strategy || "").includes("plus");
-  // For closed standard cycles: profit = proceeds - capitalUsed
-  const realizedPnl = cycle.status === "closed" && !isPlusCycle && capitalUsedDisp > 0
-    ? realizedPnlRaw - capitalUsedDisp
-    : realizedPnlRaw;
+  // CORRECCIÓN: realizedPnlRaw ya es NET PROFIT (según IdcaPnlCalculator.ts)
+  // No restar capitalUsedDisp de nuevo (causaba doble descuento)
+  const realizedPnl = realizedPnlRaw;
   // Active cycles with partial TP: realizedPnlRaw = partial sell proceeds (not profit yet)
   const isPartialTpActive = cycle.status !== "closed" && realizedPnlRaw > 0;
 
@@ -3112,19 +3111,16 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
 
   // Aggregate stats
   const totalPnl = cycles.reduce((s, c) => {
-    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
     const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return s + (real - cap);
+    return s + real;  // CORRECCIÓN: real ya es NET PROFIT
   }, 0);
   const wins = cycles.filter(c => {
-    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
     const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return (real - cap) > 1;
+    return real > 1;  // CORRECCIÓN: real ya es NET PROFIT
   }).length;
   const losses = cycles.filter(c => {
-    const cap = parseFloat(String(c.capitalUsedUsd || "0"));
     const real = parseFloat(String(c.realizedPnlUsd || "0"));
-    return (real - cap) < -1;
+    return real < -1;  // CORRECCIÓN: real ya es NET PROFIT
   }).length;
   const neutral = cycles.length - wins - losses;
 
@@ -3145,7 +3141,7 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
       {cycles.map((cycle) => {
         const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
         const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
-        const pnlUsd = real - cap;
+        const pnlUsd = real;  
         const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
         const isProfit = pnlUsd > 1;
         const isLoss = pnlUsd < -1;
@@ -3229,7 +3225,9 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
 
   const cap = parseFloat(String(cycle.capitalUsedUsd || "0"));
   const real = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  const pnlUsd = real - cap;
+  // CORRECCIÓN: real ya es NET PROFIT (según IdcaPnlCalculator.ts)
+  // No restar cap de nuevo (causaba doble descuento)
+  const pnlUsd = real;
   const pnlPct = cap > 0 ? (pnlUsd / cap) * 100 : 0;
   const totalFees = (orders || []).reduce((s: number, o: any) => s + parseFloat(String(o.feesUsd || "0")), 0);
 

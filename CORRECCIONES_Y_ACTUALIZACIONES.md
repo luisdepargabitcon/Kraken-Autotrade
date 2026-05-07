@@ -157,6 +157,84 @@ if (trailingMarginChanged && patch.trailingMarginPct) {
 
 ---
 
+## 2026-05-07 — fix(idca): corregir PnL de ciclos cerrados en historial
+
+### Problema detectado
+En IDCA → Historial → Ciclos cerrados, el ciclo BTC/USD cerrado aparecía como pérdida fuerte (-96.44%) cuando la operación fue positiva (+3.56%).
+
+**Cálculo incorrecto:**
+- Capital invertido: $625.80
+- Realizado bruto: $22.25
+- PnL neto incorrecto: -$603.55 (22.25 - 625.80)
+- PnL % incorrecto: -96.44%
+
+**Causa raíz:**
+Doble descuento del capital en frontend. El backend ya guarda `realizedPnlUsd` como NET PROFIT (según IdcaPnlCalculator.ts), pero el frontend le restaba `capitalUsedDisp` de nuevo.
+
+### Solución implementada
+**Archivo modificado:** `client/src/pages/InstitutionalDca.tsx`
+
+**Lugares corregidos (4):**
+
+1. **Líneas 2117-2120** — Cálculo de realizedPnl en componente principal:
+```typescript
+// INCORRECTO — doble descuento
+const realizedPnl = cycle.status === "closed" && !isPlusCycle && capitalUsedDisp > 0
+  ? realizedPnlRaw - capitalUsedDisp
+  : realizedPnlRaw;
+
+// CORRECTO — realizedPnlRaw ya es NET PROFIT
+const realizedPnl = realizedPnlRaw;
+```
+
+2. **Líneas 3229-3232** — Cálculo en HistoryCycleDetail:
+```typescript
+// INCORRECTO — doble descuento
+const pnlUsd = real - cap;
+
+// CORRECTO — real ya es NET PROFIT
+const pnlUsd = real;
+```
+
+3. **Líneas 3113-3124** — Cálculos de agregación (totalPnl, wins, losses):
+```typescript
+// INCORRECTO — doble descuento
+const totalPnl = cycles.reduce((s, c) => s + (real - cap), 0);
+const wins = cycles.filter(c => (real - cap) > 1).length;
+const losses = cycles.filter(c => (real - cap) < -1).length;
+
+// CORRECTO — real ya es NET PROFIT
+const totalPnl = cycles.reduce((s, c) => s + real, 0);
+const wins = cycles.filter(c => real > 1).length;
+const losses = cycles.filter(c => real < -1).length;
+```
+
+4. **Líneas 3141-3147** — Cálculo de pnlUsd en listado de ciclos:
+```typescript
+// INCORRECTO — doble descuento
+const pnlUsd = real - cap;
+
+// CORRECTO — real ya es NET PROFIT
+const pnlUsd = real;
+```
+
+### Resultado esperado para BTC/USD
+- Capital invertido: $625.80
+- Realizado bruto: +$22.25
+- Fees totales: $0.00
+- PnL neto: +$22.25
+- PnL %: +3.56%
+- Ciclo debe salir en verde (win)
+- Contador wins +1, losses sin incluir este ciclo
+- PnL Total debe sumar +22.25
+
+### Pendiente
+- [ ] Tests obligatorios (idcaCyclePnl.test.ts)
+- [ ] Validación VPS
+- [ ] Auditoría DB del ciclo BTC/USD cerrado (opcional)
+
+---
+
 ## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
 
 ### Problema detectado
