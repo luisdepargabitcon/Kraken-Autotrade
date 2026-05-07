@@ -316,6 +316,59 @@ realizedPnlPct = realizedNetUsd / soldCostBasisUsd * 100
 
 ---
 
+## 2026-05-07 — fix(idca): corregir crash historial por require en frontend
+
+### Problema detectado
+Después del fix de PnL porcentual en ciclos cerrados legacy/importados, la pestaña Historial rompe toda la aplicación con:
+
+```
+ReferenceError: require is not defined
+```
+
+**Causa raíz:**
+El helper `calculateIdcaCycleRealizedPnl` se creó en `client/src/utils/idcaPnlCalculator.ts` y se importó con `require("../../utils/idcaPnlCalculator")` dentro de componentes React. Esto es CommonJS y no es compatible con Vite/browser, que usa ESM.
+
+**Archivos afectados:**
+- `client/src/pages/InstitutionalDca.tsx` (líneas 3114 y 3237)
+
+### Solución implementada
+**Archivo nuevo:** `shared/idcaCyclePnl.ts`
+
+**Archivo eliminado:** `client/src/utils/idcaPnlCalculator.ts`
+
+**Cambios:**
+1. Mover helper `calculateIdcaCycleRealizedPnl` a `shared/idcaCyclePnl.ts` con exports ESM
+2. Añadir import ESM al principio de InstitutionalDca.tsx:
+   ```typescript
+   import { calculateIdcaCycleRealizedPnl } from "@shared/idcaCyclePnl";
+   ```
+3. Eliminar los `require()` dentro de componentes (líneas 3114 y 3237)
+4. Añadir guardas para proteger UI:
+   ```typescript
+   const cap = pnlResult?.capitalInvestedUsd || 0;
+   const pnlUsd = pnlResult?.realizedNetUsd || 0;
+   const pnlPct = pnlResult?.realizedPnlPct || 0;
+   ```
+5. Log warnings técnicos si existen (no romper UI)
+
+### Resultado esperado
+- Pestaña Historial carga sin crash
+- Fix de PnL sigue aplicado
+- BTC nuevo: +$22.25 / +3.56%
+- ETH: +$85.01 / +8.15%
+- BTC importado: +$44.37 / +3.84%
+- PnL Total: +$151.63
+
+### Validación
+- npm run check: ❌ (error preexistente en IdcaEngine.ts no relacionado)
+- npm run build: ✅
+- No hay require en client/src
+
+### Pendiente
+- Validación VPS tras deploy
+
+---
+
 ## 2026-05-05 — fix(idca): invalidar queries de ciclos al cambiar asset config
 
 ### Problema detectado

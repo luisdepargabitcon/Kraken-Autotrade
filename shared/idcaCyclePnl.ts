@@ -1,6 +1,7 @@
 /**
- * IDCA PnL Calculator — Canonical PnL computation for IDCA cycles in frontend.
+ * IDCA PnL Calculator — Canonical PnL computation for IDCA cycles.
  *
+ * Pure function compatible with both frontend and backend.
  * Handles legacy/imported cycles where realizedPnlUsd may store SELL PROCEEDS
  * instead of NET PROFIT (pre-bee8391).
  */
@@ -21,6 +22,26 @@ export interface IdcaCyclePnlResult {
   warnings: string[];
 }
 
+export interface IdcaCyclePnlOrder {
+  side: string;
+  status?: string;
+  price?: number | string | null;
+  quantity?: number | string | null;
+  valueUsd?: number | string | null;
+  value_usd?: number | string | null;
+  feesUsd?: number | string | null;
+  feeUsd?: number | string | null;
+  fee_usd?: number | string | null;
+}
+
+export interface IdcaCyclePnlInput {
+  capitalUsedUsd?: number | string | null;
+  totalQuantity?: number | string | null;
+  avgEntryPrice?: number | string | null;
+  realizedPnlUsd?: number | string | null;
+  pair?: string | null;
+}
+
 /**
  * Calculate PnL for an IDCA cycle using canonical rules.
  *
@@ -31,8 +52,8 @@ export interface IdcaCyclePnlResult {
  * 4. insufficient (cannot calculate)
  */
 export function calculateIdcaCycleRealizedPnl(
-  cycle: any,
-  orders: any[] = []
+  cycle: IdcaCyclePnlInput,
+  orders: IdcaCyclePnlOrder[] = []
 ): IdcaCyclePnlResult {
   const warnings: string[] = [];
   let pnlSource: IdcaCyclePnlResult["pnlSource"] = "insufficient";
@@ -44,8 +65,12 @@ export function calculateIdcaCycleRealizedPnl(
   const realizedPnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   // Separate BUY and SELL orders
-  const buyOrders = orders.filter((o: any) => o.side === "buy" && o.status === "filled");
-  const sellOrders = orders.filter((o: any) => o.side === "sell" && o.status === "filled");
+  const buyOrders = orders.filter((o: IdcaCyclePnlOrder) => 
+    o.side.toLowerCase() === "buy" && (!o.status || o.status.toLowerCase() === "filled")
+  );
+  const sellOrders = orders.filter((o: IdcaCyclePnlOrder) => 
+    o.side.toLowerCase() === "sell" && (!o.status || o.status.toLowerCase() === "filled")
+  );
 
   // Calculate BUY stats
   let totalBuyQty = 0;
@@ -54,8 +79,14 @@ export function calculateIdcaCycleRealizedPnl(
 
   if (buyOrders.length > 0) {
     totalBuyQty = buyOrders.reduce((sum, o) => sum + parseFloat(String(o.quantity || "0")), 0);
-    totalBuyCostUsd = buyOrders.reduce((sum, o) => sum + parseFloat(String(o.valueUsd || "0")), 0);
-    const buyFeesUsd = buyOrders.reduce((sum, o) => sum + parseFloat(String(o.feesUsd || "0")), 0);
+    totalBuyCostUsd = buyOrders.reduce((sum, o) => {
+      const value = parseFloat(String(o.valueUsd || o.value_usd || "0"));
+      return sum + value;
+    }, 0);
+    const buyFeesUsd = buyOrders.reduce((sum, o) => {
+      const fee = parseFloat(String(o.feesUsd || o.feeUsd || o.fee_usd || "0"));
+      return sum + fee;
+    }, 0);
     totalBuyCostUsd += buyFeesUsd; // Include fees in cost basis
     avgCostUsd = totalBuyQty > 0 ? totalBuyCostUsd / totalBuyQty : 0;
     pnlSource = "orders";
@@ -93,8 +124,14 @@ export function calculateIdcaCycleRealizedPnl(
 
   // Calculate SELL stats
   const totalSellQty = sellOrders.reduce((sum, o) => sum + parseFloat(String(o.quantity || "0")), 0);
-  const totalSellValueUsd = sellOrders.reduce((sum, o) => sum + parseFloat(String(o.valueUsd || "0")), 0);
-  const totalSellFeesUsd = sellOrders.reduce((sum, o) => sum + parseFloat(String(o.feesUsd || "0")), 0);
+  const totalSellValueUsd = sellOrders.reduce((sum, o) => {
+    const value = parseFloat(String(o.valueUsd || o.value_usd || "0"));
+    return sum + value;
+  }, 0);
+  const totalSellFeesUsd = sellOrders.reduce((sum, o) => {
+    const fee = parseFloat(String(o.feesUsd || o.feeUsd || o.fee_usd || "0"));
+    return sum + fee;
+  }, 0);
 
   // Calculate sold cost basis
   let soldCostBasisUsd = avgCostUsd * totalSellQty;

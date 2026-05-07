@@ -3,6 +3,7 @@
  * Completely independent from the main bot UI.
  */
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { calculateIdcaCycleRealizedPnl } from "@shared/idcaCyclePnl";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -3111,12 +3112,16 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
   }
 
   // Usar función canónica para calcular PnL de cada ciclo
-  const { calculateIdcaCycleRealizedPnl } = require("../../utils/idcaPnlCalculator");
   const cyclePnlMap = new Map<number, any>();
   cycles.forEach(cycle => {
     const cycleOrders = (allOrders || []).filter((o: any) => o.cycleId === cycle.id);
     const pnlResult = calculateIdcaCycleRealizedPnl(cycle, cycleOrders);
     cyclePnlMap.set(cycle.id, pnlResult);
+
+    // Log warnings si existen
+    if (pnlResult?.warnings?.length > 0) {
+      console.warn(`[IDCA History] Cycle ${cycle.id} PnL warnings:`, pnlResult.warnings);
+    }
   });
 
   // Aggregate stats
@@ -3234,14 +3239,19 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
   const { data: events, isLoading: eventsLoading } = useIdcaCycleEvents(cycleId);
 
   // Usar función canónica para calcular PnL (soporta legacy/importados sin BUY orders)
-  const { calculateIdcaCycleRealizedPnl } = require("../../utils/idcaPnlCalculator");
   const pnlResult = calculateIdcaCycleRealizedPnl(cycle, orders || []);
 
-  const cap = pnlResult.capitalInvestedUsd;
-  const pnlUsd = pnlResult.realizedNetUsd;
-  const pnlPct = pnlResult.realizedPnlPct;
-  const totalFees = pnlResult.totalFeesUsd;
-  const sellValue = pnlResult.totalSellValueUsd;
+  // Guardas para proteger UI
+  const cap = pnlResult?.capitalInvestedUsd || 0;
+  const pnlUsd = pnlResult?.realizedNetUsd || 0;
+  const pnlPct = pnlResult?.realizedPnlPct || 0;
+  const totalFees = pnlResult?.totalFeesUsd || 0;
+  const sellValue = pnlResult?.totalSellValueUsd || 0;
+
+  // Si hay warnings, log técnico (no romper UI)
+  if (pnlResult?.warnings?.length > 0) {
+    console.warn(`[IDCA History] Cycle ${cycleId} PnL warnings:`, pnlResult.warnings);
+  }
 
   return (
     <div className="border-t border-border/30 p-3 space-y-3 bg-muted/5">
