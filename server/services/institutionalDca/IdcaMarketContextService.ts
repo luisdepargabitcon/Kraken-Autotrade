@@ -140,9 +140,50 @@ class IdcaMarketContextService {
       throw new Error(`No current price available for ${pair}`);
     }
 
+    // Umbrales de velas por nivel (documentados explícitamente)
+    const MIN_CANDLES_HYBRID_ENGINE = 7;   // mínimo para Hybrid V2.1 en el engine
+    const MIN_CANDLES_ATR_CONTEXT   = opts.minCandlesForAtr; // mínimo para ATR/contexto en MCS (default 14)
+    const OPTIMAL_CANDLES_VISUAL    = 100; // calidad visual óptima
+
     const rawCandles = await MarketDataService.getCandles(pair, "1h");
-    if (rawCandles.length < opts.minCandlesForAtr) {
-      throw new Error(`Insufficient candles for ${pair}: ${rawCandles.length} < ${opts.minCandlesForAtr}`);
+    if (rawCandles.length < MIN_CANDLES_ATR_CONTEXT) {
+      // L1.3: Retorno degradado en lugar de throw — no romper la tarjeta de contexto si hay
+      // entre MIN_CANDLES_HYBRID_ENGINE (7) y MIN_CANDLES_ATR_CONTEXT (14) velas.
+      // El engine puede operar con 7 velas; MCS degrada su output pero no falla.
+      // Este retorno NO permite entradas — MCS nunca controla la lógica de entrada del engine.
+      console.warn(
+        `[IDCA][MARKET_DATA_WARMUP] pair=${pair}` +
+        ` candlesLoaded=${rawCandles.length} minForAtr=${MIN_CANDLES_ATR_CONTEXT}` +
+        ` minForEngine=${MIN_CANDLES_HYBRID_ENGINE} status=degraded_context`
+      );
+      const degradedContext: MarketContext = {
+        anchorPrice:              currentPrice,
+        anchorTimestamp:          now,
+        anchorAgeHours:           0,
+        currentPrice,
+        priceUpdatedAt:           now,
+        drawdownPct:              0,
+        effectiveEntryReference:  currentPrice,
+        effectiveReferenceSource: "hybrid_v2_fallback",
+        effectiveReferenceLabel:  `Sin datos suficientes (${rawCandles.length}/${MIN_CANDLES_ATR_CONTEXT} velas para ATR). Motor puede evaluar Hybrid si hay \u2265${MIN_CANDLES_HYBRID_ENGINE}.`,
+        technicalBasePrice:       0,
+        technicalBaseType:        "none",
+        referenceChangedRecently: false,
+        pair,
+        dataQuality:              "insufficient",
+        lastUpdated:              now,
+        anchorPriceUpdatedAt:     now,
+        anchorSource:             "window_high",
+        qualityDetail: {
+          status:             "poor",
+          reason:             "insufficient_candles",
+          candleCount:        rawCandles.length,
+          requiredForOptimal: OPTIMAL_CANDLES_VISUAL,
+          hasVwap:            false,
+          hasAtrp:            false,
+        },
+      };
+      return degradedContext;
     }
 
     // FASE 7: Convertir OHLC.time de segundos (Kraken) a milisegundos para computeBasePrice y computeVwapAnchored.
@@ -221,8 +262,6 @@ class IdcaMarketContextService {
     }
     const anchorPriceUpdatedAt = this.anchorChangeMap.get(pair)!.changedAt;
 
-    // Calculate drawdown
-    const drawdownPct = ((anchorPrice - currentPrice) / anchorPrice) * 100;
 
     // Determine data quality (legacy 4-level, kept for backward compat)
     let dataQuality: MarketContext['dataQuality'];
@@ -374,6 +413,12 @@ class IdcaMarketContextService {
       vwapEnabled,
       now: now.getTime(),
     });
+
+    // L1.1: drawdownPct calculado desde effectiveEntryReference (mismo origen que el engine)
+    // Fallback a anchorPrice legacy solo si effectiveEntryReference no está disponible o es 0
+    const drawdownPct = refResult.effectiveEntryReference > 0
+      ? ((refResult.effectiveEntryReference - currentPrice) / refResult.effectiveEntryReference) * 100
+      : ((anchorPrice - currentPrice) / anchorPrice) * 100;
 
     // FASE 8: Actualizar lastValidVwap si VWAP actual es fiable
     if (vwap?.isReliable && vwapCandlesUsed >= 24) {

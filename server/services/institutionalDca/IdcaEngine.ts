@@ -86,7 +86,7 @@ async function executeExit(
       const exchange = ExchangeFactory.getTradingExchange();
       const balance = await exchange.getBalance();
       const asset = pair.split("/")[0]; // BTC/USD -> BTC
-      const availableQty = parseFloat(String(balance[asset]?.available || "0"));
+      const availableQty = parseFloat(String((balance[asset] as any)?.available ?? balance[asset] ?? "0"));
 
       if (availableQty < totalQty * 0.95) {
         // Tolerancia 5% por fees/redondeo
@@ -395,6 +395,10 @@ interface VwapAnchorState {
   previous?: VwapAnchorPrevious; // previous anchor (invalidated)
 }
 const vwapAnchorMemory = new Map<string, VwapAnchorState>();
+
+// L1.4: Anti-spam para data_not_ready — emit once on cold start, then cooldown per pair+mode
+const dataNotReadyLastSent = new Map<string, number>(); // key: `${pair}:${mode}`
+const DATA_NOT_READY_COOLDOWN_MS = 5 * 60 * 1000;       // 5 minutos
 
 // ─── Helper para obtener frozenAnchor (usado por servicios externos) ─────────
 
@@ -1342,8 +1346,43 @@ async function checkEntry(
     for (const reason of check.blockReasons) {
       console.log(`${TAG}[ENTRY_BLOCKED] ${pair}: ${reason.code} - ${reason.message}`);
     }
-    // Suppress event for data_not_ready (fires every tick on cold start, not useful)
-    if (check.blockReasons.length > 0 && check.blockReasons[0]?.code !== "data_not_ready") {
+    // L1.4: data_not_ready — emitir una vez al cold start, luego cooldown de 5 min por pair+mode
+    const isDataNotReady = check.blockReasons[0]?.code === "data_not_ready";
+    const drKey          = `${pair}:${mode}`;
+    const drLastSent     = dataNotReadyLastSent.get(drKey) ?? 0;
+    const drCooldownOk   = Date.now() - drLastSent > DATA_NOT_READY_COOLDOWN_MS;
+
+    if (isDataNotReady && drCooldownOk) {
+      dataNotReadyLastSent.set(drKey, Date.now());
+      await createHumanEvent({
+        pair, mode,
+        eventType: "entry_check_blocked",
+        severity:  "info",
+        message: [
+          `⏳ IDCA inicializando datos — ${pair}`,
+          ``,
+          `El módulo está cargando velas OHLCV para poder calcular una referencia fiable.`,
+          `Las entradas quedan pausadas hasta completar los datos mínimos.`,
+          `No requiere acción.`,
+        ].join("\n"),
+        payloadJson: {
+          blockReasons:   check.blockReasons,
+          price:          currentPrice,
+          currentPrice,
+          priceUpdatedAt: new Date().toISOString(),
+        },
+      }, {
+        eventType:    "entry_check_blocked",
+        reasonCode:   "data_not_ready",
+        pair, mode,
+        blockReasons: check.blockReasons,
+      });
+    } else if (!isDataNotReady) {
+      // Resetear cooldown: si el par sale de data_not_ready, el próximo cold start notifica de nuevo
+      dataNotReadyLastSent.delete(drKey);
+    }
+
+    if (check.blockReasons.length > 0 && !isDataNotReady) {
       // Read frozen anchor from Map (filled by performEntryCheck)
       const frozenAnchor = vwapAnchorMemory.get(pair);
 
@@ -3258,7 +3297,7 @@ function mapKrakenCandles(candles: any[]): TimestampedCandle[] {
     low:    parseFloat(String(c.low    || c[3] || 0)),
     close:  parseFloat(String(c.close  || c[4] || 0)),
     volume: parseFloat(String(c.volume || c[5] || 0)),
-    time:   c.time ? c.time * 1000 : (c[0] ? c[0] * 1000 : Date.now()),
+    time:   c.time ? (c.time > 1e12 ? c.time : c.time * 1000) : (c[0] ? (c[0] > 1e12 ? c[0] : c[0] * 1000) : Date.now()),
   }));
 }
 
