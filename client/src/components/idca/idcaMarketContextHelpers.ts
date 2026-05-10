@@ -5,7 +5,7 @@
 
 export type FreshnessState = "realtime" | "recent" | "stale";
 export type ReferencePriceState = "stable" | "recently_changed" | "unknown";
-export type VwapZone = "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+export type VwapZone = "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2" | "above_upper3";
 export type DataQuality = "excellent" | "good" | "poor" | "insufficient";
 
 export interface MarketContextQualityDetail {
@@ -64,6 +64,56 @@ export function getZoneVisual(zone?: VwapZone | string): ZoneVisual {
       return { label: "Muy sobreextendido", labelShort: "Sobre++", color: "text-red-400", badgeClass: "bg-red-500/15 text-red-400 border-red-500/30", position: 85, favorable: false };
     default:
       return { label: "Desconocido", labelShort: "N/A", color: "text-muted-foreground", badgeClass: "bg-muted/30 text-muted-foreground border-border/30", position: 50, favorable: false };
+  }
+}
+
+export interface ZoneExplanation {
+  description: string;
+  implication: string;
+}
+
+export function getZoneExplanation(zone?: VwapZone | string): ZoneExplanation {
+  switch (zone) {
+    case "below_lower3":
+      return {
+        description: "El precio está muy por debajo del VWAP. Puede ser una zona atractiva para DCA, pero conviene revisar si hay ruptura bajista o debilidad estructural.",
+        implication: "Posible oportunidad · aplicar filtro de riesgo",
+      };
+    case "below_lower2":
+      return {
+        description: "El precio está bastante por debajo del VWAP. IDCA puede encontrar mejor relación precio/riesgo si el resto de filtros acompaña.",
+        implication: "Zona favorable si no hay breakdown",
+      };
+    case "below_lower1":
+      return {
+        description: "El precio está ligeramente por debajo del VWAP. Zona razonable para buscar entradas si hay caída suficiente y score aceptable.",
+        implication: "Zona favorable moderada",
+      };
+    case "between_bands":
+      return {
+        description: "El precio está cerca del VWAP. No hay ventaja clara por precio; IDCA espera mayor caída, mejor score o confirmación antes de entrar.",
+        implication: "Esperar mejor contexto",
+      };
+    case "above_upper1":
+      return {
+        description: "El precio está por encima del VWAP. Las entradas se evalúan con más prudencia porque el precio ya está extendido respecto a la referencia.",
+        implication: "Entradas más exigentes · esperar retroceso",
+      };
+    case "above_upper2":
+      return {
+        description: "El precio está muy por encima del VWAP. No es una zona cómoda para nuevas compras DCA; normalmente conviene esperar un retroceso hacia zona neutra.",
+        implication: "Evitar compras salvo señal excepcional",
+      };
+    case "above_upper3":
+      return {
+        description: "El precio está extremadamente alejado por encima del VWAP. Riesgo alto de comprar tarde en un movimiento extendido.",
+        implication: "Zona de espera · no perseguir precio",
+      };
+    default:
+      return {
+        description: "No hay datos suficientes para determinar la posición del precio respecto al VWAP.",
+        implication: "Sin zona activa",
+      };
   }
 }
 

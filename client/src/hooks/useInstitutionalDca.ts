@@ -315,7 +315,7 @@ export interface MarketContextPreview {
   anchorTimestamp?: string;
   currentPrice: number;
   drawdownPct: number;
-  vwapZone?: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";
+  vwapZone?: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2" | "above_upper3";
   atrPct?: number;
   dataQuality: "excellent" | "good" | "poor" | "insufficient";
   priceUpdatedAt?: string;

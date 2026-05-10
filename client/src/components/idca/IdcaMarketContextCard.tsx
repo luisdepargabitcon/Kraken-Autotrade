@@ -16,6 +16,7 @@ import {
   getFreshnessState,
   getReferencePriceState,
   getZoneVisual,
+  getZoneExplanation,
   getAtrpLabel,
   getQualityBadgeText,
   formatAgeLabel,
@@ -26,8 +27,8 @@ import {
   type MarketContextQualityDetail,
 } from "./idcaMarketContextHelpers";
 
-export type { FreshnessState, ReferencePriceState, ZoneVisual, MarketNarrative } from "./idcaMarketContextHelpers";
-export { getFreshnessState, getReferencePriceState, getZoneVisual, getAtrpLabel, getQualityBadgeText, formatAgeLabel, formatDateTime, buildMarketContextNarrative } from "./idcaMarketContextHelpers";
+export type { FreshnessState, ReferencePriceState, ZoneVisual, ZoneExplanation, MarketNarrative } from "./idcaMarketContextHelpers";
+export { getFreshnessState, getReferencePriceState, getZoneVisual, getZoneExplanation, getAtrpLabel, getQualityBadgeText, formatAgeLabel, formatDateTime, buildMarketContextNarrative } from "./idcaMarketContextHelpers";
 
 // ─── Badges inline ────────────────────────────────────────────────────────────
 
@@ -77,22 +78,25 @@ function NarrativeIcon({ icon }: { icon: MarketNarrative["icon"] }) {
 
 function ZoneBar({ zone }: { zone?: VwapZone }) {
   const zones: Array<{ key: VwapZone; label: string; w: number }> = [
-    { key: "below_lower3", label: "Prof.", w: 12 },
-    { key: "below_lower2", label: "Valor+", w: 15 },
-    { key: "below_lower1", label: "Valor", w: 18 },
-    { key: "between_bands", label: "Neutro", w: 20 },
-    { key: "above_upper1", label: "Sobre+", w: 18 },
-    { key: "above_upper2", label: "Sobre++", w: 17 },
+    { key: "below_lower3", label: "Prof.", w: 11 },
+    { key: "below_lower2", label: "Valor+", w: 14 },
+    { key: "below_lower1", label: "Valor", w: 16 },
+    { key: "between_bands", label: "Neutro", w: 18 },
+    { key: "above_upper1", label: "Sobre+", w: 16 },
+    { key: "above_upper2", label: "Sobre++", w: 14 },
+    { key: "above_upper3", label: "Ext.", w: 11 },
   ];
   const inactiveColors: Record<VwapZone, string> = {
     below_lower3: "bg-emerald-500/25", below_lower2: "bg-green-500/25",
     below_lower1: "bg-cyan-500/25", between_bands: "bg-yellow-500/15",
     above_upper1: "bg-orange-500/25", above_upper2: "bg-red-500/25",
+    above_upper3: "bg-red-700/25",
   };
   const activeColors: Record<VwapZone, string> = {
     below_lower3: "bg-emerald-500", below_lower2: "bg-green-500",
     below_lower1: "bg-cyan-500", between_bands: "bg-yellow-500",
     above_upper1: "bg-orange-500", above_upper2: "bg-red-500",
+    above_upper3: "bg-red-700",
   };
   return (
     <div className="space-y-1">
@@ -443,16 +447,29 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
       )}
 
       {/* ── 5. ZONA DE MERCADO ───────────────────────────────────────── */}
-      <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-2">
-        <div className="flex items-center gap-2">
-          <MapPin className="h-3 w-3 text-muted-foreground/60" />
-          <span className="text-[9px] text-muted-foreground font-mono uppercase">Zona de mercado</span>
-          <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold", zoneVisual.badgeClass)}>
-            {zoneVisual.label}
-          </span>
-        </div>
-        <ZoneBar zone={data.vwapZone} />
-      </div>
+      {(() => {
+        const zoneExp = getZoneExplanation(data.vwapZone);
+        return (
+          <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-2">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-3 w-3 text-muted-foreground/60" />
+              <span className="text-[9px] text-muted-foreground font-mono uppercase">Zona de mercado</span>
+              <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold", zoneVisual.badgeClass)}>
+                {zoneVisual.label}
+              </span>
+            </div>
+            <ZoneBar zone={data.vwapZone} />
+            {data.vwapZone && (
+              <div className="pt-1 space-y-0.5 border-t border-border/20">
+                <p className="text-[10px] text-foreground/80 leading-relaxed">{zoneExp.description}</p>
+                <p className={cn("text-[9px] font-mono font-semibold", zoneVisual.favorable ? "text-emerald-400/80" : "text-amber-400/80")}>
+                  Implicación IDCA: {zoneExp.implication}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── 6. NARRATIVA ─────────────────────────────────────────────── */}
       <div className={cn(
