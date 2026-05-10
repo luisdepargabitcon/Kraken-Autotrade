@@ -1023,6 +1023,34 @@ async function runMigration() {
       WHERE ladder_atrp_enabled = true
     `, "idca_ladder_atrp_index");
 
+    // ============================================================
+    // IDCA TRAILING BUY STATE (030) — persistent trailing buy state
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA trailing buy state columns exist...");
+    const idcaTrailingBuyStatePath = path.resolve(process.cwd(), "db", "migrations", "030_idca_trailing_buy_state.sql");
+    await tryExecuteFile(db, idcaTrailingBuyStatePath, "idca_trailing_buy_state");
+
+    // ============================================================
+    // IDCA SLIDER CONFIG (031) — adds slider_intensity to asset configs
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA slider config columns exist...");
+    const idcaSliderConfigPath = path.resolve(process.cwd(), "db", "migrations", "031_idca_slider_config.sql");
+    await tryExecuteFile(db, idcaSliderConfigPath, "idca_slider_config");
+
+    // ============================================================
+    // IDCA EXIT OVERRIDES (032) — adds exit_overrides_json to cycles
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA exit overrides columns exist...");
+    const idcaExitOverridesPath = path.resolve(process.cwd(), "db", "migrations", "032_idca_exit_overrides.sql");
+    await tryExecuteFile(db, idcaExitOverridesPath, "idca_exit_overrides");
+
+    // ============================================================
+    // LOTE 4: IDCA CYCLE EXITS (033) — exit instructions table + cost basis columns
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA cycle exit instructions table and cost basis columns exist...");
+    const idcaExitInstructionsPath = path.resolve(process.cwd(), "db", "migrations", "033_idca_exit_instructions.sql");
+    await tryExecuteFile(db, idcaExitInstructionsPath, "idca_exit_instructions");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

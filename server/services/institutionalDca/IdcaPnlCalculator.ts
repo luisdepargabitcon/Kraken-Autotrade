@@ -4,13 +4,18 @@
  * Centralises all net/gross PnL calculations so every consumer
  * (UI, Telegram, reports, logs) displays the same numbers.
  *
- * DB storage semantics (after bee8391+):
- *   - closed cycles (all types)   → realizedPnlUsd = NET PROFIT (sellProceeds – costBasis)
- *   - trailing_active (partial TP) → realizedPnlUsd = SELL PROCEEDS (not yet profit)
- *   - active cycles               → realizedPnlUsd = 0 or null
+ * DB storage semantics (Lote 4+):
+ *   - capitalUsedUsd          = remaining live cost (decreases with partial sells)
+ *   - totalCostBasisUsd       = historical total cost (never decreases); fallback = capitalUsedUsd
+ *   - realizedCostBasisUsd    = cost of the already-sold portion (Lote 4 only)
+ *   - realizedPnlUsd:
+ *       closed cycles         → NET PROFIT (proceeds – totalCostBasis)
+ *       L4 partial sell       → Accumulated realized profit/loss (can be negative)
+ *       trailing_active (legacy armTakeProfit) → SELL PROCEEDS (not profit)
+ *       active cycles         → 0 or null
  *
- * NOTE: pre-bee8391 legacy rows may have stored proceeds for v1/recovery closes.
- *       The helper handles this transparently — see `isLegacyProceeds` flag.
+ * NOTE: pre-Lote4 cycles have totalCostBasisUsd = 0 (migrated to = capitalUsedUsd by migration 033).
+ *       The helper falls back to capitalUsedUsd as cost denominator for legacy rows.
  */
 
 // ─── Fee config ───────────────────────────────────────────────────────────────
@@ -59,20 +64,22 @@ export function resolveFeePct(
 // ─── PnL result ───────────────────────────────────────────────────────────────
 
 export interface IdcaPnlResult {
-  grossEntryValueUsd: number;
+  grossEntryValueUsd: number;   // = totalCostBasisUsd (historical)
   entryFeeUsd: number;
-  costBasisUsd: number;
+  costBasisUsd: number;          // = capitalUsedUsd (remaining/live)
+  totalCostBasisUsd: number;     // historical total; denominator for pnlPct in closed cycles
   currentValueUsd: number;
   estimatedExitFeeUsd: number;
   unrealizedGrossPnlUsd: number;
   unrealizedNetPnlUsd: number;
   realizedProceedsUsd: number;
   realizedGrossPnlUsd: number;
-  realizedNetPnlUsd: number;
+  realizedNetPnlUsd: number;     // accumulated net profit (can be negative)
   partialTakeProfitProceedsUsd: number;
   feeSource: FeeSource;
   isEstimated: boolean;
-  isPartialTp: boolean;
+  isPartialTp: boolean;          // legacy armTakeProfit path
+  isL4PartialSell: boolean;      // Lote 4 partial sell path
 }
 
 // ─── Core calculator ──────────────────────────────────────────────────────────
@@ -81,6 +88,8 @@ type CycleInput = {
   status?: string | null;
   strategy?: string | null;
   capitalUsedUsd?: unknown;
+  totalCostBasisUsd?: unknown;   // Lote 4: historical total cost; fallback = capitalUsedUsd
+  realizedCostBasisUsd?: unknown; // Lote 4: cost of already-sold portion
   totalQuantity?: unknown;
   currentPrice?: unknown;
   realizedPnlUsd?: unknown;
@@ -90,71 +99,92 @@ type CycleInput = {
 /**
  * Compute canonical PnL for an IDCA cycle.
  *
+ * Lote 4 semantics:
+ *   capitalUsedUsd        = remaining live cost (open cycles only; 0 after full close)
+ *   totalCostBasisUsd     = historical total cost (never decreases); fallback = capitalUsedUsd
+ *   realizedCostBasisUsd  > 0 → L4 partial sell occurred
+ *
  * Rules:
- *   Open cycle:     unrealizedNetPnl = currentValue – estimatedExitFee – costBasis
- *   Closed cycle:   realizedNetPnl = realizedPnlUsd (stored as profit after bee8391+)
- *   Partial TP:     partialTakeProfitProceedsUsd = realizedPnlUsd (proceeds — NOT profit)
+ *   Open (no partial sell): unrealizedNetPnl = currentValue – exitFee – capitalUsed
+ *   L4 partial sell active: unrealizedNetPnl vs remaining cost; realizedNetPnl = accumulated profit
+ *   Legacy partial TP:      partialTakeProfitProceedsUsd = realizedPnlUsd (proceeds, not profit)
+ *   Closed:                 realizedNetPnl = realizedPnlUsd; pnlPct = / totalCostBasisUsd
  */
 export function computeCyclePnl(
   cycle: CycleInput,
   execFeesJson?: unknown,
   simulationFeePct?: unknown,
 ): IdcaPnlResult {
-  const capitalUsed  = parseFloat(String(cycle.capitalUsedUsd  || "0"));
-  const totalQty     = parseFloat(String(cycle.totalQuantity    || "0"));
-  const curPrice     = parseFloat(String(cycle.currentPrice     || "0"));
-  const rawRealized  = parseFloat(String(cycle.realizedPnlUsd  || "0"));
-  const status       = cycle.status || "active";
+  const capitalUsed       = parseFloat(String(cycle.capitalUsedUsd    || "0")); // remaining
+  const realizedCostBasis = parseFloat(String(cycle.realizedCostBasisUsd || "0"));
+  const rawRealized       = parseFloat(String(cycle.realizedPnlUsd    || "0"));
+  const totalQty          = parseFloat(String(cycle.totalQuantity      || "0"));
+  const curPrice          = parseFloat(String(cycle.currentPrice       || "0"));
+  const status            = cycle.status || "active";
 
-  const isPartialTp  = status === "trailing_active" && rawRealized > 0;
-  const isClosed     = status === "closed";
+  // totalCostBasisUsd: use new field if populated (Lote 4), else fall back to capitalUsedUsd (legacy)
+  const rawTotalCostBasis = parseFloat(String(cycle.totalCostBasisUsd || "0"));
+  const totalCostBasisUsd = rawTotalCostBasis > 0 ? rawTotalCostBasis : capitalUsed;
+
+  const isClosed         = status === "closed";
+  // L4 partial sell: active/trailing with realizedCostBasis > 0 (Lote 4 only)
+  const isL4PartialSell  = !isClosed && realizedCostBasis > 0;
+  // Legacy trailing partial TP (armTakeProfit): trailing_active, rawRealized > 0, no realizedCostBasis
+  const isPartialTp      = status === "trailing_active" && rawRealized > 0 && realizedCostBasis === 0;
 
   const { pct: feePct, source: feeSource } = resolveFeePct(execFeesJson, simulationFeePct);
 
-  // Entry cost (capitalUsedUsd includes simulation entry fees already)
+  // Cost for unrealized calculation = remaining live cost
   const costBasisUsd    = capitalUsed;
-  const entryFeeUsd     = capitalUsed * feePct / 100;
+  const entryFeeUsd     = totalCostBasisUsd * feePct / 100; // entry fee on full original cost
 
-  // Unrealized (open position)
+  // Unrealized (remaining open position)
   const currentValueUsd     = totalQty * curPrice;
   const includeExitFee      = (execFeesJson as any)?.includeExitFeeInNetPnlEstimate !== false;
   const estimatedExitFeeUsd = (!isClosed && includeExitFee && currentValueUsd > 0)
     ? currentValueUsd * feePct / 100
     : 0;
-  const unrealizedGrossPnlUsd = currentValueUsd - costBasisUsd;
+  const unrealizedGrossPnlUsd = currentValueUsd - costBasisUsd; // vs remaining cost
   const unrealizedNetPnlUsd   = unrealizedGrossPnlUsd - estimatedExitFeeUsd;
 
   // Realized
-  let realizedProceedsUsd         = 0;
-  let realizedNetPnlUsd           = 0;
+  let realizedProceedsUsd          = 0;
+  let realizedNetPnlUsd            = 0;
   let partialTakeProfitProceedsUsd = 0;
 
   if (isPartialTp) {
-    // Partial TP: rawRealized = sell proceeds — profit not yet determinable without full close
+    // Legacy armTakeProfit: rawRealized = sell proceeds (NOT profit)
     partialTakeProfitProceedsUsd = rawRealized;
     realizedProceedsUsd          = rawRealized;
     realizedNetPnlUsd            = 0;
-  } else if (isClosed) {
-    // After bee8391+: realizedPnlUsd = net profit for ALL cycle types
+  } else if (isL4PartialSell) {
+    // Lote 4 partial sell: rawRealized = accumulated net profit (can be negative)
     realizedNetPnlUsd   = rawRealized;
-    realizedProceedsUsd = rawRealized + costBasisUsd; // back-computed
+    realizedProceedsUsd = rawRealized + realizedCostBasis; // back-computed
+  } else if (isClosed) {
+    // Closed cycle: rawRealized = total net profit
+    realizedNetPnlUsd   = rawRealized;
+    // Back-compute proceeds using totalCostBasisUsd (not capitalUsedUsd which is 0 at close)
+    realizedProceedsUsd = rawRealized + totalCostBasisUsd;
   }
 
   return {
-    grossEntryValueUsd: capitalUsed,
+    grossEntryValueUsd: totalCostBasisUsd, // historical
     entryFeeUsd,
-    costBasisUsd,
+    costBasisUsd,                          // remaining live cost
+    totalCostBasisUsd,                     // historical (for pnlPct in closed cycles)
     currentValueUsd,
     estimatedExitFeeUsd,
     unrealizedGrossPnlUsd,
     unrealizedNetPnlUsd,
     realizedProceedsUsd,
-    realizedGrossPnlUsd: realizedNetPnlUsd, // fees already deducted in simulation
+    realizedGrossPnlUsd: realizedNetPnlUsd,
     realizedNetPnlUsd,
     partialTakeProfitProceedsUsd,
     feeSource,
     isEstimated: !isClosed,
     isPartialTp,
+    isL4PartialSell,
   };
 }
 

@@ -18,6 +18,8 @@ import { formatIdcaMessage, formatOrderReason, type FormatContext } from "./Idca
 import { idcaMigrationService } from "./IdcaMigrationService";
 import { idcaExitManager } from "./IdcaExitManager";
 import { idcaExecutionManager } from "./IdcaExecutionManager";
+import * as exitRepo from "./IdcaExitInstructionRepository";
+import { processTriggeredExitInstructions } from "./IdcaExitExecutor";
 import {
   INSTITUTIONAL_DCA_ALLOWED_PAIRS,
   type InstitutionalDcaCycle,
@@ -180,7 +182,8 @@ async function executeExit(
 
     // Guardar referencia a la orden de venta
     const grossValueUsd = totalQty * signal.exitPrice;
-    const feesUsd = grossValueUsd * 0.09 / 100; // 0.09% taker fee
+    const { pct: feePct } = (await import('./IdcaPnlCalculator')).resolveFeePct(config.executionFeesJson, (config as any).simulationFeePct);
+    const feesUsd = grossValueUsd * feePct / 100;
     const netValueUsd = grossValueUsd - feesUsd;
 
     await repo.createOrder({
@@ -737,6 +740,16 @@ export async function emergencyCloseAll(): Promise<number> {
     prices[pair] = await getCurrentPrice(pair);
   }
 
+  // ─── Lote 4: Cancel all pending exit instructions before bulk close ───
+  try {
+    const activeCyclesBefore = await repo.getAllActiveCycles(mode);
+    for (const c of activeCyclesBefore) {
+      await exitRepo.cancelActiveExitInstructionForCycle(c.id, "emergency_close_all");
+    }
+  } catch (cancelErr: any) {
+    console.error(`${TAG}[EMERGENCY_CLOSE] Failed to cancel exit instructions: ${cancelErr.message}`);
+  }
+
   const closed = await repo.closeCyclesBulk(mode, "emergency_close_all", prices);
 
   // If live mode, attempt market sells
@@ -808,6 +821,17 @@ async function runTick(): Promise<void> {
 
     // Update OHLCV cache
     await updateOhlcvCache();
+
+    // ─── Lote 4: Process triggered exit instructions ───────────────
+    try {
+      const currentPrices: Record<string, number> = {};
+      for (const pair of INSTITUTIONAL_DCA_ALLOWED_PAIRS) {
+        currentPrices[pair] = await getCurrentPrice(pair);
+      }
+      await processTriggeredExitInstructions(mode, currentPrices);
+    } catch (exitErr: any) {
+      console.error(`${TAG}[EXIT_INSTR_ERR] ${exitErr.message}`);
+    }
 
     // Evaluate each allowed pair
     const pairResults: string[] = [];
@@ -1633,6 +1657,7 @@ async function checkEntry(
     status: "active",
     capitalReservedUsd: capitalForCycle.toFixed(2),
     capitalUsedUsd: netValue.toFixed(2),
+    totalCostBasisUsd: netValue.toFixed(2),
     totalQuantity: quantity.toFixed(8),
     avgEntryPrice: currentPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
@@ -2109,6 +2134,12 @@ async function checkSafetyBuy(
   // Already at max buys
   if (buyCount >= safetyOrders.length + 1) return;
 
+  // ─── Lote 4: Guard — No safety buys if exit instruction pending ───────────
+  if (await exitRepo.hasPendingExitInstruction(cycle.id)) {
+    console.log(`${TAG}[SAFETY_BLOCKED] cycleId=${cycle.id} pair=${pair}: exit instruction pending, blocking safety buy`);
+    return;
+  }
+
   // Cooldown check
   if (cycle.lastBuyAt) {
     const cooldownMs = assetConfig.cooldownMinutesBetweenBuys * 60 * 1000;
@@ -2227,8 +2258,10 @@ async function checkSafetyBuy(
   }
   const tpPrice = newAvgPrice * (1 + tpPct / 100);
 
+  const prevTotalCostBasis = parseFloat(String((cycle as any).totalCostBasisUsd || cycle.capitalUsedUsd || "0"));
   await repo.updateCycle(cycle.id, {
     capitalUsedUsd: newTotalCost.toFixed(2),
+    totalCostBasisUsd: (prevTotalCostBasis + netValue).toFixed(2),
     totalQuantity: newTotalQty.toFixed(8),
     avgEntryPrice: newAvgPrice.toFixed(8),
     buyCount: newBuyCount,
@@ -2238,7 +2271,7 @@ async function checkSafetyBuy(
     tpTargetPrice: tpPrice.toFixed(8),
     tpBreakdownJson: tpBreakdownSafety,
     lastBuyAt: new Date(),
-  });
+  } as any);
 
   const order = await repo.createOrder({
     cycleId: cycle.id,
@@ -3676,6 +3709,12 @@ async function checkPlusActivation(
   const maxPairExposure = allocatedCapital * (plusCfg.maxExposurePctPerAsset / 100);
   if (pairExposure >= maxPairExposure) return;
 
+  // ─── Lote 4: Guard — No plus cycle if main has exit instruction pending ───
+  if (await exitRepo.hasPendingExitInstruction(mainCycle.id)) {
+    console.log(`${TAG}[PLUS_BLOCKED] ${pair} #${mainCycle.id}: exit instruction pending, blocking plus activation`);
+    return;
+  }
+
   // All checks passed — create plus cycle
   console.log(`${TAG}[PLUS] Activating plus cycle for ${pair}, dip=${dipFromLastBuy.toFixed(2)}% from main avg`);
 
@@ -3727,6 +3766,7 @@ async function checkPlusActivation(
     status: "active",
     capitalReservedUsd: plusCapital.toFixed(2),
     capitalUsedUsd: netValue.toFixed(2),
+    totalCostBasisUsd: netValue.toFixed(2),
     totalQuantity: quantity.toFixed(8),
     avgEntryPrice: currentPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
@@ -3743,7 +3783,7 @@ async function checkPlusActivation(
     tpBreakdownJson: tpBreakdown,
     cycleType: "plus",
     parentCycleId: mainCycle.id,
-  });
+  } as any);
 
   await repo.createOrder({
     cycleId: plusCycle.id,
@@ -4896,6 +4936,7 @@ async function executeRecoveryEntry(
     avgEntryPrice: currentPrice.toFixed(8),
     totalQuantity: quantity.toFixed(8),
     capitalUsedUsd: netValue.toFixed(2),
+    totalCostBasisUsd: netValue.toFixed(2),
     capitalReservedUsd: recoveryCapital.toFixed(2),
     buyCount: 1,
     nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
@@ -5291,6 +5332,15 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   if (!cycle) throw new Error(`Ciclo #${cycleId} no encontrado`);
   if (cycle.status === "closed") throw new Error("El ciclo ya está cerrado");
 
+  // ─── Lote 4: Check for blocking exit instruction ───
+  const activeInstr = await exitRepo.getActiveExitInstruction(cycleId);
+  if (activeInstr && activeInstr.status === "failed_requires_review") {
+    throw new Error(
+      `Ciclo #${cycleId} tiene una instrucción de salida en estado failed_requires_review (#${activeInstr.id}). ` +
+      `Revisa o cancela la instrucción antes de cerrar manualmente.`
+    );
+  }
+
   const pair = cycle.pair;
   const mode = cycle.mode as IdcaMode;
   const config = await repo.getIdcaConfig();
@@ -5303,6 +5353,8 @@ export async function manualCloseCycle(cycleId: number): Promise<{
 
   const sellValueUsd = totalQty * currentPrice;
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+  // Lote 4: totalCostBasisUsd = historical cost; fallback to capitalUsedUsd for legacy cycles
+  const totalCostBasis = parseFloat(String((cycle as any).totalCostBasisUsd || "0")) || capitalUsed;
 
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
@@ -5312,9 +5364,12 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   }
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  const totalRealized = prevRealized + netValue;
-  const realizedPnlUsd = totalRealized - capitalUsed;
-  const realizedPnlPct = capitalUsed > 0 ? (realizedPnlUsd / capitalUsed) * 100 : 0;
+  const sellRatio = capitalUsed > 0 ? 1.0 : 0; // full close = sell 100%
+  const costBasisSold = capitalUsed; // entire remaining cost
+  const realizedPnlIncrement = netValue - costBasisSold;
+  const realizedPnlUsd = prevRealized + realizedPnlIncrement;
+  // For pnlPct: use totalCostBasisUsd as denominator (works even when capitalUsedUsd=0)
+  const realizedPnlPct = totalCostBasis > 0 ? (realizedPnlUsd / totalCostBasis) * 100 : 0;
 
   const closedAt = new Date();
 
@@ -5337,17 +5392,20 @@ export async function manualCloseCycle(cycleId: number): Promise<{
     await executeRealSell(cycle, "manual_sell", totalQty);
   }
 
-  // Store net profit (realizedPnlUsd local var = totalRealized − capitalUsed, already correct)
+  // Lote 4: zero capitalUsedUsd on full close; preserve totalCostBasisUsd as historical
+  const prevRealizedCostBasis = parseFloat(String((cycle as any).realizedCostBasisUsd || "0"));
   await repo.updateCycle(cycle.id, {
     status: "closed",
     closeReason: "manual_close",
     totalQuantity: "0",
+    capitalUsedUsd: "0",
+    realizedCostBasisUsd: (prevRealizedCostBasis + costBasisSold).toFixed(2),
     realizedPnlUsd: realizedPnlUsd.toFixed(2),
     unrealizedPnlUsd: "0",
     unrealizedPnlPct: "0",
     currentPrice: currentPrice.toFixed(8),
     closedAt,
-  });
+  } as any);
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();

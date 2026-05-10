@@ -298,10 +298,12 @@ export async function alertTrailingExit(cycle: InstitutionalDcaCycle): Promise<v
     ? formatDuration(new Date(cycle.startedAt), new Date(cycle.closedAt))
     : "N/A";
 
+  // Lote 4: use totalCostBasisUsd as denominator (capitalUsedUsd = 0 after full close)
+  const totalCostBasis = parseFloat(String((cycle as any).totalCostBasisUsd || cycle.capitalUsedUsd || "0"));
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
   // realizedPnlUsd stores net profit (post-bee8391+)
   const pnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
-  const pnlPct = capitalUsed > 0 ? (pnlUsd / capitalUsed) * 100 : 0;
+  const pnlPct = totalCostBasis > 0 ? (pnlUsd / totalCostBasis) * 100 : 0;
 
   // Sum fees from all orders in cycle
   const orders = await repo.getOrdersByCycle(cycle.id);
@@ -333,8 +335,8 @@ export async function alertBreakevenExit(cycle: InstitutionalDcaCycle): Promise<
     ? formatDuration(new Date(cycle.startedAt), new Date(cycle.closedAt))
     : "N/A";
 
+  // Lote 4: use totalCostBasisUsd as denominator (capitalUsedUsd = 0 after full close)
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
-  // realizedPnlUsd stores net profit (post-bee8391+)
   const pnlUsd = parseFloat(String(cycle.realizedPnlUsd || "0"));
 
   // Sum fees from all orders in cycle

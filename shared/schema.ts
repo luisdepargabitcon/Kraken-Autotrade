@@ -1141,6 +1141,11 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   skippedLevelsDetail: jsonb("skipped_levels_detail"),
   // Per-cycle exit overrides (manual UI toggles)
   exitOverridesJson: jsonb("exit_overrides_json"),
+  // Lote 4: cost basis tracking for partial sells
+  totalCostBasisUsd: decimal("total_cost_basis_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  realizedCostBasisUsd: decimal("realized_cost_basis_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  partialSellCount: integer("partial_sell_count").notNull().default(0),
+  lastPartialSellAt: timestamp("last_partial_sell_at"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1148,6 +1153,51 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
 
 export type InstitutionalDcaCycle = typeof institutionalDcaCycles.$inferSelect;
 export type InsertInstitutionalDcaCycle = typeof institutionalDcaCycles.$inferInsert;
+
+// 10.4b Exit Instructions — Lote 4
+export const idcaExitInstructions = pgTable("idca_cycle_exit_instructions", {
+  id: serial("id").primaryKey(),
+  cycleId: integer("cycle_id").notNull(),
+  pair: text("pair").notNull(),
+  mode: text("mode").notNull(),                                     // simulation | live
+  type: text("type").notNull(),                                     // immediate | price_target | scheduled_time
+  triggerPrice: decimal("trigger_price", { precision: 18, scale: 8 }),
+  triggerDirection: text("trigger_direction"),                       // above | below
+  triggerTime: timestamp("trigger_time", { withTimezone: true }),
+  timezone: text("timezone").notNull().default("Europe/Madrid"),
+  closePct: decimal("close_pct", { precision: 5, scale: 2 }).notNull(), // 25 | 50 | 75 | 100
+  requestedQuantity: decimal("requested_quantity", { precision: 18, scale: 8 }),
+  status: text("status").notNull().default("pending"),              // pending|executing|executed|cancelled|failed|failed_requires_review
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: text("created_by").notNull().default("user"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // Transactional execution
+  executingStartedAt: timestamp("executing_started_at", { withTimezone: true }),
+  executionClientOrderId: text("execution_client_order_id"),
+  executedAt: timestamp("executed_at", { withTimezone: true }),
+  executionExchangeOrderId: text("execution_exchange_order_id"),
+  executionPrice: decimal("execution_price", { precision: 18, scale: 8 }),
+  executionQuantity: decimal("execution_quantity", { precision: 18, scale: 8 }),
+  // Cost basis (never null in executed instructions)
+  costBasisSoldUsd: decimal("cost_basis_sold_usd", { precision: 18, scale: 4 }),
+  realizedPnlIncrementUsd: decimal("realized_pnl_increment_usd", { precision: 18, scale: 4 }),
+  remainingCapitalUsedUsd: decimal("remaining_capital_used_usd", { precision: 18, scale: 4 }),
+  remainingCycleQuantityAfter: decimal("remaining_cycle_quantity_after", { precision: 18, scale: 8 }),
+  // Financial result
+  grossValueUsd: decimal("gross_value_usd", { precision: 18, scale: 2 }),
+  feesUsd: decimal("fees_usd", { precision: 18, scale: 4 }),
+  netValueUsd: decimal("net_value_usd", { precision: 18, scale: 2 }),
+  // Cancellation / Error
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelReason: text("cancel_reason"),
+  failureReason: text("failure_reason"),
+  // Notifications
+  telegramSentAt: timestamp("telegram_sent_at", { withTimezone: true }),
+  notes: text("notes"),
+});
+
+export type IdcaExitInstruction = typeof idcaExitInstructions.$inferSelect;
+export type InsertIdcaExitInstruction = typeof idcaExitInstructions.$inferInsert;
 
 // 10.5 Orders — granular order history
 export const institutionalDcaOrders = pgTable("institutional_dca_orders", {

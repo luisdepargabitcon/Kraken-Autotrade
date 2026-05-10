@@ -7,6 +7,12 @@ import type { Express } from "express";
 import * as repo from "../services/institutionalDca/IdcaRepository";
 import * as engine from "../services/institutionalDca/IdcaEngine";
 import * as telegram from "../services/institutionalDca/IdcaTelegramNotifier";
+import * as exitRepo from "../services/institutionalDca/IdcaExitInstructionRepository";
+import {
+  sendInstructionCreatedTelegram,
+  sendInstructionCancelledTelegram,
+  executeExitInstruction,
+} from "../services/institutionalDca/IdcaExitExecutor";
 import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
 import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
@@ -1837,6 +1843,150 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       console.error('[IDCA][PURGE] Auto-purge failed:', e.message);
     }
   }, 6 * 60 * 60 * 1000); // 6 hours
+
+  // ─── Lote 4: Exit Instruction Endpoints ───────────────────────────────────
+
+  // GET /api/institutional-dca/cycles/:id/exit-instructions
+  app.get(`${PREFIX}/cycles/:id/exit-instructions`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+      const instructions = await exitRepo.getInstructionsByCycle(id);
+      const active = await exitRepo.getActiveExitInstruction(id);
+      res.json({ instructions, activeInstruction: active ?? null });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/institutional-dca/cycles/:id/exit-instructions
+  // Body: { type, closePct, triggerPrice?, triggerDirection?, triggerTime?, timezone?, notes? }
+  app.post(`${PREFIX}/cycles/:id/exit-instructions`, async (req, res) => {
+    try {
+      const cycleId = parseInt(req.params.id);
+      if (isNaN(cycleId)) return res.status(400).json({ error: "ID inválido" });
+
+      const cycle = await repo.getCycleById(cycleId);
+      if (!cycle) return res.status(404).json({ error: "Ciclo no encontrado" });
+      if (cycle.status === "closed") return res.status(400).json({ error: "El ciclo ya está cerrado" });
+
+      // Guard: only one active instruction per cycle
+      const existing = await exitRepo.getActiveExitInstruction(cycleId);
+      if (existing) {
+        return res.status(409).json({
+          error: "Ya existe una instrucción activa para este ciclo",
+          activeInstruction: existing,
+        });
+      }
+
+      const { type, closePct, triggerPrice, triggerDirection, triggerTime, timezone, notes } = req.body;
+
+      // Validation
+      if (!type || !["immediate", "price_target", "scheduled_time"].includes(type)) {
+        return res.status(400).json({ error: "type debe ser: immediate | price_target | scheduled_time" });
+      }
+      const validPcts = [25, 50, 75, 100];
+      const pct = parseFloat(String(closePct));
+      if (!validPcts.includes(pct)) {
+        return res.status(400).json({ error: "closePct debe ser 25, 50, 75 o 100" });
+      }
+      if (type === "price_target" && (!triggerPrice || !triggerDirection)) {
+        return res.status(400).json({ error: "price_target requiere triggerPrice y triggerDirection" });
+      }
+      if (type === "price_target" && !["above", "below"].includes(triggerDirection)) {
+        return res.status(400).json({ error: "triggerDirection debe ser 'above' o 'below'" });
+      }
+      if (type === "scheduled_time" && !triggerTime) {
+        return res.status(400).json({ error: "scheduled_time requiere triggerTime (ISO8601)" });
+      }
+
+      // Snapshot requested quantity
+      const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
+      const requestedQuantity = totalQty * (pct / 100);
+
+      const instruction = await exitRepo.createExitInstruction({
+        cycleId,
+        pair: cycle.pair,
+        mode: cycle.mode,
+        type,
+        closePct: pct.toFixed(2),
+        triggerPrice: triggerPrice ? parseFloat(String(triggerPrice)).toFixed(8) : undefined,
+        triggerDirection: triggerDirection ?? undefined,
+        triggerTime: triggerTime ? new Date(triggerTime) : undefined,
+        timezone: timezone || "Europe/Madrid",
+        requestedQuantity: requestedQuantity.toFixed(8),
+        notes: notes ?? undefined,
+      });
+
+      // Determine trigger info for Telegram
+      let triggerInfo = "inmediata";
+      if (type === "price_target") triggerInfo = `${triggerDirection === "above" ? "↑" : "↓"} $${parseFloat(String(triggerPrice)).toFixed(2)}`;
+      if (type === "scheduled_time") triggerInfo = new Date(triggerTime).toLocaleString("es-ES", { timeZone: timezone || "Europe/Madrid" });
+
+      // Telegram notification
+      try {
+        await sendInstructionCreatedTelegram(cycle, instruction.id, type, pct, triggerInfo);
+      } catch { /* ignore */ }
+
+      // Immediate instructions: execute now in background
+      if (type === "immediate") {
+        const { MarketDataService } = await import("../services/MarketDataService");
+        const price = await MarketDataService.getPrice(cycle.pair);
+        if (price > 0) {
+          executeExitInstruction(instruction.id, price).catch((e: Error) => {
+            console.error(`[IDCA_EXIT_ROUTES] Immediate instruction #${instruction.id} failed: ${e.message}`);
+          });
+        }
+      }
+
+      res.status(201).json({ success: true, instruction });
+    } catch (e: any) {
+      console.error('[IDCA] createExitInstruction error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/institutional-dca/cycles/:id/exit-instructions/:instrId
+  app.delete(`${PREFIX}/cycles/:id/exit-instructions/:instrId`, async (req, res) => {
+    try {
+      const cycleId = parseInt(req.params.id);
+      const instrId = parseInt(req.params.instrId);
+      if (isNaN(cycleId) || isNaN(instrId)) return res.status(400).json({ error: "IDs inválidos" });
+
+      const cancelled = await exitRepo.cancelExitInstruction(instrId, "cancelled_by_user");
+      if (!cancelled) {
+        return res.status(409).json({ error: "La instrucción no puede cancelarse (no está en estado pending o failed_requires_review)" });
+      }
+
+      const cycle = await repo.getCycleById(cycleId);
+      if (cycle) {
+        try { await sendInstructionCancelledTelegram(cycle, instrId, "Cancelada por usuario"); } catch { /* ignore */ }
+      }
+
+      res.json({ success: true, instruction: cancelled });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/institutional-dca/cycles/:id/exit-instructions (cancel active)
+  app.delete(`${PREFIX}/cycles/:id/exit-instructions`, async (req, res) => {
+    try {
+      const cycleId = parseInt(req.params.id);
+      if (isNaN(cycleId)) return res.status(400).json({ error: "ID inválido" });
+
+      await exitRepo.cancelActiveExitInstructionForCycle(cycleId, "cancelled_by_user");
+
+      const cycle = await repo.getCycleById(cycleId);
+      if (cycle) {
+        try { await sendInstructionCancelledTelegram(cycle, 0, "Cancelada por usuario (bulk)"); } catch { /* ignore */ }
+      }
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   console.log(`[IDCA] Routes registered under ${PREFIX}/*`);
 }

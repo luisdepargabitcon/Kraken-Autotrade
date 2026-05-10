@@ -185,6 +185,11 @@ export interface IdcaCycle {
   lastManualEditAt: string | null;
   lastManualEditReason: string | null;
   editHistoryJson: any;
+  // Lote 4: cost basis tracking
+  totalCostBasisUsd: string | null;
+  realizedCostBasisUsd: string | null;
+  partialSellCount: number;
+  lastPartialSellAt: string | null;
   startedAt: string;
   closedAt: string | null;
   orders?: IdcaOrder[];
@@ -1138,6 +1143,117 @@ export function useUpdateTrailingBuyLevel1Config() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
+// ─── Lote 4: Exit Instructions ────────────────────────────────────
+
+export type ExitInstructionStatus =
+  | "pending" | "executing" | "executed"
+  | "cancelled" | "failed" | "failed_requires_review";
+
+export type ExitInstructionType = "immediate" | "price_target" | "scheduled_time";
+
+export interface IdcaExitInstruction {
+  id: number;
+  cycleId: number;
+  pair: string;
+  mode: string;
+  type: ExitInstructionType;
+  triggerPrice: string | null;
+  triggerDirection: "above" | "below" | null;
+  triggerTime: string | null;
+  timezone: string;
+  closePct: string;
+  requestedQuantity: string | null;
+  status: ExitInstructionStatus;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  executingStartedAt: string | null;
+  executionClientOrderId: string | null;
+  executedAt: string | null;
+  executionExchangeOrderId: string | null;
+  executionPrice: string | null;
+  executionQuantity: string | null;
+  costBasisSoldUsd: string | null;
+  realizedPnlIncrementUsd: string | null;
+  remainingCapitalUsedUsd: string | null;
+  remainingCycleQuantityAfter: string | null;
+  grossValueUsd: string | null;
+  feesUsd: string | null;
+  netValueUsd: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  failureReason: string | null;
+  notes: string | null;
+}
+
+export interface ExitInstructionsResponse {
+  instructions: IdcaExitInstruction[];
+  activeInstruction: IdcaExitInstruction | null;
+}
+
+export function useExitInstructions(cycleId: number | null) {
+  return useQuery<ExitInstructionsResponse>({
+    queryKey: ["idca", "exit-instructions", cycleId],
+    queryFn: async () => {
+      if (!cycleId) return { instructions: [], activeInstruction: null };
+      const res = await apiRequest("GET", `${PREFIX}/cycles/${cycleId}/exit-instructions`);
+      if (!res.ok) throw new Error("Failed to fetch exit instructions");
+      return res.json();
+    },
+    enabled: !!cycleId,
+    staleTime: 5000,
+    refetchInterval: 10000,
+  });
+}
+
+export function useCreateExitInstruction() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; instruction: IdcaExitInstruction }, Error, {
+    cycleId: number;
+    type: ExitInstructionType;
+    closePct: number;
+    triggerPrice?: number;
+    triggerDirection?: "above" | "below";
+    triggerTime?: string;
+    timezone?: string;
+    notes?: string;
+  }>({
+    mutationFn: async ({ cycleId, ...body }) => {
+      const res = await apiRequest("POST", `${PREFIX}/cycles/${cycleId}/exit-instructions`, body);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to create exit instruction");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { cycleId }) => {
+      qc.invalidateQueries({ queryKey: ["idca", "exit-instructions", cycleId] });
+      qc.invalidateQueries({ queryKey: ["idca", "cycles"] });
+    },
+  });
+}
+
+export function useCancelExitInstruction() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { cycleId: number; instrId?: number }>({
+    mutationFn: async ({ cycleId, instrId }) => {
+      const url = instrId
+        ? `${PREFIX}/cycles/${cycleId}/exit-instructions/${instrId}`
+        : `${PREFIX}/cycles/${cycleId}/exit-instructions`;
+      const res = await apiRequest("DELETE", url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to cancel exit instruction");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { cycleId }) => {
+      qc.invalidateQueries({ queryKey: ["idca", "exit-instructions", cycleId] });
+      qc.invalidateQueries({ queryKey: ["idca", "cycles"] });
     },
   });
 }

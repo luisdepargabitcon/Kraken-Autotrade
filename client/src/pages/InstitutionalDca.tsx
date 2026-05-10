@@ -64,6 +64,7 @@ import {
   Clock,
   Copy,
   Download,
+  DollarSign,
   Heart,
   Info,
   LayoutDashboard,
@@ -98,6 +99,7 @@ import {
 import { cn } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
 import { EditImportedCycleModal } from "@/components/idca/EditImportedCycleModal";
+import { IdcaCycleExitModal } from "@/components/idca/IdcaCycleExitModal";
 import { EntradasTab } from "@/components/idca/EntradasTab";
 import { SalidasTab } from "@/components/idca/SalidasTab";
 import { EjecucionTab } from "@/components/idca/EjecucionTab";
@@ -2097,6 +2099,7 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
   const [showManualCloseConfirm, setShowManualCloseConfirm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showTimeStopDisableConfirm, setShowTimeStopDisableConfirm] = useState(false);
+  const [showExitModal, setShowExitModal] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
   const toggleTimeStop = useToggleTimeStop();
@@ -2756,6 +2759,18 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     Cerrar posición
                   </Button>
                 )}
+                {/* Lote 4: Programar salida (partial/full exit) */}
+                {cycle.status !== "closed" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-3 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 text-[10px] border border-blue-400/30"
+                    onClick={() => setShowExitModal(true)}
+                  >
+                    <DollarSign className="h-3 w-3 mr-1" />
+                    Programar salida
+                  </Button>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -3048,13 +3063,144 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                 ) : (
                   <><Timer className="h-3 w-3 mr-1" /> Desactivar</>
                 )}
-              </Button>
-            </div>
+            </Button>
           </div>
         </div>
-      )}
-    </Card>
-  );
+      </div>
+    )}
+
+    {/* Manual Close Cycle Confirmation Modal */}
+    {showManualCloseConfirm && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowManualCloseConfirm(false)}>
+        <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-full bg-orange-500/10">
+              <XCircle className="h-5 w-5 text-orange-400" />
+            </div>
+            <h3 className="text-lg font-semibold">Cerrar posición manualmente</h3>
+          </div>
+
+          <div className="space-y-3 mb-6">
+            <div className="text-sm text-muted-foreground space-y-1">
+              <div><strong>Par:</strong> {cycle.pair}</div>
+              <div><strong>Modo:</strong> <span className={cycle.mode === "live" ? "text-green-400" : "text-yellow-400"}>{cycle.mode?.toUpperCase()}</span></div>
+              <div><strong>Cantidad:</strong> {parseFloat(String(cycle.totalQuantity || "0")).toFixed(6)}</div>
+              <div><strong>Precio avg entrada:</strong> {fmtUsd(cycle.avgEntryPrice)}</div>
+              <div><strong>Precio actual:</strong> {fmtUsd(cycle.currentPrice)}</div>
+              <div>
+                <strong>P&amp;L no realizado:</strong>{" "}
+                <span className={pnlPct >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
+                  {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}% ({pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)})
+                </span>
+              </div>
+            </div>
+
+            <div className={`p-3 rounded text-xs ${cycle.mode === "live"
+              ? "bg-orange-500/10 border border-orange-500/30 text-orange-300"
+              : "bg-yellow-500/10 border border-yellow-500/30 text-yellow-300"}`}>
+              {cycle.mode === "live" ? (
+                <><strong>⚠️ CICLO LIVE:</strong> Se enviará una orden de venta real al exchange al precio de mercado actual. Asegúrate de que tienes fondos suficientes y el precio es aceptable.</>
+              ) : (
+                <><strong>ℹ️ Modo simulación:</strong> Se registrará la venta al precio actual de mercado y se actualizará el wallet simulado.</>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" size="sm" onClick={() => setShowManualCloseConfirm(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              disabled={manualCloseCycle.isPending}
+              onClick={() => {
+                manualCloseCycle.mutate(cycle.id, {
+                  onSuccess: (data) => {
+                    setShowManualCloseConfirm(false);
+                    const sign = data.realizedPnlUsd >= 0 ? "+" : "";
+                    toast({
+                      title: "Posición cerrada",
+                      description: `${cycle.pair} vendido @ $${data.sellPrice.toFixed(2)} | PnL: ${sign}$${data.realizedPnlUsd.toFixed(2)} (${sign}${data.realizedPnlPct.toFixed(2)}%)`,
+                    });
+                  },
+                  onError: (err: any) => {
+                    toast({ title: "Error al cerrar", description: err.message || "Error desconocido", variant: "destructive" });
+                  },
+                });
+              }}
+            >
+              {manualCloseCycle.isPending ? (
+                <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Cerrando...</>
+              ) : (
+                <><XCircle className="h-3 w-3 mr-1" /> Confirmar cierre</>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* TimeStop Disable Confirmation Modal */}
+    {showTimeStopDisableConfirm && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowTimeStopDisableConfirm(false)}>
+        <div className="bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-full bg-amber-500/10">
+              <Timer className="h-5 w-5 text-amber-400" />
+            </div>
+            <h3 className="text-lg font-semibold">Desactivar cierre por duración</h3>
+          </div>
+
+          <div className="space-y-3 mb-6">
+            <div className="text-sm text-muted-foreground space-y-1">
+              <div><strong>Par:</strong> {cycle.pair}</div>
+              <div><strong>Estado:</strong> {cycle.status}</div>
+              <div><strong>Duración actual:</strong> {durationStr}</div>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded text-xs text-amber-300">
+              <strong>⚠️ CONFIRMACIÓN:</strong> Al desactivar el TimeStop, este ciclo ya no cerrará automáticamente por duración máxima. Solo se cerrará por TP, trailing, protección, emergencia o cierre manual.
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" size="sm" onClick={() => setShowTimeStopDisableConfirm(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+              disabled={toggleTimeStop.isPending}
+              onClick={() => {
+                toggleTimeStop.mutate({ cycleId: cycle.id, disabled: true }, {
+                  onSuccess: () => {
+                    setShowTimeStopDisableConfirm(false);
+                    toast({ title: "TimeStop desactivado", description: `Ciclo #${cycle.id} (${cycle.pair}) ya no cerrará por duración.` });
+                  },
+                  onError: (err: any) => {
+                    toast({ title: "Error", description: err.message || "Error al desactivar TimeStop", variant: "destructive" });
+                  },
+                });
+              }}
+            >
+              {toggleTimeStop.isPending ? (
+                <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Desactivando...</>
+              ) : (
+                <><Timer className="h-3 w-3 mr-1" /> Desactivar</>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Lote 4: Exit Instruction Modal */}
+    <IdcaCycleExitModal open={showExitModal} onClose={() => setShowExitModal(false)} cycle={cycle} />
+  </Card>
+);
 }
 
 // ════════════════════════════════════════════════════════════════════

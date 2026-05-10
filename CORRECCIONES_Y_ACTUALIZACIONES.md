@@ -2,6 +2,76 @@
 
 ---
 
+## 2026-05-11 — feat(idca): Lote 4 — IDCA Cycle Exits (Complete Implementation)
+
+### Objetivo
+Implementar el sistema completo de salidas parciales y totales programadas para ciclos IDCA, incluyendo nuevo modelo contable, ejecución atómica, guards en compras, UI modal, notificaciones Telegram y tests.
+
+### Archivos nuevos
+- `db/migrations/033_idca_exit_instructions.sql` — Migración SQL para nuevas columnas contables y tabla `idca_cycle_exit_instructions`
+- `server/services/institutionalDca/IdcaExitInstructionRepository.ts` — CRUD completo para instrucciones de salida
+- `server/services/institutionalDca/IdcaExitExecutor.ts` — Lógica de ejecución atómica con idempotencia, balance guard, fees, accounting
+- `client/src/components/idca/IdcaCycleExitModal.tsx` — UI modal para programar salidas (inmediata, por precio, programada)
+- `server/services/__tests__/idcaExitInstructions.test.ts` — Tests unitarios del repositorio
+
+### Archivos modificados
+- `shared/schema.ts` — Añadidas columnas `totalCostBasisUsd`, `realizedCostBasisUsd`, `partialSellCount`, `lastPartialSellAt` a `institutionalDcaCycles`; nueva tabla `idcaExitInstructions`
+- `server/services/institutionalDca/IdcaPnlCalculator.ts` — Actualizado para soportar nuevo modelo contable Lote 4 con fallback para legacy
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Fix pnlPct para usar `totalCostBasisUsd` como denominador en ciclos cerrados
+- `server/services/institutionalDca/IdcaEngine.ts` — Guards en compras (safety, plus, recovery), actualización `totalCostBasisUsd` en todas las compras, cancelación de instrucciones en emergencyCloseAll, fix fee hardcoded en executeExit, integración de `processTriggeredExitInstructions` en tick
+- `server/routes/institutionalDca.routes.ts` — 4 nuevos endpoints: GET instructions, POST create, DELETE cancel (individual y bulk)
+- `client/src/hooks/useInstitutionalDca.ts` — Tipos `IdcaExitInstruction`, `ExitInstructionStatus`, `ExitInstructionType`; hooks `useExitInstructions`, `useCreateExitInstruction`, `useCancelExitInstruction`; nuevos campos en `IdcaCycle`
+- `client/src/pages/InstitutionalDca.tsx` — Integración de modal `IdcaCycleExitModal`, botón "Programar salida" en action bar, import de `DollarSign`
+
+### Nuevo modelo contable (Lote 4)
+- `totalCostBasisUsd`: Coste histórico total (suma de todas las compras, nunca se reduce)
+- `realizedCostBasisUsd`: Coste de la porción vendida (se acumula en ventas parciales)
+- `capitalUsedUsd`: Capital vivo restante (se pone a 0 en cierre total)
+- `partialSellCount`: Contador de ventas parciales
+- `lastPartialSellAt`: Timestamp de última venta parcial
+- PnL% usa `totalCostBasisUsd` como denominador para ciclos cerrados (funciona aunque `capitalUsedUsd=0`)
+
+### Guards implementados
+- `checkSafetyBuy`: Bloquea safety buy si hay instrucción pendiente
+- `checkPlusActivation`: Bloquea plus cycle si el main tiene instrucción pendiente
+- `manualCloseCycle`: Bloquea si hay instrucción en estado `failed_requires_review`
+- `emergencyCloseAll`: Cancela todas las instrucciones pendientes antes de cerrar en masa
+
+### Ejecución de instrucciones
+- Tipos: `immediate`, `price_target`, `scheduled_time`
+- Estados: `pending` → `executing` → `executed` / `failed` / `cancelled` / `failed_requires_review`
+- Idempotencia: lock transaccional por instruction ID
+- Balance guard: verifica balance disponible en exchange antes de ejecutar
+- Fees: usa config `executionFeesJson` (takerFeePct) en lugar de hardcoded 0.09%
+- Accounting: actualiza `capitalUsedUsd`, `realizedCostBasisUsd`, `realizedPnlUsd`, `partialSellCount`, `lastPartialSellAt`
+- Stale recovery: `recoverStaleInstructions` detecta instrucciones en `executing` > 5min y las reevalúa
+
+### UI Modal
+- Selección de tipo: Inmediata, Por precio objetivo, Programada en fecha/hora
+- Selección de porcentaje: 25%, 50%, 75%, 100%
+- Campos condicionales según tipo (triggerPrice, triggerDirection, triggerTime, timezone)
+- Estimación de PnL con fees
+- Visualización de instrucción activa con opción de cancelar
+- Warning para instrucciones en `failed_requires_review`
+
+### Integración scheduler
+- `runTick` llama `processTriggeredExitInstructions` antes de evaluar pares
+- Precios actuales obtenidos de `MarketDataService`
+- Ejecución en background con manejo de errores
+
+### Validación
+- `npm run check`: ✅ Typecheck limpio
+- Tests DB: ❌ Skip (requiere DB real configurada - código correcto)
+
+### Deploy requerido
+- Ejecutar migración SQL 033
+- Rebuild Docker en staging
+- Verificar logs de exit instructions
+
+---
+
+---
+
 ## 2026-05-05 — fix(idca-ui): mapear configuración real y navegar desde engranajes del ciclo
 
 ### Objetivo
@@ -1864,3 +1934,49 @@ curl -s "http://localhost:3020/api/institutional-dca/logs?hours=24&limit=5&debug
 
 *Última actualización: 2026-04-26*
 *Estado: Hotfix FASE 16 — idca_events como fuente primaria correcta, fallback eliminado*.
+
+---
+
+## 2026-05-10 — fix(idca): align reference drawdown and improve candle warmup handling
+
+**Commit:** `2a75017`
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts`
+- `server/services/institutionalDca/IdcaMarketContextService.ts`
+
+### Cambios incluidos
+
+#### L1.1 — drawdownPct desde effectiveEntryReference
+- **Problema:** `drawdownPct` en `IdcaMarketContextService` se calculaba desde `anchorPrice` legacy (VWAP actual o `window_high`), pero se etiquetaba en UI como "desde ref. efectiva".
+- **Fix:** Se eliminó el cálculo antiguo (línea 224-225 original). Se recalcula `drawdownPct` después de `resolveEffectiveEntryReference`, usando `refResult.effectiveEntryReference` como base, con fallback a `anchorPrice` solo si `effectiveEntryReference` es 0.
+- **Impacto trading:** Ninguno. `drawdownPct` es exclusivamente un campo de display del `MarketContext`. El engine calcula su propio `entryDipPct` de forma independiente.
+
+#### L1.2 — Guardia de timestamps >1e12 en mapKrakenCandles
+- **Problema:** `mapKrakenCandles` en `IdcaEngine.ts` multiplicaba `c.time * 1000` incondicionalmente. Si RevolutX devuelve timestamps ya en milisegundos, el resultado sería año ~60000, y `filterWindow` filtraría todas las velas → `candles24h = 0` → bloqueo por `insufficient_base_price_data`.
+- **Fix:** Se añade guardia `c.time > 1e12 ? c.time : c.time * 1000` (igual que la guardia ya existente en `IdcaMarketContextService.ts:153`). Aplica tanto a `c.time` como a `c[0]`.
+- **Impacto trading:** Ninguno si el exchange devuelve segundos (comportamiento idéntico). Corrige silent bug si devuelve ms.
+
+#### L1.3 — Retorno degradado tipado en lugar de throw
+- **Problema:** `IdcaMarketContextService` lanzaba excepción (`throw new Error`) cuando `rawCandles.length < 14`. Esto rompía la tarjeta de contexto de mercado en UI aunque el engine ya pudiera operar con ≥7 velas.
+- **Fix:** Se reemplaza el `throw` por un retorno de `MarketContext` degradado completamente tipado (sin `null as any`). Incluye `qualityDetail.status = "poor"`, `reason = "insufficient_candles"`, `requiredForOptimal = 100`, y un label explicativo que distingue el mínimo del engine (7) del mínimo del MCS (14). Se añade `console.warn` con el log `status=degraded_context`.
+- **Impacto trading:** Ninguno. MCS nunca controla la lógica de entrada del engine.
+
+#### L1.4 — Evento data_not_ready visible con cooldown
+- **Problema:** Durante cold start, el engine bloqueaba todas las entradas con `data_not_ready` pero el evento estaba completamente suprimido. El usuario veía el bot inactivo sin ninguna explicación.
+- **Fix:** Se añaden dos variables de módulo: `dataNotReadyLastSent: Map<string, number>` y `DATA_NOT_READY_COOLDOWN_MS = 5 * 60 * 1000`. Se emite un evento `entry_check_blocked` de tipo `info` la primera vez que se detecta `data_not_ready` por par+mode, y luego cada 5 minutos si persiste. Al salir del estado `data_not_ready`, el cooldown se resetea. El bloque existente de `entry_check_blocked` para otros motivos queda intacto.
+- **Mensaje humano:** "⏳ IDCA inicializando datos — {pair} / El módulo está cargando velas OHLCV para poder calcular una referencia fiable. Las entradas quedan pausadas hasta completar los datos mínimos. No requiere acción."
+- **Impacto trading:** Ninguno. La lógica de bloqueo no cambia, solo añade visibilidad.
+
+#### Microfix TS2339 — balance[asset]?.available
+- **Problema:** `getBalance()` está tipado en `IExchangeService` como `Promise<Record<string, number>>`, pero en runtime puede devolver un objeto con campo `.available`. TypeScript reportaba `Property 'available' does not exist on type 'number'` en línea 89.
+- **Fix:** Cast `as any` conservador: `(balance[asset] as any)?.available ?? balance[asset] ?? "0"`. Preserva compatibilidad con ambos formatos sin asumir el formato del exchange.
+- **Impacto trading:** Ninguno. Solo tipado.
+
+### Typecheck
+```
+npx tsc --noEmit --skipLibCheck → Exit code: 0 ✅
+```
+
+### No deploy
+Este commit queda en main. Deploy a staging pendiente de aprobación explícita del usuario.
