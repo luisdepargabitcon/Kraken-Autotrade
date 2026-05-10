@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { IdcaReferenceContext } from "@/hooks/useInstitutionalDca";
+import { getZoneExplanation } from "./idcaMarketContextHelpers";
 
 // ════════════════════════════════════════════════════════════════════
 // VISUAL CATALOG — cada eventType tiene su identidad visual
@@ -208,15 +209,7 @@ function formatRelativeTime(timestampMs: number | string): string {
 }
 
 function getZoneDescription(zone: string | undefined): string {
-  const descriptions: Record<string, string> = {
-    above_upper2: "sobrecomprado",
-    above_upper1: "caro",
-    between_bands: "neutral",
-    below_lower1: "interés",
-    below_lower2: "valor",
-    below_lower3: "pánico/oportunidad",
-  };
-  return descriptions[zone || ""] || "desconocido";
+  return getZoneExplanation(zone).implication;
 }
 
 async function handleResetAnchor(pair: string): Promise<void> {
@@ -549,28 +542,57 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
       const codes = blockReasons.map((r: any) => r?.code || r).filter(Boolean);
       const isDataIssue = codes.some((c: string) => c === "data_not_ready" || c === "insufficient_base_price_data");
       const meta = ev.payloadJson?.basePrice?.meta;
+      const pair = ev.pair || "el par";
 
-      // Caso 1: problema de datos — diferenciar de condiciones de mercado
+      // Caso 1: problema de datos
       if (isDataIssue) {
         if (meta?.candleCount != null) {
-          return `No se compró porque el sistema aún no dispone de suficientes velas (${meta.candleCount}/7) para calcular una referencia de precio fiable. El sistema seguirá reintentando automáticamente.`;
+          // L3.1: usar requiredForOptimal del payload en lugar de /7 hardcoded
+          const required = meta.requiredForOptimal ?? meta.minRequired ?? 7;
+          return `IDCA está inicializando datos de mercado para ${pair}. Velas válidas disponibles: ${meta.candleCount}/${required}. Las entradas quedan pausadas hasta tener suficientes velas para calcular una referencia fiable.`;
         }
-        return "No se compró porque el sistema aún no dispone de suficientes datos de mercado para calcular una referencia fiable. El sistema seguirá reintentando automáticamente.";
+        return `IDCA está inicializando datos de mercado para ${pair}. Las entradas quedan pausadas hasta tener velas suficientes para calcular una referencia fiable.`;
       }
 
-      // Caso 2: condiciones de mercado
+      // Caso 2: insufficient_dip
+      // L3.2: mostrar caída real y mínimo requerido si están disponibles
+      const hasInsufficientDip = codes.some((c: string) => c === "insufficient_dip");
+      const hasScoreTooLow = codes.some((c: string) => c === "market_score_too_low");
+      const refPrice = p.effectiveBasePrice || p.basePrice;
+      const dipPct = p.drawdownFromAnchorPct ?? p.entryDipPct;
+      const minDipPct = p.effectiveMinDip;
+
+      if (hasInsufficientDip && !hasScoreTooLow) {
+        if (dipPct != null && minDipPct != null && refPrice != null && refPrice > 0) {
+          return `No se compra ${pair} porque la caída desde la referencia efectiva es ${fN(Math.abs(dipPct))}%, pero el mínimo configurado es ${fN(minDipPct)}%. Precio de referencia: ${fUsd(refPrice)}.`;
+        }
+        if (dipPct != null && refPrice != null && refPrice > 0) {
+          return `No se compra ${pair}: la caída desde la referencia efectiva (${fN(Math.abs(dipPct))}% desde ${fUsd(refPrice)}) todavía no alcanza el mínimo configurado.`;
+        }
+        return `No se compra ${pair}: la caída desde la referencia efectiva todavía no alcanza el mínimo configurado.`;
+      }
+
+      // Caso 3: market_score_too_low
+      // L3.3: mostrar score real y mínimo si están disponibles
+      if (hasScoreTooLow && !hasInsufficientDip) {
+        if (p.marketScore != null) {
+          return `No se compra ${pair} porque el score de mercado es bajo: ${p.marketScore}/100. Está por debajo del mínimo configurado.`;
+        }
+        return `No se compra ${pair} porque las condiciones de mercado son desfavorables en este momento.`;
+      }
+
+      // Caso 4: múltiples bloqueos — combinar mensajes
       const marketCodes = codes.filter((c: string) => c !== "data_not_ready" && c !== "insufficient_base_price_data");
       if (marketCodes.length > 0) {
         const labels = marketCodes.map((c: string) => BLOCK_REASON_LABELS[c] || c);
-        // Usar effectiveBasePrice si está disponible (coherente con engine), sino basePrice
-        const refPrice = p.effectiveBasePrice || p.basePrice;
-        if (p.entryDipPct != null && refPrice != null && refPrice > 0) {
-          return `No se compró: ${labels.join("; ")}. Caída actual: ${fN(p.entryDipPct)}% desde ${fUsd(refPrice)}.`;
-        }
-        return `No se compró: ${labels.join("; ")}.`;
+        const dipInfo = dipPct != null && refPrice != null && refPrice > 0
+          ? ` Caída actual: ${fN(Math.abs(dipPct))}% desde ${fUsd(refPrice)}.`
+          : "";
+        // L3.7: añadir score si está disponible
+        const scoreInfo = p.marketScore != null ? ` Score: ${p.marketScore}/100.` : "";
+        return `No se compra ${pair}: ${labels.join("; ")}.${dipInfo}${scoreInfo}`;
       }
 
-      // Fallback
       return "El bot evaluó la entrada pero no se cumplen todas las condiciones necesarias para comprar.";
     },
     getActionText: () => "Sin acción. El bot seguirá vigilando.",
@@ -831,6 +853,17 @@ const CHIP_COLORS: Record<string, string> = {
   "Motivo": "text-red-300",
 };
 
+// L3.4: mapa de traducción visual de labels técnicos (solo display, no cambia claves de payload)
+const CHIP_LABEL_DISPLAY: Record<string, string> = {
+  "EntryDip":     "Caída",
+  "EffectiveBase": "Ref. efectiva",
+  "Method":       "Método",
+  "Min":          "Mínimo",
+  "CurrentPrice": "Precio actual",
+  "BasePrice":    "Base técnica",
+  "MarketScore":  "Score mercado",
+};
+
 function parseTechChips(summary: string): TechChip[] {
   return summary
     .split(/\s*\|\s*/)
@@ -850,9 +883,11 @@ function parseTechChips(summary: string): TechChip[] {
 
 function TechChipBadge({ chip }: { chip: TechChip }) {
   const color = chip.label ? (CHIP_COLORS[chip.label] || "text-foreground") : "text-foreground";
+  // L3.4: mostrar label traducido si existe, sino el original
+  const displayLabel = chip.label ? (CHIP_LABEL_DISPLAY[chip.label] ?? chip.label) : undefined;
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/10 text-[10px] font-mono leading-tight">
-      {chip.label && <span className="text-muted-foreground/60">{chip.label}</span>}
+      {displayLabel && <span className="text-muted-foreground/60">{displayLabel}</span>}
       <span className={color}>{chip.value}</span>
     </span>
   );
@@ -957,7 +992,8 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                   color={parsed.entryDipPct >= 0 ? "text-amber-400" : "text-emerald-400"}
                 />
               )}
-              {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}/100`} />}
+              {/* L3.7: mostrar score/100 consistente */}
+              {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}/100`} color={parsed.marketScore >= 50 ? "text-emerald-400" : "text-amber-400"} />}
               {parsed.pnlPct != null && (
                 <DataPill label="Resultado" value={`${parsed.pnlPct >= 0 ? "+" : ""}${fN(parsed.pnlPct)}%`}
                   color={parsed.pnlPct >= 0 ? "text-emerald-400" : "text-red-400"} />
@@ -1068,9 +1104,13 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
                               <div className="text-zinc-400/70">
                                 VWAP actual pendiente de datos: el sistema está cargando velas.
                               </div>
-                            ) : parsed.referenceContext.vwapStatus === "used_frozen_anchor" ? (
+                            ) : (
+                              // L3.5: isFrozen desde fuente primaria (effectiveReferenceSource/frozenAnchorPrice),
+                              // no solo de vwapStatus — mismo fix que Lote 2 en IdcaMarketContextCard
+                              parsed.basePriceMethod === "vwap_anchor" || parsed.frozenAnchorPrice != null
+                            ) ? (
                               <div className="text-amber-400/70">
-                                {parsed.referenceContext.vwapReliability?.reason}
+                                {parsed.referenceContext.vwapReliability?.reason ?? "Usando referencia VWAP anclada congelada."}
                               </div>
                             ) : parsed.referenceContext.vwapUsed ? (
                               <div className="text-cyan-400/70">
@@ -1316,10 +1356,15 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               {parsed.effectiveBasePrice == null && parsed.basePrice != null && parsed.basePrice > 0 && (
                 <DataPill label="Precio base" value={fUsd(parsed.basePrice)} />
               )}
-              {(parsed.basePrice == null || parsed.basePrice === 0) && event.payloadJson?.basePrice?.meta?.candleCount != null && (
-                <DataPill label="Velas OHLCV" value={`${event.payloadJson.basePrice.meta.candleCount}/7`}
-                  color={event.payloadJson.basePrice.meta.candleCount < 7 ? "text-amber-400" : "text-emerald-400"} />
-              )}
+              {/* L3.1: usar requiredForOptimal del payload, no hardcode /7 */}
+              {(parsed.basePrice == null || parsed.basePrice === 0) && event.payloadJson?.basePrice?.meta?.candleCount != null && (() => {
+                const meta = event.payloadJson.basePrice.meta;
+                const required = meta.requiredForOptimal ?? meta.minRequired ?? 7;
+                return (
+                  <DataPill label="Velas OHLCV" value={`${meta.candleCount}/${required}`}
+                    color={meta.candleCount < required ? "text-amber-400" : "text-emerald-400"} />
+                );
+              })()}
               {/* Show basePriceMethod (VWAP method) when available, otherwise basePriceType */}
               {parsed.basePriceMethod && (
                 <DataPill
@@ -1346,7 +1391,8 @@ export function IdcaEventCard({ event, isExpanded, onToggle }: IdcaEventCardProp
               )}
               {parsed.quantity != null && <DataPill label="Cantidad" value={fN(parsed.quantity, 6)} />}
               {parsed.capital != null && <DataPill label="Capital" value={fUsd(parsed.capital)} />}
-              {parsed.marketScore != null && <DataPill label="Score" value={`${parsed.marketScore}`} />}
+              {/* L3.7: score con /100 */}
+              {parsed.marketScore != null && <DataPill label="Score mercado" value={`${parsed.marketScore}/100`} color={parsed.marketScore >= 50 ? "text-emerald-400" : "text-amber-400"} />}
               {parsed.sizeProfile && <DataPill label="Perfil" value={parsed.sizeProfile} />}
               {/* VWAP-specific fields */}
               {parsed.weeklyTrend && <DataPill label="Tendencia semanal" value={parsed.weeklyTrend} />}
