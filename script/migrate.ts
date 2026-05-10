@@ -1049,7 +1049,53 @@ async function runMigration() {
     // ============================================================
     console.log("[migrate] Ensuring IDCA cycle exit instructions table and cost basis columns exist...");
     const idcaExitInstructionsPath = path.resolve(process.cwd(), "db", "migrations", "033_idca_exit_instructions.sql");
+
+    if (!fs.existsSync(idcaExitInstructionsPath)) {
+      throw new Error(`[migrate] Missing migration file: ${idcaExitInstructionsPath}`);
+    }
+
     await tryExecuteFile(db, idcaExitInstructionsPath, "idca_exit_instructions");
+
+    await tryExecute(db, `
+DO $$
+DECLARE
+  missing_columns integer;
+BEGIN
+  IF to_regclass('public.idca_cycle_exit_instructions') IS NULL THEN
+    RAISE EXCEPTION 'Migration 033 failed: table idca_cycle_exit_instructions does not exist';
+  END IF;
+
+  SELECT 4 - COUNT(*)
+  INTO missing_columns
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'institutional_dca_cycles'
+    AND column_name IN (
+      'total_cost_basis_usd',
+      'realized_cost_basis_usd',
+      'partial_sell_count',
+      'last_partial_sell_at'
+    );
+
+  IF missing_columns <> 0 THEN
+    RAISE EXCEPTION 'Migration 033 failed: missing % cost basis columns in institutional_dca_cycles', missing_columns;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'idca_cycle_exit_instructions'
+      AND indexname = 'uq_idca_exit_instruction_active'
+  ) THEN
+    RAISE EXCEPTION 'Migration 033 failed: missing index uq_idca_exit_instruction_active';
+  END IF;
+END $$;
+`, "idca_exit_instructions_verify");
+
+    console.log("[migrate] Verified idca_cycle_exit_instructions exists");
+    console.log("[migrate] Verified institutional_dca_cycles cost basis columns exist");
+    console.log("[migrate] Verified uq_idca_exit_instruction_active index exists");
 
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
