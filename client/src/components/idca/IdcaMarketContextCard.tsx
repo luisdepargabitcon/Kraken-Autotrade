@@ -208,34 +208,85 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
 
   const refPriceColor = refState === "recently_changed" ? "text-red-400" : refState === "stable" ? "text-emerald-400" : "text-yellow-400";
   const drawdownColor = (data.drawdownPct ?? 0) > 0 ? "text-red-400" : "text-green-400";
-  const sourceLabel = data.effectiveReferenceLabel;
 
-  // Mostrar base técnica secundaria si es distinta de la referencia efectiva
+  const rc = data.referenceContext ?? null;
+
+  // Información de fuente de referencia
+  const vwapStatus   = rc?.vwapStatus;
+  const isWarmingUp  = vwapStatus === "warming_up";
+  const isHybrid     = rc?.referenceSource === "hybrid_v2" || rc?.referenceSource === "hybrid_fallback";
+  // L2 fix: isFrozen desde effectiveReferenceSource (fuente primaria del engine).
+  // En producción vwapStatus puede llegar como "used" aunque el engine use ancla congelada.
+  const isFrozen     = data.effectiveReferenceSource === "vwap_anchor" || data.frozenAnchorPrice != null;
+  // isVwapFull: VWAP live activo solo si manda directamente (sin ancla congelada sobreponiendo)
+  const isVwapFull   = vwapStatus === "used" && !isFrozen;
+
+  const refBadgeLabel = isFrozen
+    ? "VWAP Anclado congelado"
+    : isWarmingUp
+      ? "VWAP cargando datos"
+      : rc?.referenceLabel ?? data.effectiveReferenceLabel;
+
+  const refBadgeCls = isVwapFull
+    ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20"
+    : isFrozen
+      ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
+      : isWarmingUp
+        ? "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20"
+        : isHybrid
+          ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
+          : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
+
+  // L2.2: anchorStatus badge
+  const anchorStatus = rc?.anchorStatus;
+  const anchorStatusBadge = (() => {
+    if (!anchorStatus || anchorStatus === "unknown") return null;
+    if (anchorStatus === "active")   return { label: "Activa",              cls: "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20" };
+    if (anchorStatus === "stale")    return { label: "Ancla antigua",        cls: "border-amber-500/40 text-amber-400/90 bg-amber-950/20" };
+    if (anchorStatus === "locked")   return { label: "Bloqueada",            cls: "border-blue-500/40 text-blue-400/80 bg-blue-950/20" };
+    return { label: "Estado no confirmado", cls: "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20" };
+  })();
+
+  // L2.9: aviso ámbar si ancla antigua (>72h o anchorStatus=stale)
+  const isStale = anchorStatus === "stale" || (data.frozenAnchorAgeHours != null && data.frozenAnchorAgeHours > 72);
+  const staleAgeLabel = data.frozenAnchorAgeHours != null
+    ? data.frozenAnchorAgeHours > 48
+      ? `${(data.frozenAnchorAgeHours / 24).toFixed(1)}d`
+      : `${data.frozenAnchorAgeHours.toFixed(1)}h`
+    : null;
+
+  // L2.8: VWAP actual vs ancla congelada
+  const showVwapVsFrozen = data.effectiveReferenceSource === "vwap_anchor" &&
+    data.anchorPrice > 0 &&
+    Math.abs(data.anchorPrice - data.effectiveEntryReference) > 0.01;
+
+  // L2.6: base técnica si difiere de la referencia efectiva
   const showTechnicalBase = data.technicalBasePrice && Math.abs(data.technicalBasePrice - data.effectiveEntryReference) > 0.01;
 
   return (
     <div className="px-3 pb-3 pt-2 space-y-3">
-      {/* Grid de datos */}
+
+      {/* ── 1. REFERENCIA QUE MANDA ────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+
+        {/* Ref. Efectiva */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">Ref. Efectiva</div>
           <div className={cn("text-base font-bold font-mono", refPriceColor)}>
             ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
           </div>
           <div className={cn("text-[9px] font-mono", refPriceColor === "text-red-400" ? "text-red-400/70" : "text-muted-foreground/60")}>
-            {sourceLabel}
+            {data.effectiveReferenceLabel}
             {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
           </div>
-          {/* Fecha/edad del ancla — uniforme BTC y ETH */}
+          {/* Fecha/edad del ancla */}
           {data.frozenAnchorTs ? (
             <div className="text-[9px] text-muted-foreground/50 font-mono">
               Fijada: {new Date(data.frozenAnchorTs).toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}{" "}
               {new Date(data.frozenAnchorTs).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
-              {data.frozenAnchorAgeHours != null && (
-                <span className={data.frozenAnchorAgeHours > 168 ? " text-amber-400/70" : ""}>
-                  {" "}· hace {data.frozenAnchorAgeHours > 48
-                    ? `${(data.frozenAnchorAgeHours / 24).toFixed(1)}d`
-                    : `${data.frozenAnchorAgeHours.toFixed(1)}h`}
+              {staleAgeLabel && (
+                <span className={data.frozenAnchorAgeHours != null && data.frozenAnchorAgeHours > 168 ? " text-amber-400/70" : ""}>
+                  {" "}· hace {staleAgeLabel}
                 </span>
               )}
             </div>
@@ -246,70 +297,76 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           ) : (
             <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
           )}
-          {/* Badge de fuente + Motivo + VWAP no usado */}
-          {data.referenceContext && (() => {
-            const rc = data.referenceContext!;
-            const vwapStatus   = rc.vwapStatus;
-            const isFrozen     = vwapStatus === "used_frozen_anchor";
-            const isWarmingUp  = vwapStatus === "warming_up";
-            const isVwapFull   = vwapStatus === "used";
-            const isHybrid     = rc.referenceSource === "hybrid_v2" || rc.referenceSource === "hybrid_fallback";
-
-            const badgeLabel = isFrozen
-              ? "VWAP Anclado congelado"
-              : isWarmingUp
-                ? "VWAP cargando datos"
-                : rc.referenceLabel;
-
-            const badgeCls = isVwapFull
-              ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20"
-              : isFrozen
-                ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
-                : isWarmingUp
-                  ? "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20"
-                  : isHybrid
-                    ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
-                    : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
-
-            return (
-              <div className="mt-0.5 space-y-0.5">
-                <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${badgeCls}`}>
-                  {badgeLabel}
+          {/* L2.5: antigüedad de las velas del ancla */}
+          {data.frozenAnchorCandleAgeHours != null && (
+            <div className="text-[9px] text-muted-foreground/40 font-mono">
+              Velas del ancla: hace{" "}
+              {data.frozenAnchorCandleAgeHours > 48
+                ? `${(data.frozenAnchorCandleAgeHours / 24).toFixed(1)}d`
+                : `${data.frozenAnchorCandleAgeHours.toFixed(1)}h`}
+            </div>
+          )}
+          {/* Badges de fuente + L2.2 anchorStatus */}
+          {rc && (
+            <div className="mt-0.5 space-y-0.5">
+              <div className="flex flex-wrap gap-1">
+                <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${refBadgeCls}`}>
+                  {refBadgeLabel}
                 </div>
-                {rc.referenceReason && (
-                  <div className="text-[8px] text-muted-foreground/50 font-mono leading-tight">
-                    {rc.referenceReason}
-                  </div>
-                )}
-                {isFrozen && (
-                  <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
-                    {rc.vwapReliability?.reason}
-                  </div>
-                )}
-                {isWarmingUp && (
-                  <div className="text-[8px] text-zinc-400/70 font-mono leading-tight">
-                    VWAP actual pendiente de datos: el sistema está cargando velas.
-                  </div>
-                )}
-                {!rc.vwapUsed && !isWarmingUp && rc.vwapRejectReason && (
-                  <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
-                    {rc.vwapRejectReason}
-                  </div>
-                )}
-                {isHybrid && rc.hybridCandidatePrice != null && rc.hybridCandidatePrice > 0 && (
-                  <div className="text-[8px] text-blue-400/60 font-mono leading-tight">
-                    Hybrid: ${rc.hybridCandidatePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                  </div>
-                )}
-                {isHybrid && (rc.hybridCandidatePrice == null || rc.hybridCandidatePrice <= 0) && (
-                  <div className="text-[8px] text-zinc-500/60 font-mono leading-tight">
-                    Hybrid no disponible
+                {/* L2.2: badge anchorStatus */}
+                {anchorStatusBadge && (
+                  <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${anchorStatusBadge.cls}`}>
+                    {anchorStatusBadge.label}
                   </div>
                 )}
               </div>
-            );
-          })()}
+              {rc.referenceReason && (
+                <div className="text-[8px] text-muted-foreground/50 font-mono leading-tight">
+                  {rc.referenceReason}
+                </div>
+              )}
+              {isFrozen && rc.vwapReliability?.reason && (
+                <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
+                  {rc.vwapReliability.reason}
+                </div>
+              )}
+              {isWarmingUp && (
+                <div className="text-[8px] text-zinc-400/70 font-mono leading-tight">
+                  VWAP actual pendiente de datos: el sistema está cargando velas.
+                </div>
+              )}
+              {!rc.vwapUsed && !isWarmingUp && rc.vwapRejectReason && (
+                <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
+                  {rc.vwapRejectReason}
+                </div>
+              )}
+              {isHybrid && rc.hybridCandidatePrice != null && rc.hybridCandidatePrice > 0 && (
+                <div className="text-[8px] text-blue-400/60 font-mono leading-tight">
+                  Hybrid: ${rc.hybridCandidatePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                </div>
+              )}
+              {isHybrid && (rc.hybridCandidatePrice == null || rc.hybridCandidatePrice <= 0) && (
+                <div className="text-[8px] text-zinc-500/60 font-mono leading-tight">
+                  Hybrid no disponible
+                </div>
+              )}
+              {/* L2.3: ancla anterior si existe */}
+              {rc.previousAnchor && (
+                <div className="text-[8px] text-muted-foreground/40 font-mono leading-tight pt-0.5 border-t border-border/20 mt-0.5">
+                  Anterior: ${rc.previousAnchor.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  {rc.previousAnchor.replacedAt != null && (
+                    <span> · {formatAgeLabel(new Date(rc.previousAnchor.replacedAt).toISOString())}</span>
+                  )}
+                  {rc.previousAnchor.invalidationReason && (
+                    <span className="block text-muted-foreground/30">{rc.previousAnchor.invalidationReason}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Precio actual */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">Actual</div>
           <div className="text-base font-bold font-mono text-foreground">
@@ -317,6 +374,8 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           </div>
           <div className="text-[9px] text-muted-foreground/60 font-mono">{formatAgeLabel(data.priceUpdatedAt)}</div>
         </div>
+
+        {/* Drawdown */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">Drawdown</div>
           <div className={cn("text-base font-bold font-mono", drawdownColor)}>
@@ -324,6 +383,8 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
           </div>
           <div className="text-[9px] text-muted-foreground/60 font-mono">desde ref. efectiva</div>
         </div>
+
+        {/* ATRP */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
           <div className="text-[9px] text-muted-foreground font-mono uppercase">ATRP (14)</div>
           <div className="text-base font-bold font-mono text-foreground">
@@ -333,25 +394,55 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
         </div>
       </div>
 
-      {/* Base técnica secundaria (Hybrid V2.1) */}
+      {/* ── 2. AVISO ANCLA ANTIGUA (L2.9) ────────────────────────────── */}
+      {isStale && (
+        <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 flex gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-0.5 min-w-0">
+            <p className="text-[10px] font-semibold text-amber-300">⚠️ Ancla antigua</p>
+            <p className="text-[10px] text-amber-200/70 leading-relaxed">
+              Esta referencia sigue activa{staleAgeLabel ? `, pero fue fijada hace ${staleAgeLabel}` : ""}.
+              Revisar si sigue representando el contexto actual del mercado.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── 3. VWAP ACTUAL vs ANCLA CONGELADA (L2.8) ─────────────────── */}
+      {showVwapVsFrozen && (
+        <div className="rounded border border-border/30 bg-muted/5 p-2.5 space-y-1">
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">VWAP actual (no manda)</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-bold font-mono text-muted-foreground/70">
+              ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </span>
+            <span className="text-[8px] text-muted-foreground/40 font-mono">{data.anchorSource ?? "vwap"}</span>
+          </div>
+          <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
+            IDCA usa el ancla congelada (${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}), no el VWAP calculado ahora.
+          </div>
+        </div>
+      )}
+
+      {/* ── 4. BASE TÉCNICA HYBRID (L2.6) ────────────────────────────── */}
       {showTechnicalBase && (
         <div className="rounded border border-border/30 bg-muted/5 p-2.5 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Base técnica</div>
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">Base técnica (Hybrid V2.1)</div>
           <div className="flex items-baseline gap-2">
             <div className="text-sm font-bold font-mono text-foreground">
               ${data.technicalBasePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
             </div>
             <div className="text-[9px] text-muted-foreground/60 font-mono">
-              {data.technicalBaseType}
+              {rc?.hybridCandidateMethod ?? data.technicalBaseType}
             </div>
           </div>
-          <div className="text-[9px] text-muted-foreground/60 font-mono">
-            {data.technicalBaseReason || "Hybrid V2.1"}
+          <div className="text-[9px] text-muted-foreground/50 font-mono">
+            {rc?.hybridReason ?? data.technicalBaseReason ?? "Hybrid V2.1"}
           </div>
         </div>
       )}
 
-      {/* Zona VWAP + barra */}
+      {/* ── 5. ZONA DE MERCADO ───────────────────────────────────────── */}
       <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-2">
         <div className="flex items-center gap-2">
           <MapPin className="h-3 w-3 text-muted-foreground/60" />
@@ -363,7 +454,7 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
         <ZoneBar zone={data.vwapZone} />
       </div>
 
-      {/* Narrativa — solo si hay algo relevante que decir */}
+      {/* ── 6. NARRATIVA ─────────────────────────────────────────────── */}
       <div className={cn(
         "rounded border p-2.5 flex gap-2",
         narrative.icon === "ok" ? "border-emerald-500/20 bg-emerald-500/5" :
@@ -378,12 +469,14 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
         </div>
       </div>
 
-      {/* Meta: timestamps + fuente */}
+      {/* ── 7. FOOTER: timestamps + fuente + velas (L2.1 + L2.7) ─────── */}
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-muted-foreground/50 font-mono px-0.5">
         <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" /> {formatDateTime(data.lastUpdated)}</span>
-        {data.anchorSource && <span>Fuente: {sourceLabel}</span>}
+        {/* L2.1: usar effectiveReferenceLabel directamente, no anchorSource legacy como guarda */}
+        <span>Fuente: {data.effectiveReferenceLabel}</span>
         {data.qualityDetail && (
-          <span>Velas: {data.qualityDetail.candleCount}/{data.qualityDetail.requiredForOptimal}</span>
+          /* L2.7: etiquetar timeframe 1h */
+          <span>Velas 1h: {data.qualityDetail.candleCount}/{data.qualityDetail.requiredForOptimal}</span>
         )}
       </div>
     </div>

@@ -312,6 +312,7 @@ export interface IdcaReferenceContext {
 export interface MarketContextPreview {
   pair: string;
   anchorPrice: number;
+  anchorTimestamp?: string;
   currentPrice: number;
   drawdownPct: number;
   vwapZone?: "below_lower3" | "below_lower2" | "below_lower1" | "between_bands" | "above_upper1" | "above_upper2";

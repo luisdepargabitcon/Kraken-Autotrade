@@ -1150,6 +1150,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         priceUpdatedAt: r.priceUpdatedAt instanceof Date ? r.priceUpdatedAt.toISOString() : r.priceUpdatedAt,
         lastUpdated: r.lastUpdated instanceof Date ? r.lastUpdated.toISOString() : r.lastUpdated,
         anchorPriceUpdatedAt: r.anchorPriceUpdatedAt instanceof Date ? r.anchorPriceUpdatedAt.toISOString() : r.anchorPriceUpdatedAt,
+        anchorTimestamp: r.anchorTimestamp instanceof Date ? r.anchorTimestamp.toISOString() : r.anchorTimestamp,
         anchorAgeHours: r.anchorAgeHours,
         anchorSource: r.anchorSource,
         qualityDetail: r.qualityDetail,
