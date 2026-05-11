@@ -1097,6 +1097,79 @@ END $$;
     console.log("[migrate] Verified institutional_dca_cycles cost basis columns exist");
     console.log("[migrate] Verified uq_idca_exit_instruction_active index exists");
 
+    // ============================================================
+    // LOTE 4 HOTFIX: IDCA BTC #22 FEE/DUST RESET (034)
+    // Reconciles totalQuantity and resets BE/trailing state for BTC/USD #22
+    // after a sell failed due to fee/dust difference vs exchange balance.
+    // Idempotent: only applies to the exact known case; no-op otherwise.
+    // ============================================================
+    console.log("[migrate] Ensuring BTC #22 fee/dust reset hotfix is applied...");
+    const idcaBtc22ResetPath = path.resolve(process.cwd(), "db", "migrations", "034_idca_reset_btc22_fee_dust.sql");
+
+    if (!fs.existsSync(idcaBtc22ResetPath)) {
+      throw new Error(`[migrate] Missing migration file: ${idcaBtc22ResetPath}`);
+    }
+
+    await tryExecuteFile(db, idcaBtc22ResetPath, "idca_btc22_fee_dust_reset");
+
+    await tryExecute(db, `
+DO $$
+DECLARE
+  v_qty numeric;
+  v_status text;
+  v_protection_armed_at timestamptz;
+  v_protection_stop_price numeric;
+  v_tp_armed_at timestamptz;
+  v_trailing_active_at timestamptz;
+  v_highest_price numeric;
+BEGIN
+  SELECT
+    total_quantity::numeric,
+    status,
+    protection_armed_at,
+    protection_stop_price::numeric,
+    tp_armed_at,
+    trailing_active_at,
+    highest_price_after_tp::numeric
+  INTO
+    v_qty,
+    v_status,
+    v_protection_armed_at,
+    v_protection_stop_price,
+    v_tp_armed_at,
+    v_trailing_active_at,
+    v_highest_price
+  FROM institutional_dca_cycles
+  WHERE id = 22
+    AND pair = 'BTC/USD';
+
+  IF NOT FOUND THEN
+    RAISE NOTICE '[034 verify] BTC/USD #22 no existe. Verificación omitida.';
+    RETURN;
+  END IF;
+
+  -- If still in the problematic state, fail migration
+  IF v_status = 'trailing_active'
+     AND ABS(v_qty - 0.00782637) <= 0.00000020 THEN
+    RAISE EXCEPTION '[034 verify] BTC/USD #22 sigue en estado problemático trailing_active con qty=%', v_qty;
+  END IF;
+
+  -- If qty is reconciled, must be clean of BE/trailing state
+  IF ABS(v_qty - 0.00781932) <= 0.00000002 THEN
+    IF v_status <> 'active'
+       OR v_protection_armed_at IS NOT NULL
+       OR v_protection_stop_price IS NOT NULL
+       OR v_tp_armed_at IS NOT NULL
+       OR v_trailing_active_at IS NOT NULL
+       OR v_highest_price IS NOT NULL THEN
+      RAISE EXCEPTION '[034 verify] BTC/USD #22 qty reconciliada pero BE/trailing no quedó limpio';
+    END IF;
+  END IF;
+END $$;
+`, "idca_btc22_fee_dust_reset_verify");
+
+    console.log("[migrate] Verified BTC #22 fee/dust reset hotfix applied");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

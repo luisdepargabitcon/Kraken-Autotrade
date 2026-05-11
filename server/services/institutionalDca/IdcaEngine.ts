@@ -49,6 +49,58 @@ import { MarketDataService } from "../MarketDataService";
 
 const TAG = "[IDCA]";
 
+// ─── Fee/Dust Tolerance for Live Full-Close Sells ───────────────
+// When cycle.totalQuantity slightly exceeds exchange available balance
+// due to fees/rounding, adjust the sell volume instead of failing.
+
+const FEE_DUST_TOLERANCE_PCT = 0.20;  // max 0.20% difference allowed
+const FEE_DUST_TOLERANCE_ABS = 0.00001000; // max absolute difference allowed
+
+/**
+ * Computes the actual sell quantity for a live full-close, applying dust tolerance.
+ * For partial closes: NEVER adjusts — throws if available < requested.
+ */
+function computeLiveSellQtyWithDustTolerance(
+  requestedQty: number,
+  availableQty: number,
+  isFullClose: boolean,
+  asset: string
+): { sellQty: number; adjusted: boolean; reason: string | null } {
+  if (availableQty >= requestedQty) {
+    return { sellQty: requestedQty, adjusted: false, reason: null };
+  }
+  const diff = requestedQty - availableQty;
+  const diffPct = requestedQty > 0 ? (diff / requestedQty) * 100 : 100;
+
+  if (isFullClose && diffPct <= FEE_DUST_TOLERANCE_PCT && diff <= FEE_DUST_TOLERANCE_ABS) {
+    return {
+      sellQty: availableQty,
+      adjusted: true,
+      reason: `fee_dust_quantity_adjustment: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%)`,
+    };
+  }
+
+  throw new Error(
+    `insufficient_exchange_balance: requested=${requestedQty.toFixed(8)} ${asset}, ` +
+    `available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%)`
+  );
+}
+
+// ─── Per-cycle sell-failed Telegram cooldown (anti-spam) ────────
+// Prevents repeated Telegram alerts when trailing/BE keeps triggering
+// and the live sell keeps failing due to the same balance issue.
+
+const sellFailedCooldown = new Map<string, number>();
+const SELL_FAILED_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+function shouldSendSellFailedAlert(cycleId: number, errorKey: string): boolean {
+  const key = `${cycleId}:sell_failed:${errorKey}`;
+  const last = sellFailedCooldown.get(key) || 0;
+  if (Date.now() - last < SELL_FAILED_COOLDOWN_MS) return false;
+  sellFailedCooldown.set(key, Date.now());
+  return true;
+}
+
 // ─── Helper Functions ───────────────────────────────────────────
 
 /**
@@ -82,6 +134,8 @@ async function executeExit(
   const pair = cycle.pair;
   const totalQty = parseFloat(String(cycle.totalQuantity));
 
+  let sellVolume = totalQty; // may be adjusted by dust tolerance below
+
   try {
     // ─── GUARD: Verificar balance disponible en exchange antes de vender ───
     if (mode === "live") {
@@ -90,45 +144,22 @@ async function executeExit(
       const asset = pair.split("/")[0]; // BTC/USD -> BTC
       const availableQty = parseFloat(String((balance[asset] as any)?.available ?? balance[asset] ?? "0"));
 
-      if (availableQty < totalQty * 0.95) {
-        // Tolerancia 5% por fees/redondeo
-        const shortagePct = ((totalQty - availableQty) / totalQty * 100).toFixed(2);
-        console.error(
-          `${TAG}[EXIT_BLOCKED] cycleId=${cycle.id} pair=${pair} ` +
-          `mode=live reason=insufficient_balance ` +
-          `cycleQty=${totalQty.toFixed(8)} available=${availableQty.toFixed(8)} ` +
-          `shortage=${shortagePct}%`
+      // Apply dust tolerance: may reduce sellVolume slightly for full-close.
+      // Throws insufficient_exchange_balance for real shortages (caught below → no createOrder).
+      const dustResult = computeLiveSellQtyWithDustTolerance(totalQty, availableQty, true, asset);
+      sellVolume = dustResult.sellQty;
+
+      if (dustResult.adjusted) {
+        console.warn(
+          `${TAG}[EXIT_DUST_ADJ] cycleId=${cycle.id} pair=${pair} ` +
+          `requested=${totalQty.toFixed(8)} adjusted=${sellVolume.toFixed(8)} reason=${dustResult.reason}`
         );
-        await createHumanEvent({
-          cycleId: cycle.id, pair, mode,
-          eventType: "exit_blocked",
-          severity: "critical",
-          message: `Cierre bloqueado: balance insuficiente en exchange. Ciclo=${totalQty.toFixed(8)} ${asset}, disponible=${availableQty.toFixed(8)} ${asset} (falta ${shortagePct}%)`,
-          payloadJson: {
-            exitType: signal.exitType,
-            exitPrice: signal.exitPrice,
-            cycleQuantity: totalQty.toFixed(8),
-            availableBalance: availableQty.toFixed(8),
-            shortagePct: shortagePct,
-            warning: "Ciclo NO cerrado - verificar balance manualmente en exchange",
-          },
-        }, { eventType: "exit_blocked", pair, mode, price: signal.exitPrice });
-        await telegram.sendRawMessage(
-          `🚨 <b>[IDCA][LIVE] EXIT BLOCKED</b>\n\n` +
-          `Par: <b>${pair}</b> #${cycle.id}<br>\n` +
-          `Tipo: <code>${signal.exitType}</code><br>\n` +
-          `Precio: <code>$${signal.exitPrice.toFixed(2)}</code><br>\n` +
-          `⚠️ Balance insuficiente: ciclo=${totalQty.toFixed(8)} ${asset}, disponible=${availableQty.toFixed(8)} ${asset}<br>\n` +
-          `Falta: <b>${shortagePct}%</b><br>\n` +
-          `Ciclo sigue ACTIVO. Revisar manualmente en Revolut X.`
-        );
-        return; // NO cerrar ciclo - mantiene activo
       }
     }
 
-    // Crear orden de salida
+    // Crear orden de salida (con volume ajustado por dust si aplica)
     const exchange = ExchangeFactory.getTradingExchange();
-    const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: totalQty.toFixed(8) });
+    const sellOrder = await exchange.placeOrder({ pair, type: "sell", ordertype: "market", volume: sellVolume.toFixed(8) });
 
     if (!sellOrder) {
       throw new Error("Failed to create sell order");
@@ -243,20 +274,38 @@ async function executeExit(
     );
 
   } catch (error) {
-    console.error(`${TAG}[EXIT_FAILED] cycleId=${cycle.id} pair=${pair}:`, error);
+    const errMsg = (error as Error).message || "unknown";
+    console.error(`${TAG}[EXIT_FAILED] cycleId=${cycle.id} pair=${pair}:`, errMsg);
+
+    const isBalanceFail = errMsg.includes("insufficient_exchange_balance") || errMsg.includes("balance_zero");
+    const errorKey = isBalanceFail ? "insufficient_exchange_balance" : "execution_error";
 
     await createHumanEvent({
       cycleId: cycle.id, pair, mode,
       eventType: "exit_failed",
       severity: "error",
-      message: `Exit execution failed: ${(error as Error).message}. Ciclo sigue activo.`,
+      message: `Exit execution failed: ${errMsg}. Ciclo sigue activo.`,
       payloadJson: {
         exitType: signal.exitType,
         exitPrice: signal.exitPrice,
-        error: (error as Error).message,
-        cycleStatus: "active", // Siguie activo
+        error: errMsg,
+        cycleStatus: "active",
       },
     }, { eventType: "exit_failed", pair, mode });
+
+    if (mode === "live" && shouldSendSellFailedAlert(cycle.id, errorKey)) {
+      const asset = pair.split("/")[0];
+      await telegram.sendRawMessage(
+        `🚨 <b>[IDCA][LIVE] VENTA FALLIDA</b>\n\n` +
+        `Par: <b>${pair}</b> #${cycle.id}\n` +
+        `Tipo: <code>${signal.exitType}</code>\n` +
+        `Motivo: ${isBalanceFail ? "balance insuficiente real" : errMsg}\n` +
+        (isBalanceFail
+          ? `Cantidad ciclo: ${totalQty.toFixed(8)} ${asset}\n`
+          : "") +
+        `\nCiclo NO cerrado en DB. Revisar posición manualmente.`
+      );
+    }
   }
 }
 
@@ -2475,9 +2524,57 @@ async function executeTrailingExit(
   mode: IdcaMode
 ): Promise<void> {
   const pair = cycle.pair;
-  const remainingQty = parseFloat(String(cycle.totalQuantity));
-  const sellValueUsd = remainingQty * currentPrice;
+  const requestedQty = parseFloat(String(cycle.totalQuantity));
+  const asset = pair.split("/")[0];
 
+  // ─── FASE D: Balance guard + dust tolerance (LIVE only) ──────────────────────
+  // Must run BEFORE createOrder so we don't write fake sell history on failure.
+  let actualSellQty = requestedQty;
+  let dustAdjusted = false;
+
+  if (mode === "live") {
+    try {
+      const exchange = ExchangeFactory.getTradingExchange();
+      const balance = await exchange.getBalance();
+      const availableQty = parseFloat(
+        String((balance[asset] as any)?.available ?? balance[asset] ?? "0")
+      );
+      const dustResult = computeLiveSellQtyWithDustTolerance(requestedQty, availableQty, true, asset);
+      actualSellQty = dustResult.sellQty;
+      dustAdjusted = dustResult.adjusted;
+      if (dustAdjusted) {
+        console.warn(
+          `${TAG}[TRAILING_DUST_ADJ] cycleId=${cycle.id} ${pair} ` +
+          `requested=${requestedQty.toFixed(8)} adjusted=${actualSellQty.toFixed(8)} ` +
+          `reason=${dustResult.reason}`
+        );
+      }
+    } catch (balanceErr: any) {
+      // Real shortage — abort without writing any order record
+      console.error(`${TAG}[TRAILING_BLOCKED] #${cycle.id} ${pair} — ${balanceErr.message}`);
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "critical_error",
+        severity: "critical",
+        message: `Venta trailing bloqueada: ${balanceErr.message} — ciclo NO cerrado`,
+        payloadJson: { error: balanceErr.message, price: currentPrice, qty: requestedQty },
+      }, { eventType: "critical_error", pair, mode, price: currentPrice });
+      const isBalanceFail = balanceErr.message.includes("insufficient_exchange_balance") || balanceErr.message.includes("balance_zero");
+      if (shouldSendSellFailedAlert(cycle.id, "insufficient_exchange_balance")) {
+        await telegram.sendRawMessage(
+          `🚨 <b>[IDCA][LIVE] VENTA FALLIDA</b>\n\n` +
+          `Par: <b>${pair}</b> #${cycle.id}\n` +
+          `Tipo: trailing_exit\n` +
+          `Motivo: ${isBalanceFail ? "balance insuficiente real" : balanceErr.message}\n` +
+          `Cantidad ciclo: ${requestedQty.toFixed(8)} ${asset}\n` +
+          `\nCiclo NO cerrado en DB. Revisar posición manualmente.`
+        );
+      }
+      return; // Abort — do NOT close cycle, do NOT write order record
+    }
+  }
+
+  const sellValueUsd = actualSellQty * currentPrice;
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
     fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
@@ -2485,38 +2582,48 @@ async function executeTrailingExit(
     netValue = sellValueUsd - fees - slippage;
   }
 
+  // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
+  // Prevents fake sell history if the exchange call fails.
+  if (mode === "live") {
+    try {
+      await executeRealSell(cycle, "final_sell", actualSellQty);
+    } catch (sellErr: any) {
+      console.error(`${TAG}[TRAILING_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "critical_error",
+        severity: "critical",
+        message: `Venta trailing live FALLIDA: ${sellErr.message} — ciclo NO cerrado, posición ABIERTA en exchange`,
+        payloadJson: { error: sellErr.message, price: currentPrice, qty: actualSellQty },
+      }, { eventType: "critical_error", pair, mode, price: currentPrice });
+      if (shouldSendSellFailedAlert(cycle.id, "execution_error")) {
+        await telegram.sendRawMessage(
+          `🚨 <b>[IDCA][LIVE] VENTA TRAILING FALLIDA</b>\n\n` +
+          `Par: <b>${pair}</b> #${cycle.id}\n` +
+          `Error: <code>${sellErr.message}</code>\n` +
+          `Precio: $${currentPrice.toFixed(2)}\n` +
+          `Cantidad: ${actualSellQty.toFixed(8)} ${asset}\n` +
+          `\n⚠️ Ciclo NO cerrado en DB. Revisar posición en exchange manualmente.`
+        );
+      }
+      return; // Abort — do NOT close cycle in DB, do NOT write order record
+    }
+  }
+
+  // Live sell confirmed (or simulation) — now safe to write order record
   await repo.createOrder({
     cycleId: cycle.id, pair, mode,
     orderType: "final_sell",
     side: "sell",
     price: currentPrice.toFixed(8),
-    quantity: remainingQty.toFixed(8),
+    quantity: actualSellQty.toFixed(8),
     grossValueUsd: sellValueUsd.toFixed(2),
     feesUsd: fees.toFixed(2),
     slippageUsd: slippage.toFixed(2),
     netValueUsd: netValue.toFixed(2),
-    triggerReason: "trailing_exit",
+    triggerReason: dustAdjusted ? "trailing_exit_dust_adj" : "trailing_exit",
     humanReason: formatOrderReason("final_sell"),
   });
-
-  if (mode === "live") {
-    try {
-      await executeRealSell(cycle, "final_sell", remainingQty);
-    } catch (sellErr: any) {
-      console.error(`${TAG}[EXIT] Live sell FAILED for #${cycle.id} ${pair} — cycle NOT closed in DB. Error: ${sellErr.message}`);
-      await createHumanEvent({
-        cycleId: cycle.id, pair, mode,
-        eventType: "critical_error",
-        severity: "critical",
-        message: `Venta live FALLIDA: ${sellErr.message} — ciclo NO cerrado, posición ABIERTA en exchange`,
-        payloadJson: { error: sellErr.message, price: currentPrice, qty: remainingQty },
-      }, { eventType: "critical_error", pair, mode, price: currentPrice });
-      await telegram.sendRawMessage(
-        `🚨 <b>[IDCA][LIVE] VENTA FALLIDA</b>\n\nPar: <b>${pair}</b> #${cycle.id}\nError: <code>${sellErr.message}</code>\nPrecio: $${currentPrice.toFixed(2)}\nCantidad: ${remainingQty.toFixed(6)}\n\n⚠️ Ciclo NO cerrado en DB. Revisar posición en exchange manualmente.`
-      );
-      return; // Abort — do NOT close cycle in DB
-    }
-  }
 
   const prevRealized = parseFloat(String(cycle.realizedPnlUsd || "0"));
   const totalRealized = prevRealized + netValue;
@@ -2553,7 +2660,7 @@ async function executeTrailingExit(
     cycleId: cycle.id, pair, mode,
     eventType: "trailing_exit",
     severity: "info",
-    message: `Trailing exit: sold ${remainingQty.toFixed(6)} @ ${currentPrice.toFixed(2)}, realized=${totalRealized.toFixed(2)}`,
+    message: `Trailing exit: sold ${actualSellQty.toFixed(6)} @ ${currentPrice.toFixed(2)}, realized=${totalRealized.toFixed(2)}`,
   }, {
     eventType: "trailing_exit", pair, mode,
     price: currentPrice, pnlPct: pnlPctTrailing,
@@ -2576,9 +2683,54 @@ async function executeBreakevenExit(
   mode: IdcaMode
 ): Promise<void> {
   const pair = cycle.pair;
-  const totalQty = parseFloat(String(cycle.totalQuantity));
-  const sellValueUsd = totalQty * currentPrice;
+  const requestedQty = parseFloat(String(cycle.totalQuantity));
+  const asset = pair.split("/")[0];
 
+  // ─── FASE D: Balance guard + dust tolerance (LIVE only) ──────────────────────
+  let actualSellQty = requestedQty;
+  let dustAdjusted = false;
+
+  if (mode === "live") {
+    try {
+      const exchange = ExchangeFactory.getTradingExchange();
+      const balance = await exchange.getBalance();
+      const availableQty = parseFloat(
+        String((balance[asset] as any)?.available ?? balance[asset] ?? "0")
+      );
+      const dustResult = computeLiveSellQtyWithDustTolerance(requestedQty, availableQty, true, asset);
+      actualSellQty = dustResult.sellQty;
+      dustAdjusted = dustResult.adjusted;
+      if (dustAdjusted) {
+        console.warn(
+          `${TAG}[BREAKEVEN_DUST_ADJ] cycleId=${cycle.id} ${pair} ` +
+          `requested=${requestedQty.toFixed(8)} adjusted=${actualSellQty.toFixed(8)}`
+        );
+      }
+    } catch (balanceErr: any) {
+      console.error(`${TAG}[BREAKEVEN_BLOCKED] #${cycle.id} ${pair} — ${balanceErr.message}`);
+      await createHumanEvent({
+        cycleId: cycle.id, pair, mode,
+        eventType: "critical_error",
+        severity: "critical",
+        message: `Venta breakeven bloqueada: ${balanceErr.message} — ciclo NO cerrado`,
+        payloadJson: { error: balanceErr.message, price: currentPrice, qty: requestedQty },
+      }, { eventType: "critical_error", pair, mode, price: currentPrice });
+      const isBalanceFail = balanceErr.message.includes("insufficient_exchange_balance") || balanceErr.message.includes("balance_zero");
+      if (shouldSendSellFailedAlert(cycle.id, "insufficient_exchange_balance")) {
+        await telegram.sendRawMessage(
+          `🚨 <b>[IDCA][LIVE] VENTA FALLIDA</b>\n\n` +
+          `Par: <b>${pair}</b> #${cycle.id}\n` +
+          `Tipo: breakeven_exit\n` +
+          `Motivo: ${isBalanceFail ? "balance insuficiente real" : balanceErr.message}\n` +
+          `Cantidad ciclo: ${requestedQty.toFixed(8)} ${asset}\n` +
+          `\nCiclo NO cerrado en DB. Revisar posición manualmente.`
+        );
+      }
+      return; // Abort — do NOT write order record
+    }
+  }
+
+  const sellValueUsd = actualSellQty * currentPrice;
   let fees = 0, slippage = 0, netValue = sellValueUsd;
   if (mode === "simulation") {
     fees = sellValueUsd * (resolveSimulationFeePct(config) / 100);
@@ -2586,38 +2738,46 @@ async function executeBreakevenExit(
     netValue = sellValueUsd - fees - slippage;
   }
 
-  await repo.createOrder({
-    cycleId: cycle.id, pair, mode,
-    orderType: "breakeven_sell",
-    side: "sell",
-    price: currentPrice.toFixed(8),
-    quantity: totalQty.toFixed(8),
-    grossValueUsd: sellValueUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
-    triggerReason: "breakeven_protection",
-    humanReason: formatOrderReason("breakeven_sell"),
-  });
-
+  // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "breakeven_sell", totalQty);
+      await executeRealSell(cycle, "breakeven_sell", actualSellQty);
     } catch (sellErr: any) {
-      console.error(`${TAG}[BREAKEVEN] Live sell FAILED for #${cycle.id} ${pair} — cycle NOT closed. Error: ${sellErr.message}`);
+      console.error(`${TAG}[BREAKEVEN_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
         cycleId: cycle.id, pair, mode,
         eventType: "critical_error",
         severity: "critical",
         message: `Venta breakeven live FALLIDA: ${sellErr.message} — ciclo NO cerrado`,
-        payloadJson: { error: sellErr.message, price: currentPrice, qty: totalQty },
+        payloadJson: { error: sellErr.message, price: currentPrice, qty: actualSellQty },
       }, { eventType: "critical_error", pair, mode, price: currentPrice });
-      await telegram.sendRawMessage(
-        `🚨 <b>[IDCA][LIVE] BREAKEVEN SELL FALLIDA</b>\n\nPar: <b>${pair}</b> #${cycle.id}\nError: <code>${sellErr.message}</code>`
-      );
-      return;
+      if (shouldSendSellFailedAlert(cycle.id, "execution_error")) {
+        await telegram.sendRawMessage(
+          `🚨 <b>[IDCA][LIVE] BREAKEVEN SELL FALLIDA</b>\n\n` +
+          `Par: <b>${pair}</b> #${cycle.id}\n` +
+          `Error: <code>${sellErr.message}</code>\n` +
+          `Cantidad: ${actualSellQty.toFixed(8)} ${asset}\n` +
+          `\n⚠️ Ciclo NO cerrado en DB. Revisar posición en exchange manualmente.`
+        );
+      }
+      return; // Abort — do NOT write order record
     }
   }
+
+  // Live sell confirmed (or simulation) — now safe to write order record
+  await repo.createOrder({
+    cycleId: cycle.id, pair, mode,
+    orderType: "breakeven_sell",
+    side: "sell",
+    price: currentPrice.toFixed(8),
+    quantity: actualSellQty.toFixed(8),
+    grossValueUsd: sellValueUsd.toFixed(2),
+    feesUsd: fees.toFixed(2),
+    slippageUsd: slippage.toFixed(2),
+    netValueUsd: netValue.toFixed(2),
+    triggerReason: dustAdjusted ? "breakeven_protection_dust_adj" : "breakeven_protection",
+    humanReason: formatOrderReason("breakeven_sell"),
+  });
 
   // Store net profit (may be near-zero for breakeven)
   const capitalUsedForBe = parseFloat(String(cycle.capitalUsedUsd || "0"));
@@ -2642,10 +2802,10 @@ async function executeBreakevenExit(
     cycleId: cycle.id, pair, mode,
     eventType: "breakeven_exit",
     severity: "warn",
-    message: `Breakeven exit: ${totalQty.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
+    message: `Breakeven exit: ${actualSellQty.toFixed(6)} @ ${currentPrice.toFixed(2)}`,
   }, {
     eventType: "breakeven_exit", pair, mode,
-    price: currentPrice, quantity: totalQty, buyCount: cycle.buyCount,
+    price: currentPrice, quantity: actualSellQty, buyCount: cycle.buyCount,
   });
 
   const updatedCycle = await repo.getCycleById(cycle.id);

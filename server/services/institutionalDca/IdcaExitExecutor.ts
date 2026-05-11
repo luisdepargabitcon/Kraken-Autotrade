@@ -54,12 +54,23 @@ function resolveExitFees(
 
 // ─── Balance guard ─────────────────────────────────────────────────────────────
 
+const EXIT_FEE_DUST_TOLERANCE_PCT = 0.20;  // max 0.20% difference
+const EXIT_FEE_DUST_TOLERANCE_ABS = 0.00001000; // max absolute difference
+
+/**
+ * Verifies exchange balance before a sell.
+ * For full closes (isFullClose=true): applies dust tolerance — returns adjustedQty
+ *   which may be slightly less than quantityToSell (fee/rounding diff).
+ * For partial closes: no tolerance — throws if available < requested.
+ * Returns the actual quantity to sell (may be adjusted for dust).
+ */
 async function verifyBalance(
   cycle: InstitutionalDcaCycle,
   quantityToSell: number,
-  mode: IdcaMode
-): Promise<void> {
-  if (mode !== "live") return; // simulation: no exchange check needed
+  mode: IdcaMode,
+  isFullClose: boolean
+): Promise<number> {
+  if (mode !== "live") return quantityToSell; // simulation: no exchange check needed
 
   const exchange = ExchangeFactory.getTradingExchange();
   const balance = await exchange.getBalance();
@@ -74,13 +85,28 @@ async function verifyBalance(
     );
   }
 
-  // 2% tolerance for rounding/fees at the exchange level
-  if (available < quantityToSell * 0.98) {
-    throw new Error(
-      `insufficient_exchange_balance: ciclo requiere ${quantityToSell.toFixed(8)} ${asset}, ` +
-      `disponible ${available.toFixed(8)}. Diferencia supera tolerancia del 2%.`
-    );
+  if (available >= quantityToSell) {
+    return quantityToSell; // Exact match or surplus — no adjustment needed
   }
+
+  const diff = quantityToSell - available;
+  const diffPct = quantityToSell > 0 ? (diff / quantityToSell) * 100 : 100;
+
+  // Full close: allow dust tolerance
+  if (isFullClose && diffPct <= EXIT_FEE_DUST_TOLERANCE_PCT && diff <= EXIT_FEE_DUST_TOLERANCE_ABS) {
+    console.warn(
+      `${TAG} [BALANCE_DUST_ADJ] cycleId=${cycle.id} ${cycle.pair} ` +
+      `requested=${quantityToSell.toFixed(8)}, available=${available.toFixed(8)}, ` +
+      `diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%) — applying dust tolerance`
+    );
+    return available; // Use available qty instead
+  }
+
+  // Real shortage (exceeds tolerance or partial close)
+  throw new Error(
+    `insufficient_exchange_balance: ciclo requiere ${quantityToSell.toFixed(8)} ${asset}, ` +
+    `disponible ${available.toFixed(8)}. Diferencia ${diff.toFixed(8)} (${diffPct.toFixed(4)}%) supera tolerancia.`
+  );
 }
 
 // ─── Core P&L accounting ───────────────────────────────────────────────────────
@@ -229,8 +255,11 @@ async function createExitOrder(
   acc: SellAccounting,
   executionPrice: number,
   exchangeOrderId: string | null,
-  orderType: string
+  orderType: string,
+  triggerReason?: string
 ): Promise<void> {
+  const effectiveTrigger = triggerReason ?? orderType;
+  const humanSuffix = effectiveTrigger.includes("_dust_adj") ? " (fee/dust quantity adjustment)" : "";
   await repo.createOrder({
     cycleId: cycle.id,
     pair: cycle.pair,
@@ -244,8 +273,8 @@ async function createExitOrder(
     slippageUsd: acc.slippage.toFixed(4),
     netValueUsd: acc.netSellValue.toFixed(2),
     exchangeOrderId: exchangeOrderId ?? undefined,
-    triggerReason: orderType,
-    humanReason: orderType === "partial_sell" ? "Venta parcial (instrucción programada)" : "Cierre por instrucción programada",
+    triggerReason: effectiveTrigger,
+    humanReason: (orderType === "partial_sell" ? "Venta parcial (instrucción programada)" : "Cierre por instrucción programada") + humanSuffix,
   });
 }
 
@@ -299,12 +328,37 @@ export async function executeExitInstruction(
     const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
     if (totalQty <= 0) throw new Error(`Ciclo #${cycleId} sin cantidad disponible (totalQuantity=0)`);
 
-    // 4. Balance guard
-    await verifyBalance(cycle, totalQty * (closePct / 100), mode);
+    // 4. Balance guard — returns adjusted qty if dust tolerance applied for full close
+    const isFullClose = closePct === 100;
+    const verifiedQty = await verifyBalance(cycle, totalQty * (closePct / 100), mode, isFullClose);
 
     // 5. Compute accounting
     const config = await repo.getIdcaConfig();
-    const acc = computeSellAccounting(cycle, closePct, currentPrice, config, mode);
+    let acc: SellAccounting;
+
+    const dustAdjusted = isFullClose && verifiedQty < totalQty;
+
+    if (dustAdjusted) {
+      // Dust-adjusted full close: actual sell qty is verifiedQty (slightly less due to fees/rounding).
+      // Treat semantically as 100% close: consume ALL remaining capital so no residual is left in DB.
+      // Using effectiveClosePct=99.x% would leave a dust remainder in capitalUsedUsd — incorrect.
+      const oldCapitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+      const grossSellValue = verifiedQty * currentPrice;
+      const { fees, slippage, netValue: netSellValue } = resolveExitFees(config, mode, grossSellValue);
+      acc = {
+        quantitySold: verifiedQty,
+        sellRatio: 1.0,
+        costBasisSold: oldCapitalUsed,
+        remainingCost: 0,
+        grossSellValue,
+        fees,
+        slippage,
+        netSellValue,
+        realizedPnlIncrement: netSellValue - oldCapitalUsed,
+      };
+    } else {
+      acc = computeSellAccounting(cycle, closePct, currentPrice, config, mode);
+    }
 
     // 6. Execute sell
     let exchangeOrderId: string | null = null;
@@ -314,7 +368,7 @@ export async function executeExitInstruction(
       exchangeOrderId = await executeLiveSell(cycle, acc, clientOrderId);
     }
 
-    // 7. Update cycle
+    // 7. Update cycle — always pass original closePct (100 or partial), NOT a derived percentage
     const closeReason = instr.type === "price_target"
       ? "price_target_exit"
       : instr.type === "scheduled_time"
@@ -323,9 +377,10 @@ export async function executeExitInstruction(
 
     await updateCycleAfterSell(cycle, acc, closePct, currentPrice, closeReason);
 
-    // 8. Create order record
+    // 8. Create order record (dust adjustment noted in triggerReason for traceability)
     const orderType = closePct < 100 ? "partial_sell" : "final_sell";
-    await createExitOrder(cycle, acc, currentPrice, exchangeOrderId, orderType);
+    const effectiveTriggerReason = dustAdjusted ? `${orderType}_dust_adj` : orderType;
+    await createExitOrder(cycle, acc, currentPrice, exchangeOrderId, orderType, effectiveTriggerReason);
 
     // 9. Mark instruction executed
     const remainingQty = closePct < 100
