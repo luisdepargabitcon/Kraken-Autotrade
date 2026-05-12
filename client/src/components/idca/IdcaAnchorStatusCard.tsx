@@ -169,8 +169,8 @@ function AnchorSection({ context, pair }: AnchorSectionProps) {
   const anchorAgeHours = context.frozenAnchorAgeHours;
 
   // Valor efectivo principal
-  const effectiveValue = context.effectiveEntryReference > 0
-    ? `$${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+  const effectiveValue = (context.effectiveEntryReference ?? 0) > 0
+    ? `$${(context.effectiveEntryReference ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
     : "—";
 
   // Pill label
@@ -188,7 +188,7 @@ function AnchorSection({ context, pair }: AnchorSectionProps) {
     : "Referencia histórica";
 
   // VWAP actual del contexto (si disponible)
-  const vwapActual = (context.anchorPrice > 0 && context.anchorPrice !== context.effectiveEntryReference)
+  const vwapActual = (context.anchorPrice > 0 && context.anchorPrice !== (context.effectiveEntryReference ?? 0))
     ? context.anchorPrice
     : null;
 
@@ -375,8 +375,8 @@ function AnchorCollapsedRow({ context, pair, onExpand }: { context?: MarketConte
   const decision = rc?.dynamicAnchor?.decision as string | undefined;
   const style = getDecisionStyle(decision);
   const pillLabel = DECISION_PILL[decision ?? ""] ?? "Evaluando...";
-  const value = context && context.effectiveEntryReference > 0
-    ? `$${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+  const value = context && (context.effectiveEntryReference ?? 0) > 0
+    ? `$${(context.effectiveEntryReference ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
     : "—";
   const ageHours = context?.frozenAnchorAgeHours;
 
