@@ -330,7 +330,13 @@ export interface MarketContextPreview {
   anchorAgeHours?: number;
   anchorSource?: "vwap" | "window_high" | "frozen";
   qualityDetail?: MarketContextQualityDetail;
-  // Referencia efectiva de entrada
+  // Ancla dinámica viva (para contexto de mercado visual - siempre usa basePrice/hybrid actual)
+  marketAnchorLive: number;
+  marketAnchorLiveSource: "hybrid_v2" | "swing_high_24h" | "swing_high_48h" | "vwap_context" | "unknown";
+  marketAnchorLiveTimestamp?: string;
+  marketAnchorLiveAgeHours?: number;
+  drawdownFromLiveAnchorPct?: number;
+  // Referencia efectiva de entrada (puede usar frozen anchor si hay ciclo activo)
   effectiveEntryReference: number;
   effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
   effectiveReferenceLabel: string;

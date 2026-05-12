@@ -1034,6 +1034,24 @@ async function evaluatePair(
   const activeCycle = await repo.getActiveBotCycle(pair, mode);
 
   if (activeCycle) {
+    // Log de referencia del ciclo cuando hay frozen anchor
+    const frozenAnchor = vwapAnchorMemory.get(pair);
+    if (frozenAnchor && frozenAnchor.anchorPrice > 0) {
+      const avgEntry = parseFloat(String(activeCycle.avgEntryPrice || "0"));
+      const nextBuy = parseFloat(String(activeCycle.nextBuyPrice || "0"));
+      const ageHours = (Date.now() - frozenAnchor.setAt) / (1000 * 60 * 60);
+      console.log(
+        `[IDCA][CYCLE_REFERENCE]` +
+        ` pair=${pair}` +
+        ` cycleId=${activeCycle.id}` +
+        ` frozen_reference=${frozenAnchor.anchorPrice.toFixed(2)}` +
+        ` avg=${avgEntry.toFixed(2)}` +
+        ` nextBuyPrice=${nextBuy.toFixed(2)}` +
+        ` source=vwap_anchor` +
+        ` ageHours=${ageHours.toFixed(1)}`
+      );
+    }
+
     // Manage existing autonomous main cycle
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
 

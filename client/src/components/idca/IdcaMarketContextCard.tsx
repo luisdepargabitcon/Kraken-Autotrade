@@ -203,12 +203,12 @@ function IdcaMarketContextCompactRow({
       {/* Par */}
       <span className="text-xs font-bold font-mono text-foreground w-16 shrink-0">{data.pair}</span>
 
-      {/* Ancla IDCA Dinámica — protagonista */}
+      {/* Ancla dinámica viva — protagonista */}
       <div className="flex items-baseline gap-1.5 min-w-0 flex-wrap">
         <span className={cn("text-sm font-bold font-mono", refColor)}>
-          ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+          ${data.marketAnchorLive.toLocaleString("en-US", { maximumFractionDigits: 0 })}
         </span>
-        <span className="text-[9px] text-muted-foreground/40 font-mono">Ancla IDCA</span>
+        <span className="text-[9px] text-muted-foreground/40 font-mono">Ancla viva</span>
         <span className="text-[10px] text-muted-foreground/40">·</span>
         <span className="text-xs font-mono text-muted-foreground/70">
           ${data.currentPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
@@ -275,6 +275,7 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
 
   const refPriceColor = refState === "recently_changed" ? "text-red-400" : refState === "stable" ? "text-emerald-400" : "text-yellow-400";
   const drawdownColor = (data.drawdownPct ?? 0) > 0 ? "text-red-400" : "text-green-400";
+  const liveDrawdownColor = (data.drawdownFromLiveAnchorPct ?? 0) > 0 ? "text-red-400" : "text-green-400";
 
   const rc = data.referenceContext ?? null;
 
@@ -327,10 +328,11 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
       : `${data.frozenAnchorAgeHours.toFixed(1)}h`
     : null;
 
-  // L2.8: VWAP actual vs ancla congelada
-  const showVwapVsFrozen = data.effectiveReferenceSource === "vwap_anchor" &&
-    data.anchorPrice > 0 &&
-    Math.abs(data.anchorPrice - data.effectiveEntryReference) > 0.01;
+  // L2.8: Mostrar comparación entre ancla viva y referencia congelada del ciclo
+  const showLiveVsFrozen = data.effectiveReferenceSource === "vwap_anchor" &&
+    data.frozenAnchorPrice &&
+    data.frozenAnchorPrice > 0 &&
+    Math.abs(data.marketAnchorLive - data.effectiveEntryReference) > 0.01;
 
   // L2.6: base técnica si difiere de la referencia efectiva
   const showTechnicalBase = data.technicalBasePrice && Math.abs(data.technicalBasePrice - data.effectiveEntryReference) > 0.01;
@@ -341,42 +343,31 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
       {/* ── 1. REFERENCIA QUE MANDA ────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
 
-        {/* Ancla IDCA Dinámica — protagonista del DetailPanel */}
+        {/* Ancla dinámica viva — protagonista del DetailPanel */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ancla IDCA Dinámica</div>
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ancla viva</div>
           <div className={cn("text-base font-bold font-mono", refPriceColor)}>
-            ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            ${data.marketAnchorLive.toLocaleString("en-US", { maximumFractionDigits: 0 })}
           </div>
-          <div className={cn("text-[9px] font-mono", refPriceColor === "text-red-400" ? "text-red-400/70" : "text-muted-foreground/60")}>
-            {refBadgeLabel}
-            {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
+          <div className={cn("text-[9px] font-mono", liveDrawdownColor)}>
+            {data.drawdownFromLiveAnchorPct != null ? `${data.drawdownFromLiveAnchorPct >= 0 ? "+" : ""}${data.drawdownFromLiveAnchorPct.toFixed(2)}%` : "N/A"}
+          </div>
+          <div className="text-[9px] text-muted-foreground/40 font-mono">
+            {data.marketAnchorLiveSource === "hybrid_v2" ? "Hybrid V2.1"
+              : data.marketAnchorLiveSource === "swing_high_24h" ? "Máx 24h"
+              : data.marketAnchorLiveSource === "swing_high_48h" ? "Máx 48h"
+              : data.marketAnchorLiveSource === "vwap_context" ? "VWAP contexto"
+              : "Desconocido"}
+            {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
           </div>
           {/* Fecha/edad del ancla */}
-          {data.frozenAnchorTs ? (
+          {data.marketAnchorLiveTimestamp ? (
             <div className="text-[9px] text-muted-foreground/50 font-mono">
-              Fijada: {new Date(data.frozenAnchorTs).toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}{" "}
-              {new Date(data.frozenAnchorTs).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
-              {staleAgeLabel && (
-                <span className={data.frozenAnchorAgeHours != null && data.frozenAnchorAgeHours > 168 ? " text-amber-400/70" : ""}>
-                  {" "}· hace {staleAgeLabel}
-                </span>
-              )}
-            </div>
-          ) : data.anchorPriceUpdatedAt ? (
-            <div className="text-[9px] text-muted-foreground/50 font-mono">
-              Actualizada: {formatDateTime(data.anchorPriceUpdatedAt)}
+              Actualizada: {formatDateTime(data.marketAnchorLiveTimestamp)}
+              {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
             </div>
           ) : (
             <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
-          )}
-          {/* L2.5: antigüedad de las velas del ancla */}
-          {data.frozenAnchorCandleAgeHours != null && (
-            <div className="text-[9px] text-muted-foreground/40 font-mono">
-              Velas del ancla: hace{" "}
-              {data.frozenAnchorCandleAgeHours > 48
-                ? `${(data.frozenAnchorCandleAgeHours / 24).toFixed(1)}d`
-                : `${data.frozenAnchorCandleAgeHours.toFixed(1)}h`}
-            </div>
           )}
           {/* Estado dinámico del ancla — solo badges limpios */}
           <div className="mt-1 flex flex-wrap gap-1">
@@ -391,16 +382,25 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
               </span>
             )}
           </div>
-          {/* Referencia anterior como dato secundario — sin texto técnico raw */}
-          {rc?.previousAnchor && (
-            <div className="text-[9px] text-muted-foreground/40 font-mono mt-0.5">
-              Ref. anterior: ${rc.previousAnchor.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-              {rc.previousAnchor.replacedAt != null && (
-                <span> · {formatAgeLabel(new Date(rc.previousAnchor.replacedAt).toISOString())}</span>
-              )}
-            </div>
-          )}
         </div>
+
+        {/* Referencia del ciclo activo (secundario) */}
+        {data.effectiveReferenceSource === "vwap_anchor" && data.frozenAnchorPrice && (
+          <div className="rounded border border-orange-500/20 bg-orange-500/5 p-2.5 space-y-0.5">
+            <div className="text-[9px] text-orange-400/70 font-mono uppercase">Referencia del ciclo</div>
+            <div className="text-sm font-bold font-mono text-orange-400">
+              ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-[9px] text-muted-foreground/40 font-mono">
+              VWAP Anclado · no mueve precio medio
+            </div>
+            {data.frozenAnchorAgeHours != null && (
+              <div className="text-[9px] text-muted-foreground/40 font-mono">
+                Fijada hace {data.frozenAnchorAgeHours > 48 ? `${(data.frozenAnchorAgeHours / 24).toFixed(1)}d` : `${data.frozenAnchorAgeHours.toFixed(1)}h`}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Precio actual */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
@@ -441,20 +441,34 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
       )}
 
       {/* ── 3. LECTURA DEL MERCADO ───────────────────────────────── */}
-      {(showVwapVsFrozen || showTechnicalBase || healthData) && (
+      {(showLiveVsFrozen || showTechnicalBase || healthData) && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <Database className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-[9px] text-muted-foreground/50 font-mono uppercase tracking-wide">Lectura del mercado</span>
+            <div className="text-[9px] font-semibold text-muted-foreground">Lectura del mercado</div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {showVwapVsFrozen && (
+            {showLiveVsFrozen && (
               <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
-                <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">VWAP actual</div>
-                <div className="text-sm font-semibold font-mono text-muted-foreground/60">
-                  ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Ancla viva vs referencia ciclo</div>
+                <div className="flex items-baseline gap-1.5">
+                  <div className="text-sm font-semibold font-mono text-emerald-400">
+                    ${data.marketAnchorLive.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground/40 font-mono">
+                    viva
+                  </div>
                 </div>
-                <div className="text-[9px] text-muted-foreground/40 font-mono">Solo contexto</div>
+                <div className="flex items-baseline gap-1.5">
+                  <div className="text-sm font-semibold font-mono text-orange-400">
+                    ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground/40 font-mono">
+                    ciclo
+                  </div>
+                </div>
+                <div className="text-[9px] text-muted-foreground/40 font-mono">
+                  Diferencia: {Math.abs(data.marketAnchorLive - data.effectiveEntryReference).toFixed(2)}%
+                </div>
               </div>
             )}
             {showTechnicalBase && (

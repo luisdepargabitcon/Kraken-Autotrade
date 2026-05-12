@@ -39,7 +39,14 @@ export interface MarketContext {
   // Drawdown
   drawdownPct?: number;
 
-  // Referencia efectiva de entrada (resolver canónico)
+  // Ancla dinámica viva (para contexto de mercado visual - siempre usa basePrice/hybrid actual)
+  marketAnchorLive: number;
+  marketAnchorLiveSource: "hybrid_v2" | "swing_high_24h" | "swing_high_48h" | "vwap_context" | "unknown";
+  marketAnchorLiveTimestamp?: string;
+  marketAnchorLiveAgeHours?: number;
+  drawdownFromLiveAnchorPct?: number;
+
+  // Referencia efectiva de entrada (resolver canónico - puede usar frozen anchor si hay ciclo activo)
   effectiveEntryReference: number;
   effectiveReferenceSource: "vwap_anchor" | "hybrid_v2_fallback";
   effectiveReferenceLabel: string;
@@ -163,6 +170,13 @@ class IdcaMarketContextService {
         currentPrice,
         priceUpdatedAt:           now,
         drawdownPct:              0,
+        // Ancla dinámica viva (fallback en caso de datos insuficientes)
+        marketAnchorLive:          currentPrice,
+        marketAnchorLiveSource:    "unknown",
+        marketAnchorLiveTimestamp: now.toISOString(),
+        marketAnchorLiveAgeHours:  0,
+        drawdownFromLiveAnchorPct: 0,
+        // Referencia efectiva de entrada
         effectiveEntryReference:  currentPrice,
         effectiveReferenceSource: "hybrid_v2_fallback",
         effectiveReferenceLabel:  `Sin datos suficientes (${rawCandles.length}/${MIN_CANDLES_ATR_CONTEXT} velas para ATR). Motor puede evaluar Hybrid si hay \u2265${MIN_CANDLES_HYBRID_ENGINE}.`,
@@ -457,7 +471,28 @@ class IdcaMarketContextService {
       atr,
       atrPct,
       drawdownPct,
-      // Referencia efectiva de entrada
+      // Ancla dinámica viva (para contexto de mercado visual - siempre usa basePrice/hybrid actual)
+      marketAnchorLive: basePriceResult.price,
+      marketAnchorLiveSource: basePriceResult.meta?.selectedMethod === "swing_high_24h" ? "swing_high_24h"
+        : basePriceResult.meta?.selectedMethod === "swing_high_48h" ? "swing_high_48h"
+        : basePriceResult.meta?.selectedMethod === "vwap_context" ? "vwap_context"
+        : "hybrid_v2",
+      marketAnchorLiveTimestamp: basePriceResult.timestamp instanceof Date
+        ? basePriceResult.timestamp.toISOString()
+        : typeof basePriceResult.timestamp === "string"
+          ? basePriceResult.timestamp
+          : new Date(basePriceResult.timestamp).toISOString(),
+      marketAnchorLiveAgeHours: (now.getTime() - new Date(
+        basePriceResult.timestamp instanceof Date
+          ? basePriceResult.timestamp
+          : typeof basePriceResult.timestamp === "string"
+            ? basePriceResult.timestamp
+            : basePriceResult.timestamp
+      ).getTime()) / (1000 * 60 * 60),
+      drawdownFromLiveAnchorPct: basePriceResult.price > 0
+        ? ((basePriceResult.price - currentPrice) / basePriceResult.price) * 100
+        : drawdownPct,
+      // Referencia efectiva de entrada (puede usar frozen anchor si hay ciclo activo)
       effectiveEntryReference: refResult.effectiveEntryReference,
       effectiveReferenceSource: refResult.effectiveReferenceSource,
       effectiveReferenceLabel: refResult.effectiveReferenceLabel,
@@ -479,6 +514,17 @@ class IdcaMarketContextService {
       anchorSource,
       qualityDetail,
     };
+
+    // Log de contexto de mercado con ancla viva
+    console.log(
+      `[IDCA][MARKET_CONTEXT]` +
+      ` pair=${pair}` +
+      ` live_anchor=${context.marketAnchorLive.toFixed(2)}` +
+      ` method=${context.marketAnchorLiveSource}` +
+      ` current=${currentPrice.toFixed(2)}` +
+      ` drawdown_live=${context.drawdownFromLiveAnchorPct?.toFixed(2) ?? "N/A"}%` +
+      ` dataState=${dataQuality}`
+    );
 
     // Cache result
     this.cache.set(cacheKey, {
