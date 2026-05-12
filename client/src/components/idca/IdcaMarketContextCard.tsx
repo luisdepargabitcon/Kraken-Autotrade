@@ -155,17 +155,17 @@ function IdcaMarketContextCompactRow({
       {/* Par */}
       <span className="text-xs font-bold font-mono text-foreground w-16 shrink-0">{data.pair}</span>
 
-      {/* Precios */}
-      <div className="flex items-baseline gap-1 min-w-0">
-        <span className={cn("text-xs font-mono font-semibold", refColor)}>
-          Ref ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+      {/* Ancla IDCA Dinámica — protagonista */}
+      <div className="flex items-baseline gap-1.5 min-w-0 flex-wrap">
+        <span className={cn("text-sm font-bold font-mono", refColor)}>
+          ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
         </span>
-        <span className="text-[9px] text-muted-foreground/50 font-mono">{data.effectiveReferenceLabel}</span>
-        <span className="text-[10px] text-muted-foreground/50">·</span>
-        <span className="text-xs font-mono text-foreground">
+        <span className="text-[9px] text-muted-foreground/40 font-mono">Ancla IDCA</span>
+        <span className="text-[10px] text-muted-foreground/40">·</span>
+        <span className="text-xs font-mono text-muted-foreground/70">
           ${data.currentPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
         </span>
-        <span className="text-[10px] text-muted-foreground/50">·</span>
+        <span className="text-[10px] text-muted-foreground/40">·</span>
         <span className={cn("text-xs font-mono", drawdownColor)}>
           {drawdown >= 0 ? "+" : ""}{drawdown.toFixed(2)}%
         </span>
@@ -225,29 +225,41 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
   // isVwapFull: VWAP live activo solo si manda directamente (sin ancla congelada sobreponiendo)
   const isVwapFull   = vwapStatus === "used" && !isFrozen;
 
-  const refBadgeLabel = isFrozen
-    ? "VWAP Anclado congelado"
+  // Etiqueta dinámica: la Ancla IDCA manda, no la fuente legacy
+  const dynamicDecision = (rc as any)?.dynamicAnchor?.decision as string | undefined;
+  const refBadgeLabel = dynamicDecision
+    ? ({
+        mantener_ancla: "Dinámica activa",
+        avisar_pero_mantener: "Mantener referencia",
+        renovar_ancla: "Renovación automática",
+        esperar_mas_datos: "Esperando contexto",
+        bloquear_nuevas_entradas_por_datos: "Datos insuficientes",
+        precio_caro_no_perseguir: "Precio caro vs VWAP",
+        zona_interesante_con_confirmacion: "Zona interesante",
+        ciclo_activo_solo_contexto: "Ciclo activo: contexto",
+        salida_pendiente_sin_accion: "Salida pendiente",
+      } as Record<string, string>)[dynamicDecision] ?? "Ancla IDCA Dinámica"
     : isWarmingUp
-      ? "VWAP cargando datos"
-      : rc?.referenceLabel ?? data.effectiveReferenceLabel;
+      ? "Cargando datos"
+      : "Ancla IDCA Dinámica";
 
-  const refBadgeCls = isVwapFull
-    ? "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20"
-    : isFrozen
-      ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
-      : isWarmingUp
-        ? "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20"
-        : isHybrid
-          ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
-          : "border-amber-500/40 text-amber-400/80 bg-amber-950/20";
+  const refBadgeCls = !dynamicDecision
+    ? "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20"
+    : ["mantener_ancla", "renovar_ancla", "zona_interesante_con_confirmacion"].includes(dynamicDecision)
+      ? "border-cyan-500/40 text-cyan-400/80 bg-cyan-950/20"
+      : ["ciclo_activo_solo_contexto", "salida_pendiente_sin_accion"].includes(dynamicDecision)
+        ? "border-blue-500/40 text-blue-400/80 bg-blue-950/20"
+        : ["avisar_pero_mantener", "esperar_mas_datos"].includes(dynamicDecision)
+          ? "border-amber-500/40 text-amber-400/80 bg-amber-950/20"
+          : "border-orange-500/40 text-orange-400/80 bg-orange-950/20";
 
-  // L2.2: anchorStatus badge
+  // anchorStatus badge: reemplazar lenguaje legacy
   const anchorStatus = rc?.anchorStatus;
   const anchorStatusBadge = (() => {
     if (!anchorStatus || anchorStatus === "unknown") return null;
-    if (anchorStatus === "active")   return { label: "Activa",              cls: "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20" };
-    if (anchorStatus === "stale")    return { label: "Ancla antigua",        cls: "border-amber-500/40 text-amber-400/90 bg-amber-950/20" };
-    if (anchorStatus === "locked")   return { label: "Bloqueada",            cls: "border-blue-500/40 text-blue-400/80 bg-blue-950/20" };
+    if (anchorStatus === "active")   return { label: "Dinámica activa",          cls: "border-emerald-500/40 text-emerald-400/80 bg-emerald-950/20" };
+    if (anchorStatus === "stale")    return { label: "Ref. previa antigua",      cls: "border-amber-500/40 text-amber-400/90 bg-amber-950/20" };
+    if (anchorStatus === "locked")   return { label: "Solo contexto",            cls: "border-blue-500/40 text-blue-400/80 bg-blue-950/20" };
     return { label: "Estado no confirmado", cls: "border-zinc-500/40 text-zinc-400/70 bg-zinc-950/20" };
   })();
 
@@ -273,14 +285,14 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
       {/* ── 1. REFERENCIA QUE MANDA ────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
 
-        {/* Ref. Efectiva */}
+        {/* Ancla IDCA Dinámica — protagonista del DetailPanel */}
         <div className="rounded border border-border/30 bg-muted/10 p-2.5 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ref. Efectiva</div>
+          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ancla IDCA Dinámica</div>
           <div className={cn("text-base font-bold font-mono", refPriceColor)}>
             ${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
           </div>
           <div className={cn("text-[9px] font-mono", refPriceColor === "text-red-400" ? "text-red-400/70" : "text-muted-foreground/60")}>
-            {data.effectiveReferenceLabel}
+            {refBadgeLabel}
             {refState === "recently_changed" && ` · ${formatAgeLabel(data.referenceUpdatedAt)}`}
           </div>
           {/* Fecha/edad del ancla */}
@@ -400,48 +412,43 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
 
       {/* ── 2. AVISO ANCLA ANTIGUA (L2.9) ────────────────────────────── */}
       {isStale && (
-        <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 flex gap-2">
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-          <div className="space-y-0.5 min-w-0">
-            <p className="text-[10px] font-semibold text-amber-300">⚠️ Ancla antigua</p>
-            <p className="text-[10px] text-amber-200/70 leading-relaxed">
-              Esta referencia sigue activa{staleAgeLabel ? `, pero fue fijada hace ${staleAgeLabel}` : ""}.
-              Revisar si sigue representando el contexto actual del mercado.
-            </p>
-          </div>
+        <div className="rounded border border-amber-500/20 bg-amber-500/5 p-2 flex gap-2">
+          <AlertTriangle className="h-3 w-3 text-amber-400/70 shrink-0 mt-0.5" />
+          <p className="text-[9px] text-amber-200/60 leading-relaxed">
+            Referencia previa fijada hace {staleAgeLabel ?? "más de 3 días"}. La Ancla IDCA Dinámica evalúa si renovarla automáticamente.
+          </p>
         </div>
       )}
 
-      {/* ── 3. VWAP ACTUAL vs ANCLA CONGELADA (L2.8) ─────────────────── */}
+      {/* ── 3. VWAP ACTUAL (contexto secundario) ──────────────────────────── */}
       {showVwapVsFrozen && (
-        <div className="rounded border border-border/30 bg-muted/5 p-2.5 space-y-1">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">VWAP actual (no manda)</div>
+        <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+          <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">VWAP actual (contexto)</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-bold font-mono text-muted-foreground/70">
+            <span className="text-sm font-semibold font-mono text-muted-foreground/60">
               ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
             </span>
-            <span className="text-[8px] text-muted-foreground/40 font-mono">{data.anchorSource ?? "vwap"}</span>
           </div>
-          <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
-            IDCA usa el ancla congelada (${data.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}), no el VWAP calculado ahora.
+          <div className="text-[9px] text-muted-foreground/40 font-mono leading-tight">
+            La Ancla IDCA Dinámica decide la referencia de entrada.
           </div>
         </div>
       )}
 
-      {/* ── 4. BASE TÉCNICA HYBRID (L2.6) ────────────────────────────── */}
+      {/* ── 4. ESTRUCTURA RECIENTE / BASE TÉCNICA (contexto secundario) ────────── */}
       {showTechnicalBase && (
-        <div className="rounded border border-border/30 bg-muted/5 p-2.5 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Base técnica (Hybrid V2.1)</div>
+        <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+          <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Estructura reciente</div>
           <div className="flex items-baseline gap-2">
-            <div className="text-sm font-bold font-mono text-foreground">
+            <div className="text-sm font-semibold font-mono text-muted-foreground/60">
               ${data.technicalBasePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
             </div>
-            <div className="text-[9px] text-muted-foreground/60 font-mono">
+            <div className="text-[9px] text-muted-foreground/40 font-mono">
               {rc?.hybridCandidateMethod ?? data.technicalBaseType}
             </div>
           </div>
-          <div className="text-[9px] text-muted-foreground/50 font-mono">
-            {rc?.hybridReason ?? data.technicalBaseReason ?? "Hybrid V2.1"}
+          <div className="text-[9px] text-muted-foreground/40 font-mono">
+            {rc?.hybridReason ?? data.technicalBaseReason ?? "Base técnica reciente"}
           </div>
         </div>
       )}
@@ -490,7 +497,7 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-muted-foreground/50 font-mono px-0.5">
         <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" /> {formatDateTime(data.lastUpdated)}</span>
         {/* L2.1: usar effectiveReferenceLabel directamente, no anchorSource legacy como guarda */}
-        <span>Fuente: {data.effectiveReferenceLabel}</span>
+        <span>Ancla IDCA Dinámica</span>
         {data.qualityDetail && (
           /* L2.7: etiquetar timeframe 1h */
           <span>Velas 1h: {data.qualityDetail.candleCount}/{data.qualityDetail.requiredForOptimal}</span>
@@ -526,7 +533,7 @@ export function IdcaMarketContextSummary({
       <CardHeader className="py-2.5 px-4">
         <CardTitle className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-wide">
           <Activity className="h-3.5 w-3.5 text-primary" />
-          Contexto de Mercado
+          Contexto de Mercado · Ancla IDCA Dinámica
           <span className="text-[10px] normal-case tracking-normal text-muted-foreground/40 font-normal ml-1">
             — expandir par para ver detalle
           </span>

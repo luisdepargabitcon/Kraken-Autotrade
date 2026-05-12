@@ -1,15 +1,19 @@
 /**
- * IdcaAnchorStatusCard — Ancla IDCA + Estado de datos de mercado
+ * IdcaAnchorStatusCard — Ancla IDCA Dinámica como referencia principal
  *
- * Muestra en castellano natural:
- *  - Sección "Ancla IDCA": estado, decisión, motivo, protección de ciclos, acción
- *  - Sección "Estado de datos de mercado": por par, velas, feed, backfill
+ * Jerarquía visual:
+ *  1. Título "Ancla IDCA Dinámica" prominente
+ *  2. Valor efectivo grande y claro
+ *  3. Pill de decisión dinámica (estado)
+ *  4. Motivo en lenguaje natural
+ *  5. Datos secundarios: ref. previa, VWAP actual, zona, datos de mercado
  *
- * NO muestra: healthy/degraded, Hybrid como protagonista, shadow mode, ancla sombra.
+ * NO muestra: "VWAP Anclado" como protagonista, "Ancla antigua" como título principal,
+ * "Hybrid V2.1" como referencia principal, shadow mode, ancla sombra.
  */
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, CheckCircle, Clock, Database, Info, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, Database, Info, RefreshCw, ShieldCheck, XCircle, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MarketContextPreview, MarketDataHealthResult } from "@/hooks/useInstitutionalDca";
 
@@ -25,29 +29,41 @@ type DataReadinessState =
   | "datos_completos" | "datos_suficientes" | "datos_parciales"
   | "datos_insuficientes" | "feed_detenido";
 
-// ─── Mapeos de textos en castellano ───────────────────────────────────────────
+// ─── Mapeos de textos en castellano (lenguaje humano) ─────────────────────────
 
-const DECISION_LABEL: Record<string, string> = {
-  mantener_ancla: "Mantener ancla",
-  avisar_pero_mantener: "Ancla antigua, pero mantenida",
-  renovar_ancla: "Ancla IDCA renovada",
-  esperar_mas_datos: "Esperando más datos",
-  bloquear_nuevas_entradas_por_datos: "Nuevas entradas bloqueadas por datos",
+const DECISION_PILL: Record<string, string> = {
+  mantener_ancla: "Dinámica activa",
+  avisar_pero_mantener: "Mantener referencia",
+  renovar_ancla: "Renovación automática aplicada",
+  esperar_mas_datos: "Esperando mejor contexto",
+  bloquear_nuevas_entradas_por_datos: "Datos insuficientes",
   precio_caro_no_perseguir: "Precio caro frente al VWAP",
-  zona_interesante_con_confirmacion: "Zona interesante con confirmación",
+  zona_interesante_con_confirmacion: "Zona interesante: pendiente confirmación",
   ciclo_activo_solo_contexto: "Ciclo activo: solo contexto",
   salida_pendiente_sin_accion: "Salida pendiente: sin acción nueva",
 };
 
+const DECISION_REASON_FALLBACK: Record<string, string> = {
+  mantener_ancla: "La referencia dinámica sigue siendo válida.",
+  avisar_pero_mantener: "La referencia está siendo revisada pero se mantiene activa.",
+  renovar_ancla: "La referencia anterior estaba desactualizada y se renovó automáticamente.",
+  esperar_mas_datos: "El sistema está completando el histórico de velas antes de decidir.",
+  bloquear_nuevas_entradas_por_datos: "No hay datos suficientes para operar con seguridad.",
+  precio_caro_no_perseguir: "El precio está por encima del VWAP. No es buena zona de entrada.",
+  zona_interesante_con_confirmacion: "El precio está en zona de valor, pero requiere confirmación adicional.",
+  ciclo_activo_solo_contexto: "Hay un ciclo activo. La Ancla IDCA no modifica precio medio ni escalera.",
+  salida_pendiente_sin_accion: "Hay una salida pendiente. La Ancla IDCA no realiza ninguna acción nueva.",
+};
+
 const TRIGGER_LABEL: Record<string, string> = {
-  cambio_por_estructura: "Cambio por estructura",
-  cambio_por_vwap: "Cambio por VWAP",
-  cambio_por_ruptura_consolidacion: "Cambio por ruptura y consolidación",
-  cambio_por_obsolescencia: "Revisión por antigüedad",
-  cambio_por_calidad_datos: "Cambio por calidad de datos",
+  cambio_por_estructura: "Estructura del mercado",
+  cambio_por_vwap: "Alineación VWAP",
+  cambio_por_ruptura_consolidacion: "Ruptura y consolidación",
+  cambio_por_obsolescencia: "Antigüedad de referencia",
+  cambio_por_calidad_datos: "Calidad de datos",
   sin_cambio: "Sin cambio",
-  bloqueado_por_ciclo: "Bloqueado por ciclo activo",
-  bloqueado_por_salida: "Bloqueado por salida pendiente",
+  bloqueado_por_ciclo: "Ciclo activo",
+  bloqueado_por_salida: "Salida pendiente",
   bloqueado_por_datos: "Feed de datos detenido",
 };
 
@@ -67,40 +83,30 @@ const BACKFILL_LABEL: Record<string, string> = {
   en_progreso: "En progreso",
 };
 
-const PROTECTION_LABEL: Record<string, string> = {
-  sin_ciclo: "Sin ciclo activo",
-  ciclo_activo_protegido: "Ciclo activo: no se modifica",
-  salida_pendiente: "Salida pendiente",
-};
-
-const ACTION_LABEL: Record<string, string> = {
-  renovacion_automatica: "Renovación automática realizada",
-  sin_cambios: "Sin cambios",
-  completando_historico: "Completando histórico",
-  nuevas_entradas_bloqueadas: "Nuevas entradas bloqueadas por seguridad",
-  sin_accion_por_ciclo: "Sin acción por ciclo activo",
-};
-
 // ─── Helpers visuales ─────────────────────────────────────────────────────────
 
-function getDecisionStyle(decision?: string): { color: string; bg: string; border: string } {
+type DecisionStyle = { pillColor: string; pillBg: string; pillBorder: string; valueColor: string; cardBorder: string; cardBg: string };
+
+function getDecisionStyle(decision?: string): DecisionStyle {
   switch (decision) {
     case "renovar_ancla":
-      return { color: "text-emerald-400", bg: "bg-emerald-500/8", border: "border-emerald-500/25" };
+      return { pillColor: "text-emerald-300", pillBg: "bg-emerald-500/15", pillBorder: "border-emerald-500/40", valueColor: "text-emerald-300", cardBorder: "border-emerald-500/20", cardBg: "bg-emerald-500/5" };
     case "mantener_ancla":
+      return { pillColor: "text-cyan-300", pillBg: "bg-cyan-500/15", pillBorder: "border-cyan-500/40", valueColor: "text-cyan-200", cardBorder: "border-cyan-500/20", cardBg: "bg-cyan-500/5" };
     case "zona_interesante_con_confirmacion":
-      return { color: "text-cyan-400", bg: "bg-cyan-500/8", border: "border-cyan-500/25" };
+      return { pillColor: "text-cyan-300", pillBg: "bg-cyan-500/15", pillBorder: "border-cyan-500/40", valueColor: "text-cyan-200", cardBorder: "border-cyan-500/20", cardBg: "bg-cyan-500/5" };
     case "avisar_pero_mantener":
     case "esperar_mas_datos":
-      return { color: "text-amber-400", bg: "bg-amber-500/8", border: "border-amber-500/25" };
+      return { pillColor: "text-amber-300", pillBg: "bg-amber-500/15", pillBorder: "border-amber-500/40", valueColor: "text-amber-200", cardBorder: "border-amber-500/20", cardBg: "bg-amber-500/5" };
     case "bloquear_nuevas_entradas_por_datos":
+      return { pillColor: "text-red-300", pillBg: "bg-red-500/15", pillBorder: "border-red-500/40", valueColor: "text-red-200", cardBorder: "border-red-500/20", cardBg: "bg-red-500/5" };
     case "precio_caro_no_perseguir":
-      return { color: "text-red-400", bg: "bg-red-500/8", border: "border-red-500/25" };
+      return { pillColor: "text-orange-300", pillBg: "bg-orange-500/15", pillBorder: "border-orange-500/40", valueColor: "text-orange-200", cardBorder: "border-orange-500/20", cardBg: "bg-orange-500/5" };
     case "ciclo_activo_solo_contexto":
     case "salida_pendiente_sin_accion":
-      return { color: "text-blue-400", bg: "bg-blue-500/8", border: "border-blue-500/25" };
+      return { pillColor: "text-blue-300", pillBg: "bg-blue-500/15", pillBorder: "border-blue-500/40", valueColor: "text-blue-200", cardBorder: "border-blue-500/20", cardBg: "bg-blue-500/5" };
     default:
-      return { color: "text-zinc-400", bg: "bg-zinc-800/30", border: "border-zinc-700/30" };
+      return { pillColor: "text-zinc-400", pillBg: "bg-zinc-800/20", pillBorder: "border-zinc-700/30", valueColor: "text-foreground", cardBorder: "border-border/30", cardBg: "bg-muted/5" };
   }
 }
 
@@ -136,7 +142,7 @@ function formatAgeMin(minutes?: number | null): string {
   return m > 0 ? `hace ${h}h ${m}m` : `hace ${h}h`;
 }
 
-// ─── Sección ancla ────────────────────────────────────────────────────────────
+// ─── Sección ancla dinámica (protagonista) ────────────────────────────────────
 
 interface AnchorSectionProps {
   context?: MarketContextPreview;
@@ -146,8 +152,8 @@ interface AnchorSectionProps {
 function AnchorSection({ context, pair }: AnchorSectionProps) {
   if (!context) {
     return (
-      <div className="rounded border border-zinc-700/30 bg-zinc-800/20 p-2.5">
-        <p className="text-[10px] text-zinc-500 font-mono">Cargando datos del ancla...</p>
+      <div className="rounded border border-zinc-700/30 bg-zinc-800/20 p-3">
+        <p className="text-xs text-zinc-500 font-mono">Cargando Ancla IDCA Dinámica...</p>
       </div>
     );
   }
@@ -156,117 +162,126 @@ function AnchorSection({ context, pair }: AnchorSectionProps) {
   const dynamicDecision: AnchorDecision | undefined = rc?.dynamicAnchor?.decision;
   const dynamicTrigger: string | undefined = rc?.dynamicAnchor?.changeTrigger;
   const dynamicReason: string | undefined = rc?.dynamicAnchor?.reason;
-  const dynamicActionTaken: string | undefined = rc?.dynamicAnchor?.actionTaken;
   const dynamicProtection: string | undefined = rc?.dynamicAnchor?.cycleProtection;
   const dynamicDataState: DataReadinessState | undefined = rc?.dynamicAnchor?.dataState;
 
-  const decisionStyle = getDecisionStyle(dynamicDecision);
+  const style = getDecisionStyle(dynamicDecision);
   const anchorAgeHours = context.frozenAnchorAgeHours;
 
+  // Valor efectivo principal
+  const effectiveValue = context.effectiveEntryReference > 0
+    ? `$${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+    : "—";
+
+  // Pill label
+  const pillLabel = DECISION_PILL[dynamicDecision ?? ""] ?? "Evaluando...";
+
+  // Motivo humano — usar el del servicio si viene, si no el fallback
+  const humanReason = (dynamicReason && dynamicReason.length > 0)
+    ? dynamicReason
+    : DECISION_REASON_FALLBACK[dynamicDecision ?? ""] ?? "";
+
+  // Ref. previa (ancla congelada)
+  const prevAnchorPrice = context.frozenAnchorPrice ?? context.anchorPrice;
+  const prevAnchorLabel = anchorAgeHours != null
+    ? `Ref. previa · hace ${formatAge(anchorAgeHours)}`
+    : "Referencia histórica";
+
+  // VWAP actual del contexto (si disponible)
+  const vwapActual = (context.anchorPrice > 0 && context.anchorPrice !== context.effectiveEntryReference)
+    ? context.anchorPrice
+    : null;
+
+  // Ciclo activo: protección destacada
+  const hasCycleProtection = dynamicProtection === "ciclo_activo_protegido" || dynamicDecision === "ciclo_activo_solo_contexto";
+  const hasPendingExit = dynamicDecision === "salida_pendiente_sin_accion";
+
   return (
-    <div className="space-y-2">
-      {/* Estado general del ancla */}
-      <div className={cn("rounded border p-2.5 space-y-1.5", decisionStyle.bg, decisionStyle.border)}>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[9px] font-mono text-muted-foreground uppercase">Estado</span>
-          <span className={cn("text-[9px] font-mono font-semibold", decisionStyle.color)}>
-            Dinámica activa
-          </span>
-        </div>
+    <div className="space-y-2.5">
 
-        {/* Decisión */}
+      {/* ── BLOQUE PRINCIPAL: valor grande + pill + motivo ─────────────── */}
+      <div className={cn("rounded-lg border p-3 space-y-2", style.cardBorder, style.cardBg)}>
+
+        {/* Valor principal — prominente */}
         <div className="flex items-start justify-between gap-2">
-          <span className="text-[9px] font-mono text-muted-foreground">Decisión</span>
-          <span className={cn("text-[9px] font-mono font-medium text-right", decisionStyle.color)}>
-            {DECISION_LABEL[dynamicDecision ?? ""] ?? "Evaluando..."}
+          <div className="space-y-0.5">
+            <div className={cn("text-2xl font-bold font-mono leading-none", style.valueColor)}>
+              {effectiveValue}
+            </div>
+            <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">
+              Ancla IDCA Dinámica
+            </div>
+          </div>
+          {/* Pill de decisión */}
+          <span className={cn(
+            "inline-flex items-center text-[10px] font-semibold font-mono px-2 py-1 rounded-full border shrink-0",
+            style.pillBg, style.pillBorder, style.pillColor
+          )}>
+            {pillLabel}
           </span>
         </div>
 
-        {/* Trigger */}
-        {dynamicTrigger && dynamicTrigger !== "sin_cambio" && (
-          <div className="flex items-start justify-between gap-2">
-            <span className="text-[9px] font-mono text-muted-foreground">Motivo técnico</span>
-            <span className="text-[9px] font-mono text-muted-foreground/70 text-right">
-              {TRIGGER_LABEL[dynamicTrigger] ?? dynamicTrigger}
-            </span>
-          </div>
-        )}
-
-        {/* Motivo natural */}
-        {dynamicReason && (
-          <p className="text-[9px] text-muted-foreground/60 font-mono leading-relaxed border-t border-border/20 pt-1">
-            {dynamicReason}
+        {/* Motivo humano */}
+        {humanReason && (
+          <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+            {humanReason}
           </p>
         )}
-      </div>
 
-      {/* Ancla actual */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded border border-border/30 bg-muted/10 p-2 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ancla actual</div>
-          <div className="text-sm font-bold font-mono text-foreground">
-            {context.frozenAnchorPrice
-              ? `$${context.frozenAnchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
-              : context.anchorPrice
-                ? `$${context.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
-                : "—"}
-          </div>
-          {anchorAgeHours != null && (
-            <div className="text-[9px] text-muted-foreground/50 font-mono">
-              Fijada hace {formatAge(anchorAgeHours)}
-            </div>
-          )}
-          {/* Badge estado ancla */}
-          <div className="text-[8px] font-mono text-muted-foreground/40 uppercase mt-0.5">
-            {anchorAgeHours != null && anchorAgeHours > 168
-              ? <span className="text-amber-400/70">Ancla antigua</span>
-              : anchorAgeHours != null && anchorAgeHours > 72
-              ? <span className="text-amber-400/50">Con revisión</span>
-              : <span className="text-emerald-400/60">Activa</span>}
-          </div>
-        </div>
-
-        <div className="rounded border border-border/30 bg-muted/10 p-2 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground font-mono uppercase">Ref. efectiva</div>
-          <div className="text-sm font-bold font-mono text-foreground">
-            ${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </div>
-          <div className="text-[9px] text-muted-foreground/50 font-mono">
-            {context.effectiveReferenceLabel}
-          </div>
-          {dynamicDataState && (
-            <div className={cn("text-[8px] font-mono", getDataStateStyle(dynamicDataState).color)}>
-              {DATA_STATE_LABEL[dynamicDataState]}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Protección y acción */}
-      <div className="grid grid-cols-2 gap-2">
-        {dynamicProtection && (
-          <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
-            <div className="flex items-center gap-1">
-              <ShieldCheck className="h-3 w-3 text-muted-foreground/50 shrink-0" />
-              <span className="text-[9px] text-muted-foreground font-mono uppercase">Protección</span>
-            </div>
-            <p className="text-[9px] text-muted-foreground/60 font-mono">
-              {PROTECTION_LABEL[dynamicProtection] ?? dynamicProtection}
-            </p>
+        {/* Aviso protección ciclo activo */}
+        {hasCycleProtection && (
+          <div className="flex items-center gap-1.5 text-[10px] text-blue-300/80 font-mono">
+            <ShieldCheck className="h-3 w-3 shrink-0" />
+            No modifica precio medio, próxima compra ni escalera
           </div>
         )}
-        {dynamicActionTaken && (
-          <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
-            <div className="flex items-center gap-1">
-              <RefreshCw className="h-3 w-3 text-muted-foreground/50 shrink-0" />
-              <span className="text-[9px] text-muted-foreground font-mono uppercase">Acción</span>
-            </div>
-            <p className="text-[9px] text-muted-foreground/60 font-mono">
-              {ACTION_LABEL[dynamicActionTaken] ?? dynamicActionTaken}
-            </p>
+        {hasPendingExit && (
+          <div className="flex items-center gap-1.5 text-[10px] text-blue-300/80 font-mono">
+            <RefreshCw className="h-3 w-3 shrink-0" />
+            Esperando resolución de la salida activa
           </div>
         )}
       </div>
+
+      {/* ── DATOS SECUNDARIOS ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-2">
+
+        {/* Ref. previa */}
+        {prevAnchorPrice != null && prevAnchorPrice > 0 && (
+          <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+            <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Referencia previa</div>
+            <div className="text-xs font-semibold font-mono text-muted-foreground/70">
+              ${prevAnchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-[9px] text-muted-foreground/40 font-mono">{prevAnchorLabel}</div>
+          </div>
+        )}
+
+        {/* VWAP actual */}
+        {vwapActual != null && (
+          <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+            <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">VWAP actual</div>
+            <div className="text-xs font-semibold font-mono text-muted-foreground/70">
+              ${vwapActual.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+            {dynamicDataState && (
+              <div className={cn("text-[9px] font-mono", getDataStateStyle(dynamicDataState).color)}>
+                {DATA_STATE_LABEL[dynamicDataState]}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── CONTEXTO TÉCNICO SECUNDARIO ───────────────────────────────── */}
+      {dynamicTrigger && dynamicTrigger !== "sin_cambio" && (
+        <div className="flex items-center justify-between gap-2 px-1">
+          <span className="text-[9px] text-muted-foreground/40 font-mono">Motivo técnico</span>
+          <span className="text-[9px] text-muted-foreground/50 font-mono">
+            {TRIGGER_LABEL[dynamicTrigger] ?? dynamicTrigger}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -353,7 +368,54 @@ function DataHealthRow({ health }: DataHealthRowProps) {
   );
 }
 
-// ─── Componente principal ─────────────────────────────────────────────────────
+// ─── Fila colapsada: siempre muestra valor + pill ────────────────────────────────
+
+function AnchorCollapsedRow({ context, pair, onExpand }: { context?: MarketContextPreview; pair: string; onExpand: () => void }) {
+  const rc = (context?.referenceContext as any);
+  const decision = rc?.dynamicAnchor?.decision as string | undefined;
+  const style = getDecisionStyle(decision);
+  const pillLabel = DECISION_PILL[decision ?? ""] ?? "Evaluando...";
+  const value = context && context.effectiveEntryReference > 0
+    ? `$${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+    : "—";
+  const ageHours = context?.frozenAnchorAgeHours;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors hover:bg-muted/20",
+        style.cardBorder, style.cardBg
+      )}
+      onClick={onExpand}
+    >
+      {/* Par */}
+      <span className="text-xs font-bold font-mono text-foreground w-14 shrink-0">{pair}</span>
+
+      {/* Valor grande */}
+      <span className={cn("text-lg font-bold font-mono leading-none", style.valueColor)}>{value}</span>
+
+      {/* Pill */}
+      <span className={cn(
+        "inline-flex items-center text-[9px] font-semibold font-mono px-1.5 py-0.5 rounded-full border shrink-0",
+        style.pillBg, style.pillBorder, style.pillColor
+      )}>
+        {pillLabel}
+      </span>
+
+      {/* Edad secundaria */}
+      {ageHours != null && (
+        <span className="text-[9px] text-muted-foreground/40 font-mono ml-auto shrink-0">
+          hace {formatAge(ageHours)}
+        </span>
+      )}
+
+      {/* Toggle */}
+      <span className="text-muted-foreground/40 text-[9px] shrink-0">▼</span>
+    </div>
+  );
+}
+
+// ─── Componente principal ───────────────────────────────────────────────────
 
 interface IdcaAnchorStatusCardProps {
   contextPreviews?: MarketContextPreview[];
@@ -374,13 +436,13 @@ export function IdcaAnchorStatusCard({
     <Card className="border-border/50 bg-card/50">
       <CardHeader className="pb-2 pt-3 px-4">
         <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-cyan-400 shrink-0" />
-          Ancla IDCA
+          <Zap className="h-4 w-4 text-cyan-400 shrink-0" />
+          Ancla IDCA Dinámica
         </CardTitle>
       </CardHeader>
-      <CardContent className="px-4 pb-4 space-y-4">
+      <CardContent className="px-4 pb-4 space-y-3">
         {isLoading ? (
-          <p className="text-[10px] text-muted-foreground font-mono">Cargando...</p>
+          <p className="text-xs text-muted-foreground font-mono">Cargando Ancla IDCA Dinámica...</p>
         ) : (
           <>
             {/* Sección ancla por par */}
@@ -388,31 +450,29 @@ export function IdcaAnchorStatusCard({
               const context = contextPreviews?.find(c => c.pair === pair);
               const isExpanded = expandedPair === pair;
               return (
-                <div key={pair}>
-                  <button
-                    className="w-full text-left flex items-center justify-between gap-2 mb-1.5 group"
-                    onClick={() => setExpandedPair(isExpanded ? null : pair)}
-                  >
-                    <span className="text-[10px] font-mono font-semibold text-foreground group-hover:text-cyan-400 transition-colors">
-                      {pair}
-                    </span>
-                    <span className="text-[9px] text-muted-foreground/50">
-                      {isExpanded ? "▲" : "▼"}
-                    </span>
-                  </button>
-                  {isExpanded && <AnchorSection context={context} pair={pair} />}
-                  {!isExpanded && context && (
-                    <div className="flex items-center justify-between gap-2 rounded border border-border/25 bg-muted/5 px-2.5 py-1.5">
-                      <span className="text-[9px] font-mono text-muted-foreground">Ref. efectiva</span>
-                      <span className="text-[9px] font-mono font-semibold text-foreground">
-                        ${context.effectiveEntryReference.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                      </span>
-                      <span className="text-[9px] font-mono text-muted-foreground/50">
-                        {context.frozenAnchorAgeHours != null
-                          ? `fijada hace ${formatAge(context.frozenAnchorAgeHours)}`
-                          : context.effectiveReferenceLabel}
-                      </span>
-                    </div>
+                <div key={pair} className="space-y-0">
+                  {isExpanded ? (
+                    <>
+                      {/* Header expandido */}
+                      <button
+                        className="w-full text-left flex items-center justify-between gap-2 mb-2 group"
+                        onClick={() => setExpandedPair(null)}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Zap className="h-3.5 w-3.5 text-cyan-400/70 shrink-0" />
+                          <span className="text-xs font-bold font-mono text-foreground">{pair}</span>
+                          <span className="text-[9px] text-muted-foreground/40 font-mono">Ancla IDCA Dinámica</span>
+                        </div>
+                        <span className="text-[9px] text-muted-foreground/40">▲ cerrar</span>
+                      </button>
+                      <AnchorSection context={context} pair={pair} />
+                    </>
+                  ) : (
+                    <AnchorCollapsedRow
+                      context={context}
+                      pair={pair}
+                      onExpand={() => setExpandedPair(pair)}
+                    />
                   )}
                 </div>
               );
@@ -421,7 +481,7 @@ export function IdcaAnchorStatusCard({
             {/* Sección estado de datos de mercado */}
             {marketDataHealth && marketDataHealth.length > 0 && (
               <div className="space-y-2 border-t border-border/20 pt-3">
-                <div className="flex items-center gap-1.5 mb-2">
+                <div className="flex items-center gap-1.5 mb-1.5">
                   <Database className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
                     Estado de datos de mercado
