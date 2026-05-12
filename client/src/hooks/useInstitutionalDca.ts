@@ -86,6 +86,7 @@ export interface IdcaAssetConfig {
   partialTakeProfitPct: string;
   breakevenEnabled: boolean;
   protectionActivationPct: string;
+  beNetBufferPct: string;
   trailingActivationPct: string;
   trailingMarginPct: string;
   cooldownMinutesBetweenBuys: number;
