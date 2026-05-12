@@ -59,6 +59,12 @@ export interface FormatContext {
   parentCycleId?: number | null;
   realizedPnl?: number;
   closeReason?: string;
+  // Net break-even fields
+  beNetBufferPct?: number;
+  grossBreakEvenPrice?: number;
+  netBreakEvenPrice?: number;
+  // Self-heal method
+  method?: string;
   soloSalida?: boolean;
   sourceType?: string;
   isManualCycle?: boolean;
@@ -68,6 +74,7 @@ export interface FormatContext {
   // Rich context for Telegram
   maxBuyCount?: number;
   nextBuyPrice?: number;
+  nextBuyLevel?: number;
   nextBuyLevelPct?: number;
   protectionActivationPct?: number;
   trailingActivationPct?: number;

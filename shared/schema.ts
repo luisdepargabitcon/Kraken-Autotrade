@@ -1065,6 +1065,8 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   breakevenEnabled: boolean("breakeven_enabled").notNull().default(true),
   // New exit sliders: protection → trailing → close
   protectionActivationPct: decimal("protection_activation_pct", { precision: 5, scale: 2 }).notNull().default("1.00"),
+  // Net break-even buffer: adds margin to avgEntryPrice to cover fees/spread when protection triggers
+  beNetBufferPct: decimal("be_net_buffer_pct", { precision: 5, scale: 3 }).notNull().default("0.30"),
   trailingActivationPct: decimal("trailing_activation_pct", { precision: 5, scale: 2 }).notNull().default("3.50"),
   trailingMarginPct: decimal("trailing_margin_pct", { precision: 5, scale: 2 }).notNull().default("1.50"),
   cooldownMinutesBetweenBuys: integer("cooldown_minutes_between_buys").notNull().default(180),

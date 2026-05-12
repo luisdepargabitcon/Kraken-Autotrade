@@ -1414,7 +1414,7 @@ async function checkEntry(
   trailingBuyContext?: { localLow: number; bouncePct: number },
   trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
 ): Promise<void> {
-  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, trailingBuyEntry);
+  const check = await performEntryCheck(pair, currentPrice, config, assetConfig, mode, trailingBuyEntry, observeOnly);
 
   if (!check.allowed) {
     for (const reason of check.blockReasons) {
@@ -1937,11 +1937,53 @@ async function manageCycle(
 
   // For imported gestión-completa cycles with missing nextBuyPrice, recalculate on every tick.
   // This self-heals existing cycles regardless of status (active, paused, blocked, tp_armed).
-  if (cycle.isImported && !cycle.soloSalida) {
+  // Also applies to normal cycles that somehow lost nextBuyPrice.
+  if (!cycle.soloSalida) {
     const storedNext = parseFloat(String(cycle.nextBuyPrice || "0"));
     if (storedNext <= 0) {
-      // Si ladder ATRP está activo, no usar safety orders legacy para evitar doble ejecución
-      if (!assetConfig.ladderAtrpEnabled) {
+      // Si ladder ATRP está activo, calcular siguiente nivel con ATRP
+      if (assetConfig.ladderAtrpEnabled && assetConfig.ladderAtrpConfigJson) {
+        try {
+          const { idcaLadderAtrpService } = await import('./IdcaLadderAtrpService');
+          const frozenAnchor = vwapAnchorMemory.get(pair);
+          const ladder = await idcaLadderAtrpService.calculateLadder(
+            pair,
+            assetConfig.ladderAtrpConfigJson as import('./IdcaTypes').LadderAtrpConfig,
+            undefined,
+            frozenAnchor?.anchorPrice
+          );
+
+          // Find next level based on current buyCount (0=base already bought, 1+=next safety)
+          const currentBuyCount = cycle.buyCount || 1;
+          const nextLevel = ladder.levels.find(l => l.level >= currentBuyCount);
+
+          if (nextLevel && nextLevel.triggerPrice > 0) {
+            await repo.updateCycle(cycle.id, {
+              nextBuyLevelPct: nextLevel.dipPct.toFixed(2),
+              nextBuyPrice: nextLevel.triggerPrice.toFixed(8),
+            });
+            console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated via ATRP ladder → $${nextLevel.triggerPrice.toFixed(2)} (level=${nextLevel.level}, dip=${nextLevel.dipPct.toFixed(2)}%)`);
+
+            // Create event for traceability
+            await createHumanEvent({
+              cycleId: cycle.id, pair, mode,
+              eventType: "cycle_data_healed",
+              severity: "info",
+              message: `Próxima compra recalculada: $${nextLevel.triggerPrice.toFixed(2)} usando ladder ATRP (nivel ${nextLevel.level})`,
+            }, {
+              eventType: "cycle_data_healed", pair, mode,
+              nextBuyPrice: nextLevel.triggerPrice,
+              nextBuyLevel: nextLevel.level,
+              method: "ladder_atrp",
+            });
+          } else {
+            console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: no valid next level found in ATRP ladder (totalLevels=${ladder.totalLevels})`);
+          }
+        } catch (error) {
+          console.error(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: failed to calculate ATRP ladder`, error);
+        }
+      } else {
+        // Usar safety orders legacy cuando ladder ATRP no está activo
         const safetyOrders = parseSafetyOrders(assetConfig.safetyOrdersJson);
         const effectiveSafety = calculateEffectiveSafetyLevel(
           safetyOrders,
@@ -1957,13 +1999,23 @@ async function manageCycle(
             skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
           });
           console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${effectiveSafety.nextBuyPrice.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
+
+          // Create event for traceability
+          await createHumanEvent({
+            cycleId: cycle.id, pair, mode,
+            eventType: "cycle_data_healed",
+            severity: "info",
+            message: `Próxima compra recalculada: $${effectiveSafety.nextBuyPrice.toFixed(2)} usando safety orders`,
+          }, {
+            eventType: "cycle_data_healed", pair, mode,
+            nextBuyPrice: effectiveSafety.nextBuyPrice,
+            method: "safety_orders",
+          });
         } else if (effectiveSafety.skippedLevels !== (cycle.skippedSafetyLevels ?? 0)) {
           // Update skipped count even if no valid next level
           await repo.updateCycle(cycle.id, { skippedSafetyLevels: effectiveSafety.skippedLevels });
           console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: skippedSafetyLevels updated → ${effectiveSafety.skippedLevels}`);
         }
-      } else {
-        console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: ladder ATRP enabled, skipping safety orders legacy calculation`);
       }
     }
   }
@@ -2056,6 +2108,7 @@ async function handleActiveState(
 
   // Lógica de seguridad existente como fallback
   const protectionActivationPct = parseFloat(String(assetConfig.protectionActivationPct ?? "1.00"));
+  const beNetBufferPct = parseFloat(String(assetConfig.beNetBufferPct ?? "0.30"));
   const trailingActivationPct = parseFloat(String(assetConfig.trailingActivationPct ?? "3.50"));
   const trailingMarginPct = parseFloat(String(assetConfig.trailingMarginPct ?? "1.50"));
 
@@ -2090,26 +2143,33 @@ async function handleActiveState(
     console.warn(`${TAG}[BE_EVAL] #${cycle.id} ${pair} | BLOCKED: protectionActivationPct=${protectionActivationPct} is invalid (<=0 or NaN) — BE will NEVER arm. Check assetConfig.`);
   }
 
-  // 1. ARM PROTECTION (break-even as safety net, NOT an exit)
+  // 1. ARM PROTECTION (net break-even as safety net, NOT an exit)
   // GUARD: skip if bePercent is invalid (0, NaN, negative) — prevents arming at avg with no threshold
   if (!isProtectionArmed && isBePercentValid && pnlPct >= protectionActivationPct && avgEntry > 0) {
-    const stopPrice = avgEntry; // break-even = avg entry price
+    // Net break-even: add buffer to cover fees/spread (default 0.30%)
+    const beNetBufferPct = parseFloat(String(assetConfig.beNetBufferPct ?? "0.30"));
+    const grossStopPrice = avgEntry;
+    const netStopPrice = avgEntry * (1 + beNetBufferPct / 100);
+
     await repo.updateCycle(cycle.id, {
       protectionArmedAt: new Date(),
-      protectionStopPrice: stopPrice.toFixed(8),
+      protectionStopPrice: netStopPrice.toFixed(8),
     });
 
     await createHumanEvent({
       cycleId: cycle.id, pair, mode,
       eventType: "protection_armed",
       severity: "info",
-      message: `Protección armada a +${pnlPct.toFixed(2)}%: stop en $${stopPrice.toFixed(2)} (break-even)`,
+      message: `Protección armada en BE neto: precio medio=$${grossStopPrice.toFixed(2)}, buffer=${beNetBufferPct.toFixed(2)}%, stop=$${netStopPrice.toFixed(2)}`,
     }, {
       eventType: "protection_armed", pair, mode,
       price: currentPrice, avgEntry, pnlPct,
+      beNetBufferPct,
+      grossBreakEvenPrice: grossStopPrice,
+      netBreakEvenPrice: netStopPrice,
     });
 
-    await telegram.alertProtectionArmed(cycle, currentPrice, stopPrice, pnlPct);
+    await telegram.alertProtectionArmed(cycle, currentPrice, netStopPrice, pnlPct);
     // Don't return — continue checking trailing activation in same tick
   }
 
@@ -2823,7 +2883,8 @@ async function performEntryCheck(
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
   mode: IdcaMode,
-  trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number }
+  trailingBuyEntry?: { localLow: number; buyThreshold: number; maxExecutionPrice: number },
+  observeOnly?: boolean
 ): Promise<IdcaEntryCheckResult> {
   const blocks: IdcaBlockReason[] = [];
   const now = new Date();
@@ -3436,7 +3497,8 @@ async function performEntryCheck(
     blocks.length === 0 ? "allowed" : "blocked",
     blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
     entryDipPct, minDip, basePriceResult, currentPrice,
-    effectiveBasePrice, basePriceMethod
+    effectiveBasePrice, basePriceMethod,
+    observeOnly
   );
 
   return {
@@ -3591,15 +3653,21 @@ function logBasePriceDebug(pair: string, currentPrice: number, base: BasePriceRe
 function logEntryDecision(
   pair: string, mode: string, action: "allowed" | "blocked", reason: string,
   dip: number, minDip: number, base: BasePriceResult, currentPrice: number,
-  effectiveBasePrice?: number, basePriceMethod?: string
+  effectiveBasePrice?: number, basePriceMethod?: string,
+  observeOnly?: boolean
 ): void {
   const effBase = effectiveBasePrice ?? base.price;
   const effMethod = basePriceMethod ?? base.type ?? "hybrid";
   const drawdownFromEff = effBase > 0 ? ((effBase - currentPrice) / effBase) * 100 : dip;
+
+  // Determine effective action label for logging
+  const effectiveAction = observeOnly ? "observed" : action;
+
   console.log(
     `${TAG}[IDCA_ENTRY_DECISION]` +
     ` pair=${pair}` +
-    ` action=${action}` +
+    ` action=${effectiveAction}` +
+    ` observeOnly=${observeOnly ?? false}` +
     ` reason="${reason}"` +
     ` hybrid_base_price=${base.price.toFixed(2)}` +
     ` effective_entry_reference=${effBase.toFixed(2)}` +
@@ -3608,24 +3676,38 @@ function logEntryDecision(
     ` required_drop=${minDip.toFixed(2)}%` +
     ` current_price=${currentPrice.toFixed(2)}`
   );
-  // Persist to DB (always for "allowed"; throttled 5min for "blocked" to avoid DB spam)
+
+  // Persist to DB (always for "allowed" non-observe; throttled 5min for "blocked"/"observed" to avoid DB spam)
   const now = Date.now();
   const last = lastEntryEventMs.get(pair) ?? 0;
-  if (action === "allowed" || now - last >= ENTRY_EVENT_THROTTLE_MS) {
+
+  // Always persist for non-observe allowed entries; throttle for blocked and observed
+  const shouldPersist = (!observeOnly && action === "allowed") || now - last >= ENTRY_EVENT_THROTTLE_MS;
+
+  if (shouldPersist) {
     lastEntryEventMs.set(pair, now);
+
+    // Build message based on context
+    let message: string;
+    if (observeOnly) {
+      message = `[${pair}] Entrada observada — ciclo activo gestiona esta condición | caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`;
+    } else if (action === "allowed") {
+      message = `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`;
+    } else {
+      message = `[${pair}] Entrada bloqueada (${reason}) — caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}%`;
+    }
+
     repo.createEvent({
       pair,
       mode,
-      eventType: "entry_evaluated",
+      eventType: observeOnly ? "entry_observed" : "entry_evaluated",
       severity: "info",
-      message: action === "allowed"
-        ? `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`
-        : `[${pair}] Entrada bloqueada (${reason}) — caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}%`,
-      payloadJson: { action, reason, dip, minDip, basePrice: base.price, currentPrice, baseMethod: base.meta?.selectedMethod ?? base.type },
+      message,
+      payloadJson: { action: effectiveAction, reason, dip, minDip, basePrice: base.price, currentPrice, baseMethod: base.meta?.selectedMethod ?? base.type, observeOnly: observeOnly ?? false },
     }).then(() => {
-      console.log(`${TAG}[ENTRY_EVENT] Persisted entry_evaluated pair=${pair} mode=${mode} action=${action}`);
+      console.log(`${TAG}[ENTRY_EVENT] Persisted ${observeOnly ? "entry_observed" : "entry_evaluated"} pair=${pair} mode=${mode} action=${effectiveAction}`);
     }).catch(e => {
-      console.error(`${TAG}[ENTRY_EVENT] FAILED to persist entry_evaluated pair=${pair}: ${e?.message}`);
+      console.error(`${TAG}[ENTRY_EVENT] FAILED to persist entry event pair=${pair}: ${e?.message}`);
     });
   }
 }
