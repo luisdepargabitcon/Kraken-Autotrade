@@ -1179,6 +1179,14 @@ END $$;
     const idcaDynamicAnchorPath = path.resolve(process.cwd(), "db", "migrations", "035_idca_dynamic_anchor_config.sql");
     await tryExecuteFile(db, idcaDynamicAnchorPath, "idca_dynamic_anchor_config");
 
+    // ============================================================
+    // LOTE 5: IDCA NET BREAK-EVEN BUFFER (036)
+    // Adds be_net_buffer_pct to institutional_dca_asset_configs for fee-aware BE protection.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA net break-even buffer column exists...");
+    const idcaBeNetBufferPath = path.resolve(process.cwd(), "db", "migrations", "036_idca_be_net_buffer.sql");
+    await tryExecuteFile(db, idcaBeNetBufferPath, "idca_be_net_buffer");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
