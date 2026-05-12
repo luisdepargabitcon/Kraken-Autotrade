@@ -108,7 +108,6 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
-import { IdcaAnchorStatusCard } from "@/components/idca/IdcaAnchorStatusCard";
 import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
 import { IhcaNavigationProvider, useOptionalIdcaNavigation } from "@/hooks/IdcaNavigationContext";
 
@@ -397,18 +396,12 @@ function SummaryTab() {
         <KpiCard icon={Activity} label="Ciclos Activos" value={String(summary.activeCyclesCount)} />
       </div>
 
-      {/* Contexto de Mercado */}
+      {/* Contexto de Mercado — ancla dinámica integrada con estado de datos */}
       <IdcaMarketContextSummary
         previews={marketCtx.data}
+        marketDataHealth={marketHealth.data}
         isLoading={marketCtx.isLoading}
         error={marketCtx.error}
-      />
-
-      {/* Ancla IDCA + Estado de datos de mercado */}
-      <IdcaAnchorStatusCard
-        contextPreviews={marketCtx.data}
-        marketDataHealth={marketHealth.data}
-        isLoading={marketCtx.isLoading || marketHealth.isLoading}
       />
 
       {/* Active Cycles */}

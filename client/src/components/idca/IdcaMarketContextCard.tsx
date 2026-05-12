@@ -9,9 +9,9 @@
  */
 import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Clock, Info, MapPin } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Clock, Database, Info, MapPin, XCircle, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MarketContextPreview } from "@/hooks/useInstitutionalDca";
+import type { MarketContextPreview, MarketDataHealthResult } from "@/hooks/useInstitutionalDca";
 import {
   getFreshnessState,
   getReferencePriceState,
@@ -117,7 +117,54 @@ function ZoneBar({ zone }: { zone?: VwapZone }) {
   );
 }
 
-// ─── CompactRow (siempre visible) ─────────────────────────────────────────────
+// ─── Estado de datos mini (integrado en DetailPanel) ─────────────────────────
+
+const DATA_READINESS_LABELS: Record<string, { text: string; color: string }> = {
+  datos_completos:     { text: "Datos completos",     color: "text-emerald-400" },
+  datos_suficientes:   { text: "Datos suficientes",   color: "text-cyan-400"    },
+  datos_parciales:     { text: "Datos parciales",     color: "text-amber-400"   },
+  datos_insuficientes: { text: "Datos insuficientes", color: "text-orange-400"  },
+  feed_detenido:       { text: "Feed detenido",       color: "text-red-400"     },
+};
+
+function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
+  const state = DATA_READINESS_LABELS[health.dataReadinessState] ?? { text: health.dataReadinessState ?? "Desconocido", color: "text-zinc-400" };
+  const ageMin = health.lastCandleAgeMinutes;
+
+  return (
+    <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-1">
+      <div className="flex items-center justify-between gap-1">
+        <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Estado de datos</div>
+        {health.canUseDynamicAnchor
+          ? <CheckCircle className="h-3 w-3 text-emerald-400 shrink-0" />
+          : <XCircle className="h-3 w-3 text-red-400 shrink-0" />
+        }
+      </div>
+      <div className={cn("text-xs font-semibold font-mono", state.color)}>{state.text}</div>
+      <div className="grid grid-cols-2 gap-x-2">
+        <div className="flex justify-between gap-1">
+          <span className="text-[9px] text-muted-foreground/40 font-mono">Velas</span>
+          <span className="text-[9px] font-mono text-foreground/60">{health.candleCount}/{health.requiredCandles}</span>
+        </div>
+        {ageMin != null && (
+          <div className="flex justify-between gap-1">
+            <span className="text-[9px] text-muted-foreground/40 font-mono">Última</span>
+            <span className={cn("text-[9px] font-mono", ageMin > 90 ? "text-red-400" : "text-foreground/60")}>
+              {ageMin < 60 ? `${ageMin}m` : `${Math.floor(ageMin / 60)}h${ageMin % 60 > 0 ? ` ${ageMin % 60}m` : ""}`}
+            </span>
+          </div>
+        )}
+      </div>
+      {health.canUseDynamicAnchor && (
+        <div className="flex items-center gap-1 text-[9px] text-emerald-400/70 font-mono">
+          <Zap className="h-2.5 w-2.5" />Ancla IDCA activa
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CompactRow (siempre visible) ───────────────────────────────────────────────────
 
 function IdcaMarketContextCompactRow({
   data,
@@ -132,6 +179,7 @@ function IdcaMarketContextCompactRow({
   const refState = getReferencePriceState(data.anchorPriceUpdatedAt);
   const drawdown = data.drawdownPct ?? 0;
   const freshness = getFreshnessState(data.lastUpdated);
+  const anchorDecision = (data.referenceContext as any)?.dynamicAnchor?.decision as string | undefined;
 
   const refColor = refState === "recently_changed" ? "text-red-400" : "text-emerald-400";
   const drawdownColor = drawdown > 0 ? "text-red-400" : "text-green-400";
@@ -177,12 +225,27 @@ function IdcaMarketContextCompactRow({
           {zoneVisual.labelShort}
         </span>
         <FreshnessChip lastUpdated={data.lastUpdated} />
-        {(data.qualityDetail?.status !== "ok") && (
+        {anchorDecision === "ciclo_activo_solo_contexto" && (
+          <span className="text-[9px] font-mono px-1 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/20">
+            Ciclo activo
+          </span>
+        )}
+        {anchorDecision === "precio_caro_no_perseguir" && (
+          <span className="text-[9px] font-mono px-1 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/20">
+            Precio caro
+          </span>
+        )}
+        {anchorDecision === "bloquear_nuevas_entradas_por_datos" && (
+          <span className="text-[9px] font-mono px-1 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/20">
+            Datos insuf.
+          </span>
+        )}
+        {(data.qualityDetail?.status !== "ok") && anchorDecision !== "bloquear_nuevas_entradas_por_datos" && (
           <QualityChip qualityDetail={data.qualityDetail} dataQuality={data.dataQuality} effectiveReferenceSource={data.effectiveReferenceSource} />
         )}
         {refState === "recently_changed" && (
           <span className="text-[9px] font-mono px-1 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/20">
-            Ref {formatAgeLabel(data.referenceUpdatedAt)}
+            Ref. antigua
           </span>
         )}
       </div>
@@ -197,7 +260,7 @@ function IdcaMarketContextCompactRow({
 
 // ─── DetailPanel (expandible) ─────────────────────────────────────────────────
 
-function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) {
+function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContextPreview; healthData?: MarketDataHealthResult }) {
   const zoneVisual = getZoneVisual(data.vwapZone);
   const refState = getReferencePriceState(data.referenceUpdatedAt);
   const atrpLabel = getAtrpLabel(data.atrPct);
@@ -215,15 +278,8 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
 
   const rc = data.referenceContext ?? null;
 
-  // Información de fuente de referencia
   const vwapStatus   = rc?.vwapStatus;
   const isWarmingUp  = vwapStatus === "warming_up";
-  const isHybrid     = rc?.referenceSource === "hybrid_v2" || rc?.referenceSource === "hybrid_fallback";
-  // L2 fix: isFrozen desde effectiveReferenceSource (fuente primaria del engine).
-  // En producción vwapStatus puede llegar como "used" aunque el engine use ancla congelada.
-  const isFrozen     = data.effectiveReferenceSource === "vwap_anchor" || data.frozenAnchorPrice != null;
-  // isVwapFull: VWAP live activo solo si manda directamente (sin ancla congelada sobreponiendo)
-  const isVwapFull   = vwapStatus === "used" && !isFrozen;
 
   // Etiqueta dinámica: la Ancla IDCA manda, no la fuente legacy
   const dynamicDecision = (rc as any)?.dynamicAnchor?.decision as string | undefined;
@@ -322,61 +378,25 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
                 : `${data.frozenAnchorCandleAgeHours.toFixed(1)}h`}
             </div>
           )}
-          {/* Badges de fuente + L2.2 anchorStatus */}
-          {rc && (
-            <div className="mt-0.5 space-y-0.5">
-              <div className="flex flex-wrap gap-1">
-                <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${refBadgeCls}`}>
-                  {refBadgeLabel}
-                </div>
-                {/* L2.2: badge anchorStatus */}
-                {anchorStatusBadge && (
-                  <div className={`inline-block text-[8px] font-mono border rounded px-1 py-0 ${anchorStatusBadge.cls}`}>
-                    {anchorStatusBadge.label}
-                  </div>
-                )}
-              </div>
-              {rc.referenceReason && (
-                <div className="text-[8px] text-muted-foreground/50 font-mono leading-tight">
-                  {rc.referenceReason}
-                </div>
-              )}
-              {isFrozen && rc.vwapReliability?.reason && (
-                <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
-                  {rc.vwapReliability.reason}
-                </div>
-              )}
-              {isWarmingUp && (
-                <div className="text-[8px] text-zinc-400/70 font-mono leading-tight">
-                  VWAP actual pendiente de datos: el sistema está cargando velas.
-                </div>
-              )}
-              {!rc.vwapUsed && !isWarmingUp && rc.vwapRejectReason && (
-                <div className="text-[8px] text-amber-400/70 font-mono leading-tight">
-                  {rc.vwapRejectReason}
-                </div>
-              )}
-              {isHybrid && rc.hybridCandidatePrice != null && rc.hybridCandidatePrice > 0 && (
-                <div className="text-[8px] text-blue-400/60 font-mono leading-tight">
-                  Hybrid: ${rc.hybridCandidatePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                </div>
-              )}
-              {isHybrid && (rc.hybridCandidatePrice == null || rc.hybridCandidatePrice <= 0) && (
-                <div className="text-[8px] text-zinc-500/60 font-mono leading-tight">
-                  Hybrid no disponible
-                </div>
-              )}
-              {/* L2.3: ancla anterior si existe */}
-              {rc.previousAnchor && (
-                <div className="text-[8px] text-muted-foreground/40 font-mono leading-tight pt-0.5 border-t border-border/20 mt-0.5">
-                  Anterior: ${rc.previousAnchor.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                  {rc.previousAnchor.replacedAt != null && (
-                    <span> · {formatAgeLabel(new Date(rc.previousAnchor.replacedAt).toISOString())}</span>
-                  )}
-                  {rc.previousAnchor.invalidationReason && (
-                    <span className="block text-muted-foreground/30">{rc.previousAnchor.invalidationReason}</span>
-                  )}
-                </div>
+          {/* Estado dinámico del ancla — solo badges limpios */}
+          <div className="mt-1 flex flex-wrap gap-1">
+            {rc && (
+              <span className={`inline-flex text-[8px] font-mono border rounded px-1.5 py-0.5 ${refBadgeCls}`}>
+                {refBadgeLabel}
+              </span>
+            )}
+            {anchorStatusBadge && (
+              <span className={`inline-flex text-[8px] font-mono border rounded px-1.5 py-0.5 ${anchorStatusBadge.cls}`}>
+                {anchorStatusBadge.label}
+              </span>
+            )}
+          </div>
+          {/* Referencia anterior como dato secundario — sin texto técnico raw */}
+          {rc?.previousAnchor && (
+            <div className="text-[9px] text-muted-foreground/40 font-mono mt-0.5">
+              Ref. anterior: ${rc.previousAnchor.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+              {rc.previousAnchor.replacedAt != null && (
+                <span> · {formatAgeLabel(new Date(rc.previousAnchor.replacedAt).toISOString())}</span>
               )}
             </div>
           )}
@@ -420,35 +440,38 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
         </div>
       )}
 
-      {/* ── 3. VWAP ACTUAL (contexto secundario) ──────────────────────────── */}
-      {showVwapVsFrozen && (
-        <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">VWAP actual (contexto)</div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold font-mono text-muted-foreground/60">
-              ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-            </span>
+      {/* ── 3. LECTURA DEL MERCADO ───────────────────────────────── */}
+      {(showVwapVsFrozen || showTechnicalBase || healthData) && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Database className="h-3 w-3 text-muted-foreground/40" />
+            <span className="text-[9px] text-muted-foreground/50 font-mono uppercase tracking-wide">Lectura del mercado</span>
           </div>
-          <div className="text-[9px] text-muted-foreground/40 font-mono leading-tight">
-            La Ancla IDCA Dinámica decide la referencia de entrada.
-          </div>
-        </div>
-      )}
-
-      {/* ── 4. ESTRUCTURA RECIENTE / BASE TÉCNICA (contexto secundario) ────────── */}
-      {showTechnicalBase && (
-        <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
-          <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Estructura reciente</div>
-          <div className="flex items-baseline gap-2">
-            <div className="text-sm font-semibold font-mono text-muted-foreground/60">
-              ${data.technicalBasePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-            </div>
-            <div className="text-[9px] text-muted-foreground/40 font-mono">
-              {rc?.hybridCandidateMethod ?? data.technicalBaseType}
-            </div>
-          </div>
-          <div className="text-[9px] text-muted-foreground/40 font-mono">
-            {rc?.hybridReason ?? data.technicalBaseReason ?? "Base técnica reciente"}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {showVwapVsFrozen && (
+              <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+                <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">VWAP actual</div>
+                <div className="text-sm font-semibold font-mono text-muted-foreground/60">
+                  ${data.anchorPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                </div>
+                <div className="text-[9px] text-muted-foreground/40 font-mono">Solo contexto</div>
+              </div>
+            )}
+            {showTechnicalBase && (
+              <div className="rounded border border-border/20 bg-muted/5 p-2 space-y-0.5">
+                <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Estructura reciente</div>
+                <div className="flex items-baseline gap-1.5">
+                  <div className="text-sm font-semibold font-mono text-muted-foreground/60">
+                    ${data.technicalBasePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground/40 font-mono">
+                    {rc?.hybridCandidateMethod ?? data.technicalBaseType}
+                  </div>
+                </div>
+                <div className="text-[9px] text-muted-foreground/40 font-mono">Basada en estructura reciente</div>
+              </div>
+            )}
+            {healthData && <DataHealthMini health={healthData} />}
           </div>
         </div>
       )}
@@ -511,10 +534,12 @@ function IdcaMarketContextDetailPanel({ data }: { data: MarketContextPreview }) 
 
 export function IdcaMarketContextSummary({
   previews,
+  marketDataHealth,
   isLoading,
   error,
 }: {
   previews?: MarketContextPreview[];
+  marketDataHealth?: MarketDataHealthResult[];
   isLoading: boolean;
   error?: Error | null;
 }) {
@@ -567,7 +592,7 @@ export function IdcaMarketContextSummary({
                 />
                 {expandedPairs.has(p.pair) && (
                   <div className="border border-t-0 border-border/30 rounded-b-lg overflow-hidden">
-                    <IdcaMarketContextDetailPanel data={p} />
+                    <IdcaMarketContextDetailPanel data={p} healthData={marketDataHealth?.find(h => h.pair === p.pair)} />
                   </div>
                 )}
               </div>
