@@ -17,6 +17,7 @@ import { INSTITUTIONAL_DCA_ALLOWED_PAIRS } from "@shared/schema";
 import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
 import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
+import { checkMarketDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -965,6 +966,32 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     try {
       const status = engine.getVwapAnchorStatus();
       res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Salud de datos de mercado (Lote 5) ─────────────────────────
+
+  app.get(`${PREFIX}/market-data-health/:pair`, async (req, res) => {
+    try {
+      const pair = decodeURIComponent(req.params.pair);
+      const config = await repo.getIdcaConfig();
+      const mode = config.mode ?? "simulation";
+      const result = await checkMarketDataHealth(pair, mode);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get(`${PREFIX}/market-data-health`, async (_req, res) => {
+    try {
+      const config = await repo.getIdcaConfig();
+      const mode = config.mode ?? "simulation";
+      const pairs = ["BTC/USD", "ETH/USD"];
+      const results = await Promise.all(pairs.map(p => checkMarketDataHealth(p, mode)));
+      res.json(results);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

@@ -346,6 +346,29 @@ export interface MarketContextPreview {
   referenceContext?: IdcaReferenceContext | null;
 }
 
+export interface MarketDataHealthResult {
+  pair: string;
+  timeframe: string;
+  source: string;
+  candleCount: number;
+  requiredCandles: number;
+  sufficientCandles: number;
+  minimumCandles: number;
+  missingCandles: number;
+  lastCandleTimestamp: number | null;
+  lastCandleAgeMinutes: number | null;
+  timeframeMinutes: number;
+  estimatedReadyAt: string | null;
+  hasGaps: boolean;
+  gapCount: number;
+  backfillStatus: "no_necesario" | "solicitado" | "completado" | "fallido" | "en_progreso";
+  dataReadinessState: "datos_completos" | "datos_suficientes" | "datos_parciales" | "datos_insuficientes" | "feed_detenido";
+  canUseDynamicAnchor: boolean;
+  canOpenNewIdcaCycle: boolean;
+  reason: string;
+  checkedAt: string;
+}
+
 export interface IdcaSummary {
   mode: string;
   schedulerMode?: string;
@@ -1075,6 +1098,38 @@ export function useAllMarketContextPreviews() {
     },
     staleTime: 30000,
     refetchInterval: 60000,
+  });
+}
+
+export function useMarketDataHealth(pair: string) {
+  return useQuery<MarketDataHealthResult, Error>({
+    queryKey: ["idca", "market-data-health", pair],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${PREFIX}/market-data-health/${encodeURIComponent(pair)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to fetch market data health");
+      }
+      return res.json();
+    },
+    staleTime: 60000,
+    refetchInterval: 120000,
+  });
+}
+
+export function useAllMarketDataHealth() {
+  return useQuery<MarketDataHealthResult[], Error>({
+    queryKey: ["idca", "market-data-health-all"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${PREFIX}/market-data-health`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to fetch all market data health");
+      }
+      return res.json();
+    },
+    staleTime: 60000,
+    refetchInterval: 120000,
   });
 }
 

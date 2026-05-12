@@ -46,6 +46,7 @@ import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
+import { resolveDynamicAnchor, type DynamicAnchorResult } from "./IdcaDynamicAnchorService";
 
 const TAG = "[IDCA]";
 
@@ -2896,122 +2897,134 @@ async function performEntryCheck(
     blocks.push({ code: "insufficient_base_price_data", message: basePriceResult.reason, timestamp: now });
   }
 
-  // ── VWAP Anchor Memory — update here so it works for ALL paths (bot + observe-only) ──
+  // ── Helper: normalizar timestamps a milisegundos (Kraken puede enviar segundos) ──
+  const normalizeTimestampMs = (value: unknown, fallback = Date.now()): number => {
+    if (value instanceof Date) {
+      const t = value.getTime();
+      return Number.isFinite(t) ? t : fallback;
+    }
+    if (typeof value === "string") {
+      const t = new Date(value).getTime();
+      return Number.isFinite(t) ? t : fallback;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value <= 0) return fallback;
+      return value < 1e12 ? value * 1000 : value;
+    }
+    return fallback;
+  };
+
+  // ── Helper: aplicar lógica legacy de VWAP anchor ────────────────────────
+  // Encapsulada para poder invocarla tanto en modo legacy directo como en fallback
+  // cuando el servicio dinámico falla y idcaDynamicAnchorFallbackToLegacy=true.
   const anchorPriceBefore = vwapAnchorMemory.get(pair)?.anchorPrice ?? null;
-  if (assetConfig.vwapEnabled && basePriceResult.price > 0) {
+  const applyLegacyVwapAnchor = async (): Promise<void> => {
+    if (!assetConfig.vwapEnabled || !(basePriceResult.price > 0)) return;
     const rawTs = basePriceResult.timestamp;
     const newSwingTs =
       rawTs instanceof Date     ? rawTs.getTime() :
       typeof rawTs === "string" ? new Date(rawTs).getTime() :
       typeof rawTs === "number" ? rawTs :
       Date.now();
+    if (isNaN(newSwingTs)) return;
+    const newSwingPrice = basePriceResult.price;
 
-    if (!isNaN(newSwingTs)) {
-      const newSwingPrice = basePriceResult.price;
-
-      // Regla 1: resetear si precio supera la ancla CON HISTÉRESIS
-      const currentAnchor = vwapAnchorMemory.get(pair);
-      if (currentAnchor) {
-        const resetCheck = shouldResetAnchor({
-          pair,
-          currentPrice,
-          anchorPrice: currentAnchor.anchorPrice,
-        });
-        if (resetCheck.shouldReset) {
-          vwapAnchorMemory.delete(pair);
-          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — ${resetCheck.reason}`);
-          
-          // Limpiar estado de trailing buy si la referencia cambia
-          if (TrailingBuyManager.isArmed(pair)) {
-            TrailingBuyManager.disarm(pair);
-            telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "reference_changed")
-              .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(anchor_reset) failed: ${e.message}`));
-          }
-          tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
+    // Regla 1: resetear si precio supera la ancla CON HISTÉRESIS
+    const currentAnchor = vwapAnchorMemory.get(pair);
+    if (currentAnchor) {
+      const resetCheck = shouldResetAnchor({
+        pair,
+        currentPrice,
+        anchorPrice: currentAnchor.anchorPrice,
+      });
+      if (resetCheck.shouldReset) {
+        vwapAnchorMemory.delete(pair);
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: RESET — ${resetCheck.reason}`);
+        if (TrailingBuyManager.isArmed(pair)) {
+          TrailingBuyManager.disarm(pair);
+          telegram.alertTrailingBuyCancelled(pair, mode, currentPrice, "reference_changed")
+            .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyCancelled(anchor_reset) failed: ${e.message}`));
         }
+        tbState.resetTrailingBuyTelegramState(pair, mode, "reference_changed");
       }
+    }
 
-      // Regla 2: ancla solo sube, nunca baja CON THRESHOLD Y COOLDOWN
-      const anchorAfterReset = vwapAnchorMemory.get(pair);
-      if (!anchorAfterReset) {
-        // No hay anchor, crear uno nuevo
+    // Regla 2: ancla solo sube, nunca baja CON THRESHOLD Y COOLDOWN
+    const anchorAfterReset = vwapAnchorMemory.get(pair);
+    if (!anchorAfterReset) {
+      vwapAnchorMemory.set(pair, {
+        anchorPrice: newSwingPrice,
+        anchorTimestamp: newSwingTs,
+        setAt: Date.now(),
+        drawdownPct: 0,
+      });
+      console.log(`${TAG}[VWAP_ANCHOR] ${pair}: NEW — price=${newSwingPrice.toFixed(2)} ts=${new Date(newSwingTs).toISOString()}`);
+    } else {
+      const updateCheck = shouldUpdateAnchor({
+        pair,
+        currentPrice,
+        newSwingPrice,
+        anchorPrice: anchorAfterReset.anchorPrice,
+        anchorSetAt: anchorAfterReset.setAt,
+        now: Date.now(),
+      });
+      if (updateCheck.shouldUpdate) {
         vwapAnchorMemory.set(pair, {
           anchorPrice: newSwingPrice,
           anchorTimestamp: newSwingTs,
           setAt: Date.now(),
           drawdownPct: 0,
+          previous: {
+            anchorPrice: anchorAfterReset.anchorPrice,
+            anchorTimestamp: anchorAfterReset.anchorTimestamp,
+            setAt: anchorAfterReset.setAt,
+            replacedAt: Date.now(),
+          },
         });
-        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: NEW — price=${newSwingPrice.toFixed(2)} ts=${new Date(newSwingTs).toISOString()}`);
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: UPDATE — ${updateCheck.reason}`);
       } else {
-        // Verificar si se debe actualizar usando el helper
-        const updateCheck = shouldUpdateAnchor({
-          pair,
-          currentPrice,
-          newSwingPrice,
-          anchorPrice: anchorAfterReset.anchorPrice,
-          anchorSetAt: anchorAfterReset.setAt,
-          now: Date.now(),
-        });
-        if (updateCheck.shouldUpdate) {
-          vwapAnchorMemory.set(pair, {
-            anchorPrice: newSwingPrice,
-            anchorTimestamp: newSwingTs,
-            setAt: Date.now(),
-            drawdownPct: 0,
-            previous: {
-              anchorPrice: anchorAfterReset.anchorPrice,
-              anchorTimestamp: anchorAfterReset.anchorTimestamp,
-              setAt: anchorAfterReset.setAt,
-              replacedAt: Date.now(),
-            },
-          });
-          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: UPDATE — ${updateCheck.reason}`);
-        } else {
-          console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE — ${updateCheck.reason}`);
-        }
-      }
-
-      // Actualizar drawdown acumulado
-      const frozenNow = vwapAnchorMemory.get(pair);
-      if (frozenNow) {
-        frozenNow.drawdownPct = ((frozenNow.anchorPrice - currentPrice) / frozenNow.anchorPrice) * 100;
-        vwapAnchorMemory.set(pair, frozenNow);
-      }
-
-      const fa = vwapAnchorMemory.get(pair);
-      console.log(
-        `${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`
-      );
-
-      // Alerta: ancla cambió (precio más alto registrado)
-      if (fa && fa.anchorPrice !== anchorPriceBefore) {
-        const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
-        telegram.alertVwapAnchorChanged(pair, mode, anchorPriceBefore, fa.anchorPrice, anchorAgeHours, fa.drawdownPct)
-          .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapAnchorChanged failed: ${e.message}`));
-      }
-
-      // Alerta: hito de drawdown (-5%, -10%, -15%, -20%)
-      if (fa && fa.drawdownPct > 0) {
-        const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
-        telegram.alertVwapDrawdownMilestone(pair, mode, fa.drawdownPct, fa.anchorPrice, anchorAgeHours)
-          .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapDrawdownMilestone failed: ${e.message}`));
-      }
-
-      // Persist to DB (await to ensure memory/DB sync for UI consistency)
-      if (fa) {
-        await repo.upsertVwapAnchor({
-          pair,
-          anchorPrice:    fa.anchorPrice,
-          anchorTs:       fa.anchorTimestamp,
-          setAt:          fa.setAt,
-          drawdownPct:    fa.drawdownPct,
-          prevPrice:      fa.previous?.anchorPrice ?? null,
-          prevTs:         fa.previous?.anchorTimestamp ?? null,
-          prevSetAt:      fa.previous?.setAt ?? null,
-          prevReplacedAt: fa.previous?.replacedAt ?? null,
-        }).catch(e => console.warn(`${TAG}[VWAP_ANCHOR] DB persist failed for ${pair}: ${e.message}`));
+        console.log(`${TAG}[VWAP_ANCHOR] ${pair}: SKIP UPDATE — ${updateCheck.reason}`);
       }
     }
+
+    const frozenNow = vwapAnchorMemory.get(pair);
+    if (frozenNow) {
+      frozenNow.drawdownPct = ((frozenNow.anchorPrice - currentPrice) / frozenNow.anchorPrice) * 100;
+      vwapAnchorMemory.set(pair, frozenNow);
+    }
+    const fa = vwapAnchorMemory.get(pair);
+    console.log(
+      `${TAG}[VWAP_ANCHOR] ${pair} newSwing=${newSwingPrice.toFixed(2)} curPrice=${currentPrice.toFixed(2)} anchor=${fa?.anchorPrice?.toFixed(2) ?? "null"} dd=${fa?.drawdownPct?.toFixed(2) ?? "null"}%`
+    );
+    if (fa && fa.anchorPrice !== anchorPriceBefore) {
+      const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
+      telegram.alertVwapAnchorChanged(pair, mode, anchorPriceBefore, fa.anchorPrice, anchorAgeHours, fa.drawdownPct)
+        .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapAnchorChanged failed: ${e.message}`));
+    }
+    if (fa && fa.drawdownPct > 0) {
+      const anchorAgeHours = (Date.now() - fa.setAt) / 3600000;
+      telegram.alertVwapDrawdownMilestone(pair, mode, fa.drawdownPct, fa.anchorPrice, anchorAgeHours)
+        .catch(e => console.warn(`${TAG}[TELEGRAM] alertVwapDrawdownMilestone failed: ${e.message}`));
+    }
+    if (fa) {
+      await repo.upsertVwapAnchor({
+        pair,
+        anchorPrice:    fa.anchorPrice,
+        anchorTs:       fa.anchorTimestamp,
+        setAt:          fa.setAt,
+        drawdownPct:    fa.drawdownPct,
+        prevPrice:      fa.previous?.anchorPrice ?? null,
+        prevTs:         fa.previous?.anchorTimestamp ?? null,
+        prevSetAt:      fa.previous?.setAt ?? null,
+        prevReplacedAt: fa.previous?.replacedAt ?? null,
+      }).catch(e => console.warn(`${TAG}[VWAP_ANCHOR] DB persist failed for ${pair}: ${e.message}`));
+    }
+  };
+
+  // ── VWAP Anchor Memory — ejecutar legacy si Ancla Dinámica está desactivada o kill switch activo ──
+  const _legacyAnchorActive = !(config.idcaDynamicAnchorEnabled ?? true) || (config.idcaDynamicAnchorEmergencyDisable ?? false);
+  if (_legacyAnchorActive) {
+    await applyLegacyVwapAnchor();
   }
 
   // Read frozen anchor (just updated above)
@@ -3059,13 +3072,152 @@ async function performEntryCheck(
     }
   }
 
-  // ── Effective base price: VWAP Anchor manda, Hybrid V2.1 es fallback ──
+  // ── Ancla Dinámica IDCA (Lote 5) ─────────────────────────────────────────
+  // Si idcaDynamicAnchorEnabled=true, el servicio dinámico decide si renovar, mantener,
+  // esperar o bloquear. Si emergencyDisable=true, cae al comportamiento anterior.
+  let dynamicAnchorResult: DynamicAnchorResult | null = null;
+  const dynamicAnchorEnabled = config.idcaDynamicAnchorEnabled ?? true;
+  const emergencyDisable = config.idcaDynamicAnchorEmergencyDisable ?? false;
+
+  if (dynamicAnchorEnabled && !emergencyDisable) {
+    // Verificar si hay ciclo activo real para este par (no hardcoded)
+    const hasCycleForAnchor = await repo.hasActiveCycleForPair(pair, mode);
+    // Verificar salida pendiente: si hay ciclo, leer instrucción activa
+    let hasPendingExitForAnchor = false;
+    if (hasCycleForAnchor) {
+      const activeCycles = await repo.getAllActiveCyclesForPair(pair, mode);
+      for (const c of activeCycles) {
+        if (await exitRepo.hasPendingExitInstruction(c.id)) {
+          hasPendingExitForAnchor = true;
+          break;
+        }
+      }
+    }
+
+    // Calcular vwapResult para el servicio dinámico
+    let vwapResultForDynamic: import("./IdcaSmartLayer").VwapResult | undefined;
+    if (assetConfig.vwapEnabled && frozenAnchor?.anchorTimestamp) {
+      const vr = smart.computeVwapAnchored(candles, frozenAnchor.anchorTimestamp);
+      if (vr.isReliable) vwapResultForDynamic = vr;
+    }
+
+    try {
+      dynamicAnchorResult = await resolveDynamicAnchor({
+        pair,
+        mode,
+        currentPrice,
+        candles,
+        basePriceResult,
+        frozenAnchor: frozenAnchor ?? null,
+        vwapContext,
+        vwapResult: vwapResultForDynamic,
+        hasActiveCycle: hasCycleForAnchor,
+        hasPendingExit: hasPendingExitForAnchor,
+        vwapEnabled: assetConfig.vwapEnabled,
+        dynamicAnchorEnabled,
+        emergencyDisable,
+        now: typeof now === "number" ? now : Date.now(),
+      });
+
+      // Si la decisión es renovar_ancla, aplicar la nueva referencia calculada
+      if (
+        dynamicAnchorResult.decision === "renovar_ancla" &&
+        dynamicAnchorResult.calculatedAnchor &&
+        dynamicAnchorResult.calculatedAnchor.price > 0
+      ) {
+        const newAnchorPrice = dynamicAnchorResult.calculatedAnchor.price;
+        // anchorTimestamp = vela/estructura origen normalizada a ms (Kraken puede venir en segundos)
+        // Prioridad: calculatedAnchor.timestamp > basePriceResult.timestamp > Date.now()
+        const anchorTimestampMs = normalizeTimestampMs(
+          dynamicAnchorResult.calculatedAnchor.timestamp
+          ?? basePriceResult.timestamp
+          ?? Date.now()
+        );
+        const prevAnchor = vwapAnchorMemory.get(pair);
+        vwapAnchorMemory.set(pair, {
+          anchorPrice: newAnchorPrice,
+          anchorTimestamp: anchorTimestampMs,
+          setAt: Date.now(),
+          drawdownPct: newAnchorPrice > 0 ? ((newAnchorPrice - currentPrice) / newAnchorPrice) * 100 : 0,
+          previous: prevAnchor ? {
+            anchorPrice: prevAnchor.anchorPrice,
+            anchorTimestamp: prevAnchor.anchorTimestamp,
+            setAt: prevAnchor.setAt,
+            replacedAt: Date.now(),
+          } : undefined,
+        });
+        const updatedAnchor = vwapAnchorMemory.get(pair)!;
+        repo.upsertVwapAnchor({
+          pair,
+          anchorPrice: updatedAnchor.anchorPrice,
+          anchorTs: updatedAnchor.anchorTimestamp,
+          setAt: updatedAnchor.setAt,
+          drawdownPct: updatedAnchor.drawdownPct,
+          prevPrice: updatedAnchor.previous?.anchorPrice ?? null,
+          prevTs: updatedAnchor.previous?.anchorTimestamp ?? null,
+          prevSetAt: updatedAnchor.previous?.setAt ?? null,
+          prevReplacedAt: updatedAnchor.previous?.replacedAt ?? null,
+        }).catch(e => console.warn(`${TAG}[DYNAMIC_ANCHOR] DB persist failed for ${pair}: ${e.message}`));
+        console.log(`${TAG}[DYNAMIC_ANCHOR] ${pair}: RENOVADA — trigger=${dynamicAnchorResult.changeTrigger} newAnchor=${newAnchorPrice.toFixed(2)}`);
+        // Alerta Telegram: Ancla renovada
+        telegram.alertDynamicAnchorRenewed(
+          pair, mode,
+          dynamicAnchorResult.currentAnchor?.price ?? null,
+          newAnchorPrice,
+          dynamicAnchorResult.changeTrigger,
+          dynamicAnchorResult.reason,
+        ).catch(() => {});
+      } else if (dynamicAnchorResult.decision === "bloquear_nuevas_entradas_por_datos") {
+        blocks.push({ code: "data_not_ready", message: dynamicAnchorResult.reason, timestamp: now });
+        // Alerta Telegram según tipo de bloqueo
+        if (dynamicAnchorResult.dataState === "feed_detenido") {
+          const feedAge = (dynamicAnchorResult.auditPayload as any)?.lastCandleAgeMinutes as number | undefined;
+          telegram.alertMarketDataFeedStalled(pair, mode, feedAge ?? 0).catch(() => {});
+        } else {
+          const cCount = (dynamicAnchorResult.auditPayload as any)?.candleCount as number | undefined;
+          const rCount = (dynamicAnchorResult.auditPayload as any)?.required as number | undefined;
+          telegram.alertDynamicAnchorBlocked(
+            pair, mode,
+            dynamicAnchorResult.reason,
+            dynamicAnchorResult.dataState,
+            cCount ?? 0,
+            rCount ?? 72,
+          ).catch(() => {});
+        }
+      } else if (dynamicAnchorResult.decision === "precio_caro_no_perseguir") {
+        // P3: código específico para precio caro, distinto de errores de datos
+        blocks.push({ code: "market_context_no_chase", message: dynamicAnchorResult.reason, timestamp: now });
+      }
+
+      console.log(`${TAG}[DYNAMIC_ANCHOR] ${pair}: decision=${dynamicAnchorResult.decision} trigger=${dynamicAnchorResult.changeTrigger} dataState=${dynamicAnchorResult.dataState}`);
+    } catch (dynErr: any) {
+      const fallbackToLegacy = config.idcaDynamicAnchorFallbackToLegacy ?? true;
+      if (fallbackToLegacy) {
+        // P1: fallbackToLegacy=true → ejecutar comportamiento legacy real
+        console.warn(`${TAG}[DYNAMIC_ANCHOR] ${pair}: service error — ${dynErr?.message}. FallbackToLegacy=true: ejecutando lógica legacy.`);
+        await applyLegacyVwapAnchor();
+      } else {
+        // P1: fallbackToLegacy=false → bloquear nueva entrada con razón explícita
+        console.warn(`${TAG}[DYNAMIC_ANCHOR] ${pair}: service error — ${dynErr?.message}. FallbackToLegacy=false: bloqueando entrada.`);
+        blocks.push({
+          code: "dynamic_anchor_service_error",
+          message: `Servicio de Ancla Dinámica no disponible y fallback desactivado. No se abre nueva entrada para ${pair}. Error: ${dynErr?.message ?? "desconocido"}.`,
+          timestamp: now,
+        });
+      }
+    }
+  }
+
+  // Leer el ancla después de la posible renovación dinámica
+  const frozenAnchorFinal = vwapAnchorMemory.get(pair);
+
+  // ── Effective base price: Ancla Dinámica manda cuando está activa ─────────
   // Usar función canónica para resolver la referencia efectiva de entrada
   const refResult = resolveEffectiveEntryReference({
     pair,
     currentPrice,
     basePriceResult,
-    frozenAnchor,
+    frozenAnchor: frozenAnchorFinal,
     vwapContext,
     vwapEnabled: assetConfig.vwapEnabled,
     now: typeof now === "number" ? now : Date.now(),
@@ -3084,15 +3236,19 @@ async function performEntryCheck(
   console.log(`${TAG}[EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
 
   // Construir referenceContext enriquecido (solo metadata — no altera trading logic)
+  // hasActiveCycle real: si el servicio dinámico evaluó el ciclo, usar su resultado
+  const hasActiveCycleForContext = dynamicAnchorResult
+    ? dynamicAnchorResult.cycleProtection === "ciclo_activo_protegido"
+    : false;
   const referenceContext: ReferenceContext = buildReferenceContext({
     pair,
     refResult,
     basePriceResult,
     vwapEnabled: assetConfig.vwapEnabled,
-    frozenAnchor,
+    frozenAnchor: frozenAnchorFinal,
     vwapContext,
     minCandlesForEntry: MIN_VWAP_CANDLES_FOR_ENTRY_DEFAULT,
-    hasActiveCycle: false,
+    hasActiveCycle: hasActiveCycleForContext,
     trailingArmed: TrailingBuyManager.isArmed(pair),
   });
 
@@ -5653,7 +5809,20 @@ async function emitRecoveryRiskWarning(
 export function resetVwapAnchor(pair: string): { ok: true; pair: string } {
   vwapAnchorMemory.delete(pair);
   repo.deleteVwapAnchor(pair).catch(e => console.warn(`${TAG}[VWAP_ANCHOR] DB delete failed for ${pair}: ${e.message}`));
-  console.log(`${TAG}[VWAP_ANCHOR] Reset anchor for ${pair} (memory + DB)`);
+  // Limpiar cache de MarketContextService para que el próximo acceso recalcule con ancla vacía
+  import("./IdcaMarketContextService").then(({ idcaMarketContextService }) => {
+    idcaMarketContextService.clearCache(pair);
+  }).catch(() => {});
+  // Evento auditado de reset manual
+  repo.createEvent({
+    eventType: "idca_anchor_manual_reset",
+    pair,
+    mode: "system",
+    message: `Ancla IDCA reseteada manualmente para ${pair}. Solo afecta futuras evaluaciones globales. No modifica ciclos activos.`,
+    severity: "info",
+    payloadJson: { pair, resetAt: new Date().toISOString() },
+  }).catch(() => {});
+  console.log(`${TAG}[VWAP_ANCHOR] Reset anchor for ${pair} (memory + DB + MCS cache + event)`);
   return { ok: true, pair };
 }
 

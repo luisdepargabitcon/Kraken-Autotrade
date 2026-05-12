@@ -2,6 +2,70 @@
 
 ---
 
+## 2026-05-XX — feat(idca): Lote 5 — Ancla Dinámica IDCA Profesional
+
+### Objetivo
+Reemplazar el sistema estático de ancla VWAP por una política dinámica profesional con 5 tipos de triggers de cambio (estructura, VWAP, ruptura/consolidación, obsolescencia, calidad de datos), protección completa de ciclos activos/importados, evaluación de salud de datos de mercado, kill switch y alertas Telegram en castellano.
+
+### Archivos nuevos
+- `server/services/institutionalDca/IdcaDynamicAnchorService.ts` — Servicio central de Ancla Dinámica. Evalúa 9 decisiones posibles, protege ciclos activos e importados, soporta kill switch y emergency disable.
+- `server/services/institutionalDca/IdcaMarketDataHealthService.ts` — Evaluación de salud de velas 1h desde Kraken/MarketDataService. Estados: datos_completos, datos_suficientes, datos_parciales, datos_insuficientes, feed_detenido. Backfill automático.
+- `db/migrations/035_idca_dynamic_anchor_config.sql` — Añade columnas `idca_dynamic_anchor_enabled`, `idca_dynamic_anchor_fallback_to_legacy`, `idca_dynamic_anchor_emergency_disable` a `institutional_dca_config`.
+- `client/src/components/idca/IdcaAnchorStatusCard.tsx` — Card UI "Ancla IDCA + Estado de datos de mercado" en castellano natural. Muestra decisión, motivo, protección de ciclos, acción realizada, estado de feed por par.
+
+### Archivos modificados
+- `shared/schema.ts` — 3 nuevos campos Ancla Dinámica: `idcaDynamicAnchorEnabled`, `idcaDynamicAnchorFallbackToLegacy`, `idcaDynamicAnchorEmergencyDisable` en `institutionalDcaConfig`.
+- `server/services/institutionalDca/IdcaEngine.ts`:
+  - Import de `resolveDynamicAnchor`.
+  - Bloque post-vwapContext: invocación del servicio dinámico. Si `renovar_ancla` → actualiza memoria del ancla + DB + Telegram. Si `bloquear_nuevas_entradas_por_datos` → bloquea entry. Si `precio_caro_no_perseguir` → bloquea entry.
+  - Corrección de `hasActiveCycle: false` hardcoded → valor real desde `dynamicAnchorResult.cycleProtection`.
+  - `resetVwapAnchor`: también limpia cache de `IdcaMarketContextService` y emite evento auditado.
+  - Alertas Telegram: `alertDynamicAnchorRenewed`, `alertMarketDataFeedStalled`, `alertDynamicAnchorBlocked`.
+- `server/services/institutionalDca/IdcaMarketContextService.ts` — Corregido `vwapEnabled ?? true` → `?? false` (igual que schema default).
+- `server/routes/institutionalDca.routes.ts` — 2 nuevos endpoints: `GET /market-data-health/:pair` y `GET /market-data-health`.
+- `client/src/hooks/useInstitutionalDca.ts` — Interfaz `MarketDataHealthResult`; hooks `useMarketDataHealth(pair)` y `useAllMarketDataHealth()`.
+- `client/src/pages/InstitutionalDca.tsx` — Integración de `IdcaAnchorStatusCard` en `SummaryTab` con datos de contexto de mercado y salud de datos.
+- `client/src/components/idca/IdcaMarketContextCard.tsx` — Badge "Stale" traducido a "Sin actualizar".
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — 4 nuevas funciones de alerta en castellano: `alertDynamicAnchorRenewed`, `alertDynamicAnchorBlocked`, `alertMarketDataFeedStalled`, `alertCycleProtectedByAnchor`.
+
+### Diseño de la política dinámica
+- **Ciclo activo o importado** → `ciclo_activo_solo_contexto`: la ancla no modifica ningún campo del ciclo.
+- **Salida pendiente** → `salida_pendiente_sin_accion`: sin cambios.
+- **Feed detenido** → `bloquear_nuevas_entradas_por_datos` + alerta Telegram urgente.
+- **Datos insuficientes** → bloqueo + backfill automático desde Kraken.
+- **Trigger A (estructura)**: el mercado trabaja en zona diferente (divergencia >4%).
+- **Trigger B (VWAP)**: ancla alejada >3.5% del VWAP y hay candidato más alineado.
+- **Trigger C (ruptura/consolidación)**: 3+ velas consecutivas fuera de zona anterior.
+- **Trigger D (obsolescencia)**: ancla >72h con aviso; >168h y divergente con renovación.
+- **Precio caro** (>2.5% sobre VWAP): `precio_caro_no_perseguir` — no bloquea ventas, solo entradas.
+
+### Kill switch
+- `idcaDynamicAnchorEmergencyDisable=true` → cae al comportamiento anterior sin tocar ciclos ni DB sensible.
+- `idcaDynamicAnchorEnabled=false` → mismo efecto.
+- `idcaDynamicAnchorFallbackToLegacy=true` → si el servicio dinámico lanza excepción, fallback a VWAP legacy.
+
+### Fixes aplicados en revisión de seguridad (pre-commit)
+- **P1 — Fallback legacy real**: lógica legacy extraída a `applyLegacyVwapAnchor()`. Se invoca en: (a) `dynamicAnchorEnabled=false`, (b) `emergencyDisable=true`, (c) excepción en servicio dinámico con `fallbackToLegacy=true`. Con `fallbackToLegacy=false` y excepción → bloquea entrada con código `dynamic_anchor_service_error`.
+- **P2 — `anchorTimestamp` corregido**: al renovar ancla dinámica, `anchorTimestamp = basePriceResult.timestamp` normalizado a ms (vela/estructura origen); `setAt = Date.now()` (momento de registro).
+- **P3 — `precio_caro_no_perseguir` desacoplado de `data_not_ready`**: usa código `market_context_no_chase`. `data_not_ready` queda reservado para datos insuficientes/feed detenido/backfill.
+- **P4 — `FUENTES_BOT.md` fuera del commit**: `git add` explícito por archivo, nunca `git add -A`.
+- **P5 — Migración automática en deploy**: `script/migrate.ts` ya incluye 035. El `Dockerfile` ejecuta `npx tsx script/migrate.ts && npm start` → la migración se aplica sola en cada `docker compose up --build`.
+
+### Validación
+- `npm run check`: ✅ sin errores TypeScript
+
+### Requisito de despliegue VPS
+```sql
+-- Ejecutar en PostgreSQL antes de reiniciar:
+ALTER TABLE institutional_dca_config
+  ADD COLUMN IF NOT EXISTS idca_dynamic_anchor_enabled boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS idca_dynamic_anchor_fallback_to_legacy boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS idca_dynamic_anchor_emergency_disable boolean NOT NULL DEFAULT false;
+```
+O ejecutar directamente: `db/migrations/035_idca_dynamic_anchor_config.sql`
+
+---
+
 ## 2026-05-11 — feat(idca): Lote 4 — IDCA Cycle Exits (Complete Implementation)
 
 ### Objetivo

@@ -1170,6 +1170,15 @@ END $$;
 
     console.log("[migrate] Verified BTC #22 fee/dust reset hotfix applied");
 
+    // ============================================================
+    // LOTE 5: IDCA DYNAMIC ANCHOR CONFIG (035)
+    // Adds idca_dynamic_anchor_enabled, idca_dynamic_anchor_fallback_to_legacy,
+    // idca_dynamic_anchor_emergency_disable to institutional_dca_config.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA Dynamic Anchor config columns exist...");
+    const idcaDynamicAnchorPath = path.resolve(process.cwd(), "db", "migrations", "035_idca_dynamic_anchor_config.sql");
+    await tryExecuteFile(db, idcaDynamicAnchorPath, "idca_dynamic_anchor_config");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

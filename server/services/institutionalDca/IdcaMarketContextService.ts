@@ -397,7 +397,7 @@ class IdcaMarketContextService {
 
     // Usar el resolver canónico para obtener la referencia efectiva
     const assetConfig = await getAssetConfig(pair);
-    const vwapEnabled = assetConfig?.vwapEnabled ?? true; // Usar config del asset, fallback true para compatibilidad
+    const vwapEnabled = assetConfig?.vwapEnabled ?? false; // Usar config del asset, fallback false (igual que schema default)
 
     // FASE 7: Construir vwapContextForRef con candlesUsed real para buildReferenceContext
     const vwapContextForRef = vwap

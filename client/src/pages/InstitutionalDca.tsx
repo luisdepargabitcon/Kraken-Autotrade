@@ -51,6 +51,7 @@ import {
   useDeleteAllOrders,
   useSetCycleStatus,
   useAllMarketContextPreviews,
+  useAllMarketDataHealth,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -107,6 +108,7 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
+import { IdcaAnchorStatusCard } from "@/components/idca/IdcaAnchorStatusCard";
 import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
 import { IhcaNavigationProvider, useOptionalIdcaNavigation } from "@/hooks/IdcaNavigationContext";
 
@@ -337,6 +339,7 @@ function SummaryTab() {
   const { data: summary, isLoading, error } = useIdcaSummary();
   const { data: config } = useIdcaConfig();
   const marketCtx = useAllMarketContextPreviews();
+  const marketHealth = useAllMarketDataHealth();
 
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando resumen...</div>;
@@ -399,6 +402,13 @@ function SummaryTab() {
         previews={marketCtx.data}
         isLoading={marketCtx.isLoading}
         error={marketCtx.error}
+      />
+
+      {/* Ancla IDCA + Estado de datos de mercado */}
+      <IdcaAnchorStatusCard
+        contextPreviews={marketCtx.data}
+        marketDataHealth={marketHealth.data}
+        isLoading={marketCtx.isLoading || marketHealth.isLoading}
       />
 
       {/* Active Cycles */}

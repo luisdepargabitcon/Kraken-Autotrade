@@ -1317,6 +1317,144 @@ ${context.recommendations.map((r: string) => `• ${r}`).join("\n")}`;
   await send(chatId, message, config.telegramThreadId || undefined);
 }
 
+// ─── Alertas Ancla Dinámica IDCA (Lote 5) ──────────────────────────
+
+const lastDynamicAnchorAlert = new Map<string, number>();
+const DYNAMIC_ANCHOR_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4h entre alertas del mismo tipo por par
+const lastFeedStalledAlert = new Map<string, number>();
+const FEED_STALLED_COOLDOWN_MS = 30 * 60 * 1000; // 30min entre alertas de feed detenido
+
+export async function alertDynamicAnchorRenewed(
+  pair: string,
+  mode: string,
+  oldAnchor: number | null,
+  newAnchor: number,
+  trigger: string,
+  reason: string,
+): Promise<void> {
+  const key = `${pair}_anchor_renewed`;
+  const last = lastDynamicAnchorAlert.get(key) ?? 0;
+  if (Date.now() - last < DYNAMIC_ANCHOR_COOLDOWN_MS) return;
+
+  const { chatId, enabled } = await canSend("vwap_anchor_changed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const TRIGGER_LABELS: Record<string, string> = {
+    cambio_por_estructura: "Cambio de estructura de mercado",
+    cambio_por_vwap: "Divergencia con VWAP",
+    cambio_por_ruptura_consolidacion: "Ruptura y consolidación confirmadas",
+    cambio_por_obsolescencia: "Ancla obsoleta renovada",
+    cambio_por_calidad_datos: "Calidad de datos restaurada",
+  };
+
+  const msg = [
+    `🔔 <b>Ancla IDCA renovada</b> — <b>${pair}</b>`,
+    ``,
+    `📍 Nueva referencia: <b>$${newAnchor.toFixed(2)}</b>`,
+    oldAnchor ? `📌 Referencia anterior: $${oldAnchor.toFixed(2)}` : null,
+    `⚡ Motivo técnico: ${TRIGGER_LABELS[trigger] ?? trigger}`,
+    ``,
+    `<i>${reason}</i>`,
+    ``,
+    `La Ancla IDCA solo afecta a futuras evaluaciones de entrada.\nNo modifica ciclos activos, precios medios ni escaleras existentes.`,
+    ``,
+    `<i>Modo: ${getModeLabel(mode)}</i>`,
+  ].filter(Boolean).join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  lastDynamicAnchorAlert.set(key, Date.now());
+}
+
+export async function alertDynamicAnchorBlocked(
+  pair: string,
+  mode: string,
+  reason: string,
+  dataState: string,
+  candleCount: number,
+  requiredCandles: number,
+): Promise<void> {
+  const key = `${pair}_anchor_blocked`;
+  const last = lastDynamicAnchorAlert.get(key) ?? 0;
+  if (Date.now() - last < DYNAMIC_ANCHOR_COOLDOWN_MS) return;
+
+  const { chatId, enabled } = await canSend("buy_blocked");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const msg = [
+    `⚠️ <b>Ancla IDCA bloqueada por datos</b> — <b>${pair}</b>`,
+    ``,
+    `📊 Velas disponibles: <b>${candleCount} / ${requiredCandles}</b>`,
+    `Estado de datos: <code>${dataState}</code>`,
+    ``,
+    `<i>${reason}</i>`,
+    ``,
+    `El sistema no abrirá nuevas entradas IDCA hasta recuperar datos de mercado fiables.\nNo se modifica ningún ciclo existente.`,
+    ``,
+    `<i>Modo: ${getModeLabel(mode)}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  lastDynamicAnchorAlert.set(key, Date.now());
+}
+
+export async function alertMarketDataFeedStalled(
+  pair: string,
+  mode: string,
+  lastCandleAgeMinutes: number,
+): Promise<void> {
+  const key = `${pair}_feed_stalled`;
+  const last = lastFeedStalledAlert.get(key) ?? 0;
+  if (Date.now() - last < FEED_STALLED_COOLDOWN_MS) return;
+
+  const { chatId, enabled } = await canSend("critical_error");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const msg = [
+    `🔴 <b>Feed de datos detenido</b> — <b>${pair}</b>`,
+    ``,
+    `⏱ Última vela recibida: hace <b>${lastCandleAgeMinutes} minutos</b>`,
+    ``,
+    `El sistema no puede evaluar nuevas entradas IDCA sin datos recientes de velas.\nRevisar conexión con Kraken o reiniciar el servicio de datos.`,
+    ``,
+    `<i>Modo: ${getModeLabel(mode)}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  lastFeedStalledAlert.set(key, Date.now());
+}
+
+export async function alertCycleProtectedByAnchor(
+  pair: string,
+  mode: string,
+  anchorPrice: number,
+  cycleAvgEntry: number,
+): Promise<void> {
+  const key = `${pair}_cycle_protected`;
+  const last = lastDynamicAnchorAlert.get(key) ?? 0;
+  if (Date.now() - last < DYNAMIC_ANCHOR_COOLDOWN_MS) return;
+
+  const { chatId, enabled } = await canSend("vwap_anchor_changed");
+  if (!enabled) return;
+  const config = await repo.getIdcaConfig();
+
+  const msg = [
+    `🛡️ <b>Ciclo activo protegido — Ancla IDCA sin cambios</b> — <b>${pair}</b>`,
+    ``,
+    `📌 Referencia ancla global: $${anchorPrice.toFixed(2)}`,
+    `💰 Precio medio del ciclo activo: $${cycleAvgEntry.toFixed(2)}`,
+    ``,
+    `Con un ciclo activo, la Ancla IDCA actúa solo como contexto.\nNo se modifica el ciclo, su precio medio, escalera ni condiciones de salida.`,
+    ``,
+    `<i>Modo: ${getModeLabel(mode)}</i>`,
+  ].join("\n");
+
+  await send(chatId, msg, config.telegramThreadId || undefined);
+  lastDynamicAnchorAlert.set(key, Date.now());
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function formatDuration(start: Date, end: Date): string {

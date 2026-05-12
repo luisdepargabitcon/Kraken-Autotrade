@@ -1023,6 +1023,10 @@ export const institutionalDcaConfig = pgTable("institutional_dca_config", {
   entryUiJson: jsonb("entry_ui_json"),              // EntryUiConfig — sliders de entrada
   telegramUiJson: jsonb("telegram_ui_json"),         // TelegramUiConfig — sliders de alertas
   executionFeesJson: jsonb("execution_fees_json"),   // ExecutionFeesConfig — fees Revolut X / exchange
+  // ─── Ancla Dinámica IDCA (Lote 5) ───────────────────────────────────────────
+  idcaDynamicAnchorEnabled: boolean("idca_dynamic_anchor_enabled").notNull().default(true),
+  idcaDynamicAnchorFallbackToLegacy: boolean("idca_dynamic_anchor_fallback_to_legacy").notNull().default(true),
+  idcaDynamicAnchorEmergencyDisable: boolean("idca_dynamic_anchor_emergency_disable").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

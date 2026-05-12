@@ -46,7 +46,7 @@ function FreshnessChip({ lastUpdated }: { lastUpdated?: string }) {
   );
   return (
     <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
-      <span className="w-1 h-1 rounded-full bg-red-400 inline-block" />Stale
+      <span className="w-1 h-1 rounded-full bg-red-400 inline-block" />Sin actualizar
     </span>
   );
 }
