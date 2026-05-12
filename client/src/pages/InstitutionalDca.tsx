@@ -1178,6 +1178,74 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           </div>
         </div>
 
+        {/* ── SLIDER 1b: Buffer BE neto ── */}
+        <div id="idca-config-be-net-buffer" className="space-y-4 border-t border-border/30 pt-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2 text-sm font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                Buffer BE neto
+              </Label>
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Sin margen</span>
+              <span>Conservador</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            {btc && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">BTC/USD</span>
+                  <span className="font-mono text-sm font-semibold text-indigo-400">
+                    {parseFloat(btc.beNetBufferPct ?? "0.30").toFixed(2)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(btc.beNetBufferPct ?? "0.30")]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: btc.pair, beNetBufferPct: String(v[0]) })}
+                  min={0} max={1.0} step={0.05}
+                  className="[&>span]:bg-indigo-500"
+                />
+              </div>
+            )}
+            {eth && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">ETH/USD</span>
+                  <span className="font-mono text-sm font-semibold text-indigo-400">
+                    {parseFloat(eth.beNetBufferPct ?? "0.30").toFixed(2)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[parseFloat(eth.beNetBufferPct ?? "0.30")]}
+                  onValueChange={(v) => updateAsset.mutate({ pair: eth.pair, beNetBufferPct: String(v[0]) })}
+                  min={0} max={1.0} step={0.05}
+                  className="[&>span]:bg-indigo-500"
+                />
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Margen añadido al precio medio para cubrir comisiones, spread y deslizamiento. Evita que el stop de protección venda justo al precio medio y cierre con pérdida neta.
+          </p>
+          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-3">
+            <p className="text-xs text-indigo-300">
+              <strong>Ejemplo:</strong> con precio medio{" "}
+              <span className="font-mono">$79,960</span>{" "}
+              y buffer{" "}
+              <span className="font-mono">{btc ? parseFloat(btc.beNetBufferPct ?? "0.30").toFixed(2) : "0.30"}%</span>,
+              {" "}el BE neto se sitúa aprox. en{" "}
+              <span className="font-mono">
+                ${btc ? (79960 * (1 + parseFloat(btc.beNetBufferPct ?? "0.30") / 100)).toFixed(0) : "80,200"}
+              </span>.
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Solo aplica a <strong>nuevos</strong> armados de protección. Los stops ya armados no se recalculan.
+            </p>
+          </div>
+        </div>
+
         {/* ── SLIDER 2: Activación del trailing ── */}
         <div id="idca-config-trailing-activation" className="space-y-4 border-t border-border/30 pt-4">
           <div className="space-y-1">
