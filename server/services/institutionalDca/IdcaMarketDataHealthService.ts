@@ -39,6 +39,15 @@ export type BackfillStatus =
   | "fallido"
   | "en_progreso";
 
+/** Niveles de calidad de datos según profundidad de velas disponibles */
+export type DataQualityLevel =
+  | "none"           // 0 velas
+  | "insufficient"   // 1-6 velas (menos que mínimo)
+  | "minimal"        // 7-23 velas (mínimo técnico, contexto limitado)
+  | "minimum_context" // 24-99 velas (contexto básico operable)
+  | "good_context"   // 100-720 velas (buen contexto técnico)
+  | "full_macro_context"; // 721+ velas (contexto macro completo)
+
 export interface MarketDataHealthResult {
   pair: string;
   timeframe: string;
@@ -56,6 +65,12 @@ export interface MarketDataHealthResult {
   gapCount: number;
   backfillStatus: BackfillStatus;
   dataReadinessState: DataReadinessState;
+  // FASE C: Metadatos de calidad extendidos
+  quality: DataQualityLevel;
+  usableForEntry: boolean;   // Puede usarse para entradas nuevas
+  usableForContext: boolean;  // Puede usarse para contexto técnico
+  usableForMacro: boolean;    // Puede usarse para análisis macro
+  isFallback: boolean;       // Indica si viene de fallback
   canUseDynamicAnchor: boolean;
   canOpenNewIdcaCycle: boolean;
   allowsActiveCycleManagement: boolean;
@@ -176,14 +191,37 @@ function detectGaps(
 }
 
 /**
+ * Determina el nivel de calidad según cantidad de velas.
+ * FASE C: Clasificación profesional por profundidad de datos.
+ */
+function computeDataQuality(
+  candleCount: number,
+  minimum: number,
+  sufficient: number,
+  required: number,
+): DataQualityLevel {
+  if (candleCount === 0) return "none";
+  if (candleCount < minimum) return "insufficient";
+  if (candleCount < sufficient) return "minimal";
+  if (candleCount < required) return "minimum_context";
+  if (candleCount < 100) return "minimum_context";
+  if (candleCount < 721) return "good_context";
+  return "full_macro_context";
+}
+
+/**
  * Computa el estado de salud de datos basado en timeframe-aware thresholds.
- * 
+ *
+ * FASE C: Lógica mejorada que considera:
+ * 1. Fuente de datos (fallback BD vs Kraken directo)
+ * 2. Cantidad de velas disponibles (quality)
+ * 3. Frescura de la última vela
+ *
  * Lógica:
- * 1. Si no hay velas mínimas -> warmup
- * 2. Si hay velas pero la última está muy antigua -> stopped
- * 3. Si la última vela está obsoleta -> stale
- * 4. Si la última vela tiene retraso leve -> lagging
- * 5. Si todo está OK -> ready
+ * - Sin velas mínimas -> warmup (independiente de fuente)
+ * - Fallback BD con datos frescos y suficientes -> degraded (no oculta origen)
+ * - Fallback BD con datos obsoletos -> degraded (pero marca stale/stopped por edad)
+ * - Kraken directo: evaluar frescura normalmente
  */
 function computeReadinessState(
   candleCount: number,
@@ -194,37 +232,39 @@ function computeReadinessState(
   thresholds: TimeframeThresholds,
   isFromDbFallback: boolean,
 ): DataReadinessState {
-  // Si estamos usando BD fallback, marcar como degraded
-  if (isFromDbFallback) {
-    return "degraded";
-  }
-  
-  // Sin velas mínimas -> warmup
+  // Sin velas mínimas -> warmup (independiente de fuente)
   if (candleCount < minimum) {
     return "warmup";
   }
-  
+
   // Sin timestamp de última vela -> warmup (no sabemos la edad)
   if (lastCandleAgeMinutes === null) {
     return "warmup";
   }
-  
-  // Feed realmente detenido
+
+  // Feed realmente detenido (muy antiguo)
   if (lastCandleAgeMinutes > thresholds.stopped) {
     return "stopped";
   }
-  
+
   // Datos obsoletos para nuevas entradas
   if (lastCandleAgeMinutes > thresholds.stale) {
     return "stale";
   }
-  
+
   // Retraso leve pero contexto válido
   if (lastCandleAgeMinutes > thresholds.ready) {
     return "lagging";
   }
-  
-  // Todo OK
+
+  // Datos frescos: verificar fuente
+  // Si es fallback BD, marcar como degraded (aunque sean utilizables)
+  // Si es Kraken directo, marcar como ready
+  if (isFromDbFallback) {
+    return "degraded";
+  }
+
+  // Todo OK desde fuente primaria
   return "ready";
 }
 
@@ -311,6 +351,7 @@ function getReasonMessage(
 
 /**
  * Log estructurado de health con throttle.
+ * FASE C: Incluye quality y usabilidad en logs.
  */
 function logHealthState(
   pair: string,
@@ -320,6 +361,9 @@ function logHealthState(
     required: number;
     lastCandleAgeMinutes: number | null;
     source: string;
+    quality: DataQualityLevel;
+    usableForEntry: boolean;
+    usableForContext: boolean;
     allowsActiveCycleManagement: boolean;
     blocksNewMain: boolean;
   },
@@ -328,17 +372,18 @@ function logHealthState(
   if (!canLogState(pair, state)) {
     return;
   }
-  
+
   const prevState = previousStateByPair.get(pair);
   const isTransition = prevState && prevState !== state;
-  
+
   // Log de transición o estado
   const logPrefix = isTransition ? "[MARKET_DATA_HEALTH_CHANGE]" : "[MARKET_DATA_HEALTH]";
   const transitionInfo = isTransition ? ` ${prevState} → ${state}` : "";
-  
+
   const logMessage = `${logPrefix} ${pair} ${DEFAULTS.timeframe}${transitionInfo} | ` +
-    `state=${state} | candles=${details.candleCount}/${details.required} | ` +
+    `state=${state} | quality=${details.quality} | candles=${details.candleCount}/${details.required} | ` +
     `age=${details.lastCandleAgeMinutes}min | source=${details.source} | ` +
+    `usableEntry=${details.usableForEntry} | usableCtx=${details.usableForContext} | ` +
     `allowsActiveMgmt=${details.allowsActiveCycleManagement} | blocksNewMain=${details.blocksNewMain}`;
   
   // Severidad según estado
@@ -357,6 +402,9 @@ function logHealthState(
     requiredCandles: details.required,
     lastCandleAgeMinutes: details.lastCandleAgeMinutes,
     source: details.source,
+    quality: details.quality,
+    usableForEntry: details.usableForEntry,
+    usableForContext: details.usableForContext,
     allowsActiveCycleManagement: details.allowsActiveCycleManagement,
     blocksNewMain: details.blocksNewMain,
     event: isTransition ? "market_data_health_transition" : "market_data_health",
@@ -423,6 +471,9 @@ export async function checkMarketDataHealth(
     isFromDbFallback,
   );
 
+  // FASE C: Calcular nivel de calidad según profundidad de velas
+  const quality = computeDataQuality(candleCount, minimum, sufficient, required);
+
   // Si hubo error de fetch y no hay velas, marcar como warmup
   if (fetchError && candleCount === 0) {
     source = "unknown";
@@ -436,13 +487,33 @@ export async function checkMarketDataHealth(
   const missingCandles = Math.max(0, required - candleCount);
   const estimatedAt = estimateReadyAt(candleCount, required, tfMinutes);
 
-  // Lógica de capacidades según estado
-  // ready: todo OK
-  // lagging: contexto válido, ciclos activos OK, nuevas entradas con precaución
-  // stale: bloquear nuevas entradas, pero ciclos activos pueden seguir con spot
-  // stopped: bloquear nuevas entradas, mantener gestión defensiva si es posible
-  // warmup: no operar aún
-  // degraded: usar con precaución, preferir spot si disponible
+  // FASE C: Lógica de capacidades mejorada considerando estado + calidad + frescura
+  // ready: todo OK desde fuente primaria
+  // lagging: retraso leve pero datos recientes, contexto válido
+  // stale: datos obsoletos, solo gestión defensiva
+  // stopped: feed detenido, solo gestión defensiva
+  // warmup: sin datos suficientes
+  // degraded: fallback BD, utilizable si calidad y frescura OK
+
+  const hasFreshData = lastCandleAgeMinutes !== null && lastCandleAgeMinutes <= thresholds.stale;
+  const hasMinimumQuality = quality !== "none" && quality !== "insufficient";
+  const hasContextQuality = quality === "minimum_context" || quality === "good_context" || quality === "full_macro_context";
+  const hasMacroQuality = quality === "full_macro_context";
+
+  // Usable para entrada: requiere estado operable + datos frescos + calidad mínima
+  const usableForEntry =
+    (dataReadinessState === "ready" || dataReadinessState === "lagging") &&
+    hasFreshData &&
+    hasContextQuality;
+
+  // Usable para contexto: requiere calidad mínima + no estar stopped/warmup
+  const usableForContext =
+    hasMinimumQuality &&
+    dataReadinessState !== "stopped" &&
+    dataReadinessState !== "warmup";
+
+  // Usable para macro: requiere calidad macro completa
+  const usableForMacro = hasMacroQuality;
 
   const allowsActiveCycleManagement =
     dataReadinessState === "ready" ||
@@ -459,7 +530,7 @@ export async function checkMarketDataHealth(
     dataReadinessState === "lagging" ||
     dataReadinessState === "degraded";
 
-  const canOpenNewIdcaCycle = dataReadinessState === "ready";
+  const canOpenNewIdcaCycle = dataReadinessState === "ready" && usableForEntry;
 
   const currentBackfill = backfillState.get(pair) ?? "no_necesario";
 
@@ -472,12 +543,15 @@ export async function checkMarketDataHealth(
     missingCandles,
   );
 
-  // Log estructurado con throttle
+  // Log estructurado con throttle (FASE C: incluir quality)
   logHealthState(pair, dataReadinessState, {
     candleCount,
     required,
     lastCandleAgeMinutes,
     source,
+    quality,
+    usableForEntry,
+    usableForContext,
     allowsActiveCycleManagement,
     blocksNewMain,
   });
@@ -508,6 +582,12 @@ export async function checkMarketDataHealth(
     gapCount,
     backfillStatus: currentBackfill,
     dataReadinessState,
+    // FASE C: Nuevos metadatos de calidad
+    quality,
+    usableForEntry,
+    usableForContext,
+    usableForMacro,
+    isFallback: isFromDbFallback,
     canUseDynamicAnchor,
     canOpenNewIdcaCycle,
     allowsActiveCycleManagement,

@@ -63,6 +63,20 @@ app.use((req, res, next) => {
     console.warn("[startup] Candle retention cleanup failed (non-blocking):", err);
   });
 
+  // Scheduler diario para cleanup de velas (24h = 86400000ms)
+  // Non-blocking: errores solo se loguean, no rompen la app
+  setInterval(() => {
+    MarketDataService.cleanupOldCandles()
+      .then((deleted) => {
+        if (deleted > 0) {
+          console.log(`[MARKET_CANDLES][RETENTION] deleted=${deleted} (scheduled cleanup)`);
+        }
+      })
+      .catch((err) => {
+        console.warn("[MARKET_CANDLES][RETENTION] Scheduled cleanup failed (non-blocking):", err);
+      });
+  }, 24 * 60 * 60 * 1000); // 24 horas
+
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";

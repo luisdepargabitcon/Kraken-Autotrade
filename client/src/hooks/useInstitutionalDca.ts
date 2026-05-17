@@ -353,6 +353,15 @@ export interface MarketContextPreview {
   referenceContext?: IdcaReferenceContext | null;
 }
 
+/** Niveles de calidad de datos FASE C */
+export type DataQualityLevel =
+  | "none"
+  | "insufficient"
+  | "minimal"
+  | "minimum_context"
+  | "good_context"
+  | "full_macro_context";
+
 export interface MarketDataHealthResult {
   pair: string;
   timeframe: string;
@@ -371,6 +380,16 @@ export interface MarketDataHealthResult {
   backfillStatus: "no_necesario" | "solicitado" | "completado" | "fallido" | "en_progreso";
   /** Estado de salud de datos timeframe-aware (FASE B) */
   dataReadinessState: "ready" | "lagging" | "stale" | "stopped" | "warmup" | "degraded";
+  /** FASE C: Calidad de datos según profundidad */
+  quality: DataQualityLevel;
+  /** FASE C: Usable para entradas nuevas */
+  usableForEntry: boolean;
+  /** FASE C: Usable para contexto técnico */
+  usableForContext: boolean;
+  /** FASE C: Usable para análisis macro */
+  usableForMacro: boolean;
+  /** FASE C: Indica si viene de fallback */
+  isFallback: boolean;
   canUseDynamicAnchor: boolean;
   canOpenNewIdcaCycle: boolean;
   /** Permite gestión de ciclos activos con precio spot */
