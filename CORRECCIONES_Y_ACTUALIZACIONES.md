@@ -48,6 +48,66 @@ Reemplazar el sistema estático de ancla VWAP por una política dinámica profes
 - **P1 — Fallback legacy real**: lógica legacy extraída a `applyLegacyVwapAnchor()`. Se invoca en: (a) `dynamicAnchorEnabled=false`, (b) `emergencyDisable=true`, (c) excepción en servicio dinámico con `fallbackToLegacy=true`. Con `fallbackToLegacy=false` y excepción → bloquea entrada con código `dynamic_anchor_service_error`.
 - **P2 — `anchorTimestamp` corregido**: al renovar ancla dinámica, `anchorTimestamp = basePriceResult.timestamp` normalizado a ms (vela/estructura origen); `setAt = Date.now()` (momento de registro).
 - **P3 — `precio_caro_no_perseguir` desacoplado de `data_not_ready`**: usa código `market_context_no_chase`. `data_not_ready` queda reservado para datos insuficientes/feed detenido/backfill.
+
+---
+
+## 2026-05-17 — fix(market-data): FASE B — Shared Candle Cache y Health Timeframe-Aware
+
+### Hash del commit
+`9165c18`
+
+### Objetivo
+Eliminar falsos "Feed de datos detenido" para velas 1h con retraso leve (ej: 126min), implementar modelo de salud timeframe-aware con estados ready/lagging/stale/stopped/warmup/degraded, y crear base común persistente de velas para IDCA, modo normal y futuros módulos.
+
+### Archivos nuevos
+- `db/migrations/037_market_candles_cache.sql` — Tabla `market_candles` con índices, constraints únicos, trigger para `updated_at`. Retención: 1h=180d, 1d=5años.
+- `server/services/marketData/MarketCandleRepository.ts` — Servicio común de velas. Funciones: `upsertCandles`, `getRecentCandles`, `getCandlesSince`, `getLatestCandle`, `getCoverage`, `deleteOldCandles` (con throttle 24h), `getStats`.
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaMarketDataHealthService.ts`:
+  - Nuevos estados: `ready`, `lagging`, `stale`, `stopped`, `warmup`, `degraded` (reemplazan `datos_completos`, `datos_suficientes`, `datos_parciales`, `datos_insuficientes`, `feed_detenido`).
+  - Umbrales timeframe-aware: 1h → ready≤120min, lagging≤180min, stale≤360min, stopped>360min.
+  - Throttle de logs: 1h para ready, 30min para lagging/stale, 15min para stopped/warmup/degraded.
+  - Logs de transición: `[MARKET_DATA_HEALTH_CHANGE] pair state1 → state2`.
+  - Nuevos campos: `allowsActiveCycleManagement`, `blocksNewMain`, `source: "kraken"|"mds_cache"|"db_fallback"|"unknown"`.
+- `server/services/institutionalDca/IdcaDynamicAnchorService.ts`:
+  - Actualizado para usar nuevos estados `stopped`, `warmup`, `stale`, `lagging`, `degraded`.
+  - `conservativeMode` ahora incluye `lagging` y `degraded`.
+  - Mensajes de reason actualizados para ser más claros.
+- `server/services/institutionalDca/IdcaEngine.ts`:
+  - Actualizada comparación `feed_detenido` → `stopped`.
+- `server/services/MarketDataService.ts`:
+  - Import de `MarketCandleRepository`.
+  - Método `persistCandles()` — persiste velas cerradas en BD de forma asíncrona (sin bloquear).
+  - Método `getCandlesFromDb()` — fallback a BD cuando Kraken falla.
+  - Método `cleanupOldCandles()` — limpieza de retención.
+- `client/src/hooks/useInstitutionalDca.ts`:
+  - Actualizado `MarketDataHealthResult` con nuevos estados timeframe-aware y campos `allowsActiveCycleManagement`, `blocksNewMain`.
+- `client/src/components/idca/IdcaMarketContextCard.tsx`:
+  - Nuevo componente `DataHealthChip` con badges por estado: Datos OK (verde), Retraso leve (amarillo), Datos obsoletos (naranja), Feed detenido (rojo), Calentando (azul), Fallback BD (púrpura).
+  - Actualizado `DATA_READINESS_LABELS` con nuevos estados.
+  - Colores de edad de vela basados en estado (no en umbral fijo de 90min).
+- `script/migrate.ts` — Agregada migración 037_market_candles_cache en LOTE 6.
+
+### Reglas de negocio implementadas
+1. **126min en vela 1h** → `lagging` (amarillo), no `stopped` (rojo). Contexto válido.
+2. **Nuevas entradas main IDCA** → solo bloqueadas con `stale` o `stopped` real.
+3. **Ciclos activos IDCA** → permiten gestión con precio spot durante `lagging`.
+4. **Kraken/MDS** sigue siendo fuente primaria; BD es seed/fallback temporal marcado como `degraded`.
+5. **Retención** → 1h: 180 días, 1d: 5 años. Limpieza máximo 1 vez cada 24h.
+
+### No implementado / No modificado
+- No se añadió Binance ni otra fuente externa.
+- No se modificó `avgEntryPrice`, `basePrice` histórico, `nextBuyPrice`, `protectionStopPrice`.
+- No se recalculan anclas históricas de ciclos activos.
+- No se creó cache exclusiva para IDCA ni modo normal (centralizado en MarketDataService).
+- No se implementó Distancia Dinámica (fuera de alcance de esta fase).
+- FUENTES_BOT.md quedó fuera del commit (excluido).
+
+### Validación
+- `npm run check`: ✅ limpio
+- `npm run build`: ✅ 3785 módulos
+- `FUENTES_BOT.md`: untracked (no incluido)
 - **P4 — `FUENTES_BOT.md` fuera del commit**: `git add` explícito por archivo, nunca `git add -A`.
 - **P5 — Migración automática en deploy**: `script/migrate.ts` ya incluye 035. El `Dockerfile` ejecuta `npx tsx script/migrate.ts && npm start` → la migración se aplica sola en cada `docker compose up --build`.
 
