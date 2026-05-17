@@ -65,7 +65,9 @@ describe("MarketDataHealth FASE C - Casos críticos", () => {
     // 400min > 360 (stopped threshold para 1h)
     expect(health.dataReadinessState).toBe("stopped");
     expect(health.usableForEntry).toBe(false);
-    expect(health.usableForContext).toBe(true); // con 100 velas, aún hay contexto
+    // Stopped (> 6h sin datos) bloquea contexto operativo aunque haya velas históricas
+    expect(health.usableForContext).toBe(false);
+    expect(health.usableForMacro).toBe(false); // 100 velas = good_context, no full_macro (necesita 721+)
     expect(health.blocksNewMain).toBe(true);
     expect(health.reason).toContain("detenido");
   });
@@ -120,6 +122,44 @@ describe("MarketDataHealth FASE C - Casos críticos", () => {
     expect(health.usableForMacro).toBe(true);
     expect(health.isFallback).toBe(true);
     expect(health.reason).toContain("cache persistente");
+  });
+
+  it("C04b: db_fallback + 721 velas + 400min => usableForEntry=false (obsoleto)", async () => {
+    // CASO CRÍTICO: Muchas velas antiguas NO equivalen a datos frescos
+    // 721 velas pero última de hace 400min (> 360 stopped threshold para 1h)
+    const mockCandles = Array.from({ length: 721 }, (_, i) => ({
+      time: Math.floor((Date.now() - (400 + i) * 60 * 1000) / 1000), // 400min + i minutos atrás
+      open: 50000,
+      high: 51000,
+      low: 49000,
+      close: 50500,
+      volume: 100,
+    })).reverse();
+
+    MarketDataService.putCandles("BTC/USD", "1h", mockCandles);
+
+    const health = await checkMarketDataHealth("BTC/USD", "simulation", {
+      isFromDbFallback: true,
+    });
+
+    // Verificaciones críticas
+    expect(health.dataReadinessState).toBe("stopped"); // 400min > 360 threshold
+    expect(health.source).toBe("db_fallback");
+    expect(health.quality).toBe("full_macro_context"); // 721 velas = buena profundidad
+    expect(health.lastCandleAgeMinutes).toBeGreaterThanOrEqual(400);
+
+    // IMPORTANTE: Aunque tenga 721 velas, NO debe permitir entrada porque están obsoletas
+    expect(health.usableForEntry).toBe(false); // ← CRÍTICO: freshness gating
+    // Cuando está stopped (> 6h sin datos), el contexto técnico está obsoleto
+    expect(health.usableForContext).toBe(false); // Stopped bloquea contexto operativo
+    expect(health.usableForMacro).toBe(true); // Macro histórico sí disponible por cantidad
+    expect(health.isFallback).toBe(true);
+    expect(health.blocksNewMain).toBe(true); // Bloquea nuevas entradas
+
+    // El mensaje debe dejar claro que está stopped (el origen fallback está en source)
+    expect(health.reason).toContain("detenido");
+    expect(health.reason.toLowerCase()).toContain("feed");
+    expect(health.reason).toContain("400min");
   });
 
   it("C05: cleanupOldCandles ejecuta sin errores", async () => {

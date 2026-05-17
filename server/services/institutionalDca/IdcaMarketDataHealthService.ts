@@ -93,7 +93,7 @@ const TIMEFRAME_THRESHOLDS: Record<Timeframe, TimeframeThresholds> = {
   "5m": { ready: 10, lagging: 15, stale: 30, stopped: 60 },
   "15m": { ready: 30, lagging: 45, stale: 90, stopped: 180 },
   "30m": { ready: 60, lagging: 90, stale: 180, stopped: 360 },
-  "1h": { ready: 120, lagging: 180, stale: 360, stopped: 720 },
+  "1h": { ready: 120, lagging: 180, stale: 360, stopped: 360 }, // stopped > 360min (6h)
   "4h": { ready: 480, lagging: 720, stale: 1440, stopped: 2880 },
   "1d": { ready: 2160, lagging: 2880, stale: 5760, stopped: 11520 }, // 36h, 48h, 96h
   "1w": { ready: 10080, lagging: 20160, stale: 40320, stopped: 80640 }, // 1w, 2w, 4w, 8w
@@ -501,8 +501,10 @@ export async function checkMarketDataHealth(
   const hasMacroQuality = quality === "full_macro_context";
 
   // Usable para entrada: requiere estado operable + datos frescos + calidad mínima
+  // FASE C: degraded también puede ser usable si tiene datos frescos y calidad suficiente
   const usableForEntry =
-    (dataReadinessState === "ready" || dataReadinessState === "lagging") &&
+    (dataReadinessState === "ready" || dataReadinessState === "lagging" ||
+     (dataReadinessState === "degraded" && hasFreshData && hasContextQuality)) &&
     hasFreshData &&
     hasContextQuality;
 
