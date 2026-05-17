@@ -94,6 +94,64 @@ function QualityChip({ qualityDetail, dataQuality, effectiveReferenceSource }: {
   );
 }
 
+/**
+ * Chip de estado de salud de datos timeframe-aware (FASE B)
+ */
+function DataHealthChip({ healthData }: { healthData?: MarketDataHealthResult }) {
+  if (!healthData) return null;
+  
+  const { dataReadinessState, lastCandleAgeMinutes, source } = healthData;
+  
+  // Configuración visual por estado
+  const config: Record<string, { label: string; cls: string; icon: React.ReactNode; description: string }> = {
+    ready: {
+      label: "Datos OK",
+      cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+      icon: <CheckCircle className="h-3 w-3" />,
+      description: "Contexto de mercado actualizado",
+    },
+    lagging: {
+      label: "Retraso leve",
+      cls: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+      icon: <Clock className="h-3 w-3" />,
+      description: `Velas algo retrasadas (${lastCandleAgeMinutes}min)`,
+    },
+    stale: {
+      label: "Datos obsoletos",
+      cls: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+      icon: <AlertTriangle className="h-3 w-3" />,
+      description: `Nuevas entradas pausadas (${lastCandleAgeMinutes}min)`,
+    },
+    stopped: {
+      label: "Feed detenido",
+      cls: "bg-red-500/10 text-red-400 border-red-500/20",
+      icon: <XCircle className="h-3 w-3" />,
+      description: `Sin velas recientes (${lastCandleAgeMinutes}min)`,
+    },
+    warmup: {
+      label: "Calentando",
+      cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+      icon: <Database className="h-3 w-3" />,
+      description: "Completando histórico de velas",
+    },
+    degraded: {
+      label: "Fallback BD",
+      cls: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+      icon: <Database className="h-3 w-3" />,
+      description: `Usando cache local (${source})`,
+    },
+  };
+  
+  const { label, cls, icon, description } = config[dataReadinessState] || config.warmup;
+  
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border", cls)} title={description}>
+      {icon}
+      {label}
+    </span>
+  );
+}
+
 function NarrativeIcon({ icon }: { icon: MarketNarrative["icon"] }) {
   if (icon === "ok") return <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />;
   if (icon === "caution") return <AlertTriangle className="h-3.5 w-3.5 text-orange-400 shrink-0" />;
@@ -146,12 +204,21 @@ function ZoneBar({ zone }: { zone?: VwapZone }) {
 
 // ─── Estado de datos mini (integrado en DetailPanel) ─────────────────────────
 
-const DATA_READINESS_LABELS: Record<string, { text: string; color: string }> = {
-  datos_completos:     { text: "Datos completos",     color: "text-emerald-400" },
-  datos_suficientes:   { text: "Datos suficientes",   color: "text-cyan-400"    },
-  datos_parciales:     { text: "Datos parciales",     color: "text-amber-400"   },
-  datos_insuficientes: { text: "Datos insuficientes", color: "text-orange-400"  },
-  feed_detenido:       { text: "Feed detenido",       color: "text-red-400"     },
+/** Labels para estados de salud timeframe-aware (FASE B) */
+const DATA_READINESS_LABELS: Record<string, { text: string; color: string; severity: "ok" | "warn" | "error" }> = {
+  // Estados saludables (permiten operación normal)
+  ready:   { text: "Datos listos",      color: "text-emerald-400", severity: "ok" },
+  
+  // Estados de precaución (contexto válido, operación con cuidado)
+  lagging: { text: "Retraso leve",      color: "text-yellow-400",  severity: "warn" },
+  degraded: { text: "Fallback BD",      color: "text-purple-400",  severity: "warn" },
+  
+  // Estados de alerta (bloquean nuevas entradas)
+  stale:   { text: "Datos obsoletos",   color: "text-orange-400",  severity: "error" },
+  stopped: { text: "Feed detenido",     color: "text-red-400",    severity: "error" },
+  
+  // Estados iniciales
+  warmup:  { text: "Calentando",        color: "text-blue-400",   severity: "warn" },
 };
 
 function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
@@ -176,7 +243,13 @@ function DataHealthMini({ health }: { health: MarketDataHealthResult }) {
         {ageMin != null && (
           <div className="flex justify-between gap-1">
             <span className="text-[9px] text-muted-foreground/40 font-mono">Última</span>
-            <span className={cn("text-[9px] font-mono", ageMin > 90 ? "text-red-400" : "text-foreground/60")}>
+            <span className={cn("text-[9px] font-mono", 
+              // Colores basados en estado timeframe-aware (FASE B)
+              health.dataReadinessState === "stopped" ? "text-red-400" :
+              health.dataReadinessState === "stale" ? "text-orange-400" :
+              health.dataReadinessState === "lagging" ? "text-yellow-400" :
+              "text-foreground/60"
+            )}>
               {ageMin < 60 ? `${ageMin}m` : `${Math.floor(ageMin / 60)}h${ageMin % 60 > 0 ? ` ${ageMin % 60}m` : ""}`}
             </span>
           </div>

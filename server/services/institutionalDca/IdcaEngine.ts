@@ -3249,7 +3249,7 @@ async function performEntryCheck(
       } else if (dynamicAnchorResult.decision === "bloquear_nuevas_entradas_por_datos") {
         blocks.push({ code: "data_not_ready", message: dynamicAnchorResult.reason, timestamp: now });
         // Alerta Telegram según tipo de bloqueo
-        if (dynamicAnchorResult.dataState === "feed_detenido") {
+        if (dynamicAnchorResult.dataState === "stopped") {
           const feedAge = (dynamicAnchorResult.auditPayload as any)?.lastCandleAgeMinutes as number | undefined;
           telegram.alertMarketDataFeedStalled(pair, mode, feedAge ?? 0).catch(() => {});
         } else {

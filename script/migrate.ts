@@ -1187,6 +1187,14 @@ END $$;
     const idcaBeNetBufferPath = path.resolve(process.cwd(), "db", "migrations", "036_idca_be_net_buffer.sql");
     await tryExecuteFile(db, idcaBeNetBufferPath, "idca_be_net_buffer");
 
+    // ============================================================
+    // LOTE 6: MARKET CANDLES CACHE (037)
+    // Shared persistent candle cache for IDCA, normal mode and future modules.
+    // ============================================================
+    console.log("[migrate] Ensuring shared market candles cache table exists...");
+    const marketCandlesPath = path.resolve(process.cwd(), "db", "migrations", "037_market_candles_cache.sql");
+    await tryExecuteFile(db, marketCandlesPath, "market_candles_cache");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

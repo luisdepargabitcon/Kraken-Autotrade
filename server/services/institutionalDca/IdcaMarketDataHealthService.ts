@@ -1,24 +1,36 @@
 /**
  * IdcaMarketDataHealthService
  *
- * Evalúa si los datos de mercado (velas 1h de Kraken/MarketDataService)
- * son suficientes para que la Ancla Dinámica IDCA opere con seguridad.
+ * Evalúa si los datos de mercado (velas de Kraken/MarketDataService)
+ * son suficientes para que IDCA opere con seguridad.
  *
- * NO crea tablas nuevas de velas: reutiliza MarketDataService/Kraken.
+ * FASE B: Health timeframe-aware con estados ready/lagging/stale/stopped/warmup/degraded.
+ * Umbrales ajustados por timeframe para eliminar falsos "feed detenido".
+ *
  * NO bloquea el flujo principal: siempre devuelve un resultado.
  */
 
-import { MarketDataService } from "../MarketDataService";
+import { MarketDataService, type Timeframe } from "../MarketDataService";
 import { idcaLog } from "./idcaLog";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
+/**
+ * Estados de salud de datos timeframe-aware:
+ * - ready: Datos frescos, operativa normal
+ * - lagging: Retraso leve pero contexto válido (ej: 126min en 1h)
+ * - stale: Datos obsoletos para nuevas entradas, ciclos activos pueden seguir
+ * - stopped: Feed realmente detenido, período anómalo
+ * - warmup: Aún no hay mínimo de velas
+ * - degraded: Usando BD/cache como fallback temporal
+ */
 export type DataReadinessState =
-  | "datos_completos"
-  | "datos_suficientes"
-  | "datos_parciales"
-  | "datos_insuficientes"
-  | "feed_detenido";
+  | "ready"
+  | "lagging"
+  | "stale"
+  | "stopped"
+  | "warmup"
+  | "degraded";
 
 export type BackfillStatus =
   | "no_necesario"
@@ -30,7 +42,7 @@ export type BackfillStatus =
 export interface MarketDataHealthResult {
   pair: string;
   timeframe: string;
-  source: string;
+  source: "kraken" | "mds_cache" | "db_fallback" | "unknown";
   candleCount: number;
   requiredCandles: number;
   sufficientCandles: number;
@@ -46,9 +58,32 @@ export interface MarketDataHealthResult {
   dataReadinessState: DataReadinessState;
   canUseDynamicAnchor: boolean;
   canOpenNewIdcaCycle: boolean;
+  allowsActiveCycleManagement: boolean;
+  blocksNewMain: boolean;
   reason: string;
   checkedAt: string;
 }
+
+/** Umbrales de health por timeframe (en minutos) */
+interface TimeframeThresholds {
+  ready: number;      // Hasta este valor: datos frescos
+  lagging: number;    // Hasta este valor: retraso leve, contexto válido
+  stale: number;      // Hasta este valor: obsoleto para nuevas entradas
+  stopped: number;    // Por encima: feed detenido
+}
+
+/** Configuración de umbrales por timeframe */
+const TIMEFRAME_THRESHOLDS: Record<Timeframe, TimeframeThresholds> = {
+  "1m": { ready: 2, lagging: 5, stale: 15, stopped: 30 },
+  "5m": { ready: 10, lagging: 15, stale: 30, stopped: 60 },
+  "15m": { ready: 30, lagging: 45, stale: 90, stopped: 180 },
+  "30m": { ready: 60, lagging: 90, stale: 180, stopped: 360 },
+  "1h": { ready: 120, lagging: 180, stale: 360, stopped: 720 },
+  "4h": { ready: 480, lagging: 720, stale: 1440, stopped: 2880 },
+  "1d": { ready: 2160, lagging: 2880, stale: 5760, stopped: 11520 }, // 36h, 48h, 96h
+  "1w": { ready: 10080, lagging: 20160, stale: 40320, stopped: 80640 }, // 1w, 2w, 4w, 8w
+  "15d": { ready: 21600, lagging: 43200, stale: 86400, stopped: 172800 }, // 15d, 30d, 60d, 120d
+};
 
 // ─── Configuración por defecto ─────────────────────────────────────────────
 
@@ -56,11 +91,15 @@ const DEFAULTS = {
   requiredCandles: 72,
   sufficientCandles: 24,
   minimumCandles: 7,
-  timeframe: "1h" as const,
+  timeframe: "1h" as Timeframe,
   timeframeMinutes: 60,
-  feedStaledThresholdMinutes: 90, // última vela >90min → feed detenido
   gapThresholdMinutes: 90,        // hueco entre velas >90min = gap
 };
+
+/** Obtiene umbrales para un timeframe, con fallback a 1h */
+function getTimeframeThresholds(timeframe: Timeframe): TimeframeThresholds {
+  return TIMEFRAME_THRESHOLDS[timeframe] ?? TIMEFRAME_THRESHOLDS["1h"];
+}
 
 // ─── In-memory: backfill state por par ────────────────────────────────────
 
@@ -68,6 +107,52 @@ const backfillState = new Map<string, BackfillStatus>();
 const backfillInProgress = new Set<string>();
 const lastBackfillAttempt = new Map<string, number>();
 const BACKFILL_COOLDOWN_MS = 10 * 60 * 1000; // 10 min entre intentos
+
+// ─── Throttle de logs por estado ────────────────────────────────────────────
+
+/** Último log por par+estado para evitar spam */
+const lastLogByState = new Map<string, number>();
+
+/** Throttle en ms por tipo de estado */
+const LOG_THROTTLE_MS: Record<DataReadinessState, number> = {
+  ready: 60 * 60 * 1000,      // 1 hora - no spam de "todo OK"
+  lagging: 30 * 60 * 1000,    // 30 min - retraso leve
+  stale: 30 * 60 * 1000,      // 30 min - obsoleto
+  stopped: 15 * 60 * 1000,   // 15 min - detenido (más crítico)
+  warmup: 5 * 60 * 1000,      // 5 min - calentando
+  degraded: 15 * 60 * 1000,  // 15 min - fallback
+};
+
+/** Estado anterior por par para detectar transiciones */
+const previousStateByPair = new Map<string, DataReadinessState>();
+
+/** Verifica si se puede loguear según throttle, permitiendo siempre transiciones */
+function canLogState(pair: string, state: DataReadinessState): boolean {
+  const key = `${pair}:${state}`;
+  const now = Date.now();
+  const lastLog = lastLogByState.get(key) ?? 0;
+  const throttleMs = LOG_THROTTLE_MS[state];
+  
+  // Siempre permitir si es transición de estado
+  const prevState = previousStateByPair.get(pair);
+  if (prevState !== state) {
+    return true;
+  }
+  
+  // Throttle para logs repetidos del mismo estado
+  if (now - lastLog < throttleMs) {
+    return false;
+  }
+  
+  return true;
+}
+
+/** Marca que se logueó un estado */
+function markStateLogged(pair: string, state: DataReadinessState): void {
+  const key = `${pair}:${state}`;
+  lastLogByState.set(key, Date.now());
+  previousStateByPair.set(pair, state);
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -90,21 +175,57 @@ function detectGaps(
   return { hasGaps: gapCount > 0, gapCount };
 }
 
+/**
+ * Computa el estado de salud de datos basado en timeframe-aware thresholds.
+ * 
+ * Lógica:
+ * 1. Si no hay velas mínimas -> warmup
+ * 2. Si hay velas pero la última está muy antigua -> stopped
+ * 3. Si la última vela está obsoleta -> stale
+ * 4. Si la última vela tiene retraso leve -> lagging
+ * 5. Si todo está OK -> ready
+ */
 function computeReadinessState(
   candleCount: number,
   lastCandleAgeMinutes: number | null,
   required: number,
   sufficient: number,
   minimum: number,
-  feedStaledThreshold: number,
+  thresholds: TimeframeThresholds,
+  isFromDbFallback: boolean,
 ): DataReadinessState {
-  if (lastCandleAgeMinutes !== null && lastCandleAgeMinutes > feedStaledThreshold) {
-    return "feed_detenido";
+  // Si estamos usando BD fallback, marcar como degraded
+  if (isFromDbFallback) {
+    return "degraded";
   }
-  if (candleCount >= required) return "datos_completos";
-  if (candleCount >= sufficient) return "datos_suficientes";
-  if (candleCount >= minimum) return "datos_parciales";
-  return "datos_insuficientes";
+  
+  // Sin velas mínimas -> warmup
+  if (candleCount < minimum) {
+    return "warmup";
+  }
+  
+  // Sin timestamp de última vela -> warmup (no sabemos la edad)
+  if (lastCandleAgeMinutes === null) {
+    return "warmup";
+  }
+  
+  // Feed realmente detenido
+  if (lastCandleAgeMinutes > thresholds.stopped) {
+    return "stopped";
+  }
+  
+  // Datos obsoletos para nuevas entradas
+  if (lastCandleAgeMinutes > thresholds.stale) {
+    return "stale";
+  }
+  
+  // Retraso leve pero contexto válido
+  if (lastCandleAgeMinutes > thresholds.ready) {
+    return "lagging";
+  }
+  
+  // Todo OK
+  return "ready";
 }
 
 function estimateReadyAt(
@@ -157,6 +278,93 @@ async function triggerBackfill(pair: string, mode: string): Promise<void> {
   }
 }
 
+/**
+ * Determina el mensaje de reason según el estado de salud.
+ */
+function getReasonMessage(
+  state: DataReadinessState,
+  candleCount: number,
+  required: number,
+  lastCandleAgeMinutes: number | null,
+  fetchError: string | null,
+  missingCandles: number,
+): string {
+  switch (state) {
+    case "ready":
+      return `Datos listos: ${candleCount}/${required} velas. Contexto de mercado actualizado.`;
+    case "lagging":
+      return `Velas ${DEFAULTS.timeframe} con ligero retraso: última vela hace ${lastCandleAgeMinutes}min. Contexto todavía utilizable.`;
+    case "stale":
+      return `Datos de velas obsoletos para nuevas entradas: última vela hace ${lastCandleAgeMinutes}min. Ciclos activos siguen con precio spot si disponible.`;
+    case "stopped":
+      return `Feed de velas detenido: última vela hace ${lastCandleAgeMinutes}min. Nuevas entradas pausadas hasta recuperar datos.`;
+    case "warmup":
+      return fetchError
+        ? `Error obteniendo velas: ${fetchError}. Completando histórico.`
+        : `Datos insuficientes: ${candleCount}/${required} velas. Faltan ${missingCandles} velas. Calentando datos...`;
+    case "degraded":
+      return `Usando cache persistente como fallback. Velas: ${candleCount}. Contexto puede no estar al día.`;
+    default:
+      return "Estado desconocido.";
+  }
+}
+
+/**
+ * Log estructurado de health con throttle.
+ */
+function logHealthState(
+  pair: string,
+  state: DataReadinessState,
+  details: {
+    candleCount: number;
+    required: number;
+    lastCandleAgeMinutes: number | null;
+    source: string;
+    allowsActiveCycleManagement: boolean;
+    blocksNewMain: boolean;
+  },
+): void {
+  // Verificar throttle
+  if (!canLogState(pair, state)) {
+    return;
+  }
+  
+  const prevState = previousStateByPair.get(pair);
+  const isTransition = prevState && prevState !== state;
+  
+  // Log de transición o estado
+  const logPrefix = isTransition ? "[MARKET_DATA_HEALTH_CHANGE]" : "[MARKET_DATA_HEALTH]";
+  const transitionInfo = isTransition ? ` ${prevState} → ${state}` : "";
+  
+  const logMessage = `${logPrefix} ${pair} ${DEFAULTS.timeframe}${transitionInfo} | ` +
+    `state=${state} | candles=${details.candleCount}/${details.required} | ` +
+    `age=${details.lastCandleAgeMinutes}min | source=${details.source} | ` +
+    `allowsActiveMgmt=${details.allowsActiveCycleManagement} | blocksNewMain=${details.blocksNewMain}`;
+  
+  // Severidad según estado
+  const level: "info" | "warn" | "error" = state === "stopped" ? "warn" : 
+                                             state === "stale" ? "warn" :
+                                             state === "warmup" ? "info" :
+                                             "info";
+  
+  idcaLog(level, logMessage, {
+    pair,
+    timeframe: DEFAULTS.timeframe,
+    state,
+    previousState: prevState,
+    isTransition,
+    candleCount: details.candleCount,
+    requiredCandles: details.required,
+    lastCandleAgeMinutes: details.lastCandleAgeMinutes,
+    source: details.source,
+    allowsActiveCycleManagement: details.allowsActiveCycleManagement,
+    blocksNewMain: details.blocksNewMain,
+    event: isTransition ? "market_data_health_transition" : "market_data_health",
+  });
+  
+  markStateLogged(pair, state);
+}
+
 export async function checkMarketDataHealth(
   pair: string,
   mode = "simulation",
@@ -164,19 +372,26 @@ export async function checkMarketDataHealth(
     requiredCandles?: number;
     sufficientCandles?: number;
     minimumCandles?: number;
+    timeframe?: Timeframe;
+    timeframeMinutes?: number;
+    isFromDbFallback?: boolean;
   } = {},
 ): Promise<MarketDataHealthResult> {
-  const required  = options.requiredCandles  ?? DEFAULTS.requiredCandles;
+  const required = options.requiredCandles ?? DEFAULTS.requiredCandles;
   const sufficient = options.sufficientCandles ?? DEFAULTS.sufficientCandles;
-  const minimum   = options.minimumCandles   ?? DEFAULTS.minimumCandles;
-  const tfMinutes = DEFAULTS.timeframeMinutes;
+  const minimum = options.minimumCandles ?? DEFAULTS.minimumCandles;
+  const timeframe = options.timeframe ?? DEFAULTS.timeframe;
+  const tfMinutes = options.timeframeMinutes ?? DEFAULTS.timeframeMinutes;
+  const isFromDbFallback = options.isFromDbFallback ?? false;
+  const thresholds = getTimeframeThresholds(timeframe);
   const now = Date.now();
 
   let candles: Array<{ time: number; high: number; low: number; close: number; volume: number }> = [];
   let fetchError: string | null = null;
+  let source: MarketDataHealthResult["source"] = "kraken";
 
   try {
-    candles = await MarketDataService.getCandles(pair, "1h");
+    candles = await MarketDataService.getCandles(pair, timeframe);
   } catch (err: any) {
     fetchError = err?.message ?? String(err);
   }
@@ -197,70 +412,89 @@ export async function checkMarketDataHealth(
 
   const { hasGaps, gapCount } = detectGaps(normalizedCandles, tfMinutes, DEFAULTS.gapThresholdMinutes);
 
-  const dataReadinessState = fetchError
-    ? "datos_insuficientes"
-    : computeReadinessState(candleCount, lastCandleAgeMinutes, required, sufficient, minimum, DEFAULTS.feedStaledThresholdMinutes);
+  // Calcular estado de salud timeframe-aware
+  const dataReadinessState = computeReadinessState(
+    candleCount,
+    lastCandleAgeMinutes,
+    required,
+    sufficient,
+    minimum,
+    thresholds,
+    isFromDbFallback,
+  );
+
+  // Si hubo error de fetch y no hay velas, marcar como warmup
+  if (fetchError && candleCount === 0) {
+    source = "unknown";
+  } else if (isFromDbFallback) {
+    source = "db_fallback";
+  } else if (fetchError && candleCount > 0) {
+    // Tenemos velas de cache aunque el fetch falló
+    source = "mds_cache";
+  }
 
   const missingCandles = Math.max(0, required - candleCount);
   const estimatedAt = estimateReadyAt(candleCount, required, tfMinutes);
 
-  const canUseDynamicAnchor =
-    dataReadinessState === "datos_completos" ||
-    dataReadinessState === "datos_suficientes" ||
-    (dataReadinessState === "datos_parciales" && candleCount >= minimum);
+  // Lógica de capacidades según estado
+  // ready: todo OK
+  // lagging: contexto válido, ciclos activos OK, nuevas entradas con precaución
+  // stale: bloquear nuevas entradas, pero ciclos activos pueden seguir con spot
+  // stopped: bloquear nuevas entradas, mantener gestión defensiva si es posible
+  // warmup: no operar aún
+  // degraded: usar con precaución, preferir spot si disponible
 
-  const canOpenNewIdcaCycle =
-    dataReadinessState === "datos_completos" ||
-    dataReadinessState === "datos_suficientes";
+  const allowsActiveCycleManagement =
+    dataReadinessState === "ready" ||
+    dataReadinessState === "lagging" ||
+    dataReadinessState === "degraded";
+
+  const blocksNewMain =
+    dataReadinessState === "warmup" ||
+    dataReadinessState === "stale" ||
+    dataReadinessState === "stopped";
+
+  const canUseDynamicAnchor =
+    dataReadinessState === "ready" ||
+    dataReadinessState === "lagging" ||
+    dataReadinessState === "degraded";
+
+  const canOpenNewIdcaCycle = dataReadinessState === "ready";
 
   const currentBackfill = backfillState.get(pair) ?? "no_necesario";
 
-  let reason: string;
-  switch (dataReadinessState) {
-    case "datos_completos":
-      reason = `Datos completos: ${candleCount}/${required} velas disponibles.`;
-      break;
-    case "datos_suficientes":
-      reason = `Datos suficientes: ${candleCount}/${required} velas. Ancla dinámica conservadora.`;
-      break;
-    case "datos_parciales":
-      reason = `Datos parciales: ${candleCount}/${required} velas. Diagnóstico limitado.`;
-      break;
-    case "datos_insuficientes":
-      reason = fetchError
-        ? `Error obteniendo velas: ${fetchError}. Backfill solicitado.`
-        : `Datos insuficientes: ${candleCount}/${required} velas. Faltan ${missingCandles} velas. Backfill solicitado.`;
-      break;
-    case "feed_detenido":
-      reason = `Feed detenido: última vela hace ${lastCandleAgeMinutes} minutos (límite: ${DEFAULTS.feedStaledThresholdMinutes} min).`;
-      break;
-    default:
-      reason = "Estado desconocido.";
-  }
+  const reason = getReasonMessage(
+    dataReadinessState,
+    candleCount,
+    required,
+    lastCandleAgeMinutes,
+    fetchError,
+    missingCandles,
+  );
+
+  // Log estructurado con throttle
+  logHealthState(pair, dataReadinessState, {
+    candleCount,
+    required,
+    lastCandleAgeMinutes,
+    source,
+    allowsActiveCycleManagement,
+    blocksNewMain,
+  });
 
   // Disparar backfill si es necesario (no bloquea)
   if (
-    (dataReadinessState === "datos_insuficientes" || dataReadinessState === "datos_parciales") &&
-    !backfillInProgress.has(pair)
+    (dataReadinessState === "warmup") &&
+    !backfillInProgress.has(pair) &&
+    candleCount < minimum
   ) {
     triggerBackfill(pair, mode).catch(() => {});
   }
 
-  // Alertar feed detenido
-  if (dataReadinessState === "feed_detenido") {
-    idcaLog("warn", `Feed de datos detenido: última vela hace ${lastCandleAgeMinutes}min`, {
-      pair,
-      mode,
-      source: "IdcaMarketDataHealthService",
-      event: "idca_market_data_feed_stalled",
-      lastCandleAgeMinutes,
-    });
-  }
-
   return {
     pair,
-    timeframe: "1h",
-    source: "Kraken / MarketDataService",
+    timeframe,
+    source,
     candleCount,
     requiredCandles: required,
     sufficientCandles: sufficient,
@@ -276,6 +510,8 @@ export async function checkMarketDataHealth(
     dataReadinessState,
     canUseDynamicAnchor,
     canOpenNewIdcaCycle,
+    allowsActiveCycleManagement,
+    blocksNewMain,
     reason,
     checkedAt: new Date(now).toISOString(),
   };

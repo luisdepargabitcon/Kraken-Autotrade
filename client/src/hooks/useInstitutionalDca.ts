@@ -356,7 +356,7 @@ export interface MarketContextPreview {
 export interface MarketDataHealthResult {
   pair: string;
   timeframe: string;
-  source: string;
+  source: "kraken" | "mds_cache" | "db_fallback" | "unknown";
   candleCount: number;
   requiredCandles: number;
   sufficientCandles: number;
@@ -369,9 +369,14 @@ export interface MarketDataHealthResult {
   hasGaps: boolean;
   gapCount: number;
   backfillStatus: "no_necesario" | "solicitado" | "completado" | "fallido" | "en_progreso";
-  dataReadinessState: "datos_completos" | "datos_suficientes" | "datos_parciales" | "datos_insuficientes" | "feed_detenido";
+  /** Estado de salud de datos timeframe-aware (FASE B) */
+  dataReadinessState: "ready" | "lagging" | "stale" | "stopped" | "warmup" | "degraded";
   canUseDynamicAnchor: boolean;
   canOpenNewIdcaCycle: boolean;
+  /** Permite gestión de ciclos activos con precio spot */
+  allowsActiveCycleManagement: boolean;
+  /** Bloquea nuevas entradas main */
+  blocksNewMain: boolean;
   reason: string;
   checkedAt: string;
 }

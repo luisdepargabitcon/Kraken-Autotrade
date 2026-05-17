@@ -217,7 +217,7 @@ export async function resolveDynamicAnchor(
         : "Ancla dinámica desactivada. Usando comportamiento anterior.",
       marketReading: "Sin evaluación dinámica.",
       marketZone: vwapContext?.zone ?? null,
-      dataState: "datos_suficientes",
+      dataState: "ready",
       cycleProtection: "sin_ciclo",
       actionTaken: "sin_cambios",
       canOpenNewCycle: true,
@@ -246,7 +246,7 @@ export async function resolveDynamicAnchor(
       reason: "Hay un ciclo activo. La Ancla IDCA solo aporta contexto. No modifica precio medio, próxima compra ni escalera.",
       marketReading: "Contexto informativo. El ciclo activo gestiona su propia referencia.",
       marketZone: vwapContext?.zone ?? null,
-      dataState: "datos_suficientes",
+      dataState: "ready",
       cycleProtection: "ciclo_activo_protegido",
       actionTaken: "sin_accion_por_ciclo",
       canOpenNewCycle: false,
@@ -271,7 +271,7 @@ export async function resolveDynamicAnchor(
       reason: "Hay una salida pendiente. La Ancla IDCA no realiza ninguna acción nueva.",
       marketReading: "Salida programada en curso. Sin acción de entrada.",
       marketZone: vwapContext?.zone ?? null,
-      dataState: "datos_suficientes",
+      dataState: "ready",
       cycleProtection: "salida_pendiente",
       actionTaken: "sin_cambios",
       canOpenNewCycle: false,
@@ -283,7 +283,11 @@ export async function resolveDynamicAnchor(
   const health = await checkMarketDataHealth(pair, mode);
   const dataState = health.dataReadinessState;
 
-  if (dataState === "feed_detenido") {
+  // ── 3b. Manejar estados de salud de datos que bloquean operación ──────────
+  
+  // Feed realmente detenido o datos insuficientes (warmup)
+  if (dataState === "stopped" || dataState === "warmup") {
+    const isStopped = dataState === "stopped";
     return {
       decision: "bloquear_nuevas_entradas_por_datos",
       changeTrigger: "bloqueado_por_datos",
@@ -295,8 +299,10 @@ export async function resolveDynamicAnchor(
       calculatedAnchor: null,
       effectiveEntryReference: frozenAnchor?.anchorPrice ?? basePriceResult.price,
       usedByEngine: false,
-      reason: `Feed de datos detenido: última vela hace ${health.lastCandleAgeMinutes} minutos. No se abrirán nuevas entradas IDCA hasta recuperar datos fiables.`,
-      marketReading: "Feed de datos detenido.",
+      reason: isStopped
+        ? `Feed de velas detenido: última vela hace ${health.lastCandleAgeMinutes} minutos. Nuevas entradas pausadas hasta recuperar datos.`
+        : `Datos insuficientes para calcular la Ancla IDCA. Velas: ${health.candleCount}/${health.requiredCandles}. Completando histórico...`,
+      marketReading: isStopped ? "Feed de velas detenido." : "Datos insuficientes.",
       marketZone: null,
       dataState,
       cycleProtection: "sin_ciclo",
@@ -306,10 +312,11 @@ export async function resolveDynamicAnchor(
     };
   }
 
-  if (dataState === "datos_insuficientes") {
+  // Datos obsoletos - bloquear nuevas entradas pero permitir gestión defensiva
+  if (dataState === "stale") {
     return {
       decision: "bloquear_nuevas_entradas_por_datos",
-      changeTrigger: "cambio_por_calidad_datos",
+      changeTrigger: "bloqueado_por_datos",
       currentAnchor: frozenAnchor ? {
         price: frozenAnchor.anchorPrice,
         ageHours: anchorAgeHours(frozenAnchor, now),
@@ -318,19 +325,19 @@ export async function resolveDynamicAnchor(
       calculatedAnchor: null,
       effectiveEntryReference: frozenAnchor?.anchorPrice ?? basePriceResult.price,
       usedByEngine: false,
-      reason: `No hay datos suficientes para calcular la Ancla IDCA con seguridad. Velas disponibles: ${health.candleCount}/${health.requiredCandles}. Acción: completando histórico desde Kraken.`,
-      marketReading: "Datos insuficientes.",
+      reason: `Datos de velas obsoletos para nuevas entradas: última vela hace ${health.lastCandleAgeMinutes}min. Ciclos activos pueden seguir con precio spot.`,
+      marketReading: "Datos obsoletos para nuevas entradas.",
       marketZone: null,
       dataState,
       cycleProtection: "sin_ciclo",
-      actionTaken: "completando_historico",
+      actionTaken: "nuevas_entradas_bloqueadas",
       canOpenNewCycle: false,
-      auditPayload: { dataState, candleCount: health.candleCount, required: health.requiredCandles },
+      auditPayload: { dataState, lastCandleAgeMinutes: health.lastCandleAgeMinutes, candleCount: health.candleCount },
     };
   }
 
-  // Modo conservador si datos parciales
-  const conservativeMode = dataState === "datos_parciales";
+  // Modo conservador si datos degradados (fallback de BD) o con retraso leve
+  const conservativeMode = dataState === "degraded" || dataState === "lagging";
 
   // ── 4. Calcular estructura actual del mercado ─────────────────────────────
   const structure24h = computeRecentStructure(candles, 24, now);
@@ -392,7 +399,7 @@ export async function resolveDynamicAnchor(
 
   // ── 6. Si no hay ancla → crear una nueva ──────────────────────────────────
   if (!hasAnchor && newBasePriceCandidate > 0) {
-    const confidence = dataState === "datos_completos" ? "alta" : dataState === "datos_suficientes" ? "media" : "baja";
+    const confidence = dataState === "ready" ? "alta" : dataState === "lagging" ? "media" : "baja";
     return {
       decision: "renovar_ancla",
       changeTrigger: "cambio_por_estructura",
@@ -426,7 +433,7 @@ export async function resolveDynamicAnchor(
       Math.abs(newBasePriceCandidate - currentAnchorPrice) / currentAnchorPrice > STRUCTURE_DIVERGENCE_THRESHOLD;
 
     if (marketWorkingInNewZone) {
-      const confidence = dataState === "datos_completos" ? "alta" : "media";
+      const confidence = dataState === "ready" ? "alta" : "media";
       idcaLog("info", `Ancla IDCA renovada por cambio de estructura`, {
         pair, mode,
         event: "idca_dynamic_anchor_structure_change",
@@ -466,7 +473,7 @@ export async function resolveDynamicAnchor(
     const { breakoutDetected, newLevel } = detectBreakoutAndConsolidation(candles, currentAnchorPrice, now);
 
     if (breakoutDetected && newLevel > currentAnchorPrice) {
-      const confidence = dataState === "datos_completos" ? "alta" : "media";
+      const confidence = dataState === "ready" ? "alta" : "media";
       idcaLog("info", `Ancla IDCA renovada por ruptura y consolidación`, {
         pair, mode,
         event: "idca_dynamic_anchor_breakout_consolidation_change",
@@ -509,7 +516,7 @@ export async function resolveDynamicAnchor(
       Math.abs(newBasePriceCandidate - vwapPrice) / vwapPrice < ANCHOR_DIVERGENCE_VWAP_THRESHOLD;
 
     if (vwapDiverged && vwapAlignedWithNewBase && !conservativeMode) {
-      const confidence = dataState === "datos_completos" ? "alta" : "media";
+      const confidence = dataState === "ready" ? "alta" : "media";
       idcaLog("info", `Ancla IDCA renovada por VWAP`, {
         pair, mode,
         event: "idca_dynamic_anchor_vwap_change",
@@ -577,7 +584,7 @@ export async function resolveDynamicAnchor(
         : 0;
 
       if (candidateDivergence > 0.02) { // 2% diferente = divergente
-        const confidence = dataState === "datos_completos" ? "alta" : "media";
+        const confidence = dataState === "ready" ? "alta" : "media";
         idcaLog("info", `Ancla IDCA renovada por obsolescencia`, {
           pair, mode,
           event: "idca_dynamic_anchor_obsolescence_review",

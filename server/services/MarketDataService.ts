@@ -21,6 +21,7 @@
 
 import { ExchangeFactory } from "./exchanges/ExchangeFactory";
 import type { OHLC, Ticker } from "./exchanges/IExchangeService";
+import { MarketCandleRepository } from "./marketData/MarketCandleRepository";
 
 // ─── Public types ─────────────────────────────────────────────────
 
@@ -155,6 +156,10 @@ class MarketDataServiceClass {
         const candles = await exchange.getOHLC(pair, intervalMin);
         if (candles && Array.isArray(candles) && candles.length > 0) {
           this.candleCache.set(key, { candles, fetchedAt: Date.now() });
+          
+          // Persistir velas cerradas en BD (sin bloquear)
+          this.persistCandles(pair, tf, candles).catch(() => {});
+          
           return candles;
         }
       } catch (e: any) {
@@ -282,6 +287,81 @@ class MarketDataServiceClass {
     const atr = atrSum / period;
     const midPrice = slice[slice.length - 1].close;
     return midPrice > 0 ? (atr / midPrice) * 100 : null;
+  }
+
+  // ── Database persistence (FASE B) ─────────────────────────────
+
+  /**
+   * Persiste velas en la BD de forma asíncrona (sin bloquear).
+   * Solo las velas cerradas (no la vela en formación) se persisten.
+   */
+  private async persistCandles(pair: string, tf: Timeframe, candles: OHLC[]): Promise<void> {
+    try {
+      // Solo persistir velas cerradas (todas excepto la última si está en formación)
+      const closedCandles = candles.slice(0, -1).map(c => ({
+        ...c,
+        isClosed: true,
+      }));
+      
+      if (closedCandles.length > 0) {
+        await MarketCandleRepository.upsertCandles(pair, tf, "kraken", closedCandles);
+      }
+    } catch (error) {
+      // Log silencioso - no debe romper el flujo principal
+      console.debug(`[MDS] Failed to persist candles for ${pair}/${tf}:`, error);
+    }
+  }
+
+  /**
+   * Obtiene velas desde la BD como fallback.
+   * Usado cuando Kraken no está disponible o para seed inicial.
+   * 
+   * @returns Velas desde BD o null si no hay datos suficientes
+   */
+  async getCandlesFromDb(
+    pair: string, 
+    tf: Timeframe, 
+    minCandles: number = 7
+  ): Promise<{ candles: OHLC[]; source: "db_fallback" } | null> {
+    try {
+      const dbCandles = await MarketCandleRepository.getRecentCandles(pair, tf, 200);
+      
+      if (dbCandles.length >= minCandles) {
+        // Mapear de OHLCV a OHLC (eliminar isClosed)
+        const candles: OHLC[] = dbCandles.map(c => ({
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+        }));
+        console.log(`[MDS] DB_FALLBACK ${pair}/${tf} returned ${candles.length} candles`);
+        return { candles, source: "db_fallback" };
+      }
+      
+      return null;
+    } catch (error) {
+      console.debug(`[MDS] DB_FALLBACK failed for ${pair}/${tf}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Limpia velas antiguas según política de retención.
+   * Debe llamarse periódicamente (ej: al arrancar el servicio).
+   */
+  async cleanupOldCandles(): Promise<number> {
+    try {
+      const deleted = await MarketCandleRepository.deleteOldCandles();
+      if (deleted > 0) {
+        console.log(`[MDS] Retention cleanup: deleted ${deleted} old candles`);
+      }
+      return deleted;
+    } catch (error) {
+      console.warn(`[MDS] Retention cleanup failed:`, error);
+      return 0;
+    }
   }
 
   // ── Diagnostics ───────────────────────────────────────────────
