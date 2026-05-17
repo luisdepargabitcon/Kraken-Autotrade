@@ -148,24 +148,33 @@ class MarketDataServiceClass {
     const fetch = (async (): Promise<OHLC[]> => {
       try {
         const exchange = ExchangeFactory.getDataExchange();
-        if (!exchange.isInitialized()) return cached?.candles ?? [];
+        if (!exchange.isInitialized()) {
+          // Exchange no inicializado: intentar fallback a BD
+          const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+          return fallback ?? cached?.candles ?? [];
+        }
 
         const intervalMin = TIMEFRAME_INTERVAL_MINUTES[tf];
         if (!intervalMin) return cached?.candles ?? [];
 
         const candles = await exchange.getOHLC(pair, intervalMin);
-        if (candles && Array.isArray(candles) && candles.length > 0) {
+        if (candles && Array.isArray(candles) && candles.length >= 7) {
+          // Datos suficientes de Kraken: persistir y retornar
           this.candleCache.set(key, { candles, fetchedAt: Date.now() });
-          
-          // Persistir velas cerradas en BD (sin bloquear)
           this.persistCandles(pair, tf, candles).catch(() => {});
-          
           return candles;
         }
+
+        // Kraken retornó insuficiente (< 7 velas): intentar fallback a BD
+        console.warn(`[MDS] Kraken returned insufficient candles (${candles?.length ?? 0}), trying DB fallback`);
+        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+        return fallback ?? cached?.candles ?? [];
+
       } catch (e: any) {
-        console.warn(`[MDS] getCandles(${pair}, ${tf}) error: ${e.message}`);
+        console.warn(`[MDS] getCandles(${pair}, ${tf}) error: ${e.message}, trying DB fallback`);
+        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+        return fallback ?? cached?.candles ?? [];
       }
-      return cached?.candles ?? [];
     })();
 
     this.pendingCandles.set(key, fetch);
@@ -348,8 +357,36 @@ class MarketDataServiceClass {
   }
 
   /**
+   * Intenta fallback a BD cuando Kraken falla o devuelve insuficiente.
+   * Actualiza el caché con datos de BD si son suficientes.
+   * @returns Velas desde BD o null si no hay datos suficientes
+   */
+  private async tryFallbackToDb(
+    pair: string,
+    tf: Timeframe,
+    cachedCandles?: OHLC[]
+  ): Promise<OHLC[] | null> {
+    try {
+      const result = await this.getCandlesFromDb(pair, tf, 7);
+      if (result && result.candles.length >= 7) {
+        // Actualizar caché con datos de BD (marcando que son fallback)
+        this.candleCache.set(this.candleKey(pair, tf), {
+          candles: result.candles,
+          fetchedAt: Date.now()
+        });
+        console.log(`[MDS] USING_DB_FALLBACK ${pair}/${tf}: ${result.candles.length} candles from DB`);
+        return result.candles;
+      }
+    } catch (error) {
+      console.debug(`[MDS] Fallback to DB failed for ${pair}/${tf}:`, error);
+    }
+    return null;
+  }
+
+  /**
    * Limpia velas antiguas según política de retención.
    * Debe llamarse periódicamente (ej: al arrancar el servicio).
+   * Máximo 1 vez cada 24h (throttle interno en deleteOldCandles).
    */
   async cleanupOldCandles(): Promise<number> {
     try {

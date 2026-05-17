@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { logStreamService } from "./services/logStreamService";
 import { log } from "./utils/logger";
+import { MarketDataService } from "./services/MarketDataService";
 import fs from "fs";
 import path from "path";
 
@@ -56,6 +57,11 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  // Cleanup de velas antiguas (retención) - máximo 1 vez cada 24h por throttle interno
+  MarketDataService.cleanupOldCandles().catch((err) => {
+    console.warn("[startup] Candle retention cleanup failed (non-blocking):", err);
+  });
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

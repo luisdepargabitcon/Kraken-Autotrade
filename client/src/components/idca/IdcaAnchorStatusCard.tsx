@@ -25,9 +25,14 @@ type AnchorDecision =
   | "precio_caro_no_perseguir" | "zona_interesante_con_confirmacion"
   | "ciclo_activo_solo_contexto" | "salida_pendiente_sin_accion";
 
+/** Estados de salud timeframe-aware (FASE B) */
 type DataReadinessState =
-  | "datos_completos" | "datos_suficientes" | "datos_parciales"
-  | "datos_insuficientes" | "feed_detenido";
+  | "ready"      // Datos listos, operación normal
+  | "lagging"    // Retraso leve, contexto válido
+  | "stale"      // Datos obsoletos, bloquea nuevas entradas
+  | "stopped"    // Feed detenido, bloquea operaciones
+  | "warmup"     // Calentando, datos insuficientes
+  | "degraded";  // Fallback a BD, operación con precaución
 
 // ─── Mapeos de textos en castellano (lenguaje humano) ─────────────────────────
 
@@ -67,12 +72,14 @@ const TRIGGER_LABEL: Record<string, string> = {
   bloqueado_por_datos: "Feed de datos detenido",
 };
 
+/** Labels para estados timeframe-aware (FASE B) */
 const DATA_STATE_LABEL: Record<DataReadinessState, string> = {
-  datos_completos: "Datos completos",
-  datos_suficientes: "Datos suficientes",
-  datos_parciales: "Datos parciales",
-  datos_insuficientes: "Datos insuficientes",
-  feed_detenido: "Feed detenido",
+  ready:   "Datos listos",
+  lagging: "Retraso leve",
+  stale:   "Datos obsoletos",
+  stopped: "Feed detenido",
+  warmup:  "Calentando",
+  degraded:"Fallback BD",
 };
 
 const BACKFILL_LABEL: Record<string, string> = {
@@ -110,18 +117,21 @@ function getDecisionStyle(decision?: string): DecisionStyle {
   }
 }
 
+/** Estilos visuales para estados timeframe-aware (FASE B) */
 function getDataStateStyle(state?: DataReadinessState): { color: string; icon: React.ReactNode } {
   switch (state) {
-    case "datos_completos":
+    case "ready":
       return { color: "text-emerald-400", icon: <CheckCircle className="h-3 w-3 text-emerald-400" /> };
-    case "datos_suficientes":
-      return { color: "text-cyan-400", icon: <CheckCircle className="h-3 w-3 text-cyan-400" /> };
-    case "datos_parciales":
-      return { color: "text-amber-400", icon: <AlertTriangle className="h-3 w-3 text-amber-400" /> };
-    case "datos_insuficientes":
+    case "lagging":
+      return { color: "text-yellow-400", icon: <Clock className="h-3 w-3 text-yellow-400" /> };
+    case "stale":
       return { color: "text-orange-400", icon: <AlertTriangle className="h-3 w-3 text-orange-400" /> };
-    case "feed_detenido":
+    case "stopped":
       return { color: "text-red-400", icon: <XCircle className="h-3 w-3 text-red-400" /> };
+    case "warmup":
+      return { color: "text-blue-400", icon: <Clock className="h-3 w-3 text-blue-400" /> };
+    case "degraded":
+      return { color: "text-purple-400", icon: <Database className="h-3 w-3 text-purple-400" /> };
     default:
       return { color: "text-zinc-400", icon: <Info className="h-3 w-3 text-zinc-400" /> };
   }
