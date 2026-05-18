@@ -233,13 +233,72 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     try {
       const mode = req.query.mode as string;
       const cycles = await repo.getAllActiveCycles(mode);
-      // Enrichir ciclos con campos canónicos de ancla desde basePriceMetaJson
-      const enriched = cycles.map((cycle: any) => {
+      // Importar servicios para resolver la referencia efectiva (mismo mecanismo que contexto de mercado)
+      const { resolveEffectiveEntryReference } = await import('../services/institutionalDca/IdcaEntryReferenceResolver');
+      const { getVwapAnchor, getAssetConfig } = await import('../services/institutionalDca/IdcaRepository');
+      const enriched = await Promise.all(cycles.map(async (cycle: any) => {
+        // Primero intentar desde basePriceMetaJson (persistido en ciclo)
         const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
-        const anchorPrice: number | null = meta?.vwapAnchor ?? meta?.anchor ?? meta?.effectiveRef ?? meta?.windowHigh ?? null;
-        const anchorTs = meta?.anchorTimestamp ?? meta?.vwapAnchorTimestamp ?? meta?.effectiveRefTimestamp ?? null;
-        const anchorAgeHours = anchorTs ? Math.floor((Date.now() - new Date(anchorTs).getTime()) / (1000 * 60 * 60)) : null;
-        const anchorSource = meta?.anchorSource ?? meta?.effectiveRefSource ?? null;
+        let anchorPrice: number | null = meta?.vwapAnchor ?? meta?.anchor ?? meta?.effectiveRef ?? meta?.windowHigh ?? null;
+        let anchorSource = meta?.anchorSource ?? meta?.effectiveRefSource ?? null;
+        let anchorTs = meta?.anchorTimestamp ?? meta?.vwapAnchorTimestamp ?? meta?.effectiveRefTimestamp ?? null;
+        let anchorAgeHours = anchorTs ? Math.floor((Date.now() - new Date(anchorTs).getTime()) / (1000 * 60 * 60)) : null;
+
+        // Si no hay ancla en metadata, usar el mismo resolver que el contexto de mercado
+        if (!anchorPrice) {
+          try {
+            const dbAnchor = await getVwapAnchor(cycle.pair);
+            const frozenAnchor = dbAnchor ? {
+              anchorPrice: dbAnchor.anchor_price,
+              anchorTimestamp: dbAnchor.anchor_ts,
+              setAt: dbAnchor.set_at,
+              drawdownPct: dbAnchor.drawdown_pct,
+              previous: dbAnchor.prev_price && dbAnchor.prev_ts ? {
+                anchorPrice: dbAnchor.prev_price,
+                anchorTimestamp: dbAnchor.prev_ts,
+                setAt: dbAnchor.prev_set_at ?? 0,
+                replacedAt: dbAnchor.prev_replaced_at ?? 0,
+              } : undefined,
+            } : undefined;
+            const assetConfig = await getAssetConfig(cycle.pair);
+            const vwapEnabled = assetConfig?.vwapEnabled ?? false;
+            const currentPrice = cycle.currentPrice ? parseFloat(String(cycle.currentPrice)) : 0;
+            const basePrice = cycle.basePrice ? parseFloat(String(cycle.basePrice)) : 0;
+            const basePriceTimestamp = cycle.basePriceTimestamp ? new Date(cycle.basePriceTimestamp) : new Date();
+            const refResult = resolveEffectiveEntryReference({
+              pair: cycle.pair,
+              currentPrice,
+              basePriceResult: {
+                price: basePrice,
+                timestamp: basePriceTimestamp,
+                meta: meta || {},
+                type: cycle.basePriceType || "hybrid_v2",
+                windowMinutes: cycle.basePriceWindowMinutes || 24,
+                isReliable: true,
+                reason: "",
+              },
+              frozenAnchor,
+              vwapContext: undefined,
+              vwapEnabled,
+              now: Date.now(),
+            });
+            // Solo usar effectiveEntryReference si source es vwap_anchor (frozen anchor)
+            if (refResult.effectiveReferenceSource === "vwap_anchor" && refResult.effectiveEntryReference > 0) {
+              anchorPrice = refResult.effectiveEntryReference;
+              anchorSource = refResult.effectiveReferenceSource;
+              anchorTs = refResult.frozenAnchorTs ? new Date(refResult.frozenAnchorTs).toISOString() : null;
+              anchorAgeHours = refResult.frozenAnchorAgeHours ?? null;
+              console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} cycleAnchorPrice=${anchorPrice} source=${anchorSource} origin=effective_reference_resolver`);
+            } else {
+              console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} cycleAnchorPrice=null reason=no_vwap_anchor_in_resolver`);
+            }
+          } catch (err) {
+            console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} cycleAnchorPrice=null reason=resolver_error`, err);
+          }
+        } else {
+          console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} cycleAnchorPrice=${anchorPrice} source=${anchorSource} origin=basePriceMetaJson`);
+        }
+
         return {
           ...cycle,
           cycleAnchorPrice: anchorPrice,
@@ -248,7 +307,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           cycleAnchorAgeHours: anchorAgeHours,
           cycleAnchorIsFrozen: anchorPrice != null,
         };
-      });
+      }));
       res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
