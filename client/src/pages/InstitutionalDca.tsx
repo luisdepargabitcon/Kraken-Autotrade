@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   useIdcaControls,
@@ -2163,6 +2164,33 @@ function CyclesTab() {
   );
 }
 
+function CycleMetricChip({
+  label, value, valueClass, sub, tooltip,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  sub?: string;
+  tooltip?: string;
+}) {
+  const inner = (
+    <div className="flex flex-col rounded border border-border/30 bg-muted/10 px-2 py-1.5 min-w-0 cursor-default select-none">
+      <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wide truncate">{label}</span>
+      <span className={cn("text-sm font-mono truncate mt-0.5 leading-tight", valueClass ?? "text-foreground")}>{value}</span>
+      {sub && <span className="text-[9px] text-muted-foreground/50 truncate mt-0.5 leading-tight">{sub}</span>}
+    </div>
+  );
+  if (!tooltip) return inner;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{inner}</TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[220px] text-xs leading-relaxed">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function CycleDetailRow({ cycle }: { cycle: any }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -2298,85 +2326,134 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   </Badge>
                 )}
               </div>
-              <div className="text-[11px] text-amber-400/80 font-mono mt-1">
-                Inicio: {fmtDate(cycle.startedAt)} | Compras: {cycle.buyCount} | Score: {cycle.marketScore || "—"}
-                {cycle.tpTargetPct && ` | TP: ${parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%`}
-                {cycle.basePrice && ` | Base: $${fmtPrice(cycle.basePrice)} (${cycle.basePriceType || "—"})`}
-                {cycle.entryDipPct && ` | EntryDip: ${parseFloat(String(cycle.entryDipPct)).toFixed(2)}%`}
-                {cycle.parentCycleId && ` | Parent: #${cycle.parentCycleId}`}
-                {cycle.closeReason && ` | Cierre: ${cycle.closeReason}`}
-                {cycle.isImported && cycle.sourceType && ` | Origen: ${cycle.sourceType}`}
+              {/* Info row — secondary metadata */}
+              <div className="text-[10px] text-amber-400/70 font-mono mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                <span>Inicio: {fmtDate(cycle.startedAt)}</span>
+                <span className="text-muted-foreground/40">|</span>
+                <span>{cycle.buyCount} compra{cycle.buyCount !== 1 ? "s" : ""}</span>
+                {cycle.marketScore && <><span className="text-muted-foreground/40">|</span><span>Score: {cycle.marketScore}</span></>}
+                {cycle.tpTargetPct && <><span className="text-muted-foreground/40">|</span><span>ref. TP: {parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%</span></>}
+                {cycle.entryDipPct && <><span className="text-muted-foreground/40">|</span><span>Dip entrada: {parseFloat(String(cycle.entryDipPct)).toFixed(2)}%</span></>}
+                {cycle.parentCycleId && <><span className="text-muted-foreground/40">|</span><span>Parent: #{cycle.parentCycleId}</span></>}
+                {cycle.closeReason && <><span className="text-muted-foreground/40">|</span><span>Cierre: {cycle.closeReason}</span></>}
+                {cycle.isImported && cycle.sourceType && <><span className="text-muted-foreground/40">|</span><span>Origen: {cycle.sourceType}</span></>}
               </div>
-              {/* Price targets bar with skipped levels indicator */}
+              {/* ── Metrics grid: 6 price chips ─────────────────────── */}
               {cycle.status !== "closed" && (
-                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                  <span className="text-[10px] font-mono text-muted-foreground">
-                    📍 Precio: <span className="text-primary font-semibold">${fmtPrice(cycle.currentPrice)}</span>
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">|</span>
-                  <span className="text-[10px] font-mono text-muted-foreground">
-                    Avg: <span className="text-slate-300">${fmtPrice(cycle.avgEntryPrice)}</span>
-                  </span>
-                  {/* Exit trigger display — trailing stop (actual) or TP reference */}
-                  {cycle.status === "trailing_active" && cycle.highestPriceAfterTp && cycle.trailingPct ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground" title="Precio al que el trailing stop dispara la venta automática">
-                        ⏹ Stop trailing: <span className="text-orange-400 font-semibold">${fmtPrice((parseFloat(String(cycle.highestPriceAfterTp)) * (1 - parseFloat(String(cycle.trailingPct)) / 100)).toFixed(2))}</span>
-                        <span className="text-muted-foreground/50"> (máx ${fmtPrice(cycle.highestPriceAfterTp)})</span>
-                      </span>
-                    </>
-                  ) : cycle.tpTargetPrice && parseFloat(String(cycle.tpTargetPrice)) > 0 ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground" title="Precio objetivo de referencia (TP). La salida real ocurre vía trailing stop, no directamente a este precio.">
-                        🎯 Obj TP: <span className="text-green-400/80 font-semibold">${fmtPrice(cycle.tpTargetPrice)}</span>
-                        <span className="text-muted-foreground/40"> (ref)</span>
-                      </span>
-                    </>
-                  ) : !(cycle.isImported && cycle.soloSalida) ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-yellow-400/60">🎯 TP: pendiente de cálculo</span>
-                    </>
-                  ) : null}
-                  {cycle.soloSalida ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-yellow-400/60">
-                        🛒 Próx. compra: solo salida
-                        <ConfigJumpButton target="safety-ladder" pair={cycle.pair} label="Safety/Ladder" />
-                      </span>
-                    </>
-                  ) : cycle.nextBuyPrice && parseFloat(String(cycle.nextBuyPrice)) > 0 ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        🛒 Próx. compra: <span className="text-blue-400 font-semibold">${fmtPrice(cycle.nextBuyPrice)}</span>
-                        {cycle.nextBuyLevelPct && <span className="text-muted-foreground/70"> (-{parseFloat(String(cycle.nextBuyLevelPct)).toFixed(1)}%)</span>}
-                        <ConfigJumpButton target="safety-ladder" pair={cycle.pair} label="Safety/Ladder" />
-                      </span>
-                      {cycle.skippedSafetyLevels > 0 && (
-                        <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
-                          ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}
-                        </Badge>
-                      )}
-                    </>
-                  ) : cycle.buyCount >= 1 ? (
-                    <>
-                      <span className="text-[10px] text-muted-foreground">|</span>
-                      {cycle.skippedSafetyLevels > 0 ? (
-                        <span className="text-[10px] font-mono text-orange-400/70">🛒 Sin más niveles disponibles</span>
-                      ) : (
-                        <span className="text-[10px] font-mono text-muted-foreground/50">🛒 Próx. compra: pendiente de cálculo</span>
-                      )}
-                      {cycle.skippedSafetyLevels > 0 && (
-                        <Badge variant="outline" className="text-[9px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
-                          ⚠️ {cycle.skippedSafetyLevels} nivel{cycle.skippedSafetyLevels > 1 ? 'es' : ''} ya superado{cycle.skippedSafetyLevels > 1 ? 's' : ''}
-                        </Badge>
-                      )}
-                    </>
-                  ) : null}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 mt-2">
+                  {/* A) Precio actual */}
+                  <CycleMetricChip
+                    label="Actual"
+                    value={cycle.currentPrice ? `$${fmtPrice(cycle.currentPrice)}` : "—"}
+                    valueClass="text-primary font-bold"
+                    tooltip="Precio spot actual del par. Es dinámico y se actualiza en tiempo real."
+                  />
+                  {/* B) Precio medio */}
+                  <CycleMetricChip
+                    label="Precio medio"
+                    value={cycle.avgEntryPrice ? `$${fmtPrice(cycle.avgEntryPrice)}` : "—"}
+                    valueClass="text-slate-200 font-semibold"
+                    sub={`${cycle.buyCount} compra${cycle.buyCount !== 1 ? "s" : ""} confirmada${cycle.buyCount !== 1 ? "s" : ""}`}
+                    tooltip="Media real ponderada de compras ejecutadas y confirmadas. Es la referencia principal para PnL, BE y TP."
+                  />
+                  {/* C) Ancla ciclo */}
+                  {(() => {
+                    const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
+                    const anclaVal: string | null = meta?.vwapAnchor ?? meta?.anchor ?? meta?.effectiveRef ?? meta?.windowHigh ?? null;
+                    const bpTs = cycle.basePriceTimestamp;
+                    const ageDays = bpTs ? Math.floor((Date.now() - new Date(bpTs).getTime()) / 86400000) : null;
+                    const ageLabel = ageDays !== null ? `fijada hace ${ageDays}d` : null;
+                    const typeHint = cycle.basePriceType === "vwap_anchor" ? "VWAP anclado" : cycle.basePriceType?.includes("vwap") ? "VWAP" : null;
+                    const subParts = [typeHint, ageLabel].filter(Boolean).join(" · ");
+                    return (
+                      <CycleMetricChip
+                        label="Ancla ciclo"
+                        value={anclaVal ? `$${fmtPrice(anclaVal)}` : "—"}
+                        valueClass="text-violet-300"
+                        sub={anclaVal ? (subParts || undefined) : (cycle.isImported ? "No fijada / importado manual" : "no disponible")}
+                        tooltip="Referencia congelada asociada al ciclo. Sirve como contexto histórico, pero no cambia el precio medio ni la escalera de seguridad."
+                      />
+                    );
+                  })()}
+                  {/* D) Base entrada */}
+                  {(() => {
+                    const bt = cycle.basePriceType;
+                    const btLabel =
+                      bt === "hybrid_v2" ? "Híbrido v2" :
+                      bt === "vwap_anchor" ? "VWAP anclado" :
+                      bt === "imported_avg" ? "Precio importado" :
+                      bt === "swing_high_1h" ? "Máximo 1h" :
+                      bt === "window_high_p95" ? "P95 ventana" :
+                      bt === "cycle_start_price" ? "Precio inicio" :
+                      bt === "manual" ? "Manual" :
+                      bt ?? "—";
+                    return (
+                      <CycleMetricChip
+                        label="Base entrada"
+                        value={cycle.basePrice ? `$${fmtPrice(cycle.basePrice)}` : "—"}
+                        valueClass="text-cyan-300"
+                        sub={btLabel}
+                        tooltip="Referencia técnica usada al abrir el ciclo. Es una foto histórica y no se actualiza automáticamente."
+                      />
+                    );
+                  })()}
+                  {/* E) Próxima compra */}
+                  {(() => {
+                    if (cycle.soloSalida) {
+                      return (
+                        <CycleMetricChip
+                          label="Próx. compra"
+                          value="Solo salida"
+                          valueClass="text-yellow-400/70"
+                          tooltip="El ciclo está configurado como solo-salida: no se ejecutarán compras adicionales automáticas."
+                        />
+                      );
+                    }
+                    const nbp = cycle.nextBuyPrice ? parseFloat(String(cycle.nextBuyPrice)) : 0;
+                    const cur = cycle.currentPrice ? parseFloat(String(cycle.currentPrice)) : 0;
+                    const distPct = nbp > 0 && cur > 0 ? ((nbp - cur) / cur) * 100 : null;
+                    const skipped = cycle.skippedSafetyLevels ?? 0;
+                    const subParts: string[] = [];
+                    if (distPct !== null) subParts.push(`${distPct >= 0 ? "+" : ""}${distPct.toFixed(1)}%`);
+                    if (skipped > 0) subParts.push(`⚠️ ${skipped} nivel${skipped > 1 ? "es" : ""} superado${skipped > 1 ? "s" : ""}`);
+                    return (
+                      <CycleMetricChip
+                        label="Próx. compra"
+                        value={nbp > 0 ? `$${fmtPrice(cycle.nextBuyPrice)}` : (cycle.buyCount >= 1 ? (skipped > 0 ? "Sin más niveles" : "Pendiente") : "—")}
+                        valueClass={nbp > 0 ? "text-blue-400" : "text-muted-foreground/50"}
+                        sub={subParts.join(" · ") || undefined}
+                        tooltip="Precio del siguiente nivel de compra DCA calculado por la escalera de seguridad."
+                      />
+                    );
+                  })()}
+                  {/* F) Objetivo TP / Stop trailing */}
+                  {(() => {
+                    if (cycle.status === "trailing_active" && cycle.highestPriceAfterTp && cycle.trailingPct) {
+                      const highest = parseFloat(String(cycle.highestPriceAfterTp));
+                      const tPct = parseFloat(String(cycle.trailingPct));
+                      const stopPrice = highest * (1 - tPct / 100);
+                      return (
+                        <CycleMetricChip
+                          label="Stop trailing"
+                          value={`$${fmtPrice(stopPrice.toFixed(2))}`}
+                          valueClass="text-orange-400 font-bold"
+                          sub={`máx $${fmtPrice(cycle.highestPriceAfterTp)}`}
+                          tooltip="Precio al que el trailing stop dispara la venta automática."
+                        />
+                      );
+                    }
+                    const tpVal = cycle.tpTargetPrice ? parseFloat(String(cycle.tpTargetPrice)) : 0;
+                    const tpPctVal = cycle.tpTargetPct ? parseFloat(String(cycle.tpTargetPct)) : 0;
+                    return (
+                      <CycleMetricChip
+                        label="Objetivo TP"
+                        value={tpVal > 0 ? `$${fmtPrice(cycle.tpTargetPrice)}` : "—"}
+                        valueClass="text-green-400"
+                        sub={tpPctVal > 0 ? `ref. TP ${tpPctVal.toFixed(1)}%` : (!(cycle.isImported && cycle.soloSalida) ? "pendiente cálculo" : undefined)}
+                        tooltip="Precio objetivo de referencia (TP). La salida real ocurre vía trailing stop, no directamente a este precio."
+                      />
+                    );
+                  })()}
                 </div>
               )}
               {/* Protection / Trailing status badges */}

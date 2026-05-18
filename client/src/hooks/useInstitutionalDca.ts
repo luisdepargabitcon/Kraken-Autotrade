@@ -180,6 +180,8 @@ export interface IdcaCycle {
   skippedLevelsDetail: { level: number; dipPct: number; triggerPrice: number }[] | null;
   basePrice: string | null;
   basePriceType: string | null;
+  basePriceTimestamp: string | null;
+  basePriceMetaJson: any;
   entryDipPct: string | null;
   protectionArmedAt: string | null;
   protectionStopPrice: string | null;
