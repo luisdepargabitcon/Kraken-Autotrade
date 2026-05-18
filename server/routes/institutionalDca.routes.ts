@@ -233,7 +233,23 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     try {
       const mode = req.query.mode as string;
       const cycles = await repo.getAllActiveCycles(mode);
-      res.json(cycles);
+      // Enrichir ciclos con campos canónicos de ancla desde basePriceMetaJson
+      const enriched = cycles.map((cycle: any) => {
+        const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
+        const anchorPrice: number | null = meta?.vwapAnchor ?? meta?.anchor ?? meta?.effectiveRef ?? meta?.windowHigh ?? null;
+        const anchorTs = meta?.anchorTimestamp ?? meta?.vwapAnchorTimestamp ?? meta?.effectiveRefTimestamp ?? null;
+        const anchorAgeHours = anchorTs ? Math.floor((Date.now() - new Date(anchorTs).getTime()) / (1000 * 60 * 60)) : null;
+        const anchorSource = meta?.anchorSource ?? meta?.effectiveRefSource ?? null;
+        return {
+          ...cycle,
+          cycleAnchorPrice: anchorPrice,
+          cycleAnchorSource: anchorSource,
+          cycleAnchorTimestamp: anchorTs,
+          cycleAnchorAgeHours: anchorAgeHours,
+          cycleAnchorIsFrozen: anchorPrice != null,
+        };
+      });
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

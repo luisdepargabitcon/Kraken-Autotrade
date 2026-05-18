@@ -348,7 +348,7 @@ function IdcaMarketContextCompactRow({
         </span>
         <span className="text-[10px] text-muted-foreground/40">·</span>
         <span className={cn("text-xs font-mono", drawdownColor)}>
-          DD ciclo: {formatPctSafe(drawdown)}
+          Dist. ancla ciclo: {formatPctSafe(drawdown)}
         </span>
       </div>
 
@@ -516,13 +516,22 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
             {formatPctSafe(drawdownFromLiveAnchor)}
           </div>
           <div className="text-[9px] text-muted-foreground/40 font-mono">
-            {data.marketAnchorLiveSource === "hybrid_v2" ? "Hybrid V2.1"
-              : data.marketAnchorLiveSource === "swing_high_24h" ? "Swing high 24h"
-              : data.marketAnchorLiveSource === "swing_high_48h" ? "Swing high 48h"
-              : data.marketAnchorLiveSource === "vwap_context" ? "VWAP contexto"
-              : data.marketAnchorLiveSource ? data.marketAnchorLiveSource.replace(/_/g, " ")
-              : data.basePriceMeta?.selectedMethod ? data.basePriceMeta.selectedMethod.replace(/_/g, " ")
-              : "Método no disponible"}
+            {(() => {
+              const src = data.marketAnchorLiveSource;
+              const bpm = data.basePriceMeta;
+              const refCtx = data.referenceContext as any;
+              const label =
+                src === "hybrid_v2" ? "Hybrid V2.1" :
+                src === "swing_high_24h" ? "Swing high 24h" :
+                src === "swing_high_48h" ? "Swing high 48h" :
+                src === "vwap_context" ? "VWAP contexto" :
+                src ? String(src).replace(/_/g, " ") :
+                bpm?.selectedMethod ? String(bpm.selectedMethod).replace(/_/g, " ") :
+                (refCtx?.method) ? String(refCtx.method).replace(/_/g, " ") :
+                (bpm && Object.keys(bpm).length > 0) ? "Estructura reciente" :
+                "Método no disponible";
+              return label;
+            })()}
             {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
           </div>
           {/* Fecha/edad del ancla — con fallback a basePriceMeta.selectedAnchorTime */}

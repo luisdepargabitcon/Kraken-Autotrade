@@ -2358,19 +2358,20 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   />
                   {/* C) Ancla ciclo */}
                   {(() => {
-                    const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
-                    const anclaVal: string | null = meta?.vwapAnchor ?? meta?.anchor ?? meta?.effectiveRef ?? meta?.windowHigh ?? null;
-                    const bpTs = cycle.basePriceTimestamp;
-                    const ageDays = bpTs ? Math.floor((Date.now() - new Date(bpTs).getTime()) / 86400000) : null;
-                    const ageLabel = ageDays !== null ? `fijada hace ${ageDays}d` : null;
-                    const typeHint = cycle.basePriceType === "vwap_anchor" ? "VWAP anclado" : cycle.basePriceType?.includes("vwap") ? "VWAP" : null;
-                    const subParts = [typeHint, ageLabel].filter(Boolean).join(" · ");
+                    const anchorPrice = cycle.cycleAnchorPrice;
+                    const anchorSource = cycle.cycleAnchorSource;
+                    const anchorAgeHours = cycle.cycleAnchorAgeHours;
+                    const ageLabel = anchorAgeHours != null
+                      ? (anchorAgeHours >= 48 ? `fijada hace ${(anchorAgeHours / 24).toFixed(1)}d` : `fijada hace ${anchorAgeHours.toFixed(1)}h`)
+                      : null;
+                    const sourceLabel = anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource === "vwap" ? "VWAP" : anchorSource === "hybrid_v2" ? "Híbrido v2" : anchorSource || null;
+                    const subParts = [sourceLabel, ageLabel].filter(Boolean).join(" · ");
                     return (
                       <CycleMetricChip
                         label="Ancla ciclo"
-                        value={anclaVal ? `$${fmtPrice(anclaVal)}` : "—"}
+                        value={anchorPrice ? `$${fmtPrice(anchorPrice)}` : "—"}
                         valueClass="text-violet-300"
-                        sub={anclaVal ? (subParts || undefined) : (cycle.isImported ? "No fijada / importado manual" : "no disponible")}
+                        sub={anchorPrice ? (subParts || undefined) : (cycle.isImported ? "No fijada / importado manual" : "no disponible")}
                         tooltip="Referencia congelada asociada al ciclo. Sirve como contexto histórico, pero no cambia el precio medio ni la escalera de seguridad."
                       />
                     );
