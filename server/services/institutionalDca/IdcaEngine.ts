@@ -47,8 +47,12 @@ import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
 import { resolveDynamicAnchor, type DynamicAnchorResult } from "./IdcaDynamicAnchorService";
+import * as liveGuard from "./IdcaLiveExecutionGuard";
 
 const TAG = "[IDCA]";
+
+/** HOTFIX: Lock por ciclo para evitar compras simultáneas */
+const cycleExecutionLocks = new Map<number, boolean>();
 
 // ─── Fee/Dust Tolerance for Live Full-Close Sells ───────────────
 // When cycle.totalQuantity slightly exceeds exchange available balance
@@ -3892,61 +3896,167 @@ async function updateOhlcvCache(): Promise<void> {
   }
 }
 
-// ─── Order Execution (Live) ────────────────────────────────────────
+// ─── Order Execution (Live) — HOTFIX: Validar saldo, ajustar, confirmar fill ────────────────────────────────────────
 
-async function executeRealBuy(pair: string, quantity: number, price: number, assetConfig?: InstitutionalDcaAssetConfigRow): Promise<void> {
+export interface BuyExecutionResult {
+  success: boolean;
+  orderId?: string;
+  executedQty: number;
+  executedUsd: number;
+  avgPrice: number;
+  feeUsd: number;
+  wasAdjusted: boolean;
+  originalQty?: number;
+  rejectionReason?: string;
+}
+
+/**
+ * HOTFIX: Ejecuta compra LIVE con validación de saldo, ajuste dinámico,
+ * y confirmación de fill antes de retornar.
+ * NUNCA modifica el ciclo directamente — eso lo hace el llamador con los valores retornados.
+ */
+async function executeRealBuyWithGuard(
+  pair: string,
+  intendedQty: number,
+  price: number,
+  cycleId: number,
+  buyType: "initial" | "safety" | "plus" | "recovery",
+  mode: string,
+  assetConfig?: InstitutionalDcaAssetConfigRow,
+  buyLevel?: number
+): Promise<BuyExecutionResult> {
+  const intendedUsd = intendedQty * price;
+
+  // ─── FASE 1: Validar intención con ExecutionGuard ───
+  const validation = await liveGuard.validateLiveBuyIntention({
+    pair,
+    cycleId,
+    buyType,
+    intendedUsd,
+    intendedQty,
+    currentPrice: price,
+    feePct: 0.1, // Default: asset config doesn't have makerFeePct field
+    slippagePct: 0.1, // Default: asset config doesn't have slippage field
+    mode,
+    buyLevel,
+  });
+
+  if (!validation.allowed) {
+    console.error(`${TAG}[LIVE][BUY][BLOCKED] ${validation.reason}`);
+    return {
+      success: false,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: false,
+      originalQty: intendedQty,
+      rejectionReason: validation.reason,
+    };
+  }
+
+  // Usar cantidad ajustada si fue reducida
+  const finalQty = validation.reduced ? (validation.finalQty ?? intendedQty) : intendedQty;
+  const finalUsd = validation.reduced ? (validation.finalUsd ?? intendedUsd) : intendedUsd;
+
+  if (validation.reduced) {
+    console.log(`${TAG}[LIVE][BUY][ADJUSTED] ${pair} ${buyType}: ${intendedQty.toFixed(8)} → ${finalQty.toFixed(8)} (${finalUsd.toFixed(2)} USD)`);
+  }
+
+  // ─── FASE 2: Enviar orden al exchange ───
+  let exchangeOrderId: string | undefined;
   try {
-    // Usar nuevo ExecutionManager si hay asset config
-    if (assetConfig) {
-      const executionConfig = idcaExecutionManager.createExecutionConfig(assetConfig);
-      
-      const request = {
-        cycleId: 0, // Temporal, se asignará en contexto real
-        pair,
-        side: "buy" as const,
-        totalQuantity: quantity,
-        totalValueUsd: quantity * price,
-        urgency: "medium" as const,
-        reason: "IDCA safety buy",
-        config: executionConfig,
-      };
-      
-      const result = await idcaExecutionManager.executeOrder(request);
-      
-      if (result.success) {
-        console.log(
-          `${TAG}[LIVE][BUY] ExecutionManager order completed: ${pair} ` +
-          `qty=${result.executedQuantity.toFixed(8)} avgPrice=$${result.avgPrice.toFixed(2)} ` +
-          `orders=${result.orders.length} time=${result.executionTimeMs}ms`
-        );
-      } else {
-        console.error(`${TAG}[LIVE][BUY] ExecutionManager failed: ${pair} warnings=${result.warnings.join(", ")}`);
-        throw new Error(`ExecutionManager buy failed: ${result.warnings.join(", ")}`);
-      }
-    } else {
-      // Fallback a método original
-      const tradingExchange = ExchangeFactory.getTradingExchange();
-      if (!tradingExchange.isInitialized()) {
-        console.error(`${TAG}[LIVE][BUY] Trading exchange not initialized — order NOT sent for ${pair}`);
-        return;
-      }
-      console.log(`${TAG}[LIVE][BUY] Placing order: ${pair} qty=${quantity.toFixed(8)} @ ~${price.toFixed(2)}`);
-      const result = await tradingExchange.placeOrder({
-        pair,
-        type: "buy",
-        ordertype: "market",
-        volume: quantity.toFixed(8),
-      });
-      if (result.success) {
-        console.log(`${TAG}[LIVE][BUY] Order accepted: ${pair} orderId=${result.orderId || result.txid || "(pending)"}`);
-      } else {
-        console.error(`${TAG}[LIVE][BUY] Order FAILED: ${pair} error=${result.error}`);
-        throw new Error(`Live buy order failed: ${result.error}`);
-      }
+    const tradingExchange = ExchangeFactory.getTradingExchange();
+    if (!tradingExchange.isInitialized()) {
+      throw new Error("Trading exchange not initialized");
     }
+
+    console.log(`${TAG}[LIVE][BUY][SENDING] ${pair} qty=${finalQty.toFixed(8)} @ ~${price.toFixed(2)}`);
+
+    const orderResult = await tradingExchange.placeOrder({
+      pair,
+      type: "buy",
+      ordertype: "market",
+      volume: finalQty.toFixed(8),
+    });
+
+    if (!orderResult.success) {
+      throw new Error(orderResult.error || "Order rejected by exchange");
+    }
+
+    exchangeOrderId = orderResult.orderId || orderResult.txid;
+    console.log(`${TAG}[LIVE][BUY][SENT] ${pair} orderId=${exchangeOrderId || "pending"}`);
+
   } catch (e: any) {
-    console.error(`${TAG}[LIVE][BUY] Error placing order for ${pair}:`, e.message);
-    throw e;
+    console.error(`${TAG}[LIVE][BUY][SEND_FAILED] ${pair}: ${e.message}`);
+    return {
+      success: false,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: validation.reduced ?? false,
+      originalQty: intendedQty,
+      rejectionReason: `send_failed: ${e.message}`,
+    };
+  }
+
+  // ─── FASE 3: Confirmar fill ───
+  if (!exchangeOrderId) {
+    return {
+      success: false,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: validation.reduced ?? false,
+      originalQty: intendedQty,
+      rejectionReason: "no_exchange_order_id",
+    };
+  }
+
+  const fillConfirmation = await liveGuard.confirmOrderFill(pair, exchangeOrderId, 30000, 2000);
+
+  if (!fillConfirmation.confirmed || fillConfirmation.filledQty <= 0) {
+    console.error(`${TAG}[LIVE][BUY][NO_FILL] ${pair} orderId=${exchangeOrderId} status=${fillConfirmation.status}`);
+    return {
+      success: false,
+      orderId: exchangeOrderId,
+      executedQty: 0,
+      executedUsd: 0,
+      avgPrice: 0,
+      feeUsd: 0,
+      wasAdjusted: validation.reduced ?? false,
+      originalQty: intendedQty,
+      rejectionReason: `no_fill: ${fillConfirmation.status}`,
+    };
+  }
+
+  // ─── FASE 4: Éxito — retornar valores reales de ejecución ───
+  console.log(
+    `${TAG}[LIVE][BUY][CONFIRMED] ${pair} orderId=${exchangeOrderId} ` +
+    `qty=${fillConfirmation.filledQty.toFixed(8)} avg=${fillConfirmation.avgFillPrice.toFixed(2)} ` +
+    `fee=${fillConfirmation.feeUsd.toFixed(4)}`
+  );
+
+  return {
+    success: true,
+    orderId: exchangeOrderId,
+    executedQty: fillConfirmation.filledQty,
+    executedUsd: fillConfirmation.filledUsd,
+    avgPrice: fillConfirmation.avgFillPrice,
+    feeUsd: fillConfirmation.feeUsd,
+    wasAdjusted: validation.reduced ?? false,
+    originalQty: validation.reduced ? intendedQty : undefined,
+  };
+}
+
+/** @deprecated Usar executeRealBuyWithGuard que valida saldo y confirma fill */
+async function executeRealBuy(pair: string, quantity: number, price: number, assetConfig?: InstitutionalDcaAssetConfigRow): Promise<void> {
+  // Mantener compatibilidad hacia atrás — llamar al nuevo método y lanzar error si falla
+  const result = await executeRealBuyWithGuard(pair, quantity, price, 0, "safety", "live", assetConfig);
+  if (!result.success) {
+    throw new Error(result.rejectionReason || "Buy execution failed");
   }
 }
 

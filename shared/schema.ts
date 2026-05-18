@@ -1155,6 +1155,10 @@ export const institutionalDcaCycles = pgTable("institutional_dca_cycles", {
   startedAt: timestamp("started_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // HOTFIX: Campos de reconciliación
+  reconciliationStatus: text("reconciliation_status"),
+  reconciliationBlockedReason: text("reconciliation_blocked_reason"),
+  reconciliationBlockedAt: timestamp("reconciliation_blocked_at"),
 });
 
 export type InstitutionalDcaCycle = typeof institutionalDcaCycles.$inferSelect;
@@ -1224,6 +1228,23 @@ export const institutionalDcaOrders = pgTable("institutional_dca_orders", {
   humanReason: text("human_reason"),
   exchangeOrderId: text("exchange_order_id"),
   executedAt: timestamp("executed_at").notNull().defaultNow(),
+  // HOTFIX: Campos de trazabilidad de ejecución
+  executionStatus: text("execution_status").default("pending"),
+  intendedQuantity: decimal("intended_quantity", { precision: 18, scale: 8 }),
+  intendedUsd: decimal("intended_usd", { precision: 18, scale: 2 }),
+  executedQuantity: decimal("executed_quantity", { precision: 18, scale: 8 }),
+  executedUsd: decimal("executed_usd", { precision: 18, scale: 2 }),
+  avgFillPrice: decimal("avg_fill_price", { precision: 18, scale: 8 }),
+  rawExchangeResponseJson: jsonb("raw_exchange_response_json"),
+  voidedReason: text("voided_reason"),
+  voidedAt: timestamp("voided_at"),
+  reconciledAt: timestamp("reconciled_at"),
+  sizeAdjusted: boolean("size_adjusted").default(false),
+  originalIntendedUsd: decimal("original_intended_usd", { precision: 18, scale: 2 }),
+  adjustedUsd: decimal("adjusted_usd", { precision: 18, scale: 2 }),
+  idempotencyKey: text("idempotency_key"),
+  availableQuoteBefore: decimal("available_quote_before", { precision: 18, scale: 2 }),
+  spendableQuote: decimal("spendable_quote", { precision: 18, scale: 2 }),
 });
 
 export type InstitutionalDcaOrder = typeof institutionalDcaOrders.$inferSelect;
