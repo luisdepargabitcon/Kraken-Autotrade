@@ -110,6 +110,8 @@ interface ParsedPayload {
   trailingBuyLocalLow?: number;
   trailingBuyTriggerAt?: number;
   referenceContext?: IdcaReferenceContext | null;
+  // FASE D: Campos para observeOnly
+  observeOnly?: boolean;
   [key: string]: any;
 }
 
@@ -350,6 +352,40 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
     getActionText: () => "El bot procederá a abrir un nuevo ciclo de compra.",
   },
 
+  // FASE D: Evento para entrada observada (observeOnly=true)
+  entry_observed: {
+    icon: "👁️",
+    title: "Entrada observada — ciclo activo",
+    category: "info",
+    getHumanSummary: (ev, p) => {
+      const pair = ev.pair || "el par";
+      const parts: string[] = [];
+      parts.push(`Entrada observada — ${pair}.`);
+      parts.push("Existe un ciclo activo, por lo que no se abre un nuevo main.");
+      parts.push("El ciclo se gestiona con safety buys / Plus / Recovery según configuración.");
+
+      const refPrice = p.effectiveBasePrice || p.basePrice;
+      const dipPct = p.drawdownFromAnchorPct ?? p.entryDipPct;
+      const price = p.price;
+
+      if (dipPct != null && refPrice != null && refPrice > 0) {
+        parts.push(`Condición actual: caída ${fN(Math.abs(dipPct))}% desde referencia.`);
+      }
+      if (p.marketScore != null) {
+        parts.push(`Filtro informativo: score ${p.marketScore}.`);
+      }
+      if (price != null && price > 0) {
+        parts.push(`Precio actual: ${fUsd(price)}.`);
+      }
+      if (refPrice != null && refPrice > 0) {
+        parts.push(`Referencia evaluada: ${fUsd(refPrice)}.`);
+      }
+
+      return parts.join(" ");
+    },
+    getActionText: () => "Sin acción de nueva entrada. El ciclo activo sigue gestionándose.",
+  },
+
   tp_armed: {
     icon: "🎯",
     title: "Toma de ganancias activada",
@@ -541,8 +577,38 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
       const blockReasons: any[] = ev.payloadJson?.blockReasons || [];
       const codes = blockReasons.map((r: any) => r?.code || r).filter(Boolean);
       const isDataIssue = codes.some((c: string) => c === "data_not_ready" || c === "insufficient_base_price_data");
+      const isCycleActive = codes.some((c: string) => c === "cycle_already_active");
       const meta = ev.payloadJson?.basePrice?.meta;
       const pair = ev.pair || "el par";
+
+      // FASE D: Caso especial — ciclo activo (observeOnly)
+      // Mostrar como observación informativa, no como bloqueo de "no se compró"
+      if (isCycleActive && !isDataIssue) {
+        const parts: string[] = [];
+        parts.push(`Entrada observada — ${pair}.`);
+        parts.push("Existe un ciclo activo, por lo que no se abre un nuevo main.");
+        parts.push("El ciclo se gestiona con safety buys / Plus / Recovery según configuración.");
+
+        const refPrice = p.effectiveBasePrice || p.basePrice;
+        const dipPct = p.drawdownFromAnchorPct ?? p.entryDipPct;
+        const price = p.price;
+
+        if (dipPct != null && refPrice != null && refPrice > 0) {
+          parts.push(`Condición actual: caída ${fN(Math.abs(dipPct))}% desde referencia.`);
+        }
+        // Filtros informativos secundarios (score, etc.)
+        const otherCodes = codes.filter((c: string) => c !== "cycle_already_active");
+        if (otherCodes.length > 0 && p.marketScore != null) {
+          parts.push(`Filtro informativo: score ${p.marketScore}.`);
+        }
+        if (price != null && price > 0) {
+          parts.push(`Precio actual: ${fUsd(price)}.`);
+        }
+        if (refPrice != null && refPrice > 0) {
+          parts.push(`Referencia evaluada: ${fUsd(refPrice)}.`);
+        }
+        return parts.join(" ");
+      }
 
       // Caso 1: problema de datos
       if (isDataIssue) {
@@ -595,7 +661,15 @@ const EVENT_CATALOG: Record<string, EventVisual> = {
 
       return "El bot evaluó la entrada pero no se cumplen todas las condiciones necesarias para comprar.";
     },
-    getActionText: () => "Sin acción. El bot seguirá vigilando.",
+    getActionText: (ev, p) => {
+      const blockReasons: any[] = ev.payloadJson?.blockReasons || [];
+      const codes = blockReasons.map((r: any) => r?.code || r).filter(Boolean);
+      const isCycleActive = codes.some((c: string) => c === "cycle_already_active");
+      if (isCycleActive) {
+        return "Sin acción de nueva entrada. El ciclo activo sigue gestionándose.";
+      }
+      return "Sin acción. El bot seguirá vigilando.";
+    },
   },
 
   entry_evaluated: {

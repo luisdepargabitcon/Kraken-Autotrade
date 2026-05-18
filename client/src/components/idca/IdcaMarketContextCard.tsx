@@ -102,43 +102,43 @@ function DataHealthChip({ healthData }: { healthData?: MarketDataHealthResult })
   
   const { dataReadinessState, lastCandleAgeMinutes, source } = healthData;
   
-  // Configuración visual por estado
+  // Configuración visual por estado (FASE D)
   const config: Record<string, { label: string; cls: string; icon: React.ReactNode; description: string }> = {
     ready: {
-      label: "Datos OK",
+      label: "Datos actualizados",
       cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
       icon: <CheckCircle className="h-3 w-3" />,
-      description: "Contexto de mercado actualizado",
+      description: "Contexto actualizado",
     },
     lagging: {
-      label: "Retraso leve",
+      label: "Velas con retraso moderado",
       cls: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
       icon: <Clock className="h-3 w-3" />,
-      description: `Velas algo retrasadas (${lastCandleAgeMinutes}min)`,
+      description: `Última vela hace ${lastCandleAgeMinutes}min. Contexto utilizable`,
     },
     stale: {
       label: "Datos obsoletos",
       cls: "bg-orange-500/10 text-orange-400 border-orange-500/20",
       icon: <AlertTriangle className="h-3 w-3" />,
-      description: `Nuevas entradas pausadas (${lastCandleAgeMinutes}min)`,
+      description: `Nuevas entradas pausadas hasta recuperar velas recientes`,
     },
     stopped: {
-      label: "Feed detenido",
+      label: "Feed de velas detenido",
       cls: "bg-red-500/10 text-red-400 border-red-500/20",
       icon: <XCircle className="h-3 w-3" />,
-      description: `Sin velas recientes (${lastCandleAgeMinutes}min)`,
+      description: `Nuevas entradas bloqueadas por falta de velas recientes`,
     },
     warmup: {
-      label: "Calentando",
+      label: "Cargando velas",
       cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",
       icon: <Database className="h-3 w-3" />,
-      description: "Completando histórico de velas",
+      description: "Esperando histórico mínimo",
     },
     degraded: {
-      label: "Fallback BD",
+      label: "Usando cache local",
       cls: "bg-purple-500/10 text-purple-400 border-purple-500/20",
       icon: <Database className="h-3 w-3" />,
-      description: `Usando cache local (${source})`,
+      description: source === "db_fallback" ? "Cache local completo, validar frescura" : "Contexto limitado",
     },
   };
   
@@ -348,7 +348,7 @@ function IdcaMarketContextCompactRow({
         </span>
         <span className="text-[10px] text-muted-foreground/40">·</span>
         <span className={cn("text-xs font-mono", drawdownColor)}>
-          {formatPctSafe(drawdown)}
+          DD ciclo: {formatPctSafe(drawdown)}
         </span>
       </div>
 
@@ -517,21 +517,28 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
           </div>
           <div className="text-[9px] text-muted-foreground/40 font-mono">
             {data.marketAnchorLiveSource === "hybrid_v2" ? "Hybrid V2.1"
-              : data.marketAnchorLiveSource === "swing_high_24h" ? "Máx 24h"
-              : data.marketAnchorLiveSource === "swing_high_48h" ? "Máx 48h"
+              : data.marketAnchorLiveSource === "swing_high_24h" ? "Swing high 24h"
+              : data.marketAnchorLiveSource === "swing_high_48h" ? "Swing high 48h"
               : data.marketAnchorLiveSource === "vwap_context" ? "VWAP contexto"
-              : "Desconocido"}
+              : data.marketAnchorLiveSource ? data.marketAnchorLiveSource.replace(/_/g, " ")
+              : data.basePriceMeta?.selectedMethod ? data.basePriceMeta.selectedMethod.replace(/_/g, " ")
+              : "Método no disponible"}
             {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
           </div>
-          {/* Fecha/edad del ancla */}
-          {data.marketAnchorLiveTimestamp ? (
-            <div className="text-[9px] text-muted-foreground/50 font-mono">
-              Actualizada: {formatDateTime(data.marketAnchorLiveTimestamp)}
-              {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
-            </div>
-          ) : (
-            <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
-          )}
+          {/* Fecha/edad del ancla — con fallback a basePriceMeta.selectedAnchorTime */}
+          {(() => {
+            const timestamp = data.marketAnchorLiveTimestamp
+              || data.basePriceMeta?.selectedAnchorTime
+              || data.anchorPriceUpdatedAt;
+            return timestamp ? (
+              <div className="text-[9px] text-muted-foreground/50 font-mono">
+                Actualizada: {formatDateTime(timestamp)}
+                {data.marketAnchorLiveAgeHours != null && ` · hace ${data.marketAnchorLiveAgeHours.toFixed(1)}h`}
+              </div>
+            ) : (
+              <div className="text-[9px] text-muted-foreground/40 italic">Fecha no disponible</div>
+            );
+          })()}
           {/* Estado dinámico del ancla — solo badges limpios */}
           <div className="mt-1 flex flex-wrap gap-1">
             {rc && (

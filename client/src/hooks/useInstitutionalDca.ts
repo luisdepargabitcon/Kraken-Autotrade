@@ -351,6 +351,11 @@ export interface MarketContextPreview {
   referenceChangedRecently: boolean;
   referenceUpdatedAt?: string;
   referenceContext?: IdcaReferenceContext | null;
+  // FASE D: Metadata del precio base para fallback de timestamp
+  basePriceMeta?: {
+    selectedMethod?: string;
+    selectedAnchorTime?: string;
+  };
 }
 
 /** Niveles de calidad de datos FASE C */
