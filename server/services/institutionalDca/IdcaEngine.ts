@@ -4538,28 +4538,76 @@ async function checkPlusActivation(
   const isBtc = pair === "BTC/USD";
   const trailingPct = isBtc ? plusCfg.trailingPctBtc : plusCfg.trailingPctEth;
 
-  // Simulation fees
-  let fees = 0, slippage = 0, netValue = baseBuyUsd;
-  if (mode === "simulation") {
-    fees = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
-    slippage = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = baseBuyUsd + fees + slippage;
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  let executedQty = quantity;
+  let executedUsd = baseBuyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      0, // cycleId aún no existe
+      "plus",
+      mode,
+      assetConfig,
+      1
+    );
+
+    if (!execResult.success) {
+      // NO crear ciclo si la compra falló
+      console.error(`${TAG}[LIVE][PLUS] FAILED: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: undefined,
+        pair,
+        mode,
+        eventType: "plus_buy_failed",
+        severity: "error",
+        message: `Plus buy bloqueado/fallido: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: execResult.rejectionReason, parentCycleId: mainCycle.id },
+      }, { eventType: "plus_buy_failed", pair, mode, price: currentPrice, quantity, parentCycleId: mainCycle.id });
+      return; // Abortar - NO crear ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][PLUS] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    feeUsd = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
+    const slippageUsd = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = baseBuyUsd + feeUsd + slippageUsd;
   }
 
   // Next plus entry level
   const nextDipPct = entrySteps.length > 1 ? entrySteps[1] : null;
-  const nextBuyPrice = nextDipPct ? currentPrice * (1 - nextDipPct / 100) : null;
+  const nextBuyPrice = nextDipPct ? avgFillPrice * (1 - nextDipPct / 100) : null;
 
+  // ─── Crear ciclo SOLO después de fill confirmado ─────────────────
   const plusCycle = await repo.createCycle({
     pair,
     strategy: "institutional_dca_v1_plus",
     mode,
     status: "active",
     capitalReservedUsd: plusCapital.toFixed(2),
-    capitalUsedUsd: netValue.toFixed(2),
-    totalCostBasisUsd: netValue.toFixed(2),
-    totalQuantity: quantity.toFixed(8),
-    avgEntryPrice: currentPrice.toFixed(8),
+    capitalUsedUsd: executedUsd.toFixed(2),
+    totalCostBasisUsd: executedUsd.toFixed(2),
+    totalQuantity: executedQty.toFixed(8),
+    avgEntryPrice: avgFillPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
     buyCount: 1,
     tpTargetPct: tpPct.toFixed(2),
@@ -4576,6 +4624,7 @@ async function checkPlusActivation(
     parentCycleId: mainCycle.id,
   } as any);
 
+  // Crear orden con valores EJECUTADOS
   await repo.createOrder({
     cycleId: plusCycle.id,
     pair,
@@ -4583,21 +4632,32 @@ async function checkPlusActivation(
     orderType: "base_buy",
     buyIndex: 1,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: baseBuyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : baseBuyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - baseBuyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Plus cycle base buy, dip ${dipFromLastBuy.toFixed(1)}% from main avg`,
     humanReason: formatOrderReason("base_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: baseBuyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? baseBuyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
     });
   }
@@ -4611,11 +4671,11 @@ async function checkPlusActivation(
     cycleId: plusCycle.id, pair, mode,
     eventType: "plus_cycle_activated",
     severity: "info",
-    message: `Plus cycle activated: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, dip=${dipFromLastBuy.toFixed(1)}% from main`,
-    payloadJson: { parentCycleId: mainCycle.id, dipFromLastBuy, plusCapital, tpPct },
+    message: `Plus cycle activated: ${executedQty.toFixed(6)} @ ${avgFillPrice.toFixed(2)}, dip=${dipFromLastBuy.toFixed(1)}% from main`,
+    payloadJson: { parentCycleId: mainCycle.id, dipFromLastBuy, plusCapital, tpPct, executedQty, executedUsd, avgFillPrice },
   }, {
     eventType: "plus_cycle_activated", pair, mode,
-    price: currentPrice, quantity, entryDipPct: dipFromLastBuy,
+    price: avgFillPrice, quantity: executedQty, entryDipPct: dipFromLastBuy,
     parentCycleId: mainCycle.id, tpPct,
   });
 
@@ -4727,28 +4787,77 @@ async function checkPlusSafetyBuy(
   const nextBuyPrice = parseFloat(String(plusCycle.nextBuyPrice || "0"));
   if (nextBuyPrice <= 0 || currentPrice > nextBuyPrice) return;
 
-  // Execute plus safety buy
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  // Calcular intención
   const capitalReserved = parseFloat(String(plusCycle.capitalReservedUsd || "0"));
   const entrySteps = plusCfg.entryDipSteps || [2.0, 3.5, 5.0];
   const buyUsd = capitalReserved / (entrySteps.length || 1);
   const quantity = buyUsd / currentPrice;
 
-  let fees = 0, slippageVal = 0, netValue = buyUsd;
-  if (mode === "simulation") {
-    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
-    slippageVal = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = buyUsd + fees + slippageVal;
+  let executedQty = quantity;
+  let executedUsd = buyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      plusCycle.id,
+      "safety",
+      mode,
+      assetConfig,
+      buyCount + 1
+    );
+
+    if (!execResult.success) {
+      // NO tocar ciclo si la compra falló
+      console.error(`${TAG}[LIVE][PLUS_SAFETY] FAILED for cycle #${plusCycle.id}: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: plusCycle.id,
+        pair,
+        mode,
+        eventType: "plus_safety_buy_failed",
+        severity: "error",
+        message: `Plus safety buy #${buyCount + 1} bloqueado/fallido: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, currentPrice, reason: execResult.rejectionReason },
+      }, { eventType: "plus_safety_buy_failed", pair, mode, cycleId: plusCycle.id, price: currentPrice, quantity });
+      return; // Abortar - NO tocar ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][PLUS_SAFETY] FILL CONFIRMED for cycle #${plusCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
+    const slippageUsd = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = buyUsd + feeUsd + slippageUsd;
   }
 
+  // Recalcular promedios con valores EJECUTADOS
   const prevQty = parseFloat(String(plusCycle.totalQuantity));
   const prevCost = parseFloat(String(plusCycle.capitalUsedUsd));
-  const newTotalQty = prevQty + quantity;
-  const newTotalCost = prevCost + netValue;
+  const newTotalQty = prevQty + executedQty;
+  const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
 
   // Next level
-  const nextIdx = newBuyCount; // 0-indexed: buyCount is already next index
+  const nextIdx = newBuyCount;
   const nextDipPct = entrySteps[nextIdx] ?? null;
   const nextBuyPriceCalc = nextDipPct ? newAvgPrice * (1 - nextDipPct / 100) : null;
 
@@ -4771,6 +4880,7 @@ async function checkPlusSafetyBuy(
   }
   const tpPrice = newAvgPrice * (1 + tpPct / 100);
 
+  // Actualizar ciclo SOLO después de fill confirmado
   await repo.updateCycle(plusCycle.id, {
     capitalUsedUsd: newTotalCost.toFixed(2),
     totalQuantity: newTotalQty.toFixed(8),
@@ -4784,6 +4894,7 @@ async function checkPlusSafetyBuy(
     lastBuyAt: new Date(),
   });
 
+  // Crear orden con valores EJECUTADOS
   const plusSafetyOrder = await repo.createOrder({
     cycleId: plusCycle.id,
     pair,
@@ -4791,21 +4902,32 @@ async function checkPlusSafetyBuy(
     orderType: "safety_buy",
     buyIndex: newBuyCount,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: buyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippageVal.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : buyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - buyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Plus safety buy #${newBuyCount}`,
     humanReason: formatOrderReason("safety_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: buyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
     });
   }
@@ -4814,10 +4936,10 @@ async function checkPlusSafetyBuy(
     cycleId: plusCycle.id, pair, mode,
     eventType: "plus_safety_buy_executed",
     severity: "info",
-    message: `Plus safety buy #${newBuyCount}: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
+    message: `Plus safety buy #${newBuyCount}: ${executedQty.toFixed(6)} @ ${avgFillPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
   }, {
     eventType: "plus_safety_buy_executed", pair, mode,
-    price: currentPrice, quantity, avgEntry: newAvgPrice,
+    price: avgFillPrice, quantity: executedQty, avgEntry: newAvgPrice,
     capitalUsed: newTotalCost, buyCount: newBuyCount,
   });
 
@@ -5698,36 +5820,84 @@ async function executeRecoveryEntry(
   const pair = mainCycle.pair;
   const isBtc = pair === "BTC/USD";
 
-  // Calculate first buy
+  // Calculate first buy intention
   const entrySteps = rcfg.recoveryEntryDipSteps;
   const buyUsd = recoveryCapital / (entrySteps.length || 1);
   const quantity = buyUsd / currentPrice;
 
-  // Simulation fees
-  let fees = 0, slippage = 0, netValue = buyUsd;
-  if (mode === "simulation") {
-    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
-    slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = buyUsd + fees + slippage;
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  let executedQty = quantity;
+  let executedUsd = buyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      0, // cycleId aún no existe
+      "recovery",
+      mode,
+      assetConfig,
+      1
+    );
+
+    if (!execResult.success) {
+      // NO crear ciclo si la compra falló
+      console.error(`${TAG}[LIVE][RECOVERY] FAILED: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: undefined,
+        pair,
+        mode,
+        eventType: "recovery_buy_failed",
+        severity: "error",
+        message: `Recovery buy bloqueado/fallido: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, intendedUsd: buyUsd, currentPrice, reason: execResult.rejectionReason, parentCycleId: mainCycle.id },
+      }, { eventType: "recovery_buy_failed", pair, mode, price: currentPrice, quantity, parentCycleId: mainCycle.id });
+      return; // Abortar - NO crear ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][RECOVERY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
+    const slippageUsd = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = buyUsd + feeUsd + slippageUsd;
   }
 
   // TP
   const tpPct = isBtc ? rcfg.recoveryTpPctBtc : rcfg.recoveryTpPctEth;
-  const tpPrice = currentPrice * (1 + tpPct / 100);
+  const tpPrice = avgFillPrice * (1 + tpPct / 100);
 
   // Next safety buy
   const nextDipPct = entrySteps.length > 1 ? entrySteps[1] : null;
-  const nextBuyPrice = nextDipPct ? currentPrice * (1 - nextDipPct / 100) : null;
+  const nextBuyPrice = nextDipPct ? avgFillPrice * (1 - nextDipPct / 100) : null;
 
+  // ─── Crear ciclo SOLO después de fill confirmado ─────────────────
   const recoveryCycle = await repo.createCycle({
     pair,
     strategy: "institutional_dca_v1_recovery",
     mode,
     status: "active",
-    avgEntryPrice: currentPrice.toFixed(8),
-    totalQuantity: quantity.toFixed(8),
-    capitalUsedUsd: netValue.toFixed(2),
-    totalCostBasisUsd: netValue.toFixed(2),
+    avgEntryPrice: avgFillPrice.toFixed(8),
+    totalQuantity: executedQty.toFixed(8),
+    capitalUsedUsd: executedUsd.toFixed(2),
+    totalCostBasisUsd: executedUsd.toFixed(2),
     capitalReservedUsd: recoveryCapital.toFixed(2),
     buyCount: 1,
     nextBuyLevelPct: nextDipPct?.toFixed(2) || null,
@@ -5742,31 +5912,39 @@ async function executeRecoveryEntry(
     startedAt: new Date(),
   });
 
+  // Crear orden con valores EJECUTADOS
   await repo.createOrder({
     cycleId: recoveryCycle.id,
     pair, mode,
     orderType: "base_buy",
     buyIndex: 1,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: buyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : buyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - buyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Recovery base buy: main DD=${mainDrawdown.toFixed(1)}%`,
     humanReason: formatOrderReason("base_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: buyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
-
-  if (mode === "live") {
-    await executeRealBuy(pair, quantity, currentPrice);
-  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
     });
   }
@@ -5779,16 +5957,16 @@ async function executeRecoveryEntry(
     cycleId: recoveryCycle.id, pair, mode,
     eventType: "recovery_cycle_started",
     severity: "info",
-    message: `Recovery cycle opened: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, main DD=${mainDrawdown.toFixed(1)}%, TP=${tpPct}%`,
+    message: `Recovery cycle opened: ${executedQty.toFixed(6)} @ ${avgFillPrice.toFixed(2)}, main DD=${mainDrawdown.toFixed(1)}%, TP=${tpPct}%`,
     payloadJson: {
       parentCycleId: mainCycle.id, mainDrawdown, recoveryCapital,
-      price: currentPrice, quantity, tpPct, pairExposure, pairExposurePct,
+      price: avgFillPrice, quantity: executedQty, tpPct, pairExposure, pairExposurePct,
     },
   }, {
     eventType: "recovery_cycle_started", pair, mode,
-    price: currentPrice, quantity, tpPct,
+    price: avgFillPrice, quantity: executedQty, tpPct,
     drawdownPct: mainDrawdown, parentCycleId: mainCycle.id,
-    capitalUsed: netValue,
+    capitalUsed: executedUsd,
   });
 
   await telegram.alertCycleStarted(recoveryCycle, mainDrawdown, parseFloat(String(mainCycle.marketScore || "50")));
@@ -5916,23 +6094,72 @@ async function checkRecoverySafetyBuy(
   const nextBuyPrice = parseFloat(String(recoveryCycle.nextBuyPrice || "0"));
   if (nextBuyPrice <= 0 || currentPrice > nextBuyPrice) return;
 
-  // Execute safety buy
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  // Calcular intención
   const capitalReserved = parseFloat(String(recoveryCycle.capitalReservedUsd || "0"));
   const entrySteps = rcfg.recoveryEntryDipSteps;
   const buyUsd = capitalReserved / (entrySteps.length || 1);
   const quantity = buyUsd / currentPrice;
 
-  let fees = 0, slippage = 0, netValue = buyUsd;
-  if (mode === "simulation") {
-    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
-    slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = buyUsd + fees + slippage;
+  let executedQty = quantity;
+  let executedUsd = buyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      recoveryCycle.id,
+      "safety",
+      mode,
+      undefined, // assetConfig no pasado a safety buys recovery
+      buyCount + 1
+    );
+
+    if (!execResult.success) {
+      // NO tocar ciclo si la compra falló
+      console.error(`${TAG}[LIVE][RECOVERY_SAFETY] FAILED for cycle #${recoveryCycle.id}: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: recoveryCycle.id,
+        pair,
+        mode,
+        eventType: "recovery_safety_buy_failed",
+        severity: "error",
+        message: `Recovery safety buy #${buyCount + 1} bloqueado/fallido: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, currentPrice, reason: execResult.rejectionReason },
+      }, { eventType: "recovery_safety_buy_failed", pair, mode, cycleId: recoveryCycle.id, price: currentPrice, quantity });
+      return; // Abortar - NO tocar ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][RECOVERY_SAFETY] FILL CONFIRMED for cycle #${recoveryCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
+    const slippageUsd = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = buyUsd + feeUsd + slippageUsd;
   }
 
+  // Recalcular promedios con valores EJECUTADOS
   const prevQty = parseFloat(String(recoveryCycle.totalQuantity));
   const prevCost = parseFloat(String(recoveryCycle.capitalUsedUsd));
-  const newTotalQty = prevQty + quantity;
-  const newTotalCost = prevCost + netValue;
+  const newTotalQty = prevQty + executedQty;
+  const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
 
@@ -5945,6 +6172,7 @@ async function checkRecoverySafetyBuy(
   const tpPct = isBtc ? rcfg.recoveryTpPctBtc : rcfg.recoveryTpPctEth;
   const tpPrice = newAvgPrice * (1 + tpPct / 100);
 
+  // Actualizar ciclo SOLO después de fill confirmado
   await repo.updateCycle(recoveryCycle.id, {
     capitalUsedUsd: newTotalCost.toFixed(2),
     totalQuantity: newTotalQty.toFixed(8),
@@ -5957,30 +6185,38 @@ async function checkRecoverySafetyBuy(
     lastBuyAt: new Date(),
   });
 
+  // Crear orden con valores EJECUTADOS
   await repo.createOrder({
     cycleId: recoveryCycle.id, pair, mode,
     orderType: "safety_buy",
     buyIndex: newBuyCount,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: buyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : buyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - buyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Recovery safety buy #${newBuyCount}`,
     humanReason: formatOrderReason("safety_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: buyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
-
-  if (mode === "live") {
-    await executeRealBuy(pair, quantity, currentPrice);
-  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
     });
   }
@@ -5989,10 +6225,10 @@ async function checkRecoverySafetyBuy(
     cycleId: recoveryCycle.id, pair, mode,
     eventType: "safety_buy_executed",
     severity: "info",
-    message: `Recovery safety buy #${newBuyCount}: ${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
+    message: `Recovery safety buy #${newBuyCount}: ${executedQty.toFixed(6)} @ ${avgFillPrice.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}`,
   }, {
     eventType: "safety_buy_executed", pair, mode,
-    price: currentPrice, quantity, avgEntry: newAvgPrice,
+    price: avgFillPrice, quantity: executedQty, avgEntry: newAvgPrice,
     capitalUsed: newTotalCost, buyCount: newBuyCount,
     parentCycleId: recoveryCycle.parentCycleId,
   });

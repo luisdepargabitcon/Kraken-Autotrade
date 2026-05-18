@@ -5,4 +5,5 @@ server/public
 vite.config.ts.*
 *.tar.gz
 VERSION
+FUENTES_BOT.md
 =
