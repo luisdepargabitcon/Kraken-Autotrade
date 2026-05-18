@@ -2741,22 +2741,27 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                     {orders.map((order) => {
                       const isBuy = order.side === "buy";
                       const slip = parseFloat(String(order.slippageUsd || "0"));
+                      const isVoided = order.executionStatus === "phantom_voided";
                       return (
-                        <tr key={order.id} className="border-b border-border/20 hover:bg-muted/20">
+                        <tr key={order.id} className={cn("border-b border-border/20 hover:bg-muted/20", isVoided && "opacity-50")}>
                           <td className="p-2 pl-9 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(order.executedAt)}</td>
                           <td className="p-2">
                             <Badge variant="outline" className="text-[9px]">{translateOrderType(order.orderType)}</Badge>
+                            {isVoided && <Badge variant="outline" className="text-[9px] ml-1 border-orange-500 text-orange-400">ANULADA</Badge>}
                           </td>
-                          <td className={cn("p-2 font-semibold", isBuy ? "text-green-400" : "text-red-400")}>
+                          <td className={cn("p-2 font-semibold", isBuy ? "text-green-400" : "text-red-400", isVoided && "line-through")}>
                             {isBuy ? "COMPRA" : "VENTA"}
                           </td>
-                          <td className="p-2 text-right">{fmtPrice(order.price)}</td>
-                          <td className="p-2 text-right">{parseFloat(String(order.quantity)).toFixed(6)}</td>
-                          <td className="p-2 text-right">{fmtUsd(order.netValueUsd)}</td>
+                          <td className={cn("p-2 text-right", isVoided && "line-through text-muted-foreground")}>{fmtPrice(order.price)}</td>
+                          <td className={cn("p-2 text-right", isVoided && "line-through text-muted-foreground")}>{parseFloat(String(order.quantity)).toFixed(6)}</td>
+                          <td className={cn("p-2 text-right", isVoided && "line-through text-muted-foreground")}>{fmtUsd(order.netValueUsd)}</td>
                           <td className="p-2 text-right text-muted-foreground">{fmtUsd(order.feesUsd)}</td>
                           <td className="p-2 text-right text-muted-foreground">{slip > 0 ? fmtUsd(slip) : "—"}</td>
                           <td className="p-2 text-[10px] text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>
-                            {translateOrderReason(order)}
+                            {isVoided
+                              ? <span className="text-orange-400">{order.voidedReason ?? "Anulada por reconciliación — sin fill confirmado"}</span>
+                              : translateOrderReason(order)
+                            }
                           </td>
                         </tr>
                       );
@@ -2764,16 +2769,16 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   </tbody>
                   <tfoot className="border-t border-border/50 bg-muted/10">
                     <tr className="text-[10px] text-muted-foreground font-semibold">
-                      <td colSpan={2} className="p-2 pl-9">Total: {orders.length} órdenes</td>
+                      <td colSpan={2} className="p-2 pl-9">Total: {orders.length} órdenes{orders.some(o => o.executionStatus === "phantom_voided") && <span className="ml-2 text-orange-400">(incl. anuladas)</span>}</td>
                       <td className="p-2">
-                        <span className="text-green-400">{orders.filter(o => o.side === "buy").length}C</span>
+                        <span className="text-green-400">{orders.filter(o => o.side === "buy" && o.executionStatus !== "phantom_voided").length}C</span>
                         {" / "}
                         <span className="text-red-400">{orders.filter(o => o.side === "sell").length}V</span>
                       </td>
                       <td className="p-2 text-right">—</td>
                       <td className="p-2 text-right">—</td>
                       <td className="p-2 text-right">
-                        {fmtUsd(orders.reduce((sum, o) => sum + parseFloat(String(o.netValueUsd || "0")), 0))}
+                        {fmtUsd(orders.filter(o => o.executionStatus !== "phantom_voided").reduce((sum, o) => sum + parseFloat(String(o.netValueUsd || "0")), 0))}
                       </td>
                       <td className="p-2 text-right">
                         {fmtUsd(orders.reduce((sum, o) => sum + parseFloat(String(o.feesUsd || "0")), 0))}

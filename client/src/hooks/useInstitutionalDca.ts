@@ -214,6 +214,8 @@ export interface IdcaOrder {
   humanReason: string | null;
   exchangeOrderId: string | null;
   executedAt: string;
+  executionStatus: string | null;
+  voidedReason: string | null;
 }
 
 export interface IdcaEvent {

@@ -13,7 +13,7 @@ import { eq, and, ne } from "drizzle-orm";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import * as repo from "./IdcaRepository";
 import * as telegram from "./IdcaTelegramNotifier";
-import { institutionalDcaCycles, institutionalDcaOrders } from "@shared/schema";
+import { institutionalDcaCycles, institutionalDcaOrders, institutionalDcaEvents } from "@shared/schema";
 
 const TAG = "[IDCA_RECONCILE]";
 
@@ -34,6 +34,160 @@ export interface PhantomCheckResult {
   reason: string;
   exchangeOrderId?: string;
   exchangeFillFound?: boolean;
+}
+
+/**
+ * Void canónico de una compra fantasma y recalculo del ciclo.
+ *
+ * Busca EXACTAMENTE UNA orden candidata en el ciclo que cumpla todos los criterios.
+ * Si hay 0 o más de 1 candidatas, aborta sin tocar nada.
+ * Es idempotente: si la orden ya está phantom_voided, no recalcula de nuevo.
+ *
+ * @returns { voided: boolean; reason: string; orderId?: number }
+ */
+export async function voidPhantomBuyAndRecalculateCycle(params: {
+  cycleId: number;
+  pair: string;
+  targetPrice: number;          // precio de la compra fantasma (e.g. 76850.70)
+  targetQuantity: number;       // qty esperada (e.g. 0.010857)
+  targetUsd: number;            // valor USD esperado (e.g. 834.40)
+  reason: string;               // razón trazable para auditoría
+  eventType?: string;           // tipo de evento (default: manual_reconciliation_phantom_buy_voided)
+}): Promise<{ voided: boolean; reason: string; orderId?: number }> {
+  const { cycleId, pair, targetPrice, targetQuantity, targetUsd, reason, eventType } = params;
+  const PRICE_TOL = 0.01;   // 1% tolerancia en precio
+  const QTY_TOL   = 0.001;  // 0.1% tolerancia en cantidad
+  const USD_TOL   = 0.01;   // 1% tolerancia en valor USD
+
+  // 1. Obtener ciclo
+  const [cycle] = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, cycleId))
+    .limit(1);
+
+  if (!cycle) {
+    return { voided: false, reason: `CYCLE_NOT_FOUND: cycleId=${cycleId}` };
+  }
+  if (cycle.pair !== pair) {
+    return { voided: false, reason: `PAIR_MISMATCH: expected=${pair}, got=${cycle.pair}` };
+  }
+
+  // 2. Obtener todas las compras del ciclo
+  const buyOrders = await db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(and(
+      eq(institutionalDcaOrders.cycleId, cycleId),
+      eq(institutionalDcaOrders.side, "buy")
+    ));
+
+  // 3. Buscar candidata exacta (tolerancia por floating point)
+  const candidates = buyOrders.filter((o) => {
+    const price = parseFloat(o.price);
+    const qty   = parseFloat(o.quantity);
+    const usd   = parseFloat(o.netValueUsd);
+    const matchPrice = Math.abs(price - targetPrice) / targetPrice < PRICE_TOL;
+    const matchQty   = Math.abs(qty   - targetQuantity) / targetQuantity < QTY_TOL;
+    const matchUsd   = Math.abs(usd   - targetUsd)   / targetUsd   < USD_TOL;
+    return matchPrice && matchQty && matchUsd;
+  });
+
+  if (candidates.length === 0) {
+    return { voided: false, reason: `NO_CANDIDATE_FOUND: ninguna orden de compra en ciclo #${cycleId} coincide con price≈${targetPrice} qty≈${targetQuantity} usd≈${targetUsd}` };
+  }
+  if (candidates.length > 1) {
+    return { voided: false, reason: `AMBIGUOUS: ${candidates.length} órdenes coinciden — abortar sin tocar DB. IDs: ${candidates.map(o => o.id).join(',')}` };
+  }
+
+  const target = candidates[0];
+
+  // 4. Idempotencia: si ya está anulada, no repetir
+  if (target.executionStatus === "phantom_voided") {
+    console.log(`${TAG} [VOID_SKIP] Order ${target.id} already phantom_voided — idempotent skip`);
+    return { voided: true, reason: "ALREADY_VOIDED_IDEMPOTENT", orderId: target.id };
+  }
+
+  console.log(`${TAG} [VOID] Voiding order #${target.id} (cycle #${cycleId} ${pair}) — ${reason}`);
+
+  // 5. Transacción: anular + recalcular + evento
+  await db.transaction(async (trx) => {
+    // 5a. Marcar orden como phantom_voided (sin DELETE)
+    await trx.update(institutionalDcaOrders)
+      .set({
+        executionStatus: "phantom_voided",
+        voidedReason: reason,
+        voidedAt: new Date(),
+        reconciledAt: new Date(),
+      })
+      .where(eq(institutionalDcaOrders.id, target.id));
+
+    // 5b. Recalcular ciclo desde órdenes válidas (excluyendo phantom_voided)
+    const validBuys = await trx
+      .select()
+      .from(institutionalDcaOrders)
+      .where(and(
+        eq(institutionalDcaOrders.cycleId, cycleId),
+        eq(institutionalDcaOrders.side, "buy"),
+        ne(institutionalDcaOrders.executionStatus, "phantom_voided")
+      ));
+
+    let totalQty = 0;
+    let totalCost = 0;
+    let buyCount = 0;
+    for (const o of validBuys) {
+      const qty  = parseFloat(o.quantity);
+      const cost = parseFloat(o.netValueUsd);
+      if (qty > 0 && cost > 0) {
+        totalQty  += qty;
+        totalCost += cost;
+        buyCount++;
+      }
+    }
+    const newAvgPrice = totalQty > 0 ? totalCost / totalQty : 0;
+
+    console.log(`${TAG} [VOID] Cycle #${cycleId} recalculated: qty=${totalQty.toFixed(8)}, cost=${totalCost.toFixed(2)}, avg=${newAvgPrice.toFixed(2)}, buys=${buyCount}`);
+
+    // 5c. Actualizar agregados del ciclo + desbloquear si el status era needs_reconciliation
+    const cycleUpdate: Record<string, any> = {
+      totalQuantity: totalQty.toFixed(8),
+      capitalUsedUsd: totalCost.toFixed(2),
+      avgEntryPrice: newAvgPrice.toFixed(8),
+      buyCount: buyCount,
+      updatedAt: new Date(),
+    };
+    if (cycle.status === "needs_reconciliation") {
+      cycleUpdate.status = "active";
+      cycleUpdate.reconciliationStatus = "reconciled";
+    }
+    await trx.update(institutionalDcaCycles)
+      .set(cycleUpdate)
+      .where(eq(institutionalDcaCycles.id, cycleId));
+
+    // 5d. Evento de auditoría (sin DELETE — pista trazable)
+    await trx.insert(institutionalDcaEvents).values({
+      cycleId,
+      pair,
+      mode: "live",
+      eventType: eventType ?? "manual_reconciliation_phantom_buy_voided",
+      severity: "warning",
+      message: `Compra fantasma anulada por reconciliación: ${reason}. Ciclo recalculado desde órdenes válidas.`,
+      payloadJson: {
+        orderId: target.id,
+        targetPrice,
+        targetQuantity,
+        targetUsd,
+        newAvgPrice: newAvgPrice.toFixed(8),
+        newTotalQty: totalQty.toFixed(8),
+        newCapitalUsd: totalCost.toFixed(2),
+        newBuyCount: buyCount,
+        voidReason: reason,
+        reconciledAt: new Date().toISOString(),
+      },
+    });
+  });
+
+  return { voided: true, reason: "OK", orderId: target.id };
 }
 
 /**
@@ -77,7 +231,39 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
       }
     }
 
-    // 3. Determinar si es seguro arrancar
+    // 3. Reparación específica BTC #24 — idempotente
+    // Compra adicional fantasma del 18/05/26 05:14 — sin saldo real en Revolut X
+    // Condiciones de auto-aplicación:
+    //   - ciclo #24 existe y es BTC/USD LIVE
+    //   - status = needs_reconciliation o active
+    //   - existe EXACTAMENTE UNA orden candidata con price≈76850.70, qty≈0.010857, usd≈834.40
+    //   - esa orden NO está ya phantom_voided
+    //   - no hay ambigüedad
+    try {
+      const btc24Result = await voidPhantomBuyAndRecalculateCycle({
+        cycleId: 24,
+        pair: "BTC/USD",
+        targetPrice: 76850.70,
+        targetQuantity: 0.010857,
+        targetUsd: 834.40,
+        reason: "Compra no ejecutada en Revolut X por saldo insuficiente; confirmada como fantasma por usuario el 18/05/2026",
+        eventType: "manual_reconciliation_phantom_buy_voided",
+      });
+      if (btc24Result.voided && btc24Result.reason === "OK") {
+        console.log(`${TAG} [BTC#24] Phantom buy voided successfully — orderId=${btc24Result.orderId}`);
+        result.phantomsFound++;
+        result.phantomsVoided++;
+      } else if (btc24Result.voided && btc24Result.reason === "ALREADY_VOIDED_IDEMPOTENT") {
+        console.log(`${TAG} [BTC#24] Already voided — skip (idempotent)`);
+      } else {
+        console.warn(`${TAG} [BTC#24] Could not auto-void: ${btc24Result.reason}`);
+      }
+    } catch (btcError: any) {
+      console.error(`${TAG} [BTC#24] Error during targeted repair: ${btcError.message}`);
+      result.errors.push(`btc24_repair: ${btcError.message}`);
+    }
+
+    // 4. Determinar si es seguro arrancar
     result.safeToStart = result.ambiguousBlocked === 0 && result.errors.length === 0;
 
     console.log(`${TAG} ==========================================`);
