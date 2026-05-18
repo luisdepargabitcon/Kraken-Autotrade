@@ -18,7 +18,8 @@ ADD COLUMN IF NOT EXISTS original_intended_usd DECIMAL(18,2),
 ADD COLUMN IF NOT EXISTS adjusted_usd DECIMAL(18,2),
 ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
 ADD COLUMN IF NOT EXISTS available_quote_before DECIMAL(18,2),
-ADD COLUMN IF NOT EXISTS spendable_quote DECIMAL(18,2);
+ADD COLUMN IF NOT EXISTS spendable_quote DECIMAL(18,2),
+ADD COLUMN IF NOT EXISTS needs_verification_reason TEXT;
 
 -- 2. Add reconciliation fields to cycles table
 ALTER TABLE institutional_dca_cycles

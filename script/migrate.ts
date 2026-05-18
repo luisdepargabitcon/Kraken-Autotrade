@@ -1195,6 +1195,15 @@ END $$;
     const marketCandlesPath = path.resolve(process.cwd(), "db", "migrations", "037_market_candles_cache.sql");
     await tryExecuteFile(db, marketCandlesPath, "market_candles_cache");
 
+    // ============================================================
+    // HOTFIX CRÍTICO: IDCA EXECUTION TRACEABILITY (038)
+    // Adds execution_status, exchange_order_id tracking, and reconciliation
+    // fields to prevent phantom buys and enable safe auto-reconciliation.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA execution traceability columns exist (HOTFIX 038)...");
+    const idcaExecutionTraceabilityPath = path.resolve(process.cwd(), "db", "migrations", "038_idca_execution_traceability.sql");
+    await tryExecuteFile(db, idcaExecutionTraceabilityPath, "idca_execution_traceability");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

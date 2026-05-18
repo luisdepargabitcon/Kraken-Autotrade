@@ -143,17 +143,27 @@ async function reconcileCycle(cycle: any, result: ReconciliationResult): Promise
     // Verificar si es fantasma
     const phantomCheck = await checkIfPhantom(order, pair);
 
+    // Decisiones seguras: solo auto-actuar con evidencia determinista
     if (phantomCheck.isPhantom && phantomCheck.confidence === "high") {
-      // Caso A: Fantasma inequívoco — anular
+      // Caso A: Fantasma inequívoco con prueba determinista — anular
       console.log(`${TAG} Order ${order.id}: PHANTOM (high confidence) — voiding`);
       result.phantomsFound++;
       await voidPhantomBuy(order, cycle, phantomCheck.reason);
       result.phantomsVoided++;
-    } else if (phantomCheck.isPhantom && phantomCheck.confidence === "medium") {
-      // Caso D: Ambiguo — bloquear ciclo
-      console.log(`${TAG} Order ${order.id}: AMBIGUOUS (medium confidence) — blocking cycle`);
-      result.ambiguousBlocked++;
-      await blockCycleForManualReview(cycle, `ambiguous_order_${order.id}: ${phantomCheck.reason}`);
+    } else if (phantomCheck.reason === "legacy_order_no_exchange_order_id_needs_manual_review") {
+      // Caso Legacy: Orden sin exchangeOrderId del sistema anterior
+      // NO auto-anular, marcar para revisión manual
+      console.log(`${TAG} Order ${order.id}: LEGACY — marking needs_verification (no auto-void)`);
+      await markOrderLegacyUnverified(order);
+      // Solo bloquear ciclo si hay múltiples órdenes legacy sin verificar
+      if (await hasMultipleLegacyUnverifiedOrders(cycle.id)) {
+        result.ambiguousBlocked++;
+        await blockCycleForManualReview(cycle, `legacy_orders_need_verification: cycle_${cycle.id}`);
+      }
+    } else if (phantomCheck.confidence === "low") {
+      // Caso B: Evidencia insuficiente — no auto-actuar
+      console.log(`${TAG} Order ${order.id}: LOW CONFIDENCE — marking needs_verification`);
+      await markOrderNeedsVerification(order, phantomCheck.reason);
     } else {
       // Caso C: Parece válido — marcar como verificado
       console.log(`${TAG} Order ${order.id}: OK — marking verified`);
@@ -176,39 +186,27 @@ async function checkIfPhantom(order: any, pair: string): Promise<PhantomCheckRes
       };
     }
 
-    // Si no tiene exchangeOrderId, es candidata a fantasma
+    // Si no tiene exchangeOrderId, verificar si es orden legacy o nueva
     if (!order.exchangeOrderId) {
-      // Buscar por ventana temporal
-      const windowStart = new Date(order.createdAt);
-      windowStart.setMinutes(windowStart.getMinutes() - 5);
-      const windowEnd = new Date(order.createdAt);
-      windowEnd.setMinutes(windowEnd.getMinutes() + 5);
+      // Órdenes creadas por el nuevo sistema (post-hotfix) tienen idempotencyKey
+      // Si tiene idempotencyKey pero no exchangeOrderId -> no se envió al exchange
+      const isNewSystemOrder = !!order.idempotencyKey;
 
-      // Intentar buscar orden similar en exchange
-      // Nota: Esto requiere implementación específica por exchange
-      const similarOrderFound = await searchSimilarOrderInExchange(
-        pair,
-        "buy",
-        parseFloat(order.quantity),
-        parseFloat(order.price),
-        windowStart,
-        windowEnd
-      );
-
-      if (similarOrderFound) {
+      if (isNewSystemOrder) {
+        // Orden nueva que nunca se envió al exchange -> fantasma seguro
         return {
-          isPhantom: false,
-          confidence: "medium",
-          reason: "similar_order_found_in_exchange",
-          exchangeOrderId: similarOrderFound,
+          isPhantom: true,
+          confidence: "high",
+          reason: "new_system_order_without_exchange_id",
         };
       }
 
-      // No se encontró orden similar — probable fantasma
+      // Orden legacy (pre-hotfix) sin exchangeOrderId
+      // NO auto-anular sin evidencia determinista
       return {
-        isPhantom: true,
-        confidence: "high",
-        reason: "no_exchange_order_id_and_no_similar_order_found",
+        isPhantom: false,
+        confidence: "low",
+        reason: "legacy_order_no_exchange_order_id_needs_manual_review",
       };
     }
 
@@ -361,6 +359,46 @@ async function markOrderVerified(order: any): Promise<void> {
       reconciledAt: new Date(),
     })
     .where(eq(institutionalDcaOrders.id, order.id));
+}
+
+/**
+ * Marca orden legacy como no verificada (necesita revisión manual)
+ */
+async function markOrderLegacyUnverified(order: any): Promise<void> {
+  await db.update(institutionalDcaOrders)
+    .set({
+      executionStatus: "legacy_unverified",
+      reconciledAt: new Date(),
+    })
+    .where(eq(institutionalDcaOrders.id, order.id));
+}
+
+/**
+ * Marca orden como necesita verificación adicional
+ */
+async function markOrderNeedsVerification(order: any, reason: string): Promise<void> {
+  await db.update(institutionalDcaOrders)
+    .set({
+      executionStatus: "needs_verification",
+      reconciledAt: new Date(),
+      needsVerificationReason: reason,
+    })
+    .where(eq(institutionalDcaOrders.id, order.id));
+}
+
+/**
+ * Verifica si un ciclo tiene múltiples órdenes legacy sin verificar
+ */
+async function hasMultipleLegacyUnverifiedOrders(cycleId: number): Promise<boolean> {
+  const orders = await db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(and(
+      eq(institutionalDcaOrders.cycleId, cycleId),
+      eq(institutionalDcaOrders.side, "buy"),
+      eq(institutionalDcaOrders.executionStatus, "legacy_unverified")
+    ));
+  return orders.length >= 2;
 }
 
 /**

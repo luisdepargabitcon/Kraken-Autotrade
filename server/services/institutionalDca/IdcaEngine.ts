@@ -48,11 +48,16 @@ import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
 import { resolveDynamicAnchor, type DynamicAnchorResult } from "./IdcaDynamicAnchorService";
 import * as liveGuard from "./IdcaLiveExecutionGuard";
+import { runStartupReconciliation, isSafeToStartAfterReconciliation } from "./IdcaStartupReconciliationService";
 
 const TAG = "[IDCA]";
 
 /** HOTFIX: Lock por ciclo para evitar compras simultáneas */
 const cycleExecutionLocks = new Map<number, boolean>();
+
+/** HOTFIX: Estado de reconciliación de startup */
+let startupReconciliationCompleted = false;
+let startupReconciliationResult: any = null;
 
 // ─── Fee/Dust Tolerance for Live Full-Close Sells ───────────────
 // When cycle.totalQuantity slightly exceeds exchange available balance
@@ -730,6 +735,33 @@ async function loadAnchorsFromDb(): Promise<void> {
 
 export async function startScheduler(): Promise<void> {
   if (schedulerTimeout) return;
+
+  // ── HOTFIX: Startup Reconciliation ─────────────────────────────────
+  // Ejecutar reconciliación ANTES de arrancar el scheduler
+  if (!startupReconciliationCompleted) {
+    console.log(`${TAG} Running startup reconciliation before scheduler...`);
+    try {
+      startupReconciliationResult = await runStartupReconciliation();
+      startupReconciliationCompleted = true;
+
+      if (!isSafeToStartAfterReconciliation(startupReconciliationResult)) {
+        console.error(`${TAG} ==========================================`);
+        console.error(`${TAG} SCHEDULER BLOCKED: Reconciliation found issues`);
+        console.error(`${TAG} Cycles with ambiguous orders: ${startupReconciliationResult.ambiguousBlocked}`);
+        console.error(`${TAG} Errors: ${startupReconciliationResult.errors.length}`);
+        console.error(`${TAG} ==========================================`);
+        // NO arrancar scheduler - queda en modo seguro
+        return;
+      }
+
+      console.log(`${TAG} Startup reconciliation passed: ${startupReconciliationResult.cyclesChecked} cycles checked, ${startupReconciliationResult.phantomsVoided} phantoms voided`);
+    } catch (error: any) {
+      console.error(`${TAG} Startup reconciliation FAILED: ${error.message}`);
+      console.error(`${TAG} Scheduler NOT started due to reconciliation error`);
+      return;
+    }
+  }
+
   const config = await repo.getIdcaConfig();
   const idle = (config as any).schedulerIdleSeconds ?? 900;
   const active = (config as any).schedulerActiveSeconds ?? 300;
@@ -1712,26 +1744,73 @@ async function checkEntry(
     nextBuyPrice = Math.min(nextBuyPrice, vc.lowerBand2);
   }
 
-  // Apply simulation fees
-  let fees = 0;
-  let slippage = 0;
-  let netValue = baseBuyUsd;
-  if (mode === "simulation") {
-    fees = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
-    slippage = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = baseBuyUsd + fees + slippage;
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  let executedQty = quantity;
+  let executedUsd = baseBuyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      0, // cycleId aún no existe
+      "initial",
+      mode,
+      assetConfig,
+      1
+    );
+
+    if (!execResult.success) {
+      // Compra fallida - NO crear ciclo
+      console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: undefined,
+        pair,
+        mode,
+        eventType: "initial_buy_failed",
+        severity: "error",
+        message: `Compra inicial bloqueada: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, intendedUsd: baseBuyUsd, currentPrice, reason: execResult.rejectionReason },
+      }, { eventType: "initial_buy_failed", pair, mode, price: currentPrice, quantity });
+      return; // Abortar - NO crear ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][INITIAL_BUY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    const simFeePct = resolveSimulationFeePct(config);
+    feeUsd = baseBuyUsd * (simFeePct / 100);
+    const slippageUsd = baseBuyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = baseBuyUsd + feeUsd + slippageUsd;
   }
 
+  // ─── Crear ciclo con valores EJECUTADOS (LIVE) o PLANIFICADOS (SIM) ─
   const cycle = await repo.createCycle({
     pair,
     strategy: "institutional_dca_v1",
     mode,
     status: "active",
     capitalReservedUsd: capitalForCycle.toFixed(2),
-    capitalUsedUsd: netValue.toFixed(2),
-    totalCostBasisUsd: netValue.toFixed(2),
-    totalQuantity: quantity.toFixed(8),
-    avgEntryPrice: currentPrice.toFixed(8),
+    capitalUsedUsd: executedUsd.toFixed(2),
+    totalCostBasisUsd: executedUsd.toFixed(2),
+    totalQuantity: executedQty.toFixed(8),
+    avgEntryPrice: avgFillPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
     buyCount: 1,
     tpTargetPct: tpPct.toFixed(2),
@@ -1757,7 +1836,7 @@ async function checkEntry(
     entryDipPct: (check.entryDipPct || 0).toFixed(4),
   });
 
-  // Create order record
+  // Create order record with execution tracking
   const order = await repo.createOrder({
     cycleId: cycle.id,
     pair,
@@ -1765,27 +1844,33 @@ async function checkEntry(
     orderType: "base_buy",
     buyIndex: 1,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: baseBuyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : baseBuyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - baseBuyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Entry dip ${check.entryDipPct?.toFixed(2)}% from base $${bp.price.toFixed(2)} (${bp.type}), score=${check.marketScore}`,
     humanReason: formatOrderReason("base_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: baseBuyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? baseBuyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
-
-  // Execute real order if live
-  if (mode === "live") {
-    await executeRealBuy(pair, quantity, currentPrice);
-  }
 
   // Update simulation wallet
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
       totalCyclesSimulated: wallet.totalCyclesSimulated + 1,
     });
@@ -1793,7 +1878,7 @@ async function checkEntry(
 
   const baseFmtCtx: FormatContext = {
     eventType: "cycle_started", pair, mode,
-    price: currentPrice, quantity, capitalUsed: netValue,
+    price: currentPrice, quantity, capitalUsed: executedUsd,
     entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type,
     marketScore: check.marketScore,
     buyCount: 1, sizeProfile: check.sizeProfile,
@@ -1804,7 +1889,7 @@ async function checkEntry(
     eventType: "cycle_started",
     severity: "info",
     message: `Cycle started: baseBuy=${quantity.toFixed(6)} @ ${currentPrice.toFixed(2)} | BasePrice=$${bp.price.toFixed(2)} (${bp.type}) | EntryDip=${check.entryDipPct?.toFixed(2)}%`,
-    payloadJson: { price: currentPrice, quantity, capital: netValue, sizeProfile: check.sizeProfile, basePrice: bp },
+    payloadJson: { price: currentPrice, quantity, capital: executedUsd, sizeProfile: check.sizeProfile, basePrice: bp },
   }, baseFmtCtx);
 
   await createHumanEvent({
@@ -2327,31 +2412,75 @@ async function checkSafetyBuy(
   const buyUsd = capitalReserved * (buyPct / 100);
   const quantity = buyUsd / currentPrice;
 
-  // Simulation fees
-  let fees = 0, slippage = 0, netValue = buyUsd;
-  if (mode === "simulation") {
-    fees = buyUsd * (resolveSimulationFeePct(config) / 100);
-    slippage = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
-    netValue = buyUsd + fees + slippage;
+  // ─── HOTFIX: Flujo seguro LIVE vs SIMULATION ─────────────────────
+
+  let executedQty = quantity;
+  let executedUsd = buyUsd;
+  let avgFillPrice = currentPrice;
+  let feeUsd = 0;
+  let wasAdjusted = false;
+  let originalQty: number | undefined;
+  let exchangeOrderId: string | undefined;
+
+  if (mode === "live") {
+    // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
+    const execResult = await executeRealBuyWithGuard(
+      pair,
+      quantity,
+      currentPrice,
+      cycle.id,
+      "safety",
+      mode,
+      assetConfig,
+      safetyIndex + 1 // buyLevel (1-indexed)
+    );
+
+    if (!execResult.success) {
+      // NO tocar ciclo si la compra falló
+      console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${execResult.rejectionReason}`);
+      await createHumanEvent({
+        cycleId: cycle.id,
+        pair,
+        mode,
+        eventType: "safety_buy_failed",
+        severity: "error",
+        message: `Safety buy #${safetyIndex + 1} bloqueado/fallido: ${execResult.rejectionReason}`,
+        payloadJson: { intendedQty: quantity, currentPrice, reason: execResult.rejectionReason },
+      }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity });
+      return; // Abortar - NO tocar ciclo
+    }
+
+    // Fill confirmado - usar valores EJECUTADOS
+    executedQty = execResult.executedQty;
+    executedUsd = execResult.executedUsd;
+    avgFillPrice = execResult.avgPrice;
+    feeUsd = execResult.feeUsd;
+    wasAdjusted = execResult.wasAdjusted;
+    originalQty = execResult.originalQty;
+    exchangeOrderId = execResult.orderId;
+
+    console.log(`${TAG}[LIVE][SAFETY_BUY] FILL CONFIRMED for cycle #${cycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+  } else {
+    // ─── MODO SIMULATION: Calcular fees simulados ────────────────
+    feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
+    const slippageUsd = buyUsd * (parseFloat(String(config.simulationSlippagePct)) / 100);
+    executedUsd = buyUsd + feeUsd + slippageUsd;
   }
 
-  // Recalculate average
+  // Recalculate average usando valores EJECUTADOS
   const prevQty = parseFloat(String(cycle.totalQuantity));
   const prevCost = parseFloat(String(cycle.capitalUsedUsd));
-  const newTotalQty = prevQty + quantity;
-  const newTotalCost = prevCost + netValue;
+  const newTotalQty = prevQty + executedQty;
+  const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
 
-  // Next level
-  const nextSafety = safetyOrders[safetyIndex]; // next after current
+  // Next level (calculado desde nuevo promedio)
+  const nextSafety = safetyOrders[safetyIndex];
   const nextLevelPct = nextSafety ? nextSafety.dipPct : null;
-  const avgForNextBuy = newAvgPrice; // Reference from new avg
   let nextBuyPriceCalc = nextLevelPct ? newAvgPrice * (1 - nextLevelPct / 100) : null;
 
-  // VWAP override: anchor safety orders to real VWAP bands
-  // safetyIndex 1 (safety 1→2) → lowerBand2, safetyIndex 2 (safety 2→3) → lowerBand3
-  // safetyIndex >= 3 → fallback to % calculation above
+  // VWAP override
   if (assetConfig.vwapEnabled && nextBuyPriceCalc !== null) {
     try {
       const meta = typeof cycle.basePriceMetaJson === "string"
@@ -2360,13 +2489,12 @@ async function checkSafetyBuy(
       const vwapBands = meta?.vwapBands;
       if (vwapBands) {
         const vwapLevels = [vwapBands.lowerBand2, vwapBands.lowerBand3];
-        // safetyIndex is 0-based from safetyOrders, maps: 1→band2, 2→band3
         if (safetyIndex < vwapLevels.length && vwapLevels[safetyIndex] > 0) {
           nextBuyPriceCalc = Math.min(nextBuyPriceCalc, vwapLevels[safetyIndex]);
         }
       }
     } catch {
-      // JSON corrupto → usa cálculo % fijo existente
+      // JSON corrupto → usa cálculo % fijo
     }
   }
 
@@ -2390,10 +2518,11 @@ async function checkSafetyBuy(
   }
   const tpPrice = newAvgPrice * (1 + tpPct / 100);
 
+  // Actualizar ciclo con valores EJECUTADOS
   const prevTotalCostBasis = parseFloat(String((cycle as any).totalCostBasisUsd || cycle.capitalUsedUsd || "0"));
   await repo.updateCycle(cycle.id, {
     capitalUsedUsd: newTotalCost.toFixed(2),
-    totalCostBasisUsd: (prevTotalCostBasis + netValue).toFixed(2),
+    totalCostBasisUsd: (prevTotalCostBasis + executedUsd).toFixed(2),
     totalQuantity: newTotalQty.toFixed(8),
     avgEntryPrice: newAvgPrice.toFixed(8),
     buyCount: newBuyCount,
@@ -2405,6 +2534,7 @@ async function checkSafetyBuy(
     lastBuyAt: new Date(),
   } as any);
 
+  // Crear orden con valores EJECUTADOS
   const order = await repo.createOrder({
     cycleId: cycle.id,
     pair,
@@ -2412,25 +2542,32 @@ async function checkSafetyBuy(
     orderType: "safety_buy",
     buyIndex: newBuyCount,
     side: "buy",
-    price: currentPrice.toFixed(8),
-    quantity: quantity.toFixed(8),
-    grossValueUsd: buyUsd.toFixed(2),
-    feesUsd: fees.toFixed(2),
-    slippageUsd: slippage.toFixed(2),
-    netValueUsd: netValue.toFixed(2),
+    price: avgFillPrice.toFixed(8),
+    quantity: executedQty.toFixed(8),
+    grossValueUsd: (mode === "live" ? executedUsd - feeUsd : buyUsd).toFixed(2),
+    feesUsd: feeUsd.toFixed(2),
+    slippageUsd: (mode === "simulation" ? (executedUsd - buyUsd - feeUsd) : 0).toFixed(2),
+    netValueUsd: executedUsd.toFixed(2),
     triggerReason: `Safety buy #${newBuyCount} at -${safetyOrder.dipPct}%`,
     humanReason: formatOrderReason("safety_buy"),
+    // HOTFIX: Campos de trazabilidad
+    executionStatus: mode === "live" ? "filled" : "simulated",
+    intendedQuantity: quantity.toFixed(8),
+    intendedUsd: buyUsd.toFixed(2),
+    executedQuantity: executedQty.toFixed(8),
+    executedUsd: executedUsd.toFixed(2),
+    avgFillPrice: avgFillPrice.toFixed(8),
+    exchangeOrderId,
+    sizeAdjusted: wasAdjusted,
+    originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
+    adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
   });
-
-  if (mode === "live") {
-    await executeRealBuy(pair, quantity, currentPrice);
-  }
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
     await repo.updateSimulationWallet({
-      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - netValue).toFixed(2),
-      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + netValue).toFixed(2),
+      availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) - executedUsd).toFixed(2),
+      usedBalanceUsd: (parseFloat(String(wallet.usedBalanceUsd)) + executedUsd).toFixed(2),
       totalOrdersSimulated: wallet.totalOrdersSimulated + 1,
     });
   }
@@ -4060,8 +4197,136 @@ async function executeRealBuy(pair: string, quantity: number, price: number, ass
   }
 }
 
+/**
+ * HOTFIX: Ejecuta compra inicial de ciclo en modo LIVE con confirmación de fill.
+ * SOLO crea el ciclo si el fill es confirmado. Si falla, NO crea ciclo.
+ */
+async function executeInitialBuyLiveSafe(
+  pair: string,
+  quantity: number,
+  currentPrice: number,
+  mode: IdcaMode,
+  assetConfig?: InstitutionalDcaAssetConfigRow,
+  config?: InstitutionalDcaConfigRow,
+  check?: IdcaEntryCheckResult
+): Promise<{ success: boolean; cycleId?: number; executedQty?: number; executedUsd?: number; avgFillPrice?: number; feeUsd?: number; wasAdjusted?: boolean; originalQty?: number; error?: string }> {
+  const intendedQty = quantity;
+  const intendedUsd = quantity * currentPrice;
+
+  // 1. Ejecutar compra con validación de saldo y confirmación de fill
+  const execResult = await executeRealBuyWithGuard(
+    pair,
+    intendedQty,
+    currentPrice,
+    0, // cycleId aún no existe
+    "initial",
+    mode,
+    assetConfig,
+    1 // buyLevel 1
+  );
+
+  if (!execResult.success) {
+    // NO crear ciclo si la compra falló
+    console.error(`${TAG}[LIVE][INITIAL_BUY] FAILED: ${execResult.rejectionReason}`);
+    await createHumanEvent({
+      cycleId: undefined,
+      pair,
+      mode,
+      eventType: "initial_buy_failed",
+      severity: "error",
+      message: `Compra inicial bloqueada/fallida: ${execResult.rejectionReason}`,
+      payloadJson: { intendedQty, intendedUsd, currentPrice, reason: execResult.rejectionReason },
+    }, { eventType: "initial_buy_failed", pair, mode, price: currentPrice, quantity: intendedQty });
+    return { success: false, error: execResult.rejectionReason };
+  }
+
+  // 2. Fill confirmado - ahora crear ciclo con valores EJECUTADOS (no planificados)
+  console.log(`${TAG}[LIVE][INITIAL_BUY] FILL CONFIRMED: qty=${execResult.executedQty.toFixed(8)} avg=${execResult.avgPrice.toFixed(2)}`);
+
+  // Usar valores ejecutados para crear el ciclo
+  const executedQty = execResult.executedQty;
+  const executedUsd = execResult.executedUsd;
+  const avgFillPrice = execResult.avgPrice;
+  const feeUsd = execResult.feeUsd;
+
+  return { success: true, executedQty, executedUsd, avgFillPrice, feeUsd, wasAdjusted: execResult.wasAdjusted, originalQty: execResult.originalQty };
+}
+
+/**
+ * HOTFIX: Ejecuta safety buy en modo LIVE con confirmación de fill.
+ * SOLO actualiza ciclo si el fill es confirmado. Si falla, NO toca ciclo.
+ */
+async function executeSafetyBuyLiveSafe(
+  cycle: InstitutionalDcaCycle,
+  pair: string,
+  quantity: number,
+  currentPrice: number,
+  mode: IdcaMode,
+  assetConfig?: InstitutionalDcaAssetConfigRow,
+  buyLevel: number = 1
+): Promise<{ success: boolean; executedQty?: number; executedUsd?: number; avgPrice?: number; wasAdjusted?: boolean; originalQty?: number; orderId?: string; error?: string }> {
+  const intendedQty = quantity;
+
+  // 1. Ejecutar compra con validación de saldo y confirmación de fill
+  const execResult = await executeRealBuyWithGuard(
+    pair,
+    intendedQty,
+    currentPrice,
+    cycle.id,
+    "safety",
+    mode,
+    assetConfig,
+    buyLevel
+  );
+
+  if (!execResult.success) {
+    // NO tocar ciclo si la compra falló
+    console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${execResult.rejectionReason}`);
+    await createHumanEvent({
+      cycleId: cycle.id,
+      pair,
+      mode,
+      eventType: "safety_buy_failed",
+      severity: "error",
+      message: `Safety buy #${buyLevel} bloqueado/fallido: ${execResult.rejectionReason}`,
+      payloadJson: { intendedQty, currentPrice, reason: execResult.rejectionReason },
+    }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: intendedQty });
+    return { success: false, error: execResult.rejectionReason };
+  }
+
+  // 2. Fill confirmado - retornar valores ejecutados
+  console.log(`${TAG}[LIVE][SAFETY_BUY] FILL CONFIRMED for cycle #${cycle.id}: qty=${execResult.executedQty.toFixed(8)} avg=${execResult.avgPrice.toFixed(2)}`);
+
+  return {
+    success: true,
+    executedQty: execResult.executedQty,
+    executedUsd: execResult.executedUsd,
+    avgPrice: execResult.avgPrice,
+    wasAdjusted: execResult.wasAdjusted,
+    originalQty: execResult.originalQty,
+    orderId: execResult.orderId,
+  };
+}
+
 async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number): Promise<void> {
   try {
+    // HOTFIX: Validar balance base real antes de vender
+    const cycleQty = parseFloat(String(cycle.totalQuantity));
+    const validation = await liveGuard.validateSellQuantity(cycle.pair, quantity, cycleQty);
+    if (!validation.valid) {
+      console.error(`${TAG}[LIVE][SELL] BLOCKED: ${validation.reason} (pair=${cycle.pair} qty=${quantity.toFixed(8)} available=${validation.availableQty.toFixed(8)})`);
+      await createHumanEvent({
+        cycleId: cycle.id,
+        pair: cycle.pair,
+        mode: "live",
+        eventType: "cycle_exchange_qty_mismatch",
+        severity: "critical",
+        message: `Venta bloqueada: ${validation.reason}. Ciclo necesita reconciliación.`,
+        payloadJson: { requestedQty: quantity, availableQty: validation.availableQty, reason: validation.reason },
+      }, { eventType: "cycle_exchange_qty_mismatch", pair: cycle.pair, mode: "live", cycleId: cycle.id });
+      throw new Error(`Live sell blocked: ${validation.reason} (pair=${cycle.pair} type=${orderType})`);
+    }
+
     const tradingExchange = ExchangeFactory.getTradingExchange();
     if (!tradingExchange.isInitialized()) {
       console.error(`${TAG}[LIVE][SELL] Trading exchange not initialized — order NOT sent for ${cycle.pair}`);

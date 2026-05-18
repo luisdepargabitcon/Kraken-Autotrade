@@ -1245,6 +1245,7 @@ export const institutionalDcaOrders = pgTable("institutional_dca_orders", {
   idempotencyKey: text("idempotency_key"),
   availableQuoteBefore: decimal("available_quote_before", { precision: 18, scale: 2 }),
   spendableQuote: decimal("spendable_quote", { precision: 18, scale: 2 }),
+  needsVerificationReason: text("needs_verification_reason"),
 });
 
 export type InstitutionalDcaOrder = typeof institutionalDcaOrders.$inferSelect;
