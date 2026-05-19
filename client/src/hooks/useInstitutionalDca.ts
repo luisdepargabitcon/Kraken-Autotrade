@@ -186,9 +186,17 @@ export interface IdcaCycle {
   // Cycle anchor canonical fields (enriched from basePriceMetaJson)
   cycleAnchorPrice: number | null;
   cycleAnchorSource: string | null;
+  cycleAnchorLabel: string | null;
   cycleAnchorTimestamp: string | null;
   cycleAnchorAgeHours: number | null;
   cycleAnchorIsFrozen: boolean;
+  // Snake case fallbacks (from ORM serialization)
+  cycle_anchor_price?: number | null;
+  cycle_anchor_source?: string | null;
+  cycle_anchor_label?: string | null;
+  cycle_anchor_timestamp?: string | null;
+  cycle_anchor_age_hours?: number | null;
+  cycle_anchor_is_frozen?: boolean;
   protectionArmedAt: string | null;
   protectionStopPrice: string | null;
   lastManualEditAt: string | null;

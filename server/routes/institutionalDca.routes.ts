@@ -299,10 +299,13 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} cycleAnchorPrice=${anchorPrice} source=${anchorSource} origin=basePriceMetaJson`);
         }
 
+        // Destructure to remove any conflicting snake_case fields from original cycle
+        const { cycle_anchor_price, cycle_anchor_source, cycle_anchor_timestamp, cycle_anchor_age_hours, cycle_anchor_is_frozen, cycle_anchor_label, ...cleanCycle } = cycle;
         return {
-          ...cycle,
+          ...cleanCycle,
           cycleAnchorPrice: anchorPrice,
           cycleAnchorSource: anchorSource,
+          cycleAnchorLabel: anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource ? anchorSource.replace(/_/g, " ") : null,
           cycleAnchorTimestamp: anchorTs,
           cycleAnchorAgeHours: anchorAgeHours,
           cycleAnchorIsFrozen: anchorPrice != null,

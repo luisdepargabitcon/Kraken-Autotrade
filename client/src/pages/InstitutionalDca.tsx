@@ -53,6 +53,7 @@ import {
   useSetCycleStatus,
   useAllMarketContextPreviews,
   useAllMarketDataHealth,
+  type MarketContextPreview,
 } from "@/hooks/useInstitutionalDca";
 import {
   Activity,
@@ -2116,6 +2117,17 @@ function CyclesTab() {
     mode: modeFilter === "all" ? undefined : modeFilter,
     limit: 100,
   });
+  // Fetch market context for fallback on cycle anchor display
+  const { data: marketContextPreviews } = useAllMarketContextPreviews();
+  const marketContextByPair = useMemo(() => {
+    const map: Record<string, MarketContextPreview> = {};
+    if (marketContextPreviews) {
+      for (const ctx of marketContextPreviews) {
+        map[ctx.pair] = ctx;
+      }
+    }
+    return map;
+  }, [marketContextPreviews]);
 
   if (isLoading) return <div className="text-center py-8 text-muted-foreground">Cargando ciclos...</div>;
 
@@ -2156,7 +2168,7 @@ function CyclesTab() {
       ) : (
         <div className="space-y-2">
           {cycles.map((cycle) => (
-            <CycleDetailRow key={cycle.id} cycle={cycle} />
+            <CycleDetailRow key={cycle.id} cycle={cycle} marketContext={marketContextByPair[cycle.pair]} />
           ))}
         </div>
       )}
@@ -2191,7 +2203,7 @@ function CycleMetricChip({
   );
 }
 
-function CycleDetailRow({ cycle }: { cycle: any }) {
+function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: import("@/hooks/useInstitutionalDca").MarketContextPreview }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showForceDeleteConfirm, setShowForceDeleteConfirm] = useState(false);
@@ -2358,13 +2370,43 @@ function CycleDetailRow({ cycle }: { cycle: any }) {
                   />
                   {/* C) Ancla ciclo */}
                   {(() => {
-                    const anchorPrice = cycle.cycleAnchorPrice;
-                    const anchorSource = cycle.cycleAnchorSource;
-                    const anchorAgeHours = cycle.cycleAnchorAgeHours;
+                    // Support both camelCase (API) and snake_case (ORM fallback) field names
+                    let anchorPrice = cycle.cycleAnchorPrice ?? cycle.cycle_anchor_price ?? null;
+                    let anchorSource = cycle.cycleAnchorSource ?? cycle.cycle_anchor_source ?? null;
+                    let anchorLabel = cycle.cycleAnchorLabel ?? cycle.cycle_anchor_label ?? null;
+                    let anchorAgeHours = cycle.cycleAnchorAgeHours ?? cycle.cycle_anchor_age_hours ?? null;
+                    // Fallback: use market context if cycle doesn't have anchor but market context has frozen anchor
+                    if (!anchorPrice && marketContext) {
+                      // Only use frozen/vwap anchor from market context, never live anchor
+                      const frozenAnchorPrice = (marketContext as any).frozenAnchorPrice ?? (marketContext as any).effectiveEntryReference ?? null;
+                      const frozenAnchorSource = (marketContext as any).effectiveReferenceSource ?? (marketContext as any).referenceSource ?? null;
+                      const frozenAnchorTs = (marketContext as any).frozenAnchorTs ?? (marketContext as any).anchorTimestamp ?? null;
+                      const frozenAnchorAge = (marketContext as any).frozenAnchorAgeHours ?? (marketContext as any).anchorAgeHours ?? null;
+                      // Only use if it's a frozen/vwap anchor (not live market anchor)
+                      if (frozenAnchorPrice && frozenAnchorSource === "vwap_anchor") {
+                        anchorPrice = frozenAnchorPrice;
+                        anchorSource = frozenAnchorSource;
+                        anchorLabel = "VWAP anclado";
+                        anchorAgeHours = frozenAnchorAge;
+                        // Debug logging for fallback usage
+                        if (process.env.NODE_ENV === "development" || window.location.hostname === "localhost") {
+                          console.log(`[IDCA_UI][CYCLE_ANCHOR_FALLBACK] pair=${cycle.pair} id=${cycle.id} price=${anchorPrice} source=${anchorSource} from=marketContext`);
+                        }
+                      }
+                    }
+                    // Debug logging for troubleshooting
+                    if (process.env.NODE_ENV === "development" || window.location.hostname === "localhost") {
+                      console.log(`[IDCA_UI][CYCLE_ANCHOR] pair=${cycle.pair} id=${cycle.id} price=${anchorPrice} source=${anchorSource}`);
+                    }
                     const ageLabel = anchorAgeHours != null
                       ? (anchorAgeHours >= 48 ? `fijada hace ${(anchorAgeHours / 24).toFixed(1)}d` : `fijada hace ${anchorAgeHours.toFixed(1)}h`)
                       : null;
-                    const sourceLabel = anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource === "vwap" ? "VWAP" : anchorSource === "hybrid_v2" ? "Híbrido v2" : anchorSource || null;
+                    const sourceLabel = anchorLabel
+                      ?? (anchorSource === "vwap_anchor" ? "VWAP anclado"
+                        : anchorSource === "vwap" ? "VWAP"
+                          : anchorSource === "hybrid_v2" ? "Híbrido v2"
+                            : anchorSource ? anchorSource.replace(/_/g, " ")
+                              : null);
                     const subParts = [sourceLabel, ageLabel].filter(Boolean).join(" · ");
                     return (
                       <CycleMetricChip
