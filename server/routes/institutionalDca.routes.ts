@@ -18,8 +18,53 @@ import { serverLogsService } from "../services/serverLogsService";
 import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogParser";
 import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
 import { checkMarketDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
+import { getVwapAnchor } from "../services/institutionalDca/IdcaRepository";
 
 const PREFIX = "/api/institutional-dca";
+
+/**
+ * Enrich a list of cycles with VWAP anchor data from DB.
+ * Mirrors the same anchor source the engine uses (vwapAnchorMemory).
+ * Does NOT require vwapEnabled — if DB has an anchor, it is shown.
+ */
+async function enrichCyclesWithAnchor(cycles: any[]): Promise<any[]> {
+  return Promise.all(cycles.map(async (cycle: any) => {
+    const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
+    let anchorPrice: number | null = meta?.cycleAnchorPrice ?? null;
+    let anchorSource: string | null = anchorPrice ? "vwap_anchor" : null;
+    let anchorTs: string | null = null;
+    let anchorAgeHours: number | null = null;
+    if (!anchorPrice) {
+      try {
+        const dbAnchor = await getVwapAnchor(cycle.pair);
+        if (dbAnchor && dbAnchor.anchor_price > 0) {
+          anchorPrice = dbAnchor.anchor_price;
+          anchorSource = "vwap_anchor";
+          anchorTs = dbAnchor.set_at ? new Date(dbAnchor.set_at).toISOString() : null;
+          anchorAgeHours = dbAnchor.set_at
+            ? Math.round((Date.now() - dbAnchor.set_at) / (1000 * 60 * 60) * 10) / 10
+            : null;
+          console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=${anchorPrice} source=vwap_anchor origin=db_vwap_anchor ageHours=${anchorAgeHours}`);
+        } else {
+          console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=null origin=none reason=no_db_vwap_anchor`);
+        }
+      } catch (_err) { /* no anchor available */ }
+    } else {
+      console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=${anchorPrice} origin=basePriceMetaJson`);
+    }
+    // Strip legacy snake_case anchor fields to avoid conflicts
+    const { cycle_anchor_price, cycle_anchor_source, cycle_anchor_timestamp, cycle_anchor_age_hours, cycle_anchor_is_frozen, cycle_anchor_label, ...cleanCycle } = cycle;
+    return {
+      ...cleanCycle,
+      cycleAnchorPrice: anchorPrice,
+      cycleAnchorSource: anchorSource,
+      cycleAnchorLabel: anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource ? anchorSource.replace(/_/g, " ") : null,
+      cycleAnchorTimestamp: anchorTs,
+      cycleAnchorAgeHours: anchorAgeHours,
+      cycleAnchorIsFrozen: anchorPrice != null,
+    };
+  }));
+}
 
 export function registerInstitutionalDcaRoutes(app: Express): void {
 
@@ -199,8 +244,10 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         );
       }
 
+      const enrichedCycles = await enrichCyclesWithAnchor(summary.cycles ?? []);
       res.json({
         ...summary,
+        cycles: enrichedCycles,
         schedulerMode,
         liveCyclesCount,
         liveCapitalUsedUsd,
@@ -223,39 +270,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         limit: limit ? parseInt(limit as string) : 50,
         offset: offset ? parseInt(offset as string) : 0,
       });
-      // Enrich each cycle with VWAP anchor (same logic as /cycles/active)
-      const { getVwapAnchor: getVwapAnchorFn } = await import('../services/institutionalDca/IdcaRepository');
-      const enriched = await Promise.all(cycles.map(async (cycle: any) => {
-        const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
-        let anchorPrice: number | null = meta?.cycleAnchorPrice ?? null;
-        let anchorSource: string | null = anchorPrice ? "vwap_anchor" : null;
-        let anchorTs: string | null = null;
-        let anchorAgeHours: number | null = null;
-        if (!anchorPrice) {
-          try {
-            const dbAnchor = await getVwapAnchorFn(cycle.pair);
-            if (dbAnchor && dbAnchor.anchor_price > 0) {
-              anchorPrice = dbAnchor.anchor_price;
-              anchorSource = "vwap_anchor";
-              anchorTs = dbAnchor.set_at ? new Date(dbAnchor.set_at).toISOString() : null;
-              anchorAgeHours = dbAnchor.set_at
-                ? Math.round((Date.now() - dbAnchor.set_at) / (1000 * 60 * 60) * 10) / 10
-                : null;
-            }
-          } catch (_err) { /* no anchor available */ }
-        }
-        const { cycle_anchor_price, cycle_anchor_source, cycle_anchor_timestamp, cycle_anchor_age_hours, cycle_anchor_is_frozen, cycle_anchor_label, ...cleanCycle } = cycle;
-        return {
-          ...cleanCycle,
-          cycleAnchorPrice: anchorPrice,
-          cycleAnchorSource: anchorSource,
-          cycleAnchorLabel: anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource ? anchorSource.replace(/_/g, " ") : null,
-          cycleAnchorTimestamp: anchorTs,
-          cycleAnchorAgeHours: anchorAgeHours,
-          cycleAnchorIsFrozen: anchorPrice != null,
-        };
-      }));
-      res.json(enriched);
+      res.json(await enrichCyclesWithAnchor(cycles));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -265,54 +280,7 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     try {
       const mode = req.query.mode as string;
       const cycles = await repo.getAllActiveCycles(mode);
-      // Importar solo lo necesario para resolver ancla directamente desde DB
-      const { getVwapAnchor } = await import('../services/institutionalDca/IdcaRepository');
-      const enriched = await Promise.all(cycles.map(async (cycle: any) => {
-        // Prioridad 1: cycleAnchorPrice ya persistido en el ciclo (campo directo)
-        const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
-        let anchorPrice: number | null = meta?.cycleAnchorPrice ?? null;
-        let anchorSource: string | null = anchorPrice ? "vwap_anchor" : null;
-        let anchorTs: string | null = null;
-        let anchorAgeHours: number | null = null;
-
-        // Prioridad 2: Consultar VWAP anchor en DB directamente (mismo dato que usa el motor)
-        // NO se usa resolveEffectiveEntryReference porque requiere vwapEnabled=true
-        // El motor usa vwapAnchorMemory.get(pair) que es el anchor de DB sin condición de vwapEnabled
-        if (!anchorPrice) {
-          try {
-            const dbAnchor = await getVwapAnchor(cycle.pair);
-            if (dbAnchor && dbAnchor.anchor_price > 0) {
-              anchorPrice = dbAnchor.anchor_price;
-              anchorSource = "vwap_anchor";
-              // Usar set_at (momento en que se fijó el anchor) para calcular antigüedad
-              anchorTs = dbAnchor.set_at ? new Date(dbAnchor.set_at).toISOString() : null;
-              anchorAgeHours = dbAnchor.set_at
-                ? Math.round((Date.now() - dbAnchor.set_at) / (1000 * 60 * 60) * 10) / 10
-                : null;
-              console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=${anchorPrice} source=vwap_anchor origin=db_vwap_anchor ageHours=${anchorAgeHours}`);
-            } else {
-              console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=null origin=none reason=no_db_vwap_anchor`);
-            }
-          } catch (err) {
-            console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=null origin=none reason=db_error`);
-          }
-        } else {
-          console.log(`[IDCA][CYCLE_DTO_ANCHOR] pair=${cycle.pair} cycleId=${cycle.id} price=${anchorPrice} source=${anchorSource} origin=basePriceMetaJson`);
-        }
-
-        // Destructure to remove any conflicting snake_case fields from original cycle
-        const { cycle_anchor_price, cycle_anchor_source, cycle_anchor_timestamp, cycle_anchor_age_hours, cycle_anchor_is_frozen, cycle_anchor_label, ...cleanCycle } = cycle;
-        return {
-          ...cleanCycle,
-          cycleAnchorPrice: anchorPrice,
-          cycleAnchorSource: anchorSource,
-          cycleAnchorLabel: anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource ? anchorSource.replace(/_/g, " ") : null,
-          cycleAnchorTimestamp: anchorTs,
-          cycleAnchorAgeHours: anchorAgeHours,
-          cycleAnchorIsFrozen: anchorPrice != null,
-        };
-      }));
-      res.json(enriched);
+      res.json(await enrichCyclesWithAnchor(cycles));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
