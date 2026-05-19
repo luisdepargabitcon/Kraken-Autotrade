@@ -282,7 +282,27 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
       result.errors.push(`btc24_repair: ${btcError.message}`);
     }
 
-    // 4. Determinar si es seguro arrancar
+    // 4. Re-verificar qué ciclos siguen realmente bloqueados tras reparaciones específicas
+    // (p.ej. BTC #24 puede haber sido restaurado a "active" por voidPhantomBuyAndRecalculateCycle)
+    if (result.cyclesNeedingReview.length > 0) {
+      const stillBlocked: typeof result.cyclesNeedingReview = [];
+      for (const entry of result.cyclesNeedingReview) {
+        const [freshCycle] = await db
+          .select()
+          .from(institutionalDcaCycles)
+          .where(eq(institutionalDcaCycles.id, entry.cycleId))
+          .limit(1);
+        if (freshCycle && freshCycle.status === "needs_reconciliation") {
+          stillBlocked.push(entry);
+        } else if (freshCycle) {
+          console.log(`${TAG} [REVIEW_CLEARED] ${entry.pair} #${entry.cycleId} status=${freshCycle.status} — removed from needsReview (restored)`);
+        }
+      }
+      result.cyclesNeedingReview = stillBlocked;
+      result.ambiguousBlocked = stillBlocked.length;
+    }
+
+    // 5. Determinar si es seguro arrancar
     // SOLO errores críticos bloquean el scheduler global
     // Ciclos ambiguos/legacy solo bloquean el ciclo afectado
     result.safeToStart = result.criticalErrors.length === 0;
@@ -343,8 +363,8 @@ async function reconcileCycle(
   for (const order of orders) {
     result.ordersChecked++;
 
-    // Skip si ya está verificado/reconciliado
-    if (order.executionStatus === "verified" || order.executionStatus === "reconciled") {
+    // Skip si ya está verificado/reconciliado/anulado
+    if (["verified", "reconciled", "phantom_voided", "simulated"].includes(order.executionStatus ?? "")) {
       continue;
     }
 
