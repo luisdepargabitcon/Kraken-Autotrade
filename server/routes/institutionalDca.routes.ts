@@ -223,7 +223,39 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         limit: limit ? parseInt(limit as string) : 50,
         offset: offset ? parseInt(offset as string) : 0,
       });
-      res.json(cycles);
+      // Enrich each cycle with VWAP anchor (same logic as /cycles/active)
+      const { getVwapAnchor: getVwapAnchorFn } = await import('../services/institutionalDca/IdcaRepository');
+      const enriched = await Promise.all(cycles.map(async (cycle: any) => {
+        const meta = cycle.basePriceMetaJson && typeof cycle.basePriceMetaJson === "object" ? cycle.basePriceMetaJson : null;
+        let anchorPrice: number | null = meta?.cycleAnchorPrice ?? null;
+        let anchorSource: string | null = anchorPrice ? "vwap_anchor" : null;
+        let anchorTs: string | null = null;
+        let anchorAgeHours: number | null = null;
+        if (!anchorPrice) {
+          try {
+            const dbAnchor = await getVwapAnchorFn(cycle.pair);
+            if (dbAnchor && dbAnchor.anchor_price > 0) {
+              anchorPrice = dbAnchor.anchor_price;
+              anchorSource = "vwap_anchor";
+              anchorTs = dbAnchor.set_at ? new Date(dbAnchor.set_at).toISOString() : null;
+              anchorAgeHours = dbAnchor.set_at
+                ? Math.round((Date.now() - dbAnchor.set_at) / (1000 * 60 * 60) * 10) / 10
+                : null;
+            }
+          } catch (_err) { /* no anchor available */ }
+        }
+        const { cycle_anchor_price, cycle_anchor_source, cycle_anchor_timestamp, cycle_anchor_age_hours, cycle_anchor_is_frozen, cycle_anchor_label, ...cleanCycle } = cycle;
+        return {
+          ...cleanCycle,
+          cycleAnchorPrice: anchorPrice,
+          cycleAnchorSource: anchorSource,
+          cycleAnchorLabel: anchorSource === "vwap_anchor" ? "VWAP anclado" : anchorSource ? anchorSource.replace(/_/g, " ") : null,
+          cycleAnchorTimestamp: anchorTs,
+          cycleAnchorAgeHours: anchorAgeHours,
+          cycleAnchorIsFrozen: anchorPrice != null,
+        };
+      }));
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
