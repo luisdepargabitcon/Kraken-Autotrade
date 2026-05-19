@@ -24,8 +24,15 @@ export interface ReconciliationResult {
   phantomsVoided: number;
   partialsAdjusted: number;
   ambiguousBlocked: number;
+  /** Critical errors that should block the global scheduler (DB corruption, technical failures) */
+  criticalErrors: string[];
+  /** Legacy warnings that only block affected cycles, not the global scheduler */
+  warnings: string[];
+  /** @deprecated Use criticalErrors instead */
   errors: string[];
   safeToStart: boolean;
+  /** Cycles that need manual review but shouldn't block the global scheduler */
+  cyclesNeedingReview: Array<{ pair: string; cycleId: number; reason: string }>;
 }
 
 export interface PhantomCheckResult {
@@ -206,9 +213,15 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
     phantomsVoided: 0,
     partialsAdjusted: 0,
     ambiguousBlocked: 0,
-    errors: [],
+    criticalErrors: [],
+    warnings: [],
+    errors: [], // deprecated, kept for backward compatibility
     safeToStart: true,
+    cyclesNeedingReview: [],
   };
+
+  // Set para deduplicar ciclos bloqueados (por pair+cycleId+reason)
+  const blockedCyclesUnique = new Set<string>();
 
   try {
     // 1. Buscar ciclos activos LIVE
@@ -224,9 +237,11 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
     // 2. Para cada ciclo, verificar órdenes recientes
     for (const cycle of activeCycles) {
       try {
-        await reconcileCycle(cycle, result);
+        await reconcileCycle(cycle, result, blockedCyclesUnique);
       } catch (cycleError: any) {
         console.error(`${TAG} Error reconciling cycle ${cycle.id}: ${cycleError.message}`);
+        // Errores técnicos durante reconciliación son críticos
+        result.criticalErrors.push(`cycle_${cycle.id}: ${cycleError.message}`);
         result.errors.push(`cycle_${cycle.id}: ${cycleError.message}`);
       }
     }
@@ -257,23 +272,33 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
         console.log(`${TAG} [BTC#24] Already voided — skip (idempotent)`);
       } else {
         console.warn(`${TAG} [BTC#24] Could not auto-void: ${btc24Result.reason}`);
+        // No es un error crítico, solo un warning
+        result.warnings.push(`btc24: ${btc24Result.reason}`);
       }
     } catch (btcError: any) {
       console.error(`${TAG} [BTC#24] Error during targeted repair: ${btcError.message}`);
+      // Error técnico durante reparación específica es crítico
+      result.criticalErrors.push(`btc24_repair: ${btcError.message}`);
       result.errors.push(`btc24_repair: ${btcError.message}`);
     }
 
     // 4. Determinar si es seguro arrancar
-    result.safeToStart = result.ambiguousBlocked === 0 && result.errors.length === 0;
+    // SOLO errores críticos bloquean el scheduler global
+    // Ciclos ambiguos/legacy solo bloquean el ciclo afectado
+    result.safeToStart = result.criticalErrors.length === 0;
+
+    // Contar ciclos únicos bloqueados (deduplicados)
+    const uniqueBlockedCycles = result.cyclesNeedingReview.length;
 
     console.log(`${TAG} ==========================================`);
-    console.log(`${TAG} RECONCILIATION COMPLETE`);
+    console.log(`${TAG} [RECONCILIATION_SUMMARY] criticalErrors=${result.criticalErrors.length} ambiguousCycles=${uniqueBlockedCycles} globalSchedulerBlocked=${!result.safeToStart} cycleBlocked=${uniqueBlockedCycles}`);
     console.log(`${TAG} Cycles checked: ${result.cyclesChecked}`);
     console.log(`${TAG} Orders checked: ${result.ordersChecked}`);
     console.log(`${TAG} Phantoms found: ${result.phantomsFound}`);
     console.log(`${TAG} Phantoms voided: ${result.phantomsVoided}`);
     console.log(`${TAG} Partials adjusted: ${result.partialsAdjusted}`);
-    console.log(`${TAG} Ambiguous blocked: ${result.ambiguousBlocked}`);
+    console.log(`${TAG} Ambiguous blocked: ${result.ambiguousBlocked} (deduplicated: ${uniqueBlockedCycles})`);
+    console.log(`${TAG} Cycles needing review: ${result.cyclesNeedingReview.map(c => `${c.pair}#${c.cycleId}`).join(", ") || "none"}`);
     console.log(`${TAG} Safe to start: ${result.safeToStart}`);
     console.log(`${TAG} ==========================================`);
 
@@ -284,6 +309,7 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
 
   } catch (error: any) {
     console.error(`${TAG} CRITICAL ERROR during reconciliation: ${error.message}`);
+    result.criticalErrors.push(`critical: ${error.message}`);
     result.errors.push(`critical: ${error.message}`);
     result.safeToStart = false;
     return result;
@@ -293,7 +319,11 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
 /**
  * Reconcilia un ciclo individual
  */
-async function reconcileCycle(cycle: any, result: ReconciliationResult): Promise<void> {
+async function reconcileCycle(
+  cycle: any,
+  result: ReconciliationResult,
+  blockedCyclesUnique: Set<string>
+): Promise<void> {
   const pair = cycle.pair;
   const cycleId = cycle.id;
 
@@ -343,8 +373,17 @@ async function reconcileCycle(cycle: any, result: ReconciliationResult): Promise
       await markOrderLegacyUnverified(order);
       // Solo bloquear ciclo si hay múltiples órdenes legacy sin verificar
       if (await hasMultipleLegacyUnverifiedOrders(cycle.id)) {
-        result.ambiguousBlocked++;
-        await blockCycleForManualReview(cycle, `legacy_orders_need_verification: cycle_${cycle.id}`);
+        const uniqueKey = `${pair}:${cycle.id}:legacy_orders_need_verification`;
+        if (!blockedCyclesUnique.has(uniqueKey)) {
+          blockedCyclesUnique.add(uniqueKey);
+          result.ambiguousBlocked++;
+          result.cyclesNeedingReview.push({
+            pair,
+            cycleId: cycle.id,
+            reason: "legacy_orders_need_verification",
+          });
+          await blockCycleForManualReview(cycle, `legacy_orders_need_verification: cycle_${cycle.id}`);
+        }
       }
     } else if (phantomCheck.confidence === "low") {
       // Caso B: Evidencia insuficiente — no auto-actuar
@@ -649,17 +688,29 @@ async function notifyReconciliationResult(result: ReconciliationResult): Promise
 
 /**
  * Verifica si es seguro arrancar el scheduler después de reconciliación
+ *
+ * NUEVA POLÍTICA:
+ * - Solo errores CRÍTICOS bloquean el scheduler global
+ * - Ciclos con órdenes legacy/ambiguas solo bloquean el ciclo afectado, no el scheduler global
  */
 export function isSafeToStartAfterReconciliation(result: ReconciliationResult): boolean {
-  if (!result.safeToStart) {
-    console.error(`${TAG} UNSAFE to start scheduler: ${result.ambiguousBlocked} cycles need manual review`);
+  // Solo errores críticos bloquean el scheduler global
+  if (result.criticalErrors.length > 0) {
+    console.error(`${TAG} [RECONCILIATION_BLOCK] UNSAFE to start scheduler: ${result.criticalErrors.length} critical errors`);
+    for (const err of result.criticalErrors) {
+      console.error(`${TAG}   - ${err}`);
+    }
     return false;
   }
 
-  if (result.errors.length > 0) {
-    console.error(`${TAG} UNSAFE to start scheduler: ${result.errors.length} errors during reconciliation`);
-    return false;
+  // Ciclos con revisiones manuales no bloquean el scheduler global
+  if (result.cyclesNeedingReview.length > 0) {
+    console.log(`${TAG} [RECONCILIATION_OK] Scheduler can start: ${result.cyclesNeedingReview.length} cycles will be skipped (needs review)`);
+    for (const cycle of result.cyclesNeedingReview) {
+      console.log(`${TAG}   - ${cycle.pair} #${cycle.cycleId}: ${cycle.reason}`);
+    }
   }
 
+  // El scheduler puede arrancar si no hay errores críticos
   return true;
 }

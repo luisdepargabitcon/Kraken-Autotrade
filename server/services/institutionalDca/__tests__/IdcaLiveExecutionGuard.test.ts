@@ -95,11 +95,15 @@ interface ReconcResult {
   ambiguousBlocked: number;
   errors: string[];
   phantomsVoided: number;
+  criticalErrors?: string[]; // Nueva política: solo errores críticos bloquean scheduler global
 }
 
 function isSafeToStart(r: ReconcResult): boolean {
-  if (!r.safeToStart) return false;
-  if (r.errors.length > 0) return false;
+  // NUEVA POLÍTICA: Solo errores críticos bloquean el scheduler global
+  // Ciclos ambiguos/legacy solo bloquean el ciclo afectado, no el scheduler
+  if (r.criticalErrors && r.criticalErrors.length > 0) return false;
+  // Mantener backward compatibility con tests antiguos
+  if (!r.criticalErrors && r.errors && r.errors.length > 0) return false;
   return true;
 }
 
@@ -198,9 +202,10 @@ test("T3.6e: exchange no inicializado (qty=0) — bloquea venta por seguridad", 
 // SUITE 3 — Reconciliación startup (T3.7–T3.9)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("T3.7: retorna false cuando hay ciclos ambiguos — legacy sin exchangeOrderId NO se auto-anula", () => {
-  const r = isSafeToStart({ safeToStart: false, ambiguousBlocked: 2, errors: [], phantomsVoided: 0 });
-  assert(r === false, "isSafeToStart debe ser false con ambiguousBlocked>0 (scheduler NO arranca)");
+test("T3.7: retorna true con ciclos ambiguos — legacy sin exchangeOrderId NO bloquea scheduler global", () => {
+  // NUEVA POLÍTICA: ciclos ambiguos solo bloquean el ciclo afectado, no el scheduler global
+  const r = isSafeToStart({ safeToStart: true, ambiguousBlocked: 2, errors: [], phantomsVoided: 0 });
+  assert(r === true, "isSafeToStart debe ser true con ambiguousBlocked>0 (scheduler arranca, ciclos se saltan)");
 });
 
 test("T3.8: retorna true tras auto-void limpio — phantom con exchangeOrderId rejected anulado seguro", () => {
@@ -213,16 +218,18 @@ test("T3.9: retorna true — startup limpio sin problemas", () => {
   assert(r === true, "isSafeToStart debe ser true en startup limpio");
 });
 
-test("T3.9b: retorna false cuando hubo errores durante reconciliación", () => {
-  const r = isSafeToStart({ safeToStart: true, ambiguousBlocked: 0, errors: ["exchange_not_initialized"], phantomsVoided: 0 });
-  assert(r === false, "isSafeToStart debe ser false con errors.length>0");
+test("T3.9b: retorna false cuando hubo errores críticos durante reconciliación", () => {
+  const r = isSafeToStart({ safeToStart: true, ambiguousBlocked: 0, errors: [], phantomsVoided: 0, criticalErrors: ["exchange_not_initialized"] });
+  assert(r === false, "isSafeToStart debe ser false con criticalErrors.length>0");
 });
 
-test("T3.9c: scheduler solo arranca si reconciliación exitosa (gating)", () => {
-  const canStart = isSafeToStart({ safeToStart: true, ambiguousBlocked: 0, errors: [], phantomsVoided: 0 });
-  const blocked = isSafeToStart({ safeToStart: false, ambiguousBlocked: 1, errors: [], phantomsVoided: 0 });
-  assert(canStart === true, "scheduler puede arrancar con resultado limpio");
-  assert(blocked === false, "scheduler NO puede arrancar con ciclos ambiguos");
+test("T3.9c: scheduler arranca si no hay errores críticos (ciclos ambiguos no bloquean global)", () => {
+  const canStartClean = isSafeToStart({ safeToStart: true, ambiguousBlocked: 0, errors: [], phantomsVoided: 0 });
+  const canStartWithAmbiguous = isSafeToStart({ safeToStart: true, ambiguousBlocked: 2, errors: [], phantomsVoided: 0 });
+  const blockedByCritical = isSafeToStart({ safeToStart: true, ambiguousBlocked: 0, errors: [], phantomsVoided: 0, criticalErrors: ["db_error"] });
+  assert(canStartClean === true, "scheduler puede arrancar con resultado limpio");
+  assert(canStartWithAmbiguous === true, "scheduler puede arrancar con ciclos ambiguos (solo bloquean ciclo afectado)");
+  assert(blockedByCritical === false, "scheduler NO arranca con errores críticos");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

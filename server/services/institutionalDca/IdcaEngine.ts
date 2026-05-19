@@ -745,15 +745,26 @@ export async function startScheduler(): Promise<void> {
       startupReconciliationCompleted = true;
 
       if (!isSafeToStartAfterReconciliation(startupReconciliationResult)) {
+        // Solo errores críticos bloquean el scheduler global
         console.error(`${TAG} ==========================================`);
-        console.error(`${TAG} SCHEDULER BLOCKED: Reconciliation found issues`);
-        console.error(`${TAG} Cycles with ambiguous orders: ${startupReconciliationResult.ambiguousBlocked}`);
-        console.error(`${TAG} Errors: ${startupReconciliationResult.errors.length}`);
+        console.error(`${TAG} SCHEDULER BLOCKED: Critical reconciliation errors`);
+        console.error(`${TAG} Critical errors: ${startupReconciliationResult.criticalErrors.length}`);
+        for (const err of startupReconciliationResult.criticalErrors) {
+          console.error(`${TAG}   - ${err}`);
+        }
         console.error(`${TAG} ==========================================`);
         // NO arrancar scheduler - queda en modo seguro
         return;
       }
 
+      // Scheduler puede arrancar - mostrar resumen
+      const cyclesNeedingReview = startupReconciliationResult.cyclesNeedingReview || [];
+      if (cyclesNeedingReview.length > 0) {
+        console.log(`${TAG} [STARTUP] Scheduler starting with ${cyclesNeedingReview.length} cycles needing review (automation skipped for these)`);
+        for (const c of cyclesNeedingReview) {
+          console.log(`${TAG} [STARTUP]   - ${c.pair} #${c.cycleId}: ${c.reason}`);
+        }
+      }
       console.log(`${TAG} Startup reconciliation passed: ${startupReconciliationResult.cyclesChecked} cycles checked, ${startupReconciliationResult.phantomsVoided} phantoms voided`);
     } catch (error: any) {
       console.error(`${TAG} Startup reconciliation FAILED: ${error.message}`);
@@ -1926,6 +1937,32 @@ async function manageCycle(
   mode: IdcaMode
 ): Promise<void> {
   const pair = cycle.pair;
+
+  // ─── HOTFIX: Skip automation for cycles needing reconciliation ─────────
+  // Ciclos bloqueados por reconciliación no ejecutan compras/ventas/plus/recovery
+  if (cycle.status === "needs_reconciliation") {
+    console.log(`${TAG}[CYCLE_SKIPPED_RECONCILIATION] pair=${pair} cycleId=${cycle.id} reason=${cycle.reconciliationBlockedReason || "needs_reconciliation"}`);
+    // Solo actualizar precio/PnL para UI, sin ejecutar ninguna acción automática
+    const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+    const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
+    const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+    if (avgEntry > 0 && totalQty > 0) {
+      const marketValue = totalQty * currentPrice;
+      const unrealizedPnlUsd = marketValue - capitalUsed;
+      const unrealizedPnlPct = capitalUsed > 0 ? (unrealizedPnlUsd / capitalUsed) * 100 : 0;
+      const currentDD = unrealizedPnlPct < 0 ? Math.abs(unrealizedPnlPct) : 0;
+      const prevMaxDD = parseFloat(String(cycle.maxDrawdownPct || "0"));
+      const maxDD = Math.max(currentDD, prevMaxDD);
+      await repo.updateCycle(cycle.id, {
+        currentPrice: currentPrice.toFixed(8),
+        unrealizedPnlUsd: unrealizedPnlUsd.toFixed(2),
+        unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
+        maxDrawdownPct: maxDD.toFixed(2),
+      });
+    }
+    return;
+  }
+
   const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
   const totalQty = parseFloat(String(cycle.totalQuantity || "0"));
   const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
