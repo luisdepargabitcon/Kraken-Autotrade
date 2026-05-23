@@ -173,7 +173,7 @@ async function main() {
           ? "Has unique exchangeOrderId/tradeId/clientOrderId"
           : "First final sell by executedAt"
         : "Duplicate final sell (same cycle, similar qty/price/reason)";
-      
+
       if (!isKeep) duplicateOrderIds.push(o.orderId);
 
       return {
@@ -183,24 +183,74 @@ async function main() {
       };
     });
 
-    // Calcular totales después de limpieza
+    // 4. Detectar SELL post-cierre como duplicadas adicionales
+    // Criterios: misma cycleId, side=sell, no exchangeOrderId, ejecutada después de keepOrder,
+    // qty similar a totalBoughtQty o keepOrder.qty, y mantenerla haría que sold > bought + dustTolerance
+    if (keepOrder) {
+      const postCloseDuplicateCandidates = sellOrders.filter(o => {
+        // Ya marcada como duplicada? Saltar
+        if (duplicateOrderIds.includes(o.id)) return false;
+        // Es la keepOrder? Saltar
+        if (o.id === keepOrderId) return false;
+        // Tiene exchangeOrderId? No marcar (podría ser fill real)
+        if (o.exchangeOrderId) return false;
+        // Ejecutada después de keepOrder?
+        const executedAt = o.executedAt || new Date();
+        if (executedAt <= keepOrder.executedAt) return false;
+        // Qty similar a totalBoughtQty o keepOrder.qty (tolerancia 10%)?
+        const qty = parseFloat(o.quantity || "0");
+        const qtySimilarToBought = Math.abs(qty - totalBoughtQty) / totalBoughtQty < 0.10;
+        const qtySimilarToKeep = keepOrder && Math.abs(qty - keepOrder.qty) / keepOrder.qty < 0.10;
+        if (!qtySimilarToBought && !qtySimilarToKeep) return false;
+        // Mantenerla haría que sold > bought + dustTolerance?
+        const currentSoldAfterCleanup = totalSoldQtyRaw - duplicateOrderIds.reduce((sum, id) => {
+          const dup = finalSellsAnalysis.find(f => f.orderId === id);
+          return sum + (dup?.qty || 0);
+        }, 0);
+        const soldWithThisOrder = currentSoldAfterCleanup + qty;
+        const dustTolerance = Math.max(0.00000010, totalBoughtQty * 0.005);
+        if (soldWithThisOrder <= totalBoughtQty + dustTolerance) return false;
+
+        return true;
+      });
+
+      // Añadir post-close duplicates a duplicateOrderIds
+      for (const postCloseDup of postCloseDuplicateCandidates) {
+        duplicateOrderIds.push(postCloseDup.id);
+        // Añadir a finalSellsWithDecision para reporte
+        finalSellsWithDecision.push({
+          orderId: postCloseDup.id,
+          executedAt: postCloseDup.executedAt || new Date(),
+          price: parseFloat(postCloseDup.price || "0"),
+          qty: parseFloat(postCloseDup.quantity || "0"),
+          usd: parseFloat(postCloseDup.netValueUsd || "0"),
+          exchangeOrderId: postCloseDup.exchangeOrderId || null,
+          reason: postCloseDup.humanReason || postCloseDup.triggerReason || "",
+          hasUniqueId: false,
+          decision: "DUPLICATE" as const,
+          why: "Post-close sell without exchangeOrderId (position already closed)",
+        });
+      }
+    }
+
+    // Calcular totales después de limpieza (incluyendo post-close duplicates)
     const totalSoldQtyAfterCleanup = totalSoldQtyRaw - duplicateOrderIds.reduce((sum, id) => {
-      const o = finalSellsAnalysis.find(f => f.orderId === id);
-      return sum + (o?.qty || 0);
+      const o = sellOrders.find(s => s.id === id);
+      return sum + parseFloat(o?.quantity || "0");
     }, 0);
 
     const soldUsdAfterCleanup = soldUsdRaw - duplicateOrderIds.reduce((sum, id) => {
-      const o = finalSellsAnalysis.find(f => f.orderId === id);
-      return sum + (o?.usd || 0);
+      const o = sellOrders.find(s => s.id === id);
+      return sum + parseFloat(o?.netValueUsd || "0");
     }, 0);
 
     const pnlBefore = soldUsdRaw - capitalBought;
     const pnlAfterEstimated = soldUsdAfterCleanup - capitalBought;
 
-    // 4. Calcular dustTolerance
+    // 5. Calcular dustTolerance
     const dustTolerance = Math.max(0.00000010, totalBoughtQty * 0.005);
 
-    // 5. Analizar TODAS las SELL que quedarían después de limpieza
+    // 6. Analizar TODAS las SELL que quedarían después de limpieza
     const remainingSellOrdersAfterCleanup = sellOrders
       .filter(o => !duplicateOrderIds.includes(o.id))
       .map(o => ({
@@ -216,10 +266,10 @@ async function main() {
           ? "Selected as the single valid final sell"
           : o.exchangeOrderId
           ? "Has unique exchangeOrderId (not marked as duplicate)"
-          : "Not marked as duplicate (outside final/trailing set)",
+          : "Not marked as duplicate (outside final/trailing set and not post-close candidate)",
       }));
 
-    // 6. Verificar guard: sold after cleanup no puede superar bought + dustTolerance
+    // 7. Verificar guard: sold after cleanup no puede superar bought + dustTolerance
     const applyBlocked = totalSoldQtyAfterCleanup > totalBoughtQty + dustTolerance;
     const applyBlockedReason = applyBlocked
       ? `remaining_sold_exceeds_bought: ${totalSoldQtyAfterCleanup.toFixed(8)} > ${totalBoughtQty.toFixed(8)} + ${dustTolerance.toFixed(8)}`
