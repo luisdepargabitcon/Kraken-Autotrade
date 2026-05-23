@@ -305,55 +305,58 @@ export async function reconcileBtc24MissingFillsMay23(): Promise<{
       inserted++;
     }
 
-    if (inserted > 0) {
-      // 3. Recalcular ciclo desde todas las órdenes válidas (excluir phantom_voided/rejected/no_fill)
-      const VALID_STATUSES = ["filled", "confirmed", "reconciled", "partially_filled"];
-      const allBuys = await trx
-        .select()
-        .from(institutionalDcaOrders)
-        .where(and(
-          eq(institutionalDcaOrders.cycleId, cycleId),
-          eq(institutionalDcaOrders.side, "buy"),
-          ne(institutionalDcaOrders.executionStatus, "phantom_voided")
-        ));
+    // 3. Siempre recalcular ciclo desde órdenes válidas (incluso si inserted=0, para corregir desviaciones)
+    // Incluir: filled, confirmed, reconciled, partially_filled + legacy sin status explícito pero con datos válidos
+    // Excluir explícitamente: phantom_voided, rejected, canceled, failed, no_fill_confirmed
+    const EXCLUDED_STATUSES = ["phantom_voided", "rejected", "canceled", "failed", "no_fill_confirmed"];
+    const allBuys = await trx
+      .select()
+      .from(institutionalDcaOrders)
+      .where(and(
+        eq(institutionalDcaOrders.cycleId, cycleId),
+        eq(institutionalDcaOrders.side, "buy")
+      ));
 
-      const validBuys = allBuys.filter(o =>
-        VALID_STATUSES.includes(o.executionStatus ?? "") ||
-        // Include old orders without executionStatus (pre-guard buys with no field set)
-        (!o.executionStatus && parseFloat(o.quantity) > 0 && parseFloat(o.netValueUsd) > 0)
-      );
+    const validBuys = allBuys.filter(o => {
+      const st = o.executionStatus ?? "";
+      // Excluir estados de fallo explícitos
+      if (EXCLUDED_STATUSES.includes(st)) return false;
+      // Incluir si tiene datos ejecutados válidos (cualquier otro status o null/pending/etc.)
+      const qty = parseFloat(o.executedQuantity ?? o.quantity);
+      const cost = parseFloat(o.executedUsd ?? o.netValueUsd);
+      return qty > 0 && cost > 0;
+    });
 
-      let totalQty = 0, totalCost = 0, buyCount = 0;
-      for (const o of validBuys) {
-        const qty  = parseFloat(o.executedQuantity ?? o.quantity);
-        const cost = parseFloat(o.executedUsd ?? o.netValueUsd);
-        if (qty > 0 && cost > 0) { totalQty += qty; totalCost += cost; buyCount++; }
-      }
-      const newAvg = totalQty > 0 ? totalCost / totalQty : 0;
+    let totalQty = 0, totalCost = 0, buyCount = 0;
+    for (const o of validBuys) {
+      const qty  = parseFloat(o.executedQuantity ?? o.quantity);
+      const cost = parseFloat(o.executedUsd ?? o.netValueUsd);
+      if (qty > 0 && cost > 0) { totalQty += qty; totalCost += cost; buyCount++; }
+    }
+    const newAvg = totalQty > 0 ? totalCost / totalQty : 0;
 
-      console.log(`${TAG} [BTC#24_FILLS] Recalculated: qty=${totalQty.toFixed(8)} cost=${totalCost.toFixed(2)} avg=${newAvg.toFixed(2)} buys=${buyCount}`);
+    console.log(`${TAG} [BTC#24_FILLS] Recalculated: qty=${totalQty.toFixed(8)} cost=${totalCost.toFixed(2)} avg=${newAvg.toFixed(2)} buys=${buyCount} (validOrders=${validBuys.length})`);
 
       await trx.update(institutionalDcaCycles)
-        .set({
-          totalQuantity: totalQty.toFixed(8),
-          capitalUsedUsd: totalCost.toFixed(2),
-          avgEntryPrice: newAvg.toFixed(8),
-          buyCount,
-          updatedAt: new Date(),
-        })
-        .where(eq(institutionalDcaCycles.id, cycleId));
+      .set({
+        totalQuantity: totalQty.toFixed(8),
+        capitalUsedUsd: totalCost.toFixed(2),
+        avgEntryPrice: newAvg.toFixed(8),
+        buyCount,
+        updatedAt: new Date(),
+      })
+      .where(eq(institutionalDcaCycles.id, cycleId));
 
-      // 4. Evento de auditoría
-      await trx.insert(institutionalDcaEvents).values({
-        cycleId,
-        pair,
-        mode: "live",
-        eventType: "fills_reconciled_from_exchange_history",
-        severity: "info",
-        message: `${inserted} fill(s) de Revolut X importados para BTC #24. Ciclo recalculado: qty=${totalQty.toFixed(8)}, avg=${newAvg.toFixed(2)}, capital=${totalCost.toFixed(2)}.`,
-        payloadJson: { inserted, fills: fills.map(f => ({ price: f.price, qty: f.qty, usd: f.usd })), newAvg, newTotalQty: totalQty, newCapital: totalCost },
-      });
-    }
+    // 4. Evento de auditoría
+    await trx.insert(institutionalDcaEvents).values({
+      cycleId,
+      pair,
+      mode: "live",
+      eventType: "fills_reconciled_from_exchange_history",
+      severity: "info",
+      message: `${inserted} fill(s) de Revolut X importados para BTC #24. Ciclo recalculado: qty=${totalQty.toFixed(8)}, avg=${newAvg.toFixed(2)}, capital=${totalCost.toFixed(2)}.`,
+      payloadJson: { inserted, fills: fills.map(f => ({ price: f.price, qty: f.qty, usd: f.usd })), newAvg, newTotalQty: totalQty, newCapital: totalCost },
+    });
   });
 
   return {
