@@ -49,7 +49,7 @@ export interface BalanceCheckResult {
 export interface FillConfirmation {
   confirmed: boolean;
   exchangeOrderId?: string;
-  status: "filled" | "partially_filled" | "rejected" | "canceled" | "expired" | "failed" | "pending" | "unknown";
+  status: "filled" | "partially_filled" | "rejected" | "canceled" | "expired" | "failed" | "pending" | "unknown" | "execution_unknown_pending_reconciliation";
   filledQty: number;
   filledUsd: number;
   avgFillPrice: number;
@@ -260,73 +260,48 @@ export async function confirmOrderFill(
 
   const startTime = Date.now();
 
+  // Revolut X: estados finales confirmados (uppercase)
+  const FILLED_STATUSES = ["FILLED", "EXECUTED", "COMPLETED", "DONE", "FULLY_FILLED"];
+  const PARTIAL_STATUSES = ["PARTIALLY_FILLED", "PARTIAL", "PART_FILLED"];
+  const REJECTED_STATUSES = ["REJECTED", "CANCELED", "CANCELLED", "EXPIRED", "FAILED"];
+
   while (Date.now() - startTime < timeoutMs) {
     try {
       const exchange = ExchangeFactory.getTradingExchange();
       if (!exchange.isInitialized()) {
-        return {
-          confirmed: false,
-          status: "unknown",
-          filledQty: 0,
-          filledUsd: 0,
-          avgFillPrice: 0,
-          feeUsd: 0,
-        };
+        return { confirmed: false, status: "unknown", filledQty: 0, filledUsd: 0, avgFillPrice: 0, feeUsd: 0 };
       }
 
-      // Consultar estado de orden (si el exchange lo soporta)
-      const orderStatus: any = await (exchange as any).getOrderStatus?.(pair, exchangeOrderId);
-      
-      if (!orderStatus) {
+      // Usar getOrder (existe en RevolutXService) — getOrderStatus NO existe
+      // El status devuelto por getOrder está en UPPERCASE (normalizedStatus)
+      const orderData: any = await (exchange as any).getOrder?.(exchangeOrderId)
+        ?? await (exchange as any).getOrderStatus?.(pair, exchangeOrderId);
+
+      if (!orderData) {
         await sleep(pollIntervalMs);
         continue;
       }
 
-      // Estados finales confirmados
-      if (orderStatus.status === "filled") {
-        return {
-          confirmed: true,
-          exchangeOrderId,
-          status: "filled",
-          filledQty: parseFloat(String(orderStatus.filledQty || orderStatus.volume || 0)),
-          filledUsd: parseFloat(String(orderStatus.cost || orderStatus.value || 0)),
-          avgFillPrice: parseFloat(String(orderStatus.avgPrice || orderStatus.price || 0)),
-          feeUsd: parseFloat(String(orderStatus.fee || 0)),
-          fillTime: new Date(),
-          rawResponse: orderStatus,
-        };
+      const status = (orderData.status || '').toUpperCase();
+      const filledQty = parseFloat(String(orderData.filledSize ?? orderData.filledQty ?? orderData.volume ?? 0));
+      const filledUsd = parseFloat(String(orderData.executedValue ?? orderData.cost ?? orderData.value ?? 0));
+      const avgFillPrice = parseFloat(String(orderData.averagePrice ?? orderData.avgPrice ?? orderData.price ?? 0));
+      const feeUsd = parseFloat(String(orderData.fee ?? 0));
+
+      if (FILLED_STATUSES.includes(status) && filledQty > 0) {
+        return { confirmed: true, exchangeOrderId, status: "filled", filledQty, filledUsd, avgFillPrice, feeUsd, fillTime: new Date(), rawResponse: orderData };
       }
 
-      if (orderStatus.status === "partially_filled" || orderStatus.status === "partial") {
-        return {
-          confirmed: true,
-          exchangeOrderId,
-          status: "partially_filled",
-          filledQty: parseFloat(String(orderStatus.filledQty || orderStatus.volume || 0)),
-          filledUsd: parseFloat(String(orderStatus.cost || orderStatus.value || 0)),
-          avgFillPrice: parseFloat(String(orderStatus.avgPrice || orderStatus.price || 0)),
-          feeUsd: parseFloat(String(orderStatus.fee || 0)),
-          fillTime: new Date(),
-          rawResponse: orderStatus,
-        };
+      if (PARTIAL_STATUSES.includes(status) && filledQty > 0) {
+        return { confirmed: true, exchangeOrderId, status: "partially_filled", filledQty, filledUsd, avgFillPrice, feeUsd, fillTime: new Date(), rawResponse: orderData };
       }
 
-      // Estados de fallo
-      if (["rejected", "canceled", "expired", "failed"].includes(orderStatus.status)) {
-        return {
-          confirmed: false,
-          exchangeOrderId,
-          status: orderStatus.status as any,
-          filledQty: 0,
-          filledUsd: 0,
-          avgFillPrice: 0,
-          feeUsd: 0,
-          rawResponse: orderStatus,
-        };
+      if (REJECTED_STATUSES.includes(status)) {
+        return { confirmed: false, exchangeOrderId, status: "rejected", filledQty: 0, filledUsd: 0, avgFillPrice: 0, feeUsd: 0, rawResponse: orderData };
       }
 
-      // Estado pendiente: esperar
-      console.log(`${TAG}[POLL] Order ${exchangeOrderId} status=${orderStatus.status}, waiting...`);
+      // Estado pendiente (OPEN, NEW, PENDING, etc): esperar siguiente poll
+      console.log(`${TAG}[POLL] Order ${exchangeOrderId} status=${status}, waiting...`);
       await sleep(pollIntervalMs);
 
     } catch (error: any) {
@@ -335,11 +310,31 @@ export async function confirmOrderFill(
     }
   }
 
-  // Timeout: no se pudo confirmar
-  console.warn(`${TAG}[TIMEOUT] Could not confirm fill for order ${exchangeOrderId} within ${timeoutMs}ms`);
+  // Timeout: último recurso — consultar fills directamente por orderId
+  try {
+    const exchange = ExchangeFactory.getTradingExchange();
+    if (exchange.isInitialized()) {
+      const fills: any[] = await (exchange as any).getFills?.({ orderId: exchangeOrderId }) ?? [];
+      if (Array.isArray(fills) && fills.length > 0) {
+        let totalQty = 0, totalUsd = 0;
+        for (const f of fills) {
+          const qty = parseFloat(String(f.quantity ?? f.qty ?? f.size ?? 0));
+          const px = parseFloat(String(f.price ?? f.rate ?? 0));
+          if (qty > 0) { totalQty += qty; totalUsd += px * qty; }
+        }
+        if (totalQty > 0) {
+          console.log(`${TAG}[FILLS_FALLBACK] Found fills for ${exchangeOrderId}: qty=${totalQty.toFixed(8)} usd=${totalUsd.toFixed(2)}`);
+          return { confirmed: true, exchangeOrderId, status: "filled", filledQty: totalQty, filledUsd: totalUsd, avgFillPrice: totalQty > 0 ? totalUsd / totalQty : 0, feeUsd: 0, fillTime: new Date() };
+        }
+      }
+    }
+  } catch (_fallbackErr) { /* best-effort */ }
+
+  // Genuinamente desconocido — NO marcar failed; dejar para reconciliación manual
+  console.warn(`${TAG}[UNCONFIRMED] Order ${exchangeOrderId} unconfirmed after ${timeoutMs}ms — marking execution_unknown_pending_reconciliation`);
   return {
     confirmed: false,
-    status: "unknown",
+    status: "execution_unknown_pending_reconciliation",
     filledQty: 0,
     filledUsd: 0,
     avgFillPrice: 0,

@@ -442,6 +442,33 @@ const migrationWarnedPairs = new Set<string>();                 // only warn ONC
 // TODO: persistir en DB si se quiere sobrevivir reinicios (actualmente en memoria con TTL)
 const lastDigestSentAt = new Map<string, number>();             // por modo: last time digest was sent
 
+// Cooldown anti-spam: key = `${pair}#${cycleId}:${buyLevel}:${reason}` → nextAllowedAt ms
+const safetyBuyCooldowns = new Map<string, number>();
+const SAFETY_BUY_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown por insuf. balance
+const UNKNOWN_PENDING_COOLDOWN_MS = 60 * 60 * 1000; // 60 min cooldown por ejecución desconocida
+
+function getSafetyBuyCooldownKey(pair: string, cycleId: number, buyLevel: number, reason: string): string {
+  const reasonTag = reason.startsWith("insufficient_exchange_balance") ? "insufficient_balance"
+    : reason.startsWith("no_fill") || reason.startsWith("execution_unknown") ? "unknown_pending"
+    : reason.substring(0, 30);
+  return `${pair}#${cycleId}:${buyLevel}:${reasonTag}`;
+}
+
+function isSafetyBuyOnCooldown(pair: string, cycleId: number, buyLevel: number, reason: string): boolean {
+  const key = getSafetyBuyCooldownKey(pair, cycleId, buyLevel, reason);
+  const until = safetyBuyCooldowns.get(key);
+  return until !== undefined && Date.now() < until;
+}
+
+function setSafetyBuyCooldown(pair: string, cycleId: number, buyLevel: number, reason: string): void {
+  const key = getSafetyBuyCooldownKey(pair, cycleId, buyLevel, reason);
+  const durationMs = (reason.startsWith("no_fill") || reason.startsWith("execution_unknown"))
+    ? UNKNOWN_PENDING_COOLDOWN_MS
+    : SAFETY_BUY_COOLDOWN_MS;
+  safetyBuyCooldowns.set(key, Date.now() + durationMs);
+  console.log(`${TAG}[BUY_COOLDOWN] ${pair} cycle#${cycleId} level=${buyLevel} reason=${reason.substring(0, 40)} cooldown=${Math.round(durationMs / 60000)}min`);
+}
+
 // VWAP anchor memory — frozen anchor that never goes down (only up or reset)
 interface VwapAnchorPrevious {
   anchorPrice: number;
@@ -2473,17 +2500,27 @@ async function checkSafetyBuy(
     );
 
     if (!execResult.success) {
+      const rejReason = execResult.rejectionReason ?? "unknown";
       // NO tocar ciclo si la compra falló
-      console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${execResult.rejectionReason}`);
-      await createHumanEvent({
-        cycleId: cycle.id,
-        pair,
-        mode,
-        eventType: "safety_buy_failed",
-        severity: "error",
-        message: `Safety buy #${safetyIndex + 1} bloqueado/fallido: ${execResult.rejectionReason}`,
-        payloadJson: { intendedQty: quantity, currentPrice, reason: execResult.rejectionReason },
-      }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity });
+      console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${rejReason}`);
+      // Anti-spam: solo emitir evento si no estamos en cooldown activo para este motivo
+      if (!isSafetyBuyOnCooldown(pair, cycle.id, safetyIndex + 1, rejReason)) {
+        const isUnknownPending = rejReason.startsWith("no_fill") || rejReason.startsWith("execution_unknown");
+        await createHumanEvent({
+          cycleId: cycle.id,
+          pair,
+          mode,
+          eventType: isUnknownPending ? "safety_buy_unknown_pending" : "safety_buy_failed",
+          severity: isUnknownPending ? "warning" : "error",
+          message: isUnknownPending
+            ? `Safety buy #${safetyIndex + 1} ejecución desconocida — pendiente reconciliación manual: ${rejReason}`
+            : `Safety buy #${safetyIndex + 1} bloqueado/fallido: ${rejReason}`,
+          payloadJson: { intendedQty: quantity, currentPrice, reason: rejReason },
+        }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity });
+        setSafetyBuyCooldown(pair, cycle.id, safetyIndex + 1, rejReason);
+      } else {
+        console.log(`${TAG}[BUY_COOLDOWN_SKIP] ${pair} cycle#${cycle.id} safety#${safetyIndex + 1} — event suppressed (cooldown active)`);
+      }
       return; // Abortar - NO tocar ciclo
     }
 
@@ -4317,18 +4354,26 @@ async function executeSafetyBuyLiveSafe(
   );
 
   if (!execResult.success) {
-    // NO tocar ciclo si la compra falló
-    console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${execResult.rejectionReason}`);
-    await createHumanEvent({
-      cycleId: cycle.id,
-      pair,
-      mode,
-      eventType: "safety_buy_failed",
-      severity: "error",
-      message: `Safety buy #${buyLevel} bloqueado/fallido: ${execResult.rejectionReason}`,
-      payloadJson: { intendedQty, currentPrice, reason: execResult.rejectionReason },
-    }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: intendedQty });
-    return { success: false, error: execResult.rejectionReason };
+    const rejReason = execResult.rejectionReason ?? "unknown";
+    console.error(`${TAG}[LIVE][SAFETY_BUY] FAILED for cycle #${cycle.id}: ${rejReason}`);
+    if (!isSafetyBuyOnCooldown(pair, cycle.id, buyLevel, rejReason)) {
+      const isUnknownPending = rejReason.startsWith("no_fill") || rejReason.startsWith("execution_unknown");
+      await createHumanEvent({
+        cycleId: cycle.id,
+        pair,
+        mode,
+        eventType: isUnknownPending ? "safety_buy_unknown_pending" : "safety_buy_failed",
+        severity: isUnknownPending ? "warning" : "error",
+        message: isUnknownPending
+          ? `Safety buy #${buyLevel} ejecución desconocida — pendiente reconciliación manual: ${rejReason}`
+          : `Safety buy #${buyLevel} bloqueado/fallido: ${rejReason}`,
+        payloadJson: { intendedQty, currentPrice, reason: rejReason },
+      }, { eventType: "safety_buy_failed", pair, mode, cycleId: cycle.id, price: currentPrice, quantity: intendedQty });
+      setSafetyBuyCooldown(pair, cycle.id, buyLevel, rejReason);
+    } else {
+      console.log(`${TAG}[BUY_COOLDOWN_SKIP] ${pair} cycle#${cycle.id} safety#${buyLevel} — event suppressed (cooldown active)`);
+    }
+    return { success: false, error: rejReason };
   }
 
   // 2. Fill confirmado - retornar valores ejecutados

@@ -198,6 +198,173 @@ export async function voidPhantomBuyAndRecalculateCycle(params: {
 }
 
 /**
+ * Reconcilia los fills reales de Revolut X del 23/05/2026 para BTC #24.
+ *
+ * Contexto: El bot marcó dos compras como no_fill:unknown aunque Revolut X sí las ejecutó.
+ * Esta función las importa como órdenes reconciliadas si no existen ya en DB.
+ * Es idempotente: usa idempotencyKey único por fill.
+ *
+ * Fill 1: 09:52 — 0.00896639 BTC @ $74,466.31 ≈ $667.69
+ * Fill 2: 09:55 — 0.0011208  BTC @ $74,469.94 ≈ $83.47
+ */
+export async function reconcileBtc24MissingFillsMay23(): Promise<{
+  applied: boolean;
+  inserted: number;
+  skipped: number;
+  reason: string;
+}> {
+  const cycleId = 24;
+  const pair = "BTC/USD";
+
+  const fills = [
+    {
+      qty:   0.00896639,
+      price: 74466.31,
+      usd:   667.69,
+      executedAt: new Date("2026-05-23T07:52:00.000Z"), // 09:52 Europe/Madrid = 07:52 UTC
+      ikey: "RECONCILE:BTC/USD:24:2026-05-23T09:52:qty0.00896639:price74466.31",
+    },
+    {
+      qty:   0.0011208,
+      price: 74469.94,
+      usd:   83.47,
+      executedAt: new Date("2026-05-23T07:55:00.000Z"), // 09:55 Europe/Madrid = 07:55 UTC
+      ikey: "RECONCILE:BTC/USD:24:2026-05-23T09:55:qty0.0011208:price74469.94",
+    },
+  ];
+
+  // 1. Verificar que el ciclo existe
+  const [cycle] = await db
+    .select()
+    .from(institutionalDcaCycles)
+    .where(eq(institutionalDcaCycles.id, cycleId))
+    .limit(1);
+
+  if (!cycle) return { applied: false, inserted: 0, skipped: 0, reason: `CYCLE_NOT_FOUND: cycleId=${cycleId}` };
+  if (cycle.pair !== pair) return { applied: false, inserted: 0, skipped: 0, reason: `PAIR_MISMATCH` };
+
+  // 2. Obtener órdenes existentes para comprobar idempotencia
+  const existingOrders = await db
+    .select()
+    .from(institutionalDcaOrders)
+    .where(eq(institutionalDcaOrders.cycleId, cycleId));
+
+  let inserted = 0;
+  let skipped = 0;
+
+  await db.transaction(async (trx) => {
+    for (const fill of fills) {
+      // Idempotencia primaria: por idempotencyKey
+      const alreadyByKey = existingOrders.some(o => o.idempotencyKey === fill.ikey);
+      if (alreadyByKey) {
+        console.log(`${TAG} [BTC#24_FILLS] Already reconciled (key): ${fill.ikey}`);
+        skipped++;
+        continue;
+      }
+      // Idempotencia secundaria: por precio+qty parecidos con status reconciled
+      const PRICE_TOL = 0.01;
+      const QTY_TOL = 0.001;
+      const alreadyByData = existingOrders.some(o => {
+        if (!["reconciled", "filled", "confirmed"].includes(o.executionStatus ?? "")) return false;
+        const pMatch = Math.abs(parseFloat(o.price) - fill.price) / fill.price < PRICE_TOL;
+        const qMatch = Math.abs(parseFloat(o.quantity) - fill.qty) / fill.qty < QTY_TOL;
+        return pMatch && qMatch;
+      });
+      if (alreadyByData) {
+        console.log(`${TAG} [BTC#24_FILLS] Already reconciled (data match): price=${fill.price} qty=${fill.qty}`);
+        skipped++;
+        continue;
+      }
+
+      // Insertar fill reconciliado
+      await trx.insert(institutionalDcaOrders).values({
+        cycleId,
+        pair,
+        mode: "live",
+        orderType: "safety_buy",
+        buyIndex: 2,
+        side: "buy",
+        price: fill.price.toFixed(8),
+        quantity: fill.qty.toFixed(8),
+        grossValueUsd: fill.usd.toFixed(2),
+        feesUsd: "0.00",
+        slippageUsd: "0.00",
+        netValueUsd: fill.usd.toFixed(2),
+        executionStatus: "reconciled",
+        executedQuantity: fill.qty.toFixed(8),
+        executedUsd: fill.usd.toFixed(2),
+        avgFillPrice: fill.price.toFixed(8),
+        executedAt: fill.executedAt,
+        reconciledAt: new Date(),
+        idempotencyKey: fill.ikey,
+        triggerReason: "revolutx_reconciliation",
+        humanReason: "Compra ejecutada en Revolut X reconciliada desde historial; originalmente marcada como no_fill: unknown.",
+        needsVerificationReason: null,
+      });
+      console.log(`${TAG} [BTC#24_FILLS] Inserted reconciled fill: price=${fill.price} qty=${fill.qty} usd=${fill.usd}`);
+      inserted++;
+    }
+
+    if (inserted > 0) {
+      // 3. Recalcular ciclo desde todas las órdenes válidas (excluir phantom_voided/rejected/no_fill)
+      const VALID_STATUSES = ["filled", "confirmed", "reconciled", "partially_filled"];
+      const allBuys = await trx
+        .select()
+        .from(institutionalDcaOrders)
+        .where(and(
+          eq(institutionalDcaOrders.cycleId, cycleId),
+          eq(institutionalDcaOrders.side, "buy"),
+          ne(institutionalDcaOrders.executionStatus, "phantom_voided")
+        ));
+
+      const validBuys = allBuys.filter(o =>
+        VALID_STATUSES.includes(o.executionStatus ?? "") ||
+        // Include old orders without executionStatus (pre-guard buys with no field set)
+        (!o.executionStatus && parseFloat(o.quantity) > 0 && parseFloat(o.netValueUsd) > 0)
+      );
+
+      let totalQty = 0, totalCost = 0, buyCount = 0;
+      for (const o of validBuys) {
+        const qty  = parseFloat(o.executedQuantity ?? o.quantity);
+        const cost = parseFloat(o.executedUsd ?? o.netValueUsd);
+        if (qty > 0 && cost > 0) { totalQty += qty; totalCost += cost; buyCount++; }
+      }
+      const newAvg = totalQty > 0 ? totalCost / totalQty : 0;
+
+      console.log(`${TAG} [BTC#24_FILLS] Recalculated: qty=${totalQty.toFixed(8)} cost=${totalCost.toFixed(2)} avg=${newAvg.toFixed(2)} buys=${buyCount}`);
+
+      await trx.update(institutionalDcaCycles)
+        .set({
+          totalQuantity: totalQty.toFixed(8),
+          capitalUsedUsd: totalCost.toFixed(2),
+          avgEntryPrice: newAvg.toFixed(8),
+          buyCount,
+          updatedAt: new Date(),
+        })
+        .where(eq(institutionalDcaCycles.id, cycleId));
+
+      // 4. Evento de auditoría
+      await trx.insert(institutionalDcaEvents).values({
+        cycleId,
+        pair,
+        mode: "live",
+        eventType: "fills_reconciled_from_exchange_history",
+        severity: "info",
+        message: `${inserted} fill(s) de Revolut X importados para BTC #24. Ciclo recalculado: qty=${totalQty.toFixed(8)}, avg=${newAvg.toFixed(2)}, capital=${totalCost.toFixed(2)}.`,
+        payloadJson: { inserted, fills: fills.map(f => ({ price: f.price, qty: f.qty, usd: f.usd })), newAvg, newTotalQty: totalQty, newCapital: totalCost },
+      });
+    }
+  });
+
+  return {
+    applied: inserted > 0,
+    inserted,
+    skipped,
+    reason: inserted > 0 ? "OK" : skipped > 0 ? "ALREADY_RECONCILED_IDEMPOTENT" : "NO_ACTION",
+  };
+}
+
+/**
  * Ejecuta reconciliación automática segura al arrancar.
  * Debe llamarse ANTES de activar el scheduler IDCA LIVE.
  */
@@ -277,9 +444,21 @@ export async function runStartupReconciliation(): Promise<ReconciliationResult> 
       }
     } catch (btcError: any) {
       console.error(`${TAG} [BTC#24] Error during targeted repair: ${btcError.message}`);
-      // Error técnico durante reparación específica es crítico
       result.criticalErrors.push(`btc24_repair: ${btcError.message}`);
       result.errors.push(`btc24_repair: ${btcError.message}`);
+    }
+
+    // 3b. Importar fills reales de Revolut X del 23/05/2026 para BTC #24
+    try {
+      const fillsResult = await reconcileBtc24MissingFillsMay23();
+      if (fillsResult.applied) {
+        console.log(`${TAG} [BTC#24_FILLS] Reconciled ${fillsResult.inserted} fill(s) — cycle recalculated`);
+      } else {
+        console.log(`${TAG} [BTC#24_FILLS] ${fillsResult.reason} (inserted=${fillsResult.inserted} skipped=${fillsResult.skipped})`);
+      }
+    } catch (fillsError: any) {
+      console.error(`${TAG} [BTC#24_FILLS] Error importing fills: ${fillsError.message}`);
+      result.warnings.push(`btc24_fills: ${fillsError.message}`);
     }
 
     // 4. Re-verificar qué ciclos siguen realmente bloqueados tras reparaciones específicas

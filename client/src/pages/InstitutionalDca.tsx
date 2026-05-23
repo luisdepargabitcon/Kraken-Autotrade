@@ -2862,12 +2862,20 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
                       const isBuy = order.side === "buy";
                       const slip = parseFloat(String(order.slippageUsd || "0"));
                       const isVoided = order.executionStatus === "phantom_voided";
+                      const isReconciled = order.executionStatus === "reconciled";
                       return (
-                        <tr key={order.id} className={cn("border-b border-border/20 hover:bg-muted/20", isVoided && "opacity-50")}>
+                        <tr key={order.id} className={cn("border-b border-border/20 hover:bg-muted/20", isVoided && "opacity-50", isReconciled && "bg-cyan-950/20")}>
                           <td className="p-2 pl-9 text-[10px] text-muted-foreground whitespace-nowrap">{fmtDate(order.executedAt)}</td>
                           <td className="p-2">
                             <Badge variant="outline" className="text-[9px]">{translateOrderType(order.orderType)}</Badge>
                             {isVoided && <Badge variant="outline" className="text-[9px] ml-1 border-orange-500 text-orange-400">ANULADA</Badge>}
+                            {isReconciled && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] ml-1 border-cyan-500 text-cyan-400"
+                                title="Fill confirmado desde historial de Revolut X tras quedar inicialmente como no_fill/unknown."
+                              >RECONCILIADA</Badge>
+                            )}
                           </td>
                           <td className={cn("p-2 font-semibold", isBuy ? "text-green-400" : "text-red-400", isVoided && "line-through")}>
                             {isBuy ? "COMPRA" : "VENTA"}
@@ -2880,7 +2888,9 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
                           <td className="p-2 text-[10px] text-muted-foreground min-w-[250px] whitespace-normal" title={order.triggerReason || ""}>
                             {isVoided
                               ? <span className="text-orange-400">{order.voidedReason ?? "Anulada por reconciliación — sin fill confirmado"}</span>
-                              : translateOrderReason(order)
+                              : isReconciled
+                                ? <span className="text-cyan-400">{order.humanReason ?? "Fill confirmado desde historial de Revolut X"}</span>
+                                : translateOrderReason(order)
                             }
                           </td>
                         </tr>
