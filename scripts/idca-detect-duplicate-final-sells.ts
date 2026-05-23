@@ -38,6 +38,7 @@ interface DuplicateCandidate {
   totalBoughtQty: number;
   totalSoldQtyRaw: number;
   totalSoldQtyAfterCleanup: number;
+  dustTolerance: number;
   capitalBought: number;
   soldUsdRaw: number;
   soldUsdAfterCleanup: number;
@@ -56,6 +57,19 @@ interface DuplicateCandidate {
     decision: "KEEP" | "DUPLICATE";
     why: string;
   }>;
+  remainingSellOrdersAfterCleanup: Array<{
+    orderId: number;
+    type: string;
+    reason: string;
+    qty: number;
+    price: number;
+    usd: number;
+    exchangeOrderId: string | null;
+    executedAt: Date;
+    whyKept: string;
+  }>;
+  applyBlocked: boolean;
+  applyBlockedReason: string | null;
 }
 
 async function main() {
@@ -183,6 +197,34 @@ async function main() {
     const pnlBefore = soldUsdRaw - capitalBought;
     const pnlAfterEstimated = soldUsdAfterCleanup - capitalBought;
 
+    // 4. Calcular dustTolerance
+    const dustTolerance = Math.max(0.00000010, totalBoughtQty * 0.005);
+
+    // 5. Analizar TODAS las SELL que quedarían después de limpieza
+    const remainingSellOrdersAfterCleanup = sellOrders
+      .filter(o => !duplicateOrderIds.includes(o.id))
+      .map(o => ({
+        orderId: o.id,
+        type: o.orderType || "unknown",
+        reason: o.humanReason || o.triggerReason || "",
+        qty: parseFloat(o.quantity || "0"),
+        price: parseFloat(o.price || "0"),
+        usd: parseFloat(o.netValueUsd || "0"),
+        exchangeOrderId: o.exchangeOrderId || null,
+        executedAt: o.executedAt || new Date(),
+        whyKept: o.id === keepOrderId
+          ? "Selected as the single valid final sell"
+          : o.exchangeOrderId
+          ? "Has unique exchangeOrderId (not marked as duplicate)"
+          : "Not marked as duplicate (outside final/trailing set)",
+      }));
+
+    // 6. Verificar guard: sold after cleanup no puede superar bought + dustTolerance
+    const applyBlocked = totalSoldQtyAfterCleanup > totalBoughtQty + dustTolerance;
+    const applyBlockedReason = applyBlocked
+      ? `remaining_sold_exceeds_bought: ${totalSoldQtyAfterCleanup.toFixed(8)} > ${totalBoughtQty.toFixed(8)} + ${dustTolerance.toFixed(8)}`
+      : null;
+
     candidates.push({
       cycleId,
       pair: cycle.pair,
@@ -194,6 +236,7 @@ async function main() {
       totalBoughtQty,
       totalSoldQtyRaw,
       totalSoldQtyAfterCleanup,
+      dustTolerance,
       capitalBought,
       soldUsdRaw,
       soldUsdAfterCleanup,
@@ -202,6 +245,9 @@ async function main() {
       keepOrderId,
       duplicateOrderIds,
       finalSells: finalSellsWithDecision,
+      remainingSellOrdersAfterCleanup,
+      applyBlocked,
+      applyBlockedReason,
     });
   }
 
@@ -221,6 +267,7 @@ async function main() {
     console.log(`${TAG} totalBoughtQty=${c.totalBoughtQty.toFixed(8)}`);
     console.log(`${TAG} totalSoldQtyRaw=${c.totalSoldQtyRaw.toFixed(8)}`);
     console.log(`${TAG} totalSoldQtyAfterCleanup=${c.totalSoldQtyAfterCleanup.toFixed(8)}`);
+    console.log(`${TAG} dustTolerance=${c.dustTolerance.toFixed(8)}`);
     console.log(`${TAG} capitalBought=$${c.capitalBought.toFixed(2)}`);
     console.log(`${TAG} soldUsdRaw=$${c.soldUsdRaw.toFixed(2)}`);
     console.log(`${TAG} soldUsdAfterCleanup=$${c.soldUsdAfterCleanup.toFixed(2)}`);
@@ -228,6 +275,10 @@ async function main() {
     console.log(`${TAG} pnlAfterEstimated=$${c.pnlAfterEstimated.toFixed(2)}`);
     console.log(`${TAG} keepOrderId=${c.keepOrderId}`);
     console.log(`${TAG} duplicateOrderIds=[${c.duplicateOrderIds.join(", ")}]`);
+    console.log(`${TAG} applyBlocked=${c.applyBlocked}`);
+    if (c.applyBlockedReason) {
+      console.log(`${TAG} APPLY_BLOCKED_REASON=${c.applyBlockedReason}`);
+    }
     console.log(`${TAG}`);
     console.log(`${TAG} --- FINAL SELLS DETAIL ---`);
     for (const fs of c.finalSells) {
@@ -235,6 +286,14 @@ async function main() {
       console.log(`${TAG}   exchangeOrderId=${fs.exchangeOrderId}`);
       console.log(`${TAG}   reason="${fs.reason}"`);
       console.log(`${TAG}   decision=${fs.decision} why=${fs.why}`);
+    }
+    console.log(`${TAG}`);
+    console.log(`${TAG} --- REMAINING SELL ORDERS AFTER CLEANUP ---`);
+    for (const rs of c.remainingSellOrdersAfterCleanup) {
+      console.log(`${TAG} orderId=${rs.orderId} type=${rs.type} qty=${rs.qty} price=${rs.price} usd=${rs.usd}`);
+      console.log(`${TAG}   exchangeOrderId=${rs.exchangeOrderId} executedAt=${rs.executedAt.toISOString()}`);
+      console.log(`${TAG}   reason="${rs.reason}"`);
+      console.log(`${TAG}   whyKept="${rs.whyKept}"`);
     }
     console.log(`${TAG} ----------------------------------------\n`);
   }
@@ -259,6 +318,13 @@ async function main() {
 
     if (candidate.duplicateOrderIds.length === 0) {
       console.log(`${TAG} ❌ ABORT: No duplicate orders to delete.`);
+      process.exit(1);
+    }
+
+    if (candidate.applyBlocked) {
+      console.log(`${TAG} ❌ ABORT: APPLY_BLOCKED - ${candidate.applyBlockedReason}`);
+      console.log(`${TAG} Cleanup cannot proceed because remaining sold quantity would still exceed bought quantity.`);
+      console.log(`${TAG} Review remainingSellOrdersAfterCleanup above for additional duplicate candidates.`);
       process.exit(1);
     }
 
