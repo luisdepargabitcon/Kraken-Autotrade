@@ -13,7 +13,7 @@ import { eq, and, ne } from "drizzle-orm";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import * as repo from "./IdcaRepository";
 import * as telegram from "./IdcaTelegramNotifier";
-import { institutionalDcaCycles, institutionalDcaOrders, institutionalDcaEvents } from "@shared/schema";
+import { institutionalDcaCycles, institutionalDcaOrders, institutionalDcaEvents, type InstitutionalDcaOrder } from "@shared/schema";
 
 const TAG = "[IDCA_RECONCILE]";
 
@@ -307,8 +307,18 @@ export async function reconcileBtc24MissingFillsMay23(): Promise<{
 
     // 3. Siempre recalcular ciclo desde órdenes válidas (incluso si inserted=0, para corregir desviaciones)
     // Incluir: filled, confirmed, reconciled, partially_filled + legacy sin status explícito pero con datos válidos
-    // Excluir explícitamente: phantom_voided, rejected, canceled, failed, no_fill_confirmed
-    const EXCLUDED_STATUSES = ["phantom_voided", "rejected", "canceled", "failed", "no_fill_confirmed"];
+    // Excluir explícitamente: phantom/voided/rejected/canceled/failed/no_fill y variantes
+    const EXCLUDED_STATUSES = [
+      "phantom_voided",
+      "voided_by_reconciliation",
+      "rejected",
+      "canceled",
+      "cancelled",
+      "failed",
+      "no_fill",
+      "no_fill_confirmed",
+      "execution_unknown_pending_reconciliation"
+    ];
     const allBuys = await trx
       .select()
       .from(institutionalDcaOrders)
@@ -317,15 +327,26 @@ export async function reconcileBtc24MissingFillsMay23(): Promise<{
         eq(institutionalDcaOrders.side, "buy")
       ));
 
-    const validBuys = allBuys.filter(o => {
-      const st = o.executionStatus ?? "";
-      // Excluir estados de fallo explícitos
-      if (EXCLUDED_STATUSES.includes(st)) return false;
-      // Incluir si tiene datos ejecutados válidos (cualquier otro status o null/pending/etc.)
+    const validBuys: InstitutionalDcaOrder[] = [];
+    for (const o of allBuys) {
+      const rawStatus = o.executionStatus ?? "";
+      const st = String(rawStatus).trim().toLowerCase();
       const qty = parseFloat(o.executedQuantity ?? o.quantity);
       const cost = parseFloat(o.executedUsd ?? o.netValueUsd);
-      return qty > 0 && cost > 0;
-    });
+      const hasPositiveData = qty > 0 && cost > 0;
+      const excluded = EXCLUDED_STATUSES.includes(st);
+      const included = !excluded && hasPositiveData;
+
+      // Log de auditoría detallado para BTC #24
+      const reason = excluded
+        ? "excluded_status"
+        : !hasPositiveData
+          ? "zero_qty_or_cost"
+          : "positive_qty_cost_legacy";
+      console.log(`${TAG} [BTC#24_RECALC_ORDER] orderId=${o.id} status="${rawStatus}" normalized="${st}" qty=${qty.toFixed(8)} cost=${cost.toFixed(2)} included=${included} reason=${reason}`);
+
+      if (included) validBuys.push(o);
+    }
 
     let totalQty = 0, totalCost = 0, buyCount = 0;
     for (const o of validBuys) {
