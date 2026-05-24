@@ -3534,10 +3534,10 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
       {/* Aggregate bar */}
       <div className="flex flex-wrap gap-3 text-xs font-mono">
         <Badge variant="outline" className="text-[10px]">{cycles.length} ciclos cerrados</Badge>
-        <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">✅ {wins} wins</Badge>
-        <Badge variant="outline" className="text-[10px] text-red-400 border-red-400/30">🔴 {losses} losses</Badge>
-        <Badge variant="outline" className="text-[10px] text-muted-foreground">⚖️ {neutral} neutral</Badge>
-        <Badge variant="outline" className={cn("text-[10px] font-bold", totalPnl >= 0 ? "text-green-400 border-green-400/30" : "text-red-400 border-red-400/30")}>
+        <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-green-400 border-green-400/30">✅ {wins} wins</Badge>
+        <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-red-400 border-red-400/30">🔴 {losses} losses</Badge>
+        <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-muted-foreground">⚖️ {neutral} neutral</Badge>
+        <Badge variant="outline" className={cn("text-lg font-bold px-4 py-2", totalPnl >= 0 ? "text-green-400 border-green-400/30" : "text-red-400 border-red-400/30")}>
           PnL Total: {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
         </Badge>
       </div>
