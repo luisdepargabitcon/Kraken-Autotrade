@@ -2,6 +2,96 @@
 
 ---
 
+## 2026-05-24 — fix(idca): block duplicate sell cleanup if remaining sold exceeds bought
+
+### Hash del commit
+`2e0a701`
+
+### Objetivo
+Añadir guard de seguridad en el script de detección de ventas finales duplicadas para evitar limpieza si después de eliminar duplicados la cantidad vendida sigue superando la cantidad comprada más una tolerancia de dust.
+
+### Archivo modificado
+- `scripts/idca-detect-duplicate-final-sells.ts`
+
+### Cambios implementados
+1. **dustTolerance**: Calcular tolerancia de dust como `max(0.00000010 BTC, totalBoughtQty * 0.005)`
+2. **Auditoría completa de SELL**: Analizar TODAS las órdenes SELL que quedarían después de limpieza, no solo las final/trailing
+3. **remainingSellOrdersAfterCleanup**: Imprimir detalle de todas las SELL restantes con:
+   - orderId, type, reason, qty, price, usd
+   - exchangeOrderId, executedAt
+   - whyKept (motivo por el que se conserva)
+4. **applyBlocked**: Verificar si `totalSoldQtyAfterCleanup > totalBoughtQty + dustTolerance`
+5. **APPLY_BLOCKED_REASON**: Imprimir razón del bloqueo si aplica
+6. **Abort en --apply**: Si `applyBlocked` es true, abortar limpieza con mensaje claro
+
+### Resultado del dry-run en VPS (ejemplo real)
+- totalBoughtQty=0.00782637
+- totalSoldQtyRaw=3.42794301
+- totalSoldQtyAfterCleanup=0.01564569
+- dustTolerance=0.00003913
+- applyBlocked=true
+- APPLY_BLOCKED_REASON=remaining_sold_exceeds_bought: 0.01564569 > 0.00782637 + 0.00003913
+
+### Regla de seguridad
+Después de limpieza, `totalSoldQty` válido no puede superar `totalBoughtQty + dustTolerance`. Si lo supera, el script aborta automáticamente en modo --apply y reporta las órdenes SELL restantes para revisión manual.
+
+### Confirmaciones
+- ✅ No tocó ciclos activos BTC #24 / ETH #17
+- ✅ No tocó motor LIVE
+- ✅ No tocó anclas ni MarketData
+- ✅ No deploy
+- ✅ No VPS
+- ✅ FUENTES_BOT.md excluido
+
+---
+
+## 2026-05-24 — fix(idca): include post-close sells in duplicate cleanup detection
+
+### Hash del commit
+`d65065b`
+
+### Objetivo
+Detectar ventas SELL posteriores al cierre final (ej: venta breakeven id 754) como duplicadas adicionales si cumplen criterios de invalidación.
+
+### Archivo modificado
+- `scripts/idca-detect-duplicate-final-sells.ts`
+
+### Cambios implementados
+1. **Detección de SELL post-cierre**: Buscar ventas después de keepOrder que:
+   - No tienen exchangeOrderId
+   - Qty similar a totalBoughtQty o keepOrder.qty (tolerancia 10%)
+   - Mantenerlas haría que sold > bought + dustTolerance
+2. **Inclusión en duplicateOrderIds**: Añadir estas ventas post-cierre a la lista de duplicadas
+3. **Recálculo de totales**: Calcular totalSoldQtyAfterCleanup usando sellOrders (no solo finalSellsAnalysis) para incluir post-close duplicates
+4. **applyBlocked=false**: Solo si totalSoldQtyAfterCleanup <= totalBoughtQty + dustTolerance
+
+### Resultado esperado para cycle_id 22
+- keepOrderId=57
+- duplicateOrderIds=[58..493, 754]
+- totalBoughtQty=0.00782637
+- totalSoldQtyAfterCleanup≈0.00782637
+- applyBlocked=false
+
+### Criterios de SELL post-cierre duplicada
+- Mismo cycleId
+- side=sell
+- no exchangeOrderId
+- executedAt > keepOrder.executedAt
+- qty similar a totalBoughtQty o keepOrder.qty (±10%)
+- Mantenerla haría que totalSoldQtyAfterCleanup > totalBoughtQty + dustTolerance
+
+### Confirmaciones
+- ✅ id 754 (breakeven sell) incluido como duplicado candidato
+- ✅ applyBlocked=false solo si totalSoldQtyAfterCleanup <= totalBoughtQty + dustTolerance
+- ✅ No tocó ciclos activos BTC #24 / ETH #17
+- ✅ No tocó motor LIVE
+- ✅ No tocó anclas ni MarketData
+- ✅ No deploy
+- ✅ No VPS
+- ✅ FUENTES_BOT.md excluido
+
+---
+
 ## 2026-05-XX — feat(idca): Lote 5 — Ancla Dinámica IDCA Profesional
 
 ### Objetivo
