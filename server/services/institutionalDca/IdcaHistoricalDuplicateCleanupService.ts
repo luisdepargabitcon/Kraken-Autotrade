@@ -10,7 +10,7 @@
  */
 
 import { db } from "../../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { institutionalDcaCycles, institutionalDcaOrders, institutionalDcaEvents } from "@shared/schema";
 
 const TAG = "[IDCA][DUP_FINAL_SELL_CLEANUP]";
@@ -195,7 +195,15 @@ async function applyCleanup(candidate: CleanupCandidate): Promise<void> {
     const duplicateRowsFullData = await trx
       .select()
       .from(institutionalDcaOrders)
-      .where(sql`${institutionalDcaOrders.id} = ANY(${duplicateOrderIds})`);
+      .where(inArray(institutionalDcaOrders.id, duplicateOrderIds));
+
+    console.log(`${TAG} backup rows selected count=${duplicateRowsFullData.length}`);
+
+    // Validar que backupRows.length coincide con duplicateOrderIds.length
+    if (duplicateRowsFullData.length !== duplicateOrderIds.length) {
+      console.log(`${TAG} aborted reason=backup_count_mismatch expected=${duplicateOrderIds.length} actual=${duplicateRowsFullData.length}`);
+      throw new Error(`Backup count mismatch: expected ${duplicateOrderIds.length}, got ${duplicateRowsFullData.length}`);
+    }
 
     // Calcular capital comprado para PnL
     const buyOrdersBefore = await trx
@@ -236,9 +244,15 @@ async function applyCleanup(candidate: CleanupCandidate): Promise<void> {
     console.log(`${TAG} backup created`);
 
     // Delete duplicates
+    console.log(`${TAG} deleting duplicate order ids count=${duplicateOrderIds.length}`);
     await trx
       .delete(institutionalDcaOrders)
-      .where(sql`${institutionalDcaOrders.id} = ANY(${duplicateOrderIds})`);
+      .where(
+        and(
+          eq(institutionalDcaOrders.cycleId, cycleId),
+          inArray(institutionalDcaOrders.id, duplicateOrderIds)
+        )
+      );
 
     console.log(`${TAG} deleted duplicate orders count=${duplicateOrderIds.length}`);
 
