@@ -18,6 +18,7 @@ import { errorAlertService } from "./services/ErrorAlertService";
 import cron from "node-cron";
 import http from "http";
 import type { RouterDeps } from "./routes/types";
+import { runIdcaHistoricalDuplicateCleanupOnce } from "./services/institutionalDca/IdcaHistoricalDuplicateCleanupService";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -1014,6 +1015,15 @@ export async function registerRoutes(
       console.warn(`[startup] P&L rebuild failed (non-critical): ${e.message}`);
     }
   }, 10000); // 10s delay to let other services initialize first
+
+  // === IDCA HISTORICAL DUPLICATE CLEANUP ON STARTUP (background, non-blocking) ===
+  setTimeout(async () => {
+    try {
+      await runIdcaHistoricalDuplicateCleanupOnce();
+    } catch (e: any) {
+      console.warn(`[startup] IDCA historical duplicate cleanup failed (non-critical): ${e.message}`);
+    }
+  }, 15000); // 15s delay to let DB and other services initialize first
 
   return httpServer;
 }
