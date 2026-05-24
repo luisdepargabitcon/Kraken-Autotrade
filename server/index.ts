@@ -60,9 +60,11 @@ app.use((req, res, next) => {
   await registerRoutes(httpServer, app);
 
   // Limpieza automática de duplicados históricos IDCA (idempotente, non-blocking)
+  console.log("[startup] About to run IDCA historical duplicate cleanup");
   runIdcaHistoricalDuplicateCleanupOnce().catch((err) => {
     console.warn("[startup] IDCA historical duplicate cleanup failed (non-blocking):", err);
   });
+  console.log("[startup] IDCA historical duplicate cleanup hook scheduled");
 
   // Cleanup de velas antiguas (retención) - máximo 1 vez cada 24h por throttle interno
   MarketDataService.cleanupOldCandles().catch((err) => {

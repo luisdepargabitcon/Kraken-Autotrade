@@ -299,6 +299,7 @@ async function applyCleanup(candidate: CleanupCandidate): Promise<void> {
  * Se llama durante el startup del servidor
  */
 export async function runIdcaHistoricalDuplicateCleanupOnce(): Promise<void> {
+  console.log(`${TAG} startup hook reached`);
   try {
     console.log(`${TAG} checking historical duplicate final sells`);
 
