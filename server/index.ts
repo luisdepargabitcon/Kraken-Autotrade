@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { logStreamService } from "./services/logStreamService";
 import { log } from "./utils/logger";
 import { MarketDataService } from "./services/MarketDataService";
+import { runIdcaHistoricalDuplicateCleanupOnce } from "./services/institutionalDca/IdcaHistoricalDuplicateCleanupService";
 import fs from "fs";
 import path from "path";
 
@@ -57,6 +58,11 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  // Limpieza automática de duplicados históricos IDCA (idempotente, non-blocking)
+  runIdcaHistoricalDuplicateCleanupOnce().catch((err) => {
+    console.warn("[startup] IDCA historical duplicate cleanup failed (non-blocking):", err);
+  });
 
   // Cleanup de velas antiguas (retención) - máximo 1 vez cada 24h por throttle interno
   MarketDataService.cleanupOldCandles().catch((err) => {
