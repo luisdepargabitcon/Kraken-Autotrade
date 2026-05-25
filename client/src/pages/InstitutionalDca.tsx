@@ -158,7 +158,7 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia">("entrada");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
@@ -915,7 +915,7 @@ function DynamicDistancePanel({
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap"; setConfigSubTab: (tab: "entrada" | "general" | "vwap") => void }) {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
@@ -980,6 +980,17 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           )}
         >
           VWAP & Rebound
+        </button>
+        <button
+          onClick={() => setConfigSubTab("distancia")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "distancia"
+              ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          📐 Distancia
         </button>
       </div>
 
@@ -1633,40 +1644,6 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           )}
         </div>
 
-        {/* ─── Distancia Dinámica ─────────────────────────────────────────── */}
-        <div className="border-t border-border/30 pt-5">
-          <div className="flex items-center gap-3 mb-4">
-            <Activity className="h-5 w-5 text-violet-400" />
-            <div>
-              <p className="text-sm font-semibold">Distancia Dinámica entre Compras</p>
-              <p className="text-xs text-muted-foreground">
-                Calcula automáticamente la separación mínima entre safety buys. En modo dinámico sólo
-                puede alejar el próximo trigger (más conservador), nunca acercarlo.
-                La decisión es siempre <strong>server-side</strong>.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {btc && (
-              <DynamicDistancePanel
-                label="BTC"
-                config={btc.dynamicDistanceConfigJson as Record<string, any> | null}
-                defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
-                onSave={(patch) => updateAsset.mutate({ pair: btc.pair, dynamicDistanceConfigJson: patch } as any)}
-              />
-            )}
-            {eth && (
-              <DynamicDistancePanel
-                label="ETH"
-                config={eth.dynamicDistanceConfigJson as Record<string, any> | null}
-                defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
-                onSave={(patch) => updateAsset.mutate({ pair: eth.pair, dynamicDistanceConfigJson: patch } as any)}
-              />
-            )}
-          </div>
-        </div>
-
         <div className="border-t border-border/30 pt-5">
           <div className="flex items-center gap-3 mb-4">
             <Sparkles className="h-5 w-5 text-amber-500" />
@@ -1843,6 +1820,31 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
         )}
       </ConfigBlock>
       </>)}
+
+      {/* ════ SUB-TAB: DISTANCIA DINÁMICA ════ */}
+      {configSubTab === "distancia" && (
+        <ConfigBlock icon={Activity} title="Distancia Dinámica entre Compras"
+          desc="La Distancia Dinámica ajusta automáticamente la separación mínima entre compras del ciclo activo. En modo manual no cambia el comportamiento actual. En modo dinámico solo puede alejar el próximo precio de compra, nunca acercarlo.">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {btc && (
+              <DynamicDistancePanel
+                label="BTC"
+                config={btc.dynamicDistanceConfigJson as Record<string, any> | null}
+                defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
+                onSave={(patch) => updateAsset.mutate({ pair: btc.pair, dynamicDistanceConfigJson: patch } as any)}
+              />
+            )}
+            {eth && (
+              <DynamicDistancePanel
+                label="ETH"
+                config={eth.dynamicDistanceConfigJson as Record<string, any> | null}
+                defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
+                onSave={(patch) => updateAsset.mutate({ pair: eth.pair, dynamicDistanceConfigJson: patch } as any)}
+              />
+            )}
+          </div>
+        </ConfigBlock>
+      )}
 
       {/* ════ SUB-TAB: VWAP & REBOUND ════ */}
       {configSubTab === "vwap" && (
