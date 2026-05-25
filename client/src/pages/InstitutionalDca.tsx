@@ -819,6 +819,100 @@ function deriveAlertPreview(freq: number, detail: number, grouping: number) {
   return { watchingMin, trackingMin, digestMin, tracking, profile };
 }
 
+// ─── DynamicDistancePanel ────────────────────────────────────────────────
+
+interface DdDefaults { minDistancePct: number; maxDistancePct: number; feeFloorPct: number; }
+
+function DynamicDistancePanel({
+  label, config: rawConfig, defaults, onSave,
+}: {
+  label: string;
+  config: Record<string, any> | null;
+  defaults: DdDefaults;
+  onSave: (full: Record<string, any>) => void;
+}) {
+  const cfg = rawConfig ?? {};
+  const mode = (cfg.mode ?? "manual") as string;
+  const save = (patch: Record<string, any>) => {
+    const full = {
+      mode: "manual",
+      atrMultiplier: 1.0,
+      aggressiveness: 50,
+      useMarketRegime: true,
+      useCyclePressure: true,
+      useExposurePenalty: true,
+      useDataHealthPenalty: true,
+      ...defaults,
+      ...cfg,
+      ...patch,
+    };
+    onSave(full);
+  };
+  const isDynamic = mode === "dynamic_hybrid";
+  return (
+    <div className="space-y-3 p-4 bg-violet-950/20 rounded-lg border border-violet-500/20">
+      <p className="text-xs font-bold text-violet-400 uppercase tracking-wider">{label} — Distancia Dinámica</p>
+      <div className="flex items-center gap-3">
+        <Label className="text-xs w-20 shrink-0">Modo</Label>
+        <Select value={mode} onValueChange={(v) => save({ mode: v })}>
+          <SelectTrigger className="h-7 text-xs flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="manual">Manual (sin cambios)</SelectItem>
+            <SelectItem value="dynamic_hybrid">Dinámico Híbrido</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {isDynamic && (
+        <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2">
+          <ColorSlider label="Agresividad" color="violet" unit=""
+            value={cfg.aggressiveness ?? 50} min={0} max={100} step={5}
+            onChange={(v) => save({ aggressiveness: v })}
+            desc="0=más conservador (+20% distancia), 50=neutro, 100=más agresivo (-20% distancia)" />
+          <ColorSlider label="Multiplicador ATR" color="violet"
+            value={cfg.atrMultiplier ?? 1.0} min={0.2} max={3.0} step={0.1}
+            onChange={(v) => save({ atrMultiplier: v })}
+            desc="Multiplica el ATR% para obtener la distancia base dinámica." />
+          <ColorSlider label="Distancia mínima" color="violet"
+            value={cfg.minDistancePct ?? defaults.minDistancePct} min={0.3} max={3.0} step={0.1}
+            onChange={(v) => save({ minDistancePct: v })}
+            desc="Clamp mínimo — la distancia nunca bajará de este porcentaje." />
+          <ColorSlider label="Distancia máxima" color="violet"
+            value={cfg.maxDistancePct ?? defaults.maxDistancePct} min={3} max={25} step={0.5}
+            onChange={(v) => save({ maxDistancePct: v })}
+            desc="Clamp máximo — la distancia nunca superará este porcentaje." />
+          <ColorSlider label="Fee floor" color="violet"
+            value={cfg.feeFloorPct ?? defaults.feeFloorPct} min={0.30} max={2.0} step={0.05}
+            onChange={(v) => save({ feeFloorPct: v })}
+            desc="Distancia mínima absoluta para cubrir fees de ida y vuelta." />
+          <div className="space-y-2 pt-2 border-t border-violet-500/20">
+            <p className="text-xs text-muted-foreground font-medium">Penalizaciones aditivas al ATR</p>
+            <ToggleField label="Por régimen de mercado" checked={cfg.useMarketRegime !== false}
+              onChange={(v) => save({ useMarketRegime: v })}
+              desc="+0.5% si marketScore<60, +1% si <40" />
+            <ToggleField label="Por presión de ciclo" checked={cfg.useCyclePressure !== false}
+              onChange={(v) => save({ useCyclePressure: v })}
+              desc="+0.30% en buyCount=2, +0.60% en buyCount≥3" />
+            <ToggleField label="Por exposición" checked={cfg.useExposurePenalty !== false}
+              onChange={(v) => save({ useExposurePenalty: v })}
+              desc="+0.5% si exposición>60%, +1% si >80%" />
+            <ToggleField label="Por dato degradado" checked={cfg.useDataHealthPenalty !== false}
+              onChange={(v) => save({ useDataHealthPenalty: v })}
+              desc="+0.5% cuando hay <14 velas disponibles en caché" />
+          </div>
+          <div className="bg-violet-950/40 rounded p-3 text-xs text-violet-300 space-y-1">
+            <p className="font-semibold">ℹ️ Preview estimado (visual)</p>
+            <p>raw ≈ max(feeFloor, ATR×mult + penalizaciones)</p>
+            <p>aplicada = clamp(raw × factor_agresividad, min, max)</p>
+            <p className="text-violet-400 font-medium">Decisión autoritativa: siempre server-side en IdcaDynamicDistanceService</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
 function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap"; setConfigSubTab: (tab: "entrada" | "general" | "vwap") => void }) {
@@ -1537,6 +1631,40 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
               onChange={(v) => updateAsset.mutate({ pair: eth.pair, maxSafetyOrders: v })}
               desc="Número máximo de compras extra si el precio de ETH sigue bajando." />
           )}
+        </div>
+
+        {/* ─── Distancia Dinámica ─────────────────────────────────────────── */}
+        <div className="border-t border-border/30 pt-5">
+          <div className="flex items-center gap-3 mb-4">
+            <Activity className="h-5 w-5 text-violet-400" />
+            <div>
+              <p className="text-sm font-semibold">Distancia Dinámica entre Compras</p>
+              <p className="text-xs text-muted-foreground">
+                Calcula automáticamente la separación mínima entre safety buys. En modo dinámico sólo
+                puede alejar el próximo trigger (más conservador), nunca acercarlo.
+                La decisión es siempre <strong>server-side</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {btc && (
+              <DynamicDistancePanel
+                label="BTC"
+                config={btc.dynamicDistanceConfigJson as Record<string, any> | null}
+                defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
+                onSave={(patch) => updateAsset.mutate({ pair: btc.pair, dynamicDistanceConfigJson: patch } as any)}
+              />
+            )}
+            {eth && (
+              <DynamicDistancePanel
+                label="ETH"
+                config={eth.dynamicDistanceConfigJson as Record<string, any> | null}
+                defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
+                onSave={(patch) => updateAsset.mutate({ pair: eth.pair, dynamicDistanceConfigJson: patch } as any)}
+              />
+            )}
+          </div>
         </div>
 
         <div className="border-t border-border/30 pt-5">

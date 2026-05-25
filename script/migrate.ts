@@ -1204,6 +1204,15 @@ END $$;
     const idcaExecutionTraceabilityPath = path.resolve(process.cwd(), "db", "migrations", "038_idca_execution_traceability.sql");
     await tryExecuteFile(db, idcaExecutionTraceabilityPath, "idca_execution_traceability");
 
+    // ============================================================
+    // IDCA DYNAMIC DISTANCE CONFIG (039)
+    // Adds dynamic_distance_config_json JSONB column to asset_configs.
+    // Default mode=manual → zero behavioral change for existing setups.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA dynamic distance config column exists (039)...");
+    const idcaDynamicDistancePath = path.resolve(process.cwd(), "db", "migrations", "039_idca_dynamic_distance_config.sql");
+    await tryExecuteFile(db, idcaDynamicDistancePath, "idca_dynamic_distance_config");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

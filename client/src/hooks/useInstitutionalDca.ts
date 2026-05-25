@@ -130,6 +130,8 @@ export interface IdcaAssetConfig {
     minVolumeCheck: boolean;
     confirmWithVwap: boolean;
   };
+  // Dynamic Distance config
+  dynamicDistanceConfigJson?: Record<string, any> | null;
 }
 
 export interface IdcaCycle {

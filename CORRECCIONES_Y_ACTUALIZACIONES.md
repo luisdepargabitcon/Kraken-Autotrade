@@ -2,6 +2,61 @@
 
 ---
 
+## 2026-05-25 — feat(idca): Distancia Dinámica entre Safety Buys (Dynamic Distance)
+
+### Objetivo
+Implementar la feature "Distancia Dinámica" para el módulo IDCA. En modo `dynamic_hybrid`, el
+sistema calcula automáticamente una distancia mínima entre safety buys basada en ATR%, régimen
+de mercado, presión del ciclo y exposición. En modo `manual` (default), el comportamiento es
+**100% idéntico al actual** — sin cambio alguno.
+
+### Regla de aplicación (autoritativa, server-side)
+```
+effectiveNextBuyPrice = min(existingNextBuyPrice, referencePrice × (1 - appliedDistancePct/100))
+```
+- La distancia dinámica **solo puede alejar el trigger** (más conservador). **Nunca lo acerca.**
+- Referencia de precio: `lastBuyPrice` (precio de la última compra ejecutada) → fallback `avgEntryPrice`.
+- Fórmula: `raw = max(feeFloor, ATR×mult + regimePenalty + cyclePressure + exposurePenalty + dataHealthPenalty)`
+- Clamp final: `appliedDistancePct = clamp(raw × aggressivenessFactor, minDistancePct, maxDistancePct)`
+
+### Archivos nuevos
+- `server/services/institutionalDca/IdcaDynamicDistanceService.ts` — Motor puro de cálculo
+- `db/migrations/039_idca_dynamic_distance_config.sql` — Migración idempotente
+- `server/services/institutionalDca/__tests__/IdcaDynamicDistance.test.ts` — 35 assertions, 8 casos
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaTypes.ts` — Nuevos tipos: `DynamicDistanceMode`, `DynamicDistanceConfig`, `DynamicDistanceInput`, `DynamicDistanceResult`, `DynamicDistanceComponents`
+- `shared/schema.ts` — `dynamicDistanceConfigJson: jsonb(...)` en `institutionalDcaAssetConfigs`
+- `script/migrate.ts` — Registro de migración 039
+- `server/services/institutionalDca/IdcaEngine.ts` — Integración en 3 puntos: self-heal ladder, self-heal safety orders, checkSafetyBuy post-VWAP
+- `client/src/pages/InstitutionalDca.tsx` — Nuevo bloque UI "Distancia Dinámica" en "Compras extra" (componente `DynamicDistancePanel`)
+- `client/src/hooks/useInstitutionalDca.ts` — `dynamicDistanceConfigJson?: Record<string, any>` en `IdcaAssetConfig`
+
+### Integración en engine (puntos quirúrgicos, sin tocar contabilidad)
+1. **checkSafetyBuy** (post-VWAP override): aplica `computeDynamicDistance()` con `lastBuyPrice=avgFillPrice`
+2. **manageCycle self-heal ladder**: aplica `computeDynamicDistance()` con `lastBuyPrice=null` → fallback avgEntry
+3. **manageCycle self-heal safety orders**: igual que punto 2
+
+### Invariantes garantizados
+- `avgEntryPrice`, `totalQuantity`, `capitalUsedUsd`, `basePrice`, anclas VWAP: **nunca se modifican**
+- Ciclos importados con `soloSalida=false` usan las mismas reglas
+- `plus` y `recovery` respetan la misma regla conservadora
+- Modo `manual` (default) = cero cambio de comportamiento
+
+### DB Migration 039
+```sql
+ALTER TABLE institutional_dca_asset_configs
+ADD COLUMN IF NOT EXISTS dynamic_distance_config_json JSONB;
+-- Backfill con mode="manual" para todos los pares existentes
+```
+
+### Validación
+- `npm run check`: ✅ (exit 0)
+- Tests: ✅ 35/35 assertions, 0 failures
+- Requiere migración DB en deploy (`npm run migrate` o docker compose up)
+
+---
+
 ## 2026-05-24 — fix(idca): block duplicate sell cleanup if remaining sold exceeds bought
 
 ### Hash del commit
@@ -89,6 +144,187 @@ Detectar ventas SELL posteriores al cierre final (ej: venta breakeven id 754) co
 - ✅ No deploy
 - ✅ No VPS
 - ✅ FUENTES_BOT.md excluido
+
+---
+
+## 2026-05-24 — fix(idca): run duplicate final sell cleanup automatically on startup
+
+### Hash del commit
+`beb5458`
+
+### Objetivo
+Ejecutar automáticamente la limpieza de duplicados históricos durante el startup del servidor, de forma idempotente y con guards estrictos de seguridad.
+
+### Archivos nuevos
+- `server/services/institutionalDca/IdcaHistoricalDuplicateCleanupService.ts` — Servicio de limpieza automática con detección, idempotencia, backup y guards
+
+### Archivos modificados
+- `server/index.ts` — Integración de `runIdcaHistoricalDuplicateCleanupOnce()` en startup después de migraciones
+
+### Cambios implementados
+1. **Detección automática**: Función `detectDuplicateFinalSells()` que busca ciclos BTC/USD cerrados con ventas finales duplicadas
+2. **Idempotencia**: Función `isCleanupAlreadyApplied()` verifica si ya existe evento `duplicate_final_sell_cleanup_completed` con cleanupKey específico
+3. **Backup obligatorio**: Antes de borrar, crea evento `duplicate_final_sell_cleanup_backup` con datos completos de duplicadas
+4. **Guards estrictos**: Solo aplica limpieza si:
+   - Exactamente 1 candidato
+   - cycleId = 22
+   - keepOrderId = 57
+   - duplicateOrderIds incluye 754
+   - applyBlocked = false
+   - totalSoldQtyAfterCleanup <= totalBoughtQty + dustTolerance
+5. **Borrado controlado**: Elimina solo duplicateOrderIds del cycleId afectado
+6. **Recálculo**: Actualiza totalQuantity, capitalUsedUsd, avgEntryPrice, buyCount del ciclo
+7. **Evento de completado**: Registra `duplicate_final_sell_cleanup_completed` con cleanupKey
+8. **Non-blocking**: Errores no bloquean el startup del servidor
+
+### Logs esperados en deploy
+```
+[IDCA][DUP_FINAL_SELL_CLEANUP] checking historical duplicate final sells
+[IDCA][DUP_FINAL_SELL_CLEANUP] candidate cycleId=22 keepOrderId=57 duplicates=437 applyBlocked=false
+[IDCA][DUP_FINAL_SELL_CLEANUP] backup created
+[IDCA][DUP_FINAL_SELL_CLEANUP] deleted duplicate orders count=437
+[IDCA][DUP_FINAL_SELL_CLEANUP] completed cycleId=22
+```
+
+Si ya se ejecutó:
+```
+[IDCA][DUP_FINAL_SELL_CLEANUP] already applied, skipping
+```
+
+### Confirmaciones
+- ✅ Al hacer deploy se ejecuta automáticamente
+- ✅ Idempotente, si ya limpió no repite
+- ✅ Backup obligatorio antes de borrar
+- ✅ Borra solo duplicateOrderIds del cycle_id 22
+- ✅ Mantiene id 57
+- ✅ Incluye id 754 como duplicada
+- ✅ Aborta si soldAfterCleanup > bought + dust
+- ✅ No toca ciclos activos
+- ✅ No toca motor LIVE
+- ✅ No deploy (solo código)
+- ✅ No VPS
+
+---
+
+## 2026-05-24 — fix(idca): ensure historical duplicate cleanup runs in staging startup
+
+### Hash del commit
+`ebb231b`
+
+### Objetivo
+Añadir logs de diagnóstico para confirmar que el hook de limpieza se ejecuta en el startup del servidor.
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaHistoricalDuplicateCleanupService.ts` — Log incondicional "startup hook reached"
+- `server/index.ts` — Logs adicionales "About to run" y "hook scheduled"
+
+### Cambios implementados
+1. **Log incondicional**: `[IDCA][DUP_FINAL_SELL_CLEANUP] startup hook reached` al inicio de la función
+2. **Logs de diagnóstico en server/index.ts**:
+   - `[startup] About to run IDCA historical duplicate cleanup`
+   - `[startup] IDCA historical duplicate cleanup hook scheduled`
+
+### Logs esperados en deploy
+```
+[startup] About to run IDCA historical duplicate cleanup
+[IDCA][DUP_FINAL_SELL_CLEANUP] startup hook reached
+[IDCA][DUP_FINAL_SELL_CLEANUP] checking historical duplicate final sells
+[startup] IDCA historical duplicate cleanup hook scheduled
+```
+
+### Confirmaciones
+- ✅ Entrypoint real corregido (server/index.ts)
+- ✅ Log startup hook reached incondicional
+- ✅ Cleanup se ejecuta o muestra motivo de abort
+- ✅ No toca ciclos activos ni motor LIVE
+
+---
+
+## 2026-05-24 — fix(idca): wire duplicate cleanup into real startup path
+
+### Hash del commit
+`775df71`
+
+### Objetivo
+Mover la llamada de limpieza de duplicados al startup real de la app (server/routes.ts) donde se ejecutan los otros hooks de startup como P&L rebuild.
+
+### Archivos modificados
+- `server/routes.ts` — Import y llamada a `runIdcaHistoricalDuplicateCleanupOnce()` en setTimeout 15s
+- `server/index.ts` — Eliminar llamada duplicada que no se ejecutaba
+
+### Cambios implementados
+1. **Import en server/routes.ts**: Añadir import de `runIdcaHistoricalDuplicateCleanupOnce`
+2. **Llamada en startup real**: Añadir setTimeout 15s después de P&L rebuild (línea 1019-1026)
+3. **Eliminar duplicado**: Quitar llamada en server/index.ts que no se ejecutaba
+
+### Archivo exacto donde estaban los logs reales
+`server/routes.ts` línea 1010 (Auto-rebuilding P&L for sells without P&L)
+
+### Logs esperados en deploy
+```
+[startup] Auto-rebuilding P&L for sells without P&L...
+[startup] P&L rebuild done: updated=0, skipped=195, errors=0
+[IDCA][DUP_FINAL_SELL_CLEANUP] startup hook reached
+[IDCA][DUP_FINAL_SELL_CLEANUP] checking historical duplicate final sells
+[IDCA][DUP_FINAL_SELL_CLEANUP] candidate cycleId=22 keepOrderId=57 duplicates=437 applyBlocked=false
+[IDCA][DUP_FINAL_SELL_CLEANUP] backup created
+[IDCA][DUP_FINAL_SELL_CLEANUP] deleted duplicate orders count=437
+[IDCA][DUP_FINAL_SELL_CLEANUP] completed cycleId=22
+```
+
+Si ya se ejecutó:
+```
+[IDCA][DUP_FINAL_SELL_CLEANUP] already applied, skipping
+```
+
+### Confirmaciones
+- ✅ Archivo exacto: server/routes.ts (línea 1019-1026)
+- ✅ Hook integrado en startup real
+- ✅ Log "startup hook reached" saldrá siempre
+- ✅ Cleanup se ejecuta o muestra motivo de abort
+- ✅ No toca motor LIVE ni ciclos activos
+
+---
+
+## 2026-05-24 — fix(idca): use inArray for duplicate final sell cleanup ids
+
+### Hash del commit
+`dc1d959`
+
+### Objetivo
+Corregir error SQL "op ANY/ALL (array) requires array on right side" reemplazando uso de ANY por Drizzle inArray en queries de backup y delete.
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaHistoricalDuplicateCleanupService.ts` — Import inArray, reemplazar ANY por inArray, añadir validación de backup count
+
+### Cambios implementados
+1. **Import inArray**: Añadir `inArray` a imports de drizzle-orm
+2. **Backup query**: Reemplazar `sql`${institutionalDcaOrders.id} = ANY(${duplicateOrderIds})`` por `inArray(institutionalDcaOrders.id, duplicateOrderIds)`
+3. **Delete query**: Reemplazar ANY por `and(eq(institutionalDcaOrders.cycleId, cycleId), inArray(institutionalDcaOrders.id, duplicateOrderIds))`
+4. **Validación backup count**: Verificar que `duplicateRowsFullData.length === duplicateOrderIds.length` antes de borrar
+5. **Logs de diagnóstico**: Añadir logs "backup rows selected count" y "deleting duplicate order ids count"
+6. **Abort si mismatch**: Si backup count no coincide, abortar con error y log "backup_count_mismatch"
+
+### Logs esperados en deploy
+```
+[IDCA][DUP_FINAL_SELL_CLEANUP] backup rows selected count=437
+[IDCA][DUP_FINAL_SELL_CLEANUP] backup created
+[IDCA][DUP_FINAL_SELL_CLEANUP] deleting duplicate order ids count=437
+[IDCA][DUP_FINAL_SELL_CLEANUP] deleted duplicate orders count=437
+[IDCA][DUP_FINAL_SELL_CLEANUP] completed cycleId=22
+```
+
+Si backup count mismatch:
+```
+[IDCA][DUP_FINAL_SELL_CLEANUP] aborted reason=backup_count_mismatch expected=437 actual=...
+```
+
+### Confirmaciones
+- ✅ Se reemplazó ANY/ALL por inArray
+- ✅ backupRows.length debe coincidir con duplicateOrderIds.length antes de borrar
+- ✅ No toca BTC #24 / ETH #17
+- ✅ No toca motor LIVE
+- ✅ No hizo deploy ni VPS
 
 ---
 

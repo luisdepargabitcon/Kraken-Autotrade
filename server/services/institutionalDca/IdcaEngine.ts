@@ -41,8 +41,10 @@ import type {
   DipReferenceMethod,
   IdcaMacroContext,
   VwapEntryContext,
+  DynamicDistanceInput,
 } from "./IdcaTypes";
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
+import { parseDynamicDistanceConfig, computeDynamicDistance } from "./IdcaDynamicDistanceService";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
@@ -2129,21 +2131,47 @@ async function manageCycle(
           const nextLevel = ladder.levels.find(l => l.level >= currentBuyCount);
 
           if (nextLevel && nextLevel.triggerPrice > 0) {
+            // Dynamic Distance: aplica como suelo conservador. lastBuyPrice=null → fallback a avgEntry.
+            let healedNextBuyPrice = nextLevel.triggerPrice;
+            const ddCfgHealed = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+            if (ddCfgHealed.mode === "dynamic_hybrid") {
+              const ddResultHealed = computeDynamicDistance({
+                config: ddCfgHealed,
+                pair,
+                cycleType: (cycle.cycleType as IdcaCycleType) || "main",
+                buyCount: cycle.buyCount || 1,
+                avgEntryPrice: avgEntry,
+                lastBuyPrice: null,  // self-heal: no recent fill → fallback to avgEntry in service
+                existingNextBuyPrice: nextLevel.triggerPrice,
+                atrPct: getVolatility(pair),
+                marketScore: parseFloat(String(cycle.marketScore || "50")),
+                candleCount: ohlcCache.get(pair)?.length ?? 0,
+                capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
+                capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
+              });
+              if (!ddResultHealed.blocked && ddResultHealed.effectiveNextBuyPrice != null) {
+                if (ddResultHealed.changedFrom != null) {
+                  console.log(`${TAG}[DYNAMIC_DISTANCE][SELF_HEAL] ${pair} #${cycle.id}: ladder nextBuyPrice ${ddResultHealed.changedFrom.toFixed(2)} → ${ddResultHealed.effectiveNextBuyPrice.toFixed(2)}`);
+                }
+                healedNextBuyPrice = ddResultHealed.effectiveNextBuyPrice;
+              }
+            }
+
             await repo.updateCycle(cycle.id, {
               nextBuyLevelPct: nextLevel.dipPct.toFixed(2),
-              nextBuyPrice: nextLevel.triggerPrice.toFixed(8),
+              nextBuyPrice: healedNextBuyPrice.toFixed(8),
             });
-            console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated via ATRP ladder → $${nextLevel.triggerPrice.toFixed(2)} (level=${nextLevel.level}, dip=${nextLevel.dipPct.toFixed(2)}%)`);
+            console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated via ATRP ladder → $${healedNextBuyPrice.toFixed(2)} (level=${nextLevel.level}, dip=${nextLevel.dipPct.toFixed(2)}%)`);
 
             // Create event for traceability
             await createHumanEvent({
               cycleId: cycle.id, pair, mode,
               eventType: "cycle_data_healed",
               severity: "info",
-              message: `Próxima compra recalculada: $${nextLevel.triggerPrice.toFixed(2)} usando ladder ATRP (nivel ${nextLevel.level})`,
+              message: `Próxima compra recalculada: $${healedNextBuyPrice.toFixed(2)} usando ladder ATRP (nivel ${nextLevel.level})`,
             }, {
               eventType: "cycle_data_healed", pair, mode,
-              nextBuyPrice: nextLevel.triggerPrice,
+              nextBuyPrice: healedNextBuyPrice,
               nextBuyLevel: nextLevel.level,
               method: "ladder_atrp",
             });
@@ -2163,23 +2191,49 @@ async function manageCycle(
           cycle.buyCount || 1
         );
         if (effectiveSafety.nextBuyPrice && effectiveSafety.nextBuyPrice > 0) {
+          // Dynamic Distance: aplica como suelo conservador. lastBuyPrice=null → fallback a avgEntry.
+          let healedNextBuySafety = effectiveSafety.nextBuyPrice;
+          const ddCfgSafety = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+          if (ddCfgSafety.mode === "dynamic_hybrid") {
+            const ddResultSafety = computeDynamicDistance({
+              config: ddCfgSafety,
+              pair,
+              cycleType: (cycle.cycleType as IdcaCycleType) || "main",
+              buyCount: cycle.buyCount || 1,
+              avgEntryPrice: avgEntry,
+              lastBuyPrice: null,  // self-heal: no recent fill → fallback to avgEntry in service
+              existingNextBuyPrice: effectiveSafety.nextBuyPrice,
+              atrPct: getVolatility(pair),
+              marketScore: parseFloat(String(cycle.marketScore || "50")),
+              candleCount: ohlcCache.get(pair)?.length ?? 0,
+              capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
+              capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
+            });
+            if (!ddResultSafety.blocked && ddResultSafety.effectiveNextBuyPrice != null) {
+              if (ddResultSafety.changedFrom != null) {
+                console.log(`${TAG}[DYNAMIC_DISTANCE][SELF_HEAL] ${pair} #${cycle.id}: safety nextBuyPrice ${ddResultSafety.changedFrom.toFixed(2)} → ${ddResultSafety.effectiveNextBuyPrice.toFixed(2)}`);
+              }
+              healedNextBuySafety = ddResultSafety.effectiveNextBuyPrice;
+            }
+          }
+
           await repo.updateCycle(cycle.id, {
             nextBuyLevelPct: effectiveSafety.nextLevelPct?.toFixed(2) || null,
-            nextBuyPrice: effectiveSafety.nextBuyPrice.toFixed(8),
+            nextBuyPrice: healedNextBuySafety.toFixed(8),
             skippedSafetyLevels: effectiveSafety.skippedLevels,
             skippedLevelsDetail: effectiveSafety.skippedLevels > 0 ? effectiveSafety.skippedLevelsDetail : null,
           });
-          console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${effectiveSafety.nextBuyPrice.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
+          console.log(`${TAG}[SELF_HEAL] ${pair} #${cycle.id}: nextBuyPrice recalculated → $${healedNextBuySafety.toFixed(2)} (skipped=${effectiveSafety.skippedLevels})`);
 
           // Create event for traceability
           await createHumanEvent({
             cycleId: cycle.id, pair, mode,
             eventType: "cycle_data_healed",
             severity: "info",
-            message: `Próxima compra recalculada: $${effectiveSafety.nextBuyPrice.toFixed(2)} usando safety orders`,
+            message: `Próxima compra recalculada: $${healedNextBuySafety.toFixed(2)} usando safety orders`,
           }, {
             eventType: "cycle_data_healed", pair, mode,
-            nextBuyPrice: effectiveSafety.nextBuyPrice,
+            nextBuyPrice: healedNextBuySafety,
             method: "safety_orders",
           });
         } else if (effectiveSafety.skippedLevels !== (cycle.skippedSafetyLevels ?? 0)) {
@@ -2569,6 +2623,36 @@ async function checkSafetyBuy(
       }
     } catch {
       // JSON corrupto → usa cálculo % fijo
+    }
+  }
+
+  // ─── Dynamic Distance: aplicar como suelo conservador ────────────────────
+  // Solo afecta nextBuyPriceCalc. Nunca modifica avgEntryPrice ni contabilidad.
+  // La distancia dinámica puede alejar el trigger (más bajo), nunca acercarlo.
+  const ddConfig = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+  if (ddConfig.mode === "dynamic_hybrid") {
+    const ddInput: DynamicDistanceInput = {
+      config: ddConfig,
+      pair,
+      cycleType: (cycle.cycleType as IdcaCycleType) || "main",
+      buyCount: newBuyCount,
+      avgEntryPrice: newAvgPrice,
+      lastBuyPrice: avgFillPrice,         // precio real de esta compra — referencia preferente
+      existingNextBuyPrice: nextBuyPriceCalc,
+      atrPct: getVolatility(pair),
+      marketScore: parseFloat(String(cycle.marketScore || "50")),
+      candleCount: ohlcCache.get(pair)?.length ?? 0,
+      capitalUsedUsd: newTotalCost,
+      capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
+    };
+    const ddResult = computeDynamicDistance(ddInput);
+    if (ddResult.blocked) {
+      console.log(`${TAG}[DYNAMIC_DISTANCE] ${pair} #${cycle.id}: blocked reason=${ddResult.blockReason} — keeping existing nextBuyPriceCalc`);
+    } else if (ddResult.mode === "dynamic_hybrid" && ddResult.effectiveNextBuyPrice != null) {
+      if (ddResult.changedFrom != null) {
+        console.log(`${TAG}[DYNAMIC_DISTANCE] ${pair} #${cycle.id}: nextBuyPrice ${ddResult.changedFrom.toFixed(2)} → ${ddResult.effectiveNextBuyPrice.toFixed(2)} (applied=${ddResult.appliedDistancePct?.toFixed(2)}% ref=${ddResult.referencePrice?.toFixed(2)})`);
+      }
+      nextBuyPriceCalc = ddResult.effectiveNextBuyPrice;
     }
   }
 

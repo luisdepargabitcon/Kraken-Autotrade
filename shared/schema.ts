@@ -1058,6 +1058,8 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   ladderAtrpEnabled: boolean("ladder_atrp_enabled").notNull().default(false),
   // Trailing Buy Level 1 config
   trailingBuyLevel1ConfigJson: jsonb("trailing_buy_level_1_config_json"),
+  // Dynamic Distance config (manual | dynamic_hybrid)
+  dynamicDistanceConfigJson: jsonb("dynamic_distance_config_json"),
   takeProfitPct: decimal("take_profit_pct", { precision: 5, scale: 2 }).notNull().default("4.00"),
   dynamicTakeProfit: boolean("dynamic_take_profit").notNull().default(true),
   trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }).notNull().default("1.20"),

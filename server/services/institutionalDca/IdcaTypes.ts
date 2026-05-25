@@ -529,3 +529,70 @@ export interface TrailingBuyState {
   triggerLevel: number;
   expiresAt?: Date;
 }
+
+// ─── Dynamic Distance Config ──────────────────────────────────────────────
+
+export type DynamicDistanceMode = "manual" | "dynamic_hybrid";
+
+export interface DynamicDistanceConfig {
+  mode: DynamicDistanceMode;
+  // ATR multiplier: how many ATR% to use as base distance
+  atrMultiplier: number;       // default 1.0
+  // Aggressiveness slider: 0=más conservador, 100=más agresivo
+  aggressiveness: number;      // default 50 (neutral)
+  // Clamps
+  minDistancePct: number;      // default 0.80 (BTC) / 1.00 (ETH)
+  maxDistancePct: number;      // default 12.0 (BTC) / 15.0 (ETH)
+  // Fee floor: minimum distance to ensure profitability after round-trip fees+spread
+  feeFloorPct: number;         // default 0.60 (BTC) / 0.70 (ETH)
+  // Feature toggles
+  useMarketRegime: boolean;    // default true — adds penalty when marketScore < 60
+  useCyclePressure: boolean;   // default true — adds penalty when buyCount >= 2
+  useExposurePenalty: boolean; // default true — adds penalty when exposure > 60%
+  useDataHealthPenalty: boolean; // default true — adds penalty when data is stale
+}
+
+export interface DynamicDistanceComponents {
+  feeFloor: number;
+  atrDistance: number;
+  regimePenalty: number;
+  cyclePressure: number;
+  exposurePenalty: number;
+  dataHealthPenalty: number;
+  raw: number;
+  aggressivenessFactor: number;
+  clamped: boolean;
+}
+
+export interface DynamicDistanceInput {
+  config: DynamicDistanceConfig;
+  pair: string;
+  cycleType: IdcaCycleType;
+  buyCount: number;
+  // Reference prices — prefer lastBuyPrice, fallback to avgEntryPrice
+  avgEntryPrice: number;
+  lastBuyPrice?: number | null;
+  // Existing calculated nextBuyPrice (from ladder or safety orders)
+  existingNextBuyPrice?: number | null;
+  // Market context
+  atrPct: number;         // from getVolatility(pair) — ATRP percentage
+  marketScore: number;    // 0–100 from cycle.marketScore
+  candleCount: number;    // from ohlcCache.get(pair)?.length — data health proxy
+  // Exposure
+  capitalUsedUsd: number;
+  capitalReservedUsd: number;
+}
+
+export interface DynamicDistanceResult {
+  mode: DynamicDistanceMode;
+  blocked: boolean;
+  blockReason?: "data_not_ready";
+  // Only populated when mode=dynamic_hybrid and not blocked
+  appliedDistancePct?: number;
+  suggestedDistancePct?: number;
+  referencePrice?: number;           // lastBuyPrice ?? avgEntryPrice
+  proposedNextBuyPrice?: number;     // referencePrice * (1 - appliedDistancePct / 100)
+  effectiveNextBuyPrice?: number;    // min(existingNextBuyPrice, proposedNextBuyPrice)
+  changedFrom?: number | null;       // existingNextBuyPrice if changed, for logging
+  components?: DynamicDistanceComponents;
+}
