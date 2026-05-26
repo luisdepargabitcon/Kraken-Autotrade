@@ -1060,6 +1060,8 @@ export const institutionalDcaAssetConfigs = pgTable("institutional_dca_asset_con
   trailingBuyLevel1ConfigJson: jsonb("trailing_buy_level_1_config_json"),
   // Dynamic Distance config (manual | dynamic_hybrid)
   dynamicDistanceConfigJson: jsonb("dynamic_distance_config_json"),
+  // Entry Mode: which distance resolver is active for all buy types
+  entryMode: text("entry_mode").notNull().default("assisted_entry"),
   takeProfitPct: decimal("take_profit_pct", { precision: 5, scale: 2 }).notNull().default("4.00"),
   dynamicTakeProfit: boolean("dynamic_take_profit").notNull().default(true),
   trailingPct: decimal("trailing_pct", { precision: 5, scale: 2 }).notNull().default("1.20"),

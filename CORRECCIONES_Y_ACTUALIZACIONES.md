@@ -2,6 +2,68 @@
 
 ---
 
+## 2026-06-02 — feat(idca): Sprint 1a — IdcaDistanceResolver: resolver unificado de distancia de entrada
+
+### Objetivo
+Unificar el cálculo de distancia requerida para TODOS los tipos de compra IDCA bajo un
+único servicio `IdcaDistanceResolver`, eliminando las fuentes de verdad duplicadas y
+preparando la arquitectura para Sprint 1b (motor de confluencia) y Sprint 2 (UI unificada).
+
+### Archivos nuevos
+- `db/migrations/040_idca_entry_mode.sql`
+  - Añade columna `entry_mode TEXT NOT NULL DEFAULT 'assisted_entry'` a `institutional_dca_asset_configs`
+  - Constraint: solo acepta `'assisted_entry'`, `'dynamic_intelligent_entry'`, `'legacy'`
+  - Default `assisted_entry` → cero cambio de comportamiento en VPS existente
+- `server/services/institutionalDca/IdcaDistanceResolver.ts`
+  - `resolveIdcaRequiredDistance()`: resolver principal para initial_entry, trailing_buy_entry, safety_buy, recovery, reentry
+  - `logDistanceResolution()`: emite log `[IDCA][DISTANCE_RESOLUTION]` con breakdown completo
+  - Modo `assisted_entry`: usa sliders (curva estática por par) — equivalente a comportamiento actual
+  - Modo `dynamic_intelligent_entry`: delega en `computeDynamicDistance()` — distancia ATR-driven
+  - Modo `legacy`: alias de `assisted_entry` con `legacyUsed=true`
+  - Regla conservadora safety_buy/recovery: `effectiveNextBuyPrice = min(existing, proposed)`
+  - Fallback automático a sliders si `computeDynamicDistance` está bloqueado (datos insuficientes)
+- `server/services/institutionalDca/__tests__/IdcaDistanceResolver.test.ts`
+  - 18 tests unitarios: equivalencia slider, retrocompat legacy, modo dinámico, regla conservadora, fallback
+
+### Archivos modificados
+- `shared/schema.ts`
+  - Añade campo `entryMode: text("entry_mode").notNull().default("assisted_entry")` a `institutionalDcaAssetConfigs`
+- `server/services/institutionalDca/IdcaTypes.ts`
+  - Añade: `IdcaEntryMode`, `IdcaDistanceUsedFor`, `IdcaDistanceSource`
+  - Añade: `IdcaDistanceResolverInput`, `IdcaDistanceResolverBreakdown`, `IdcaDistanceResolverResult`
+- `server/services/institutionalDca/IdcaEngine.ts`
+  - Importa `resolveIdcaRequiredDistance`, `logDistanceResolution`, `IdcaEntryMode`
+  - Elimina imports directos de `computeDynamicDistance` y `DynamicDistanceInput` (ya no usados)
+  - **Punto 1 (VWAP TB path)**: reemplaza `tbDerived.effectiveMinDipPct` con resolver
+  - **Punto 2 (L1 TB path)**: reemplaza `derived.effectiveMinDipPct` con resolver
+  - **Punto 3 (initial_entry)**: reemplaza `getEffectiveEntryConfig` directo con resolver; añade log `[DISTANCE_RESOLUTION]`
+  - **Punto 4 (safety_buy)**: reemplaza bloque `computeDynamicDistance` directo con resolver
+  - **Punto 5a (self-heal ATRP ladder)**: reemplaza `computeDynamicDistance` con resolver
+  - **Punto 5b (self-heal safety orders)**: reemplaza `computeDynamicDistance` con resolver
+  - Actualiza `logEntryDecision()` para incluir `entryMode` y `required_drop_source` en `[IDCA_ENTRY_DECISION]`
+  - Actualiza `[EFFECTIVE_CONFIG]` log para incluir `entryMode`, `entryDistanceSource`, `legacyUsed`
+
+### Nuevos logs emitidos
+- `[IDCA][DISTANCE_RESOLUTION]`: para cada resolución de distancia (initial_entry, TB, safety_buy, recovery)
+  - Campos: pair, usedFor, mode, source, legacyUsed, requiredDistancePct, sliderBasePct, atrMultiplier, atrComponent, aggressivenessFactor, feeFloor, minClamp, maxClamp, regimePenalty, cyclePressure, exposurePenalty, dataQualityPenalty, suggestedDistancePct, referencePrice, currentPrice, drawdownFromReferencePct, trailingBuyWillArm
+- `[IDCA][EFFECTIVE_CONFIG]`: ahora incluye `entryMode`, `entryDistanceSource`, `legacyUsed`
+- `[IDCA][IDCA_ENTRY_DECISION]`: ahora incluye `entryMode`, `required_drop_source`
+
+### Preservación de comportamiento (Sprint 1a)
+- Con `entry_mode='assisted_entry'` (default): comportamiento 100% equivalente al anterior
+- Con `entry_mode='assisted_entry'` + `dynamicDistanceConfig.mode='dynamic_hybrid'`: safety buys siguen usando distancia dinámica (retrocompat)
+- `entry_mode='dynamic_intelligent_entry'`: nuevo, no activado en VPS hasta configuración explícita
+
+### Validación
+- `npm run check`: ✅ (tsc, 0 errores)
+- `vitest IdcaDistanceResolver`: ✅ 18/18 tests pasados
+
+### Deploy VPS
+- Requiere ejecutar migración: `040_idca_entry_mode.sql`
+- `git pull + docker compose -f docker-compose.staging.yml up -d --build`
+
+---
+
 ## 2026-05-26 — fix(idca): refresh trailing buy reference after dynamic anchor renewal
 
 ### Contexto del bug

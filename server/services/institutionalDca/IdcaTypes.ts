@@ -530,6 +530,72 @@ export interface TrailingBuyState {
   expiresAt?: Date;
 }
 
+// ─── Entry Mode & Distance Resolver ─────────────────────────────────────────
+
+/** Modo de resolución de distancia activo para el par. */
+export type IdcaEntryMode = "assisted_entry" | "dynamic_intelligent_entry" | "legacy";
+
+/** Tipo de compra para el que se resuelve la distancia requerida. */
+export type IdcaDistanceUsedFor =
+  | "initial_entry"
+  | "trailing_buy_entry"
+  | "safety_buy"
+  | "reentry"
+  | "recovery";
+
+/** Fuente del valor de distancia resuelta. */
+export type IdcaDistanceSource =
+  | "assisted_entry_sliders"
+  | "dynamic_distance"
+  | "legacy_entry_patience";
+
+export interface IdcaDistanceResolverInput {
+  pair: string;
+  usedFor: IdcaDistanceUsedFor;
+  activeEntryMode: IdcaEntryMode;
+  referencePrice: number;
+  atrPct: number;
+  entryGlobalConfig: { entryUiJson?: unknown } | null;
+  dynamicDistanceConfig: DynamicDistanceConfig;
+  buyCount: number;
+  marketScore: number;
+  candleCount: number;
+  capitalUsedUsd: number;
+  capitalReservedUsd: number;
+  existingNextBuyPrice?: number | null;
+}
+
+export interface IdcaDistanceResolverBreakdown {
+  sliderBasePct?: number;
+  atrPct?: number;
+  atrMultiplier?: number;
+  atrComponent?: number;
+  aggressiveness?: number;
+  aggressivenessFactor?: number;
+  feeFloor?: number;
+  userMinDistancePct?: number;
+  userMaxDistancePct?: number;
+  marketRegimePenalty?: number;
+  cyclePressurePenalty?: number;
+  exposurePenalty?: number;
+  dataQualityPenalty?: number;
+  suggestedDistancePct?: number;
+  finalRequiredDistancePct: number;
+}
+
+export interface IdcaDistanceResolverResult {
+  requiredDistancePct: number;
+  mode: IdcaEntryMode;
+  source: IdcaDistanceSource;
+  legacyUsed: boolean;
+  usedFor: IdcaDistanceUsedFor;
+  /** Populated for safety_buy/recovery when conservative min() rule applied. */
+  effectiveNextBuyPrice?: number;
+  /** Informational shadow field — NOT applied to orders in Sprint 1a. */
+  suggestedSizeFactor?: number;
+  breakdown: IdcaDistanceResolverBreakdown;
+}
+
 // ─── Dynamic Distance Config ──────────────────────────────────────────────
 
 export type DynamicDistanceMode = "manual" | "dynamic_hybrid";

@@ -41,10 +41,11 @@ import type {
   DipReferenceMethod,
   IdcaMacroContext,
   VwapEntryContext,
-  DynamicDistanceInput,
+  IdcaEntryMode,
 } from "./IdcaTypes";
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
-import { parseDynamicDistanceConfig, computeDynamicDistance } from "./IdcaDynamicDistanceService";
+import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
+import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
@@ -1195,13 +1196,29 @@ async function evaluatePair(
               console.log(`${TAG}[VWAP_RELIABILITY] pair=${pair} candlesUsed=${tbVwap.candlesUsed} reliableForEntry=false reliableForContext=true reason=insufficient_vwap_candles minRequired=${MIN_VWAP_CANDLES_FOR_ENTRY}`);
             }
 
-            // Guard FASE 2: computar buyThreshold real desde sliders para validar arm
-            const tbDerived = getEffectiveEntryConfig(config, pair);
+            // Guard FASE 2: computar buyThreshold real usando resolver de distancia
+            const tbDerived = getEffectiveEntryConfig(config, pair); // mantener para reboundPct y otros
             const tbFrozenAnchor = vwapAnchorMemory.get(pair);
             const tbEffectiveRef = tbFrozenAnchor?.anchorPrice && tbFrozenAnchor.anchorPrice > 0
               ? tbFrozenAnchor.anchorPrice
               : tbVwap.lowerBand1;
-            const tbBuyThreshold = tbEffectiveRef * (1 - tbDerived.effectiveMinDipPct / 100);
+            const tbEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+            const tbDistanceResult = resolveIdcaRequiredDistance({
+              pair,
+              usedFor: "trailing_buy_entry",
+              activeEntryMode: tbEntryMode,
+              referencePrice: tbEffectiveRef,
+              atrPct: getVolatility(pair),
+              entryGlobalConfig: config,
+              dynamicDistanceConfig: parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson),
+              buyCount: 0,
+              marketScore: 50,  // Sprint 1a: safe default para TB pre-ciclo
+              candleCount: tbCandles.length,
+              capitalUsedUsd: 0,
+              capitalReservedUsd: 0,
+            });
+            logDistanceResolution(TAG, pair, tbDistanceResult, { referencePrice: tbEffectiveRef, currentPrice });
+            const tbBuyThreshold = tbEffectiveRef * (1 - tbDistanceResult.requiredDistancePct / 100);
 
             // ─── HOTFIX: Stale reference guard ──────────────────────────────────────────
             // If trailing buy was armed BEFORE a dynamic anchor renewal, its snapshot
@@ -1450,9 +1467,25 @@ async function evaluatePair(
             const effectiveEntryReference = frozenAnchor$?.anchorPrice && frozenAnchor$.anchorPrice > 0
               ? frozenAnchor$.anchorPrice
               : triggerPrice; // fallback al precio del nivel ladder
-            // Slider config es fuente de verdad: si entryUiJson existe, sus valores override minDipPct/trailingValue
-            const derived = getEffectiveEntryConfig(config, pair);
-            const effectiveMinDipPct = derived.effectiveMinDipPct;
+            // Resolver de distancia: fuente de verdad para umbral de trailing buy L1
+            const derived = getEffectiveEntryConfig(config, pair); // mantener para maxOvershootPct y otros
+            const tbL1EntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+            const tbL1DistanceResult = resolveIdcaRequiredDistance({
+              pair,
+              usedFor: "trailing_buy_entry",
+              activeEntryMode: tbL1EntryMode,
+              referencePrice: effectiveEntryReference,
+              atrPct: getVolatility(pair),
+              entryGlobalConfig: config,
+              dynamicDistanceConfig: parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson),
+              buyCount: 0,
+              marketScore: 50,  // Sprint 1a: safe default para TB pre-ciclo
+              candleCount: ohlcCache.get(pair)?.length ?? 0,
+              capitalUsedUsd: 0,
+              capitalReservedUsd: 0,
+            });
+            logDistanceResolution(TAG, pair, tbL1DistanceResult, { referencePrice: effectiveEntryReference, currentPrice });
+            const effectiveMinDipPct = tbL1DistanceResult.requiredDistancePct;
             const buyThreshold = effectiveEntryReference * (1 - effectiveMinDipPct / 100);
             const maxOvershootPct = derived.maxExecutionOvershootPct;
             const maxExecutionPrice = buyThreshold * (1 + maxOvershootPct / 100);
@@ -2242,30 +2275,30 @@ async function manageCycle(
           const nextLevel = ladder.levels.find(l => l.level >= currentBuyCount);
 
           if (nextLevel && nextLevel.triggerPrice > 0) {
-            // Dynamic Distance: aplica como suelo conservador. lastBuyPrice=null → fallback a avgEntry.
+            // Resolver de distancia: aplica como suelo conservador. self-heal: avgEntry como referencia.
             let healedNextBuyPrice = nextLevel.triggerPrice;
-            const ddCfgHealed = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
-            if (ddCfgHealed.mode === "dynamic_hybrid") {
-              const ddResultHealed = computeDynamicDistance({
-                config: ddCfgHealed,
-                pair,
-                cycleType: (cycle.cycleType as IdcaCycleType) || "main",
-                buyCount: cycle.buyCount || 1,
-                avgEntryPrice: avgEntry,
-                lastBuyPrice: null,  // self-heal: no recent fill → fallback to avgEntry in service
-                existingNextBuyPrice: nextLevel.triggerPrice,
-                atrPct: getVolatility(pair),
-                marketScore: parseFloat(String(cycle.marketScore || "50")),
-                candleCount: ohlcCache.get(pair)?.length ?? 0,
-                capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
-                capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
-              });
-              if (!ddResultHealed.blocked && ddResultHealed.effectiveNextBuyPrice != null) {
-                if (ddResultHealed.changedFrom != null) {
-                  console.log(`${TAG}[DYNAMIC_DISTANCE][SELF_HEAL] ${pair} #${cycle.id}: ladder nextBuyPrice ${ddResultHealed.changedFrom.toFixed(2)} → ${ddResultHealed.effectiveNextBuyPrice.toFixed(2)}`);
-                }
-                healedNextBuyPrice = ddResultHealed.effectiveNextBuyPrice;
+            const shAtrpEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+            const shAtrpDdCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+            const shAtrpResult = resolveIdcaRequiredDistance({
+              pair,
+              usedFor: "recovery",
+              activeEntryMode: shAtrpEntryMode,
+              referencePrice: avgEntry,  // no recent fill → usar avgEntry
+              atrPct: getVolatility(pair),
+              entryGlobalConfig: config,
+              dynamicDistanceConfig: shAtrpDdCfg,
+              buyCount: cycle.buyCount || 1,
+              marketScore: parseFloat(String(cycle.marketScore || "50")),
+              candleCount: ohlcCache.get(pair)?.length ?? 0,
+              capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
+              capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
+              existingNextBuyPrice: nextLevel.triggerPrice,
+            });
+            if (shAtrpResult.effectiveNextBuyPrice != null) {
+              if (shAtrpResult.effectiveNextBuyPrice !== nextLevel.triggerPrice) {
+                console.log(`${TAG}[DISTANCE_RESOLVER][SELF_HEAL] ${pair} #${cycle.id}: ladder nextBuyPrice ${nextLevel.triggerPrice.toFixed(2)} → ${shAtrpResult.effectiveNextBuyPrice.toFixed(2)} (mode=${shAtrpResult.mode} source=${shAtrpResult.source})`);
               }
+              healedNextBuyPrice = shAtrpResult.effectiveNextBuyPrice;
             }
 
             await repo.updateCycle(cycle.id, {
@@ -2302,30 +2335,30 @@ async function manageCycle(
           cycle.buyCount || 1
         );
         if (effectiveSafety.nextBuyPrice && effectiveSafety.nextBuyPrice > 0) {
-          // Dynamic Distance: aplica como suelo conservador. lastBuyPrice=null → fallback a avgEntry.
+          // Resolver de distancia: aplica como suelo conservador. self-heal: avgEntry como referencia.
           let healedNextBuySafety = effectiveSafety.nextBuyPrice;
-          const ddCfgSafety = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
-          if (ddCfgSafety.mode === "dynamic_hybrid") {
-            const ddResultSafety = computeDynamicDistance({
-              config: ddCfgSafety,
-              pair,
-              cycleType: (cycle.cycleType as IdcaCycleType) || "main",
-              buyCount: cycle.buyCount || 1,
-              avgEntryPrice: avgEntry,
-              lastBuyPrice: null,  // self-heal: no recent fill → fallback to avgEntry in service
-              existingNextBuyPrice: effectiveSafety.nextBuyPrice,
-              atrPct: getVolatility(pair),
-              marketScore: parseFloat(String(cycle.marketScore || "50")),
-              candleCount: ohlcCache.get(pair)?.length ?? 0,
-              capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
-              capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
-            });
-            if (!ddResultSafety.blocked && ddResultSafety.effectiveNextBuyPrice != null) {
-              if (ddResultSafety.changedFrom != null) {
-                console.log(`${TAG}[DYNAMIC_DISTANCE][SELF_HEAL] ${pair} #${cycle.id}: safety nextBuyPrice ${ddResultSafety.changedFrom.toFixed(2)} → ${ddResultSafety.effectiveNextBuyPrice.toFixed(2)}`);
-              }
-              healedNextBuySafety = ddResultSafety.effectiveNextBuyPrice;
+          const shSafetyEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+          const shSafetyDdCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+          const shSafetyResult = resolveIdcaRequiredDistance({
+            pair,
+            usedFor: "recovery",
+            activeEntryMode: shSafetyEntryMode,
+            referencePrice: avgEntry,  // no recent fill → usar avgEntry
+            atrPct: getVolatility(pair),
+            entryGlobalConfig: config,
+            dynamicDistanceConfig: shSafetyDdCfg,
+            buyCount: cycle.buyCount || 1,
+            marketScore: parseFloat(String(cycle.marketScore || "50")),
+            candleCount: ohlcCache.get(pair)?.length ?? 0,
+            capitalUsedUsd: parseFloat(String(cycle.capitalUsedUsd || "0")),
+            capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
+            existingNextBuyPrice: effectiveSafety.nextBuyPrice,
+          });
+          if (shSafetyResult.effectiveNextBuyPrice != null) {
+            if (shSafetyResult.effectiveNextBuyPrice !== effectiveSafety.nextBuyPrice) {
+              console.log(`${TAG}[DISTANCE_RESOLVER][SELF_HEAL] ${pair} #${cycle.id}: safety nextBuyPrice ${effectiveSafety.nextBuyPrice.toFixed(2)} → ${shSafetyResult.effectiveNextBuyPrice.toFixed(2)} (mode=${shSafetyResult.mode} source=${shSafetyResult.source})`);
             }
+            healedNextBuySafety = shSafetyResult.effectiveNextBuyPrice;
           }
 
           await repo.updateCycle(cycle.id, {
@@ -2737,33 +2770,34 @@ async function checkSafetyBuy(
     }
   }
 
-  // ─── Dynamic Distance: aplicar como suelo conservador ────────────────────
+  // ─── Resolver de distancia: aplicar como suelo conservador ──────────────────
   // Solo afecta nextBuyPriceCalc. Nunca modifica avgEntryPrice ni contabilidad.
-  // La distancia dinámica puede alejar el trigger (más bajo), nunca acercarlo.
-  const ddConfig = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
-  if (ddConfig.mode === "dynamic_hybrid") {
-    const ddInput: DynamicDistanceInput = {
-      config: ddConfig,
+  // Regla conservadora: effectiveNextBuyPrice = min(existingNextBuyPrice, proposedNextBuyPrice)
+  if (nextBuyPriceCalc !== null) {
+    const sbEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+    const sbDdCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+    const sbDistanceResult = resolveIdcaRequiredDistance({
       pair,
-      cycleType: (cycle.cycleType as IdcaCycleType) || "main",
-      buyCount: newBuyCount,
-      avgEntryPrice: newAvgPrice,
-      lastBuyPrice: avgFillPrice,         // precio real de esta compra — referencia preferente
-      existingNextBuyPrice: nextBuyPriceCalc,
+      usedFor: "safety_buy",
+      activeEntryMode: sbEntryMode,
+      referencePrice: avgFillPrice > 0 ? avgFillPrice : newAvgPrice,  // precio real de esta compra
       atrPct: getVolatility(pair),
+      entryGlobalConfig: config,
+      dynamicDistanceConfig: sbDdCfg,
+      buyCount: newBuyCount,
       marketScore: parseFloat(String(cycle.marketScore || "50")),
       candleCount: ohlcCache.get(pair)?.length ?? 0,
       capitalUsedUsd: newTotalCost,
       capitalReservedUsd: parseFloat(String(cycle.capitalReservedUsd || "0")),
-    };
-    const ddResult = computeDynamicDistance(ddInput);
-    if (ddResult.blocked) {
-      console.log(`${TAG}[DYNAMIC_DISTANCE] ${pair} #${cycle.id}: blocked reason=${ddResult.blockReason} — keeping existing nextBuyPriceCalc`);
-    } else if (ddResult.mode === "dynamic_hybrid" && ddResult.effectiveNextBuyPrice != null) {
-      if (ddResult.changedFrom != null) {
-        console.log(`${TAG}[DYNAMIC_DISTANCE] ${pair} #${cycle.id}: nextBuyPrice ${ddResult.changedFrom.toFixed(2)} → ${ddResult.effectiveNextBuyPrice.toFixed(2)} (applied=${ddResult.appliedDistancePct?.toFixed(2)}% ref=${ddResult.referencePrice?.toFixed(2)})`);
+      existingNextBuyPrice: nextBuyPriceCalc,
+    });
+    if (sbDistanceResult.effectiveNextBuyPrice != null) {
+      if (sbDistanceResult.effectiveNextBuyPrice < nextBuyPriceCalc) {
+        console.log(`${TAG}[DISTANCE_RESOLVER][SAFETY_BUY] ${pair} #${cycle.id}: nextBuyPrice ${nextBuyPriceCalc.toFixed(2)} → ${sbDistanceResult.effectiveNextBuyPrice.toFixed(2)} (mode=${sbDistanceResult.mode} source=${sbDistanceResult.source} applied=${sbDistanceResult.requiredDistancePct.toFixed(2)}%)`);
       }
-      nextBuyPriceCalc = ddResult.effectiveNextBuyPrice;
+      nextBuyPriceCalc = sbDistanceResult.effectiveNextBuyPrice;
+    } else if (sbDistanceResult.source === "dynamic_distance" && sbDistanceResult.requiredDistancePct === 0) {
+      console.log(`${TAG}[DISTANCE_RESOLVER][SAFETY_BUY] ${pair} #${cycle.id}: blocked or no-effect (mode=${sbDistanceResult.mode}) — keeping existing nextBuyPriceCalc`);
     }
   }
 
@@ -3762,9 +3796,38 @@ async function performEntryCheck(
     : 0;
 
   const atrPct = basePriceResult.meta?.atrPct ?? 0;
-  const sliderDerivedEntry = getEffectiveEntryConfig(config, pair);
-  const minDip = sliderDerivedEntry.effectiveMinDipPct;
-  console.log(`${TAG}[EFFECTIVE_CONFIG] pair=${pair} source=sliders effectiveMinDipPct=${minDip.toFixed(2)}% legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}% atrPct=${atrPct.toFixed(2)}%`);
+  const entryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
+  const ddCfgEntry = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
+  const entryDistanceResult = resolveIdcaRequiredDistance({
+    pair,
+    usedFor: "initial_entry",
+    activeEntryMode: entryMode,
+    referencePrice: effectiveBasePrice > 0 ? effectiveBasePrice : currentPrice,
+    atrPct,
+    entryGlobalConfig: config,
+    dynamicDistanceConfig: ddCfgEntry,
+    buyCount: 0,
+    marketScore: 50,  // Sprint 1a: safe default; marketScore se calcula después (post-line 3870)
+    candleCount: ohlcCache.get(pair)?.length ?? 0,
+    capitalUsedUsd: 0,
+    capitalReservedUsd: 0,
+  });
+  const minDip = entryDistanceResult.requiredDistancePct;
+  logDistanceResolution(TAG, pair, entryDistanceResult, {
+    referencePrice: effectiveBasePrice,
+    currentPrice,
+    drawdownFromReferencePct: entryDipPct,
+    trailingBuyWillArm: entryDipPct >= minDip,
+  });
+  console.log(
+    `${TAG}[EFFECTIVE_CONFIG] pair=${pair}` +
+    ` entryMode=${entryMode}` +
+    ` entryDistanceSource=${entryDistanceResult.source}` +
+    ` requiredDistancePct=${minDip.toFixed(2)}%` +
+    ` legacyUsed=${entryDistanceResult.legacyUsed}` +
+    ` legacyMinDipPct=${parseFloat(String(assetConfig.minDipPct)).toFixed(2)}%` +
+    ` atrPct=${atrPct.toFixed(2)}%`
+  );
 
   // Construir referenceContext enriquecido (solo metadata — no altera trading logic)
   // hasActiveCycle real: si el servicio dinámico evaluó el ciclo, usar su resultado
@@ -3968,7 +4031,8 @@ async function performEntryCheck(
     blocks.length === 0 ? "all_checks_passed" : blocks.map(b => b.code).join(","),
     entryDipPct, minDip, basePriceResult, currentPrice,
     effectiveBasePrice, basePriceMethod,
-    observeOnly
+    observeOnly,
+    entryDistanceResult.mode, entryDistanceResult.source
   );
 
   return {
@@ -4124,7 +4188,8 @@ function logEntryDecision(
   pair: string, mode: string, action: "allowed" | "blocked", reason: string,
   dip: number, minDip: number, base: BasePriceResult, currentPrice: number,
   effectiveBasePrice?: number, basePriceMethod?: string,
-  observeOnly?: boolean
+  observeOnly?: boolean,
+  distanceMode?: string, distanceSource?: string
 ): void {
   const effBase = effectiveBasePrice ?? base.price;
   const effMethod = basePriceMethod ?? base.type ?? "hybrid";
@@ -4139,6 +4204,8 @@ function logEntryDecision(
     ` action=${effectiveAction}` +
     ` observeOnly=${observeOnly ?? false}` +
     ` reason="${reason}"` +
+    ` entryMode=${distanceMode ?? "assisted_entry"}` +
+    ` required_drop_source=${distanceSource ?? "assisted_entry_sliders"}` +
     ` hybrid_base_price=${base.price.toFixed(2)}` +
     ` effective_entry_reference=${effBase.toFixed(2)}` +
     ` reference_method=${effMethod}` +
