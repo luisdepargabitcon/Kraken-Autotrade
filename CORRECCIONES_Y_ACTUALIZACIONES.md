@@ -2,6 +2,73 @@
 
 ---
 
+## 2026-05-27 — feat(idca): Sprint 1b — IdcaConfluenceEngine: motor de confluencia jerárquico
+
+### Objetivo
+Implementar el motor de confluencia IDCA (`IdcaConfluenceEngine`) con arquitectura
+jerárquica: hard gates → régimen de mercado → family scores → multiplicadores →
+confidence final → decisionClass. Integración en `IdcaEngine.ts` como capa diagnóstica
+(Sprint 1b default: `smartAdjustmentEnabled=false` → sin cambio de distancia, solo logs).
+
+### Archivos nuevos
+- **`server/services/institutionalDca/IdcaConfluenceEngine.ts`** (460 líneas)
+  - `classifyIdcaMarketRegime()`: 8 regímenes con orden de prioridad definido
+  - `evaluateIdcaEntryConfluence()`: pipeline completo con family scores, multiplicadores, decisionClass, smart adjustment y dynamic distance con confidence
+  - `logIdcaConfluence()`: log estructurado `[IDCA][CONFLUENCE]`
+  - Family scores: `valueScore`, `confirmationScore`, `riskScore`, `dataScore`, `regimeScore`
+  - Multiplicadores: `riskMultiplier × dataMultiplier × regimeMultiplier` (no suma plana)
+  - Fórmula: `confidenceScore = sqrt(value × confirmation) × riskMult × dataMult × regimeMult`
+- **`server/services/institutionalDca/__tests__/IdcaConfluenceEngine.test.ts`** (32/32 tests ✅)
+
+### Archivos modificados
+- **`server/services/institutionalDca/IdcaTypes.ts`**
+  - Nuevos tipos: `IdcaMarketRegime`, `IdcaDecisionClass`, `IdcaConfidenceGrade`, `IdcaConfluenceProfile`, `IdcaHardBlockerCode`, `IdcaDegradingBlockerCode`, `IdcaFamilyScores`, `IdcaConfluenceBreakdown`, `IdcaConfluenceInput`, `IdcaConfluenceResult`
+  - `IdcaDistanceResolverInput/Result`: campo `tbPath?: "vwap_anchor" | "level_1" | "none"` (fix doble log)
+  - `IDCA_BLOCK_CODES`: añadidos `confluence_no_entry`, `confluence_hard_blocked`
+  - `IdcaEntryCheckResult`: campo `confluenceResult?: IdcaConfluenceResult`
+- **`server/services/institutionalDca/IdcaDistanceResolver.ts`**
+  - `tbPath` pasado en result para VWAP y L1 paths
+  - `logDistanceResolution()`: emite `tbPath=vwap_anchor|level_1` cuando aplica
+- **`server/services/institutionalDca/IdcaEngine.ts`**
+  - `tbPath: "vwap_anchor"` en llamada VWAP TB resolver
+  - `tbPath: "level_1"` en llamada L1 TB resolver
+  - Helpers locales: `_deriveShortMomentum()`, `_deriveHasRecoveryCandle()`, `_deriveBtcContext()`
+  - `btcScoreForConfluence`: hoisted para capturar btcScore para confluencia
+  - `let minDip` (era `const`): permite actualización por confluence adjustment
+  - Bloque de evaluación de confluencia post-`reboundConfirmed`:
+    - Llama `evaluateIdcaEntryConfluence()` cuando `smartModeEnabled || dynamic_intelligent_entry`
+    - Emite `[IDCA][CONFLUENCE]` con score, regime, decisionClass, family scores, multiplicadores
+    - Hard blockers → `blocks.push({ code: "confluence_hard_blocked", ... })`
+    - `decisionClass=NO_ENTRY` → `blocks.push({ code: "confluence_no_entry", ... })`
+    - `finalRequiredDistancePct ≠ minDip` → re-evalúa `insufficient_dip` gate
+  - `confluenceResult` incluido en return de `performEntryCheck`
+
+### Comportamiento de los logs esperados en producción
+```text
+[IDCA][DISTANCE_RESOLUTION] pair=BTC/USD usedFor=trailing_buy_entry ... tbPath=vwap_anchor
+[IDCA][DISTANCE_RESOLUTION] pair=BTC/USD usedFor=trailing_buy_entry ... tbPath=level_1
+[IDCA][CONFLUENCE] pair=BTC/USD decisionClass=WATCH confidenceScore=58.3 confidenceGrade=C
+  marketRegime=neutral_range hardBlocked=false valueScore=72.1 confirmationScore=45.0
+  riskScore=100 dataScore=79 regimeScore=62 riskMult=1.10 dataMult=0.90 regimeMult=1.00
+  baseOpportunity=56.9 finalDistancePct=3.70% canArmTB=false smartAdj=0.000%
+```
+
+### Retrocompatibilidad (Sprint 1b)
+- `smartAdjustmentEnabled=false` (default) → `finalRequiredDistancePct = sliderBase` → sin cambio de minDip
+- Confluencia solo activa cuando `config.smartModeEnabled=true` OR `entryMode=dynamic_intelligent_entry`
+- NO modifica: sizing real, avgEntryPrice, anclas, fills, safety orders
+- Sprint 1a assets en producción: comportamiento 100% idéntico
+
+### Validación
+- `npm run check`: ✅
+- `vitest IdcaConfluenceEngine`: ✅ 32/32
+
+### VPS — no requiere migración adicional
+- No hay nuevas columnas DB en Sprint 1b
+- Solo `docker compose up -d --build` después de `git pull`
+
+---
+
 ## 2026-06-02 — feat(idca): Sprint 1a — IdcaDistanceResolver: resolver unificado de distancia de entrada
 
 ### Objetivo

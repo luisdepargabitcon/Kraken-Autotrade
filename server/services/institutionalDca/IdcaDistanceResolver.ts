@@ -89,6 +89,7 @@ function _resolveAssistedEntryDistance(
     source: isLegacy ? "legacy_entry_patience" : "assisted_entry_sliders",
     legacyUsed: isLegacy,
     usedFor,
+    tbPath: input.tbPath,
     breakdown: {
       sliderBasePct,
       finalRequiredDistancePct,
@@ -152,6 +153,7 @@ function _resolveDynamicEntryDistance(
     source: "dynamic_distance",
     legacyUsed: false,
     usedFor,
+    tbPath: input.tbPath,
     breakdown: {
       atrPct,
       atrMultiplier: dynamicDistanceConfig.atrMultiplier,
@@ -306,6 +308,7 @@ export function logDistanceResolution(
   if (context?.currentPrice != null)            parts.push(`currentPrice=${context.currentPrice.toFixed(2)}`);
   if (context?.drawdownFromReferencePct != null) parts.push(`drawdownFromReferencePct=${context.drawdownFromReferencePct.toFixed(2)}%`);
   if (context?.trailingBuyWillArm != null)      parts.push(`trailingBuyWillArm=${context.trailingBuyWillArm}`);
+  if (result.tbPath != null && result.tbPath !== "none")  parts.push(`tbPath=${result.tbPath}`);
 
   console.log(parts.join(" "));
 }

@@ -42,10 +42,12 @@ import type {
   IdcaMacroContext,
   VwapEntryContext,
   IdcaEntryMode,
+  IdcaConfluenceResult,
 } from "./IdcaTypes";
 import { normalizeDipReferenceMethod } from "./IdcaTypes";
 import { parseDynamicDistanceConfig } from "./IdcaDynamicDistanceService";
 import { resolveIdcaRequiredDistance, logDistanceResolution } from "./IdcaDistanceResolver";
+import { evaluateIdcaEntryConfluence, logIdcaConfluence } from "./IdcaConfluenceEngine";
 import type { TimestampedCandle } from "./IdcaSmartLayer";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { MarketDataService } from "../MarketDataService";
@@ -1216,6 +1218,7 @@ async function evaluatePair(
               candleCount: tbCandles.length,
               capitalUsedUsd: 0,
               capitalReservedUsd: 0,
+              tbPath: "vwap_anchor",
             });
             logDistanceResolution(TAG, pair, tbDistanceResult, { referencePrice: tbEffectiveRef, currentPrice });
             const tbBuyThreshold = tbEffectiveRef * (1 - tbDistanceResult.requiredDistancePct / 100);
@@ -1483,6 +1486,7 @@ async function evaluatePair(
               candleCount: ohlcCache.get(pair)?.length ?? 0,
               capitalUsedUsd: 0,
               capitalReservedUsd: 0,
+              tbPath: "level_1",
             });
             logDistanceResolution(TAG, pair, tbL1DistanceResult, { referencePrice: effectiveEntryReference, currentPrice });
             const effectiveMinDipPct = tbL1DistanceResult.requiredDistancePct;
@@ -3812,7 +3816,7 @@ async function performEntryCheck(
     capitalUsedUsd: 0,
     capitalReservedUsd: 0,
   });
-  const minDip = entryDistanceResult.requiredDistancePct;
+  let minDip = entryDistanceResult.requiredDistancePct;
   logDistanceResolution(TAG, pair, entryDistanceResult, {
     referencePrice: effectiveBasePrice,
     currentPrice,
@@ -3932,6 +3936,7 @@ async function performEntryCheck(
   let marketScore = 60;
   let volatilityScore = 0;
   let sizeProfile: IdcaSizeProfile = "balanced";
+  let btcScoreForConfluence: number | undefined;
 
   if (config.smartModeEnabled) {
     const scoreCandles = ohlcCache.get(pair) || [];
@@ -3967,6 +3972,7 @@ async function performEntryCheck(
             avgVolume: 1,
             localHigh: Math.max(...btcCloses.slice(-60)),
           }, config.marketScoreWeightsJson as any);
+          btcScoreForConfluence = btcScore;
         }
       }
 
@@ -4024,6 +4030,84 @@ async function performEntryCheck(
     }
   }
 
+  // ── Confluence evaluation (Sprint 1b) ───────────────────────────────────────
+  // Evaluar después de tener: marketScore, reboundConfirmed, atrPct, vwapZone.
+  // Sprint 1b default: smartAdjustmentEnabled=false → sólo diagnóstico, sin cambio de minDip.
+  let confluenceResult: IdcaConfluenceResult | undefined;
+  if (config.smartModeEnabled || entryMode === "dynamic_intelligent_entry") {
+    const allCandles = ohlcCache.get(pair) || [];
+    const recentForMomentum = allCandles.slice(-6);
+    const shortMomentum = _deriveShortMomentum(recentForMomentum);
+    const hasRecoveryCandle = _deriveHasRecoveryCandle(recentForMomentum);
+    const btcContextForPair = _deriveBtcContext(btcScoreForConfluence);
+    const confluenceProfile = entryMode === "dynamic_intelligent_entry" ? "full" : "assisted";
+
+    confluenceResult = evaluateIdcaEntryConfluence({
+      pair,
+      usedFor: trailingBuyEntry ? "trailing_buy_entry" : "initial_entry",
+      confluenceProfile,
+      drawdownFromReferencePct: entryDipPct,
+      requiredDistancePct: minDip,
+      sliderBasePct: entryDistanceResult.breakdown.sliderBasePct ?? minDip,
+      dynamicRawDistancePct: entryMode === "dynamic_intelligent_entry"
+        ? entryDistanceResult.requiredDistancePct : undefined,
+      vwapZone: vwapContext?.zone,
+      referenceMethod: basePriceMethod ?? undefined,
+      vwapReliable: vwapContext?.isReliable ?? false,
+      reboundConfirmed,
+      requireReboundConfirmation: !!assetConfig.requireReboundConfirmation,
+      trailingBuyArmed: TrailingBuyManager.isArmed(pair),
+      priceInActivationZone: entryDipPct >= minDip,
+      shortMomentum,
+      hasRecoveryCandle,
+      capitalUsedUsd: 0,
+      capitalReservedUsd: 0,
+      buyCount: 0,
+      marketScore,
+      atrPct,
+      btcContext: btcContextForPair,
+      candleCount: allCandles.length,
+      atrReliable: atrPct > 0,
+      smartAdjustmentEnabled: false,  // Sprint 1b default: solo diagnóstico
+    });
+
+    logIdcaConfluence(TAG, pair, confluenceResult);
+
+    // Aplicar hard blockers de confluencia a blocks (deduplicando)
+    if (confluenceResult.hardBlocked) {
+      for (const hb of confluenceResult.hardBlockers) {
+        if (!blocks.some(b => b.code === hb) && !blocks.some(b => b.code === "confluence_hard_blocked")) {
+          blocks.push({ code: "confluence_hard_blocked", message: `Hard gate: ${hb}`, timestamp: now });
+        }
+      }
+    }
+
+    // Confluencia con NO_ENTRY por baja confianza (no causado por hard gate ya procesado)
+    if (!confluenceResult.hardBlocked && confluenceResult.decisionClass === "NO_ENTRY") {
+      blocks.push({
+        code: "confluence_no_entry",
+        message: `Confluence NO_ENTRY: score=${confluenceResult.confidenceScore} grade=${confluenceResult.confidenceGrade} regime=${confluenceResult.marketRegime}`,
+        timestamp: now,
+      });
+    }
+
+    // Si confluencia ajustó minDip (smart adjustment activo o dynamic_intelligent_entry)
+    if (confluenceResult.finalRequiredDistancePct !== minDip) {
+      minDip = confluenceResult.finalRequiredDistancePct;
+      // Re-evaluar insufficient_dip con el nuevo minDip
+      const insuffIdx = blocks.findIndex(b => b.code === "insufficient_dip");
+      if (insuffIdx >= 0 && entryDipPct >= minDip) {
+        blocks.splice(insuffIdx, 1);  // ahora satisfecho
+      } else if (insuffIdx < 0 && basePriceResult.isReliable && !trailingBuyEntry && entryDipPct < minDip) {
+        blocks.push({
+          code: "insufficient_dip",
+          message: `EntryDip ${entryDipPct.toFixed(2)}% < adjusted min ${minDip.toFixed(2)}% (confluence)`,
+          timestamp: now,
+        });
+      }
+    }
+  }
+
   // Entry decision log — emitido con todos los bloques evaluados
   logEntryDecision(
     pair, mode,
@@ -4066,6 +4150,7 @@ async function performEntryCheck(
     referenceChangedRecently: refResult.referenceChangedRecently,
     referenceUpdatedAt: refResult.referenceUpdatedAt,
     referenceContext,
+    confluenceResult,
   };
 }
 
@@ -4156,6 +4241,36 @@ function getVolatility(pair: string): number {
   const candles = ohlcCache.get(pair) || [];
   if (candles.length < 5) return 2.0; // Default
   return smart.computeATRPct(candles);
+}
+
+// ─── Confluence helpers ───────────────────────────────────────────────
+
+function _deriveShortMomentum(
+  candles: { close: number }[]
+): "positive" | "flat" | "negative" {
+  if (candles.length < 4) return "flat";
+  const recent = candles[candles.length - 1].close;
+  const past   = candles[candles.length - 4].close;
+  if (past <= 0) return "flat";
+  const pct = ((recent - past) / past) * 100;
+  return pct > 0.3 ? "positive" : pct < -0.3 ? "negative" : "flat";
+}
+
+function _deriveHasRecoveryCandle(candles: { close: number; open?: number }[]): boolean {
+  if (candles.length < 2) return false;
+  const last = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+  return !!(last.open && last.close > last.open && last.close > prev.close);
+}
+
+function _deriveBtcContext(
+  btcScore: number | undefined
+): "supportive" | "neutral" | "weak" | "breakdown" | undefined {
+  if (btcScore == null) return undefined;
+  if (btcScore >= 65) return "supportive";
+  if (btcScore >= 50) return "neutral";
+  if (btcScore >= 35) return "weak";
+  return "breakdown";
 }
 
 // ─── Structured logs for basePrice trazabilidad ──────────────────────

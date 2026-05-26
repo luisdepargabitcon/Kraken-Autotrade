@@ -187,6 +187,8 @@ export const IDCA_BLOCK_CODES = [
   "institutional_dca_toggle_off",
   "global_trading_pause",
   "insufficient_base_price_data",
+  "confluence_no_entry",
+  "confluence_hard_blocked",
 ] as const;
 
 export type IdcaBlockCode = typeof IDCA_BLOCK_CODES[number];
@@ -247,6 +249,7 @@ export interface IdcaEntryCheckResult {
   referenceChangedRecently?: boolean;
   referenceUpdatedAt?: string;
   referenceContext?: import("./IdcaReferenceContext").ReferenceContext;
+  confluenceResult?: IdcaConfluenceResult;
 }
 
 export interface IdcaPairEvaluation {
@@ -563,6 +566,8 @@ export interface IdcaDistanceResolverInput {
   capitalUsedUsd: number;
   capitalReservedUsd: number;
   existingNextBuyPrice?: number | null;
+  /** Trailing buy path context — distinguishes vwap_anchor vs level_1 logs. */
+  tbPath?: "vwap_anchor" | "level_1" | "none";
 }
 
 export interface IdcaDistanceResolverBreakdown {
@@ -591,9 +596,149 @@ export interface IdcaDistanceResolverResult {
   usedFor: IdcaDistanceUsedFor;
   /** Populated for safety_buy/recovery when conservative min() rule applied. */
   effectiveNextBuyPrice?: number;
-  /** Informational shadow field — NOT applied to orders in Sprint 1a. */
+  /** Informational shadow field — NOT applied to orders. */
   suggestedSizeFactor?: number;
+  /** Trailing buy path — distinguishes vwap_anchor vs level_1 logs. */
+  tbPath?: "vwap_anchor" | "level_1" | "none";
   breakdown: IdcaDistanceResolverBreakdown;
+}
+
+// ─── Confluence Engine Types (Sprint 1b) ─────────────────────────────────────
+
+export type IdcaMarketRegime =
+  | "bullish_pullback"
+  | "neutral_range"
+  | "bearish_breakdown"
+  | "high_volatility"
+  | "low_volatility"
+  | "capitulation_zone"
+  | "rebound_candidate"
+  | "unknown";
+
+export type IdcaDecisionClass =
+  | "NO_ENTRY"
+  | "WATCH"
+  | "ARM_TRAILING"
+  | "NORMAL_ENTRY"
+  | "HIGH_CONFIDENCE_ENTRY"
+  | "DEFENSIVE_SAFETY_BUY";
+
+export type IdcaConfidenceGrade = "A" | "B" | "C" | "D" | "F";
+
+export type IdcaConfluenceProfile = "full" | "assisted" | "safety_buy";
+
+export type IdcaHardBlockerCode =
+  | "data_unusable"
+  | "market_data_stale_critical"
+  | "pair_not_allowed"
+  | "module_paused"
+  | "global_trading_paused"
+  | "exchange_execution_blocked"
+  | "insufficient_capital"
+  | "cycle_state_incompatible"
+  | "overexposed_critical"
+  | "btc_breakdown_blocks_eth"
+  | "vwap_zone_extremely_unfavorable";
+
+export type IdcaDegradingBlockerCode =
+  | "data_degraded"
+  | "market_score_weak"
+  | "risk_elevated"
+  | "high_volatility_warn"
+  | "no_rebound_when_required"
+  | "vwap_zone_unfavorable"
+  | "exposure_medium_high"
+  | "cycle_pressure_high";
+
+export interface IdcaFamilyScores {
+  valueScore: number;
+  confirmationScore: number;
+  riskScore: number;
+  dataScore: number;
+  regimeScore: number;
+}
+
+export interface IdcaConfluenceBreakdown {
+  distanceScore: number;
+  vwapZoneScore: number;
+  referenceQualityScore: number;
+  reboundScore: number;
+  momentumScore: number;
+  structureScore: number;
+  exposurePenalty: number;
+  cyclePressurePenalty: number;
+  volatilityPenalty: number;
+  btcContextPenalty: number;
+  candlesScore: number;
+  freshnessScore: number;
+  sourceScore: number;
+  indicatorScore: number;
+  riskMultiplier: number;
+  dataMultiplier: number;
+  regimeMultiplier: number;
+  baseOpportunity: number;
+  smartAdjustmentRaw?: number;
+  smartAdjustmentPct?: number;
+  riskAdjustment?: number;
+  dataAdjustment?: number;
+  regimeAdjustment?: number;
+  vwapAdjustment?: number;
+  confidenceDiscount?: number;
+  dynamicConfidenceDiscount?: number;
+  dynamicConfidencePenalty?: number;
+  dynamicRiskPenaltiesPct?: number;
+  candidateDistancePct?: number;
+}
+
+export interface IdcaConfluenceInput {
+  pair: string;
+  usedFor: IdcaDistanceUsedFor;
+  confluenceProfile: IdcaConfluenceProfile;
+  drawdownFromReferencePct: number;
+  requiredDistancePct: number;
+  sliderBasePct?: number;
+  dynamicRawDistancePct?: number;
+  userMinEntryDistancePct?: number;
+  userMaxEntryDistancePct?: number;
+  minConfidenceScore?: number;
+  vwapZone?: string;
+  referenceMethod?: string;
+  vwapReliable: boolean;
+  reboundConfirmed: boolean;
+  requireReboundConfirmation: boolean;
+  trailingBuyArmed: boolean;
+  priceInActivationZone: boolean;
+  shortMomentum?: "positive" | "flat" | "negative";
+  hasRecoveryCandle?: boolean;
+  capitalUsedUsd: number;
+  capitalReservedUsd: number;
+  buyCount: number;
+  marketScore: number;
+  atrPct: number;
+  btcContext?: "supportive" | "neutral" | "weak" | "breakdown";
+  candleCount: number;
+  atrReliable: boolean;
+  smartAdjustmentEnabled: boolean;
+  dynamicDistanceConfig?: DynamicDistanceConfig;
+}
+
+export interface IdcaConfluenceResult {
+  decisionClass: IdcaDecisionClass;
+  confidenceScore: number;
+  confidenceGrade: IdcaConfidenceGrade;
+  marketRegime: IdcaMarketRegime;
+  hardBlocked: boolean;
+  hardBlockers: IdcaHardBlockerCode[];
+  degradingBlockers: IdcaDegradingBlockerCode[];
+  familyScores: IdcaFamilyScores;
+  canArmTrailingBuy: boolean;
+  smartAdjustmentPct: number;
+  finalRequiredDistancePct: number;
+  suggestedSizeFactor?: number;
+  confidenceAdjustmentPct?: number;
+  breakdown: IdcaConfluenceBreakdown;
+  reasons: string[];
+  warnings: string[];
 }
 
 // ─── Dynamic Distance Config ──────────────────────────────────────────────
