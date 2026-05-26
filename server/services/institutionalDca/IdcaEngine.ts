@@ -1203,6 +1203,45 @@ async function evaluatePair(
               : tbVwap.lowerBand1;
             const tbBuyThreshold = tbEffectiveRef * (1 - tbDerived.effectiveMinDipPct / 100);
 
+            // ─── HOTFIX: Stale reference guard ──────────────────────────────────────────
+            // If trailing buy was armed BEFORE a dynamic anchor renewal, its snapshot
+            // of referencePrice is stale. Disarm + let arm block re-arm with new ref.
+            // Skip if: no active cycle (checked by caller), diff ≤ 0.25% (noise), or not armed.
+            if (TrailingBuyManager.isArmed(pair)) {
+              const tbStaleState = TrailingBuyManager.getState(pair);
+              if (tbStaleState) {
+                const tbStaleRefDiff = tbStaleState.referencePrice > 0
+                  ? Math.abs(tbEffectiveRef - tbStaleState.referencePrice) / tbStaleState.referencePrice
+                  : 1;
+                if (tbStaleRefDiff > 0.0025) {
+                  const oldRef = tbStaleState.referencePrice;
+                  const oldLocalLow = tbStaleState.localLow;
+                  console.log(
+                    `${TAG}[TRAILING_BUY_REFERENCE_REFRESH] pair=${pair}` +
+                    ` old=${oldRef.toFixed(2)} new=${tbEffectiveRef.toFixed(2)}` +
+                    ` reason=dynamic_anchor_renewed activeCycle=false`
+                  );
+                  TrailingBuyManager.disarm(pair);
+                  tbState.resetTrailingBuyTelegramState(pair, mode, "reference_refreshed");
+                  await createHumanEvent({
+                    pair, mode,
+                    eventType: "trailing_buy_reference_refreshed",
+                    severity: "info",
+                    message: `Trailing buy rearmado: ancla dinámica renovada. Ref anterior: $${oldRef.toFixed(2)} → Nueva: $${tbEffectiveRef.toFixed(2)} (diff=${(tbStaleRefDiff * 100).toFixed(3)}%)`,
+                    payloadJson: {
+                      pair,
+                      oldReference: oldRef,
+                      newReference: tbEffectiveRef,
+                      oldBestObservedPrice: oldLocalLow,
+                      reason: "dynamic_anchor_renewed",
+                      activeCycleExists: false,
+                      diffPct: parseFloat((tbStaleRefDiff * 100).toFixed(4)),
+                    },
+                  }, { eventType: "trailing_buy_reference_refreshed", pair, mode });
+                }
+              }
+            }
+
             // Arm: precio entra en zona VWAP Y toca buyThreshold real Y VWAP tiene datos maduros
             if (inInterestZone && vwapReliableForEntry && currentPrice <= tbBuyThreshold && !TrailingBuyManager.isArmed(pair)) {
               const reboundMinPct = tbDerived.reboundPct;
@@ -1243,6 +1282,35 @@ async function evaluatePair(
               }
               
               if (tbResult.triggered) {
+                // ─── HOTFIX: Pre-purchase stale reference guard (task 5) ───────────────
+                // Edge case: anchor renews in a previous stage of the same tick
+                // (inside checkEntry). Verify reference used at arm still matches.
+                const tbTriggerRefDiff = tbManagerState && tbEffectiveRef > 0
+                  ? Math.abs(tbEffectiveRef - tbManagerState.referencePrice) / tbManagerState.referencePrice
+                  : 0;
+                if (tbTriggerRefDiff > 0.0025) {
+                  console.log(
+                    `${TAG}[TRAILING_BUY_REFERENCE_STALE_BLOCKED] pair=${pair}` +
+                    ` trailingRef=${tbManagerState!.referencePrice.toFixed(2)}` +
+                    ` currentRef=${tbEffectiveRef.toFixed(2)}` +
+                    ` action=refresh_no_buy`
+                  );
+                  await createHumanEvent({
+                    pair, mode,
+                    eventType: "trailing_buy_reference_stale_blocked",
+                    severity: "warn",
+                    message: `Trailing buy trigger bloqueado: referencia stale ($${tbManagerState!.referencePrice.toFixed(2)}) vs referencia actual ($${tbEffectiveRef.toFixed(2)}). No se ejecuta compra.`,
+                    payloadJson: {
+                      pair,
+                      trailingRef: tbManagerState!.referencePrice,
+                      currentRef: tbEffectiveRef,
+                      diffPct: parseFloat((tbTriggerRefDiff * 100).toFixed(4)),
+                      action: "refresh_no_buy",
+                    },
+                  }, { eventType: "trailing_buy_reference_stale_blocked", pair, mode });
+                  tbState.resetTrailingBuyTelegramState(pair, mode, "reference_stale_blocked");
+                  // TB already disarmed by update(); stale guard on next tick will re-arm with new ref
+                } else {
                 // Trailing confirmó rebote → permitir ejecución de compra
                 const tbState$ = TrailingBuyManager.getState(pair); // puede ser undefined ya (disarmed)
                 const tbBuyThreshold = tbResult.buyThreshold ?? tbState$?.buyThreshold ?? currentPrice;
@@ -1263,6 +1331,7 @@ async function evaluatePair(
                 telegram.alertTrailingBuyTriggered(pair, mode, currentPrice, tbResult.bouncePct, tbResult.localLow, tbResult.maxExecutionPrice)
                   .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyTriggered failed: ${e.message}`));
                 trailingAllowsEntry = true;
+                } // end stale-ref-ok branch
               } else if (tbResult.reason === "expired") {
                 // Trailing buy expiró por timeout
                 await createHumanEvent({
@@ -1387,6 +1456,44 @@ async function evaluatePair(
             const buyThreshold = effectiveEntryReference * (1 - effectiveMinDipPct / 100);
             const maxOvershootPct = derived.maxExecutionOvershootPct;
             const maxExecutionPrice = buyThreshold * (1 + maxOvershootPct / 100);
+
+            // ─── HOTFIX: Stale reference guard (Level 1 path) ───────────────────────
+            // Same as VWAP path: if TB armed before anchor renewal, disarm and re-arm.
+            if (TrailingBuyManager.isArmed(pair)) {
+              const tbL1StaleState = TrailingBuyManager.getState(pair);
+              if (tbL1StaleState) {
+                const tbL1RefDiff = tbL1StaleState.referencePrice > 0
+                  ? Math.abs(effectiveEntryReference - tbL1StaleState.referencePrice) / tbL1StaleState.referencePrice
+                  : 1;
+                if (tbL1RefDiff > 0.0025) {
+                  const oldRefL1 = tbL1StaleState.referencePrice;
+                  const oldLowL1 = tbL1StaleState.localLow;
+                  console.log(
+                    `${TAG}[TRAILING_BUY_REFERENCE_REFRESH] pair=${pair}` +
+                    ` old=${oldRefL1.toFixed(2)} new=${effectiveEntryReference.toFixed(2)}` +
+                    ` reason=dynamic_anchor_renewed activeCycle=false path=level1`
+                  );
+                  TrailingBuyManager.disarm(pair);
+                  tbState.resetTrailingBuyTelegramState(pair, mode, "reference_refreshed");
+                  await createHumanEvent({
+                    pair, mode,
+                    eventType: "trailing_buy_reference_refreshed",
+                    severity: "info",
+                    message: `Trailing buy L1 rearmado: ancla dinámica renovada. Ref anterior: $${oldRefL1.toFixed(2)} → Nueva: $${effectiveEntryReference.toFixed(2)} (diff=${(tbL1RefDiff * 100).toFixed(3)}%)`,
+                    payloadJson: {
+                      pair,
+                      oldReference: oldRefL1,
+                      newReference: effectiveEntryReference,
+                      oldBestObservedPrice: oldLowL1,
+                      reason: "dynamic_anchor_renewed",
+                      activeCycleExists: false,
+                      diffPct: parseFloat((tbL1RefDiff * 100).toFixed(4)),
+                      path: "level1",
+                    },
+                  }, { eventType: "trailing_buy_reference_refreshed", pair, mode });
+                }
+              }
+            }
 
             if (currentPrice > buyThreshold) {
               // ── WATCHING: precio está cayendo hacia la zona de activación ──

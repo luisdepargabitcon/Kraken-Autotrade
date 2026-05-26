@@ -2,6 +2,92 @@
 
 ---
 
+## 2026-05-26 — fix(idca): refresh trailing buy reference after dynamic anchor renewal
+
+### Contexto del bug
+Telegram enviaba mensajes de Trailing Buy usando la referencia antigua después de que la
+Ancla Dinámica IDCA se renovara:
+
+```
+[Ancla IDCA renovada — BTC/USD]
+Nueva referencia: $77,809.90  ← Telegram de ancla correcto
+Referencia anterior: $82,017.40
+
+[Trailing Buy siguiendo precio — BTC/USD]
+Precio de referencia de entrada: $82,017.40  ← BUG: sigue con ref vieja
+```
+
+### Root cause
+`TrailingBuyManager.states` guarda un snapshot de `referencePrice` en el momento del arm.
+Cuando la Ancla Dinámica renueva (dentro de `checkEntry`), el TB ya armado mantiene el
+snapshot antiguo. La función `alertTrailingBuyTracking` usa `tbManagerState.referencePrice`
+directamente → siempre el valor viejo.
+
+### Arquitectura del flujo (por tick)
+```
+handleActiveState(pair)
+  ├── [activeCycle?] → manageCycle()
+  └── [no cycle]
+        ├── VWAP TB path:
+        │     ① Stale guard (NUEVO): tbManagerState.ref vs vwapAnchorMemory → disarm si >0.25%
+        │     ② Arm block: arm con tbEffectiveRef actual
+        │     ③ Update block: tbManagerState.update() → trigger?
+        │         └── Pre-purchase guard (NUEVO): bloquea trigger si ref stale
+        ├── Level 1 TB path:
+        │     ④ Stale guard L1 (NUEVO): mismo control
+        └── checkEntry() ← ancla puede renovar AQUÍ (POSTERIOR al TB logic)
+```
+
+### Fix
+
+**Guard 1 — VWAP path stale ref** (después de computar `tbEffectiveRef`):
+- Si `isArmed(pair)` Y `abs(tbEffectiveRef − armedRef) / armedRef > 0.0025`:
+  - `TrailingBuyManager.disarm(pair)` 
+  - `tbState.resetTrailingBuyTelegramState(...)` 
+  - emit event `trailing_buy_reference_refreshed`
+  - log `[TRAILING_BUY_REFERENCE_REFRESH]`
+- El arm block (justo después) re-arma con `tbEffectiveRef` nuevo si condiciones cumplen
+
+**Guard 2 — Pre-purchase** (dentro del bloque `tbResult.triggered`):
+- Antes de `trailingAllowsEntry = true`, verifica `tbManagerState.referencePrice` vs `tbEffectiveRef`
+- Si diff > 0.25% → no compra, log `[TRAILING_BUY_REFERENCE_STALE_BLOCKED]`, emit event
+- Safety net para el edge case donde ancla renueva en el mismo tick del trigger
+
+**Guard 3 — Level 1 path** (después de computar `effectiveEntryReference`):
+- Misma lógica que Guard 1, aplica al path de Level 1 TB
+
+### Invariantes garantizados
+- **Ciclo activo**: el guard solo corre en el bloque `!hasAny && !hasImported`. Con ciclo activo, el engine ejecuta `manageCycle` y no toca TB. `avg`, `nextBuyPrice`, `ladder`, `capitalUsedUsd` intocados.
+- **Diff ≤ 0.25%**: no refresca (noise suppression, misma tolerancia que otros fixes)
+- **Re-arm inmediato**: si tras el disarm el precio sigue en zona de interés, el arm block re-arma en el mismo tick con la nueva referencia
+- **Telegram correcto post-fix**: `alertTrailingBuyTracking` usa `tbManagerState.referencePrice` = nuevo ancla
+
+### Logs esperados post-fix
+```
+[IDCA][TRAILING_BUY_REFERENCE_REFRESH] pair=BTC/USD old=82017.40 new=77809.90
+  reason=dynamic_anchor_renewed activeCycle=false
+[IDCA][TRAILING_BUY_ARMED] pair=BTC/USD referencePrice=$77809.90 ...
+```
+Y a continuación Telegram mostrará:
+```
+[Trailing Buy siguiendo precio — BTC/USD]
+Precio de referencia de entrada: $77,809.90  ← correcto ✓
+```
+
+### Archivos modificados
+- `IdcaEngine.ts`:
+  - Guard 1 (VWAP path): stale ref check después de `tbBuyThreshold` (líneas ~1206-1243)
+  - Guard 2 (pre-purchase): bloqueo antes de `trailingAllowsEntry = true` (líneas ~1285-1313)
+  - Guard 3 (Level 1 path): mismo control (líneas ~1460-1496)
+- `IdcaTrailingBuyReferenceRefresh.test.ts` (**nuevo**): 15 tests / 15 PASS
+
+### Validación
+- `npm run check`: ✅ (exit 0)
+- Tests: ✅ 15/15 (Casos A/B/C/D + full sequence BTC)
+- No requiere migración DB
+
+---
+
 ## 2026-05-26 — fix(idca): adjust protective sell quantity to exchange balance
 
 ### Contexto del bug
