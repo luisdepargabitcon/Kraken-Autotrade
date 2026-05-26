@@ -19,6 +19,9 @@ import { isIdcaLine, parseIdcaLog } from "../services/institutionalDca/idcaLogPa
 import { getEffectiveEntryConfig, ENTRY_SLIDER_DEFAULTS, type EntryUiConfig } from "../services/institutionalDca/IdcaSliderConfig";
 import { checkMarketDataHealth } from "../services/institutionalDca/IdcaMarketDataHealthService";
 import { getVwapAnchor } from "../services/institutionalDca/IdcaRepository";
+import { parseDynamicDistanceConfig } from "../services/institutionalDca/IdcaDynamicDistanceService";
+import { computeATRPct } from "../services/institutionalDca/IdcaSmartLayer";
+import { evaluateIdcaEntryConfluence } from "../services/institutionalDca/IdcaConfluenceEngine";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -2057,6 +2060,96 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       }
 
       res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Entry Diagnostics Snapshot (Sprint 2) ───────────────────────────────────────
+  // GET /api/institutional-dca/entry-diagnostics
+  // Returns a lightweight confluence snapshot per pair without executing trades.
+
+  app.get(`${PREFIX}/entry-diagnostics`, async (_req, res) => {
+    try {
+      const { MarketDataService } = await import("../services/MarketDataService");
+      const pairsToCheck = INSTITUTIONAL_DCA_ALLOWED_PAIRS as readonly string[];
+      const globalConfig = await repo.getIdcaConfig();
+      const result: Record<string, unknown> = {};
+
+      for (const pair of pairsToCheck) {
+        try {
+          const assetConfig = await repo.getAssetConfig(pair);
+          if (!assetConfig) { result[pair] = { pair, error: "asset config not found" }; continue; }
+
+          const currentPrice = await MarketDataService.getPrice(pair);
+          const candles = await MarketDataService.getCandles(pair, "1h");
+
+          const anchor = await getVwapAnchor(pair);
+          const referencePrice = anchor?.anchor_price && anchor.anchor_price > 0
+            ? anchor.anchor_price : currentPrice;
+          const referenceMethod = anchor?.anchor_price && anchor.anchor_price > 0
+            ? "vwap_anchor" : "current_price";
+
+          const entryMode = (assetConfig.entryMode ?? "assisted_entry") as string;
+          const entryConfig = getEffectiveEntryConfig({ entryUiJson: globalConfig.entryUiJson }, pair);
+          const atrPct = candles.length >= 14
+            ? computeATRPct(candles as Array<{ close: number; high: number; low: number; time: number }>)
+            : 2.0;
+          const drawdownFromReferencePct = referencePrice > 0
+            ? ((referencePrice - currentPrice) / referencePrice) * 100
+            : 0;
+
+          const confluenceResult = evaluateIdcaEntryConfluence({
+            pair,
+            usedFor: "initial_entry",
+            confluenceProfile: entryMode === "dynamic_intelligent_entry" ? "full" : "assisted",
+            drawdownFromReferencePct,
+            requiredDistancePct: entryConfig.effectiveMinDipPct,
+            sliderBasePct: entryConfig.effectiveMinDipPct,
+            referenceMethod,
+            vwapReliable: candles.length > 0,
+            reboundConfirmed: false,
+            requireReboundConfirmation: !!assetConfig.requireReboundConfirmation,
+            trailingBuyArmed: false,
+            priceInActivationZone: drawdownFromReferencePct >= entryConfig.effectiveMinDipPct,
+            capitalUsedUsd: 0,
+            capitalReservedUsd: 0,
+            buyCount: 0,
+            marketScore: 60,
+            atrPct,
+            candleCount: candles.length,
+            atrReliable: candles.length >= 14,
+            smartAdjustmentEnabled: false,
+          });
+
+          result[pair] = {
+            pair,
+            currentPrice,
+            entryMode,
+            referencePrice,
+            referenceMethod,
+            drawdownFromReferencePct: +drawdownFromReferencePct.toFixed(2),
+            requiredDistancePct: +entryConfig.effectiveMinDipPct.toFixed(2),
+            atrPct: +atrPct.toFixed(3),
+            candleCount: candles.length,
+            decisionClass: confluenceResult.decisionClass,
+            confidenceScore: confluenceResult.confidenceScore,
+            confidenceGrade: confluenceResult.confidenceGrade,
+            marketRegime: confluenceResult.marketRegime,
+            hardBlocked: confluenceResult.hardBlocked,
+            hardBlockers: confluenceResult.hardBlockers,
+            degradingBlockers: confluenceResult.degradingBlockers,
+            familyScores: confluenceResult.familyScores,
+            canArmTrailingBuy: confluenceResult.canArmTrailingBuy,
+            finalRequiredDistancePct: confluenceResult.finalRequiredDistancePct,
+            timestamp: new Date().toISOString(),
+          };
+        } catch (pairErr: any) {
+          result[pair] = { pair, error: String(pairErr.message) };
+        }
+      }
+
+      res.json({ pairs: result, generatedAt: new Date().toISOString() });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

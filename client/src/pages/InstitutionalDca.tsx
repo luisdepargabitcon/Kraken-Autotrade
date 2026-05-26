@@ -110,6 +110,7 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
+import { IdcaMarketPriceHeader } from "@/components/idca/IdcaMarketPriceHeader";
 import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
 import { IhcaNavigationProvider, useOptionalIdcaNavigation } from "@/hooks/IdcaNavigationContext";
 
@@ -158,7 +159,7 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia">("entrada");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia" | "confluencia">("entrada");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
@@ -915,7 +916,7 @@ function DynamicDistancePanel({
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia") => void }) {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia" | "confluencia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia" | "confluencia") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
@@ -992,9 +993,20 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
         >
           📐 Distancia
         </button>
+        <button
+          onClick={() => setConfigSubTab("confluencia")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "confluencia"
+              ? "bg-cyan-500/10 text-cyan-400 border-b-2 border-cyan-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          🧠 Confluencia
+        </button>
       </div>
 
-      {/* ════ ENTRADA AUTOMÁTICA ════ */}
+      {/* ════ ENTRADA ASISTIDA ════ */}
       {configSubTab === "entrada" && (() => {
         const eu = config.entryUiJson as Record<string, number> | null;
         const patience  = eu?.entryPatienceLevel       ?? 70;
@@ -1008,7 +1020,7 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           <div className="space-y-6">
             <Card className="border-green-500/30 bg-green-500/5">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-mono text-green-400">🎯 ENTRADA AUTOMÁTICA</CardTitle>
+                <CardTitle className="text-sm font-mono text-green-400">🎯 ENTRADA ASISTIDA</CardTitle>
                 <p className="text-xs text-muted-foreground">Controla cuándo y cómo el bot entra al mercado. Todos los valores técnicos se calculan automáticamente.</p>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -1844,6 +1856,49 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
             )}
           </div>
         </ConfigBlock>
+      )}
+
+      {/* ════ SUB-TAB: CONFLUENCIA ════ */}
+      {configSubTab === "confluencia" && (
+        <div className="space-y-4">
+          <Card className="border-cyan-500/30 bg-cyan-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-mono text-cyan-400">🧠 MOTOR DE CONFLUENCIA — Diagnóstico de Entrada</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Snapshot en tiempo real de la evaluación de confluencia por par. Muestra
+                régimen de mercado, puntuación de confianza y clase de decisión calculados
+                por <code className="font-mono text-[10px]">IdcaConfluenceEngine</code>.
+                En Sprint 1b el motor es solo diagnóstico — no modifica distancias ni tamaños.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <IdcaMarketPriceHeader />
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/30 bg-background/60">
+            <CardHeader className="pb-1">
+              <CardTitle className="text-xs font-mono text-muted-foreground">Leyenda — Clases de Decisión</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                {([
+                  ["HIGH_CONFIDENCE_ENTRY", "bg-emerald-500/15 text-emerald-300", "Todos los factores alineados. Entrada de alta confianza."],
+                  ["NORMAL_ENTRY", "bg-green-500/15 text-green-300", "Condiciones satisfactorias para entrada normal."],
+                  ["ARM_TRAILING", "bg-blue-500/15 text-blue-300", "Precio en zona pero sin confirmación. Armar trailing buy."],
+                  ["DEFENSIVE_SAFETY_BUY", "bg-amber-500/15 text-amber-300", "Sólo safety buy defensivo recomendado."],
+                  ["WATCH", "bg-yellow-500/15 text-yellow-300", "Condiciones débiles. Observar sin actuar."],
+                  ["NO_ENTRY", "bg-red-500/15 text-red-300", "Bloqueado por hard gate o confianza insuficiente."],
+                ] as [string, string, string][]).map(([cls, color, desc]) => (
+                  <div key={cls} className="flex flex-col gap-0.5">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold w-fit ${color}`}>{cls}</span>
+                    <span className="text-[10px] text-muted-foreground">{desc}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* ════ SUB-TAB: VWAP & REBOUND ════ */}

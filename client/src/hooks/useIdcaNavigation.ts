@@ -124,7 +124,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
 export interface UseIdcaNavigationOptions {
   setMainTab: (tab: string) => void;
   setAdaptiveTab?: (tab: string) => void;
-  setConfigSubTab?: (tab: "entrada" | "general" | "vwap" | "distancia") => void;
+  setConfigSubTab?: (tab: "entrada" | "general" | "vwap" | "distancia" | "confluencia") => void;
   setSelectedPair?: (pair: string) => void;
 }
 

@@ -1481,3 +1481,53 @@ export function useIdcaTerminalLogs(filters: {
     enabled: filters.enabled,
   });
 }
+
+// --- Entry Diagnostics (Sprint 2) ---
+
+export interface IdcaEntryDiagnosticPair {
+  pair: string;
+  currentPrice: number;
+  entryMode: string;
+  referencePrice: number;
+  referenceMethod: string;
+  drawdownFromReferencePct: number;
+  requiredDistancePct: number;
+  atrPct: number;
+  candleCount: number;
+  decisionClass: string;
+  confidenceScore: number;
+  confidenceGrade: string;
+  marketRegime: string;
+  hardBlocked: boolean;
+  hardBlockers: string[];
+  degradingBlockers: string[];
+  familyScores: {
+    valueScore: number;
+    confirmationScore: number;
+    riskScore: number;
+    dataScore: number;
+    regimeScore: number;
+  };
+  canArmTrailingBuy: boolean;
+  finalRequiredDistancePct: number;
+  timestamp: string;
+  error?: string;
+}
+
+export interface IdcaEntryDiagnosticsResponse {
+  pairs: Record<string, IdcaEntryDiagnosticPair>;
+  generatedAt: string;
+}
+
+export function useIdcaEntryDiagnostics() {
+  return useQuery<IdcaEntryDiagnosticsResponse>({
+    queryKey: ["idca", "entry-diagnostics"],
+    queryFn: async () => {
+      const res = await fetch(`${PREFIX}/entry-diagnostics`);
+      if (!res.ok) throw new Error("Failed to fetch entry diagnostics");
+      return res.json();
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+}
