@@ -355,7 +355,7 @@ export async function validateSellQuantity(
   console.log(`${TAG}[SELL_CHECK] pair=${pair} requested=${requestedQty.toFixed(8)} available=${availableQty.toFixed(8)} cycleQty=${cycleQty.toFixed(8)}`);
 
   // Si el ciclo cree tener más de lo disponible en exchange, hay mismatch
-  if (cycleQty > availableQty * 1.001) { // 0.1% tolerancia
+  if (cycleQty > availableQty * 1.0025) { // 0.25% tolerancia (cubre dust/fees)
     return {
       valid: false,
       availableQty,
@@ -364,7 +364,7 @@ export async function validateSellQuantity(
   }
 
   // Si la cantidad solicitada excede lo disponible
-  if (requestedQty > availableQty * 1.001) {
+  if (requestedQty > availableQty * 1.0025) { // 0.25% tolerancia (cubre dust/fees)
     return {
       valid: false,
       availableQty,

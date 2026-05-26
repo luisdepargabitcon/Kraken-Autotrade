@@ -54,8 +54,9 @@ function resolveExitFees(
 
 // ─── Balance guard ─────────────────────────────────────────────────────────────
 
-const EXIT_FEE_DUST_TOLERANCE_PCT = 0.20;  // max 0.20% difference
-const EXIT_FEE_DUST_TOLERANCE_ABS = 0.00001000; // max absolute difference
+// Dynamic tolerance: 0.25% of sell qty (same as IdcaEngine)
+// The old AND(pct, abs) check was too strict for BTC dust shortfalls.
+const EXIT_FEE_DUST_TOLERANCE_PCT = 0.25;  // kept for documentation — dynamic calc below uses 0.25%
 
 /**
  * Verifies exchange balance before a sell.
@@ -91,9 +92,10 @@ async function verifyBalance(
 
   const diff = quantityToSell - available;
   const diffPct = quantityToSell > 0 ? (diff / quantityToSell) * 100 : 100;
+  const dustTolerance = Math.max(0.00000002, quantityToSell * 0.0025); // 0.25% relative
 
-  // Full close: allow dust tolerance
-  if (isFullClose && diffPct <= EXIT_FEE_DUST_TOLERANCE_PCT && diff <= EXIT_FEE_DUST_TOLERANCE_ABS) {
+  // Full close: allow dust tolerance (dynamic — 0.25% of qty, covers fee/rounding shortfalls)
+  if (isFullClose && diff <= dustTolerance) {
     console.warn(
       `${TAG} [BALANCE_DUST_ADJ] cycleId=${cycle.id} ${cycle.pair} ` +
       `requested=${quantityToSell.toFixed(8)}, available=${available.toFixed(8)}, ` +

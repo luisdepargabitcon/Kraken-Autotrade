@@ -2,6 +2,60 @@
 
 ---
 
+## 2026-05-26 — fix(idca): adjust protective sell quantity to exchange balance
+
+### Contexto del bug
+BTC/USD ciclo #24 fallaba en venta break-even con:
+```
+[IDCA][BREAKEVEN_BLOCKED] insufficient_exchange_balance:
+requested=0.01799884 BTC / available=0.01798263 BTC / diff=0.00001621 (0.0901%)
+```
+Telegram spameaba el mismo fallo cada tick durante horas.
+
+### Root cause
+`computeLiveSellQtyWithDustTolerance` usaba condición AND estricta:
+```
+diffPct (0.0901%) ≤ 0.20% ✓  AND  diff (0.00001621) ≤ 0.00001000 ✗ → THROWS
+```
+El threshold absoluto (0.00001000 BTC) era demasiado estrecho. La diferencia era
+causada por fees/rounding del exchange (RevolutX), completamente normal.
+El bug existía también en `verifyBalance` (IdcaExitExecutor) y `validateSellQuantity` (Guard).
+
+### Fix
+Tolerancia dinámica relativa: `dustTolerance = max(2 baseUnits, requestedQty × 0.0025)`.
+Para BTC #24: `0.01799884 × 0.0025 = 0.00004497` > `0.00001621` → PASA ✓
+
+### Archivos modificados
+- `IdcaEngine.ts`:
+  - `computeLiveSellQtyWithDustTolerance`: AND(pct, abs) → `diff ≤ max(2units, qty×0.0025)`
+  - `executeBreakevenExit`: añade `reconciliationStatus="closed_with_exchange_dust_adjustment"` + evento `sell_quantity_adjusted_to_exchange_balance` + log `[SELL_QTY_ADJUSTED]`
+  - `executeTrailingExit`: ídem
+  - `SELL_FAILED_COOLDOWN_MS`: 10min → 30min (anti-spam Telegram)
+- `IdcaExitExecutor.ts`: `verifyBalance`: misma corrección de tolerancia dinámica
+- `IdcaLiveExecutionGuard.ts`: `validateSellQuantity`: `×1.001` (0.1%) → `×1.0025` (0.25%)
+- `IdcaSellQuantityGuard.test.ts` (**nuevo**): 11 tests, 11/11 PASS
+
+### Invariantes garantizados
+- **Partial closes**: NUNCA se ajustan, siguen lanzando si available < requested
+- **No se cierra ciclo sin fill confirmado**: la orden se envía antes de escribir DB
+- **Residual dust**: si diff ≤ tolerancia → `reconciliationStatus="closed_with_exchange_dust_adjustment"`
+- **Residual grande (>0.25%)**: sigue bloqueando con `insufficient_exchange_balance`
+- **Telegram**: cooldown 30min por cycleId+exitType+reason
+
+### Log esperado post-fix (en lugar del error)
+```
+[IDCA][SELL_QTY_ADJUSTED] #24 BTC/USD exit=breakeven_exit
+  requested=0.01799884 available=0.01798263 submitted=0.01798263
+  diffPct=0.0901 closeAsDust=true
+```
+
+### Validación
+- `npm run check`: ✅ (exit 0)
+- Tests: ✅ 11/11 (IdcaSellQuantityGuard.test.ts)
+- No requiere migración DB
+
+---
+
 ## 2026-05-25 — feat(idca): Distancia Dinámica entre Safety Buys (Dynamic Distance)
 
 ### Objetivo

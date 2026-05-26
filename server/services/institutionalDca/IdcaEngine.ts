@@ -64,13 +64,16 @@ let startupReconciliationResult: any = null;
 // ─── Fee/Dust Tolerance for Live Full-Close Sells ───────────────
 // When cycle.totalQuantity slightly exceeds exchange available balance
 // due to fees/rounding, adjust the sell volume instead of failing.
-
-const FEE_DUST_TOLERANCE_PCT = 0.20;  // max 0.20% difference allowed
-const FEE_DUST_TOLERANCE_ABS = 0.00001000; // max absolute difference allowed
+// HOTFIX: Use dynamic relative tolerance (0.25% of requestedQty) instead of
+// a fixed absolute threshold — the old ABS check was blocking on tiny shortfalls
+// (e.g. BTC #24: diff=0.00001621 BTC, 0.0901%) when only the PCT check matters.
 
 /**
  * Computes the actual sell quantity for a live full-close, applying dust tolerance.
  * For partial closes: NEVER adjusts — throws if available < requested.
+ *
+ * dustTolerance = max(2 base units, 0.25% of requestedQty).
+ * Covers fee/rounding deltas up to ~0.25% without blocking protective exits.
  */
 function computeLiveSellQtyWithDustTolerance(
   requestedQty: number,
@@ -83,12 +86,13 @@ function computeLiveSellQtyWithDustTolerance(
   }
   const diff = requestedQty - availableQty;
   const diffPct = requestedQty > 0 ? (diff / requestedQty) * 100 : 100;
+  const dustTolerance = Math.max(0.00000002, requestedQty * 0.0025); // 0.25% relative
 
-  if (isFullClose && diffPct <= FEE_DUST_TOLERANCE_PCT && diff <= FEE_DUST_TOLERANCE_ABS) {
+  if (isFullClose && diff <= dustTolerance) {
     return {
       sellQty: availableQty,
       adjusted: true,
-      reason: `fee_dust_quantity_adjustment: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%)`,
+      reason: `fee_dust_quantity_adjustment: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%) tolerance=${dustTolerance.toFixed(8)}`,
     };
   }
 
@@ -103,7 +107,7 @@ function computeLiveSellQtyWithDustTolerance(
 // and the live sell keeps failing due to the same balance issue.
 
 const sellFailedCooldown = new Map<string, number>();
-const SELL_FAILED_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+const SELL_FAILED_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
 function shouldSendSellFailedAlert(cycleId: number, errorKey: string): boolean {
   const key = `${cycleId}:sell_failed:${errorKey}`;
@@ -3023,7 +3027,8 @@ async function executeTrailingExit(
     totalQuantity: "0",
     realizedPnlUsd: trailingNetProfitUsd.toFixed(2),
     closedAt,
-  });
+    ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
+  } as any);
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -3032,6 +3037,26 @@ async function executeTrailingExit(
       usedBalanceUsd: Math.max(0, parseFloat(String(wallet.usedBalanceUsd)) - sellValueUsd).toFixed(2),
       realizedPnlUsd: (parseFloat(String(wallet.realizedPnlUsd)) + totalRealized - capitalUsedForPnl).toFixed(2),
     });
+  }
+
+  if (dustAdjusted) {
+    const dustDiff = requestedQty - actualSellQty;
+    const assetT = pair.split("/")[0];
+    console.log(`${TAG}[SELL_QTY_ADJUSTED] #${cycle.id} ${pair} exit=trailing_exit requested=${requestedQty.toFixed(8)} available=${actualSellQty.toFixed(8)} submitted=${actualSellQty.toFixed(8)} diffPct=${(dustDiff / requestedQty * 100).toFixed(4)} closeAsDust=true`);
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "sell_quantity_adjusted_to_exchange_balance",
+      severity: "info",
+      message: `Venta trailing ajustada al saldo real del exchange: ${actualSellQty.toFixed(8)} ${assetT} (solicitado ${requestedQty.toFixed(8)}, diff=${dustDiff.toFixed(8)})`,
+      payloadJson: {
+        cycleId: cycle.id, pair, exitType: "trailing_exit",
+        requestedQty, availableQty: actualSellQty, submittedQty: actualSellQty,
+        diffQty: dustDiff,
+        diffPct: requestedQty > 0 ? (dustDiff / requestedQty) * 100 : 0,
+        dustToleranceQty: Math.max(0.00000002, requestedQty * 0.0025),
+        closeAsDust: true,
+      },
+    }, { eventType: "sell_quantity_adjusted_to_exchange_balance", pair, mode, cycleId: cycle.id });
   }
 
   await createHumanEvent({
@@ -3166,7 +3191,8 @@ async function executeBreakevenExit(
     totalQuantity: "0",
     realizedPnlUsd: beNetProfitUsd.toFixed(2),
     closedAt: new Date(),
-  });
+    ...(dustAdjusted ? { reconciliationStatus: "closed_with_exchange_dust_adjustment" } : {}),
+  } as any);
 
   if (mode === "simulation") {
     const wallet = await repo.getSimulationWallet();
@@ -3174,6 +3200,26 @@ async function executeBreakevenExit(
       availableBalanceUsd: (parseFloat(String(wallet.availableBalanceUsd)) + netValue).toFixed(2),
       usedBalanceUsd: Math.max(0, parseFloat(String(wallet.usedBalanceUsd)) - sellValueUsd).toFixed(2),
     });
+  }
+
+  if (dustAdjusted) {
+    const dustDiff = requestedQty - actualSellQty;
+    const asset = pair.split("/")[0];
+    console.log(`${TAG}[SELL_QTY_ADJUSTED] #${cycle.id} ${pair} exit=breakeven_exit requested=${requestedQty.toFixed(8)} available=${actualSellQty.toFixed(8)} submitted=${actualSellQty.toFixed(8)} diffPct=${(dustDiff / requestedQty * 100).toFixed(4)} closeAsDust=true`);
+    await createHumanEvent({
+      cycleId: cycle.id, pair, mode,
+      eventType: "sell_quantity_adjusted_to_exchange_balance",
+      severity: "info",
+      message: `Venta de protección ajustada al saldo real del exchange: ${actualSellQty.toFixed(8)} ${asset} (solicitado ${requestedQty.toFixed(8)}, diff=${dustDiff.toFixed(8)})`,
+      payloadJson: {
+        cycleId: cycle.id, pair, exitType: "breakeven_exit",
+        requestedQty, availableQty: actualSellQty, submittedQty: actualSellQty,
+        diffQty: dustDiff,
+        diffPct: requestedQty > 0 ? (dustDiff / requestedQty) * 100 : 0,
+        dustToleranceQty: Math.max(0.00000002, requestedQty * 0.0025),
+        closeAsDust: true,
+      },
+    }, { eventType: "sell_quantity_adjusted_to_exchange_balance", pair, mode, cycleId: cycle.id });
   }
 
   await createHumanEvent({
