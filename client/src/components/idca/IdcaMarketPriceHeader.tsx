@@ -71,7 +71,7 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
         <div className="flex items-center gap-2">
           <span className="font-mono font-bold text-sm text-foreground">{pair}</span>
           <span className="font-mono text-base font-semibold text-foreground">
-            ${currentPrice > 0 ? currentPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: pair === "BTC/USD" ? 0 : 2 }) : "—"}
+            ${currentPrice > 0 ? currentPrice.toLocaleString("en-US", { minimumFractionDigits: pair === "BTC/USD" ? 0 : 2, maximumFractionDigits: pair === "BTC/USD" ? 0 : 2 }) : "—"}
           </span>
         </div>
         <Badge className={cn("text-xs border px-2 py-0.5 font-mono", decisionClassColor(decisionClass))}>
