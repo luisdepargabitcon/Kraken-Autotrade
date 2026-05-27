@@ -22,6 +22,8 @@ import { getVwapAnchor } from "../services/institutionalDca/IdcaRepository";
 import { parseDynamicDistanceConfig } from "../services/institutionalDca/IdcaDynamicDistanceService";
 import { computeATRPct } from "../services/institutionalDca/IdcaSmartLayer";
 import { evaluateIdcaEntryConfluence } from "../services/institutionalDca/IdcaConfluenceEngine";
+import { resolveIdcaRequiredDistance } from "../services/institutionalDca/IdcaDistanceResolver";
+import type { IdcaEntryMode } from "../services/institutionalDca/IdcaTypes";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -2090,8 +2092,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           const referenceMethod = anchor?.anchor_price && anchor.anchor_price > 0
             ? "vwap_anchor" : "current_price";
 
-          const entryMode = (assetConfig.entryMode ?? "assisted_entry") as string;
+          const activeEntryMode = (assetConfig.entryMode ?? "assisted_entry") as IdcaEntryMode;
           const entryConfig = getEffectiveEntryConfig({ entryUiJson: globalConfig.entryUiJson }, pair);
+          const ddCfg = parseDynamicDistanceConfig(assetConfig.dynamicDistanceConfigJson);
           const atrPct = candles.length >= 14
             ? computeATRPct(candles as Array<{ close: number; high: number; low: number; time: number }>)
             : 2.0;
@@ -2099,19 +2102,39 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             ? ((referencePrice - currentPrice) / referencePrice) * 100
             : 0;
 
+          // Resolver real de distancia — refleja el mismo valor que usa el motor
+          const distanceResult = resolveIdcaRequiredDistance({
+            pair,
+            usedFor: "initial_entry",
+            activeEntryMode,
+            referencePrice,
+            atrPct,
+            entryGlobalConfig: { entryUiJson: globalConfig.entryUiJson },
+            dynamicDistanceConfig: ddCfg,
+            buyCount: 0,
+            marketScore: 60,
+            candleCount: candles.length,
+            capitalUsedUsd: 0,
+            capitalReservedUsd: 0,
+          });
+
           const confluenceResult = evaluateIdcaEntryConfluence({
             pair,
             usedFor: "initial_entry",
-            confluenceProfile: entryMode === "dynamic_intelligent_entry" ? "full" : "assisted",
+            confluenceProfile: activeEntryMode === "dynamic_intelligent_entry" ? "full" : "assisted",
             drawdownFromReferencePct,
-            requiredDistancePct: entryConfig.effectiveMinDipPct,
-            sliderBasePct: entryConfig.effectiveMinDipPct,
+            requiredDistancePct: distanceResult.requiredDistancePct,
+            sliderBasePct: distanceResult.breakdown.sliderBasePct ?? entryConfig.effectiveMinDipPct,
+            dynamicRawDistancePct: activeEntryMode === "dynamic_intelligent_entry"
+              ? distanceResult.requiredDistancePct : undefined,
+            userMinEntryDistancePct: distanceResult.breakdown.userMinDistancePct,
+            userMaxEntryDistancePct: distanceResult.breakdown.userMaxDistancePct,
             referenceMethod,
             vwapReliable: candles.length > 0,
             reboundConfirmed: false,
             requireReboundConfirmation: !!assetConfig.requireReboundConfirmation,
             trailingBuyArmed: false,
-            priceInActivationZone: drawdownFromReferencePct >= entryConfig.effectiveMinDipPct,
+            priceInActivationZone: drawdownFromReferencePct >= distanceResult.requiredDistancePct,
             capitalUsedUsd: 0,
             capitalReservedUsd: 0,
             buyCount: 0,
@@ -2125,11 +2148,14 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           result[pair] = {
             pair,
             currentPrice,
-            entryMode,
+            entryMode: activeEntryMode,
             referencePrice,
             referenceMethod,
             drawdownFromReferencePct: +drawdownFromReferencePct.toFixed(2),
-            requiredDistancePct: +entryConfig.effectiveMinDipPct.toFixed(2),
+            requiredDistancePct: +distanceResult.requiredDistancePct.toFixed(2),
+            distanceSource: distanceResult.source,
+            distanceMode: distanceResult.mode,
+            sliderBasePct: +(distanceResult.breakdown.sliderBasePct ?? entryConfig.effectiveMinDipPct).toFixed(2),
             atrPct: +atrPct.toFixed(3),
             candleCount: candles.length,
             decisionClass: confluenceResult.decisionClass,

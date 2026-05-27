@@ -1852,7 +1852,7 @@ async function checkEntry(
         pair, mode,
         eventType: "entry_observed",
         severity: "info",
-        message: `[OBSERVE] Condición detectada, sin acción — ciclo activo. BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
+        message: `[OBSERVE] Condición detectada, sin acción — ${TrailingBuyManager.isArmed(pair) ? "trailing buy en vigilancia" : "ciclo activo"}. BasePrice=$${bp.price.toFixed(2)} (${bp.type}), EntryDip=${check.entryDipPct?.toFixed(2)}%, Score=${check.marketScore}`,
         payloadJson: { observeOnly: true, marketScore: check.marketScore, entryDipPct: check.entryDipPct, sizeProfile: check.sizeProfile, basePrice: bp, vwapContext: check.vwapContext ?? null, effectiveBasePrice: check.effectiveBasePrice, effectiveMinDip: check.effectiveMinDip, basePriceMethod: check.basePriceMethod, weeklyTrend: check.weeklyTrend, monthlyBias: check.monthlyBias },
       }, { eventType: "entry_observed", pair, mode, entryDipPct: check.entryDipPct, entryBasePrice: bp.price, entryBasePriceType: bp.type, marketScore: check.marketScore, sizeProfile: check.sizeProfile });
     }
@@ -4051,6 +4051,8 @@ async function performEntryCheck(
       sliderBasePct: entryDistanceResult.breakdown.sliderBasePct ?? minDip,
       dynamicRawDistancePct: entryMode === "dynamic_intelligent_entry"
         ? entryDistanceResult.requiredDistancePct : undefined,
+      userMinEntryDistancePct: entryDistanceResult.breakdown.userMinDistancePct,
+      userMaxEntryDistancePct: entryDistanceResult.breakdown.userMaxDistancePct,
       vwapZone: vwapContext?.zone,
       referenceMethod: basePriceMethod ?? undefined,
       vwapReliable: vwapContext?.isReliable ?? false,
@@ -4116,7 +4118,8 @@ async function performEntryCheck(
     entryDipPct, minDip, basePriceResult, currentPrice,
     effectiveBasePrice, basePriceMethod,
     observeOnly,
-    entryDistanceResult.mode, entryDistanceResult.source
+    entryDistanceResult.mode, entryDistanceResult.source,
+    TrailingBuyManager.isArmed(pair)
   );
 
   return {
@@ -4304,7 +4307,8 @@ function logEntryDecision(
   dip: number, minDip: number, base: BasePriceResult, currentPrice: number,
   effectiveBasePrice?: number, basePriceMethod?: string,
   observeOnly?: boolean,
-  distanceMode?: string, distanceSource?: string
+  distanceMode?: string, distanceSource?: string,
+  tbArmed?: boolean
 ): void {
   const effBase = effectiveBasePrice ?? base.price;
   const effMethod = basePriceMethod ?? base.type ?? "hybrid";
@@ -4342,7 +4346,10 @@ function logEntryDecision(
     // Build message based on context
     let message: string;
     if (observeOnly) {
-      message = `[${pair}] Entrada observada — ciclo activo gestiona esta condición | caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`;
+      const observeCtx = tbArmed
+        ? "trailing buy en vigilancia"
+        : "condiciones de entrada detectadas";
+      message = `[${pair}] Entrada observada — ${observeCtx} | caída ${dip.toFixed(2)}% vs mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`;
     } else if (action === "allowed") {
       message = `[${pair}] Entrada PERMITIDA — caída ${dip.toFixed(2)}% ≥ mínimo ${minDip.toFixed(2)}% | base=$${base.price.toFixed(2)}`;
     } else {

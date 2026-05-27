@@ -563,10 +563,16 @@ function IdcaMarketContextDetailPanel({ data, healthData }: { data: MarketContex
           </div>
         </div>
 
-        {/* Referencia del ciclo activo (secundario) */}
+        {/* Referencia efectiva de entrada (VWAP anchor — puede ser TB o ciclo) */}
         {data.effectiveReferenceSource === "vwap_anchor" && data.frozenAnchorPrice && effectiveEntryReference > 0 && (
           <div className="rounded border border-orange-500/20 bg-orange-500/5 p-2.5 space-y-0.5">
-            <div className="text-[9px] text-orange-400/70 font-mono uppercase">Referencia del ciclo</div>
+            <div className="text-[9px] text-orange-400/70 font-mono uppercase">{(() => {
+              const reason = ((data.referenceContext as any)?.referenceReason ?? "").toLowerCase();
+              if (reason.includes("trailing") || reason.includes("trailing buy")) return "Ancla dinámica VWAP";
+              if (reason.includes("ciclo")) return "Referencia del ciclo";
+              if (data.referenceContext?.anchorStatus === "imported") return "Referencia importada";
+              return "Referencia efectiva de entrada";
+            })()}</div>
             <div className="text-sm font-bold font-mono text-orange-400">
               {formatUsdSafe(effectiveEntryReference)}
             </div>
