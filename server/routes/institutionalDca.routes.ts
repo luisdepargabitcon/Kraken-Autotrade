@@ -23,7 +23,9 @@ import { parseDynamicDistanceConfig } from "../services/institutionalDca/IdcaDyn
 import { computeATRPct } from "../services/institutionalDca/IdcaSmartLayer";
 import { evaluateIdcaEntryConfluence } from "../services/institutionalDca/IdcaConfluenceEngine";
 import { resolveIdcaRequiredDistance } from "../services/institutionalDca/IdcaDistanceResolver";
-import type { IdcaEntryMode } from "../services/institutionalDca/IdcaTypes";
+import { resolveIdcaDynamicRebound, getDefaultDynamicReboundConfig } from "../services/institutionalDca/IdcaDynamicReboundResolver";
+import { TrailingBuyManager } from "../services/institutionalDca/TrailingBuyManager";
+import type { IdcaEntryMode, IdcaReboundState, IdcaReboundSource, IdcaTbPath } from "../services/institutionalDca/IdcaTypes";
 
 const PREFIX = "/api/institutional-dca";
 
@@ -2145,6 +2147,79 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             smartAdjustmentEnabled: false,
           });
 
+          // ─── Trailing Buy state for diagnostics ─────────────────────────────
+          const tbState = TrailingBuyManager.getState(pair);
+          const tbArmed = TrailingBuyManager.isArmed(pair);
+          let tbSource: IdcaReboundSource = "none";
+          let tbStateStr: IdcaReboundState = "inactive";
+          let tbPath: IdcaTbPath = "unknown";
+          let localLowPrice: number | null = null;
+          let localLowDrawdownPct: number | null = null;
+          let reboundPct: number | null = null;
+          let reboundTriggerPrice: number | null = null;
+          let maxExecutionPrice: number | null = null;
+          let retainedDropPct: number | null = null;
+          let retainedRequiredDropPct: number | null = null;
+          let retainedActualDropPct: number | null = null;
+          let canExecuteTrailingBuy = false;
+          let blocker: string | null = null;
+
+          if (tbArmed && tbState) {
+            tbStateStr = "armed";
+            tbPath = (tbState.triggerLevel === 0) ? "vwap_anchor" : "level_1";
+            localLowPrice = tbState.localLow;
+            localLowDrawdownPct = referencePrice > 0
+              ? ((referencePrice - tbState.localLow) / referencePrice) * 100
+              : null;
+            reboundPct = tbState.trailingPct;
+            reboundTriggerPrice = tbState.localLow * (1 + tbState.trailingPct / 100);
+            maxExecutionPrice = tbState.maxExecutionPrice;
+            retainedDropPct = referencePrice > 0
+              ? ((referencePrice - tbState.maxExecutionPrice) / referencePrice) * 100
+              : null;
+            retainedRequiredDropPct = distanceResult.requiredDistancePct;
+            retainedActualDropPct = drawdownFromReferencePct;
+            canExecuteTrailingBuy = currentPrice >= reboundTriggerPrice && currentPrice <= maxExecutionPrice;
+            blocker = canExecuteTrailingBuy ? null : (currentPrice > maxExecutionPrice ? "max_execution_price_exceeded" : "rebound_trigger_not_reached");
+
+            // If dynamic_intelligent_entry, calculate dynamic rebound for source info
+            if (activeEntryMode === "dynamic_intelligent_entry") {
+              const drConfig = (assetConfig as any).dynamicReboundConfigJson || getDefaultDynamicReboundConfig(pair);
+              const drResult = resolveIdcaDynamicRebound({
+                pair,
+                usedFor: "trailing_buy_entry",
+                entryMode: activeEntryMode,
+                localLowPrice: tbState.localLow,
+                currentPrice,
+                referencePrice,
+                requiredDistancePct: distanceResult.requiredDistancePct,
+                drawdownFromReferencePct,
+                atrPct,
+                confidenceScore: confluenceResult.confidenceScore,
+                marketRegime: confluenceResult.marketRegime,
+                vwapZone: "between_bands",
+                confluenceResult,
+                dynamicReboundConfig: drConfig,
+                tbPath,
+              });
+              tbSource = drResult.source;
+              // Override with dynamic values if source is dynamic_rebound
+              if (drResult.source === "dynamic_rebound") {
+                reboundPct = drResult.reboundPct;
+                reboundTriggerPrice = drResult.reboundTriggerPrice;
+                maxExecutionPrice = drResult.maxExecutionPrice;
+                retainedDropPct = drResult.retainedDropPct;
+                retainedRequiredDropPct = drResult.retainedRequiredDropPct;
+                retainedActualDropPct = drResult.retainedActualDropPct;
+                canExecuteTrailingBuy = drResult.canExecuteTrailingBuy;
+                blocker = drResult.blocker === "none" ? null : drResult.blocker;
+                tbStateStr = drResult.state;
+              }
+            } else {
+              tbSource = "legacy_rebound";
+            }
+          }
+
           result[pair] = {
             pair,
             currentPrice,
@@ -2168,6 +2243,27 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
             familyScores: confluenceResult.familyScores,
             canArmTrailingBuy: confluenceResult.canArmTrailingBuy,
             finalRequiredDistancePct: confluenceResult.finalRequiredDistancePct,
+            trailingBuy: {
+              state: tbStateStr,
+              tbPath,
+              source: tbSource,
+              referencePrice,
+              currentPrice,
+              requiredDistancePct: +distanceResult.requiredDistancePct.toFixed(2),
+              drawdownFromReferencePct: +drawdownFromReferencePct.toFixed(2),
+              localLowPrice,
+              localLowDrawdownPct: localLowDrawdownPct ? +localLowDrawdownPct.toFixed(2) : null,
+              reboundPct: reboundPct ? +reboundPct.toFixed(3) : null,
+              reboundTriggerPrice: reboundTriggerPrice ? +reboundTriggerPrice.toFixed(2) : null,
+              maxExecutionPrice: maxExecutionPrice ? +maxExecutionPrice.toFixed(2) : null,
+              expectedBuyPrice: reboundTriggerPrice ? +reboundTriggerPrice.toFixed(2) : null,
+              retainedDropPct: retainedDropPct ? +retainedDropPct.toFixed(3) : null,
+              retainedRequiredDropPct: retainedRequiredDropPct ? +retainedRequiredDropPct.toFixed(3) : null,
+              retainedActualDropPct: retainedActualDropPct ? +retainedActualDropPct.toFixed(3) : null,
+              canExecuteTrailingBuy,
+              blocker,
+              updatedAt: new Date().toISOString(),
+            },
             timestamp: new Date().toISOString(),
           };
         } catch (pairErr: any) {

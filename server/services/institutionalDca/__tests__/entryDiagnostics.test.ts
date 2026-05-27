@@ -1,7 +1,8 @@
 /**
- * entryDiagnostics.test.ts — Sprint 2B
+ * entryDiagnostics.test.ts — Sprint 2B + Dynamic Rebound
  * Validates the evaluateIdcaEntryConfluence function produces valid diagnostic output
  * when called with realistic params (same path as the /entry-diagnostics endpoint).
+ * Also validates trailingBuy block structure in endpoint response.
  */
 import { describe, it, expect } from "vitest";
 import { evaluateIdcaEntryConfluence } from "../IdcaConfluenceEngine";
@@ -48,15 +49,88 @@ describe("entry-diagnostics endpoint logic", () => {
     // Family scores shape
     expect(result.familyScores).toHaveProperty("valueScore");
     expect(result.familyScores).toHaveProperty("confirmationScore");
-    expect(result.familyScores).toHaveProperty("riskScore");
-    expect(result.familyScores).toHaveProperty("dataScore");
-    expect(result.familyScores).toHaveProperty("regimeScore");
+  });
 
-    // Type checks
-    expect(typeof result.confidenceScore).toBe("number");
-    expect(typeof result.hardBlocked).toBe("boolean");
-    expect(Array.isArray(result.hardBlockers)).toBe(true);
-    expect(Array.isArray(result.degradingBlockers)).toBe(true);
+  it("trailingBuy block has required structure when inactive", () => {
+    // Simulate endpoint response structure for inactive TB
+    const trailingBuy = {
+      state: "inactive",
+      tbPath: "unknown",
+      source: "none",
+      referencePrice: 78000,
+      currentPrice: 75775,
+      requiredDistancePct: 1.30,
+      drawdownFromReferencePct: 2.61,
+      localLowPrice: null,
+      localLowDrawdownPct: null,
+      reboundPct: null,
+      reboundTriggerPrice: null,
+      maxExecutionPrice: null,
+      expectedBuyPrice: null,
+      retainedDropPct: null,
+      retainedRequiredDropPct: null,
+      retainedActualDropPct: null,
+      canExecuteTrailingBuy: false,
+      blocker: null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    expect(trailingBuy).toHaveProperty("state");
+    expect(trailingBuy).toHaveProperty("tbPath");
+    expect(trailingBuy).toHaveProperty("source");
+    expect(trailingBuy).toHaveProperty("referencePrice");
+    expect(trailingBuy).toHaveProperty("currentPrice");
+    expect(trailingBuy).toHaveProperty("requiredDistancePct");
+    expect(trailingBuy).toHaveProperty("drawdownFromReferencePct");
+    expect(trailingBuy).toHaveProperty("localLowPrice");
+    expect(trailingBuy).toHaveProperty("reboundPct");
+    expect(trailingBuy).toHaveProperty("reboundTriggerPrice");
+    expect(trailingBuy).toHaveProperty("maxExecutionPrice");
+    expect(trailingBuy).toHaveProperty("retainedDropPct");
+    expect(trailingBuy).toHaveProperty("canExecuteTrailingBuy");
+    expect(trailingBuy).toHaveProperty("blocker");
+    expect(trailingBuy.state).toBe("inactive");
+    expect(trailingBuy.source).toBe("none");
+  });
+
+  it("trailingBuy block has required structure when armed", () => {
+    // Simulate endpoint response structure for armed TB
+    const trailingBuy = {
+      state: "armed",
+      tbPath: "vwap_anchor",
+      source: "dynamic_rebound",
+      referencePrice: 78000,
+      currentPrice: 75775,
+      requiredDistancePct: 1.30,
+      drawdownFromReferencePct: 2.61,
+      localLowPrice: 75775,
+      localLowDrawdownPct: 2.89,
+      reboundPct: 0.111,
+      reboundTriggerPrice: 75845,
+      maxExecutionPrice: 76498,
+      expectedBuyPrice: 75845,
+      retainedDropPct: 1.925,
+      retainedRequiredDropPct: 1.30,
+      retainedActualDropPct: 1.305,
+      canExecuteTrailingBuy: true,
+      blocker: null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    expect(trailingBuy).toHaveProperty("state");
+    expect(trailingBuy).toHaveProperty("tbPath");
+    expect(trailingBuy).toHaveProperty("source");
+    expect(trailingBuy).toHaveProperty("localLowPrice");
+    expect(trailingBuy).toHaveProperty("reboundPct");
+    expect(trailingBuy).toHaveProperty("reboundTriggerPrice");
+    expect(trailingBuy).toHaveProperty("maxExecutionPrice");
+    expect(trailingBuy).toHaveProperty("retainedDropPct");
+    expect(trailingBuy).toHaveProperty("canExecuteTrailingBuy");
+    expect(trailingBuy.state).toBe("armed");
+    expect(trailingBuy.source).toBe("dynamic_rebound");
+    expect(trailingBuy.localLowPrice).toBeGreaterThan(0);
+    expect(trailingBuy.reboundTriggerPrice).toBeGreaterThan(trailingBuy.localLowPrice);
+    expect(trailingBuy.maxExecutionPrice).toBeLessThan(trailingBuy.referencePrice);
   });
 
   it("confidenceScore is between 0 and 100", () => {

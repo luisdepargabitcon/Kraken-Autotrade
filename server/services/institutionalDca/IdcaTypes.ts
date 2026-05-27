@@ -807,3 +807,86 @@ export interface DynamicDistanceResult {
   changedFrom?: number | null;       // existingNextBuyPrice if changed, for logging
   components?: DynamicDistanceComponents;
 }
+
+// ─── Dynamic Rebound Config ───────────────────────────────────────────────
+
+export interface DynamicReboundConfig {
+  enabled: boolean;
+  minReboundPct: number;                    // default 0.10 (BTC) / 0.15 (ETH)
+  maxReboundPct: number;                    // default 0.80 (BTC) / 1.20 (ETH)
+  reboundAtrMultiplier: number;             // default 0.40 (BTC) / 0.50 (ETH)
+  minRequiredDropRetentionRatio: number;    // default 1.00 — retain at least required distance
+  minActualDrawdownRetentionRatio: number;  // default 0.50 — retain 50% of actual drawdown
+  antiOverextendedEnabled: boolean;          // default true — block if price exceeds maxExecutionPrice
+}
+
+export type IdcaReboundSource = "dynamic_rebound" | "assisted_rebound" | "legacy_rebound" | "none";
+
+export type IdcaReboundBlocker =
+  | "none"
+  | "rebound_trigger_not_reached"
+  | "rebound_overextended"
+  | "max_execution_price_exceeded"
+  | "confluence_hard_blocked";
+
+export type IdcaReboundState =
+  | "inactive"
+  | "armed"
+  | "watching_rebound"
+  | "confirmed"
+  | "overextended"
+  | "blocked";
+
+export type IdcaTbPath = "vwap_anchor" | "level_1" | "safety_buy" | "unknown";
+
+export interface IdcaDynamicReboundInput {
+  pair: string;
+  usedFor: "trailing_buy_entry" | "initial_entry" | "safety_buy" | "recovery";
+  entryMode: IdcaEntryMode;
+  localLowPrice: number;
+  currentPrice: number;
+  referencePrice: number;
+  requiredDistancePct: number;
+  drawdownFromReferencePct: number;
+  atrPct: number;
+  confidenceScore?: number;
+  marketRegime?: IdcaMarketRegime;
+  vwapZone?: string;
+  confluenceResult?: IdcaConfluenceResult;
+  dynamicReboundConfig: DynamicReboundConfig;
+  tbPath?: IdcaTbPath;
+}
+
+export interface IdcaDynamicReboundBreakdown {
+  atrPct: number;
+  atrComponent: number;
+  confidenceScore?: number;
+  confidenceFactor?: number;
+  regimeFactor?: number;
+  vwapFactor?: number;
+  minReboundPct: number;
+  maxReboundPct: number;
+  drawdownFromReferencePct: number;
+  requiredDistancePct: number;
+  retainedRequiredDropPct: number;
+  retainedActualDropPct: number;
+  retainedDropPct: number;
+  finalReboundPct: number;
+  finalReboundTriggerPrice: number;
+  finalMaxExecutionPrice: number;
+}
+
+export interface IdcaDynamicReboundResult {
+  reboundPct: number;
+  reboundTriggerPrice: number;
+  maxExecutionPrice: number;
+  retainedDropPct: number;
+  retainedRequiredDropPct: number;
+  retainedActualDropPct: number;
+  canExecuteTrailingBuy: boolean;
+  source: IdcaReboundSource;
+  blocker: IdcaReboundBlocker;
+  state: IdcaReboundState;
+  tbPath?: IdcaTbPath;
+  breakdown: IdcaDynamicReboundBreakdown;
+}

@@ -11,6 +11,8 @@
  *
  * Estado efímero (en memoria). Si el bot reinicia, el siguiente tick recalcula.
  */
+import { resolveIdcaDynamicRebound, getDefaultDynamicReboundConfig } from "./IdcaDynamicReboundResolver";
+import type { IdcaEntryMode, IdcaTbPath } from "./IdcaTypes";
 
 export interface TrailingBuyState {
   pair: string;
@@ -75,10 +77,57 @@ class TrailingBuyManagerClass {
   arm(pair: string, triggerPrice: number, currentPrice: number, opts?: {
     trailingPct?: number;
     maxDurationMs?: number;
+    // Dynamic rebound parameters (optional)
+    entryMode?: IdcaEntryMode;
+    dynamicReboundConfig?: any;
+    requiredDistancePct?: number;
+    drawdownFromReferencePct?: number;
+    atrPct?: number;
+    confidenceScore?: number;
+    marketRegime?: string;
+    vwapZone?: string;
+    tbPath?: IdcaTbPath;
   }): void {
     const now = Date.now();
-    const trailingPct = opts?.trailingPct ?? DEFAULT_TRAILING_PCT;
-    const reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
+    const entryMode = opts?.entryMode ?? "assisted_entry";
+    let trailingPct = opts?.trailingPct ?? DEFAULT_TRAILING_PCT;
+    let reboundTriggerPrice: number;
+    let maxExecutionPrice: number;
+    let reboundSource = "legacy_rebound";
+
+    // ─── Dynamic rebound calculation for dynamic_intelligent_entry ─────────
+    if (entryMode === "dynamic_intelligent_entry" &&
+        opts?.dynamicReboundConfig &&
+        opts?.requiredDistancePct != null &&
+        opts?.drawdownFromReferencePct != null &&
+        opts?.atrPct != null) {
+      const reboundResult = resolveIdcaDynamicRebound({
+        pair,
+        usedFor: "trailing_buy_entry",
+        entryMode,
+        localLowPrice: currentPrice,
+        currentPrice,
+        referencePrice: triggerPrice,
+        requiredDistancePct: opts.requiredDistancePct,
+        drawdownFromReferencePct: opts.drawdownFromReferencePct,
+        atrPct: opts.atrPct,
+        confidenceScore: opts.confidenceScore,
+        marketRegime: opts.marketRegime as any,
+        vwapZone: opts.vwapZone,
+        dynamicReboundConfig: opts.dynamicReboundConfig,
+        tbPath: opts.tbPath,
+      });
+
+      trailingPct = reboundResult.reboundPct;
+      reboundTriggerPrice = reboundResult.reboundTriggerPrice;
+      maxExecutionPrice = reboundResult.maxExecutionPrice;
+      reboundSource = reboundResult.source;
+    } else {
+      // Legacy fallback
+      reboundTriggerPrice = currentPrice * (1 + trailingPct / 100);
+      maxExecutionPrice = triggerPrice * (1 + trailingPct / 100);
+    }
+
     this.states.set(pair, {
       pair,
       armed: true,
@@ -86,7 +135,7 @@ class TrailingBuyManagerClass {
       referencePrice: triggerPrice,
       activationPrice: triggerPrice, // En VWAP-path, lowerBand1 ya ES el activation price
       buyThreshold: triggerPrice,    // mismo valor en VWAP-path
-      maxExecutionPrice: triggerPrice * (1 + (opts?.trailingPct ?? DEFAULT_TRAILING_PCT) / 100),
+      maxExecutionPrice,
       triggerPrice,
       localLow: currentPrice,
       localLowAt: now,
@@ -102,7 +151,9 @@ class TrailingBuyManagerClass {
     console.log(
       `[IDCA][TRAILING_BUY_ARMED] pair=${pair} referencePrice=$${triggerPrice.toFixed(2)}` +
       ` buyThreshold=$${triggerPrice.toFixed(2)} localLow=$${currentPrice.toFixed(2)}` +
-      ` reboundPct=${trailingPct.toFixed(2)} reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}`
+      ` reboundPct=${trailingPct.toFixed(2)}% reboundTriggerPrice=$${reboundTriggerPrice.toFixed(2)}` +
+      ` maxExecutionPrice=$${maxExecutionPrice.toFixed(2)} reboundSource=${reboundSource}` +
+      (opts?.tbPath ? ` tbPath=${opts.tbPath}` : ``)
     );
   }
 
