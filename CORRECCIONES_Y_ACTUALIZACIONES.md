@@ -2,6 +2,53 @@
 
 ---
 
+## 2026-05-27 — feat(idca): Sprint 2C — Selector real de modo, eliminación pestaña Distancia, traducciones completas
+
+### Objetivo
+Sprint 2C: Cierre UX/funcional del rediseño de Entradas IDCA. Selector real de modo por par con confirmación,
+pestaña "Distancia" eliminada (contenido integrado en Entrada/Dinámica y Entrada/Safety Buys),
+toggle `smartAdjustmentEnabled` movido a Asistida, traducciones completas de la UI al español,
+timestamp en `IdcaMarketPriceHeader`, botones ON fake convertidos a badges de solo lectura.
+
+### Archivos modificados
+- `client/src/pages/InstitutionalDca.tsx`
+  - `EntrySubSections` reescrito (Sprint 2C): sección Resumen con selector real BTC/ETH por par
+  - AlertDialog de confirmación al activar `dynamic_intelligent_entry`
+  - Sección Asistida: añadido toggle `smartAdjustmentEnabled` (guardado en `entryUiJson`)
+  - Sección Dinámica: `DynamicDistancePanel` con estado visible del modo activo por par
+  - Sección Safety: incluye `DynamicDistancePanel` propio (movido desde pestaña Distancia)
+  - Sección TB: badges de solo lectura en lugar de etiquetas "ON" no interactivas
+  - Sección Confluencia: toggle usa `smartAdj`/`entryUiJson` en lugar de `smartModeEnabled`
+  - Pestaña "📐 Distancia" eliminada del ConfigTab superior
+  - Pestaña "🧠 Confluencia" eliminada del ConfigTab superior (integrada en Entrada/Confluencia)
+  - Banner LEGACY actualizado a "Configuración de Entradas rediseñada (Sprint 2C)"
+  - `configSubTab` type narrowed a `"entrada" | "general" | "vwap"`
+- `client/src/hooks/useInstitutionalDca.ts`
+  - `IdcaAssetConfig.entryMode?: string` añadido
+- `client/src/hooks/useIdcaNavigation.ts`
+  - Tipos narrowed: eliminado "distancia" y "confluencia" de `configSubTab`
+- `client/src/components/idca/IdcaMarketPriceHeader.tsx`
+  - Traducciones completas: regímenes, modos de entrada, blockers, clases de decisión
+  - `ARM_TRAILING` → "Vigilar rebote", `WATCH` → "Observar", `NO_ENTRY` → "No entrar"
+  - `Req:` → `Requerido:`
+  - Timestamp `Última act: HH:MM:SS` con aviso visual si datos > 60s
+
+### Tests añadidos
+- `server/services/institutionalDca/__tests__/entryMode.test.ts` — 7 tests:
+  - Modo default `assisted_entry`
+  - `dynamic_intelligent_entry` válido
+  - Switch de vuelta a `assisted_entry`
+  - Traducción de modos al español
+  - Traducción de blocker codes al español
+  - Verificación de que no se muestran códigos técnicos crudos en UI
+
+### No modificado
+- avgEntryPrice, basePrice, anclas, fills, tamaños de órdenes
+- `dynamic_intelligent_entry` no se activa automáticamente (requiere confirmación explícita)
+- Backend / endpoints (sin cambios — `PATCH /api/institutional-dca/asset-configs/:pair` ya existía)
+
+---
+
 ## 2026-05-27 — feat(idca): Sprint 2B — UI de Confluencia, Market Price Header, Endpoint de Diagnóstico
 
 ### Objetivo

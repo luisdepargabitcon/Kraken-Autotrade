@@ -15,6 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -53,6 +57,7 @@ import {
   useSetCycleStatus,
   useAllMarketContextPreviews,
   useAllMarketDataHealth,
+  useIdcaEntryDiagnostics,
   type MarketContextPreview,
 } from "@/hooks/useInstitutionalDca";
 import {
@@ -159,7 +164,7 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia" | "confluencia">("entrada");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
@@ -916,30 +921,38 @@ function DynamicDistancePanel({
   );
 }
 
-// ─── Entry Sub-Sections (Sprint 2B) ─────────────────────────────
+// ─── Entry Sub-Sections (Sprint 2C) ─────────────────────────────
 type EntrySection = "resumen" | "asistida" | "dinamica" | "confluencia" | "tb" | "safety" | "diagnostico";
+
+function modeLabel(mode?: string): string {
+  if (mode === "dynamic_intelligent_entry") return "⚡ Dinámica inteligente";
+  return "🎯 Entrada asistida";
+}
 
 function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsset }: {
   config: any; updateConfig: any; btcAsset: any; ethAsset: any; updateAsset: any;
 }) {
   const [section, setSection] = useState<EntrySection>("resumen");
-  const eu = config.entryUiJson as Record<string, number> | null;
-  const patience = eu?.entryPatienceLevel ?? 70;
-  const rebound = eu?.reboundConfirmationLevel ?? 65;
-  const quality = eu?.entryQualityLevel ?? 65;
-  const size = eu?.entrySizeAggressiveness ?? 40;
+  const [confirmDynamic, setConfirmDynamic] = useState<string | null>(null);
+  const { data: diagData } = useIdcaEntryDiagnostics();
+  const eu = config.entryUiJson as Record<string, number & { smartAdjustmentEnabled?: boolean }> | null;
+  const patience = (eu as any)?.entryPatienceLevel ?? 70;
+  const rebound = (eu as any)?.reboundConfirmationLevel ?? 65;
+  const quality = (eu as any)?.entryQualityLevel ?? 65;
+  const size = (eu as any)?.entrySizeAggressiveness ?? 40;
+  const smartAdj = !!(eu as any)?.smartAdjustmentEnabled;
   const preview = deriveEntryPreview(patience, rebound, quality);
-  const saveEntry = (key: string, val: number) =>
+  const saveEntry = (key: string, val: number | boolean) =>
     updateConfig.mutate({ entryUiJson: { ...(eu ?? {}), [key]: val } });
 
   const pills: { id: EntrySection; label: string; color: string }[] = [
-    { id: "resumen", label: "Resumen", color: "bg-primary/10 text-primary border-primary" },
-    { id: "asistida", label: "Asistida", color: "bg-green-500/10 text-green-400 border-green-500" },
-    { id: "dinamica", label: "Dinámica", color: "bg-purple-500/10 text-purple-400 border-purple-500" },
-    { id: "confluencia", label: "Confluencia", color: "bg-cyan-500/10 text-cyan-400 border-cyan-500" },
-    { id: "tb", label: "Trailing Buy", color: "bg-blue-500/10 text-blue-400 border-blue-500" },
-    { id: "safety", label: "Safety Buys", color: "bg-amber-500/10 text-amber-400 border-amber-500" },
-    { id: "diagnostico", label: "Diagnóstico", color: "bg-rose-500/10 text-rose-400 border-rose-500" },
+    { id: "resumen",     label: "Resumen / Modo",    color: "bg-primary/10 text-primary border-primary" },
+    { id: "asistida",    label: "Asistida",           color: "bg-green-500/10 text-green-400 border-green-500" },
+    { id: "dinamica",    label: "Dinámica",           color: "bg-purple-500/10 text-purple-400 border-purple-500" },
+    { id: "confluencia", label: "Confluencia",        color: "bg-cyan-500/10 text-cyan-400 border-cyan-500" },
+    { id: "tb",          label: "Trailing Buy",       color: "bg-blue-500/10 text-blue-400 border-blue-500" },
+    { id: "safety",      label: "Safety Buys",        color: "bg-amber-500/10 text-amber-400 border-amber-500" },
+    { id: "diagnostico", label: "Diagnóstico",        color: "bg-rose-500/10 text-rose-400 border-rose-500" },
   ];
 
   return (
@@ -960,39 +973,89 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
 
       {/* ─── RESUMEN / MODO ACTIVO ─── */}
       {section === "resumen" && (
-        <Card className="border-border/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-mono">Modo de Entrada Activo</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-xs">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <span className="text-muted-foreground">Modo global</span>
-                <Badge className="ml-2 font-mono">{config.smartModeEnabled ? "Smart (confluencia activa)" : "Asistida (sliders)"}</Badge>
-              </div>
-              <div className="space-y-1">
-                <span className="text-muted-foreground">smart_adjustment</span>
-                <Badge variant="outline" className="ml-2 font-mono">{config.smartModeEnabled ? "ON" : "OFF"}</Badge>
-              </div>
+        <div className="space-y-4">
+          <Card className="border-border/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-mono">Modo de Entrada Activo por Par</CardTitle>
+              <p className="text-xs text-muted-foreground">Cada par puede usar un modo de entrada diferente. El cambio se guarda en base de datos de forma inmediata.</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {[btcAsset, ethAsset].filter(Boolean).map((asset: any) => {
+                const mode = asset.entryMode ?? "assisted_entry";
+                const isDynamic = mode === "dynamic_intelligent_entry";
+                const diag = (diagData?.pairs as any)?.[asset.pair];
+                return (
+                  <div key={asset.pair} className="space-y-3 rounded-lg border border-border/30 bg-card/40 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-sm">{asset.pair}</span>
+                      <Badge className={cn("font-mono text-xs", isDynamic ? "bg-purple-500/20 text-purple-300 border-purple-500/30" : "bg-green-500/20 text-green-300 border-green-500/30")}>
+                        {modeLabel(mode)}
+                      </Badge>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline"
+                        className={cn("text-xs h-7 flex-1", !isDynamic && "bg-green-500/10 text-green-300 border-green-500/30")}
+                        onClick={() => { if (isDynamic) updateAsset.mutate({ pair: asset.pair, entryMode: "assisted_entry" } as any); }}
+                        disabled={!isDynamic || updateAsset.isPending}>
+                        ✅ Entrada Asistida
+                      </Button>
+                      <Button size="sm" variant="outline"
+                        className={cn("text-xs h-7 flex-1", isDynamic && "bg-purple-500/10 text-purple-300 border-purple-500/30")}
+                        onClick={() => { if (!isDynamic) setConfirmDynamic(asset.pair); }}
+                        disabled={isDynamic || updateAsset.isPending}>
+                        ⚡ Dinámica Inteligente
+                      </Button>
+                    </div>
+                    {diag && (
+                      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-muted-foreground border-t border-border/20 pt-2">
+                        <div>Confianza: <span className="text-foreground">{diag.confidenceScore?.toFixed(0)} {diag.confidenceGrade}</span></div>
+                        <div>Caída: <span className={diag.drawdownFromReferencePct >= diag.requiredDistancePct ? "text-green-400" : "text-yellow-400"}>{diag.drawdownFromReferencePct?.toFixed(2)}%</span></div>
+                        <div>Req: <span className="text-foreground">{diag.requiredDistancePct?.toFixed(2)}%</span></div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          <div className="rounded-md border border-border/30 bg-muted/20 p-3 text-xs space-y-1.5">
+            <p><strong>Entrada Asistida</strong>: La distancia de entrada se calcula con los sliders de abajo. Confluencia actúa solo como diagnóstico.</p>
+            <p><strong>Dinámica Inteligente</strong>: El motor calcula la distancia con ATR, régimen, family scores y confianza. Los sliders quedan como floor de seguridad.</p>
+          </div>
+
+          <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-mono font-medium text-muted-foreground">RESUMEN SLIDERS (base para Entrada Asistida)</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+              <div className="flex justify-between"><span className="text-muted-foreground">BTC caída mín</span><span className="font-mono">{preview.btcDip.toFixed(2)}%</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">ETH caída mín</span><span className="font-mono">{preview.ethDip.toFixed(2)}%</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">BTC rebote</span><span className="font-mono">{preview.btcRebound.toFixed(2)}%</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">ETH rebote</span><span className="font-mono">{preview.ethRebound.toFixed(2)}%</span></div>
             </div>
-            <div className="rounded bg-muted/30 p-3 text-[11px] space-y-1">
-              <p><strong>assisted_entry</strong>: Sliders definen distancia base. Confluencia solo diagnóstica.</p>
-              <p><strong>dynamic_intelligent_entry</strong>: Motor de confluencia calcula distancia + ajuste dinámico completo.</p>
-              <p className="text-muted-foreground mt-2">El modo por par se define en el asset config (DB). En producción ambos pares usan <code className="font-mono">assisted_entry</code>.</p>
-            </div>
-            <div className="rounded-md border border-border/50 bg-muted/30 p-4 space-y-3">
-              <p className="text-xs font-mono font-medium text-muted-foreground">RESUMEN CALCULADO (sliders)</p>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
-                <div className="flex justify-between"><span className="text-muted-foreground">BTC caída mín</span><span className="font-mono">{preview.btcDip.toFixed(2)}%</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">ETH caída mín</span><span className="font-mono">{preview.ethDip.toFixed(2)}%</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">BTC rebote</span><span className="font-mono">{preview.btcRebound.toFixed(2)}%</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">ETH rebote</span><span className="font-mono">{preview.ethRebound.toFixed(2)}%</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Score mín entrada</span><span className="font-mono">{preview.minScore}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Score mín mercado</span><span className="font-mono">{preview.minMarket}</span></div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+
+          <AlertDialog open={!!confirmDynamic} onOpenChange={(open) => !open && setConfirmDynamic(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Activar Entrada Dinámica Inteligente</AlertDialogTitle>
+                <AlertDialogDescription className="space-y-2">
+                  <p>Vas a activar <strong>Entrada Dinámica Inteligente</strong> para <strong>{confirmDynamic}</strong>.</p>
+                  <p>Este modo usa ATR, confluencia, régimen de mercado y score de confianza para calcular la distancia de entrada dinámicamente.</p>
+                  <p className="text-yellow-500">⚠ No modifica tamaños de órdenes ni avgEntryPrice/anclas/fills. Solo cambia la distancia requerida para entrada inicial.</p>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setConfirmDynamic(null)}>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => {
+                  if (confirmDynamic) updateAsset.mutate({ pair: confirmDynamic, entryMode: "dynamic_intelligent_entry" } as any);
+                  setConfirmDynamic(null);
+                }}>
+                  Confirmar activación
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       )}
 
       {/* ─── ASISTIDA ─── */}
@@ -1003,6 +1066,20 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
             <p className="text-xs text-muted-foreground">Controla cuándo y cómo el bot entra al mercado. Los valores técnicos se derivan automáticamente de estos sliders.</p>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Toggle ajuste inteligente asistido */}
+            <div className="flex items-center justify-between rounded-lg border border-green-500/20 p-3 bg-green-500/5">
+              <div>
+                <p className="text-sm font-medium">Ajuste inteligente asistido</p>
+                <p className="text-[10px] text-muted-foreground">
+                  ON: la confluencia puede ajustar ±0.3-1% la distancia en modo asistido.{" "}
+                  OFF: sliders mandan sin ajuste adicional (comportamiento clásico).
+                </p>
+              </div>
+              <Switch
+                checked={smartAdj}
+                onCheckedChange={(v) => saveEntry("smartAdjustmentEnabled", v)}
+              />
+            </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between"><Label className="text-sm font-medium">Entrada</Label><span className="font-mono text-lg font-semibold text-green-400">{patience}</span></div>
               <Slider value={[patience]} onValueChange={(v) => saveEntry("entryPatienceLevel", v[0])} min={0} max={100} step={1} className="[&>span]:bg-green-500" />
@@ -1029,31 +1106,46 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
 
       {/* ─── DINÁMICA INTELIGENTE ─── */}
       {section === "dinamica" && (
-        <Card className="border-purple-500/30 bg-purple-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-mono text-purple-400">⚡ ENTRADA DINÁMICA INTELIGENTE</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Modo avanzado: el motor de confluencia calcula la distancia requerida dinámicamente
-              usando ATR, régimen, family scores y confianza. <strong>No activar sin supervisión.</strong>
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Alert className="bg-purple-500/10 border-purple-500/30">
-              <AlertTriangle className="h-4 w-4 text-purple-400" />
-              <AlertDescription className="text-xs text-purple-200">
-                Este modo está <strong>desactivado por defecto</strong>. Para activarlo, cambie
-                el <code className="font-mono text-[10px]">entryMode</code> del asset a{" "}
-                <code className="font-mono text-[10px]">dynamic_intelligent_entry</code> en la base de datos.
-                No se activa desde la UI para prevenir accidentes.
-              </AlertDescription>
-            </Alert>
-            <div className="text-xs text-muted-foreground space-y-2">
-              <p><strong>Flujo</strong>: ATR% → régimen → family scores → multiplicadores → confidenceScore → decisionClass → distancia ajustada</p>
-              <p><strong>Diferencia con Asistida</strong>: No usa sliders como base. La distancia es 100% derivada de mercado.</p>
-              <p><strong>Safety net</strong>: Respeta <code className="font-mono">userMinEntryDistancePct</code> (floor absoluto).</p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          {[btcAsset, ethAsset].filter(Boolean).map((asset: any) => {
+            const mode = asset.entryMode ?? "assisted_entry";
+            const isDynamic = mode === "dynamic_intelligent_entry";
+            return (
+              <div key={asset.pair} className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 p-3">
+                  <div>
+                    <p className="text-sm font-mono font-bold text-purple-300">{asset.pair}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Modo activo: <span className={isDynamic ? "text-purple-300" : "text-green-300"}>{isDynamic ? "Entrada Dinámica Inteligente" : "Entrada Asistida"}</span>
+                    </p>
+                  </div>
+                  {!isDynamic && (
+                    <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">
+                      Parámetros configurados — no activos mientras el modo sea Asistida
+                    </Badge>
+                  )}
+                  {isDynamic && (
+                    <Badge className="text-[10px] bg-purple-500/20 text-purple-300">
+                      ⚡ Activo — estos parámetros mandan la distancia
+                    </Badge>
+                  )}
+                </div>
+                <DynamicDistancePanel
+                  label={asset.pair.includes("BTC") ? "BTC" : "ETH"}
+                  config={asset.dynamicDistanceConfigJson as Record<string, any> | null}
+                  defaults={asset.pair.includes("BTC")
+                    ? { minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }
+                    : { minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
+                  onSave={(patch) => updateAsset.mutate({ pair: asset.pair, dynamicDistanceConfigJson: patch } as any)}
+                />
+              </div>
+            );
+          })}
+          <div className="rounded p-3 bg-muted/20 border border-border/30 text-xs text-muted-foreground space-y-1">
+            <p>Para activar este modo para un par, ve a <strong>Resumen / Modo</strong> y selecciona &quot;Dinámica Inteligente&quot;.</p>
+            <p>Los parámetros aquí configurados son la fuente de distancia solo cuando el modo activo del par sea <code className="font-mono text-[10px]">dynamic_intelligent_entry</code>.</p>
+          </div>
+        </div>
       )}
 
       {/* ─── CONFLUENCIA ─── */}
@@ -1067,18 +1159,17 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Toggle smartAdjustmentEnabled */}
               <div className="flex items-center justify-between rounded-lg border border-cyan-500/20 p-3 bg-cyan-500/5">
                 <div>
-                  <p className="text-sm font-medium">Smart Adjustment</p>
+                  <p className="text-sm font-medium">Ajuste inteligente asistido</p>
                   <p className="text-[10px] text-muted-foreground">
-                    Cuando ON, la confluencia puede ajustar ±0.3-1% la distancia requerida en modo asistido.
-                    OFF = solo diagnóstico (logs sin impacto).
+                    ON: confluencia ajusta ±0.3-1% la distancia en modo asistido.
+                    OFF: solo diagnóstico (logs sin impacto en distancia).
                   </p>
                 </div>
                 <Switch
-                  checked={!!config.smartModeEnabled}
-                  onCheckedChange={(v) => updateConfig.mutate({ smartModeEnabled: v })}
+                  checked={smartAdj}
+                  onCheckedChange={(v) => saveEntry("smartAdjustmentEnabled", v)}
                 />
               </div>
               <IdcaMarketPriceHeader />
@@ -1093,62 +1184,98 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono text-blue-400">📈 TRAILING BUY</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Trailing buy se arma cuando el precio entra en zona de activación y la confluencia lo permite.
-              Dos caminos: VWAP anchor (primario) y Level 1 (fallback).
+              Se arma cuando el precio entra en zona de activación y la confluencia lo permite.
+              Configuración real en pestaña <strong>VWAP &amp; Rebound</strong>.
             </p>
           </CardHeader>
-          <CardContent className="space-y-3 text-xs text-muted-foreground">
+          <CardContent className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-4">
               {btcAsset && (
-                <div className="space-y-1">
-                  <span className="font-medium text-foreground">BTC</span>
-                  <p>TB enabled: <Badge variant="outline">{btcAsset.trailingBuyEnabled ? "ON" : "OFF"}</Badge></p>
-                  <p>VWAP: <Badge variant="outline">{btcAsset.vwapEnabled ? "ON" : "OFF"}</Badge></p>
+                <div className="space-y-2 p-3 rounded border border-border/30 bg-card/40">
+                  <span className="font-medium text-foreground font-mono">BTC/USD</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Trailing Buy:</span>
+                    <Badge variant="outline" className={btcAsset.trailingBuyEnabled ? "text-green-400 border-green-400/30" : "text-muted-foreground"}>
+                      {btcAsset.trailingBuyEnabled ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">VWAP anchor:</span>
+                    <Badge variant="outline" className={btcAsset.vwapEnabled ? "text-violet-400 border-violet-400/30" : "text-muted-foreground"}>
+                      {btcAsset.vwapEnabled ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </div>
                 </div>
               )}
               {ethAsset && (
-                <div className="space-y-1">
-                  <span className="font-medium text-foreground">ETH</span>
-                  <p>TB enabled: <Badge variant="outline">{ethAsset.trailingBuyEnabled ? "ON" : "OFF"}</Badge></p>
-                  <p>VWAP: <Badge variant="outline">{ethAsset.vwapEnabled ? "ON" : "OFF"}</Badge></p>
+                <div className="space-y-2 p-3 rounded border border-border/30 bg-card/40">
+                  <span className="font-medium text-foreground font-mono">ETH/USD</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Trailing Buy:</span>
+                    <Badge variant="outline" className={ethAsset.trailingBuyEnabled ? "text-green-400 border-green-400/30" : "text-muted-foreground"}>
+                      {ethAsset.trailingBuyEnabled ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">VWAP anchor:</span>
+                    <Badge variant="outline" className={ethAsset.vwapEnabled ? "text-violet-400 border-violet-400/30" : "text-muted-foreground"}>
+                      {ethAsset.vwapEnabled ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </div>
                 </div>
               )}
             </div>
-            <p className="text-[10px]">Los paths (vwap_anchor / level_1) se distinguen en logs con <code className="font-mono">tbPath</code>.</p>
+            <p className="text-[10px] text-muted-foreground">Para configurar los umbrales de activación y rebote mínimo, ve a la pestaña <strong>VWAP &amp; Rebound</strong>.</p>
           </CardContent>
         </Card>
       )}
 
       {/* ─── SAFETY BUYS ─── */}
       {section === "safety" && (
-        <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-mono text-amber-400">🛡️ COMPRAS POSTERIORES / SAFETY</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Safety orders se ejecutan dentro de un ciclo activo para promediar a la baja.
-              La distancia dinámica (sub-tab Distancia) controla la separación entre safety buys.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3 text-xs text-muted-foreground">
-            <div className="grid grid-cols-2 gap-4">
-              {btcAsset && (
-                <div className="space-y-1">
-                  <span className="font-medium text-foreground">BTC</span>
-                  <p>Max safety orders: <span className="font-mono">{btcAsset.maxSafetyOrders}</span></p>
-                  <p>Niveles: <span className="font-mono">{btcAsset.safetyOrdersJson?.length ?? 0}</span></p>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            {btcAsset && (
+              <div className="space-y-2 p-3 rounded border border-amber-500/20 bg-amber-500/5">
+                <span className="font-medium text-foreground font-mono text-sm">BTC/USD</span>
+                <div className="text-xs space-y-1">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Máx. safety orders</span><span className="font-mono">{btcAsset.maxSafetyOrders}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Niveles configurados</span><span className="font-mono">{btcAsset.safetyOrdersJson?.length ?? 0}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Modo distancia</span>
+                    <Badge variant="outline" className="text-[10px]">{(btcAsset.dynamicDistanceConfigJson as any)?.mode ?? "manual"}</Badge>
+                  </div>
                 </div>
+              </div>
+            )}
+            {ethAsset && (
+              <div className="space-y-2 p-3 rounded border border-amber-500/20 bg-amber-500/5">
+                <span className="font-medium text-foreground font-mono text-sm">ETH/USD</span>
+                <div className="text-xs space-y-1">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Máx. safety orders</span><span className="font-mono">{ethAsset.maxSafetyOrders}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Niveles configurados</span><span className="font-mono">{ethAsset.safetyOrdersJson?.length ?? 0}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Modo distancia</span>
+                    <Badge variant="outline" className="text-[10px]">{(ethAsset.dynamicDistanceConfigJson as any)?.mode ?? "manual"}</Badge>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="space-y-3">
+            <p className="text-xs font-mono font-medium text-muted-foreground">DISTANCIA DINÁMICA ENTRE COMPRAS</p>
+            <p className="text-[10px] text-muted-foreground">En modo dinámico híbrido solo puede alejar el próximo precio de compra, nunca acercarlo.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {btcAsset && (
+                <DynamicDistancePanel label="BTC" config={btcAsset.dynamicDistanceConfigJson as any}
+                  defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
+                  onSave={(patch) => updateAsset.mutate({ pair: btcAsset.pair, dynamicDistanceConfigJson: patch } as any)} />
               )}
               {ethAsset && (
-                <div className="space-y-1">
-                  <span className="font-medium text-foreground">ETH</span>
-                  <p>Max safety orders: <span className="font-mono">{ethAsset.maxSafetyOrders}</span></p>
-                  <p>Niveles: <span className="font-mono">{ethAsset.safetyOrdersJson?.length ?? 0}</span></p>
-                </div>
+                <DynamicDistancePanel label="ETH" config={ethAsset.dynamicDistanceConfigJson as any}
+                  defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
+                  onSave={(patch) => updateAsset.mutate({ pair: ethAsset.pair, dynamicDistanceConfigJson: patch } as any)} />
               )}
             </div>
-            <p className="text-[10px]">La confluencia evalúa <code className="font-mono">DEFENSIVE_SAFETY_BUY</code> como clase de decisión para safety buys cuando la confianza es baja.</p>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* ─── DIAGNÓSTICO ─── */}
@@ -1171,7 +1298,7 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia" | "confluencia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia" | "confluencia") => void }) {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap"; setConfigSubTab: (tab: "entrada" | "general" | "vwap") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
@@ -1192,13 +1319,12 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
   return (
     <div className="space-y-6">
 
-      {/* ════ BANNER LEGACY ════ */}
-      <Alert className="bg-amber-500/10 border-amber-500/30">
-        <AlertTriangle className="h-4 w-4 text-amber-500" />
-        <AlertDescription className="text-amber-200">
-          <strong>LEGACY - Configuración clásica</strong>: Esta pestaña contiene la configuración original del módulo. 
-          La nueva configuración adaptativa está en la pestaña <strong>Adaptativo</strong>. 
-          Algunos campos aquí están duplicados con la nueva configuración.
+      {/* ════ BANNER CONFIG ════ */}
+      <Alert className="bg-blue-500/10 border-blue-500/30">
+        <AlertDescription className="text-blue-200 text-xs">
+          <strong>Configuración de Entradas rediseñada (Sprint 2C).</strong>{" "}
+          La <strong>Entrada Asistida</strong> mantiene la lógica anterior por sliders.{" "}
+          La <strong>Entrada Dinámica Inteligente</strong> solo manda si se activa explícitamente por par desde <em>Resumen / Modo</em>.
         </AlertDescription>
       </Alert>
 
@@ -1236,28 +1362,6 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           )}
         >
           VWAP & Rebound
-        </button>
-        <button
-          onClick={() => setConfigSubTab("distancia")}
-          className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
-            configSubTab === "distancia"
-              ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-500"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          📐 Distancia
-        </button>
-        <button
-          onClick={() => setConfigSubTab("confluencia")}
-          className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
-            configSubTab === "confluencia"
-              ? "bg-cyan-500/10 text-cyan-400 border-b-2 border-cyan-500"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          🧠 Confluencia
         </button>
       </div>
 
@@ -1977,73 +2081,6 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
       </ConfigBlock>
       </>)}
 
-      {/* ════ SUB-TAB: DISTANCIA DINÁMICA ════ */}
-      {configSubTab === "distancia" && (
-        <ConfigBlock icon={Activity} title="Distancia Dinámica entre Compras"
-          desc="La Distancia Dinámica ajusta automáticamente la separación mínima entre compras del ciclo activo. En modo manual no cambia el comportamiento actual. En modo dinámico solo puede alejar el próximo precio de compra, nunca acercarlo.">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {btc && (
-              <DynamicDistancePanel
-                label="BTC"
-                config={btc.dynamicDistanceConfigJson as Record<string, any> | null}
-                defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
-                onSave={(patch) => updateAsset.mutate({ pair: btc.pair, dynamicDistanceConfigJson: patch } as any)}
-              />
-            )}
-            {eth && (
-              <DynamicDistancePanel
-                label="ETH"
-                config={eth.dynamicDistanceConfigJson as Record<string, any> | null}
-                defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
-                onSave={(patch) => updateAsset.mutate({ pair: eth.pair, dynamicDistanceConfigJson: patch } as any)}
-              />
-            )}
-          </div>
-        </ConfigBlock>
-      )}
-
-      {/* ════ SUB-TAB: CONFLUENCIA ════ */}
-      {configSubTab === "confluencia" && (
-        <div className="space-y-4">
-          <Card className="border-cyan-500/30 bg-cyan-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-mono text-cyan-400">🧠 MOTOR DE CONFLUENCIA — Diagnóstico de Entrada</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Snapshot en tiempo real de la evaluación de confluencia por par. Muestra
-                régimen de mercado, puntuación de confianza y clase de decisión calculados
-                por <code className="font-mono text-[10px]">IdcaConfluenceEngine</code>.
-                En Sprint 1b el motor es solo diagnóstico — no modifica distancias ni tamaños.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <IdcaMarketPriceHeader />
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/30 bg-background/60">
-            <CardHeader className="pb-1">
-              <CardTitle className="text-xs font-mono text-muted-foreground">Leyenda — Clases de Decisión</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                {([
-                  ["HIGH_CONFIDENCE_ENTRY", "bg-emerald-500/15 text-emerald-300", "Todos los factores alineados. Entrada de alta confianza."],
-                  ["NORMAL_ENTRY", "bg-green-500/15 text-green-300", "Condiciones satisfactorias para entrada normal."],
-                  ["ARM_TRAILING", "bg-blue-500/15 text-blue-300", "Precio en zona pero sin confirmación. Armar trailing buy."],
-                  ["DEFENSIVE_SAFETY_BUY", "bg-amber-500/15 text-amber-300", "Sólo safety buy defensivo recomendado."],
-                  ["WATCH", "bg-yellow-500/15 text-yellow-300", "Condiciones débiles. Observar sin actuar."],
-                  ["NO_ENTRY", "bg-red-500/15 text-red-300", "Bloqueado por hard gate o confianza insuficiente."],
-                ] as [string, string, string][]).map(([cls, color, desc]) => (
-                  <div key={cls} className="flex flex-col gap-0.5">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold w-fit ${color}`}>{cls}</span>
-                    <span className="text-[10px] text-muted-foreground">{desc}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* ════ SUB-TAB: VWAP & REBOUND ════ */}
       {configSubTab === "vwap" && (

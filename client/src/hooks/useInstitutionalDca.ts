@@ -132,6 +132,8 @@ export interface IdcaAssetConfig {
   };
   // Dynamic Distance config
   dynamicDistanceConfigJson?: Record<string, any> | null;
+  // Entry Mode: assisted_entry | dynamic_intelligent_entry
+  entryMode?: string;
 }
 
 export interface IdcaCycle {

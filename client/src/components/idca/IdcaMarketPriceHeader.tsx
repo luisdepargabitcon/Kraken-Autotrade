@@ -34,6 +34,46 @@ function gradeColor(grade: string): string {
   }
 }
 
+const REGIME_LABELS: Record<string, string> = {
+  high_volatility:   "Alta volatilidad",
+  low_volatility:    "Baja volatilidad",
+  neutral_range:     "Rango neutro",
+  trending_up:       "Tendencia alcista",
+  trending_down:     "Tendencia bajista",
+  bullish_breakout:  "Ruptura alcista",
+  bearish_breakdown: "Ruptura bajista",
+  rebound_candidate: "Candidato rebote",
+  capitulation_zone: "Zona capitulación",
+};
+
+const BLOCKER_LABELS: Record<string, string> = {
+  no_rebound_when_required:    "Falta confirmación de rebote",
+  no_rebound_confirmed:        "Falta rebote confirmado",
+  insufficient_dip:            "Caída insuficiente",
+  dynamic_confidence_too_low:  "Confianza dinámica insuficiente",
+  data_unusable:               "Datos no utilizables",
+  data_degraded:               "Datos degradados",
+  market_score_weak:           "Mercado débil",
+  risk_elevated:               "Riesgo elevado",
+  high_volatility:             "Volatilidad alta",
+  low_volatility:              "Baja volatilidad",
+  btc_breakdown_blocks_eth:    "BTC en caída bloquea ETH",
+};
+
+function formatRegime(regime: string): string {
+  return REGIME_LABELS[regime] ?? regime.replace(/_/g, " ");
+}
+
+function translateBlocker(code: string): string {
+  return BLOCKER_LABELS[code] ?? code.replace(/_/g, " ");
+}
+
+function formatEntryMode(mode: string): string {
+  if (mode === "assisted_entry") return "Entrada asistida";
+  if (mode === "dynamic_intelligent_entry") return "Dinámica inteligente";
+  return mode.replace(/_/g, " ");
+}
+
 function regimeIcon(regime: string) {
   if (regime.includes("bullish") || regime === "rebound_candidate") return "📈";
   if (regime.includes("bearish") || regime === "capitulation_zone") return "📉";
@@ -46,8 +86,8 @@ function formatDecisionLabel(cls: string): string {
   const map: Record<string, string> = {
     HIGH_CONFIDENCE_ENTRY: "Alta confianza",
     NORMAL_ENTRY:          "Entrada normal",
-    ARM_TRAILING:          "Armar TB",
-    DEFENSIVE_SAFETY_BUY:  "Safety defensivo",
+    ARM_TRAILING:          "Vigilar rebote",
+    DEFENSIVE_SAFETY_BUY:  "Compra defensiva",
     WATCH:                 "Observar",
     NO_ENTRY:              "No entrar",
   };
@@ -89,10 +129,15 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
         </span>
         <span>
           {regimeIcon(marketRegime)}{" "}
-          <span className="font-mono">{marketRegime.replace(/_/g, " ")}</span>
+          <span className="font-mono">{formatRegime(marketRegime)}</span>
         </span>
         <span className="font-mono">ATR {atrPct.toFixed(2)}%</span>
-        <span className="font-mono text-[10px]">{entryMode.replace(/_/g, " ")}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="font-mono text-[10px] cursor-help underline decoration-dotted">{formatEntryMode(entryMode)}</span>
+          </TooltipTrigger>
+          <TooltipContent className="text-[10px]">Código: {entryMode}</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Dip progress bar */}
@@ -104,7 +149,7 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
               {drawdownFromReferencePct.toFixed(2)}%
             </span>
           </span>
-          <span>Req: <span className="font-mono">{requiredDistancePct.toFixed(2)}%</span></span>
+          <span>Requerido: <span className="font-mono">{requiredDistancePct.toFixed(2)}%</span></span>
         </div>
         <div className="relative h-1.5 bg-muted/50 rounded-full overflow-hidden">
           <div
@@ -141,13 +186,23 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
       {hardBlocked && (
         <div className="flex items-center gap-1 text-[10px] text-red-400">
           <ShieldAlert className="h-3 w-3" />
-          <span className="font-mono truncate">{hardBlockers.join(", ")}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="font-mono truncate cursor-help">{hardBlockers.map(translateBlocker).join(", ")}</span>
+            </TooltipTrigger>
+            <TooltipContent className="text-[10px]">{hardBlockers.join(", ")}</TooltipContent>
+          </Tooltip>
         </div>
       )}
       {!hardBlocked && degradingBlockers.length > 0 && (
-        <div className="text-[10px] text-yellow-500/80 font-mono truncate">
-          ⚠ {degradingBlockers.slice(0, 3).join(", ")}
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="text-[10px] text-yellow-500/80 font-mono truncate cursor-help">
+              ⚠ {degradingBlockers.slice(0, 3).map(translateBlocker).join(", ")}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent className="text-[10px]">{degradingBlockers.join(", ")}</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );
@@ -168,6 +223,9 @@ export function IdcaMarketPriceHeader({ className }: IdcaMarketPriceHeaderProps)
   const updatedAgo = dataUpdatedAt
     ? Math.round((Date.now() - dataUpdatedAt) / 1000)
     : null;
+  const updatedTime = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -176,9 +234,12 @@ export function IdcaMarketPriceHeader({ className }: IdcaMarketPriceHeaderProps)
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium text-muted-foreground">Estado de Entrada por Par</span>
-          {updatedAgo !== null && (
-            <span className="text-[10px] text-muted-foreground/60 font-mono">
-              (hace {updatedAgo}s)
+          {updatedTime !== null && (
+            <span className={cn(
+              "text-[10px] font-mono",
+              updatedAgo !== null && updatedAgo > 60 ? "text-yellow-500/70" : "text-muted-foreground/60"
+            )}>
+              Última act: {updatedTime}{updatedAgo !== null && updatedAgo > 60 ? " ⚠" : ""}
             </span>
           )}
         </div>
