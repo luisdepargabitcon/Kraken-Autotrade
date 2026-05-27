@@ -1213,6 +1213,15 @@ END $$;
     const idcaDynamicDistancePath = path.resolve(process.cwd(), "db", "migrations", "039_idca_dynamic_distance_config.sql");
     await tryExecuteFile(db, idcaDynamicDistancePath, "idca_dynamic_distance_config");
 
+    // ============================================================
+    // IDCA ORDER FEE TRACKING (042)
+    // Adds gross_base_qty, net_base_qty, fee_asset, fee_amount, fee_source
+    // to institutional_dca_orders for Revolut X base-asset fee tracking.
+    // ============================================================
+    console.log("[migrate] Ensuring IDCA order fee tracking columns exist (042)...");
+    const idcaOrderFeeTrackingPath = path.resolve(process.cwd(), "db", "migrations", "042_idca_order_fee_tracking.sql");
+    await tryExecuteFile(db, idcaOrderFeeTrackingPath, "idca_order_fee_tracking");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
