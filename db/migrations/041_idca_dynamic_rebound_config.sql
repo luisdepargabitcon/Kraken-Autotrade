@@ -49,12 +49,3 @@ SET dynamic_rebound_config_json = '{
   "antiOverextendedEnabled": true
 }'::jsonb
 WHERE dynamic_rebound_config_json = '{}'::jsonb;
-
-DO $$
-BEGIN
-  RAISE NOTICE 'Migration 041 completed: Added dynamic_rebound_config_json to institutional_dca_asset_configs';
-  RAISE NOTICE 'BTC/USD: minReboundPct=0.10%, maxReboundPct=0.80%, reboundAtrMultiplier=0.40';
-  RAISE NOTICE 'ETH/USD: minReboundPct=0.15%, maxReboundPct=1.20%, reboundAtrMultiplier=0.50';
-  RAISE NOTICE 'Other pairs: BTC defaults applied';
-  RAISE NOTICE 'To customize: UPDATE institutional_dca_asset_configs SET dynamic_rebound_config_json = ''{...}'' WHERE pair = ''...'';';
-END $$;
