@@ -2,6 +2,80 @@
 
 ---
 
+## 2026-05-27 — feat(idca): Sprint 2B — UI de Confluencia, Market Price Header, Endpoint de Diagnóstico
+
+### Objetivo
+Sprint 2B: UI completa de confluencia, header de mercado persistente en todas las pestañas IDCA,
+sub-tabs de Entradas ampliadas (Resumen/Modo, Asistida, Dinámica, Confluencia, TB, Safety, Diagnóstico),
+toggle de `smartAdjustmentEnabled` (OFF por defecto), endpoint HTTP `/entry-diagnostics`, y test de validación.
+
+### Archivos nuevos
+- **`client/src/components/idca/IdcaMarketPriceHeader.tsx`**
+  - Componente header compacto por par: precio actual, régimen, confianza, family scores, barra de caída
+  - Color-coded badges por `decisionClass`
+  - Auto-refetch cada 30s vía `useIdcaEntryDiagnostics`
+  - Visible en TODAS las pestañas IDCA (layout común)
+- **`server/services/institutionalDca/__tests__/entryDiagnostics.test.ts`**
+  - Test de validación del endpoint `GET /api/institutional-dca/entry-diagnostics`
+
+### Archivos modificados
+- **`server/routes/institutionalDca.routes.ts`**
+  - Nuevo endpoint `GET /api/institutional-dca/entry-diagnostics`
+  - Retorna snapshot de confluencia por par sin ejecutar trades
+  - Importa `parseDynamicDistanceConfig`, `computeATRPct`, `evaluateIdcaEntryConfluence`
+- **`client/src/hooks/useInstitutionalDca.ts`**
+  - Nuevos tipos: `IdcaEntryDiagnosticPair`, `IdcaEntryDiagnosticsResponse`
+  - Nuevo hook: `useIdcaEntryDiagnostics()` (refetch 30s, stale 20s)
+- **`client/src/hooks/useIdcaNavigation.ts`**
+  - Tipo ampliado: `"confluencia"` añadido a `setConfigSubTab`
+- **`client/src/pages/InstitutionalDca.tsx`**
+  - `IdcaMarketPriceHeader` en layout principal (entre ControlsBar y Tabs)
+  - Tipo de `configSubTab` ampliado con `"confluencia"`
+  - Sub-tab `🧠 Confluencia` con leyenda de clases de decisión
+  - Renombrado "ENTRADA AUTOMÁTICA" → "ENTRADA ASISTIDA"
+  - Sub-tabs Entradas ampliadas (ConfigTab)
+  - Toggle `smartAdjustmentEnabled` (OFF por defecto)
+
+### Endpoint `GET /api/institutional-dca/entry-diagnostics`
+Retorna por cada par:
+```json
+{
+  "pair": "BTC/USD",
+  "currentPrice": 108500,
+  "entryMode": "assisted_entry",
+  "referencePrice": 110200,
+  "referenceMethod": "vwap_anchor",
+  "drawdownFromReferencePct": 1.54,
+  "requiredDistancePct": 2.50,
+  "atrPct": 2.15,
+  "decisionClass": "WATCH",
+  "confidenceScore": 58.3,
+  "confidenceGrade": "C",
+  "marketRegime": "neutral_range",
+  "hardBlocked": false,
+  "familyScores": { "valueScore": 72, "confirmationScore": 45, "riskScore": 100, "dataScore": 79, "regimeScore": 62 },
+  "canArmTrailingBuy": false,
+  "finalRequiredDistancePct": 2.50
+}
+```
+
+### Retrocompatibilidad
+- `smartAdjustmentEnabled=false` (default): toggle UI disponible pero OFF
+- `dynamic_intelligent_entry` NO se activa automáticamente
+- NO modifica: sizing real, avgEntryPrice, basePrice, anclas, fills, safety orders
+- Header es solo lectura/diagnóstico
+
+### Validación
+- `npm run check`: ✅
+- Tests Sprint 1b (32/32): ✅
+- Test endpoint entry-diagnostics: ✅
+
+### VPS
+- No requiere migración DB
+- `docker compose up -d --build` después de `git pull`
+
+---
+
 ## 2026-05-27 — feat(idca): Sprint 1b — IdcaConfluenceEngine: motor de confluencia jerárquico
 
 ### Objetivo

@@ -183,6 +183,8 @@ export default function InstitutionalDca() {
 
           <ControlsBar />
 
+          <IdcaMarketPriceHeader className="border border-border/30 rounded-lg p-3 bg-card/30" />
+
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="grid grid-cols-5 md:grid-cols-10 gap-1 h-auto p-1">
               <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
@@ -914,6 +916,259 @@ function DynamicDistancePanel({
   );
 }
 
+// ─── Entry Sub-Sections (Sprint 2B) ─────────────────────────────
+type EntrySection = "resumen" | "asistida" | "dinamica" | "confluencia" | "tb" | "safety" | "diagnostico";
+
+function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsset }: {
+  config: any; updateConfig: any; btcAsset: any; ethAsset: any; updateAsset: any;
+}) {
+  const [section, setSection] = useState<EntrySection>("resumen");
+  const eu = config.entryUiJson as Record<string, number> | null;
+  const patience = eu?.entryPatienceLevel ?? 70;
+  const rebound = eu?.reboundConfirmationLevel ?? 65;
+  const quality = eu?.entryQualityLevel ?? 65;
+  const size = eu?.entrySizeAggressiveness ?? 40;
+  const preview = deriveEntryPreview(patience, rebound, quality);
+  const saveEntry = (key: string, val: number) =>
+    updateConfig.mutate({ entryUiJson: { ...(eu ?? {}), [key]: val } });
+
+  const pills: { id: EntrySection; label: string; color: string }[] = [
+    { id: "resumen", label: "Resumen", color: "bg-primary/10 text-primary border-primary" },
+    { id: "asistida", label: "Asistida", color: "bg-green-500/10 text-green-400 border-green-500" },
+    { id: "dinamica", label: "Dinámica", color: "bg-purple-500/10 text-purple-400 border-purple-500" },
+    { id: "confluencia", label: "Confluencia", color: "bg-cyan-500/10 text-cyan-400 border-cyan-500" },
+    { id: "tb", label: "Trailing Buy", color: "bg-blue-500/10 text-blue-400 border-blue-500" },
+    { id: "safety", label: "Safety Buys", color: "bg-amber-500/10 text-amber-400 border-amber-500" },
+    { id: "diagnostico", label: "Diagnóstico", color: "bg-rose-500/10 text-rose-400 border-rose-500" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Pills */}
+      <div className="flex gap-1.5 flex-wrap">
+        {pills.map(p => (
+          <button key={p.id}
+            onClick={() => setSection(p.id)}
+            className={cn(
+              "px-3 py-1 rounded-full text-[11px] font-medium transition-colors border",
+              section === p.id ? p.color : "border-border/40 text-muted-foreground hover:text-foreground"
+            )}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ─── RESUMEN / MODO ACTIVO ─── */}
+      {section === "resumen" && (
+        <Card className="border-border/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono">Modo de Entrada Activo</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Modo global</span>
+                <Badge className="ml-2 font-mono">{config.smartModeEnabled ? "Smart (confluencia activa)" : "Asistida (sliders)"}</Badge>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground">smart_adjustment</span>
+                <Badge variant="outline" className="ml-2 font-mono">{config.smartModeEnabled ? "ON" : "OFF"}</Badge>
+              </div>
+            </div>
+            <div className="rounded bg-muted/30 p-3 text-[11px] space-y-1">
+              <p><strong>assisted_entry</strong>: Sliders definen distancia base. Confluencia solo diagnóstica.</p>
+              <p><strong>dynamic_intelligent_entry</strong>: Motor de confluencia calcula distancia + ajuste dinámico completo.</p>
+              <p className="text-muted-foreground mt-2">El modo por par se define en el asset config (DB). En producción ambos pares usan <code className="font-mono">assisted_entry</code>.</p>
+            </div>
+            <div className="rounded-md border border-border/50 bg-muted/30 p-4 space-y-3">
+              <p className="text-xs font-mono font-medium text-muted-foreground">RESUMEN CALCULADO (sliders)</p>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                <div className="flex justify-between"><span className="text-muted-foreground">BTC caída mín</span><span className="font-mono">{preview.btcDip.toFixed(2)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">ETH caída mín</span><span className="font-mono">{preview.ethDip.toFixed(2)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">BTC rebote</span><span className="font-mono">{preview.btcRebound.toFixed(2)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">ETH rebote</span><span className="font-mono">{preview.ethRebound.toFixed(2)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Score mín entrada</span><span className="font-mono">{preview.minScore}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Score mín mercado</span><span className="font-mono">{preview.minMarket}</span></div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── ASISTIDA ─── */}
+      {section === "asistida" && (
+        <Card className="border-green-500/30 bg-green-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono text-green-400">🎯 ENTRADA ASISTIDA</CardTitle>
+            <p className="text-xs text-muted-foreground">Controla cuándo y cómo el bot entra al mercado. Los valores técnicos se derivan automáticamente de estos sliders.</p>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between"><Label className="text-sm font-medium">Entrada</Label><span className="font-mono text-lg font-semibold text-green-400">{patience}</span></div>
+              <Slider value={[patience]} onValueChange={(v) => saveEntry("entryPatienceLevel", v[0])} min={0} max={100} step={1} className="[&>span]:bg-green-500" />
+              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Comprar antes</span><span>Esperar mejor precio</span></div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between"><Label className="text-sm font-medium">Confirmación del rebote</Label><span className="font-mono text-lg font-semibold text-blue-400">{rebound}</span></div>
+              <Slider value={[rebound]} onValueChange={(v) => saveEntry("reboundConfirmationLevel", v[0])} min={0} max={100} step={1} className="[&>span]:bg-blue-500" />
+              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Rápida</span><span>Fuerte</span></div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between"><Label className="text-sm font-medium">Calidad mínima de entrada</Label><span className="font-mono text-lg font-semibold text-amber-400">{quality}</span></div>
+              <Slider value={[quality]} onValueChange={(v) => saveEntry("entryQualityLevel", v[0])} min={0} max={100} step={1} className="[&>span]:bg-amber-500" />
+              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Más oportunidades</span><span>Más filtro</span></div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between"><Label className="text-sm font-medium">Tamaño de compra inicial</Label><span className="font-mono text-lg font-semibold text-purple-400">{size}</span></div>
+              <Slider value={[size]} onValueChange={(v) => saveEntry("entrySizeAggressiveness", v[0])} min={0} max={100} step={1} className="[&>span]:bg-purple-500" />
+              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Más conservador</span><span>Más decidido</span></div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── DINÁMICA INTELIGENTE ─── */}
+      {section === "dinamica" && (
+        <Card className="border-purple-500/30 bg-purple-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono text-purple-400">⚡ ENTRADA DINÁMICA INTELIGENTE</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Modo avanzado: el motor de confluencia calcula la distancia requerida dinámicamente
+              usando ATR, régimen, family scores y confianza. <strong>No activar sin supervisión.</strong>
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert className="bg-purple-500/10 border-purple-500/30">
+              <AlertTriangle className="h-4 w-4 text-purple-400" />
+              <AlertDescription className="text-xs text-purple-200">
+                Este modo está <strong>desactivado por defecto</strong>. Para activarlo, cambie
+                el <code className="font-mono text-[10px]">entryMode</code> del asset a{" "}
+                <code className="font-mono text-[10px]">dynamic_intelligent_entry</code> en la base de datos.
+                No se activa desde la UI para prevenir accidentes.
+              </AlertDescription>
+            </Alert>
+            <div className="text-xs text-muted-foreground space-y-2">
+              <p><strong>Flujo</strong>: ATR% → régimen → family scores → multiplicadores → confidenceScore → decisionClass → distancia ajustada</p>
+              <p><strong>Diferencia con Asistida</strong>: No usa sliders como base. La distancia es 100% derivada de mercado.</p>
+              <p><strong>Safety net</strong>: Respeta <code className="font-mono">userMinEntryDistancePct</code> (floor absoluto).</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── CONFLUENCIA ─── */}
+      {section === "confluencia" && (
+        <div className="space-y-4">
+          <Card className="border-cyan-500/30 bg-cyan-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-mono text-cyan-400">🧠 MOTOR DE CONFLUENCIA</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Evaluación en tiempo real por par. Toggle de smart adjustment abajo.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Toggle smartAdjustmentEnabled */}
+              <div className="flex items-center justify-between rounded-lg border border-cyan-500/20 p-3 bg-cyan-500/5">
+                <div>
+                  <p className="text-sm font-medium">Smart Adjustment</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Cuando ON, la confluencia puede ajustar ±0.3-1% la distancia requerida en modo asistido.
+                    OFF = solo diagnóstico (logs sin impacto).
+                  </p>
+                </div>
+                <Switch
+                  checked={!!config.smartModeEnabled}
+                  onCheckedChange={(v) => updateConfig.mutate({ smartModeEnabled: v })}
+                />
+              </div>
+              <IdcaMarketPriceHeader />
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ─── TRAILING BUY ─── */}
+      {section === "tb" && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono text-blue-400">📈 TRAILING BUY</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Trailing buy se arma cuando el precio entra en zona de activación y la confluencia lo permite.
+              Dos caminos: VWAP anchor (primario) y Level 1 (fallback).
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs text-muted-foreground">
+            <div className="grid grid-cols-2 gap-4">
+              {btcAsset && (
+                <div className="space-y-1">
+                  <span className="font-medium text-foreground">BTC</span>
+                  <p>TB enabled: <Badge variant="outline">{btcAsset.trailingBuyEnabled ? "ON" : "OFF"}</Badge></p>
+                  <p>VWAP: <Badge variant="outline">{btcAsset.vwapEnabled ? "ON" : "OFF"}</Badge></p>
+                </div>
+              )}
+              {ethAsset && (
+                <div className="space-y-1">
+                  <span className="font-medium text-foreground">ETH</span>
+                  <p>TB enabled: <Badge variant="outline">{ethAsset.trailingBuyEnabled ? "ON" : "OFF"}</Badge></p>
+                  <p>VWAP: <Badge variant="outline">{ethAsset.vwapEnabled ? "ON" : "OFF"}</Badge></p>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px]">Los paths (vwap_anchor / level_1) se distinguen en logs con <code className="font-mono">tbPath</code>.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── SAFETY BUYS ─── */}
+      {section === "safety" && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono text-amber-400">🛡️ COMPRAS POSTERIORES / SAFETY</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Safety orders se ejecutan dentro de un ciclo activo para promediar a la baja.
+              La distancia dinámica (sub-tab Distancia) controla la separación entre safety buys.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs text-muted-foreground">
+            <div className="grid grid-cols-2 gap-4">
+              {btcAsset && (
+                <div className="space-y-1">
+                  <span className="font-medium text-foreground">BTC</span>
+                  <p>Max safety orders: <span className="font-mono">{btcAsset.maxSafetyOrders}</span></p>
+                  <p>Niveles: <span className="font-mono">{btcAsset.safetyOrdersJson?.length ?? 0}</span></p>
+                </div>
+              )}
+              {ethAsset && (
+                <div className="space-y-1">
+                  <span className="font-medium text-foreground">ETH</span>
+                  <p>Max safety orders: <span className="font-mono">{ethAsset.maxSafetyOrders}</span></p>
+                  <p>Niveles: <span className="font-mono">{ethAsset.safetyOrdersJson?.length ?? 0}</span></p>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px]">La confluencia evalúa <code className="font-mono">DEFENSIVE_SAFETY_BUY</code> como clase de decisión para safety buys cuando la confianza es baja.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── DIAGNÓSTICO ─── */}
+      {section === "diagnostico" && (
+        <Card className="border-rose-500/30 bg-rose-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-mono text-rose-400">🔬 DIAGNÓSTICO / RESULTADO EFECTIVO</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Endpoint: <code className="font-mono text-[10px]">GET /api/institutional-dca/entry-diagnostics</code>
+            </p>
+          </CardHeader>
+          <CardContent>
+            <IdcaMarketPriceHeader />
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
 function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia" | "confluencia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia" | "confluencia") => void }) {
@@ -1006,119 +1261,8 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
         </button>
       </div>
 
-      {/* ════ ENTRADA ASISTIDA ════ */}
-      {configSubTab === "entrada" && (() => {
-        const eu = config.entryUiJson as Record<string, number> | null;
-        const patience  = eu?.entryPatienceLevel       ?? 70;
-        const rebound   = eu?.reboundConfirmationLevel ?? 65;
-        const quality   = eu?.entryQualityLevel        ?? 65;
-        const size      = eu?.entrySizeAggressiveness  ?? 40;
-        const preview   = deriveEntryPreview(patience, rebound, quality);
-        const saveEntry = (key: string, val: number) =>
-          updateConfig.mutate({ entryUiJson: { ...(eu ?? {}), [key]: val } });
-        return (
-          <div className="space-y-6">
-            <Card className="border-green-500/30 bg-green-500/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-mono text-green-400">🎯 ENTRADA ASISTIDA</CardTitle>
-                <p className="text-xs text-muted-foreground">Controla cuándo y cómo el bot entra al mercado. Todos los valores técnicos se calculan automáticamente.</p>
-              </CardHeader>
-              <CardContent className="space-y-6">
-
-                {/* Slider 1 — Entrada */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Entrada</Label>
-                    <span className="font-mono text-lg font-semibold text-green-400">{patience}</span>
-                  </div>
-                  <Slider value={[patience]} onValueChange={(v) => saveEntry("entryPatienceLevel", v[0])}
-                    min={0} max={100} step={1} className="[&>span]:bg-green-500" />
-                  <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>Comprar antes</span><span>Esperar mejor precio</span>
-                  </div>
-                </div>
-
-                {/* Slider 2 — Confirmación del rebote */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Confirmación del rebote</Label>
-                    <span className="font-mono text-lg font-semibold text-blue-400">{rebound}</span>
-                  </div>
-                  <Slider value={[rebound]} onValueChange={(v) => saveEntry("reboundConfirmationLevel", v[0])}
-                    min={0} max={100} step={1} className="[&>span]:bg-blue-500" />
-                  <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>Rápida</span><span>Fuerte</span>
-                  </div>
-                </div>
-
-                {/* Slider 3 — Calidad mínima de entrada */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Calidad mínima de entrada</Label>
-                    <span className="font-mono text-lg font-semibold text-amber-400">{quality}</span>
-                  </div>
-                  <Slider value={[quality]} onValueChange={(v) => saveEntry("entryQualityLevel", v[0])}
-                    min={0} max={100} step={1} className="[&>span]:bg-amber-500" />
-                  <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>Más oportunidades</span><span>Más filtro</span>
-                  </div>
-                </div>
-
-                {/* Slider 4 — Tamaño de compra inicial */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Tamaño de compra inicial</Label>
-                    <span className="font-mono text-lg font-semibold text-purple-400">{size}</span>
-                  </div>
-                  <Slider value={[size]} onValueChange={(v) => saveEntry("entrySizeAggressiveness", v[0])}
-                    min={0} max={100} step={1} className="[&>span]:bg-purple-500" />
-                  <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>Más conservador</span><span>Más decidido</span>
-                  </div>
-                </div>
-
-                {/* Resumen calculado */}
-                <div className="rounded-md border border-border/50 bg-muted/30 p-4 space-y-3">
-                  <p className="text-xs font-mono font-medium text-muted-foreground">RESUMEN CALCULADO</p>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">BTC caída mínima</span>
-                      <span className="font-mono font-medium">{preview.btcDip.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">ETH caída mínima</span>
-                      <span className="font-mono font-medium">{preview.ethDip.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">BTC rebote</span>
-                      <span className="font-mono font-medium">{preview.btcRebound.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">ETH rebote</span>
-                      <span className="font-mono font-medium">{preview.ethRebound.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Score mínimo entrada</span>
-                      <span className="font-mono font-medium">{preview.minScore}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Score mínimo mercado</span>
-                      <span className="font-mono font-medium">{preview.minMarket}</span>
-                    </div>
-                  </div>
-                  <div className="pt-2 border-t border-border/30">
-                    <p className="text-xs">
-                      <span className="font-medium text-green-400">Configuración actual: {preview.style}.</span>{" "}
-                      {preview.desc}
-                    </p>
-                  </div>
-                </div>
-
-              </CardContent>
-            </Card>
-          </div>
-        );
-      })()}
+      {/* ════ ENTRADA (SUB-SECCIONES) ════ */}
+      {configSubTab === "entrada" && <EntrySubSections config={config} updateConfig={updateConfig} btcAsset={btc} ethAsset={eth} updateAsset={updateAsset} />}
 
       {configSubTab === "general" && (<>
 
