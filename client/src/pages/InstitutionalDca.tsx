@@ -20,6 +20,8 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   useIdcaControls,
@@ -93,7 +95,6 @@ import {
   TrendingUp,
   Wallet,
   Zap,
-  ChevronDown,
   ChevronRight,
   Loader2,
   Package,
@@ -1184,44 +1185,127 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono text-blue-400">📈 TRAILING BUY</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Se arma cuando el precio entra en zona de activación y la confluencia lo permite.
-              Configuración real en pestaña <strong>VWAP &amp; Rebound</strong>.
+              Estado en tiempo real del trailing buy por par. Datos del endpoint /entry-diagnostics.
             </p>
           </CardHeader>
           <CardContent className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-4">
-              {btcAsset && (
+              {diagData?.pairs["BTC/USD"] && (
                 <div className="space-y-2 p-3 rounded border border-border/30 bg-card/40">
-                  <span className="font-medium text-foreground font-mono">BTC/USD</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Trailing Buy:</span>
-                    <Badge variant="outline" className={btcAsset.trailingBuyEnabled ? "text-green-400 border-green-400/30" : "text-muted-foreground"}>
-                      {btcAsset.trailingBuyEnabled ? "Activo" : "Inactivo"}
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground font-mono">BTC/USD</span>
+                    <Badge variant="outline" className={
+                      diagData.pairs["BTC/USD"].trailingBuy?.state === "armed" ||
+                      diagData.pairs["BTC/USD"].trailingBuy?.state === "watching_rebound" ||
+                      diagData.pairs["BTC/USD"].trailingBuy?.state === "confirmed"
+                        ? "text-green-400 border-green-400/30"
+                        : "text-muted-foreground"
+                    }>
+                      {diagData.pairs["BTC/USD"].trailingBuy?.state === "inactive" ? "Inactivo" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state === "armed" ? "Armado" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state === "watching_rebound" ? "Vigilando rebote" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state === "confirmed" ? "Confirmado" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state === "overextended" ? "Sobre-extendido" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state === "blocked" ? "Bloqueado" :
+                       diagData.pairs["BTC/USD"].trailingBuy?.state || "Desconocido"}
                     </Badge>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">VWAP anchor:</span>
-                    <Badge variant="outline" className={btcAsset.vwapEnabled ? "text-violet-400 border-violet-400/30" : "text-muted-foreground"}>
-                      {btcAsset.vwapEnabled ? "Activo" : "Inactivo"}
-                    </Badge>
-                  </div>
+                  {diagData.pairs["BTC/USD"].trailingBuy?.state !== "inactive" && diagData.pairs["BTC/USD"].trailingBuy && (
+                    <div className="space-y-1 text-[10px] font-mono text-muted-foreground">
+                      <div className="flex justify-between">
+                        <span>Source:</span>
+                        <span className={diagData.pairs["BTC/USD"].trailingBuy.source === "dynamic_rebound" ? "text-purple-400" : ""}>
+                          {diagData.pairs["BTC/USD"].trailingBuy.source === "dynamic_rebound" ? "Dinámico" :
+                           diagData.pairs["BTC/USD"].trailingBuy.source === "assisted_rebound" ? "Asistido" :
+                           diagData.pairs["BTC/USD"].trailingBuy.source === "legacy_rebound" ? "Legacy" :
+                           diagData.pairs["BTC/USD"].trailingBuy.source}
+                        </span>
+                      </div>
+                      {diagData.pairs["BTC/USD"].trailingBuy.localLowPrice && (
+                        <div className="flex justify-between">
+                          <span>Mín local:</span>
+                          <span>${diagData.pairs["BTC/USD"].trailingBuy.localLowPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                        </div>
+                      )}
+                      {diagData.pairs["BTC/USD"].trailingBuy.reboundPct && diagData.pairs["BTC/USD"].trailingBuy.reboundTriggerPrice && (
+                        <div className="flex justify-between">
+                          <span>Trigger rebote:</span>
+                          <span className="text-green-400">${diagData.pairs["BTC/USD"].trailingBuy.reboundTriggerPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })} (+{diagData.pairs["BTC/USD"].trailingBuy.reboundPct.toFixed(2)}%)</span>
+                        </div>
+                      )}
+                      {diagData.pairs["BTC/USD"].trailingBuy.maxExecutionPrice && (
+                        <div className="flex justify-between">
+                          <span>Máx ejecución:</span>
+                          <span className="text-amber-400">${diagData.pairs["BTC/USD"].trailingBuy.maxExecutionPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                        </div>
+                      )}
+                      {diagData.pairs["BTC/USD"].trailingBuy.blocker && (
+                        <div className="flex justify-between text-red-400">
+                          <span>Bloqueador:</span>
+                          <span>{diagData.pairs["BTC/USD"].trailingBuy.blocker}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
-              {ethAsset && (
+              {diagData?.pairs["ETH/USD"] && (
                 <div className="space-y-2 p-3 rounded border border-border/30 bg-card/40">
-                  <span className="font-medium text-foreground font-mono">ETH/USD</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Trailing Buy:</span>
-                    <Badge variant="outline" className={ethAsset.trailingBuyEnabled ? "text-green-400 border-green-400/30" : "text-muted-foreground"}>
-                      {ethAsset.trailingBuyEnabled ? "Activo" : "Inactivo"}
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground font-mono">ETH/USD</span>
+                    <Badge variant="outline" className={
+                      diagData.pairs["ETH/USD"].trailingBuy?.state === "armed" ||
+                      diagData.pairs["ETH/USD"].trailingBuy?.state === "watching_rebound" ||
+                      diagData.pairs["ETH/USD"].trailingBuy?.state === "confirmed"
+                        ? "text-green-400 border-green-400/30"
+                        : "text-muted-foreground"
+                    }>
+                      {diagData.pairs["ETH/USD"].trailingBuy?.state === "inactive" ? "Inactivo" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state === "armed" ? "Armado" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state === "watching_rebound" ? "Vigilando rebote" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state === "confirmed" ? "Confirmado" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state === "overextended" ? "Sobre-extendido" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state === "blocked" ? "Bloqueado" :
+                       diagData.pairs["ETH/USD"].trailingBuy?.state || "Desconocido"}
                     </Badge>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">VWAP anchor:</span>
-                    <Badge variant="outline" className={ethAsset.vwapEnabled ? "text-violet-400 border-violet-400/30" : "text-muted-foreground"}>
-                      {ethAsset.vwapEnabled ? "Activo" : "Inactivo"}
-                    </Badge>
-                  </div>
+                  {diagData.pairs["ETH/USD"].trailingBuy?.state !== "inactive" && diagData.pairs["ETH/USD"].trailingBuy && (
+                    <div className="space-y-1 text-[10px] font-mono text-muted-foreground">
+                      <div className="flex justify-between">
+                        <span>Source:</span>
+                        <span className={diagData.pairs["ETH/USD"].trailingBuy.source === "dynamic_rebound" ? "text-purple-400" : ""}>
+                          {diagData.pairs["ETH/USD"].trailingBuy.source === "dynamic_rebound" ? "Dinámico" :
+                           diagData.pairs["ETH/USD"].trailingBuy.source === "assisted_rebound" ? "Asistido" :
+                           diagData.pairs["ETH/USD"].trailingBuy.source === "legacy_rebound" ? "Legacy" :
+                           diagData.pairs["ETH/USD"].trailingBuy.source}
+                        </span>
+                      </div>
+                      {diagData.pairs["ETH/USD"].trailingBuy.localLowPrice && (
+                        <div className="flex justify-between">
+                          <span>Mín local:</span>
+                          <span>${diagData.pairs["ETH/USD"].trailingBuy.localLowPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {diagData.pairs["ETH/USD"].trailingBuy.reboundPct && diagData.pairs["ETH/USD"].trailingBuy.reboundTriggerPrice && (
+                        <div className="flex justify-between">
+                          <span>Trigger rebote:</span>
+                          <span className="text-green-400">${diagData.pairs["ETH/USD"].trailingBuy.reboundTriggerPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })} (+{diagData.pairs["ETH/USD"].trailingBuy.reboundPct.toFixed(2)}%)</span>
+                        </div>
+                      )}
+                      {diagData.pairs["ETH/USD"].trailingBuy.maxExecutionPrice && (
+                        <div className="flex justify-between">
+                          <span>Máx ejecución:</span>
+                          <span className="text-amber-400">${diagData.pairs["ETH/USD"].trailingBuy.maxExecutionPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {diagData.pairs["ETH/USD"].trailingBuy.blocker && (
+                        <div className="flex justify-between text-red-400">
+                          <span>Bloqueador:</span>
+                          <span>{diagData.pairs["ETH/USD"].trailingBuy.blocker}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1287,8 +1371,100 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
               Endpoint: <code className="font-mono text-[10px]">GET /api/institutional-dca/entry-diagnostics</code>
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <IdcaMarketPriceHeader />
+
+            {/* ─── Trailing Buy Technical Diagnostics (expandable) ─── */}
+            {diagData && (
+              <div className="space-y-3">
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="w-full justify-between text-xs font-mono text-muted-foreground hover:text-foreground">
+                      <span>📊 Diagnóstico técnico Trailing Buy</span>
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-2 pt-2">
+                    {["BTC/USD", "ETH/USD"].map(pair => {
+                      const pairData = diagData.pairs[pair];
+                      if (!pairData?.trailingBuy) return null;
+                      const tb = pairData.trailingBuy;
+                      return (
+                        <div key={pair} className="p-2 rounded border border-border/30 bg-card/40 text-[10px] font-mono space-y-1">
+                          <div className="font-semibold text-foreground mb-1">{pair}</div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
+                            <span>Estado:</span>
+                            <span className={tb.state === "armed" || tb.state === "confirmed" ? "text-green-400" : ""}>{tb.state}</span>
+                            <span>Source:</span>
+                            <span className={tb.source === "dynamic_rebound" ? "text-purple-400" : ""}>{tb.source}</span>
+                            <span>TB Path:</span>
+                            <span>{tb.tbPath}</span>
+                            <span>Reference:</span>
+                            <span>${tb.referencePrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                            <span>Current:</span>
+                            <span>${tb.currentPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                            <span>Required dist:</span>
+                            <span>{tb.requiredDistancePct.toFixed(2)}%</span>
+                            <span>Drawdown:</span>
+                            <span>{tb.drawdownFromReferencePct.toFixed(2)}%</span>
+                            {tb.localLowPrice && (
+                              <>
+                                <span>Local low:</span>
+                                <span>${tb.localLowPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                              </>
+                            )}
+                            {tb.reboundPct && (
+                              <>
+                                <span>Rebound %:</span>
+                                <span>{tb.reboundPct.toFixed(3)}%</span>
+                              </>
+                            )}
+                            {tb.reboundTriggerPrice && (
+                              <>
+                                <span>Trigger price:</span>
+                                <span className="text-green-400">${tb.reboundTriggerPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                              </>
+                            )}
+                            {tb.maxExecutionPrice && (
+                              <>
+                                <span>Max execution:</span>
+                                <span className="text-amber-400">${tb.maxExecutionPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                              </>
+                            )}
+                            {tb.retainedDropPct && (
+                              <>
+                                <span>Retained drop:</span>
+                                <span>{tb.retainedDropPct.toFixed(3)}%</span>
+                              </>
+                            )}
+                            {tb.retainedRequiredDropPct && (
+                              <>
+                                <span>Retained required:</span>
+                                <span>{tb.retainedRequiredDropPct.toFixed(3)}%</span>
+                              </>
+                            )}
+                            {tb.retainedActualDropPct && (
+                              <>
+                                <span>Retained actual:</span>
+                                <span>{tb.retainedActualDropPct.toFixed(3)}%</span>
+                              </>
+                            )}
+                            <span>Can execute:</span>
+                            <span className={tb.canExecuteTrailingBuy ? "text-green-400" : "text-red-400"}>{tb.canExecuteTrailingBuy ? "Sí" : "No"}</span>
+                            {tb.blocker && (
+                              <>
+                                <span className="text-red-400">Blocker:</span>
+                                <span className="text-red-400">{tb.blocker}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

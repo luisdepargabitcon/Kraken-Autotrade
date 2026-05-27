@@ -1512,6 +1512,27 @@ export interface IdcaEntryDiagnosticPair {
   };
   canArmTrailingBuy: boolean;
   finalRequiredDistancePct: number;
+  trailingBuy?: {
+    state: string;
+    tbPath: string;
+    source: string;
+    referencePrice: number;
+    currentPrice: number;
+    requiredDistancePct: number;
+    drawdownFromReferencePct: number;
+    localLowPrice: number | null;
+    localLowDrawdownPct: number | null;
+    reboundPct: number | null;
+    reboundTriggerPrice: number | null;
+    maxExecutionPrice: number | null;
+    expectedBuyPrice: number | null;
+    retainedDropPct: number | null;
+    retainedRequiredDropPct: number | null;
+    retainedActualDropPct: number | null;
+    canExecuteTrailingBuy: boolean;
+    blocker: string | null;
+    updatedAt: string;
+  };
   timestamp: string;
   error?: string;
 }

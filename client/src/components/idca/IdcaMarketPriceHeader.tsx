@@ -58,6 +58,27 @@ const BLOCKER_LABELS: Record<string, string> = {
   high_volatility:             "Volatilidad alta",
   low_volatility:              "Baja volatilidad",
   btc_breakdown_blocks_eth:    "BTC en caída bloquea ETH",
+  // Dynamic rebound blockers
+  rebound_trigger_not_reached: "Rebote no alcanzado",
+  rebound_overextended:        "Rebote sobre-extendido",
+  max_execution_price_exceeded: "Precio superó máximo ejecución",
+  confluence_hard_blocked:     "Confluencia bloqueada",
+};
+
+const REBOUND_STATE_LABELS: Record<string, string> = {
+  inactive:       "Inactivo",
+  armed:          "Armado",
+  watching_rebound: "Vigilando rebote",
+  confirmed:      "Confirmado",
+  overextended:   "Sobre-extendido",
+  blocked:        "Bloqueado",
+};
+
+const REBOUND_SOURCE_LABELS: Record<string, string> = {
+  dynamic_rebound:  "Dinámico",
+  assisted_rebound: "Asistido",
+  legacy_rebound:   "Legacy",
+  none:             "Ninguno",
 };
 
 function formatRegime(regime: string): string {
@@ -100,9 +121,10 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
   const { pair, currentPrice, decisionClass, confidenceScore, confidenceGrade,
           marketRegime, drawdownFromReferencePct, requiredDistancePct,
           hardBlocked, hardBlockers, degradingBlockers, atrPct,
-          candleCount, entryMode, familyScores } = data;
+          candleCount, entryMode, familyScores, trailingBuy } = data;
 
   const dipOk = drawdownFromReferencePct >= requiredDistancePct;
+  const tbArmed = trailingBuy?.state === "armed" || trailingBuy?.state === "watching_rebound" || trailingBuy?.state === "confirmed";
 
   return (
     <div className="rounded-lg border border-border/50 bg-card/60 p-3 space-y-2">
@@ -139,6 +161,31 @@ function PairDiagnosticCard({ data }: { data: IdcaEntryDiagnosticPair }) {
           <TooltipContent className="text-[10px]">Código: {entryMode}</TooltipContent>
         </Tooltip>
       </div>
+
+      {/* Trailing Buy compact line */}
+      {tbArmed && trailingBuy && (
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono bg-blue-500/5 border border-blue-500/20 rounded px-2 py-1">
+          <span className="text-blue-400 font-semibold">TB armado</span>
+          {trailingBuy.localLowPrice && (
+            <>
+              <span>|</span>
+              <span>mín ${trailingBuy.localLowPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+            </>
+          )}
+          {trailingBuy.reboundPct && trailingBuy.reboundTriggerPrice && (
+            <>
+              <span>|</span>
+              <span>rebote +{trailingBuy.reboundPct.toFixed(2)}% → compra ${trailingBuy.reboundTriggerPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+            </>
+          )}
+          {trailingBuy.maxExecutionPrice && (
+            <>
+              <span>|</span>
+              <span>máx ${trailingBuy.maxExecutionPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Dip progress bar */}
       <div className="space-y-1">

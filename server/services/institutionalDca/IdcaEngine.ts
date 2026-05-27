@@ -1265,17 +1265,57 @@ async function evaluatePair(
             // Arm: precio entra en zona VWAP Y toca buyThreshold real Y VWAP tiene datos maduros
             if (inInterestZone && vwapReliableForEntry && currentPrice <= tbBuyThreshold && !TrailingBuyManager.isArmed(pair)) {
               const reboundMinPct = tbDerived.reboundPct;
-              TrailingBuyManager.arm(pair, tbEffectiveRef, currentPrice, { trailingPct: reboundMinPct });
+              const drawdownFromReferencePct = tbEffectiveRef > 0
+                ? ((tbEffectiveRef - currentPrice) / tbEffectiveRef) * 100
+                : 0;
+              const atrPct = getVolatility(pair);
+              const dynamicReboundConfig = (assetConfig as any).dynamicReboundConfigJson || null;
+
+              // Prepare arm options with dynamic rebound parameters if applicable
+              const armOpts: any = { trailingPct: reboundMinPct };
+              if (tbEntryMode === "dynamic_intelligent_entry" && dynamicReboundConfig) {
+                armOpts.entryMode = tbEntryMode;
+                armOpts.dynamicReboundConfig = dynamicReboundConfig;
+                armOpts.requiredDistancePct = tbDistanceResult.requiredDistancePct;
+                armOpts.drawdownFromReferencePct = drawdownFromReferencePct;
+                armOpts.atrPct = atrPct;
+                armOpts.tbPath = "vwap_anchor";
+              }
+
+              TrailingBuyManager.arm(pair, tbEffectiveRef, currentPrice, armOpts);
+              const tbArmedState = TrailingBuyManager.getState(pair);
+              const reboundTriggerPrice = tbArmedState?.localLow
+                ? tbArmedState.localLow * (1 + tbArmedState.trailingPct / 100)
+                : currentPrice * (1 + reboundMinPct / 100);
+              const maxExecPriceArmed = tbArmedState?.maxExecutionPrice ?? (tbBuyThreshold * (1 + reboundMinPct / 100));
+
+              // Build payload with dynamic rebound data if available
+              const payloadJson: any = {
+                price: currentPrice,
+                zone: tbZone,
+                lowerBand1: tbVwap.lowerBand1,
+                reboundMinPct,
+                effectiveRef: tbEffectiveRef,
+                buyThreshold: tbBuyThreshold,
+                candlesUsed: tbVwap.candlesUsed,
+                entryMode: tbEntryMode,
+                reboundSource: armOpts.entryMode === "dynamic_intelligent_entry" ? "dynamic_rebound" : "legacy_rebound",
+                actualReboundPct: tbArmedState?.trailingPct,
+                actualTriggerPrice: reboundTriggerPrice,
+                maxExecutionPrice: maxExecPriceArmed,
+                retainedDropPct: tbEffectiveRef > 0
+                  ? ((tbEffectiveRef - maxExecPriceArmed) / tbEffectiveRef) * 100
+                  : null,
+              };
+
               await createHumanEvent({
                 pair, mode,
                 eventType: "trailing_buy_activated",
                 severity: "info",
-                message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}`,
-                payloadJson: { price: currentPrice, zone: tbZone, lowerBand1: tbVwap.lowerBand1, reboundMinPct, effectiveRef: tbEffectiveRef, buyThreshold: tbBuyThreshold, candlesUsed: tbVwap.candlesUsed },
+                message: `Trailing buy armed: price $${currentPrice.toFixed(2)} in ${tbZone}, lowerBand1=$${tbVwap.lowerBand1.toFixed(2)}, reboundPct=${tbArmedState?.trailingPct?.toFixed(3)}%`,
+                payloadJson,
               }, { eventType: "trailing_buy_activated", pair, mode });
-              const reboundTriggerPrice = currentPrice * (1 + reboundMinPct / 100);
-              const tbArmedState = TrailingBuyManager.getState(pair);
-              const maxExecPriceArmed = tbArmedState?.maxExecutionPrice ?? (tbBuyThreshold * (1 + reboundMinPct / 100));
+
               telegram.alertTrailingBuyArmed(pair, mode, currentPrice, tbEffectiveRef, tbBuyThreshold, reboundTriggerPrice, maxExecPriceArmed)
                 .catch(e => console.warn(`${TAG}[TELEGRAM] alertTrailingBuyArmed failed: ${e.message}`));
             }
