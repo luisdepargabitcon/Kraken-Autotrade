@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-05-27 — fix(idca): Sprint 2C fixes — entry-diagnostics, clamp mínimo, mensajes contextuales, UI etiquetas
+
+### Objetivo
+Correcciones post-Sprint 2C tras activar `dynamic_intelligent_entry`:
+- `/entry-diagnostics` devuelve distancia dinámica real usando `resolveIdcaRequiredDistance`
+- Confluence respeta `userMinEntryDistancePct` (minClamp) en `computeDynamicWithConfidence`
+- Mensajes contextuales en logs distinguen TB armado vs ciclo activo vs pre-entrada
+- UI muestra etiqueta contextual "Referencia del ciclo" solo cuando hay ciclo activo real
+
+### Archivos modificados
+- `server/routes/institutionalDca.routes.ts`
+  - Endpoint `/entry-diagnostics`: usa `resolveIdcaRequiredDistance` con `activeEntryMode`
+  - Pasa `userMinEntryDistancePct`/`userMaxEntryDistancePct` a `evaluateIdcaEntryConfluence`
+  - Devuelve `distanceSource`, `distanceMode`, `sliderBasePct` en respuesta
+- `server/services/institutionalDca/IdcaEngine.ts`
+  - Pasa `userMinEntryDistancePct`/`userMaxEntryDistancePct` de `distanceResult` a confluence
+  - `logEntryDecision`: añade parámetro `tbArmed` para mensajes contextuales
+  - Mensaje observe-only: "trailing buy en vigilancia" si TB armado, "ciclo activo" si no
+  - Mensaje `logEntryDecision`: distingue TB vs ciclo activo vs pre-entrada
+- `client/src/components/idca/IdcaMarketContextCard.tsx`
+  - Label contextual según `referenceContext.referenceReason`:
+    - "Ancla dinámica VWAP" para trailing buy
+    - "Referencia del ciclo" para ciclo activo
+    - "Referencia importada" para imported cycle
+    - "Referencia efectiva de entrada" por defecto
+
+### Validación
+- `npm run check`: ✅
+- Tests: `IdcaDistanceResolver.test.ts` (23), `entryDiagnostics.test.ts` (7), `entryMode.test.ts` (7) — 33/33 ✅
+
+---
+
 ## 2026-05-27 — feat(idca): Sprint 2C — Selector real de modo, eliminación pestaña Distancia, traducciones completas
 
 ### Objetivo
