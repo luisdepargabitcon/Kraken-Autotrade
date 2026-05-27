@@ -891,7 +891,7 @@ export async function emergencyCloseAll(): Promise<number> {
     for (const cycle of activeCycles) {
       if (parseFloat(String(cycle.totalQuantity)) > 0) {
         try {
-          await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)));
+          await executeRealSell(cycle, "emergency_sell", parseFloat(String(cycle.totalQuantity)), true);
         } catch (e: any) {
           console.error(`${TAG}[EMERGENCY_CLOSE] Error selling ${cycle.pair}:`, e.message);
         }
@@ -1982,6 +1982,13 @@ async function checkEntry(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -2019,7 +2026,14 @@ async function checkEntry(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][INITIAL_BUY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][INITIAL_BUY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     const simFeePct = resolveSimulationFeePct(config);
@@ -2037,7 +2051,8 @@ async function checkEntry(
     capitalReservedUsd: capitalForCycle.toFixed(2),
     capitalUsedUsd: executedUsd.toFixed(2),
     totalCostBasisUsd: executedUsd.toFixed(2),
-    totalQuantity: executedQty.toFixed(8),
+    // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para totalQuantity
+    totalQuantity: (mode === "live" ? netBaseQty : executedQty).toFixed(8),
     avgEntryPrice: avgFillPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
     buyCount: 1,
@@ -2091,6 +2106,14 @@ async function checkEntry(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? baseBuyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   // Update simulation wallet
@@ -2728,6 +2751,13 @@ async function checkSafetyBuy(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -2775,7 +2805,14 @@ async function checkSafetyBuy(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][SAFETY_BUY] FILL CONFIRMED for cycle #${cycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][SAFETY_BUY] FILL CONFIRMED for cycle #${cycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
@@ -2786,7 +2823,8 @@ async function checkSafetyBuy(
   // Recalculate average usando valores EJECUTADOS
   const prevQty = parseFloat(String(cycle.totalQuantity));
   const prevCost = parseFloat(String(cycle.capitalUsedUsd));
-  const newTotalQty = prevQty + executedQty;
+  // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para el nuevo total
+  const newTotalQty = prevQty + (mode === "live" ? netBaseQty : executedQty);
   const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
@@ -2908,6 +2946,14 @@ async function checkSafetyBuy(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   if (mode === "simulation") {
@@ -2988,7 +3034,7 @@ async function armTakeProfit(
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "partial_sell", partialQty);
+    await executeRealSell(cycle, "partial_sell", partialQty, false);
   }
 
   const remainingQty = totalQty - partialQty;
@@ -3153,7 +3199,7 @@ async function executeTrailingExit(
   // Prevents fake sell history if the exchange call fails.
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "final_sell", actualSellQty);
+      await executeRealSell(cycle, "final_sell", actualSellQty, true);
     } catch (sellErr: any) {
       console.error(`${TAG}[TRAILING_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -3329,7 +3375,7 @@ async function executeBreakevenExit(
   // ─── FASE E: Execute live sell BEFORE writing order record ───────────────────
   if (mode === "live") {
     try {
-      await executeRealSell(cycle, "breakeven_sell", actualSellQty);
+      await executeRealSell(cycle, "breakeven_sell", actualSellQty, true);
     } catch (sellErr: any) {
       console.error(`${TAG}[BREAKEVEN_SELL_FAILED] #${cycle.id} ${pair} — ${sellErr.message}`);
       await createHumanEvent({
@@ -4585,6 +4631,12 @@ export interface BuyExecutionResult {
   wasAdjusted: boolean;
   originalQty?: number;
   rejectionReason?: string;
+  // Fee tracking for base-asset fees (e.g., Revolut X charges fee in BTC)
+  grossBaseQty?: number;
+  netBaseQty?: number;
+  feeAsset?: string;
+  feeAmount?: number;
+  feeSource?: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null;
 }
 
 /**
@@ -4713,7 +4765,7 @@ async function executeRealBuyWithGuard(
   console.log(
     `${TAG}[LIVE][BUY][CONFIRMED] ${pair} orderId=${exchangeOrderId} ` +
     `qty=${fillConfirmation.filledQty.toFixed(8)} avg=${fillConfirmation.avgFillPrice.toFixed(2)} ` +
-    `fee=${fillConfirmation.feeUsd.toFixed(4)}`
+    `fee=${fillConfirmation.feeUsd.toFixed(4)} netQty=${fillConfirmation.netBaseQty?.toFixed(8) || 'N/A'}`
   );
 
   return {
@@ -4725,6 +4777,11 @@ async function executeRealBuyWithGuard(
     feeUsd: fillConfirmation.feeUsd,
     wasAdjusted: validation.reduced ?? false,
     originalQty: validation.reduced ? intendedQty : undefined,
+    grossBaseQty: fillConfirmation.grossBaseQty,
+    netBaseQty: fillConfirmation.netBaseQty,
+    feeAsset: fillConfirmation.feeAsset,
+    feeAmount: fillConfirmation.feeAmount,
+    feeSource: fillConfirmation.feeSource,
   };
 }
 
@@ -4856,11 +4913,11 @@ async function executeSafetyBuyLiveSafe(
   };
 }
 
-async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number): Promise<void> {
+async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, quantity: number, isFullClose: boolean = false): Promise<void> {
   try {
     // HOTFIX: Validar balance base real antes de vender
     const cycleQty = parseFloat(String(cycle.totalQuantity));
-    const validation = await liveGuard.validateSellQuantity(cycle.pair, quantity, cycleQty);
+    const validation = await liveGuard.validateSellQuantity(cycle.pair, quantity, cycleQty, isFullClose);
     if (!validation.valid) {
       console.error(`${TAG}[LIVE][SELL] BLOCKED: ${validation.reason} (pair=${cycle.pair} qty=${quantity.toFixed(8)} available=${validation.availableQty.toFixed(8)})`);
       await createHumanEvent({
@@ -4875,17 +4932,23 @@ async function executeRealSell(cycle: InstitutionalDcaCycle, orderType: string, 
       throw new Error(`Live sell blocked: ${validation.reason} (pair=${cycle.pair} type=${orderType})`);
     }
 
+    // Usar cantidad ajustada si dust tolerance fue aplicada
+    const sellQty = validation.adjustedQty ?? quantity;
+    if (validation.adjustedQty && validation.adjustedQty !== quantity) {
+      console.log(`${TAG}[LIVE][SELL] Dust tolerance applied: original=${quantity.toFixed(8)} adjusted=${sellQty.toFixed(8)} reason=${validation.reason}`);
+    }
+
     const tradingExchange = ExchangeFactory.getTradingExchange();
     if (!tradingExchange.isInitialized()) {
       console.error(`${TAG}[LIVE][SELL] Trading exchange not initialized — order NOT sent for ${cycle.pair}`);
       throw new Error(`Live sell blocked: exchange not initialized (pair=${cycle.pair} type=${orderType})`);
     }
-    console.log(`${TAG}[LIVE][SELL] Placing order: ${cycle.pair} type=${orderType} qty=${quantity.toFixed(8)}`);
+    console.log(`${TAG}[LIVE][SELL] Placing order: ${cycle.pair} type=${orderType} qty=${sellQty.toFixed(8)}`);
     const result = await tradingExchange.placeOrder({
       pair: cycle.pair,
       type: "sell",
       ordertype: "market",
-      volume: quantity.toFixed(8),
+      volume: sellQty.toFixed(8),
     });
     if (result.success) {
       console.log(`${TAG}[LIVE][SELL] Order accepted: ${cycle.pair} type=${orderType} orderId=${result.orderId || result.txid || "(pending)"}`);
@@ -5096,6 +5159,13 @@ async function checkPlusActivation(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -5133,7 +5203,14 @@ async function checkPlusActivation(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][PLUS] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][PLUS] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     feeUsd = baseBuyUsd * (resolveSimulationFeePct(config) / 100);
@@ -5154,7 +5231,8 @@ async function checkPlusActivation(
     capitalReservedUsd: plusCapital.toFixed(2),
     capitalUsedUsd: executedUsd.toFixed(2),
     totalCostBasisUsd: executedUsd.toFixed(2),
-    totalQuantity: executedQty.toFixed(8),
+    // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para totalQuantity
+    totalQuantity: (mode === "live" ? netBaseQty : executedQty).toFixed(8),
     avgEntryPrice: avgFillPrice.toFixed(8),
     currentPrice: currentPrice.toFixed(8),
     buyCount: 1,
@@ -5199,6 +5277,14 @@ async function checkPlusActivation(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? baseBuyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   if (mode === "simulation") {
@@ -5351,6 +5437,13 @@ async function checkPlusSafetyBuy(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -5388,7 +5481,14 @@ async function checkPlusSafetyBuy(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][PLUS_SAFETY] FILL CONFIRMED for cycle #${plusCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][PLUS_SAFETY] FILL CONFIRMED for cycle #${plusCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
@@ -5399,7 +5499,8 @@ async function checkPlusSafetyBuy(
   // Recalcular promedios con valores EJECUTADOS
   const prevQty = parseFloat(String(plusCycle.totalQuantity));
   const prevCost = parseFloat(String(plusCycle.capitalUsedUsd));
-  const newTotalQty = prevQty + executedQty;
+  // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para el nuevo total
+  const newTotalQty = prevQty + (mode === "live" ? netBaseQty : executedQty);
   const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
@@ -5469,6 +5570,14 @@ async function checkPlusSafetyBuy(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   if (mode === "simulation") {
@@ -5555,7 +5664,7 @@ async function closePlusCycle(
   }
 
   if (mode === "live") {
-    await executeRealSell(plusCycle, "final_sell", totalQty);
+    await executeRealSell(plusCycle, "final_sell", totalQty, true);
   }
 
   await createHumanEvent({
@@ -6383,6 +6492,13 @@ async function executeRecoveryEntry(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, crear ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -6420,7 +6536,14 @@ async function executeRecoveryEntry(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][RECOVERY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} fee=${feeUsd.toFixed(4)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][RECOVERY] FILL CONFIRMED: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
@@ -6443,7 +6566,8 @@ async function executeRecoveryEntry(
     mode,
     status: "active",
     avgEntryPrice: avgFillPrice.toFixed(8),
-    totalQuantity: executedQty.toFixed(8),
+    // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para totalQuantity
+    totalQuantity: (mode === "live" ? netBaseQty : executedQty).toFixed(8),
     capitalUsedUsd: executedUsd.toFixed(2),
     totalCostBasisUsd: executedUsd.toFixed(2),
     capitalReservedUsd: recoveryCapital.toFixed(2),
@@ -6486,6 +6610,14 @@ async function executeRecoveryEntry(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   if (mode === "simulation") {
@@ -6658,6 +6790,13 @@ async function checkRecoverySafetyBuy(
   let originalQty: number | undefined;
   let exchangeOrderId: string | undefined;
 
+  // Fee tracking variables (default to executedQty for simulation)
+  let netBaseQty = quantity;
+  let grossBaseQty = quantity;
+  let feeAsset: string | null | undefined = null;
+  let feeAmount: number | null | undefined = null;
+  let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null | undefined = null;
+
   if (mode === "live") {
     // ─── MODO LIVE: Ejecutar PRIMERO, actualizar ciclo DESPUÉS ─────────
     const execResult = await executeRealBuyWithGuard(
@@ -6695,7 +6834,14 @@ async function checkRecoverySafetyBuy(
     originalQty = execResult.originalQty;
     exchangeOrderId = execResult.orderId;
 
-    console.log(`${TAG}[LIVE][RECOVERY_SAFETY] FILL CONFIRMED for cycle #${recoveryCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)}`);
+    // Fee tracking: usar netBaseQty si está disponible (fee en base asset)
+    netBaseQty = execResult.netBaseQty ?? executedQty;
+    grossBaseQty = execResult.grossBaseQty ?? executedQty;
+    feeAsset = execResult.feeAsset ?? null;
+    feeAmount = execResult.feeAmount ?? null;
+    feeSource = execResult.feeSource ?? null;
+
+    console.log(`${TAG}[LIVE][RECOVERY_SAFETY] FILL CONFIRMED for cycle #${recoveryCycle.id}: qty=${executedQty.toFixed(8)} avg=${avgFillPrice.toFixed(2)} netQty=${netBaseQty.toFixed(8)} feeAsset=${feeAsset || 'N/A'}`);
   } else {
     // ─── MODO SIMULATION: Calcular fees simulados ────────────────
     feeUsd = buyUsd * (resolveSimulationFeePct(config) / 100);
@@ -6706,7 +6852,8 @@ async function checkRecoverySafetyBuy(
   // Recalcular promedios con valores EJECUTADOS
   const prevQty = parseFloat(String(recoveryCycle.totalQuantity));
   const prevCost = parseFloat(String(recoveryCycle.capitalUsedUsd));
-  const newTotalQty = prevQty + executedQty;
+  // HOTFIX: Usar netBaseQty (cantidad neta post-fee en base asset) para el nuevo total
+  const newTotalQty = prevQty + (mode === "live" ? netBaseQty : executedQty);
   const newTotalCost = prevCost + executedUsd;
   const newAvgPrice = newTotalCost / newTotalQty;
   const newBuyCount = buyCount + 1;
@@ -6758,6 +6905,14 @@ async function checkRecoverySafetyBuy(
     sizeAdjusted: wasAdjusted,
     originalIntendedUsd: wasAdjusted ? buyUsd.toFixed(2) : undefined,
     adjustedUsd: wasAdjusted ? executedUsd.toFixed(2) : undefined,
+    // Fee tracking (solo LIVE)
+    ...(mode === "live" ? {
+      grossBaseQty: grossBaseQty.toFixed(8),
+      netBaseQty: netBaseQty.toFixed(8),
+      feeAsset: feeAsset || null,
+      feeAmount: feeAmount?.toFixed(8) || null,
+      feeSource: feeSource || null,
+    } : {}),
   });
 
   if (mode === "simulation") {
@@ -6831,7 +6986,7 @@ async function closeRecoveryCycle(
     });
 
     if (mode === "live") {
-      await executeRealSell(recoveryCycle, "final_sell", remainingQty);
+      await executeRealSell(recoveryCycle, "final_sell", remainingQty, true);
     }
   }
 
@@ -6964,7 +7119,7 @@ export async function manualCloseCycle(cycleId: number): Promise<{
   });
 
   if (mode === "live") {
-    await executeRealSell(cycle, "manual_sell", totalQty);
+    await executeRealSell(cycle, "manual_sell", totalQty, true);
   }
 
   // Lote 4: zero capitalUsedUsd on full close; preserve totalCostBasisUsd as historical

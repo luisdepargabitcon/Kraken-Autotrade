@@ -56,6 +56,12 @@ export interface FillConfirmation {
   feeUsd: number;
   fillTime?: Date;
   rawResponse?: any;
+  // Fee tracking for base-asset fees (e.g., Revolut X charges fee in BTC)
+  grossBaseQty?: number;
+  netBaseQty?: number;
+  feeAsset?: string;
+  feeAmount?: number;
+  feeSource?: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null;
 }
 
 export interface ExecutionGuardResult {
@@ -284,16 +290,82 @@ export async function confirmOrderFill(
 
       const status = (orderData.status || '').toUpperCase();
       const filledQty = parseFloat(String(orderData.filledSize ?? orderData.filledQty ?? orderData.volume ?? 0));
-      const filledUsd = parseFloat(String(orderData.executedValue ?? orderData.cost ?? orderData.value ?? 0));
+      let filledUsd = parseFloat(String(orderData.executedValue ?? orderData.cost ?? orderData.value ?? 0));
       const avgFillPrice = parseFloat(String(orderData.averagePrice ?? orderData.avgPrice ?? orderData.price ?? 0));
       const feeUsd = parseFloat(String(orderData.fee ?? 0));
 
+      // HOTFIX: Recalcular filledUsd si viene 0 pero hay filledQty y avgFillPrice
+      if (filledUsd === 0 && filledQty > 0 && avgFillPrice > 0) {
+        filledUsd = filledQty * avgFillPrice;
+        console.log(`${TAG}[FILLED_USD_RECALC] orderId=${exchangeOrderId} recalculated filledUsd=${filledUsd.toFixed(2)} from qty=${filledQty.toFixed(8)} * price=${avgFillPrice.toFixed(2)}`);
+      }
+
+      // Fee tracking para Revolut X (base-asset fee)
+      let grossBaseQty = filledQty;
+      let netBaseQty = filledQty;
+      let feeAsset: string | undefined = undefined;
+      let feeAmount: number | undefined = undefined;
+      let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null = null;
+
+      // Detectar si es Revolut X y aplicar fallback para fee en base asset
+      const exchangeName = exchange.constructor.name.toLowerCase();
+      if (exchangeName.includes("revolut") && filledQty > 0 && avgFillPrice > 0) {
+        // Revolut X default fee: 0.09% (0.0009)
+        const REVOLUT_FEE_PCT = 0.0009;
+        const inferredFeeBaseQty = filledQty * REVOLUT_FEE_PCT;
+        const inferredFeeUsd = filledUsd * REVOLUT_FEE_PCT;
+
+        // Si el fee de la API es 0 o muy pequeño, inferir fee en base asset
+        if (feeUsd === 0 || Math.abs(feeUsd - inferredFeeUsd) > 0.01) {
+          netBaseQty = filledQty - inferredFeeBaseQty;
+          feeAsset = pair.split("/")[0]; // Base asset (BTC, ETH, etc.)
+          feeAmount = inferredFeeBaseQty;
+          feeSource = "inferred_from_default_pct";
+          console.log(`${TAG}[REVOLUT_FEE_INFERRED] orderId=${exchangeOrderId} fee_asset=${feeAsset} fee_amount=${feeAmount.toFixed(8)} net_base_qty=${netBaseQty.toFixed(8)} source=inferred_from_default_pct`);
+        } else {
+          // Fee de la API es confiable
+          feeAsset = "USD"; // Asumimos USD si la API devuelve fee en USD
+          feeAmount = feeUsd;
+          feeSource = "exchange_api";
+        }
+      }
+
       if (FILLED_STATUSES.includes(status) && filledQty > 0) {
-        return { confirmed: true, exchangeOrderId, status: "filled", filledQty, filledUsd, avgFillPrice, feeUsd, fillTime: new Date(), rawResponse: orderData };
+        return {
+          confirmed: true,
+          exchangeOrderId,
+          status: "filled",
+          filledQty,
+          filledUsd,
+          avgFillPrice,
+          feeUsd,
+          fillTime: new Date(),
+          rawResponse: orderData,
+          grossBaseQty,
+          netBaseQty,
+          feeAsset,
+          feeAmount,
+          feeSource,
+        };
       }
 
       if (PARTIAL_STATUSES.includes(status) && filledQty > 0) {
-        return { confirmed: true, exchangeOrderId, status: "partially_filled", filledQty, filledUsd, avgFillPrice, feeUsd, fillTime: new Date(), rawResponse: orderData };
+        return {
+          confirmed: true,
+          exchangeOrderId,
+          status: "partially_filled",
+          filledQty,
+          filledUsd,
+          avgFillPrice,
+          feeUsd,
+          fillTime: new Date(),
+          rawResponse: orderData,
+          grossBaseQty,
+          netBaseQty,
+          feeAsset,
+          feeAmount,
+          feeSource,
+        };
       }
 
       if (REJECTED_STATUSES.includes(status)) {
@@ -344,15 +416,18 @@ export async function confirmOrderFill(
 
 /**
  * Valida que hay suficiente balance base para una venta propuesta.
+ * Para full closes (isFullClose=true): aplica dust tolerance y devuelve cantidad ajustada.
+ * Para partial closes: no tolerancia, lanza si available < requested.
  */
 export async function validateSellQuantity(
   pair: string,
   requestedQty: number,
-  cycleQty: number
-): Promise<{ valid: boolean; availableQty: number; reason?: string }> {
+  cycleQty: number,
+  isFullClose: boolean = false
+): Promise<{ valid: boolean; availableQty: number; adjustedQty?: number; reason?: string }> {
   const availableQty = await getAvailableBaseQty(pair);
   
-  console.log(`${TAG}[SELL_CHECK] pair=${pair} requested=${requestedQty.toFixed(8)} available=${availableQty.toFixed(8)} cycleQty=${cycleQty.toFixed(8)}`);
+  console.log(`${TAG}[SELL_CHECK] pair=${pair} requested=${requestedQty.toFixed(8)} available=${availableQty.toFixed(8)} cycleQty=${cycleQty.toFixed(8)} isFullClose=${isFullClose}`);
 
   // Si el ciclo cree tener más de lo disponible en exchange, hay mismatch
   if (cycleQty > availableQty * 1.0025) { // 0.25% tolerancia (cubre dust/fees)
@@ -364,11 +439,26 @@ export async function validateSellQuantity(
   }
 
   // Si la cantidad solicitada excede lo disponible
-  if (requestedQty > availableQty * 1.0025) { // 0.25% tolerancia (cubre dust/fees)
+  if (requestedQty > availableQty) {
+    const diff = requestedQty - availableQty;
+    const diffPct = requestedQty > 0 ? (diff / requestedQty) * 100 : 100;
+    const dustTolerance = Math.max(0.00000002, requestedQty * 0.0025); // 0.25% relativo
+
+    if (isFullClose && diff <= dustTolerance) {
+      // Dust tolerance aplicable: ajustar a cantidad disponible
+      console.log(`${TAG}[SELL_CHECK] Dust tolerance applied: requested=${requestedQty.toFixed(8)} adjusted=${availableQty.toFixed(8)} diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%)`);
+      return {
+        valid: true,
+        availableQty,
+        adjustedQty: availableQty,
+        reason: `fee_dust_quantity_adjustment: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%) tolerance=${dustTolerance.toFixed(8)}`,
+      };
+    }
+
     return {
       valid: false,
       availableQty,
-      reason: `insufficient_base_balance: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}`,
+      reason: `insufficient_base_balance: requested=${requestedQty.toFixed(8)}, available=${availableQty.toFixed(8)}, diff=${diff.toFixed(8)} (${diffPct.toFixed(4)}%)`,
     };
   }
 

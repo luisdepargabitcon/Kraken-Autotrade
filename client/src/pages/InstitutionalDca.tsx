@@ -165,7 +165,7 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap">("entrada");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia">("entrada");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
@@ -1343,22 +1343,6 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
               </div>
             )}
           </div>
-          <div className="space-y-3">
-            <p className="text-xs font-mono font-medium text-muted-foreground">DISTANCIA DINÁMICA ENTRE COMPRAS</p>
-            <p className="text-[10px] text-muted-foreground">En modo dinámico híbrido solo puede alejar el próximo precio de compra, nunca acercarlo.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {btcAsset && (
-                <DynamicDistancePanel label="BTC" config={btcAsset.dynamicDistanceConfigJson as any}
-                  defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
-                  onSave={(patch) => updateAsset.mutate({ pair: btcAsset.pair, dynamicDistanceConfigJson: patch } as any)} />
-              )}
-              {ethAsset && (
-                <DynamicDistancePanel label="ETH" config={ethAsset.dynamicDistanceConfigJson as any}
-                  defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
-                  onSave={(patch) => updateAsset.mutate({ pair: ethAsset.pair, dynamicDistanceConfigJson: patch } as any)} />
-              )}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1474,7 +1458,7 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap"; setConfigSubTab: (tab: "entrada" | "general" | "vwap") => void }) {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
@@ -1538,6 +1522,17 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           )}
         >
           VWAP & Rebound
+        </button>
+        <button
+          onClick={() => setConfigSubTab("distancia")}
+          className={cn(
+            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            configSubTab === "distancia"
+              ? "bg-orange-500/10 text-orange-400 border-b-2 border-orange-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          📏 Distancia
         </button>
       </div>
 
@@ -2334,6 +2329,42 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
               </p>
             </div>
           </div>
+          </div>
+        </ConfigBlock>
+      )}
+
+      {/* ════ SUB-TAB: DISTANCIA DINÁMICA ════ */}
+      {configSubTab === "distancia" && (
+        <ConfigBlock icon={Activity} title="Distancia Dinámica entre Compras"
+          desc="Configuración de distancia dinámica entre compras en modo híbrido. En modo dinámico híbrido solo puede alejar el próximo precio de compra, nunca acercarlo.">
+
+          <div id="idca-config-distancia" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {btc && (
+                <DynamicDistancePanel label="BTC" config={btc.dynamicDistanceConfigJson as any}
+                  defaults={{ minDistancePct: 0.80, maxDistancePct: 12.0, feeFloorPct: 0.60 }}
+                  onSave={(patch) => updateAsset.mutate({ pair: btc.pair, dynamicDistanceConfigJson: patch } as any)} />
+              )}
+              {eth && (
+                <DynamicDistancePanel label="ETH" config={eth.dynamicDistanceConfigJson as any}
+                  defaults={{ minDistancePct: 1.00, maxDistancePct: 15.0, feeFloorPct: 0.70 }}
+                  onSave={(patch) => updateAsset.mutate({ pair: eth.pair, dynamicDistanceConfigJson: patch } as any)} />
+              )}
+            </div>
+
+            {/* ── Info panel ── */}
+            <div className="border-t border-border/30 pt-4">
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-orange-300 font-semibold">Notas importantes:</p>
+                <ul className="text-xs text-orange-300/80 space-y-1 list-disc list-inside">
+                  <li>En modo <strong>Manual</strong>, usa los valores fijos configurados en la sub-pestaña Entrada</li>
+                  <li>En modo <strong>Dinámico Híbrido</strong>, el sistema ajusta dinámicamente la distancia según volatilidad y fees</li>
+                  <li>El modo dinámico <strong>solo puede alejar</strong> el próximo precio de compra, nunca acercarlo</li>
+                  <li>Los valores <strong>minDistancePct</strong> y <strong>maxDistancePct</strong> definen los límites del ajuste dinámico</li>
+                  <li>El <strong>feeFloorPct</strong> asegura que la distancia nunca sea menor al costo de fees</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </ConfigBlock>
       )}

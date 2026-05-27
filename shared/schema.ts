@@ -1252,6 +1252,12 @@ export const institutionalDcaOrders = pgTable("institutional_dca_orders", {
   availableQuoteBefore: decimal("available_quote_before", { precision: 18, scale: 2 }),
   spendableQuote: decimal("spendable_quote", { precision: 18, scale: 2 }),
   needsVerificationReason: text("needs_verification_reason"),
+  // Fee tracking for base-asset fees (e.g., Revolut X charges fee in BTC)
+  grossBaseQty: decimal("gross_base_qty", { precision: 18, scale: 8 }),
+  netBaseQty: decimal("net_base_qty", { precision: 18, scale: 8 }),
+  feeAsset: text("fee_asset"),
+  feeAmount: decimal("fee_amount", { precision: 18, scale: 8 }),
+  feeSource: text("fee_source"), // exchange_api, inferred_from_default_pct, manual, legacy
 });
 
 export type InstitutionalDcaOrder = typeof institutionalDcaOrders.$inferSelect;
