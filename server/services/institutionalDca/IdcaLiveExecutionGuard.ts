@@ -395,8 +395,42 @@ export async function confirmOrderFill(
           if (qty > 0) { totalQty += qty; totalUsd += px * qty; }
         }
         if (totalQty > 0) {
+          const avgFillPrice = totalQty > 0 ? totalUsd / totalQty : 0;
           console.log(`${TAG}[FILLS_FALLBACK] Found fills for ${exchangeOrderId}: qty=${totalQty.toFixed(8)} usd=${totalUsd.toFixed(2)}`);
-          return { confirmed: true, exchangeOrderId, status: "filled", filledQty: totalQty, filledUsd: totalUsd, avgFillPrice: totalQty > 0 ? totalUsd / totalQty : 0, feeUsd: 0, fillTime: new Date() };
+
+          // Fee tracking para Revolut X en fallback
+          let grossBaseQty = totalQty;
+          let netBaseQty = totalQty;
+          let feeAsset: string | undefined = undefined;
+          let feeAmount: number | undefined = undefined;
+          let feeSource: "exchange_api" | "inferred_from_default_pct" | "manual" | "legacy" | null = null;
+
+          const exchangeName = exchange.constructor.name.toLowerCase();
+          if (exchangeName.includes("revolut") && totalQty > 0 && avgFillPrice > 0) {
+            const REVOLUT_FEE_PCT = 0.0009;
+            const inferredFeeBaseQty = totalQty * REVOLUT_FEE_PCT;
+            netBaseQty = totalQty - inferredFeeBaseQty;
+            feeAsset = pair.split("/")[0];
+            feeAmount = inferredFeeBaseQty;
+            feeSource = "inferred_from_default_pct";
+            console.log(`${TAG}[FILLS_FALLBACK][REVOLUT_FEE_INFERRED] orderId=${exchangeOrderId} fee_asset=${feeAsset} fee_amount=${feeAmount.toFixed(8)} net_base_qty=${netBaseQty.toFixed(8)}`);
+          }
+
+          return {
+            confirmed: true,
+            exchangeOrderId,
+            status: "filled",
+            filledQty: totalQty,
+            filledUsd: totalUsd,
+            avgFillPrice,
+            feeUsd: 0,
+            fillTime: new Date(),
+            grossBaseQty,
+            netBaseQty,
+            feeAsset,
+            feeAmount,
+            feeSource,
+          };
         }
       }
     }

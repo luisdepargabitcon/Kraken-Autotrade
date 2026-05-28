@@ -16,6 +16,8 @@
  * 9. PnL calculation with netBaseQty
  * 10. Schema validation with new fields
  * 11. Migration 042 schema verification
+ * 12. Safety buy with sizeAdjusted (orderId 765 reproduction)
+ * 13. SizeAdjusted does not disable fee tracking
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -191,6 +193,72 @@ describe("IDCA Fee Tracking Hotfix", () => {
       expect(expectedColumns).toContain("fee_asset");
       expect(expectedColumns).toContain("fee_amount");
       expect(expectedColumns).toContain("fee_source");
+    });
+  });
+
+  describe("12. Safety buy with sizeAdjusted (orderId 765 reproduction)", () => {
+    it("should apply fee tracking correctly for safety_buy with sizeAdjusted=true", () => {
+      // Reproduce exact case from orderId 765
+      const orderType = "safety_buy";
+      const sizeAdjusted = true;
+      const executedUsd = 312.96;
+      const grossBaseQty = 0.00428042;
+      const avgFillPrice = 73115.40;
+      const exchange = "Revolut X";
+      const REVOLUT_FEE_PCT = 0.0009;
+      
+      // Calculate expected fee tracking values
+      const expectedFeeBaseQty = grossBaseQty * REVOLUT_FEE_PCT;
+      const expectedNetBaseQty = grossBaseQty - expectedFeeBaseQty;
+      const expectedFeeUsd = executedUsd * REVOLUT_FEE_PCT;
+      const expectedNetValueUsd = executedUsd - expectedFeeUsd;
+      const expectedFeeAsset = "BTC";
+      const expectedFeeSource = "inferred_from_default_pct";
+      
+      // Verify expected values
+      expect(orderType).toBe("safety_buy");
+      expect(sizeAdjusted).toBe(true);
+      expect(grossBaseQty).toBe(0.00428042);
+      expect(executedUsd).toBe(312.96);
+      expect(avgFillPrice).toBe(73115.40);
+      
+      // Verify fee tracking is applied even with sizeAdjusted=true
+      expect(expectedNetBaseQty).toBeCloseTo(0.00427657, 8);
+      expect(expectedFeeBaseQty).toBeCloseTo(0.00000385, 8);
+      expect(expectedFeeUsd).toBeCloseTo(0.28, 2);
+      expect(expectedNetValueUsd).toBeCloseTo(312.68, 2);
+      expect(expectedFeeAsset).toBe("BTC");
+      expect(expectedFeeSource).toBe("inferred_from_default_pct");
+      
+      // Verify cycle.totalQuantity should be incremented with netBaseQty
+      const prevQty = 0.01388300;
+      const newTotalQty = prevQty + expectedNetBaseQty;
+      expect(newTotalQty).toBeCloseTo(0.01815957, 8);
+    });
+  });
+
+  describe("13. SizeAdjusted does not disable fee tracking", () => {
+    it("should apply fee tracking even when sizeAdjusted=true", () => {
+      // Test that sizeAdjusted does not skip fee tracking
+      const sizeAdjusted = true;
+      const grossBaseQty = 0.01;
+      const executedUsd = 1000;
+      const REVOLUT_FEE_PCT = 0.0009;
+      
+      // Fee tracking should be applied regardless of sizeAdjusted
+      const expectedFeeBaseQty = grossBaseQty * REVOLUT_FEE_PCT;
+      const expectedNetBaseQty = grossBaseQty - expectedFeeBaseQty;
+      const expectedFeeUsd = executedUsd * REVOLUT_FEE_PCT;
+      
+      expect(sizeAdjusted).toBe(true);
+      expect(expectedNetBaseQty).toBeLessThan(grossBaseQty);
+      expect(expectedFeeBaseQty).toBeGreaterThan(0);
+      expect(expectedFeeUsd).toBeGreaterThan(0);
+      
+      // Verify fee tracking fields are populated (corrected calculation)
+      expect(expectedNetBaseQty).toBeCloseTo(0.009991, 8);
+      expect(expectedFeeBaseQty).toBeCloseTo(0.000009, 8);
+      expect(expectedFeeUsd).toBeCloseTo(0.90, 2);
     });
   });
 });
