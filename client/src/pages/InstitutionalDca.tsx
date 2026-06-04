@@ -182,7 +182,10 @@ export default function InstitutionalDca() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <CircleDollarSign className="h-6 w-6 text-primary" />
-              <h1 className="text-xl font-bold font-mono">INSTITUTIONAL DCA</h1>
+              <div>
+                <h1 className="text-xl font-bold">DCA Inteligente</h1>
+                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">IDCA · Gestión avanzada por ciclos</p>
+              </div>
             </div>
             <HealthBadge />
           </div>

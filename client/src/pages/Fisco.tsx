@@ -549,7 +549,10 @@ export default function Fisco() {
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <Calculator className="h-6 w-6 text-blue-400" />
-            <h1 className="text-xl font-bold">Fiscal Crypto</h1>
+            <div>
+              <h1 className="text-xl font-bold">Fiscal Crypto</h1>
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Fiscal · FIFO, AEAT, importaciones e informes</p>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-end gap-3 p-4 bg-card border border-border rounded-xl">
