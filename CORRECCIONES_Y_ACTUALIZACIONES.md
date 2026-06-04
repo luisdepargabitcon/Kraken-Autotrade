@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-06-04 — fix(ui): Cierre branding Fiscal Crypto (Fase 1.2)
+
+### Objetivo
+Eliminar referencias FISCO visibles en páginas internas Fisco.tsx y Notifications.tsx.
+
+### Cambios
+- `Fisco.tsx` — Título: "FISCO — Informe Fiscal Anual" → "Fiscal Crypto"
+- `Fisco.tsx` — "Canal de destino para alertas FISCO" → "...alertas Fiscal Crypto" (x2)
+- `Notifications.tsx` — Categoría: "Fiscal / FISCO" → "Fiscal Crypto"
+- `Notifications.tsx` — Descripción: "errores FISCO" → "errores fiscales"
+- `Notifications.tsx` — Labels: "Sync diario FISCO" → "Sync diario fiscal", "Sync manual FISCO" → "Sync manual fiscal", "Error sync FISCO" → "Error de sincronización fiscal"
+- Claves internas `fisco_*` sin modificar
+
+### Sin impacto operativo
+- No se tocó server/, DB, lógica operativa ni FUENTES_BOT.md
+
+### Grep resultado
+- 0 coincidencias en client/src para todos los patrones de branding antiguo (scope aprobado)
+- Guide.tsx tiene "KrakenBot.AI" en texto de guía técnica histórica (fuera del scope Fase 1.2)
+
+### Commit
+- Hash: a8630ac
+
+---
+
 ## 2026-06-04 — fix(ui): Pulido branding NEXA y labels mundos (Fase 1.1)
 
 ### Objetivo
