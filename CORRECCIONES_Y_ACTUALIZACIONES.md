@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-06-04 — fix(ui): Coherencia final de títulos y mundos NEXA (Fase 1.3)
+
+### Objetivo
+Alinear títulos principales visibles de los tres mundos con los nombres NEXA definitivos.
+
+### Cambios
+- `InstitutionalDca.tsx` — `INSTITUTIONAL DCA` → **`DCA Inteligente`** + subtítulo `IDCA · Gestión avanzada por ciclos`
+- `Strategies.tsx` — `Trading` → **`Trading Activo`** + subtítulo `SPOT · Señales, estrategias y órdenes`
+- `Fisco.tsx` — Añadir subtítulo `Fiscal · FIFO, AEAT, importaciones e informes` bajo "Fiscal Crypto"
+
+### Sin impacto operativo
+- No se tocó server/, DB, lógica operativa, interruptores BTC/ETH ni FUENTES_BOT.md
+
+### Grep resultado
+- 0 ocurrencias como título principal visible
+- Ocurrencias justificadas restantes: comentarios de código, guía técnica interna, badge secundario en IdcaPnlWidget (etiqueta técnica pequeña, permitida)
+
+### Commit
+- Hash: 34de14c
+
+---
+
 ## 2026-06-04 — fix(ui): Cierre branding Fiscal Crypto (Fase 1.2)
 
 ### Objetivo
