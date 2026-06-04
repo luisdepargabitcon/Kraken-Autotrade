@@ -4329,12 +4329,19 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
                   <span className="text-lg">{resultIcon}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground/60 font-mono">#{cycle.id}</span>
                       <span className="text-sm font-mono font-bold">{cycle.pair}</span>
                       <Badge variant="outline" className={cn("text-[10px] font-mono", MODE_COLORS[cycle.mode])}>
                         {cycle.mode?.toUpperCase()}
                       </Badge>
                       {cycle.cycleType === "plus" && (
                         <Badge variant="outline" className="text-[10px] font-mono text-purple-400 border-purple-400/50">PLUS</Badge>
+                      )}
+                      {cycle.cycleType === "recovery" && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-orange-400 border-orange-400/50 bg-orange-400/5">RECOVERY</Badge>
+                      )}
+                      {cycle.isManualCycle && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-fuchsia-400 border-fuchsia-400/50 bg-fuchsia-400/5">MANUAL</Badge>
                       )}
                       {cycle.isImported && (
                         <Badge variant="outline" className="text-[10px] font-mono text-cyan-400 border-cyan-400/50">IMPORTADO</Badge>
@@ -4733,7 +4740,9 @@ function EventsTab() {
         </Button>
       </div>
       <div className="text-[10px] text-muted-foreground/50 font-mono">
-        {subTab === "terminal" && "Eventos IDCA enriquecidos y payloads."}
+        {subTab === "live" && "Actividad en tiempo real del motor IDCA: últimos 50 eventos del día."}
+        {subTab === "events" && "Historial filtrable de todos los eventos IDCA con buscador, paginación y exportación CSV."}
+        {subTab === "terminal" && "Eventos IDCA enriquecidos y payloads técnicos."}
         {subTab === "logs" && "Logs técnicos continuos del módulo IDCA."}
       </div>
       {subTab === "live" && <LiveMonitorPanel />}
