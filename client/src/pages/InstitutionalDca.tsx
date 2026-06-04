@@ -165,7 +165,7 @@ export default function InstitutionalDca() {
   const [activeTab, setActiveTab] = useState("summary");
   const [adaptiveTab, setAdaptiveTab] = useState("entradas");
   const [selectedPair, setSelectedPair] = useState<string | undefined>(undefined);
-  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia">("entrada");
+  const [configSubTab, setConfigSubTab] = useState<"entrada" | "general" | "vwap" | "distancia" | "plus">("general");
 
   const { navigateToConfig } = useIdcaNavigation({
     setMainTab: setActiveTab,
@@ -1573,7 +1573,7 @@ function EntrySubSections({ config, updateConfig, btcAsset, ethAsset, updateAsse
 
 // ─── Main ConfigTab ─────────────────────────────────────────────
 
-function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia") => void }) {
+function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" | "general" | "vwap" | "distancia" | "plus"; setConfigSubTab: (tab: "entrada" | "general" | "vwap" | "distancia" | "plus") => void }) {
   const { data: config } = useIdcaConfig();
   const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateConfig = useUpdateIdcaConfig();
@@ -1604,50 +1604,61 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
       </Alert>
 
       {/* ════ SUB-TABS DENTRO DE CONFIG ════ */}
-      <div className="flex gap-2 border-b border-border/40 pb-2">
-        <button
-          onClick={() => setConfigSubTab("entrada")}
-          className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
-            configSubTab === "entrada"
-              ? "bg-green-500/10 text-green-400 border-b-2 border-green-500"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          🎯 Entrada
-        </button>
+      <div className="flex gap-1.5 flex-wrap border-b border-border/40 pb-2 overflow-x-auto">
         <button
           onClick={() => setConfigSubTab("general")}
           className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            "px-3 py-1.5 rounded-t text-xs font-medium transition-colors whitespace-nowrap",
             configSubTab === "general"
               ? "bg-primary/10 text-primary border-b-2 border-primary"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          General
+          ⚙️ General
         </button>
         <button
-          onClick={() => setConfigSubTab("vwap")}
+          onClick={() => setConfigSubTab("entrada")}
           className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
-            configSubTab === "vwap"
-              ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-500"
+            "px-3 py-1.5 rounded-t text-xs font-medium transition-colors whitespace-nowrap",
+            configSubTab === "entrada"
+              ? "bg-green-500/10 text-green-400 border-b-2 border-green-500"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          VWAP & Rebound
+          🎯 Compras
+        </button>
+        <button
+          onClick={() => setConfigSubTab("plus")}
+          className={cn(
+            "px-3 py-1.5 rounded-t text-xs font-medium transition-colors whitespace-nowrap",
+            configSubTab === "plus"
+              ? "bg-amber-500/10 text-amber-400 border-b-2 border-amber-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          🔄 Plus / Recovery
         </button>
         <button
           onClick={() => setConfigSubTab("distancia")}
           className={cn(
-            "px-4 py-1.5 rounded-t text-sm font-medium transition-colors",
+            "px-3 py-1.5 rounded-t text-xs font-medium transition-colors whitespace-nowrap",
             configSubTab === "distancia"
               ? "bg-orange-500/10 text-orange-400 border-b-2 border-orange-500"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          📏 Distancia
+          📏 Distancia Dinámica
+        </button>
+        <button
+          onClick={() => setConfigSubTab("vwap")}
+          className={cn(
+            "px-3 py-1.5 rounded-t text-xs font-medium transition-colors whitespace-nowrap",
+            configSubTab === "vwap"
+              ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-500"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          🔗 Ancla / VWAP
         </button>
       </div>
 
@@ -2181,7 +2192,10 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
           )}
         </div>
       </ConfigBlock>
+      </>)}
 
+      {/* ════ SUB-TAB: PLUS / RECOVERY ════ */}
+      {configSubTab === "plus" && (<>
       {/* ════ BLOQUE 4 — COMPRAS EXTRA Y CICLO PLUS ════ */}
       <ConfigBlock icon={Zap} title="Compras extra y Ciclo Plus"
         desc="Aquí decides si el sistema puede reforzar una posición cuando el precio sigue bajando y cómo aprovechar rebotes.">

@@ -26,7 +26,7 @@ export type IdcaConfigTarget =
 export interface NavigateResult {
   mainTab: "adaptativo" | "config" | "telegram" | "eventos";
   adaptiveTab?: "entradas" | "salidas" | "ejecucion" | "avanzado";
-  configSubTab?: "entrada" | "general" | "vwap" | "distancia";
+  configSubTab?: "entrada" | "general" | "vwap" | "distancia" | "plus";
   sectionId: string;
   pair?: string;
 }
@@ -124,7 +124,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
 export interface UseIdcaNavigationOptions {
   setMainTab: (tab: string) => void;
   setAdaptiveTab?: (tab: string) => void;
-  setConfigSubTab?: (tab: "entrada" | "general" | "vwap" | "distancia") => void;
+  setConfigSubTab?: (tab: "entrada" | "general" | "vwap" | "distancia" | "plus") => void;
   setSelectedPair?: (pair: string) => void;
 }
 
