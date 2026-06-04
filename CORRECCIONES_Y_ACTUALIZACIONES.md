@@ -2,6 +2,76 @@
 
 ---
 
+## 2026-05-28 — fix(idca): Bug crítico fee tracking en safety_buy fallback timeout
+
+### Objetivo
+Corregir bug crítico donde safety_buy en Revolut X no aplicaba fee tracking cuando el fill se confirmaba por el path de fallback de timeout en `confirmOrderFill`.
+
+### Contexto del bug
+Después del hotfix de fee tracking Revolut X y la reconciliación manual del ciclo BTC #25, el bot ejecutó una nueva compra safety_buy real (orderId 765) con:
+- grossBaseQty = 0.00428042
+- netBaseQty = 0.00428042 (BUG: debería ser 0.00427657)
+- feeAsset = null (BUG: debería ser BTC)
+- feeAmount = null (BUG: debería ser 0.00000385)
+- feeSource = null (BUG: debería ser inferred_from_default_pct)
+- feesUsd = 0.00 (BUG: debería ser 0.28)
+
+### Root cause
+El fallback de timeout en `confirmOrderFill` (línea 399 en IdcaLiveExecutionGuard.ts) NO incluía los campos de fee tracking (`grossBaseQty`, `netBaseQty`, `feeAsset`, `feeAmount`, `feeSource`). Si el orden se confirmaba por este fallback, los campos de fee tracking quedaban null.
+
+### Fix
+Agregar fee tracking al fallback de timeout para Revolut X:
+- Detectar si es Revolut X por `exchange.constructor.name.toLowerCase().includes("revolut")`
+- Calcular fee base asset: `inferredFeeBaseQty = totalQty × 0.0009` (0.09% Revolut X default)
+- Calcular net base qty: `netBaseQty = totalQty - inferredFeeBaseQty`
+- Poblar feeAsset (base asset), feeAmount, feeSource ("inferred_from_default_pct")
+- Log específico: `[FILLS_FALLBACK][REVOLUT_FEE_INFERRED]`
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaLiveExecutionGuard.ts`
+  - Fallback de timeout (líneas 385-437): agregar fee tracking para Revolut X
+- `server/services/__tests__/idcaFeeTrackingHotfix.test.ts`
+  - Test 12: reproducción exacta orderId 765 (safety_buy + sizeAdjusted=true)
+  - Test 13: verificar que sizeAdjusted no desactiva fee tracking
+- `sql/idca_order_765_cycle_25_fee_tracking_fix.sql` (nuevo)
+  - SQL backup + update + rollback para orderId 765 y cycleId 25
+  - NO aplicado aún (pendiente revisión manual)
+
+### Valores esperados orderId 765 tras corrección
+- quantity = 0.00427657 (net)
+- grossValueUsd = 312.96
+- netValueUsd = 312.68
+- feesUsd = 0.28
+- executedQuantity = 0.00428042 (gross)
+- executedUsd = 312.96
+- avgFillPrice = 73115.40
+- grossBaseQty = 0.00428042
+- netBaseQty = 0.00427657
+- feeAsset = BTC
+- feeAmount = 0.00000385
+- feeSource = inferred_from_default_pct
+
+### Valores esperados cycleId 25 tras corrección
+- totalQuantity = 0.01815957 (0.01388300 + 0.00427657)
+- avgEntryPrice = 74670.82095006
+- unrealizedPnlUsd = -21.50 (con currentPrice 73432.10)
+- unrealizedPnlPct = -1.5873
+
+### Validación
+- `npm run check`: ✅
+- Tests: ✅ 13/13 (idcaFeeTrackingHotfix.test.ts)
+
+### Invariantes garantizados
+- Fee tracking se aplica en TODOS los tipos de compra LIVE en Revolut X: base_buy, safety_buy, plus_buy, recovery_buy, plus_safety_buy, recovery_safety_buy
+- sizeAdjusted=true NO desactiva fee tracking
+- cycle.totalQuantity siempre usa netBaseQty, no grossBaseQty
+
+### Commit
+- Hash: 7378159
+- Mensaje: "Bug crítico IDCA: Corregir fee tracking en safety_buy fallback timeout"
+
+---
+
 ## 2026-05-27 — fix(idca): Sprint 2C fixes — entry-diagnostics, clamp mínimo, mensajes contextuales, UI etiquetas
 
 ### Objetivo

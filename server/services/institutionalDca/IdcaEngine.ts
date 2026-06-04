@@ -1036,6 +1036,20 @@ async function runTick(): Promise<void> {
   }
 }
 
+// ─── Pair Disabled Log (throttled: 1 per 4 hours per pair) ──────────
+const pairDisabledLastLogAt = new Map<string, number>();
+const PAIR_DISABLED_LOG_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+function emitPairDisabledLog(pair: string, mode: string): void {
+  const key = `${pair}#${mode}`;
+  const now = Date.now();
+  const lastAt = pairDisabledLastLogAt.get(key) ?? 0;
+  if (now - lastAt >= PAIR_DISABLED_LOG_INTERVAL_MS) {
+    console.log(`${TAG}[PAIR_DISABLED] ${pair} mode=${mode} operationMode=exit_only reason=no_new_buys`);
+    pairDisabledLastLogAt.set(key, now);
+  }
+}
+
 // ─── Pair Evaluation ───────────────────────────────────────────────
 
 async function evaluatePair(
@@ -1049,14 +1063,16 @@ async function evaluatePair(
     console.warn(`${TAG}[EVAL_SKIP] ${pair}: no assetConfig in DB`);
     return;
   }
-  if (!assetConfig.enabled) {
-    console.log(`${TAG}[EVAL_SKIP] ${pair}: assetConfig.enabled=false`);
+  // ─── EXIT-ONLY MODE: Si par desactivado, gestionar salidas pero no compras ───
+  const pairDisabled = !assetConfig.enabled;
+  if (pairDisabled) {
     // Limpiar trailing buy si el par se desactivó
     if (TrailingBuyManager.isArmed(pair)) {
       TrailingBuyManager.disarm(pair);
       tbState.resetTrailingBuyTelegramState(pair, mode, "asset_disabled");
     }
-    return;
+    // Log throttled: solo emitir cada 4 horas por par
+    emitPairDisabledLog(pair, mode);
   }
 
   const currentPrice = await getCurrentPrice(pair);
@@ -1088,8 +1104,8 @@ async function evaluatePair(
   // ── Manage imported cycles independently (do not interfere with autonomous logic) ──
   const importedCycles = await repo.getActiveImportedCycles(pair, mode);
   for (const ic of importedCycles) {
-    await manageCycle(ic, currentPrice, config, assetConfig, mode);
-    if (!ic.soloSalida) {
+    await manageCycle(ic, currentPrice, config, assetConfig, mode, pairDisabled);
+    if (!ic.soloSalida && !pairDisabled) {
       const plusCfgImp = getPlusConfig(config);
       if (plusCfgImp.enabled) {
         const existingPlus = await repo.getActivePlusCycle(pair, mode, ic.id);
@@ -1135,28 +1151,31 @@ async function evaluatePair(
       );
     }
 
-    // Manage existing autonomous main cycle
-    await manageCycle(activeCycle, currentPrice, config, assetConfig, mode);
+    // Manage existing autonomous main cycle (exits always allowed)
+    await manageCycle(activeCycle, currentPrice, config, assetConfig, mode, pairDisabled);
 
-    const plusConfig = getPlusConfig(config);
-    if (plusConfig.enabled) {
-      const existingPlus = await repo.getActivePlusCycle(pair, mode, activeCycle.id);
-      if (existingPlus) {
-        await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
-      } else {
-        await checkPlusActivation(activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
-      }
-    }
-
-    const recoveryCfg = getRecoveryConfig(config);
-    if (recoveryCfg.enabled) {
-      const existingRecovery = await repo.getActiveRecoveryCycles(pair, mode, activeCycle.id);
-      if (existingRecovery.length > 0) {
-        for (const rc of existingRecovery) {
-          await manageRecoveryCycle(rc, activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
+    // Plus/Recovery: solo si par activo
+    if (!pairDisabled) {
+      const plusConfig = getPlusConfig(config);
+      if (plusConfig.enabled) {
+        const existingPlus = await repo.getActivePlusCycle(pair, mode, activeCycle.id);
+        if (existingPlus) {
+          await managePlusCycle(existingPlus, activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
+        } else {
+          await checkPlusActivation(activeCycle, currentPrice, config, assetConfig, mode, plusConfig);
         }
-      } else {
-        await checkRecoveryActivation(activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
+      }
+
+      const recoveryCfg = getRecoveryConfig(config);
+      if (recoveryCfg.enabled) {
+        const existingRecovery = await repo.getActiveRecoveryCycles(pair, mode, activeCycle.id);
+        if (existingRecovery.length > 0) {
+          for (const rc of existingRecovery) {
+            await manageRecoveryCycle(rc, activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
+          }
+        } else {
+          await checkRecoveryActivation(activeCycle, currentPrice, config, assetConfig, mode, recoveryCfg);
+        }
       }
     }
   } else {
@@ -1168,7 +1187,7 @@ async function evaluatePair(
       TrailingBuyManager.disarm(pair);
       tbState.resetTrailingBuyTelegramState(pair, mode, "cycle_active_cleanup");
     }
-    if (!hasAny && !hasImported) {
+    if (!hasAny && !hasImported && !pairDisabled) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
 
       // ── Entry check with VWAP logic ────────────────────────────────
@@ -2174,7 +2193,8 @@ async function manageCycle(
   currentPrice: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode
+  mode: IdcaMode,
+  pairDisabled: boolean = false
 ): Promise<void> {
   const pair = cycle.pair;
 
@@ -2306,7 +2326,7 @@ async function manageCycle(
   const prevStatus = cycle.status;
   switch (cycle.status) {
     case "active":
-      await handleActiveState(cycle, currentPrice, unrealizedPnlPct, config, assetConfig, mode);
+      await handleActiveState(cycle, currentPrice, unrealizedPnlPct, config, assetConfig, mode, pairDisabled);
       break;
     case "tp_armed":
       await handleTpArmedState(cycle, currentPrice, config, assetConfig, mode);
@@ -2526,7 +2546,8 @@ async function handleActiveState(
   pnlPct: number,
   config: InstitutionalDcaConfigRow,
   assetConfig: InstitutionalDcaAssetConfigRow,
-  mode: IdcaMode
+  mode: IdcaMode,
+  pairDisabled: boolean = false
 ): Promise<void> {
   const pair = cycle.pair;
   const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
@@ -2657,8 +2678,8 @@ async function handleActiveState(
     return;
   }
 
-  // 4. Check safety buy levels — skip if imported + soloSalida
-  if (!(cycle.isImported && cycle.soloSalida)) {
+  // 4. Check safety buy levels — skip if imported + soloSalida OR pair disabled
+  if (!(cycle.isImported && cycle.soloSalida) && !pairDisabled) {
     await checkSafetyBuy(cycle, currentPrice, config, assetConfig, mode);
   }
 }
