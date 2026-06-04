@@ -2,6 +2,47 @@
 
 ---
 
+## 2026-06-04 — feat(ui): NEXA Modular Home Shell (Fase 1)
+
+### Objetivo
+Reestructurar la UI en una plataforma modular con Home principal y 3 mundos independientes.
+
+### Archivos nuevos
+- `client/src/components/home/WorldCard.tsx` — Tarjeta clicable por mundo con stats
+- `client/src/components/layout/GlobalHeader.tsx` — Header global NEXA con nav + badge
+- `client/src/layouts/AppShell.tsx` — Layout shell (header + contenido)
+- `client/src/pages/NexaHome.tsx` — Home con 3 mundos + acceso secundario a Sistema
+
+### Archivos modificados
+- `client/src/App.tsx` — Rutas nuevas `/dca`, `/trading`, `/fiscal`, redirects SPA, `/dashboard-legacy`
+- `client/src/components/mobile/MobileTabBar.tsx` — Tabs: Home, DCA, Trading, Fiscal, Sistema
+
+### Rutas
+| Ruta nueva | Componente |
+|------------|-----------|
+| `/` | NexaHome |
+| `/dca` | InstitutionalDca |
+| `/trading` | Strategies |
+| `/fiscal` | Fisco |
+| `/dashboard-legacy` | Dashboard (antiguo) |
+
+### Aliases SPA (Redirect sin recarga)
+- `/institutional-dca` → `/dca`
+- `/strategies` → `/trading`
+- `/fisco` → `/fiscal`
+
+### Sin impacto operativo
+- No se tocó server/, DB, lógica operativa, motores, scheduler ni FUENTES_BOT.md
+- Solo cambio UI/UX frontend
+
+### Validación
+- `npm run check`: ✅
+
+### Commit
+- Hash: 223592e
+
+---
+
 ## 2026-06-04 — fix(idca-ui): Controles de par visibles en encabezado principal IDCA
 
 ### Objetivo
