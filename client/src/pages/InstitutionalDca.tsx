@@ -5093,12 +5093,22 @@ function TelegramTab() {
     });
   };
 
+  const isConnected = config.telegramEnabled && !!telegramStatus?.chatIdConfigured && !!telegramStatus?.serviceInitialized;
+
+  const buyActive = [toggles["cycle_started"] !== false, toggles["base_buy_executed"] !== false, toggles["safety_buy_executed"] !== false, !!toggles["buy_blocked"]].filter(Boolean).length;
+  const sellActive = [toggles["protection_armed"] !== false, toggles["trailing_activated"] !== false, toggles["tp_armed"] !== false, toggles["trailing_exit"] !== false, toggles["breakeven_exit"] !== false, toggles["module_max_drawdown_reached"] !== false].filter(Boolean).length;
+  const vwapActive = [toggles["vwap_anchor_changed"] !== false, toggles["vwap_approaching_buy"] !== false, toggles["vwap_drawdown_milestone"] !== false, toggles["trailing_buy_armed"] !== false, toggles["trailing_buy_triggered"] !== false].filter(Boolean).length;
+  const sysActive = [toggles["critical_error"] !== false, !!toggles["smart_adjustment_applied"], !!toggles["simulation_alerts_enabled"]].filter(Boolean).length;
+
   return (
     <div className="space-y-4">
       <Card className="border-border/50">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-mono flex items-center gap-2">
             <Send className="h-4 w-4" /> CONFIGURACIÓN TELEGRAM IDCA
+            <Badge variant="outline" className={cn("text-[10px] ml-auto", isConnected ? "text-green-400 border-green-500/40 bg-green-500/10" : "text-red-400 border-red-500/40 bg-red-500/10")}>
+              {isConnected ? "✓ Conectado" : "✗ Sin conexión"}
+            </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -5149,7 +5159,7 @@ function TelegramTab() {
       {/* ── Alertas de Compra ── */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">🛒 ALERTAS DE COMPRA</CardTitle>
+          <CardTitle className="text-sm font-mono flex items-center gap-2">🛒 ALERTAS DE COMPRA <span className="text-[10px] text-muted-foreground font-normal">{buyActive}/4 activas</span></CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -5168,7 +5178,7 @@ function TelegramTab() {
       {/* ── Alertas de Venta / Salida ── */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">📈 ALERTAS DE VENTA / SALIDA</CardTitle>
+          <CardTitle className="text-sm font-mono flex items-center gap-2">📈 ALERTAS DE VENTA / SALIDA <span className="text-[10px] text-muted-foreground font-normal">{sellActive}/6 activas</span></CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -5191,7 +5201,7 @@ function TelegramTab() {
       {/* ── Alertas VWAP ── */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">📊 ALERTAS VWAP / TRAILING BUY</CardTitle>
+          <CardTitle className="text-sm font-mono flex items-center gap-2">📊 ALERTAS VWAP / TRAILING BUY <span className="text-[10px] text-muted-foreground font-normal">{vwapActive}/5 activas</span></CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -5302,7 +5312,7 @@ function TelegramTab() {
       {/* ── Alertas de Sistema ── */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono">⚙️ ALERTAS DE SISTEMA</CardTitle>
+          <CardTitle className="text-sm font-mono flex items-center gap-2">⚙️ ALERTAS DE SISTEMA <span className="text-[10px] text-muted-foreground font-normal">{sysActive}/3 activas</span></CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
