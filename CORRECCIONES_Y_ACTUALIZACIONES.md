@@ -2,6 +2,30 @@
 
 ---
 
+## 2026-06-04 — feat(ui): Organización subpestañas Configuración DCA (Fase 2.1)
+
+### Objetivo
+Reorganizar las subpestañas de Configuración en DCA Inteligente para mejor claridad visual.
+
+### Cambios
+- `client/src/pages/InstitutionalDca.tsx`:
+  - Estado `configSubTab` por defecto cambia de `entrada` → `general`
+  - Nuevo sub-tab `plus` extrae BLOQUE 4 (Plus) + BLOQUE 5 (Recovery) del tab General
+  - Labels renombrados: ⚙️ General | 🎯 Compras | 🔄 Plus / Recovery | 📏 Distancia Dinámica | 🔗 Ancla / VWAP
+  - Tab bar: `flex-wrap overflow-x-auto` para mobile
+- `client/src/hooks/useIdcaNavigation.ts`:
+  - Tipo `NavigateResult.configSubTab` + `UseIdcaNavigationOptions.setConfigSubTab` añaden `"plus"`
+
+### Autotests
+- `npm run check`: ✅
+- `npm test`: 12 fallos pre-existentes (templates Telegram snapshot, idcaMarketContextHelpers time edge) — NO relacionados con estos cambios
+
+### Impacto operativo: ninguno
+### Migración DB: no
+### Commit: 484c2d0
+
+---
+
 ## 2026-06-04 — feat(ui): Modernización visual DCA Inteligente (Fase 2)
 
 ### Objetivo
