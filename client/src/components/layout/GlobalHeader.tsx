@@ -7,10 +7,10 @@ export function GlobalHeader() {
   const [location] = useLocation();
 
   const navItems = [
-    { href: "/", label: "Home" },
-    { href: "/dca", label: "DCA", aliases: ["/institutional-dca"] },
-    { href: "/trading", label: "Trading", aliases: ["/strategies"] },
-    { href: "/fiscal", label: "Fiscal", aliases: ["/fisco"] },
+    { href: "/", label: "Home", labelShort: "Home" },
+    { href: "/dca", label: "DCA Inteligente", labelShort: "DCA", aliases: ["/institutional-dca"] },
+    { href: "/trading", label: "Trading Activo", labelShort: "Trading", aliases: ["/strategies"] },
+    { href: "/fiscal", label: "Fiscal Crypto", labelShort: "Fiscal", aliases: ["/fisco"] },
   ];
 
   const isActive = (item: { href: string; aliases?: string[] }) => {

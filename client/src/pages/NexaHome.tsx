@@ -17,6 +17,13 @@ interface IdcaSummary {
   totalUnrealizedPnlUsd?: string | number;
 }
 
+interface FiscoMeta {
+  availableYears?: number[];
+  exchanges?: string[];
+  totalOperations?: number;
+  lastSync?: string;
+}
+
 export default function NexaHome() {
   const { data: dashboard } = useQuery<DashboardData>({
     queryKey: ["dashboard"],
@@ -38,21 +45,51 @@ export default function NexaHome() {
     staleTime: 30000,
   });
 
+  const { data: fiscoMeta } = useQuery<FiscoMeta>({
+    queryKey: ["/api/fisco/meta"],
+    queryFn: async () => {
+      const res = await fetch("/api/fisco/meta");
+      if (!res.ok) return {};
+      return res.json();
+    },
+    staleTime: 60000,
+  });
+
+  const { data: openPositions } = useQuery<any[]>({
+    queryKey: ["openPositions"],
+    queryFn: async () => {
+      const res = await fetch("/api/open-positions");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
   const fmtUsd = (v: string | number | null | undefined) => {
     const n = parseFloat(String(v || "0"));
     return `$${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
   const dcaStats = [
-    { label: "Ciclos activos", value: String(idcaSummary?.activeCyclesCount ?? "—") },
-    { label: "Capital invertido", value: idcaSummary?.totalCapitalInvested ? fmtUsd(idcaSummary.totalCapitalInvested) : "—" },
-    { label: "PnL no realizado", value: idcaSummary?.totalUnrealizedPnlUsd ? fmtUsd(idcaSummary.totalUnrealizedPnlUsd) : "—" },
+    { label: "Ciclos activos", value: String(idcaSummary?.activeCyclesCount ?? "Sin datos") },
+    { label: "Capital invertido", value: idcaSummary?.totalCapitalInvested ? fmtUsd(idcaSummary.totalCapitalInvested) : "Sin datos" },
+    { label: "PnL no realizado", value: idcaSummary?.totalUnrealizedPnlUsd ? fmtUsd(idcaSummary.totalUnrealizedPnlUsd) : "Sin datos" },
   ];
 
   const tradingStats = [
     { label: "Bot", value: dashboard?.botActive ? "Activo" : "Inactivo" },
-    { label: "Pares", value: String(dashboard?.activePairs?.length ?? "—") },
-    { label: "Exchange", value: dashboard?.tradingExchange?.toUpperCase() ?? "—" },
+    { label: "Pares activos", value: String(dashboard?.activePairs?.length ?? "Sin datos") },
+    { label: "Posiciones", value: openPositions ? String(openPositions.length) : "Sin datos" },
+    { label: "Exchange", value: dashboard?.tradingExchange?.toUpperCase() ?? "Sin datos" },
+  ];
+
+  const currentYear = fiscoMeta?.availableYears?.length
+    ? String(Math.max(...fiscoMeta.availableYears))
+    : String(new Date().getFullYear());
+
+  const fiscoStats = [
+    { label: "Año fiscal", value: currentYear },
+    { label: "Operaciones", value: fiscoMeta?.totalOperations != null ? String(fiscoMeta.totalOperations) : "Sin datos" },
   ];
 
   return (
@@ -78,6 +115,7 @@ export default function NexaHome() {
             icon={<TrendingUp className="h-5 w-5 text-blue-400" />}
             accentColor="bg-blue-500/10"
             stats={dcaStats}
+            ctaLabel="Entrar en DCA Inteligente"
           />
 
           <WorldCard
@@ -88,6 +126,7 @@ export default function NexaHome() {
             icon={<BarChart3 className="h-5 w-5 text-emerald-400" />}
             accentColor="bg-emerald-500/10"
             stats={tradingStats}
+            ctaLabel="Entrar en Trading Activo"
           />
 
           <WorldCard
@@ -97,6 +136,8 @@ export default function NexaHome() {
             href="/fiscal"
             icon={<FileText className="h-5 w-5 text-purple-400" />}
             accentColor="bg-purple-500/10"
+            stats={fiscoStats}
+            ctaLabel="Entrar en Fiscal Crypto"
           />
         </div>
 

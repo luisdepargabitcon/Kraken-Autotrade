@@ -13,6 +13,7 @@ interface WorldCardProps {
   stats?: { label: string; value: string }[];
   accentColor: string;
   badgeLabel?: string;
+  ctaLabel?: string;
 }
 
 export function WorldCard({
@@ -24,6 +25,7 @@ export function WorldCard({
   stats,
   accentColor,
   badgeLabel,
+  ctaLabel = "Entrar",
 }: WorldCardProps) {
   return (
     <Link href={href} className="block group">
@@ -75,7 +77,7 @@ export function WorldCard({
           {/* CTA */}
           <div className="flex items-center justify-end mt-auto pt-2">
             <span className="text-xs text-primary group-hover:underline flex items-center gap-1">
-              Entrar
+              {ctaLabel}
               <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
             </span>
           </div>

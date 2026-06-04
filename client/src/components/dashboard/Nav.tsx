@@ -18,16 +18,16 @@ export function Nav() {
 
   const navItems: NavItem[] = [
     // TRADING
-    { href: "/", label: "PANEL", icon: LayoutDashboard },
-    { href: "/strategies", label: "TRADING", icon: Activity },
+    { href: "/", label: "HOME", icon: LayoutDashboard },
+    { href: "/dca", label: "DCA", icon: CircleDollarSign },
+    { href: "/trading", label: "TRADING", icon: Activity },
     { href: "/terminal", label: "TERMINAL", icon: BarChart3 },
-    { href: "/institutional-dca", label: "IDCA", icon: CircleDollarSign },
     // ANÁLISIS
     { separator: true, label: "ANÁLISIS" },
     { href: "/monitor", label: "MONITOR", icon: Monitor },
     { href: "/wallet", label: "CARTERA", icon: Wallet },
     { href: "/ai", label: "IA/ML", icon: Brain },
-    { href: "/fisco", label: "FISCO", icon: Calculator },
+    { href: "/fiscal", label: "FISCAL", icon: Calculator },
     // SISTEMA
     { separator: true, label: "SISTEMA" },
     { href: "/notifications", label: "ALERTAS", icon: Bell },
@@ -59,7 +59,7 @@ export function Nav() {
               <Activity className="h-4 w-4 md:h-5 md:w-5 text-primary" />
             </div>
             <span className="font-sans font-bold text-base md:text-lg tracking-tight">
-              KRAKEN<span className="text-primary">BOT</span><span className="hidden sm:inline">.AI</span>
+              NEXA<span className="text-primary hidden sm:inline"> Crypto Suite</span>
             </span>
           </div>
 
