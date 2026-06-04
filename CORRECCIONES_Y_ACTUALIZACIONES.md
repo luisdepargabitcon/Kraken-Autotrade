@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-06-04 — fix(idca-ui): Controles de par visibles en encabezado principal IDCA
+
+### Objetivo
+Mover los controles de "Operativa del par" (Activo / Solo salidas) al encabezado principal de IDCA para que sean visibles sin entrar en Configuración.
+
+### Cambios
+- `client/src/pages/InstitutionalDca.tsx` → `ControlsBar`
+  - Añadir `useIdcaAssetConfigs()` y `useUpdateAssetConfig()` al encabezado
+  - Añadir fila de toggles compactos por par (BTC/USD, ETH/USD)
+  - Switch con `scale-75` + badge "Activo" (verde) / "Solo salidas" (ámbar)
+  - Tooltip con explicación del comportamiento exit-only
+  - Toast de confirmación al cambiar estado
+  - Mobile: `flex-wrap` para chips en columna si no caben
+  - Se mantiene sección en Configuración → Operativa del par (sincronizada)
+
+### Sin impacto operativo
+- No se tocó IdcaEngine, fee tracking, reconciliación, scheduler, ni DB schema
+- Solo cambio UI/UX
+
+### Validación
+- `npm run check`: ✅
+
+### Commit
+- Hash: 0b3bd2d
+
+---
+
 ## 2026-06-04 — feat(idca): Interruptor por par con modo exit-only
 
 ### Objetivo
