@@ -2,6 +2,44 @@
 
 ---
 
+## 2026-06-04 — feat(ui): Mejoras visuales DCA Telegram Tab (Fase 2.4)
+
+### Cambios
+- `client/src/pages/InstitutionalDca.tsx`:
+  - `TelegramTab`: badge "✓ Conectado / ✗ Sin conexión" en el header de la card config
+  - `TelegramTab`: contador "X/Y activas" en cada sección de alertas (Compra, Venta, VWAP, Sistema)
+  - Computed: `isConnected`, `buyActive`, `sellActive`, `vwapActive`, `sysActive`
+
+### Commit: 22354b3
+
+---
+
+## 2026-06-04 — feat(ui): Mejoras historial y eventos DCA (Fase 2.3)
+
+### Cambios
+- `client/src/pages/InstitutionalDca.tsx`:
+  - `HistoryCyclesView`: `#id` en cabecera del ciclo cerrado
+  - `HistoryCyclesView`: badges RECOVERY + MANUAL en ciclos cerrados
+  - `EventsTab`: descripción contextual para todos los sub-tabs (live, events, terminal, logs)
+
+### Commit: 983496f
+
+---
+
+## 2026-06-04 — feat(ui): Ciclos DCA responsive mejorado (Fase 2.2)
+
+### Cambios
+- `client/src/pages/InstitutionalDca.tsx`:
+  - `CycleDetailRow`: info row añade `#id` y `durationStr`
+  - `CycleDetailRow`: nuevo chip "Cantidad" (totalQuantity) en grid de métricas
+  - `CycleDetailRow`: grid cols → `2/4/7` para mejor layout móvil
+  - `CyclesTab`: stats banner (total/activos/cerrados/live/sim) encima de la lista
+  - `CyclesTab`: empty state mejorado con mensaje de contexto
+
+### Commit: 5218b91
+
+---
+
 ## 2026-06-04 — feat(ui): Organización subpestañas Configuración DCA (Fase 2.1)
 
 ### Objetivo
