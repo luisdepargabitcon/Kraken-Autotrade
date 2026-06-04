@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-06-04 — fix(ui): Pulido branding NEXA y labels mundos (Fase 1.1)
+
+### Objetivo
+Alinear branding, nombres visibles de mundos y datos de tarjetas Home.
+
+### Cambios
+- `GlobalHeader.tsx` — Labels desktop: "DCA Inteligente", "Trading Activo", "Fiscal Crypto"
+- `Nav.tsx` — Branding KRAKENBOT.AI → NEXA Crypto Suite, rutas actualizadas (/dca, /trading, /fiscal)
+- `NexaHome.tsx` — Stats Fiscal (año, operaciones) via /api/fisco/meta, stats Trading (posiciones) via /api/open-positions, fallback "Sin datos", ctaLabel por tarjeta
+- `WorldCard.tsx` — Prop `ctaLabel` para CTA personalizable
+
+### Sin impacto operativo
+- No se tocó server/, DB, lógica operativa ni FUENTES_BOT.md
+- Solo cambio UI/UX
+
+### Commit
+- Hash: 6d1ae21
+
+---
+
 ## 2026-06-04 — feat(ui): NEXA Modular Home Shell (Fase 1)
 
 ### Objetivo
