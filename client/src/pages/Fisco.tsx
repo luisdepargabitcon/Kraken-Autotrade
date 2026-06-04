@@ -549,7 +549,7 @@ export default function Fisco() {
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <Calculator className="h-6 w-6 text-blue-400" />
-            <h1 className="text-xl font-bold">FISCO — Informe Fiscal Anual</h1>
+            <h1 className="text-xl font-bold">Fiscal Crypto</h1>
           </div>
 
           <div className="flex flex-wrap items-end gap-3 p-4 bg-card border border-border rounded-xl">
@@ -1061,7 +1061,7 @@ export default function Fisco() {
                           <MessageSquare className="h-4 w-4 text-cyan-400" />
                         </div>
                         <div>
-                          <Label className="text-sm font-medium">Canal de destino para alertas FISCO</Label>
+                          <Label className="text-sm font-medium">Canal de destino para alertas Fiscal Crypto</Label>
                           <p className="text-xs text-muted-foreground mt-0.5">Selecciona el chat/grupo de Telegram donde se enviarán informes y alertas fiscales</p>
                         </div>
                       </div>
@@ -1084,7 +1084,7 @@ export default function Fisco() {
                       {alertConfigQ.data?._noDefaultChat && (!alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured") && (
                         <p className="text-xs text-yellow-400 mt-2 flex items-center gap-1">
                           <AlertTriangle className="h-3 w-3" />
-                          No hay canal configurado — selecciona uno para activar las alertas FISCO
+                          No hay canal configurado — selecciona uno para activar las alertas Fiscal Crypto
                         </p>
                       )}
                     </div>

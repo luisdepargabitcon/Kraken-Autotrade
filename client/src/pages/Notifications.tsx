@@ -187,14 +187,14 @@ export default function Notifications() {
       ],
     },
     {
-      category: "Fiscal / FISCO",
+      category: "Fiscal Crypto",
       icon: "🧾",
-      description: "Sincronización fiscal, informes y errores FISCO",
+      description: "Sincronización fiscal, informes y errores fiscales",
       subtypes: [
-        { key: "fisco_sync_daily", label: "Sync diario FISCO", hint: "Alerta de sincronización fiscal automática" },
-        { key: "fisco_sync_manual", label: "Sync manual FISCO", hint: "Alerta de sincronización fiscal manual" },
+        { key: "fisco_sync_daily", label: "Sync diario fiscal", hint: "Alerta de sincronización fiscal automática" },
+        { key: "fisco_sync_manual", label: "Sync manual fiscal", hint: "Alerta de sincronización fiscal manual" },
         { key: "fisco_report_generated", label: "Informe fiscal generado", hint: "Alerta al generar un informe fiscal" },
-        { key: "fisco_error_sync", label: "Error sync FISCO", hint: "Alerta de error en sincronización fiscal" },
+        { key: "fisco_error_sync", label: "Error de sincronización fiscal", hint: "Alerta de error en sincronización fiscal" },
       ],
     },
   ];
