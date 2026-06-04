@@ -2,6 +2,62 @@
 
 ---
 
+## 2026-06-04 — feat(idca): Interruptor por par con modo exit-only
+
+### Objetivo
+Añadir interruptor funcional por par para desactivar operativa. Cuando `assetConfig.enabled=false`, el par entra en modo "solo salidas": no abre ciclos, no compra, pero sí gestiona salidas y actualiza PnL.
+
+### Problema detectado (auditoría)
+ANTES: cuando `assetConfig.enabled=false`, el motor hacía `return` completo en `evaluatePair`, bloqueando **TODO** incluyendo:
+- Actualización de PnL/precio
+- Gestión de salidas (TP, trailing, break-even)
+- Cierre manual
+
+### Corrección implementada
+Ahora `enabled=false` activa modo **exit-only**:
+- **SÍ**: actualizar PnL/precio, evaluar TP, trailing exit, break-even, cierre manual, protección de capital
+- **NO**: nuevas entradas, safety buys, Plus cycle, Recovery cycle, trailing buy entry, dynamic intelligent entry
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaEngine.ts`
+  - `evaluatePair`: eliminar `return` prematuro; crear `pairDisabled` flag
+  - `emitPairDisabledLog`: función anti-spam (1 log cada 4h por par)
+  - `manageCycle`: nuevo parámetro `pairDisabled`, bloquea `checkSafetyBuy`
+  - `handleActiveState`: nuevo parámetro `pairDisabled`, propagado desde manageCycle
+  - Entry logic: bloqueada con `&& !pairDisabled`
+  - Plus/Recovery: envueltos en `if (!pairDisabled)` block
+- `client/src/pages/InstitutionalDca.tsx`
+  - Sección "Operativa del par" con tooltip explicativo
+  - Badge de estado por par: "Activo" (verde) / "Solo salidas" (ámbar)
+  - Badge en ciclo activo: "PAR DESACTIVADO — SOLO SALIDAS" (ámbar)
+- `server/services/__tests__/idcaPairDisabledToggle.test.ts` (nuevo)
+  - 13 tests que validan todos los comportamientos
+
+### Guards implementados
+| Ruta | Bloqueada por `pairDisabled` |
+|------|------------------------------|
+| Nueva entrada main | ✅ |
+| Trailing buy entry | ✅ |
+| Dynamic intelligent entry | ✅ |
+| Safety buy | ✅ |
+| Plus cycle creation | ✅ |
+| Recovery cycle creation | ✅ |
+| TP / trailing exit | ❌ (permitido) |
+| Break-even | ❌ (permitido) |
+| Cierre manual | ❌ (permitido) |
+| PnL/precio update | ❌ (permitido) |
+| TimeStop exit | ❌ (permitido) |
+
+### Validación
+- `npm run check`: ✅
+- Tests: ✅ 13/13 (idcaPairDisabledToggle.test.ts)
+
+### Commit
+- Hash: ae82820
+- No requiere migración DB (usa campo `enabled` existente)
+
+---
+
 ## 2026-05-28 — fix(idca): Bug crítico fee tracking en safety_buy fallback timeout
 
 ### Objetivo
