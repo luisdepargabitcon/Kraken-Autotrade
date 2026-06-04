@@ -255,8 +255,10 @@ function HealthBadge() {
 function ControlsBar() {
   const { data: controls } = useIdcaControls();
   const { data: config } = useIdcaConfig();
+  const { data: assetConfigs } = useIdcaAssetConfigs();
   const updateControls = useUpdateIdcaControls();
   const updateConfig = useUpdateIdcaConfig();
+  const updateAssetCtrl = useUpdateAssetConfig();
   const emergencyClose = useEmergencyCloseAll();
   const { toast } = useToast();
 
@@ -264,9 +266,23 @@ function ControlsBar() {
   const isPaused = controls?.globalTradingPause ?? false;
   const mode = config?.mode || "disabled";
 
+  const btc = assetConfigs?.find((a: any) => a.pair === "BTC/USD");
+  const eth = assetConfigs?.find((a: any) => a.pair === "ETH/USD");
+
+  const handlePairToggle = (pair: string, newEnabled: boolean) => {
+    updateAssetCtrl.mutate({ pair, enabled: newEnabled }, {
+      onSuccess: () => {
+        toast({
+          title: `${pair}`,
+          description: newEnabled ? "Cambiado a Activo" : "Cambiado a Solo salidas",
+        });
+      },
+    });
+  };
+
   return (
     <Card className="border-border/50">
-      <CardContent className="p-4">
+      <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-4">
           {/* IDCA Toggle */}
           <div className="flex items-center gap-2">
@@ -336,6 +352,53 @@ function ControlsBar() {
             EMERGENCY CLOSE
           </Button>
         </div>
+
+        {/* Per-pair operation toggles */}
+        {(btc || eth) && (
+          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-border/30">
+            <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-wider">Operativa par</span>
+            {btc && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5">
+                    <Switch
+                      checked={btc.enabled}
+                      onCheckedChange={(v) => handlePairToggle(btc.pair, v)}
+                      className="scale-75"
+                    />
+                    <span className="text-xs font-mono">BTC/USD</span>
+                    <Badge variant="outline" className={cn("text-[10px] font-mono px-1.5 py-0", btc.enabled ? "text-green-400 border-green-400/50 bg-green-400/5" : "text-amber-400 border-amber-400/50 bg-amber-400/5")}>
+                      {btc.enabled ? "Activo" : "Solo salidas"}
+                    </Badge>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-xs">
+                  Activo: el par puede abrir ciclos y hacer compras. Solo salidas: no hará nuevas compras, safety buys, Plus ni Recovery, pero seguirá permitiendo TP, trailing, break-even y cierre manual.
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {eth && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5">
+                    <Switch
+                      checked={eth.enabled}
+                      onCheckedChange={(v) => handlePairToggle(eth.pair, v)}
+                      className="scale-75"
+                    />
+                    <span className="text-xs font-mono">ETH/USD</span>
+                    <Badge variant="outline" className={cn("text-[10px] font-mono px-1.5 py-0", eth.enabled ? "text-green-400 border-green-400/50 bg-green-400/5" : "text-amber-400 border-amber-400/50 bg-amber-400/5")}>
+                      {eth.enabled ? "Activo" : "Solo salidas"}
+                    </Badge>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-xs">
+                  Activo: el par puede abrir ciclos y hacer compras. Solo salidas: no hará nuevas compras, safety buys, Plus ni Recovery, pero seguirá permitiendo TP, trailing, break-even y cierre manual.
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
