@@ -239,7 +239,17 @@ function HealthBadge() {
   if (!health) return null;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap justify-end">
+      {health.lastError && (
+        <Badge variant="outline" className="text-[10px] font-mono text-red-400 border-red-400/50 bg-red-400/5 max-w-[200px] truncate" title={health.lastError}>
+          ⚠ {health.lastError}
+        </Badge>
+      )}
+      {!health.schedulerActive && (
+        <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">
+          Scheduler pausado
+        </Badge>
+      )}
       <div className={cn("h-2 w-2 rounded-full", health.isRunning ? "bg-green-500 animate-pulse" : "bg-gray-500")} />
       <span className="text-xs font-mono text-muted-foreground">
         {health.isRunning ? `Activo (tick #${health.tickCount})` : "Inactivo"}
@@ -416,6 +426,7 @@ function SummaryTab() {
   const { data: config } = useIdcaConfig();
   const marketCtx = useAllMarketContextPreviews();
   const marketHealth = useAllMarketDataHealth();
+  const { data: assetConfigs } = useIdcaAssetConfigs();
 
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando resumen...</div>;
@@ -473,6 +484,44 @@ function SummaryTab() {
         <KpiCard icon={Activity} label="Ciclos Activos" value={String(summary.activeCyclesCount)} />
       </div>
 
+      {/* Estado operativo por par */}
+      {assetConfigs && assetConfigs.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {assetConfigs.map((asset: any) => {
+            const ctx = marketCtx.data?.find((m: any) => m.pair === asset.pair);
+            const drawdown = ctx?.drawdownPct ?? 0;
+            const drawdownColor = drawdown <= -3 ? "text-red-400" : drawdown <= -1 ? "text-amber-400" : "text-green-400";
+            const isPairActive = asset.enabled;
+            return (
+              <Card key={asset.pair} className={cn("border-border/50", !isPairActive && "border-amber-500/30 bg-amber-500/5")}>
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-mono font-bold">{asset.pair}</span>
+                    <Badge variant="outline" className={cn("text-[10px] font-mono px-1.5 py-0", isPairActive ? "text-green-400 border-green-400/50 bg-green-400/5" : "text-amber-400 border-amber-400/50 bg-amber-400/5")}>
+                      {isPairActive ? "Activo" : "Solo salidas"}
+                    </Badge>
+                  </div>
+                  {ctx ? (
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div>
+                        <p className="text-muted-foreground">Precio actual</p>
+                        <p className="font-mono font-medium">${ctx.currentPrice.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Drawdown</p>
+                        <p className={cn("font-mono font-medium", drawdownColor)}>{drawdown.toFixed(2)}%</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground">Sin datos de mercado</p>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
       {/* Contexto de Mercado — ancla dinámica integrada con estado de datos */}
       <IdcaMarketContextSummary
         previews={marketCtx.data}
@@ -485,7 +534,7 @@ function SummaryTab() {
       {summary.cycles.length > 0 && (
         <Card className="border-border/50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-mono">CICLOS ACTIVOS</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center gap-2"><Activity className="h-3.5 w-3.5 text-primary" />Ciclos activos</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {summary.cycles.map((cycle) => (
