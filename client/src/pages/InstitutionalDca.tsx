@@ -2872,10 +2872,27 @@ function CyclesTab() {
         </Button>
       </div>
 
+      {cycles && cycles.length > 0 && (() => {
+        const activeCount = cycles.filter((c) => c.status !== "closed").length;
+        const closedCount = cycles.filter((c) => c.status === "closed").length;
+        const liveCount = cycles.filter((c) => c.mode === "live" && c.status !== "closed").length;
+        const simCount = cycles.filter((c) => c.mode === "simulation" && c.status !== "closed").length;
+        return (
+          <div className="flex items-center gap-3 px-1 text-xs text-muted-foreground flex-wrap">
+            <span className="font-mono">{cycles.length} total</span>
+            {activeCount > 0 && <span className="text-green-400 font-mono">{activeCount} activo{activeCount !== 1 ? "s" : ""}</span>}
+            {closedCount > 0 && <span className="font-mono">{closedCount} cerrado{closedCount !== 1 ? "s" : ""}</span>}
+            {liveCount > 0 && <span className="text-emerald-400 font-mono">{liveCount} live</span>}
+            {simCount > 0 && <span className="text-blue-400 font-mono">{simCount} simulación</span>}
+          </div>
+        );
+      })()}
+
       {(!cycles || cycles.length === 0) ? (
         <Card className="border-border/50">
           <CardContent className="p-8 text-center text-muted-foreground">
-            <p className="text-sm">No hay ciclos</p>
+            <p className="text-sm font-medium">Sin ciclos</p>
+            <p className="text-xs mt-1">Los ciclos aparecerán aquí cuando el scheduler los abra.</p>
           </CardContent>
         </Card>
       ) : (
@@ -3058,9 +3075,13 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
               </div>
               {/* Info row — secondary metadata */}
               <div className="text-[10px] text-amber-400/70 font-mono mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                <span className="text-muted-foreground/60">#{cycle.id}</span>
+                <span className="text-muted-foreground/40">|</span>
                 <span>Inicio: {fmtDate(cycle.startedAt)}</span>
                 <span className="text-muted-foreground/40">|</span>
                 <span>{cycle.buyCount} compra{cycle.buyCount !== 1 ? "s" : ""}</span>
+                <span className="text-muted-foreground/40">|</span>
+                <span className="text-muted-foreground/70">{durationStr}</span>
                 {cycle.marketScore && <><span className="text-muted-foreground/40">|</span><span>Score: {cycle.marketScore}</span></>}
                 {cycle.tpTargetPct && <><span className="text-muted-foreground/40">|</span><span>ref. TP: {parseFloat(String(cycle.tpTargetPct)).toFixed(1)}%</span></>}
                 {cycle.entryDipPct && <><span className="text-muted-foreground/40">|</span><span>Dip entrada: {parseFloat(String(cycle.entryDipPct)).toFixed(2)}%</span></>}
@@ -3070,7 +3091,7 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
               </div>
               {/* ── Metrics grid: 6 price chips ─────────────────────── */}
               {cycle.status !== "closed" && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 mt-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 mt-2">
                   {/* A) Precio actual */}
                   <CycleMetricChip
                     label="Actual"
@@ -3187,6 +3208,13 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
                       />
                     );
                   })()}
+                  {/* E2) Cantidad */}
+                  <CycleMetricChip
+                    label="Cantidad"
+                    value={parseFloat(cycle.totalQuantity) > 0 ? `${parseFloat(cycle.totalQuantity).toFixed(6).replace(/\.?0+$/, "")} ${cycle.pair.split("/")[0]}` : "—"}
+                    valueClass="text-slate-300"
+                    tooltip="Cantidad total acumulada de activo en este ciclo (compras confirmadas)."
+                  />
                   {/* F) Objetivo TP / Stop trailing */}
                   {(() => {
                     if (cycle.status === "trailing_active" && cycle.highestPriceAfterTp && cycle.trailingPct) {
