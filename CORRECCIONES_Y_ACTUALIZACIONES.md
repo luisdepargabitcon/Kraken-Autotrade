@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-06-04 — feat(ui): Modernización visual DCA Inteligente (Fase 2)
+
+### Objetivo
+Mejorar la UI del módulo DCA Inteligente de forma quirúrgica sin tocar lógica operativa.
+
+### Cambios en `client/src/pages/InstitutionalDca.tsx`
+- **HealthBadge**: añadir badge rojo `⚠ lastError` si existe error en health
+- **HealthBadge**: añadir badge amber `Scheduler pausado` si `schedulerActive=false`
+- **SummaryTab**: nuevo hook `useIdcaAssetConfigs()` para sección por par
+- **SummaryTab**: nueva sección "Estado por par" con card por BTC/USD y ETH/USD mostrando precio actual, drawdown % y badge Activo/Solo salidas
+- **SummaryTab**: título `CICLOS ACTIVOS` → `Ciclos activos` con icono menos agresivo
+
+### Sin impacto operativo
+- No se tocó ControlsBar, hooks operativos, server/, DB, lógica IDCA ni FUENTES_BOT.md
+- Datos: todos de hooks ya existentes (`useIdcaAssetConfigs`, `useAllMarketContextPreviews`)
+
+### Commit
+- Hash: f3c8764
+
+---
+
 ## 2026-06-04 — fix(ui): Coherencia final de títulos y mundos NEXA (Fase 1.3)
 
 ### Objetivo
