@@ -1,14 +1,13 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Activity, Monitor, Wallet, Settings, BarChart3 } from "lucide-react";
+import { Home, TrendingUp, BarChart3, FileText, Settings } from "lucide-react";
 
 const tabs = [
-  { href: "/", label: "Panel", icon: LayoutDashboard },
-  { href: "/strategies", label: "Trading", icon: Activity },
-  { href: "/terminal", label: "Terminal", icon: BarChart3 },
-  { href: "/monitor", label: "Monitor", icon: Monitor },
-  { href: "/wallet", label: "Cartera", icon: Wallet },
-  { href: "/settings", label: "Sistema", icon: Settings },
+  { href: "/", label: "Home", icon: Home, exact: true },
+  { href: "/dca", label: "DCA", icon: TrendingUp, aliases: ["/institutional-dca"] },
+  { href: "/trading", label: "Trading", icon: BarChart3, aliases: ["/strategies"] },
+  { href: "/fiscal", label: "Fiscal", icon: FileText, aliases: ["/fisco"] },
+  { href: "/settings", label: "Sistema", icon: Settings, aliases: ["/monitor", "/wallet", "/integrations", "/notifications", "/backups", "/terminal", "/ai", "/guide"] },
 ];
 
 export function MobileTabBar() {
@@ -21,7 +20,9 @@ export function MobileTabBar() {
     >
       <div className="flex items-center justify-around h-16">
         {tabs.map((tab) => {
-          const isActive = location === tab.href;
+          const isActive = (tab as any).exact
+            ? location === tab.href
+            : location === tab.href || location.startsWith(tab.href + "/") || ((tab as any).aliases?.some((a: string) => location === a || location.startsWith(a + "/")));
           return (
             <Link
               key={tab.href}
