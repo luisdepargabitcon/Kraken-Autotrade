@@ -2,6 +2,47 @@
 
 ---
 
+## 2026-06-05 — feat(ui): Telegram global modular (Fase 5)
+
+### Cambios
+- `client/src/pages/Notifications.tsx`:
+  - Header: subtítulo "Telegram Global · Un bot, todos los módulos NEXA."
+  - Module overview panel (4 módulos): DCA Inteligente (→ /dca), Trading Activo, Fiscal Crypto, Sistema
+  - ALERT_SUBTYPES: categoría "Trading" renombrada a "Trading Activo" con descripción actualizada
+  - No se tocó lógica de envío, templates, tokens ni chats
+
+### Commit: b8d028b
+
+---
+
+## 2026-06-05 — feat(ui): modernize Fiscal Crypto dashboard shell (Fase 4)
+
+### Cambios
+- `client/src/pages/Fisco.tsx`:
+  - Summary panel: grid de métricas (año fiscal, operaciones, exchanges, G/P Neto FIFO, FIFO Estado + última sync)
+  - Reemplaza la línea plana de contadores anterior
+  - Tabs con iconos: `TrendingUp` / `FileText` / `Bell` para Resumen/Transacciones/Alertas
+  - Descripción contextual bajo el tab activo
+  - No se tocaron FIFO, importadores, cálculos fiscales ni server/
+
+### Commit: f11ba18
+
+---
+
+## 2026-06-05 — feat(ui): modernize Trading Activo dashboard shell (Fase 3)
+
+### Cambios
+- `client/src/pages/Strategies.tsx`:
+  - Status bar: bot activo/inactivo, estrategia activa, pares activos, nivel riesgo, badge REAL · Kraken
+  - Tab description: línea de contexto bajo la tab activa (todas las tabs)
+  - Config grid: `md:grid-cols-2` + `items-start` para mejor responsive (era `lg:grid-cols-2`)
+  - Warning card: "Fondos Reales · Kraken SPOT" con descripción clara + pares activos en font-mono
+  - No se tocó lógica SPOT, estrategias, Smart Guard ni server/
+
+### Commit: 3c0abe9
+
+---
+
 ## 2026-06-04 — feat(ui): Mejoras visuales DCA Telegram Tab (Fase 2.4)
 
 ### Cambios
