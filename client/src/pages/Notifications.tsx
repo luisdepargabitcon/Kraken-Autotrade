@@ -124,9 +124,9 @@ export default function Notifications() {
 
   const ALERT_SUBTYPES: { category: string; icon: string; description: string; subtypes: { key: keyof AlertPreferences; label: string; hint?: string }[] }[] = [
     {
-      category: "Trading",
+      category: "Trading Activo",
       icon: "📊",
-      description: "Compras, ventas y ejecuciones de trading",
+      description: "Compras, ventas y ejecuciones de trading SPOT",
       subtypes: [
         { key: "trade_buy", label: "Compras ejecutadas", hint: "Alerta al confirmar una compra" },
         { key: "trade_sell", label: "Ventas ejecutadas", hint: "Alerta al confirmar una venta" },
@@ -402,7 +402,7 @@ export default function Notifications() {
                 <Bell className="h-8 w-8 text-primary" />
                 Notificaciones
               </h1>
-              <p className="text-muted-foreground mt-1">Centro unificado de alertas Telegram. Toda la configuración de notificaciones desde aquí.</p>
+              <p className="text-muted-foreground mt-1">Telegram Global · Un bot, todos los módulos NEXA.</p>
             </div>
             <div className="hidden sm:flex items-center gap-4 text-sm text-muted-foreground">
               <div className="flex items-center gap-1.5">
@@ -431,6 +431,44 @@ export default function Notifications() {
               </CardContent>
             </Card>
           )}
+
+          {/* ========== MODULE OVERVIEW ========== */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Link href="/dca">
+              <div className="p-3 rounded-lg border border-border/50 bg-card/60 hover:border-primary/50 hover:bg-card transition-colors cursor-pointer space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Brain className="h-3.5 w-3.5 text-violet-400" />
+                  <span className="text-xs font-semibold">DCA Inteligente</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">Alertas gestionadas en /dca → Telegram</div>
+                <div className="text-[10px] font-mono text-violet-400/80">→ Configurar en DCA</div>
+              </div>
+            </Link>
+            <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                <span className="text-xs font-semibold">Trading Activo</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">SPOT: trades, régimen, Smart Guard</div>
+              <div className="text-[10px] font-mono text-emerald-400/80">✓ Configurado aquí</div>
+            </div>
+            <div className="p-3 rounded-lg border border-blue-500/30 bg-blue-500/5 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Calculator className="h-3.5 w-3.5 text-blue-400" />
+                <span className="text-xs font-semibold">Fiscal Crypto</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">Sync fiscal, informes, errores FIFO</div>
+              <div className="text-[10px] font-mono text-blue-400/80">✓ Configurado aquí</div>
+            </div>
+            <div className="p-3 rounded-lg border border-border/50 bg-card/60 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-orange-400" />
+                <span className="text-xs font-semibold">Sistema</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">Arranque, errores críticos, heartbeat</div>
+              <div className="text-[10px] font-mono text-orange-400/80">✓ Configurado aquí</div>
+            </div>
+          </div>
 
           <div className="grid gap-6">
 
