@@ -199,6 +199,36 @@ export default function Strategies() {
             </div>
           </div>
 
+          {/* Status Bar */}
+          {config && !isLoading && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium ${
+                config.isActive
+                  ? "border-green-500/40 bg-green-500/10 text-green-400"
+                  : "border-slate-500/40 bg-slate-500/10 text-slate-400"
+              }`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${config.isActive ? "bg-green-400 animate-pulse" : "bg-slate-400"}`} />
+                {config.isActive ? "Activo" : "Detenido"}
+              </span>
+              <Badge variant="outline" className="text-[11px] font-mono h-5">
+                {STRATEGIES.find(s => s.id === config.strategy)?.name || "Sin estrategia"}
+              </Badge>
+              {config.activePairs && config.activePairs.length > 0 && (
+                <Badge variant="outline" className="text-[11px] font-mono h-5">
+                  {config.activePairs.join(" · ")}
+                </Badge>
+              )}
+              <Badge variant="outline" className={`text-[11px] font-mono h-5 ${
+                config.riskLevel === "high" ? "text-red-400 border-red-500/40" :
+                config.riskLevel === "low" ? "text-green-400 border-green-500/40" :
+                "text-yellow-400 border-yellow-500/40"
+              }`}>
+                Riesgo {RISK_LEVELS.find(r => r.id === config.riskLevel)?.name || "—"}
+              </Badge>
+              <Badge variant="outline" className="text-[11px] text-amber-400 border-amber-500/40 h-5">REAL · Kraken</Badge>
+            </div>
+          )}
+
           {/* Tab Navigation */}
           <div className="flex gap-0.5 md:gap-1 border-b border-border/50 pb-0 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
             <button
@@ -294,6 +324,16 @@ export default function Strategies() {
               </>
             )}
           </div>
+          <div className="text-[11px] text-muted-foreground/60 font-mono px-0.5">
+            {activeTab === "config" && "Estrategia base, pares activos y parámetros del bot."}
+            {activeTab === "entradas" && "Umbrales de señal técnica y condiciones para abrir una posición."}
+            {activeTab === "salidas" && "Stop-Loss, Take-Profit y Trailing Stop para gestionar el cierre."}
+            {activeTab === "mercado" && "Contexto de mercado y filtros de condición operativa."}
+            {activeTab === "riesgo" && "Gestión de exposición, tamaño de posición y capital."}
+            {activeTab === "metricas" && "Indicadores técnicos del mercado en tiempo real."}
+            {activeTab === "motor" && "Parámetros del motor adaptativo de señales."}
+            {activeTab === "smartexit" && "Salidas inteligentes y condiciones de cierre dinámicas."}
+          </div>
 
           {activeTab === "entradas" && (
             <EntradasTab
@@ -334,7 +374,7 @@ export default function Strategies() {
             <SmartExitTab />
           )}
 
-          <div className={`grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 ${activeTab !== "config" ? "hidden" : ""}`}>
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 items-start ${activeTab !== "config" ? "hidden" : ""}`}>
             <Card className="glass-panel border-border/50">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base md:text-lg">
@@ -481,18 +521,23 @@ export default function Strategies() {
                 </CardContent>
               </Card>
 
-              <Card className="glass-panel border-border/50 border-yellow-500/30">
-                <CardContent className="pt-6">
+              <Card className="glass-panel border-amber-500/20 bg-amber-500/5">
+                <CardContent className="pt-4 pb-4">
                   <div className="flex items-start gap-3">
-                    <div className="p-2 bg-yellow-500/20 rounded-lg">
-                      <Zap className="h-5 w-5 text-yellow-500" />
+                    <div className="p-1.5 bg-amber-500/20 rounded-lg shrink-0">
+                      <Zap className="h-4 w-4 text-amber-400" />
                     </div>
-                    <div>
-                      <h4 className="font-medium text-yellow-500">Modo REAL Activado</h4>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Todas las operaciones se ejecutan con dinero real en Kraken. 
-                        No hay modo simulación.
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm font-medium text-amber-400">Fondos Reales · Kraken SPOT</h4>
+                        <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40">REAL</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Las órdenes se ejecutan directamente en Kraken con capital real. Revisa la configuración de riesgo y los pares activos antes de activar el bot.
                       </p>
+                      {config?.activePairs && config.activePairs.length > 0 && (
+                        <p className="text-xs font-mono text-muted-foreground/70">Pares: {config.activePairs.join(" · ")}</p>
+                      )}
                     </div>
                   </div>
                 </CardContent>
