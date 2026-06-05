@@ -622,28 +622,41 @@ export default function Fisco() {
           </div>
         </div>
 
-        {/* ========== COUNTERS ========== */}
+        {/* ========== SUMMARY PANEL ========== */}
         {report && (
-          <div className="flex flex-wrap gap-4">
-            <div className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg">
-              <FileText className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Operaciones importadas:</span>
-              <span className="font-bold text-sm">{report.counters.total_operations}</span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            <div className="bg-card border border-blue-500/30 rounded-lg p-3 space-y-0.5">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Año fiscal</div>
+              <div className="text-xl font-bold text-blue-400">{selectedYear}</div>
             </div>
-            {report.counters.pending_valuation > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                <AlertTriangle className="h-4 w-4 text-yellow-400" />
-                <span className="text-sm text-yellow-400">Valoraci\u00f3n EUR pendiente:</span>
-                <span className="font-bold text-sm text-yellow-400">{report.counters.pending_valuation}</span>
+            <div className="bg-card border border-border rounded-lg p-3 space-y-0.5">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Operaciones</div>
+              <div className="text-xl font-bold">{report.counters.total_operations.toLocaleString("es-ES")}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-3 space-y-0.5">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Exchanges</div>
+              <div className="text-sm font-bold leading-tight">
+                {meta?.exchanges && meta.exchanges.length > 0
+                  ? meta.exchanges.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(", ")
+                  : <span className="text-muted-foreground/50">Sin datos</span>}
               </div>
-            )}
-            {report.last_sync && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg ml-auto">
-                <span className="text-xs text-muted-foreground">\u00daltima sincronizaci\u00f3n: {fmtDateShort(report.last_sync)}</span>
+            </div>
+            <div className={`bg-card border rounded-lg p-3 space-y-0.5 ${report.section_a.total_eur >= 0 ? "border-green-500/30" : "border-red-500/30"}`}>
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">G/P Neto FIFO</div>
+              <div className={`text-base font-bold font-mono ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                {report.section_a.total_eur >= 0 ? "+" : ""}{eur(report.section_a.total_eur)}
               </div>
-            )}
+            </div>
+            <div className={`bg-card border rounded-lg p-3 space-y-0.5 ${report.counters.pending_valuation > 0 ? "border-yellow-500/30" : "border-green-500/20"}`}>
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">FIFO Estado</div>
+              <div className={`text-sm font-bold ${report.counters.pending_valuation > 0 ? "text-yellow-400" : "text-green-400"}`}>
+                {report.counters.pending_valuation > 0 ? `⚠️ ${report.counters.pending_valuation} pend.` : "✓ OK"}
+              </div>
+              {report.last_sync && <div className="text-[10px] text-muted-foreground/60 font-mono">{fmtDateShort(report.last_sync)}</div>}
+            </div>
           </div>
         )}
+
 
         {/* Pipeline error */}
         {runPipeline.isError && (
@@ -687,10 +700,15 @@ export default function Fisco() {
         {/* ========== TABS STRUCTURE ========== */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="resumen">Resumen Fiscal</TabsTrigger>
-            <TabsTrigger value="anexo">Anexo: Transacciones</TabsTrigger>
+            <TabsTrigger value="resumen" className="gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> Resumen Fiscal</TabsTrigger>
+            <TabsTrigger value="anexo" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Transacciones</TabsTrigger>
             <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
           </TabsList>
+          <div className="text-[11px] text-muted-foreground/60 font-mono px-0.5 -mt-3">
+            {activeTab === "resumen" && "Informe FIFO completo: sección A (transmisiones), B (activos), C (rendimientos), D (saldos)."}
+            {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
+            {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
+          </div>
 
           {/* ==================== TAB: RESUMEN FISCAL ==================== */}
           <TabsContent value="resumen" className="space-y-5">
