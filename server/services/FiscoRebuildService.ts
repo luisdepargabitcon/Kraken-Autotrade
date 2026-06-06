@@ -233,11 +233,11 @@ export class FiscoRebuildService {
         INSERT INTO fisco_backup_disposals
           (backup_id, original_id, sell_operation_id, lot_id_str, asset,
            quantity, proceeds_eur, cost_basis_eur, gain_loss_eur, disposed_at)
-        SELECT $1, id, sell_operation_id,
-               COALESCE(lot_id::text, 'UNKNOWN_BASIS'),
-               asset, quantity, proceeds_eur, cost_basis_eur, gain_loss_eur, disposed_at
-        FROM fisco_disposals
-        LEFT JOIN fisco_lots ON fisco_disposals.lot_id = fisco_lots.id
+        SELECT $1, fd.id, fd.sell_operation_id,
+               COALESCE(fd.lot_id::text, 'UNKNOWN_BASIS'),
+               fd.asset, fd.quantity, fd.proceeds_eur, fd.cost_basis_eur,
+               fd.gain_loss_eur, fd.disposed_at
+        FROM fisco_disposals fd
       `, [backupId]);
 
       await client.query("COMMIT");
