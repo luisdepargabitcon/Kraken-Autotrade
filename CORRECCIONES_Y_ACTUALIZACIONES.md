@@ -97,6 +97,32 @@ Auditoría detectó errores críticos en el sistema FIFO fiscal:
 - Mocks para `eur-rates` (offline, tasa fija 0.92)
 - Casos: buy/sell fiat, buy/sell stablecoin, buy/sell stablecoin↔fiat, crypto↔crypto, multi-entry refid, asset normalization
 
+### Commit: 75725f2
+
+---
+
+## 2026-06-06 — fix(fisco): migración 043 integrada en script/migrate.ts (auto-deploy)
+
+### Problema
+La migración `043_fisco_rebuild_reconciliation.sql` no se ejecutaba automáticamente al hacer deploy.
+Requería comando manual en el VPS, lo cual no es aceptable.
+
+### Cambio
+- `script/migrate.ts`: añadido bloque para la migración 043 al final del runner, antes del log de éxito final:
+  ```
+  console.log("[migrate] Applying 043_fisco_rebuild_reconciliation...");
+  await tryExecuteFile(db, fiscoRebuildPath, "fisco_rebuild_reconciliation");
+  console.log("[migrate] 043_fisco_rebuild_reconciliation OK");
+  ```
+- Logs explícitos: `[migrate] Applying 043_fisco_rebuild_reconciliation...` y `[migrate] 043_fisco_rebuild_reconciliation OK`
+- Idempotencia verificada: toda la migración 043 usa `CREATE TABLE IF NOT EXISTS` y `CREATE INDEX IF NOT EXISTS`
+
+### Tablas creadas automáticamente en deploy
+- `fisco_rebuild_runs`
+- `fisco_staging_operations`, `fisco_staging_lots`, `fisco_staging_disposals`, `fisco_staging_summary`
+- `fisco_backup_operations`, `fisco_backup_lots`, `fisco_backup_disposals`
+- `fisco_reconciliation_runs`, `fisco_reconciliation_items`
+
 ### Commit: pendiente
 
 ---

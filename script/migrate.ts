@@ -1222,6 +1222,17 @@ END $$;
     const idcaOrderFeeTrackingPath = path.resolve(process.cwd(), "db", "migrations", "042_idca_order_fee_tracking.sql");
     await tryExecuteFile(db, idcaOrderFeeTrackingPath, "idca_order_fee_tracking");
 
+    // ============================================================
+    // FISCO REBUILD & RECONCILIATION (043)
+    // Staging tables, backup tables, rebuild run tracking,
+    // and reconciliation tables for controlled FISCO rebuilds.
+    // All statements use IF NOT EXISTS — fully idempotent.
+    // ============================================================
+    console.log("[migrate] Applying 043_fisco_rebuild_reconciliation...");
+    const fiscoRebuildPath = path.resolve(process.cwd(), "db", "migrations", "043_fisco_rebuild_reconciliation.sql");
+    await tryExecuteFile(db, fiscoRebuildPath, "fisco_rebuild_reconciliation");
+    console.log("[migrate] 043_fisco_rebuild_reconciliation OK");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
