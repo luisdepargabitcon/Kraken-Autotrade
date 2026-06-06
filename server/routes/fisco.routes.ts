@@ -6,6 +6,7 @@ import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort, type Norm
 import { runFifo, validateFifoResult } from "../services/fisco/fifo-engine";
 import { getUsdToEurRate, getCachedUsdEurRate } from "../services/fisco/eur-rates";
 import { fiscoRebuildService } from "../services/FiscoRebuildService";
+import { isFiscoRebuildActive } from "../services/fisco/rebuild-state";
 import { pool } from "../db";
 
 /**
@@ -1130,6 +1131,15 @@ export function registerFiscoRebuildRoutes(app: Express): void {
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/state
+   * Returns whether a FISCO rebuild is currently active.
+   * Useful for UI polling and debugging rate-limit competition.
+   */
+  app.get("/api/fisco/rebuild/state", (_req, res) => {
+    return res.json({ active: isFiscoRebuildActive() });
   });
 
   /**

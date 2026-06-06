@@ -22,6 +22,7 @@
 import { ExchangeFactory } from "./exchanges/ExchangeFactory";
 import type { OHLC, Ticker } from "./exchanges/IExchangeService";
 import { MarketCandleRepository } from "./marketData/MarketCandleRepository";
+import { isFiscoRebuildActive } from "./fisco/rebuild-state";
 
 // ─── Public types ─────────────────────────────────────────────────
 
@@ -145,6 +146,14 @@ class MarketDataServiceClass {
     this._misses++;
     console.debug(`[MDS] CACHE_MISS ${key} (stale=${cached ? "yes" : "no"})`);
 
+    // During FISCO rebuild: skip Kraken OHLC calls to preserve rate-limit budget
+    if (isFiscoRebuildActive()) {
+      console.log(`[FISCO_REBUILD_MODE] skipping non-essential Kraken call: getCandles(${key})`);
+      if (cached?.candles) return cached.candles;
+      const fb = await this.tryFallbackToDb(pair, tf, undefined);
+      return fb ?? [];
+    }
+
     const fetch = (async (): Promise<OHLC[]> => {
       try {
         const exchange = ExchangeFactory.getDataExchange();
@@ -213,6 +222,12 @@ class MarketDataServiceClass {
     this._misses++;
     console.debug(`[MDS] CACHE_MISS ${pair}::price`);
 
+    // During FISCO rebuild: use stale cache to preserve rate-limit budget
+    if (isFiscoRebuildActive() && cached) {
+      console.log(`[FISCO_REBUILD_MODE] skipping non-essential Kraken call: getPrice(${pair})`);
+      return cached.ticker.last;
+    }
+
     const fetch = (async (): Promise<Ticker> => {
       const exchange = ExchangeFactory.getDataExchange();
       if (!exchange.isInitialized()) throw new Error("exchange not ready");
@@ -244,6 +259,12 @@ class MarketDataServiceClass {
     }
 
     this._misses++;
+
+    // During FISCO rebuild: use stale cache to preserve rate-limit budget
+    if (isFiscoRebuildActive() && cached) {
+      console.log(`[FISCO_REBUILD_MODE] skipping non-essential Kraken call: getTicker(${pair})`);
+      return cached.ticker;
+    }
 
     const fetch = (async (): Promise<Ticker> => {
       const exchange = ExchangeFactory.getDataExchange();

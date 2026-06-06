@@ -20,6 +20,10 @@ const NONCE_ALERT_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [500, 1000, 2000];
 const METADATA_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Per-page rate-limit retry delays for ledger/trades pagination (10s → 30s → 60s → 120s)
+const LEDGER_RL_DELAYS = [10_000, 30_000, 60_000, 120_000];
+// Inter-page delay (ms) — 2 s keeps us well within Kraken private rate limits
+const INTER_PAGE_DELAY_MS = 2_000;
 
 export class KrakenService implements IExchangeService {
   readonly exchangeName = 'kraken';
@@ -325,17 +329,42 @@ export class KrakenService implements IExchangeService {
     const allTrades: Record<string, any> = {};
     let offset = 0;
     let totalCount = 0;
-    const RATE_LIMIT_DELAY = 1000; // 1s extra entre páginas (callKraken ya añade 500ms min)
-    
+
     console.log("[kraken] Fetching all trades history with pagination...");
     
     while (true) {
       const paginatedParams = { ...params, ofs: offset };
       
-      const response: any = await this.executeWithNonceRetry("tradesHistory", () => 
-        this.client.tradesHistory(paginatedParams)
-      );
-      
+      // Per-page RL retry — keeps offset unchanged, never restarts from 0
+      let response: any;
+      { let rlAttempt = 0;
+        while (true) {
+          try {
+            response = await this.executeWithNonceRetry("tradesHistory", () =>
+              this.client.tradesHistory(paginatedParams)
+            );
+            break;
+          } catch (err: any) {
+            const isRL = err.message?.includes("EAPI:Rate limit") ||
+                         err.message?.includes("Rate limit") ||
+                         err.errorCode === "RATE_LIMIT";
+            if (isRL && rlAttempt < LEDGER_RL_DELAYS.length) {
+              const delay = LEDGER_RL_DELAYS[rlAttempt];
+              console.warn(`[kraken] Rate limit on tradesHistory offset=${offset}. Retry ${rlAttempt + 1}/${LEDGER_RL_DELAYS.length} in ${delay / 1000}s…`);
+              await new Promise(r => setTimeout(r, delay));
+              rlAttempt++;
+              continue;
+            }
+            throw Object.assign(
+              new Error(isRL
+                ? `EAPI:Rate limit exhausted on tradesHistory offset=${offset} after ${rlAttempt} retries: ${err.message}`
+                : `Kraken tradesHistory error at offset=${offset}: ${err.message}`),
+              { stage: "kraken_trades_pagination", offset, retries: rlAttempt, lastError: err.message }
+            );
+          }
+        }
+      }
+
       const trades = response.trades || {};
       const count = response.count || 0;
       
@@ -364,8 +393,8 @@ export class KrakenService implements IExchangeService {
         break;
       }
       
-      // Rate limiting - esperar entre llamadas
-      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+      // Rate limiting — 2 s between pages
+      await new Promise(resolve => setTimeout(resolve, INTER_PAGE_DELAY_MS));
     }
     
     console.log(`[kraken] Finished fetching ${Object.keys(allTrades).length} total trades`);
@@ -420,16 +449,41 @@ export class KrakenService implements IExchangeService {
     const allLedger: Record<string, any> = {};
     let offset = 0;
     let totalCount = 0;
-    const RATE_LIMIT_DELAY = 1000; // 1s extra entre páginas (callKraken ya añade 500ms min)
 
     console.log(`[kraken] Fetching all ledger entries with pagination...`);
 
     while (true) {
       const paginatedParams = { ...params, ofs: offset };
 
-      const response: any = await this.executeWithNonceRetry("ledgers", () =>
-        this.client.ledgers(paginatedParams)
-      );
+      // Per-page RL retry — keeps offset unchanged, never restarts from 0
+      let response: any;
+      { let rlAttempt = 0;
+        while (true) {
+          try {
+            response = await this.executeWithNonceRetry("ledgers", () =>
+              this.client.ledgers(paginatedParams)
+            );
+            break;
+          } catch (err: any) {
+            const isRL = err.message?.includes("EAPI:Rate limit") ||
+                         err.message?.includes("Rate limit") ||
+                         err.errorCode === "RATE_LIMIT";
+            if (isRL && rlAttempt < LEDGER_RL_DELAYS.length) {
+              const delay = LEDGER_RL_DELAYS[rlAttempt];
+              console.warn(`[kraken] Rate limit on ledger offset=${offset}. Retry ${rlAttempt + 1}/${LEDGER_RL_DELAYS.length} in ${delay / 1000}s…`);
+              await new Promise(r => setTimeout(r, delay));
+              rlAttempt++;
+              continue;
+            }
+            throw Object.assign(
+              new Error(isRL
+                ? `EAPI:Rate limit exhausted on ledger offset=${offset} after ${rlAttempt} retries: ${err.message}`
+                : `Kraken ledger error at offset=${offset}: ${err.message}`),
+              { stage: "kraken_ledger_pagination", offset, retries: rlAttempt, lastError: err.message }
+            );
+          }
+        }
+      }
 
       const ledger = response?.ledger || {};
       const count = response?.count || 0;
@@ -468,7 +522,8 @@ export class KrakenService implements IExchangeService {
         break;
       }
 
-      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+      // Rate limiting — 2 s between pages
+      await new Promise(resolve => setTimeout(resolve, INTER_PAGE_DELAY_MS));
     }
 
     console.log(`[kraken] Finished fetching ${Object.keys(allLedger).length} total ledger entries`);

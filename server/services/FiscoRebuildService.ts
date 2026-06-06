@@ -295,8 +295,18 @@ export class FiscoRebuildService {
         krakenOps = await normalizeKrakenLedger(ledgerEntries);
         console.log(`[fisco/rebuild] Kraken: ${ledgerEntries.length} entries → ${krakenOps.length} ops`);
       } catch (e: any) {
-        console.error(`[fisco/rebuild] Kraken fetch failed: ${e.message}`);
-        throw new Error(`Error fetching Kraken data: ${e.message}`);
+        const isRL = e.message?.includes("Rate limit") || e.stage === "kraken_ledger_pagination";
+        const detail = {
+          stage: e.stage ?? "kraken_ledger_pagination",
+          offset: e.offset ?? null,
+          retries: e.retries ?? null,
+          lastError: e.lastError ?? e.message,
+          hint: isRL
+            ? "Kraken rate limit during private ledger fetch — retry will happen automatically next time"
+            : "Kraken API error during ledger pagination",
+        };
+        console.error(`[fisco/rebuild] Kraken fetch failed:`, JSON.stringify(detail));
+        throw Object.assign(new Error(`Error fetching Kraken data: ${JSON.stringify(detail)}`), detail);
       }
     }
 
