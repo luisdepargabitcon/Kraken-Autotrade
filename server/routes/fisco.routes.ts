@@ -1173,6 +1173,50 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/fisco/rebuild/runs/:runId/export
+   * Returns all normalized operations from a dry-run staging table as JSON.
+   * Use for auditing ledger entries → normalized ops (e.g. 535 entries → 284 ops).
+   */
+  app.get("/api/fisco/rebuild/runs/:runId/export", async (req, res) => {
+    try {
+      const { runId } = req.params;
+      const result = await pool.query(`
+        SELECT
+          rebuild_run_id   AS "runId",
+          exchange,
+          external_id      AS "externalId",
+          op_type          AS "opType",
+          asset,
+          amount::float    AS amount,
+          price_eur::float AS "priceEur",
+          total_eur::float AS "totalEur",
+          fee_eur::float   AS "feeEur",
+          counter_asset    AS "counterAsset",
+          pair,
+          executed_at      AS "executedAt",
+          requires_eur_price AS "requiresEurPrice"
+        FROM fisco_staging_operations
+        WHERE rebuild_run_id = $1
+        ORDER BY executed_at ASC
+      `, [runId]);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "No staging operations found for this runId" });
+      }
+
+      const criticalCount = result.rows.filter(r => r.requiresEurPrice).length;
+      return res.json({
+        runId,
+        total: result.rows.length,
+        requiresEurPriceCount: criticalCount,
+        operations: result.rows,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * GET /api/fisco/validate
    * Runs post-FIFO validation on the current official data.
    * Returns criticalErrors and isSafeForReport.

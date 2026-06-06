@@ -13,7 +13,7 @@
  * - Kraken refid groups with >2 entries are handled by aggregating all positives/negatives.
  */
 
-import { toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate, getCryptoEurPriceHistorical } from "./eur-rates";
+import { toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate, getCryptoEurPriceHistorical, prefetchKrakenOhlcForAssets } from "./eur-rates";
 
 // ============================================================
 // Types
@@ -71,7 +71,14 @@ async function rateFor(date: Date): Promise<number> {
 }
 
 async function toEurAmt(amount: number, asset: string, date: Date): Promise<number> {
-  return toEurHistorical(amount, asset, date);
+  const a = asset.toUpperCase();
+  if (isFiat(a) || isCryptoStable(a)) return toEurHistorical(amount, a, date);
+  // Crypto fee (e.g. TON deposit fee, SOL withdrawal fee): use historical EUR price
+  const eurPrice = await getCryptoEurPriceHistorical(a, date);
+  if (eurPrice !== null) return amount * eurPrice;
+  // No price available — fee defaults to 0 (non-critical for FIFO correctness)
+  console.warn(`[normalizer] No EUR price for crypto fee: ${a} × ${amount} on ${date.toISOString().split("T")[0]} — using 0`);
+  return 0;
 }
 
 // ============================================================
@@ -95,10 +102,22 @@ export async function normalizeKrakenLedger(
 ): Promise<NormalizedOperation[]> {
   const ops: NormalizedOperation[] = [];
 
-  // Prefetch all historical EUR rates in one API call
+  // Prefetch all historical EUR rates in one ECB API call
   const dates = [...new Set(entries.map(e => new Date(e.time * 1000).toISOString().split("T")[0]))]
     .map(d => new Date(d));
   await prefetchHistoricalRates(dates);
+
+  // Bulk-prefetch Kraken OHLC for all crypto assets in the ledger.
+  // ONE call per asset fills the cache for the full date range, preventing per-operation
+  // rate-limit hits during normalization (see P3/P4 — eur-rates.ts).
+  const cryptoAssetsInLedger = [...new Set(
+    entries.map(e => normalizeAsset(e.asset)).filter(a => !isFiat(a) && !isCryptoStable(a))
+  )];
+  if (cryptoAssetsInLedger.length > 0) {
+    const fromDate = new Date(Math.min(...entries.map(e => e.time * 1000)));
+    const toDate = new Date(Math.max(...entries.map(e => e.time * 1000)));
+    await prefetchKrakenOhlcForAssets(cryptoAssetsInLedger, fromDate, toDate);
+  }
 
   // Group by refid
   const byRefid = new Map<string, KrakenLedgerEntry[]>();

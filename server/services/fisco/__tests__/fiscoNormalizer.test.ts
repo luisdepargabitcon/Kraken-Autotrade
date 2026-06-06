@@ -11,6 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../eur-rates", () => ({
   getHistoricalUsdEurRate: vi.fn().mockResolvedValue(0.92),
   prefetchHistoricalRates: vi.fn().mockResolvedValue(undefined),
+  prefetchKrakenOhlcForAssets: vi.fn().mockResolvedValue(undefined), // bulk OHLC prefetch (offline)
   toEurHistorical: vi.fn().mockImplementation(async (amount: number, currency: string) => {
     if (currency === "EUR") return amount;
     return amount * 0.92; // 1 USD = 0.92 EUR

@@ -19,6 +19,7 @@ import { revolutXService } from "./exchanges/RevolutXService";
 import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort, type NormalizedOperation } from "./fisco/normalizer";
 import { runFifo, validateFifoResult, type FifoResult, type FiscoCriticalError } from "./fisco/fifo-engine";
 import { randomUUID } from "crypto";
+import { setFiscoRebuildMode } from "./fisco/rebuild-state";
 
 // ============================================================
 // Types
@@ -90,6 +91,7 @@ export class FiscoRebuildService {
 
     await this.createRun(runId, mode, triggeredBy, exchangeFilter ?? null);
 
+    setFiscoRebuildMode(true);
     let backupId: string | null = null;
 
     try {
@@ -182,6 +184,7 @@ export class FiscoRebuildService {
       };
     } catch (err: any) {
       console.error(`[fisco/rebuild] FAILED runId=${runId}:`, err);
+      setFiscoRebuildMode(false);
       await this.updateRun(runId, {
         status: "failed",
         completed_at: new Date().toISOString(),
@@ -198,6 +201,8 @@ export class FiscoRebuildService {
         elapsedMs: Date.now() - t0,
         error: err.message,
       };
+    } finally {
+      setFiscoRebuildMode(false);
     }
   }
 

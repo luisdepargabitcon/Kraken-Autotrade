@@ -225,14 +225,104 @@ const KRAKEN_ASSET_PREFIXES: Record<string, string[]> = {
   LTC: ["XLTC", "LTC"],
 };
 
-// Cache: "ASSET:YYYY-MM-DD" → EUR price
+// Cache: "ASSET:YYYY-MM-DD" → EUR price (null = tried and failed)
 const cryptoPriceCache = new Map<string, number | null>();
-// Internal Kraken OHLC cache: "k:ASSET:YYYY-MM-DD" → EUR price
+// Kraken OHLC per-day cache: "k:ASSET:YYYY-MM-DD" → EUR close price (null = tried and failed)
 const krakenOhlcCache = new Map<string, number | null>();
+// Tracks which assets have had their full year OHLC bulk-fetched
+const ohlcBulkFetchedAssets = new Set<string>();
+
+/**
+ * Fetch a Kraken API URL with automatic exponential-backoff retry on rate-limit errors.
+ * Returns the parsed JSON body or null on unrecoverable failure.
+ */
+async function krakenFetchWithRetry(url: string, maxRetries = 3): Promise<any | null> {
+  const retryDelays = [5000, 15000, 30000];
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) return null;
+      const body = await resp.json() as any;
+      const isRateLimit = Array.isArray(body.error) &&
+        body.error.some((e: unknown) => typeof e === "string" && e.includes("Rate limit"));
+      if (isRateLimit) {
+        if (attempt < maxRetries) {
+          const delay = retryDelays[attempt] ?? 30000;
+          console.warn(`[fisco/eur] Kraken rate limit (attempt ${attempt + 1}/${maxRetries + 1}). Waiting ${delay / 1000}s…`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        console.warn("[fisco/eur] Kraken rate limit exhausted — switching to CoinGecko fallback");
+        return null;
+      }
+      return body;
+    } catch { /* network/timeout — treated as a miss */ }
+  }
+  return null;
+}
+
+/**
+ * Bulk-prefetch Kraken daily OHLC EUR prices for a set of crypto assets over a date range.
+ * ONE API call per asset fills krakenOhlcCache for the full range, eliminating per-operation
+ * Kraken calls during normalization (key rate-limit mitigation).
+ *
+ * Only EUR-quoted pairs are used in bulk mode (no per-candle USD→EUR conversion needed).
+ * A 300 ms pause is inserted between assets to respect Kraken rate limits.
+ */
+export async function prefetchKrakenOhlcForAssets(assets: string[], from: Date, to: Date): Promise<void> {
+  const unique = [...new Set(assets.map(a => a.toUpperCase()))];
+  if (unique.length === 0) return;
+
+  const sinceTs = Math.floor(from.getTime() / 1000);
+  console.log(`[fisco/eur] Bulk OHLC prefetch: ${unique.length} assets from ${toDateStr(from)} to ${toDateStr(to)}`);
+
+  for (const asset of unique) {
+    if (ohlcBulkFetchedAssets.has(asset)) continue; // already done
+    ohlcBulkFetchedAssets.add(asset);
+
+    const names = KRAKEN_ASSET_PREFIXES[asset] ?? [asset];
+    let fetched = false;
+
+    outerLoop: for (const name of names) {
+      for (const suffix of ["ZEUR", "EUR"]) { // EUR-quoted only for bulk
+        const pair = `${name}${suffix}`;
+        const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440&since=${sinceTs}`;
+        const body = await krakenFetchWithRetry(url, 3);
+        if (!body || (body.error?.length ?? 0) > 0) continue;
+
+        const candles = (Object.entries(body.result as Record<string, any>)
+          .find(([k]) => k !== "last")?.[1] as any[][] | undefined);
+        if (!candles || candles.length === 0) continue;
+
+        let cached = 0;
+        for (const candle of candles) {
+          const candleDate = toDateStr(new Date(candle[0] * 1000));
+          const close = parseFloat(candle[4]);
+          if (isNaN(close) || close <= 0) continue;
+          const cacheKey = `k:${asset}:${candleDate}`;
+          if (!krakenOhlcCache.has(cacheKey)) {
+            krakenOhlcCache.set(cacheKey, close);
+            cached++;
+          }
+        }
+        console.log(`[fisco/eur] Kraken OHLC bulk ${pair}: ${cached} EUR prices cached (${candles.length} candles)`);
+        fetched = true;
+        break outerLoop;
+      }
+    }
+
+    if (!fetched) {
+      console.warn(`[fisco/eur] Kraken OHLC bulk prefetch failed for ${asset} — CoinGecko will be used as fallback`);
+    }
+    // Pause between assets to stay within Kraken rate limits
+    await new Promise(r => setTimeout(r, 300));
+  }
+}
 
 /**
  * Try Kraken public OHLC API for a daily close price in EUR.
- * Tries EUR and USD quote pairs with Kraken-native and standard asset names.
+ * Checks bulk cache first (populated by prefetchKrakenOhlcForAssets).
+ * Falls back to individual API request with retry if not cached.
  * @internal Called by getCryptoEurPriceHistorical.
  */
 async function tryKrakenOhlcEurPrice(asset: string, date: Date): Promise<number | null> {
@@ -240,43 +330,39 @@ async function tryKrakenOhlcEurPrice(asset: string, date: Date): Promise<number 
   const dateStr = toDateStr(date);
   const cacheKey = `k:${assetUpper}:${dateStr}`;
 
-  if (krakenOhlcCache.has(cacheKey)) return krakenOhlcCache.get(cacheKey)!;
+  // Check cache (may have been filled by bulk prefetch)
+  if (krakenOhlcCache.has(cacheKey)) {
+    const v = krakenOhlcCache.get(cacheKey) ?? null;
+    return (v !== null && v > 0) ? v : null;
+  }
 
   const names = KRAKEN_ASSET_PREFIXES[assetUpper] ?? [assetUpper];
-  // Request candles starting 2 days before date to ensure coverage
   const since = Math.floor(date.getTime() / 1000) - 2 * 86400;
 
   for (const name of names) {
-    // Try EUR quote first (no currency conversion needed), then USD
     for (const [suffix, isEur] of [["ZEUR", true], ["EUR", true], ["ZUSD", false], ["USD", false]] as [string, boolean][]) {
       const pair = `${name}${suffix}`;
-      try {
-        const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440&since=${since}`;
-        const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!resp.ok) continue;
-        const body = await resp.json() as any;
-        if (body.error?.length > 0) continue;
+      const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440&since=${since}`;
+      const body = await krakenFetchWithRetry(url, 3);
+      if (!body || (body.error?.length ?? 0) > 0) continue;
 
-        // The result key may differ from requested pair (Kraken normalises internally)
-        const candles = (Object.entries(body.result as Record<string, any>)
-          .find(([k]) => k !== "last")?.[1] as any[][] | undefined);
-        if (!candles || candles.length === 0) continue;
+      const candles = (Object.entries(body.result as Record<string, any>)
+        .find(([k]) => k !== "last")?.[1] as any[][] | undefined);
+      if (!candles || candles.length === 0) continue;
 
-        // Prefer candle from the exact date, fall back to last available
-        const dayCandle = candles.find((c) => toDateStr(new Date(c[0] * 1000)) === dateStr)
-          ?? candles[candles.length - 1];
-        const close = parseFloat(dayCandle[4]); // index 4 = close
-        if (isNaN(close) || close <= 0) continue;
+      const dayCandle = candles.find((c) => toDateStr(new Date(c[0] * 1000)) === dateStr)
+        ?? candles[candles.length - 1];
+      const close = parseFloat(dayCandle[4]);
+      if (isNaN(close) || close <= 0) continue;
 
-        const eurPrice = isEur ? close : close * await getHistoricalUsdEurRate(date);
-        krakenOhlcCache.set(cacheKey, eurPrice);
-        console.log(`[fisco/eur] Kraken OHLC ${pair} on ${dateStr}: close=${close} → ${eurPrice.toFixed(4)} EUR`);
-        return eurPrice;
-      } catch { /* continue to next pair format */ }
+      const eurPrice = isEur ? close : close * await getHistoricalUsdEurRate(date);
+      krakenOhlcCache.set(cacheKey, eurPrice);
+      console.log(`[fisco/eur] Kraken OHLC ${pair} on ${dateStr}: close=${close} → ${eurPrice.toFixed(4)} EUR`);
+      return eurPrice;
     }
   }
 
-  krakenOhlcCache.set(cacheKey, null);
+  krakenOhlcCache.set(cacheKey, null); // mark as tried-and-failed
   return null;
 }
 
@@ -337,4 +423,5 @@ export async function getCryptoEurPriceHistorical(asset: string, date: Date): Pr
 export function _clearCryptoEurCacheForTest(): void {
   cryptoPriceCache.clear();
   krakenOhlcCache.clear();
+  ohlcBulkFetchedAssets.clear();
 }
