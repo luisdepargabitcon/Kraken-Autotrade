@@ -186,9 +186,10 @@ export function getCachedUsdEurRate(): number {
 }
 
 // ============================================================
-// Historical crypto EUR prices via CoinGecko public API
+// Historical crypto EUR prices — Priority: Kraken OHLC → CoinGecko → null
 // ============================================================
 
+// CoinGecko asset ID map (fallback source)
 const COINGECKO_ID_MAP: Record<string, string> = {
   BTC: "bitcoin",
   ETH: "ethereum",
@@ -216,49 +217,124 @@ const COINGECKO_ID_MAP: Record<string, string> = {
   SEI: "sei-network",
 };
 
+// Kraken native asset name prefixes (Kraken uses X/Z prefix for legacy pairs)
+const KRAKEN_ASSET_PREFIXES: Record<string, string[]> = {
+  BTC: ["XBT", "XXBT"],
+  ETH: ["XETH", "ETH"],
+  XRP: ["XXRP", "XRP"],
+  LTC: ["XLTC", "LTC"],
+};
+
 // Cache: "ASSET:YYYY-MM-DD" → EUR price
 const cryptoPriceCache = new Map<string, number | null>();
+// Internal Kraken OHLC cache: "k:ASSET:YYYY-MM-DD" → EUR price
+const krakenOhlcCache = new Map<string, number | null>();
 
 /**
- * Fetch historical EUR price for a crypto asset on a specific date via CoinGecko.
- * Returns null if the asset is unknown or the API call fails.
- * Cached per (asset, date) to avoid repeated calls.
+ * Try Kraken public OHLC API for a daily close price in EUR.
+ * Tries EUR and USD quote pairs with Kraken-native and standard asset names.
+ * @internal Called by getCryptoEurPriceHistorical.
+ */
+async function tryKrakenOhlcEurPrice(asset: string, date: Date): Promise<number | null> {
+  const assetUpper = asset.toUpperCase();
+  const dateStr = toDateStr(date);
+  const cacheKey = `k:${assetUpper}:${dateStr}`;
+
+  if (krakenOhlcCache.has(cacheKey)) return krakenOhlcCache.get(cacheKey)!;
+
+  const names = KRAKEN_ASSET_PREFIXES[assetUpper] ?? [assetUpper];
+  // Request candles starting 2 days before date to ensure coverage
+  const since = Math.floor(date.getTime() / 1000) - 2 * 86400;
+
+  for (const name of names) {
+    // Try EUR quote first (no currency conversion needed), then USD
+    for (const [suffix, isEur] of [["ZEUR", true], ["EUR", true], ["ZUSD", false], ["USD", false]] as [string, boolean][]) {
+      const pair = `${name}${suffix}`;
+      try {
+        const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440&since=${since}`;
+        const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!resp.ok) continue;
+        const body = await resp.json() as any;
+        if (body.error?.length > 0) continue;
+
+        // The result key may differ from requested pair (Kraken normalises internally)
+        const candles = (Object.entries(body.result as Record<string, any>)
+          .find(([k]) => k !== "last")?.[1] as any[][] | undefined);
+        if (!candles || candles.length === 0) continue;
+
+        // Prefer candle from the exact date, fall back to last available
+        const dayCandle = candles.find((c) => toDateStr(new Date(c[0] * 1000)) === dateStr)
+          ?? candles[candles.length - 1];
+        const close = parseFloat(dayCandle[4]); // index 4 = close
+        if (isNaN(close) || close <= 0) continue;
+
+        const eurPrice = isEur ? close : close * await getHistoricalUsdEurRate(date);
+        krakenOhlcCache.set(cacheKey, eurPrice);
+        console.log(`[fisco/eur] Kraken OHLC ${pair} on ${dateStr}: close=${close} → ${eurPrice.toFixed(4)} EUR`);
+        return eurPrice;
+      } catch { /* continue to next pair format */ }
+    }
+  }
+
+  krakenOhlcCache.set(cacheKey, null);
+  return null;
+}
+
+/**
+ * Fetch historical EUR price for a crypto asset on a specific date.
+ *
+ * Priority:
+ *   1) Kraken OHLC daily close (authoritative for Kraken-origin operations)
+ *   2) CoinGecko historical daily price (broad coverage)
+ *   3) null → caller (normalizer) marks requiresEurPrice=true and blocks the report
+ *
+ * Cached per (asset, YYYY-MM-DD) to avoid redundant API calls.
  */
 export async function getCryptoEurPriceHistorical(asset: string, date: Date): Promise<number | null> {
   const assetUpper = asset.toUpperCase();
-  const cgId = COINGECKO_ID_MAP[assetUpper];
-  if (!cgId) {
-    console.warn(`[fisco/eur] No CoinGecko ID for asset "${assetUpper}" — cannot fetch EUR price`);
-    return null;
-  }
-
   const dateStr = toDateStr(date);
   const cacheKey = `${assetUpper}:${dateStr}`;
 
-  if (cryptoPriceCache.has(cacheKey)) {
-    return cryptoPriceCache.get(cacheKey)!;
+  if (cryptoPriceCache.has(cacheKey)) return cryptoPriceCache.get(cacheKey)!;
+
+  // Priority 1: Kraken OHLC
+  const krakenPrice = await tryKrakenOhlcEurPrice(assetUpper, date);
+  if (krakenPrice !== null) {
+    cryptoPriceCache.set(cacheKey, krakenPrice);
+    return krakenPrice;
   }
 
-  // CoinGecko history endpoint uses DD-MM-YYYY
-  const [year, month, day] = dateStr.split("-");
-  const cgDate = `${day}-${month}-${year}`;
-
-  try {
-    const url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (resp.ok) {
-      const data = await resp.json() as any;
-      const price = data?.market_data?.current_price?.eur;
-      if (typeof price === "number" && price > 0) {
-        cryptoPriceCache.set(cacheKey, price);
-        console.log(`[fisco/eur] CoinGecko ${assetUpper} on ${dateStr}: ${price.toFixed(4)} EUR`);
-        return price;
+  // Priority 2: CoinGecko historical daily
+  const cgId = COINGECKO_ID_MAP[assetUpper];
+  if (cgId) {
+    const [year, month, day] = dateStr.split("-");
+    const cgDate = `${day}-${month}-${year}`;
+    try {
+      const url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        const price = data?.market_data?.current_price?.eur;
+        if (typeof price === "number" && price > 0) {
+          cryptoPriceCache.set(cacheKey, price);
+          console.log(`[fisco/eur] CoinGecko ${assetUpper} on ${dateStr}: ${price.toFixed(4)} EUR`);
+          return price;
+        }
       }
+    } catch (e: any) {
+      console.warn(`[fisco/eur] CoinGecko failed for ${assetUpper} on ${dateStr}: ${e.message}`);
     }
-  } catch (e: any) {
-    console.warn(`[fisco/eur] CoinGecko price failed for ${assetUpper} on ${dateStr}: ${e.message}`);
+  } else {
+    console.warn(`[fisco/eur] No price source for "${assetUpper}" on ${dateStr} — will require manual EUR price`);
   }
 
+  // Priority 3: null → normalizer marks requiresEurPrice=true
   cryptoPriceCache.set(cacheKey, null);
   return null;
+}
+
+/** Clear crypto EUR price caches. For testing only — do not call in production. */
+export function _clearCryptoEurCacheForTest(): void {
+  cryptoPriceCache.clear();
+  krakenOhlcCache.clear();
 }

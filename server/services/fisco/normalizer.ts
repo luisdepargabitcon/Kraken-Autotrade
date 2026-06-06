@@ -282,21 +282,24 @@ async function classifyAndBuildTrade(t: TradeClassifyInput): Promise<NormalizedO
   }
 
   // ---- Case 4: Buy crypto with stablecoin (e.g. TON/USDC buy)
-  //      → trade_buy crypto + trade_sell stablecoin (disposed to pay)
+  //      → trade_sell stablecoin (disposal) + trade_buy crypto
+  //      Stablecoin is valued at historical USD/EUR rate (assumes peg ≈ 1 USD).
+  //      Kraken ledger does not provide better cost data for the stablecoin itself.
   if (recvCrypto && spentStable) {
-    const totalEur = spentAmount * usdEurRate;
-    const priceEur = totalEur / recvAmount;
+    const totalEur = spentAmount * usdEurRate;       // USDC cost → EUR
+    const stablePriceEur = totalEur / spentAmount;   // explicit per-unit price (= usdEurRate when peg holds)
+    const cryptoPriceEur = totalEur / recvAmount;
     const stableDisposal: NormalizedOperation = {
       exchange, externalId: `${refid}_disp_${spentAsset}`,
       opType: "trade_sell", asset: spentAsset, amount: spentAmount,
-      priceEur: usdEurRate, totalEur, feeEur: 0,
+      priceEur: stablePriceEur, totalEur, feeEur: 0,
       counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
       executedAt: execDate, rawData,
     };
     const cryptoBuy: NormalizedOperation = {
       exchange, externalId: refid,
       opType: "trade_buy", asset: recvAsset, amount: recvAmount,
-      priceEur, totalEur, feeEur,
+      priceEur: cryptoPriceEur, totalEur, feeEur,
       counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
       executedAt: execDate, rawData,
     };
@@ -305,20 +308,23 @@ async function classifyAndBuildTrade(t: TradeClassifyInput): Promise<NormalizedO
 
   // ---- Case 5: Sell crypto for stablecoin (e.g. TON/USDC sell)
   //      → trade_sell crypto + trade_buy stablecoin (acquired as proceeds)
+  //      Stablecoin proceeds valued at historical USD/EUR rate (assumes peg ≈ 1 USD).
+  //      Kraken ledger does not expose actual USD proceeds for stablecoin receipts.
   if (spentCrypto && recvStable) {
-    const totalEur = recvAmount * usdEurRate;
-    const priceEur = totalEur / spentAmount;
+    const totalEur = recvAmount * usdEurRate;       // USDC proceeds → EUR
+    const cryptoPriceEur = totalEur / spentAmount;
+    const stablePriceEur = totalEur / recvAmount;   // explicit per-unit price (= usdEurRate when peg holds)
     const cryptoSell: NormalizedOperation = {
       exchange, externalId: refid,
       opType: "trade_sell", asset: spentAsset, amount: spentAmount,
-      priceEur, totalEur, feeEur,
+      priceEur: cryptoPriceEur, totalEur, feeEur,
       counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
       executedAt: execDate, rawData,
     };
     const stableAcquisition: NormalizedOperation = {
       exchange, externalId: `${refid}_rcv_${recvAsset}`,
       opType: "trade_buy", asset: recvAsset, amount: recvAmount,
-      priceEur: usdEurRate, totalEur, feeEur: 0,
+      priceEur: stablePriceEur, totalEur, feeEur: 0,
       counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
       executedAt: execDate, rawData,
     };
