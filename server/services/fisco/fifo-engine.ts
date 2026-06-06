@@ -2,6 +2,13 @@
  * FISCO FIFO Engine: Processes normalized operations to calculate
  * capital gains/losses using FIFO (First In, First Out) method.
  * All calculations in EUR as required by Spanish tax law (IRPF).
+ *
+ * FIXED (2026-06-06):
+ * - Negative inventory generates a CRITICAL error (not a silent warning).
+ * - Sales without lots generate CRITICAL error with UNKNOWN_BASIS.
+ * - Operations with requiresEurPrice=true generate CRITICAL error.
+ * - FifoResult now includes criticalErrors[] that block fiscal report generation.
+ * - validateFifoResult() helper to check if result is safe for reporting.
  */
 
 import type { NormalizedOperation } from "./normalizer";
@@ -36,12 +43,30 @@ export interface FifoDisposal {
   disposedAt: Date;
 }
 
+export type FiscoCriticalErrorCode =
+  | "NEGATIVE_INVENTORY"      // sell reduces asset balance below zero
+  | "UNKNOWN_BASIS"           // sold quantity exceeds available lots
+  | "REQUIRES_EUR_PRICE"      // crypto-to-crypto trade without EUR value
+  | "SELL_WITHOUT_LOTS"       // sell operation with zero open lots
+  | "UNCLASSIFIED_OPERATION"; // operation type cannot be determined
+
+export interface FiscoCriticalError {
+  code: FiscoCriticalErrorCode;
+  exchange: string;
+  externalId: string;
+  asset: string;
+  detail: string;
+  executedAt: Date;
+}
+
 export interface FifoResult {
   lots: FifoLot[];
   disposals: FifoDisposal[];
   summary: AssetSummary[];
   yearSummary: YearSummary[];
-  warnings: string[];
+  warnings: string[];          // non-blocking notices
+  criticalErrors: FiscoCriticalError[]; // BLOCKS fiscal report generation
+  isSafeForReport: boolean;    // true only if criticalErrors is empty
 }
 
 export interface AssetSummary {
@@ -79,19 +104,46 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
   const lots: FifoLot[] = [];
   const disposals: FifoDisposal[] = [];
   const warnings: string[] = [];
+  const criticalErrors: FiscoCriticalError[] = [];
 
-  // Index lots by asset for quick FIFO lookup
   const openLotsByAsset = new Map<string, FifoLot[]>();
+  // Track running inventory to detect negative balances
+  const inventoryByAsset = new Map<string, number>();
 
   let lotCounter = 0;
+
+  const addCritical = (code: FiscoCriticalErrorCode, op: NormalizedOperation, detail: string) => {
+    criticalErrors.push({ code, exchange: op.exchange, externalId: op.externalId, asset: op.asset, detail, executedAt: op.executedAt });
+  };
 
   for (let i = 0; i < operations.length; i++) {
     const op = operations[i];
 
-    // --- BUY: Create a new lot ---
+    // --- Flag crypto-to-crypto operations that have no EUR value ---
+    if (op.requiresEurPrice) {
+      addCritical(
+        "REQUIRES_EUR_PRICE", op,
+        `${op.opType === "trade_sell" ? "Venta" : "Compra"} de ${op.asset} en operación cripto/cripto (${op.pair}) sin valor EUR disponible. Requiere precio histórico manual.`
+      );
+      // Continue processing to register the operation exists (for inventory tracking)
+      // but skip FIFO lot/disposal creation since we have no EUR value
+      if (op.opType === "trade_sell") {
+        const inv = (inventoryByAsset.get(op.asset) || 0) - op.amount;
+        inventoryByAsset.set(op.asset, inv);
+        if (inv < -1e-8) {
+          addCritical("NEGATIVE_INVENTORY", op,
+            `Inventario negativo de ${op.asset}: ${inv.toFixed(8)} tras venta cripto/cripto`);
+        }
+      } else if (op.opType === "trade_buy") {
+        inventoryByAsset.set(op.asset, (inventoryByAsset.get(op.asset) || 0) + op.amount);
+      }
+      continue;
+    }
+
+    // --- BUY: Create a new FIFO lot ---
     if (op.opType === "trade_buy") {
       if (!op.totalEur || !op.priceEur) {
-        warnings.push(`[${op.exchange}:${op.externalId}] Buy without EUR price, skipped for FIFO`);
+        warnings.push(`[${op.exchange}:${op.externalId}] Compra sin precio EUR, omitida del FIFO`);
         continue;
       }
 
@@ -114,29 +166,35 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
       const assetLots = openLotsByAsset.get(op.asset) || [];
       assetLots.push(lot);
       openLotsByAsset.set(op.asset, assetLots);
+      inventoryByAsset.set(op.asset, (inventoryByAsset.get(op.asset) || 0) + op.amount);
     }
 
     // --- SELL: Consume lots FIFO ---
     else if (op.opType === "trade_sell") {
       if (!op.totalEur || !op.priceEur) {
-        warnings.push(`[${op.exchange}:${op.externalId}] Sell without EUR price, skipped for FIFO`);
+        warnings.push(`[${op.exchange}:${op.externalId}] Venta sin precio EUR, omitida del FIFO`);
         continue;
+      }
+
+      // Check inventory before selling
+      const currentInv = inventoryByAsset.get(op.asset) || 0;
+      if (currentInv <= 1e-10) {
+        addCritical("SELL_WITHOUT_LOTS", op,
+          `Venta de ${op.amount.toFixed(8)} ${op.asset} sin ningún lote abierto (inventario actual: ${currentInv.toFixed(8)})`);
       }
 
       let remainingToSell = op.amount;
       const sellPriceEur = op.priceEur;
       const assetLots = openLotsByAsset.get(op.asset) || [];
-
-      // Allocate sell fee proportionally across disposals
       const totalSellFeeEur = op.feeEur;
 
       while (remainingToSell > 1e-10 && assetLots.length > 0) {
-        const lot = assetLots[0]; // FIFO: oldest first
+        const lot = assetLots[0];
         const consumed = Math.min(remainingToSell, lot.remainingQty);
 
         const proceedsEur = consumed * sellPriceEur;
         const costBasisEur = consumed * lot.unitCostEur;
-        const feePortion = (consumed / op.amount) * totalSellFeeEur;
+        const feePortion = op.amount > 0 ? (consumed / op.amount) * totalSellFeeEur : 0;
         const gainLoss = proceedsEur - costBasisEur - feePortion;
 
         disposals.push({
@@ -156,16 +214,21 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
         if (lot.remainingQty < 1e-10) {
           lot.isClosed = true;
           lot.remainingQty = 0;
-          assetLots.shift(); // Remove closed lot from open list
+          assetLots.shift();
         }
       }
 
+      // Update inventory
+      const newInv = (inventoryByAsset.get(op.asset) || 0) - op.amount;
+      inventoryByAsset.set(op.asset, newInv);
+
       if (remainingToSell > 1e-10) {
-        warnings.push(
-          `[${op.exchange}:${op.externalId}] Sold ${op.amount} ${op.asset} but only had lots for ${(op.amount - remainingToSell).toFixed(8)}. ` +
-          `Remaining ${remainingToSell.toFixed(8)} has no cost basis (possible pre-existing holdings or deposits).`
-        );
-        // Create a zero-cost-basis disposal for the remainder
+        // CRITICAL: sold more than available lots — UNKNOWN_BASIS
+        addCritical("UNKNOWN_BASIS", op,
+          `Vendido ${op.amount.toFixed(8)} ${op.asset} pero solo había lotes para ${(op.amount - remainingToSell).toFixed(8)}. ` +
+          `Faltan ${remainingToSell.toFixed(8)} ${op.asset} sin base de coste. Inventario resultante: ${newInv.toFixed(8)}.`);
+
+        // Record the zero-basis disposal for completeness (flagged as UNKNOWN)
         disposals.push({
           sellOperationIdx: i,
           lotId: "UNKNOWN_BASIS",
@@ -177,18 +240,76 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
           disposedAt: op.executedAt,
         });
       }
-    }
 
-    // Deposits and withdrawals don't create taxable events by themselves
-    // but deposits of crypto COULD establish cost basis if from external wallet.
-    // For now we skip them — the user trades within exchanges only.
+      if (newInv < -1e-8) {
+        addCritical("NEGATIVE_INVENTORY", op,
+          `Inventario negativo de ${op.asset}: ${newInv.toFixed(8)} tras venta de ${op.amount.toFixed(8)}`);
+      }
+    }
   }
 
-  // Build summaries
   const summary = buildAssetSummary(operations, lots, disposals);
   const yearSummary = buildYearSummary(operations, disposals);
 
-  return { lots, disposals, summary, yearSummary, warnings };
+  return {
+    lots, disposals, summary, yearSummary, warnings,
+    criticalErrors,
+    isSafeForReport: criticalErrors.length === 0,
+  };
+}
+
+/**
+ * Post-FIFO validation: checks for all critical conditions.
+ * Returns the same criticalErrors array with additional cross-checks.
+ */
+export function validateFifoResult(result: FifoResult): FiscoCriticalError[] {
+  const errors = [...result.criticalErrors];
+
+  // Check for UNKNOWN_BASIS disposals in the disposals list
+  const unknownDisposals = result.disposals.filter(d => d.lotId === "UNKNOWN_BASIS");
+  for (const d of unknownDisposals) {
+    const alreadyReported = errors.some(
+      e => e.code === "UNKNOWN_BASIS" && e.asset === d.asset
+    );
+    if (!alreadyReported) {
+      errors.push({
+        code: "UNKNOWN_BASIS",
+        exchange: "unknown",
+        externalId: "UNKNOWN_BASIS",
+        asset: d.asset,
+        detail: `Disposal de ${d.quantity.toFixed(8)} ${d.asset} sin base de coste (${d.disposedAt.toISOString().split("T")[0]})`,
+        executedAt: d.disposedAt,
+      });
+    }
+  }
+
+  // Check for negative final balances per asset
+  const assetBalance = new Map<string, number>();
+  for (const lot of result.lots) {
+    assetBalance.set(lot.asset, (assetBalance.get(lot.asset) || 0) + lot.quantity);
+  }
+  for (const d of result.disposals) {
+    assetBalance.set(d.asset, (assetBalance.get(d.asset) || 0) - d.quantity);
+  }
+  for (const [asset, balance] of assetBalance) {
+    if (balance < -1e-6) {
+      const alreadyReported = errors.some(
+        e => e.code === "NEGATIVE_INVENTORY" && e.asset === asset
+      );
+      if (!alreadyReported) {
+        errors.push({
+          code: "NEGATIVE_INVENTORY",
+          exchange: "computed",
+          externalId: "balance_check",
+          asset,
+          detail: `Balance final negativo para ${asset}: ${balance.toFixed(8)}`,
+          executedAt: new Date(),
+        });
+      }
+    }
+  }
+
+  return errors;
 }
 
 // ============================================================

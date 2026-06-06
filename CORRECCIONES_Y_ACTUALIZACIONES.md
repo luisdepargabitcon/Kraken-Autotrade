@@ -2,6 +2,105 @@
 
 ---
 
+## 2026-06-06 — fix(fisco): Normalización FIFO completa + Rebuild Service (Fase FISCO-AUDIT)
+
+### Problema
+Auditoría detectó errores críticos en el sistema FIFO fiscal:
+- Trades cripto/USDC (TON/USDC) no generaban `trade_buy` para la stablecoin recibida → saldo USDC negativo
+- Trades cripto/cripto (ETH/BTC) no generaban dos operaciones (venta + compra) → inventario incorrecto
+- Tasa EUR usada era una única tasa global del día de sync, no la tasa histórica de cada fecha de operación
+- `refid` con múltiples entradas (fills parciales) solo procesaba la primera positiva y la primera negativa
+- UNKNOWN_BASIS era un warning silencioso, no bloqueaba la generación del informe fiscal
+
+### Cambios
+
+#### `server/services/fisco/eur-rates.ts` ✅
+- Añadida función `getHistoricalUsdEurRate(date)` con caché por día (BCE ECB API)
+- Añadida función `prefetchHistoricalRates(dates[])` para carga masiva en un solo request
+- Añadida función `toEurHistorical(amount, currency, date)` para conversión con tasa histórica
+
+#### `server/services/fisco/normalizer.ts` ✅ REESCRITURA COMPLETA
+- Import cambiado a `{ toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate }`
+- Clasificadores `isFiat()`, `isCryptoStable()`, `isCrypto()` con conjuntos `FIAT_ASSETS` y `CRYPTO_STABLES`
+- Nueva función `classifyAndBuildTrade()` compartida por Kraken y RevolutX — 9 casos:
+  1. Fiat↔Fiat → `conversion` (sin FIFO)
+  2. Crypto←Fiat → `trade_buy` (compra normal)
+  3. Crypto→Fiat → `trade_sell` (venta normal)
+  4. Crypto←Stablecoin → `trade_sell` stablecoin + `trade_buy` crypto
+  5. Crypto→Stablecoin → `trade_sell` crypto + `trade_buy` stablecoin
+  6. Stablecoin←Fiat → `trade_buy` stablecoin
+  7. Stablecoin→Fiat → `trade_sell` stablecoin
+  8. Stablecoin↔Stablecoin → `trade_sell` + `trade_buy`
+  9. Crypto↔Crypto → dos ops con `requiresEurPrice=true` y `totalEur=null`
+- `normalizeKrakenLedger`: prefetch tasas históricas, agrega TODOS los positivos/negativos por `refid`
+- `normalizeRevolutXOrders`: usa `classifyAndBuildTrade`, prefetch tasas históricas
+- `NormalizedOperation` interface añade campo `requiresEurPrice?: boolean`
+
+#### `server/services/fisco/fifo-engine.ts` ✅
+- Nuevos tipos: `FiscoCriticalErrorCode`, `FiscoCriticalError`
+- `FifoResult` añade `criticalErrors[]` y `isSafeForReport: boolean`
+- `runFifo()`: genera errores críticos (no warnings) para:
+  - `REQUIRES_EUR_PRICE`: operaciones cripto/cripto sin valor EUR
+  - `SELL_WITHOUT_LOTS`: venta sin ningún lote abierto
+  - `UNKNOWN_BASIS`: venta que supera los lotes disponibles
+  - `NEGATIVE_INVENTORY`: inventario por debajo de cero
+- Nueva función `validateFifoResult()`: validación post-FIFO con comprobaciones cruzadas adicionales
+
+#### `db/migrations/043_fisco_rebuild_reconciliation.sql` ✅ NUEVO
+- Tablas staging: `fisco_staging_operations`, `fisco_staging_lots`, `fisco_staging_disposals`, `fisco_staging_summary`
+- Tablas backup: `fisco_backup_operations`, `fisco_backup_lots`, `fisco_backup_disposals`
+- Tabla de ejecuciones: `fisco_rebuild_runs` (dry_run / commit, status, errores JSON)
+- Tablas reconciliación: `fisco_reconciliation_runs`, `fisco_reconciliation_items`
+- Indexes sobre `rebuild_run_id` y `backup_id`
+
+#### `server/services/FiscoRebuildService.ts` ✅ NUEVO
+- Clase singleton con flujo completo:
+  1. `backup()` — copia tablas oficiales a tablas backup con `backup_id`
+  2. `fetchAndNormalize()` — obtiene ledger de Kraken y órdenes RevolutX, normaliza
+  3. FIFO + `validateFifoResult()`
+  4. `saveToDryRun()` — guarda en tablas staging sin tocar las oficiales
+  5. `compareWithOfficial()` — genera diff de operaciones/G-P por año
+  6. `commitToOfficial()` — swap atómico staging → oficiales (solo si `isSafeForReport=true`)
+  7. `runReconciliation()` — almacena resultados en `fisco_reconciliation_*`
+- Método `rebuild(options)` orquesta todo el flujo con registro en `fisco_rebuild_runs`
+- Métodos de consulta: `getRebuildRuns()`, `getRebuildRunById()`, `getLatestReconciliation()`
+
+#### `server/routes/fisco.routes.ts` ✅
+- Añadida función `registerFiscoRebuildRoutes(app)` con endpoints:
+  - `POST /api/fisco/rebuild` — ejecuta rebuild (body: `{ mode, exchangeFilter, fullSync }`)
+  - `GET /api/fisco/rebuild/runs` — historial de ejecuciones
+  - `GET /api/fisco/rebuild/runs/:runId` — detalle de ejecución
+  - `GET /api/fisco/rebuild/reconciliation/latest` — última reconciliación
+  - `GET /api/fisco/validate` — validación rápida de datos oficiales actuales
+  - `GET /api/fisco/transactions-report` — listado detallado con filtros para informe HTML
+- Import actualizado: `validateFifoResult`, `fiscoRebuildService`
+
+#### `server/routes.ts` ✅
+- Añadido `registerFiscoRebuildRoutes(app)` junto a `registerFiscoRoutes`
+
+#### `client/src/pages/Fisco.tsx` ✅
+- Nuevas interfaces: `FiscoCriticalError`, `FiscoValidateResponse`, `RebuildResult`, `RebuildRun`
+- Nuevo estado: `rebuildConfirm`, `rebuildMode`
+- Nuevas queries: `validateQ` (`/api/fisco/validate`), `rebuildRunsQ` (`/api/fisco/rebuild/runs`)
+- Nueva mutation: `runRebuild` (`POST /api/fisco/rebuild`)
+- Banner de errores críticos (visible en toda la página si `!isSafeForReport`)
+- Nuevo tab "Reconstruir" (4º tab) con:
+  - Panel de estado de validación con lista de errores críticos
+  - Selector de modo dry_run / commit
+  - Flujo de doble confirmación para commit
+  - Panel de resultados de rebuild (métricas + errores)
+  - Historial de ejecuciones con estado y badge por color
+- Punto rojo en el tab si hay errores críticos
+
+#### `server/services/fisco/__tests__/fiscoNormalizer.test.ts` ✅ NUEVO
+- 9 tests unitarios cubriendo todos los casos de clasificación de trades
+- Mocks para `eur-rates` (offline, tasa fija 0.92)
+- Casos: buy/sell fiat, buy/sell stablecoin, buy/sell stablecoin↔fiat, crypto↔crypto, multi-entry refid, asset normalization
+
+### Commit: pendiente
+
+---
+
 ## 2026-06-05 — feat(ui): Telegram global modular (Fase 5)
 
 ### Cambios

@@ -109,6 +109,52 @@ interface FiscoSyncHistoryItem {
   errorJson: any;
 }
 
+interface FiscoCriticalError {
+  code: string;
+  asset?: string;
+  exchange?: string;
+  externalId?: string;
+  detail: string;
+  executedAt?: string;
+}
+
+interface FiscoValidateResponse {
+  isSafeForReport: boolean;
+  criticalErrors: FiscoCriticalError[];
+  operationsCount: number;
+  lotsCount: number;
+  disposalsCount: number;
+}
+
+interface RebuildResult {
+  runId: string;
+  mode: string;
+  status: string;
+  isSafeForReport: boolean;
+  operationsCount: number;
+  lotsCount: number;
+  disposalsCount: number;
+  criticalErrorsCount: number;
+  warningsCount: number;
+  criticalErrors: FiscoCriticalError[];
+  warnings: string[];
+  backupId: string | null;
+  elapsedMs: number;
+  error?: string;
+}
+
+interface RebuildRun {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  mode: string;
+  status: string;
+  triggered_by: string | null;
+  operations_count: number;
+  critical_errors_count: number;
+  is_safe_for_report: boolean;
+}
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -334,6 +380,10 @@ export default function Fisco() {
   const [selectedExchange, setSelectedExchange] = useState<string>("");
   const [activeTab, setActiveTab] = useState<string>("resumen");
 
+  // Rebuild state
+  const [rebuildConfirm, setRebuildConfirm] = useState<null | "dry_run" | "commit">(null);
+  const [rebuildMode, setRebuildMode] = useState<"dry_run" | "commit">("dry_run");
+
   // Anexo filters
   const [anexoAsset, setAnexoAsset] = useState("");
   const [anexoExchange, setAnexoExchange] = useState("");
@@ -498,6 +548,43 @@ export default function Fisco() {
     },
   });
 
+  // --- Validate current FISCO data ---
+  const validateQ = useQuery<FiscoValidateResponse>({
+    queryKey: ["/api/fisco/validate"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    staleTime: 60_000,
+  });
+
+  // --- Rebuild runs history ---
+  const rebuildRunsQ = useQuery<{ runs: RebuildRun[] }>({
+    queryKey: ["/api/fisco/rebuild/runs"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "rebuild",
+  });
+
+  // --- Rebuild mutation ---
+  const runRebuild = useMutation<RebuildResult, Error, { mode: "dry_run" | "commit" }>({
+    mutationFn: async ({ mode }) => {
+      const resp = await fetch("/api/fisco/rebuild", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, fullSync: true }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || resp.statusText);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco/rebuild/runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco/validate"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fisco"] });
+      setRebuildConfirm(null);
+    },
+    onError: () => setRebuildConfirm(null),
+  });
+
   // --- Options ---
   // Always show years from 2024 to current, plus any additional years from DB
   const currentYear = new Date().getFullYear();
@@ -658,6 +745,28 @@ export default function Fisco() {
         )}
 
 
+        {/* Critical errors banner (from validate endpoint) */}
+        {validateQ.data && !validateQ.data.isSafeForReport && (
+          <Card className="border-red-600/50 bg-red-600/10">
+            <CardContent className="py-3 space-y-2">
+              <div className="flex items-center gap-2 text-red-400 font-semibold text-sm">
+                <AlertTriangle className="h-4 w-4" />
+                {validateQ.data.criticalErrors.length} ERROR{validateQ.data.criticalErrors.length !== 1 ? "ES" : ""} CRÍTICO{validateQ.data.criticalErrors.length !== 1 ? "S" : ""} — El informe fiscal NO ES FIABLE hasta resolverlos
+              </div>
+              <ul className="space-y-0.5 pl-6">
+                {validateQ.data.criticalErrors.slice(0, 5).map((e, i) => (
+                  <li key={i} className="text-xs text-red-300 font-mono">
+                    <span className="text-red-500 font-bold">[{e.code}]</span>{e.asset ? ` ${e.asset}:` : ""} {e.detail}
+                  </li>
+                ))}
+                {validateQ.data.criticalErrors.length > 5 && (
+                  <li className="text-xs text-red-400">... y {validateQ.data.criticalErrors.length - 5} más. Ver pestaña "Reconstruir".</li>
+                )}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Pipeline error */}
         {runPipeline.isError && (
           <Card className="border-red-500/30 bg-red-500/5">
@@ -699,15 +808,22 @@ export default function Fisco() {
 
         {/* ========== TABS STRUCTURE ========== */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="resumen" className="gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> Resumen Fiscal</TabsTrigger>
             <TabsTrigger value="anexo" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Transacciones</TabsTrigger>
             <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
+            <TabsTrigger value="rebuild" className="gap-1.5 relative">
+              <Settings2 className="h-3.5 w-3.5" /> Reconstruir
+              {validateQ.data && !validateQ.data.isSafeForReport && (
+                <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500" />
+              )}
+            </TabsTrigger>
           </TabsList>
           <div className="text-[11px] text-muted-foreground/60 font-mono px-0.5 -mt-3">
             {activeTab === "resumen" && "Informe FIFO completo: sección A (transmisiones), B (activos), C (rendimientos), D (saldos)."}
             {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
             {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
+            {activeTab === "rebuild" && "Reconstrucción controlada de datos FIFO con backup, dry-run y validación de errores críticos."}
           </div>
 
           {/* ==================== TAB: RESUMEN FISCAL ==================== */}
@@ -1349,6 +1465,221 @@ export default function Fisco() {
             </Card>
 
           </TabsContent>
+
+          {/* ==================== TAB: REBUILD ==================== */}
+          <TabsContent value="rebuild" className="space-y-5">
+
+            {/* Validation status */}
+            <Card className={validateQ.data
+              ? validateQ.data.isSafeForReport
+                ? "border-green-500/30 bg-green-500/5"
+                : "border-red-500/40 bg-red-500/5"
+              : "border-border"}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  {validateQ.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> :
+                   validateQ.data?.isSafeForReport
+                     ? <span className="text-green-400">✓ Datos FIFO válidos</span>
+                     : <span className="text-red-400">✗ Errores críticos detectados</span>}
+                  {validateQ.data && (
+                    <span className="text-xs text-muted-foreground font-normal ml-auto">
+                      {validateQ.data.operationsCount.toLocaleString("es-ES")} ops · {validateQ.data.lotsCount.toLocaleString("es-ES")} lotes · {validateQ.data.disposalsCount.toLocaleString("es-ES")} disposals
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              {validateQ.data && !validateQ.data.isSafeForReport && (
+                <CardContent className="pt-0 space-y-1">
+                  {validateQ.data.criticalErrors.map((e, i) => (
+                    <div key={i} className="text-xs font-mono text-red-300 flex gap-2">
+                      <span className="text-red-500 font-bold shrink-0">[{e.code}]</span>
+                      <span>{e.asset ? `${e.asset}: ` : ""}{e.detail}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              )}
+            </Card>
+
+            {/* Rebuild controls */}
+            <Card className="border-border">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Reconstruir datos FIFO desde exchanges</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-muted-foreground">
+                  Descarga todo el historial de Kraken y RevolutX, renormaliza operaciones con tasas EUR históricas
+                  por fecha y recalcula el FIFO completo. El modo <strong>dry-run</strong> simula sin alterar los datos oficiales.
+                  El modo <strong>commit</strong> reemplaza los datos oficiales (solo si no hay errores críticos).
+                </p>
+
+                {/* Mode selector */}
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-muted-foreground">Modo:</label>
+                  <div className="flex gap-2">
+                    {(["dry_run", "commit"] as const).map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setRebuildMode(m)}
+                        className={`px-3 py-1.5 rounded text-xs font-mono border transition-colors ${
+                          rebuildMode === m
+                            ? m === "commit"
+                              ? "bg-red-600/20 border-red-500/50 text-red-300"
+                              : "bg-blue-600/20 border-blue-500/50 text-blue-300"
+                            : "border-border text-muted-foreground hover:border-border/80"
+                        }`}
+                      >
+                        {m === "dry_run" ? "🔍 dry_run (simulación)" : "⚠️ commit (reemplazar datos)"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Confirmation flow */}
+                {rebuildConfirm === null ? (
+                  <Button
+                    onClick={() => setRebuildConfirm(rebuildMode)}
+                    disabled={runRebuild.isPending}
+                    variant="outline"
+                    className={`gap-2 ${rebuildMode === "commit" ? "border-red-500/50 text-red-400 hover:bg-red-500/10" : "border-blue-500/50 text-blue-400 hover:bg-blue-500/10"}`}
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    {rebuildMode === "dry_run" ? "Ejecutar simulación" : "Solicitar reconstrucción real"}
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5">
+                    <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0" />
+                    <span className="text-xs text-yellow-300">
+                      {rebuildConfirm === "commit"
+                        ? "⚠️ CONFIRMAR: esto reemplazará los datos fiscales oficiales (backup automático activado)."
+                        : "Confirmar ejecución del dry-run (no altera datos oficiales)."}
+                    </span>
+                    <div className="flex gap-2 ml-auto shrink-0">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRebuildConfirm(null)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        size="sm"
+                        className={`h-7 text-xs gap-1.5 ${rebuildConfirm === "commit" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
+                        onClick={() => runRebuild.mutate({ mode: rebuildConfirm })}
+                        disabled={runRebuild.isPending}
+                      >
+                        {runRebuild.isPending ? <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</> : "Confirmar"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Rebuild result */}
+                {runRebuild.data && (
+                  <div className={`rounded-lg border p-3 text-xs space-y-2 ${
+                    runRebuild.data.isSafeForReport ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"}`}>
+                    <div className="flex items-center gap-2 font-semibold">
+                      {runRebuild.data.isSafeForReport ? "✓ Reconstrucción exitosa" : "✗ Reconstrucción con errores"}
+                      <span className="ml-auto font-mono text-muted-foreground">
+                        {(runRebuild.data.elapsedMs / 1000).toFixed(1)}s · {runRebuild.data.status}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-center">
+                      {[
+                        ["Operaciones", runRebuild.data.operationsCount],
+                        ["Lotes", runRebuild.data.lotsCount],
+                        ["Disposals", runRebuild.data.disposalsCount],
+                        ["Errores críticos", runRebuild.data.criticalErrorsCount],
+                      ].map(([label, val]) => (
+                        <div key={label as string} className="bg-card border border-border rounded p-2">
+                          <div className="text-muted-foreground">{label}</div>
+                          <div className={`font-bold font-mono ${label === "Errores críticos" && (val as number) > 0 ? "text-red-400" : ""}`}>{(val as number).toLocaleString("es-ES")}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {runRebuild.data.criticalErrors.length > 0 && (
+                      <div className="space-y-0.5 pt-1 border-t border-border/50">
+                        {runRebuild.data.criticalErrors.map((e, i) => (
+                          <div key={i} className="font-mono text-red-300">
+                            <span className="text-red-500 font-bold">[{e.code}]</span>{e.asset ? ` ${e.asset}:` : ""} {e.detail}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {runRebuild.isError && (
+                  <div className="text-xs text-red-400 border border-red-500/30 rounded p-2">
+                    Error: {runRebuild.error.message}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Rebuild runs history */}
+            <Card className="border-border">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  Historial de reconstrucciones
+                  <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs gap-1" onClick={() => rebuildRunsQ.refetch()}>
+                    <RefreshCw className="h-3 w-3" /> Actualizar
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {rebuildRunsQ.isLoading ? (
+                  <div className="text-center py-6"><Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" /></div>
+                ) : rebuildRunsQ.data?.runs && rebuildRunsQ.data.runs.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="text-left py-2 px-3">Fecha</th>
+                          <th className="text-left py-2 px-3">Modo</th>
+                          <th className="text-left py-2 px-3">Estado</th>
+                          <th className="text-right py-2 px-3">Ops</th>
+                          <th className="text-right py-2 px-3">Errores</th>
+                          <th className="text-left py-2 px-3">Fiable</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rebuildRunsQ.data.runs.map(run => (
+                          <tr key={run.id} className="border-b border-border/30 hover:bg-muted/10">
+                            <td className="py-2 px-3 font-mono">{fmtDate(run.started_at)}</td>
+                            <td className="py-2 px-3">
+                              <Badge className={run.mode === "commit" ? "bg-red-500/20 text-red-400 border-red-500/30" : "bg-blue-500/20 text-blue-400 border-blue-500/30"}>
+                                {run.mode}
+                              </Badge>
+                            </td>
+                            <td className="py-2 px-3">
+                              <Badge className={
+                                run.status === "committed" ? "bg-green-500/20 text-green-400 border-green-500/30" :
+                                run.status === "completed_dry" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" :
+                                run.status === "failed" || run.status === "aborted" ? "bg-red-500/20 text-red-400 border-red-500/30" :
+                                "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                              }>{run.status}</Badge>
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono">{run.operations_count?.toLocaleString("es-ES") ?? "—"}</td>
+                            <td className="py-2 px-3 text-right font-mono">
+                              <span className={run.critical_errors_count > 0 ? "text-red-400 font-bold" : "text-muted-foreground"}>
+                                {run.critical_errors_count ?? "—"}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3">
+                              {run.is_safe_for_report
+                                ? <span className="text-green-400">✓</span>
+                                : <span className="text-red-400">✗</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    Sin reconstrucciones previas. Ejecuta una simulación para empezar.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+          </TabsContent>
+
         </Tabs>
 
         {/* ========== MODAL: LOT DETAILS ========== */}

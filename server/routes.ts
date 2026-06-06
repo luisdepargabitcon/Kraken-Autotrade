@@ -917,8 +917,9 @@ export async function registerRoutes(
   // ============================================================
   // FISCO (Fiscal Control) ENDPOINTS (modularized)
   // ============================================================
-  const { registerFiscoRoutes } = await import('./routes/fisco.routes');
+  const { registerFiscoRoutes, registerFiscoRebuildRoutes } = await import('./routes/fisco.routes');
   registerFiscoRoutes(app, routerDeps);
+  registerFiscoRebuildRoutes(app);
 
   // ============================================================
   // FISCO ALERTS ENDPOINTS (new)

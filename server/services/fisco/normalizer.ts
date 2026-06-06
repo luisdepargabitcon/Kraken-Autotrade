@@ -2,9 +2,18 @@
  * FISCO Normalizer: Converts raw exchange data into unified FiscoOperation format.
  * Handles deduplication, classification, and EUR conversion.
  * Sources: Kraken ledger + RevolutX historical orders.
+ *
+ * FIXED (2026-06-06):
+ * - Crypto-to-crypto trades now generate TWO operations (sell spent + buy received).
+ * - Crypto→stablecoin sells now also create a trade_buy for the stablecoin received.
+ * - Stablecoin→fiat now generates proper trade_sell for the stablecoin.
+ * - Fiat→stablecoin now generates proper trade_buy for the stablecoin.
+ * - Stablecoin→stablecoin generates both sell and buy.
+ * - Historical USD/EUR rate used per operation date (not a single global rate).
+ * - Kraken refid groups with >2 entries are handled by aggregating all positives/negatives.
  */
 
-import { toEur, getUsdToEurRate } from "./eur-rates";
+import { toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate } from "./eur-rates";
 
 // ============================================================
 // Types
@@ -15,7 +24,7 @@ export interface NormalizedOperation {
   externalId: string;
   opType: "trade_buy" | "trade_sell" | "deposit" | "withdrawal" | "conversion" | "staking";
   asset: string;
-  amount: number;       // Always positive
+  amount: number;
   priceEur: number | null;
   totalEur: number | null;
   feeEur: number;
@@ -23,29 +32,46 @@ export interface NormalizedOperation {
   pair: string | null;
   executedAt: Date;
   rawData: any;
+  requiresEurPrice?: boolean;
 }
 
 // ============================================================
-// Asset normalization
+// Asset classification
 // ============================================================
 
 const ASSET_MAP: Record<string, string> = {
   XXBT: "BTC", XETH: "ETH", XXRP: "XRP", XLTC: "LTC", XDOT: "DOT",
-  ZUSD: "USD", ZEUR: "EUR", ZGBP: "GBP", ZJPY: "JPY",
-  XBT: "BTC",
-  // Kraken suffixed variants (staking, hold, funded)
+  ZUSD: "USD", ZEUR: "EUR", ZGBP: "GBP", ZJPY: "JPY", XBT: "BTC",
   "EUR.HOLD": "EUR", "USD.HOLD": "USD", "GBP.HOLD": "GBP",
-  "EUR.M": "EUR", "USD.M": "USD",
-  "ETH2.S": "ETH", "ETH2": "ETH",
+  "EUR.M": "EUR", "USD.M": "USD", "ETH2.S": "ETH", "ETH2": "ETH",
   "DOT.S": "DOT", "XBT.M": "BTC",
 };
 
-function normalizeAsset(raw: string): string {
-  // Direct lookup first
+export function normalizeAsset(raw: string): string {
   if (ASSET_MAP[raw]) return ASSET_MAP[raw];
-  // Strip common Kraken suffixes: .HOLD, .S, .M, .F
   const stripped = raw.replace(/\.(HOLD|S|M|F|P)$/, "");
   return ASSET_MAP[stripped] || stripped;
+}
+
+// Fiat currencies: not tracked in FIFO, never generate lots/disposals
+const FIAT_ASSETS = new Set(["USD", "EUR", "GBP", "JPY", "CHF"]);
+// Crypto-stablecoins: ARE tracked in FIFO (they are crypto tokens with cost basis)
+const CRYPTO_STABLES = new Set(["USDC", "USDT", "USDE", "DAI", "BUSD"]);
+
+const isFiat = (a: string) => FIAT_ASSETS.has(a);
+const isCryptoStable = (a: string) => CRYPTO_STABLES.has(a);
+const isCrypto = (a: string) => !isFiat(a) && !isCryptoStable(a);
+
+// ============================================================
+// EUR helpers (per-date historical rate)
+// ============================================================
+
+async function rateFor(date: Date): Promise<number> {
+  return getHistoricalUsdEurRate(date);
+}
+
+async function toEurAmt(amount: number, asset: string, date: Date): Promise<number> {
+  return toEurHistorical(amount, asset, date);
 }
 
 // ============================================================
@@ -64,15 +90,15 @@ interface KrakenLedgerEntry {
   time: number;
 }
 
-/**
- * Group Kraken ledger entries by refid to reconstruct full operations.
- * Trade entries come in pairs (e.g., -BTC + USD for a BTC sell).
- */
 export async function normalizeKrakenLedger(
   entries: KrakenLedgerEntry[]
 ): Promise<NormalizedOperation[]> {
   const ops: NormalizedOperation[] = [];
-  const usdEurRate = await getUsdToEurRate();
+
+  // Prefetch all historical EUR rates in one API call
+  const dates = [...new Set(entries.map(e => new Date(e.time * 1000).toISOString().split("T")[0]))]
+    .map(d => new Date(d));
+  await prefetchHistoricalRates(dates);
 
   // Group by refid
   const byRefid = new Map<string, KrakenLedgerEntry[]>();
@@ -86,176 +112,90 @@ export async function normalizeKrakenLedger(
     const firstEntry = group[0];
     const execDate = new Date(firstEntry.time * 1000);
 
-    // --- TRADE ---
     if (firstEntry.type === "trade") {
-      // Find the two sides: one positive (received), one negative (spent)
-      const positive = group.filter(e => e.amount > 0);
-      const negative = group.filter(e => e.amount < 0);
+      // Aggregate ALL positive (received) and negative (spent) entries
+      const posEntries = group.filter(e => e.amount > 0);
+      const negEntries = group.filter(e => e.amount < 0);
+      if (posEntries.length === 0 || negEntries.length === 0) continue;
 
-      if (positive.length === 0 || negative.length === 0) continue;
+      const recvAsset = normalizeAsset(posEntries[0].asset);
+      const spentAsset = normalizeAsset(negEntries[0].asset);
+      const recvAmount = posEntries.reduce((s, e) => s + Math.abs(e.amount), 0);
+      const spentAmount = negEntries.reduce((s, e) => s + Math.abs(e.amount), 0);
+      const totalFee = group.reduce((s, e) => s + Math.abs(e.fee), 0);
+      const usdEurRate = await rateFor(execDate);
 
-      const received = positive[0];
-      const spent = negative[0];
-      const recvAsset = normalizeAsset(received.asset);
-      const spentAsset = normalizeAsset(spent.asset);
-      const recvAmount = Math.abs(received.amount);
-      const spentAmount = Math.abs(spent.amount);
-
-      // Determine if this is a buy or sell of the crypto asset
-      const stablecoins = ["USD", "EUR", "USDC", "USDT", "GBP"];
-      const recvIsStable = stablecoins.includes(recvAsset);
-      const spentIsStable = stablecoins.includes(spentAsset);
-
-      let isBuy: boolean;
-      let cryptoAsset: string;
-      let quoteAsset: string;
-      let cryptoAmount: number;
-      let quoteAmount: number;
-      let totalFee: number;
-
-      if (recvIsStable && !spentIsStable) {
-        // Selling crypto: received USD, spent BTC
-        isBuy = false;
-        cryptoAsset = spentAsset;
-        quoteAsset = recvAsset;
-        cryptoAmount = spentAmount;
-        quoteAmount = recvAmount;
-        totalFee = Math.abs(received.fee) + Math.abs(spent.fee);
-      } else if (!recvIsStable && spentIsStable) {
-        // Buying crypto: spent USD, received BTC
-        isBuy = true;
-        cryptoAsset = recvAsset;
-        quoteAsset = spentAsset;
-        cryptoAmount = recvAmount;
-        quoteAmount = spentAmount;
-        totalFee = Math.abs(received.fee) + Math.abs(spent.fee);
-      } else if (!recvIsStable && !spentIsStable) {
-        // Crypto-to-crypto trade: treat received as buy
-        isBuy = true;
-        cryptoAsset = recvAsset;
-        quoteAsset = spentAsset;
-        cryptoAmount = recvAmount;
-        quoteAmount = spentAmount;
-        totalFee = Math.abs(received.fee) + Math.abs(spent.fee);
-      } else {
-        // Stable-to-stable (conversion): e.g. USD→USDC
-        const feeTotal = group.reduce((s, e) => s + Math.abs(e.fee), 0);
-        ops.push({
-          exchange: "kraken",
-          externalId: `${refid}_conv`,
-          opType: "conversion",
-          asset: recvAsset,
-          amount: recvAmount,
-          priceEur: null,
-          totalEur: await toEur(recvAmount, recvAsset),
-          feeEur: await toEur(feeTotal, spentAsset),
-          counterAsset: spentAsset,
-          pair: `${recvAsset}/${spentAsset}`,
-          executedAt: execDate,
-          rawData: group,
-        });
-        continue;
-      }
-
-      const priceInQuote = quoteAmount / cryptoAmount;
-      let priceEur: number;
-      let totalEur: number;
-      let feeEur: number;
-
-      if (quoteAsset === "EUR") {
-        priceEur = priceInQuote;
-        totalEur = quoteAmount;
-        feeEur = totalFee;
-      } else {
-        priceEur = priceInQuote * usdEurRate;
-        totalEur = quoteAmount * usdEurRate;
-        feeEur = totalFee * usdEurRate;
-      }
-
-      ops.push({
+      const newOps = await classifyAndBuildTrade({
         exchange: "kraken",
-        externalId: refid,
-        opType: isBuy ? "trade_buy" : "trade_sell",
-        asset: cryptoAsset,
-        amount: cryptoAmount,
-        priceEur,
-        totalEur,
-        feeEur,
-        counterAsset: quoteAsset,
-        pair: `${cryptoAsset}/${quoteAsset}`,
-        executedAt: execDate,
+        refid,
+        recvAsset,
+        spentAsset,
+        recvAmount,
+        spentAmount,
+        totalFee,
+        usdEurRate,
+        execDate,
         rawData: group,
       });
+      ops.push(...newOps);
     }
 
-    // --- DEPOSIT ---
     else if (firstEntry.type === "deposit") {
       const asset = normalizeAsset(firstEntry.asset);
-      const amount = Math.abs(firstEntry.amount);
       ops.push({
         exchange: "kraken",
         externalId: refid,
         opType: "deposit",
         asset,
-        amount,
-        priceEur: null,
-        totalEur: null,
-        feeEur: await toEur(Math.abs(firstEntry.fee), asset),
-        counterAsset: null,
-        pair: null,
-        executedAt: execDate,
-        rawData: group,
+        amount: Math.abs(firstEntry.amount),
+        priceEur: null, totalEur: null,
+        feeEur: await toEurAmt(Math.abs(firstEntry.fee), asset, execDate),
+        counterAsset: null, pair: null,
+        executedAt: execDate, rawData: group,
       });
     }
 
-    // --- WITHDRAWAL ---
     else if (firstEntry.type === "withdrawal") {
       const asset = normalizeAsset(firstEntry.asset);
-      const amount = Math.abs(firstEntry.amount);
       ops.push({
         exchange: "kraken",
         externalId: refid,
         opType: "withdrawal",
         asset,
-        amount,
-        priceEur: null,
-        totalEur: null,
-        feeEur: await toEur(Math.abs(firstEntry.fee), asset),
-        counterAsset: null,
-        pair: null,
-        executedAt: execDate,
-        rawData: group,
+        amount: Math.abs(firstEntry.amount),
+        priceEur: null, totalEur: null,
+        feeEur: await toEurAmt(Math.abs(firstEntry.fee), asset, execDate),
+        counterAsset: null, pair: null,
+        executedAt: execDate, rawData: group,
       });
     }
 
-    // --- RECEIVE / SPEND (internal conversion like USDC↔USD) ---
     else if (firstEntry.type === "receive" || firstEntry.type === "spend") {
-      // These come in pairs via the same refid — handle as conversion
       if (group.length >= 2) {
         const recv = group.find(e => e.amount > 0);
         const spend = group.find(e => e.amount < 0);
         if (recv && spend) {
           const recvAsset = normalizeAsset(recv.asset);
           const spentAsset = normalizeAsset(spend.asset);
-          ops.push({
+          const recvAmount = Math.abs(recv.amount);
+          const spentAmount = Math.abs(spend.amount);
+          const totalFee = group.reduce((s, e) => s + Math.abs(e.fee), 0);
+          const usdEurRate = await rateFor(execDate);
+
+          // receive/spend can be stablecoin redemptions — use same classification
+          const newOps = await classifyAndBuildTrade({
             exchange: "kraken",
-            externalId: `${refid}_conv`,
-            opType: "conversion",
-            asset: recvAsset,
-            amount: Math.abs(recv.amount),
-            priceEur: null,
-            totalEur: await toEur(Math.abs(recv.amount), recvAsset),
-            feeEur: await toEur(Math.abs(recv.fee) + Math.abs(spend.fee), spentAsset),
-            counterAsset: spentAsset,
-            pair: `${spentAsset}→${recvAsset}`,
-            executedAt: execDate,
-            rawData: group,
+            refid: `${refid}_rcv`,
+            recvAsset, spentAsset,
+            recvAmount, spentAmount,
+            totalFee, usdEurRate,
+            execDate, rawData: group,
           });
+          ops.push(...newOps);
         }
       }
     }
 
-    // --- STAKING ---
     else if (firstEntry.type === "staking") {
       const asset = normalizeAsset(firstEntry.asset);
       ops.push({
@@ -264,18 +204,204 @@ export async function normalizeKrakenLedger(
         opType: "staking",
         asset,
         amount: Math.abs(firstEntry.amount),
-        priceEur: null,
-        totalEur: null,
-        feeEur: 0,
-        counterAsset: null,
-        pair: null,
-        executedAt: execDate,
-        rawData: group,
+        priceEur: null, totalEur: null, feeEur: 0,
+        counterAsset: null, pair: null,
+        executedAt: execDate, rawData: group,
       });
     }
   }
 
   return ops;
+}
+
+// ============================================================
+// Core trade classifier — shared by Kraken and RevolutX
+// ============================================================
+
+interface TradeClassifyInput {
+  exchange: string;
+  refid: string;
+  recvAsset: string;
+  spentAsset: string;
+  recvAmount: number;
+  spentAmount: number;
+  totalFee: number;
+  usdEurRate: number;
+  execDate: Date;
+  rawData: any;
+}
+
+async function classifyAndBuildTrade(t: TradeClassifyInput): Promise<NormalizedOperation[]> {
+  const { exchange, refid, recvAsset, spentAsset, recvAmount, spentAmount, totalFee, usdEurRate, execDate, rawData } = t;
+
+  const recvFiat = isFiat(recvAsset);
+  const spentFiat = isFiat(spentAsset);
+  const recvStable = isCryptoStable(recvAsset);
+  const spentStable = isCryptoStable(spentAsset);
+  const recvCrypto = isCrypto(recvAsset);
+  const spentCrypto = isCrypto(spentAsset);
+
+  const feeEur = totalFee * usdEurRate;
+
+  // ---- Case 1: Fiat↔Fiat (e.g. USD→EUR) — conversion, no FIFO
+  if (recvFiat && spentFiat) {
+    return [{
+      exchange, externalId: `${refid}_conv`,
+      opType: "conversion",
+      asset: recvAsset, amount: recvAmount,
+      priceEur: null, totalEur: recvAmount * usdEurRate, feeEur,
+      counterAsset: spentAsset, pair: `${spentAsset}/${recvAsset}`,
+      executedAt: execDate, rawData,
+    }];
+  }
+
+  // ---- Case 2: Buy crypto with fiat (e.g. BTC/USD buy)
+  if (recvCrypto && spentFiat) {
+    const totalEur = spentAmount * usdEurRate;
+    const priceEur = totalEur / recvAmount;
+    return [{
+      exchange, externalId: refid,
+      opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+      priceEur, totalEur, feeEur,
+      counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+      executedAt: execDate, rawData,
+    }];
+  }
+
+  // ---- Case 3: Sell crypto for fiat (e.g. BTC/USD sell)
+  if (spentCrypto && recvFiat) {
+    const totalEur = recvAmount * usdEurRate;
+    const priceEur = totalEur / spentAmount;
+    return [{
+      exchange, externalId: refid,
+      opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+      priceEur, totalEur, feeEur,
+      counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+      executedAt: execDate, rawData,
+    }];
+  }
+
+  // ---- Case 4: Buy crypto with stablecoin (e.g. TON/USDC buy)
+  //      → trade_buy crypto + trade_sell stablecoin (disposed to pay)
+  if (recvCrypto && spentStable) {
+    const totalEur = spentAmount * usdEurRate;
+    const priceEur = totalEur / recvAmount;
+    const stableDisposal: NormalizedOperation = {
+      exchange, externalId: `${refid}_disp_${spentAsset}`,
+      opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+      priceEur: usdEurRate, totalEur, feeEur: 0,
+      counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+      executedAt: execDate, rawData,
+    };
+    const cryptoBuy: NormalizedOperation = {
+      exchange, externalId: refid,
+      opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+      priceEur, totalEur, feeEur,
+      counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+      executedAt: execDate, rawData,
+    };
+    return [stableDisposal, cryptoBuy];
+  }
+
+  // ---- Case 5: Sell crypto for stablecoin (e.g. TON/USDC sell)
+  //      → trade_sell crypto + trade_buy stablecoin (acquired as proceeds)
+  if (spentCrypto && recvStable) {
+    const totalEur = recvAmount * usdEurRate;
+    const priceEur = totalEur / spentAmount;
+    const cryptoSell: NormalizedOperation = {
+      exchange, externalId: refid,
+      opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+      priceEur, totalEur, feeEur,
+      counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+      executedAt: execDate, rawData,
+    };
+    const stableAcquisition: NormalizedOperation = {
+      exchange, externalId: `${refid}_rcv_${recvAsset}`,
+      opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+      priceEur: usdEurRate, totalEur, feeEur: 0,
+      counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+      executedAt: execDate, rawData,
+    };
+    return [cryptoSell, stableAcquisition];
+  }
+
+  // ---- Case 6: Buy stablecoin with fiat (e.g. USDC/USD buy)
+  if (recvStable && spentFiat) {
+    const totalEur = spentAmount * usdEurRate;
+    return [{
+      exchange, externalId: refid,
+      opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+      priceEur: usdEurRate, totalEur, feeEur,
+      counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+      executedAt: execDate, rawData,
+    }];
+  }
+
+  // ---- Case 7: Sell stablecoin for fiat (e.g. USDC/USD sell)
+  if (spentStable && recvFiat) {
+    const totalEur = spentAmount * usdEurRate;
+    return [{
+      exchange, externalId: refid,
+      opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+      priceEur: usdEurRate, totalEur, feeEur,
+      counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+      executedAt: execDate, rawData,
+    }];
+  }
+
+  // ---- Case 8: Stablecoin↔Stablecoin (e.g. USDC/USDT swap)
+  if (recvStable && spentStable) {
+    const totalEur = spentAmount * usdEurRate;
+    return [
+      {
+        exchange, externalId: `${refid}_disp_${spentAsset}`,
+        opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+        priceEur: usdEurRate, totalEur, feeEur,
+        counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+        executedAt: execDate, rawData,
+      },
+      {
+        exchange, externalId: `${refid}_rcv_${recvAsset}`,
+        opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+        priceEur: usdEurRate, totalEur: recvAmount * usdEurRate, feeEur: 0,
+        counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+        executedAt: execDate, rawData,
+      },
+    ];
+  }
+
+  // ---- Case 9: Crypto-to-Crypto (e.g. ETH/BTC) — EUR value unknown from trade data
+  if (spentCrypto && recvCrypto) {
+    return [
+      {
+        exchange, externalId: `${refid}_c2c_sell`,
+        opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+        priceEur: null, totalEur: null, feeEur: feeEur / 2,
+        counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+        executedAt: execDate, rawData,
+        requiresEurPrice: true,
+      },
+      {
+        exchange, externalId: `${refid}_c2c_buy`,
+        opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+        priceEur: null, totalEur: null, feeEur: feeEur / 2,
+        counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+        executedAt: execDate, rawData,
+        requiresEurPrice: true,
+      },
+    ];
+  }
+
+  // Fallback: unknown combination — emit as conversion for manual review
+  console.warn(`[normalizer] Unclassified trade ${refid}: recv=${recvAsset} spent=${spentAsset}`);
+  return [{
+    exchange, externalId: `${refid}_unk`,
+    opType: "conversion",
+    asset: recvAsset, amount: recvAmount,
+    priceEur: null, totalEur: null, feeEur,
+    counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+    executedAt: execDate, rawData,
+  }];
 }
 
 // ============================================================
@@ -300,50 +426,39 @@ export async function normalizeRevolutXOrders(
   orders: RevolutXOrder[]
 ): Promise<NormalizedOperation[]> {
   const ops: NormalizedOperation[] = [];
-  const usdEurRate = await getUsdToEurRate();
 
-  for (const order of orders) {
-    if (order.status !== "filled" || order.filled_quantity <= 0) continue;
+  const validOrders = orders.filter(o => o.status === "filled" && o.filled_quantity > 0);
+  const dates = validOrders.map(o => new Date(o.created_date));
+  await prefetchHistoricalRates(dates);
 
-    // Parse symbol: "BTC/USD", "ETH/EUR", etc.
-    const [baseAsset, quoteAsset] = order.symbol.split("/");
-    if (!baseAsset || !quoteAsset) continue;
+  for (const order of validOrders) {
+    const parts = order.symbol.split("/");
+    if (parts.length !== 2) continue;
+    const [baseAsset, quoteAsset] = parts;
 
+    const execDate = new Date(order.created_date);
+    const usdEurRate = await rateFor(execDate);
     const amount = order.filled_quantity;
     const priceInQuote = order.average_fill_price;
     const totalInQuote = amount * priceInQuote;
+    const rawFeeInQuote = order.total_fee || totalInQuote * 0.0009;
+    const totalFee = rawFeeInQuote;
 
-    let priceEur: number;
-    let totalEur: number;
+    // Map to recv/spent based on side
+    const recvAsset = order.side === "buy" ? baseAsset : quoteAsset;
+    const spentAsset = order.side === "buy" ? quoteAsset : baseAsset;
+    const recvAmount = order.side === "buy" ? amount : totalInQuote;
+    const spentAmount = order.side === "buy" ? totalInQuote : amount;
 
-    if (quoteAsset === "EUR") {
-      priceEur = priceInQuote;
-      totalEur = totalInQuote;
-    } else {
-      priceEur = priceInQuote * usdEurRate;
-      totalEur = totalInQuote * usdEurRate;
-    }
-
-    // Fee real de RevolutX si la API lo devuelve; fallback a 0.09% taker fee
-    const rawFeeInQuote = order.total_fee || 0;
-    const estimatedFeeInQuote = totalInQuote * 0.0009; // 0.09% taker fee publicado
-    const feeInQuote = rawFeeInQuote > 0 ? rawFeeInQuote : estimatedFeeInQuote;
-    const feeEur = quoteAsset === "EUR" ? feeInQuote : feeInQuote * usdEurRate;
-
-    ops.push({
+    const newOps = await classifyAndBuildTrade({
       exchange: "revolutx",
-      externalId: order.id,
-      opType: order.side === "buy" ? "trade_buy" : "trade_sell",
-      asset: baseAsset,
-      amount,
-      priceEur,
-      totalEur,
-      feeEur,
-      counterAsset: quoteAsset,
-      pair: order.symbol,
-      executedAt: new Date(order.created_date),
-      rawData: order,
+      refid: order.id,
+      recvAsset, spentAsset,
+      recvAmount, spentAmount,
+      totalFee, usdEurRate,
+      execDate, rawData: order,
     });
+    ops.push(...newOps);
   }
 
   return ops;

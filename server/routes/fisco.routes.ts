@@ -3,8 +3,9 @@ import { krakenService } from "../services/kraken";
 import { revolutXService } from "../services/exchanges/RevolutXService";
 import type { RouterDeps } from "./types";
 import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort, type NormalizedOperation } from "../services/fisco/normalizer";
-import { runFifo } from "../services/fisco/fifo-engine";
+import { runFifo, validateFifoResult } from "../services/fisco/fifo-engine";
 import { getUsdToEurRate, getCachedUsdEurRate } from "../services/fisco/eur-rates";
+import { fiscoRebuildService } from "../services/FiscoRebuildService";
 import { pool } from "../db";
 
 /**
@@ -1045,4 +1046,178 @@ async function saveFiscoToDB(
   } finally {
     client.release();
   }
+}
+
+// ============================================================
+// REBUILD endpoints
+// ============================================================
+
+export function registerFiscoRebuildRoutes(app: Express): void {
+
+  /**
+   * POST /api/fisco/rebuild
+   * Body: { mode: 'dry_run' | 'commit', exchangeFilter?: string, fullSync?: boolean }
+   * Runs the full FISCO rebuild pipeline.
+   */
+  app.post("/api/fisco/rebuild", async (req, res) => {
+    try {
+      const { mode = "dry_run", exchangeFilter = null, fullSync = true } = req.body || {};
+      if (mode !== "dry_run" && mode !== "commit") {
+        return res.status(400).json({ error: "mode must be 'dry_run' or 'commit'" });
+      }
+      const result = await fiscoRebuildService.rebuild({
+        mode,
+        triggeredBy: "ui_button",
+        exchangeFilter,
+        fullSync,
+      });
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/runs
+   * Returns the list of rebuild runs (latest first).
+   */
+  app.get("/api/fisco/rebuild/runs", async (_req, res) => {
+    try {
+      const runs = await fiscoRebuildService.getRebuildRuns(30);
+      return res.json({ runs });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/runs/:runId
+   * Returns detail of a specific rebuild run.
+   */
+  app.get("/api/fisco/rebuild/runs/:runId", async (req, res) => {
+    try {
+      const run = await fiscoRebuildService.getRebuildRunById(req.params.runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      return res.json(run);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/reconciliation/latest
+   * Returns the latest reconciliation run.
+   */
+  app.get("/api/fisco/rebuild/reconciliation/latest", async (_req, res) => {
+    try {
+      const recon = await fiscoRebuildService.getLatestReconciliation();
+      return res.json({ reconciliation: recon });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/validate
+   * Runs post-FIFO validation on the current official data.
+   * Returns criticalErrors and isSafeForReport.
+   */
+  app.get("/api/fisco/validate", async (_req, res) => {
+    try {
+      // Quick validation on existing official data
+      const [opsRes, lotsRes, dispRes] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_operations`),
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_lots`),
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_disposals`),
+      ]);
+      const unknownBasis = await pool.query(
+        `SELECT asset, COUNT(*) AS cnt FROM fisco_disposals WHERE lot_id IS NULL GROUP BY asset`
+      );
+      const negBalance = await pool.query(`
+        SELECT asset,
+          (SELECT SUM(quantity) FROM fisco_lots fl2 WHERE fl2.asset = fl.asset) -
+          (SELECT COALESCE(SUM(fd.quantity),0) FROM fisco_disposals fd
+            JOIN fisco_operations fo ON fd.sell_operation_id = fo.id
+            WHERE fo.asset = fl.asset) AS bal
+        FROM (SELECT DISTINCT asset FROM fisco_lots) fl
+        HAVING (
+          (SELECT SUM(quantity) FROM fisco_lots fl2 WHERE fl2.asset = fl.asset) -
+          (SELECT COALESCE(SUM(fd.quantity),0) FROM fisco_disposals fd
+            JOIN fisco_operations fo ON fd.sell_operation_id = fo.id
+            WHERE fo.asset = fl.asset)
+        ) < -0.000001
+      `);
+      const criticalErrors = [
+        ...unknownBasis.rows.map((r: any) => ({
+          code: "UNKNOWN_BASIS",
+          asset: r.asset,
+          detail: `${r.cnt} disposals sin base de coste para ${r.asset}`,
+        })),
+        ...negBalance.rows.map((r: any) => ({
+          code: "NEGATIVE_INVENTORY",
+          asset: r.asset,
+          detail: `Balance negativo para ${r.asset}: ${parseFloat(r.bal).toFixed(8)}`,
+        })),
+      ];
+      return res.json({
+        isSafeForReport: criticalErrors.length === 0,
+        criticalErrors,
+        operationsCount: parseInt(opsRes.rows[0].cnt),
+        lotsCount: parseInt(lotsRes.rows[0].cnt),
+        disposalsCount: parseInt(dispRes.rows[0].cnt),
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/transactions-report?year=&exchange=&asset=
+   * Returns detailed transaction list for HTML report generation.
+   */
+  app.get("/api/fisco/transactions-report", async (req, res) => {
+    try {
+      const { year, exchange, asset, type } = req.query as Record<string, string>;
+      const conditions: string[] = [];
+      const params: any[] = [];
+      let pIdx = 1;
+      if (year) {
+        conditions.push(`EXTRACT(YEAR FROM o.executed_at) = $${pIdx++}`);
+        params.push(parseInt(year));
+      }
+      if (exchange) {
+        conditions.push(`o.exchange = $${pIdx++}`);
+        params.push(exchange);
+      }
+      if (asset) {
+        conditions.push(`o.asset = $${pIdx++}`);
+        params.push(asset);
+      }
+      if (type) {
+        conditions.push(`o.op_type = $${pIdx++}`);
+        params.push(type);
+      }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const ops = await pool.query(`
+        SELECT
+          o.id, o.exchange, o.external_id, o.op_type, o.asset, o.amount,
+          o.price_eur, o.total_eur, o.fee_eur, o.counter_asset, o.pair, o.executed_at,
+          COALESCE(
+            (SELECT SUM(d.gain_loss_eur) FROM fisco_disposals d WHERE d.sell_operation_id = o.id),
+            NULL
+          ) AS realized_gain_eur,
+          COALESCE(
+            (SELECT COUNT(*) FROM fisco_disposals d WHERE d.sell_operation_id = o.id
+             AND d.lot_id IS NULL),
+            0
+          ) AS unknown_basis_count
+        FROM fisco_operations o
+        ${where}
+        ORDER BY o.executed_at ASC
+      `, params);
+      return res.json({ count: ops.rows.length, transactions: ops.rows });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
 }
