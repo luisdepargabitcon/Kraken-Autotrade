@@ -184,3 +184,81 @@ export async function toEur(amount: number, currency: string): Promise<number> {
 export function getCachedUsdEurRate(): number {
   return cachedUsdEur || FALLBACK_RATES.USD;
 }
+
+// ============================================================
+// Historical crypto EUR prices via CoinGecko public API
+// ============================================================
+
+const COINGECKO_ID_MAP: Record<string, string> = {
+  BTC: "bitcoin",
+  ETH: "ethereum",
+  SOL: "solana",
+  XRP: "ripple",
+  DOT: "polkadot",
+  ADA: "cardano",
+  MATIC: "matic-network",
+  POL: "matic-network",
+  LINK: "chainlink",
+  UNI: "uniswap",
+  ATOM: "cosmos",
+  TON: "the-open-network",
+  AVAX: "avalanche-2",
+  LTC: "litecoin",
+  DOGE: "dogecoin",
+  SHIB: "shiba-inu",
+  NEAR: "near",
+  APT: "aptos",
+  SUI: "sui",
+  OP: "optimism",
+  ARB: "arbitrum",
+  INJ: "injective-protocol",
+  TIA: "celestia",
+  SEI: "sei-network",
+};
+
+// Cache: "ASSET:YYYY-MM-DD" → EUR price
+const cryptoPriceCache = new Map<string, number | null>();
+
+/**
+ * Fetch historical EUR price for a crypto asset on a specific date via CoinGecko.
+ * Returns null if the asset is unknown or the API call fails.
+ * Cached per (asset, date) to avoid repeated calls.
+ */
+export async function getCryptoEurPriceHistorical(asset: string, date: Date): Promise<number | null> {
+  const assetUpper = asset.toUpperCase();
+  const cgId = COINGECKO_ID_MAP[assetUpper];
+  if (!cgId) {
+    console.warn(`[fisco/eur] No CoinGecko ID for asset "${assetUpper}" — cannot fetch EUR price`);
+    return null;
+  }
+
+  const dateStr = toDateStr(date);
+  const cacheKey = `${assetUpper}:${dateStr}`;
+
+  if (cryptoPriceCache.has(cacheKey)) {
+    return cryptoPriceCache.get(cacheKey)!;
+  }
+
+  // CoinGecko history endpoint uses DD-MM-YYYY
+  const [year, month, day] = dateStr.split("-");
+  const cgDate = `${day}-${month}-${year}`;
+
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      const price = data?.market_data?.current_price?.eur;
+      if (typeof price === "number" && price > 0) {
+        cryptoPriceCache.set(cacheKey, price);
+        console.log(`[fisco/eur] CoinGecko ${assetUpper} on ${dateStr}: ${price.toFixed(4)} EUR`);
+        return price;
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[fisco/eur] CoinGecko price failed for ${assetUpper} on ${dateStr}: ${e.message}`);
+  }
+
+  cryptoPriceCache.set(cacheKey, null);
+  return null;
+}

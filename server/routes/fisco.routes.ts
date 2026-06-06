@@ -444,12 +444,33 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const allOps = mergeAndSort(krakenOps, revxOps);
       console.log(`[fisco/run] Normalized: ${allOps.length} operations (${krakenOps.length} Kraken + ${revxOps.length} RevolutX)`);
 
-      // 4. Run FIFO
+      // 4. Run FIFO + post-validation
       console.log("[fisco/run] Running FIFO engine...");
       const fifo = runFifo(allOps);
-      console.log(`[fisco/run] FIFO: ${fifo.lots.length} lots, ${fifo.disposals.length} disposals, ${fifo.warnings.length} warnings`);
+      const postValidationErrors = validateFifoResult(fifo);
+      fifo.criticalErrors.push(...postValidationErrors.filter(e =>
+        !fifo.criticalErrors.some(x => x.code === e.code && x.externalId === e.externalId)
+      ));
+      fifo.isSafeForReport = fifo.criticalErrors.length === 0;
+      console.log(`[fisco/run] FIFO: ${fifo.lots.length} lots, ${fifo.disposals.length} disposals, ${fifo.warnings.length} warnings, ${fifo.criticalErrors.length} critical errors, safe=${fifo.isSafeForReport}`);
 
-      // 5. Save to DB (upsert operations)
+      // 4b. BLOCK if critical errors — never overwrite official data with invalid FIFO results
+      if (!fifo.isSafeForReport) {
+        console.error(`[fisco/run] BLOCKED: ${fifo.criticalErrors.length} critical errors detected. Official data NOT modified.`);
+        return res.status(422).json({
+          status: "blocked",
+          message: `Pipeline bloqueado: ${fifo.criticalErrors.length} errores críticos. Los datos oficiales NO han sido modificados. Corrija los errores y vuelva a ejecutar.`,
+          critical_errors: fifo.criticalErrors,
+          is_safe_for_report: false,
+          fifo_stats: {
+            lots: fifo.lots.length,
+            disposals: fifo.disposals.length,
+            warnings: fifo.warnings.length,
+          },
+        });
+      }
+
+      // 5. Save to DB — only reached when isSafeForReport=true
       console.log("[fisco/run] Saving to database...");
       await saveFiscoToDB(allOps, fifo);
 
@@ -473,6 +494,8 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const httpStatus = exchangeErrors.length > 0 ? 207 : 200;
       res.status(httpStatus).json({
         status: exchangeErrors.length > 0 ? "partial_success" : "ok",
+        is_safe_for_report: fifo.isSafeForReport,
+        critical_errors_count: fifo.criticalErrors.length,
         exchange_errors: exchangeErrors.length > 0 ? exchangeErrors : undefined,
         elapsed_seconds: parseFloat(elapsed),
         usd_eur_rate: usdEurRate,
@@ -894,10 +917,42 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       // --- Last sync ---
       const lastSyncQ = await pool.query(`SELECT MAX(created_at) as last_sync FROM fisco_operations`);
 
+      // --- Critical errors (DB-based validation for the report year) ---
+      const [unknownBasisQ, requiresEurQ] = await Promise.all([
+        pool.query(
+          `SELECT o.asset, COUNT(*) AS cnt FROM fisco_disposals d
+           JOIN fisco_operations o ON d.sell_operation_id = o.id
+           WHERE d.cost_basis_eur::numeric = 0
+           AND EXTRACT(YEAR FROM d.disposed_at) = $1 ${exchWhere}
+           GROUP BY o.asset`, [year]
+        ),
+        pool.query(
+          `SELECT asset, COUNT(*) AS cnt FROM fisco_operations
+           WHERE total_eur IS NULL AND op_type IN ('trade_buy','trade_sell')
+           AND EXTRACT(YEAR FROM executed_at) = $1 ${exchWhereOps}
+           GROUP BY asset`, [year]
+        ),
+      ]);
+      const annualCriticalErrors = [
+        ...unknownBasisQ.rows.map((r: any) => ({
+          code: "UNKNOWN_BASIS",
+          asset: r.asset,
+          detail: `${r.cnt} disposals con base de coste cero para ${r.asset}`,
+        })),
+        ...requiresEurQ.rows.map((r: any) => ({
+          code: "REQUIRES_EUR_PRICE",
+          asset: r.asset,
+          detail: `${r.cnt} operaciones de ${r.asset} sin valoración EUR`,
+        })),
+      ];
+
       res.json({
         year,
         exchange_filter: exchangeFilter || 'all',
         last_sync: lastSyncQ.rows[0]?.last_sync || null,
+        is_safe_for_report: annualCriticalErrors.length === 0,
+        critical_errors_count: annualCriticalErrors.length,
+        critical_errors: annualCriticalErrors,
         counters,
         section_a: sectionA,
         section_b: sectionB,

@@ -123,6 +123,42 @@ Requería comando manual en el VPS, lo cual no es aceptable.
 - `fisco_backup_operations`, `fisco_backup_lots`, `fisco_backup_disposals`
 - `fisco_reconciliation_runs`, `fisco_reconciliation_items`
 
+### Commit: 52f593d
+
+---
+
+## 2026-06-06 — fix(fisco): revisión post-implementación — 6 fixes bloqueantes
+
+### Cambios
+
+#### `server/services/fisco/eur-rates.ts`
+- Añadida `getCryptoEurPriceHistorical(asset, date)` vía CoinGecko API pública
+- Caché por `"ASSET:YYYY-MM-DD"`, devuelve `null` si activo desconocido o falla API
+- `COINGECKO_ID_MAP`: BTC, ETH, SOL, XRP, DOT, ADA, MATIC, POL, LINK, UNI, ATOM, TON, AVAX, LTC, DOGE, SHIB, NEAR, APT, SUI, OP, ARB, INJ, TIA, SEI
+
+#### `server/services/fisco/normalizer.ts`
+- **Case 9 (Crypto/Crypto)**: intenta valorar en EUR con `getCryptoEurPriceHistorical` antes de marcar `requiresEurPrice`
+  - Con precio: genera ops con `priceEur`/`totalEur` reales, `requiresEurPrice=false`
+  - Sin precio: fallback a `requiresEurPrice=true`, `totalEur=null`
+- **Case 6 (Stablecoin←Fiat)**: `priceEur = totalEur / recvAmount` (corrige asunción de peg 1:1)
+- **Case 7 (Stablecoin→Fiat)**: `totalEur = recvAmount * usdEurRate` (USD recibido, no USDC gastado)
+
+#### `server/services/FiscoRebuildService.ts`
+- Recalcula `fifo.isSafeForReport = fifo.criticalErrors.length === 0` tras merge de `validateFifoResult()`
+- Elimina `isSafeForReport` stale post-validación
+
+#### `server/routes/fisco.routes.ts`
+- **`GET /api/fisco/run`**: bloquea con HTTP 422 si `criticalErrors.length > 0` tras FIFO + validate; `saveFiscoToDB` solo se ejecuta si `isSafeForReport=true`; respuesta OK incluye `is_safe_for_report` y `critical_errors_count`
+- **`GET /api/fisco/annual-report`**: añade `is_safe_for_report`, `critical_errors_count`, `critical_errors[]` basados en DB (`UNKNOWN_BASIS` + `REQUIRES_EUR_PRICE`)
+
+#### `server/services/fisco/__tests__/fiscoNormalizer.test.ts`
+- Mock añade `getCryptoEurPriceHistorical: vi.fn().mockResolvedValue(null)`
+- Case 6: verifica `priceEur = totalEur/recvAmount` con spread real
+- Case 7: verifica `totalEur` desde `recvAmount` USD (no `spentAmount`)
+- Case 9 con EUR: `mockResolvedValueOnce(50000)` → ops con EUR real, `requiresEurPrice=false`
+- Case 9 fallback: `null` → `requiresEurPrice=true`
+- `isSafeForReport`: 2 nuevos tests
+
 ### Commit: pendiente
 
 ---

@@ -13,7 +13,7 @@
  * - Kraken refid groups with >2 entries are handled by aggregating all positives/negatives.
  */
 
-import { toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate } from "./eur-rates";
+import { toEurHistorical, prefetchHistoricalRates, getHistoricalUsdEurRate, getCryptoEurPriceHistorical } from "./eur-rates";
 
 // ============================================================
 // Types
@@ -326,24 +326,28 @@ async function classifyAndBuildTrade(t: TradeClassifyInput): Promise<NormalizedO
   }
 
   // ---- Case 6: Buy stablecoin with fiat (e.g. USDC/USD buy)
+  //      totalEur = USD spent → EUR; priceEur = cost per stablecoin unit (may differ from usdEurRate if spread exists)
   if (recvStable && spentFiat) {
     const totalEur = spentAmount * usdEurRate;
+    const priceEur = totalEur / recvAmount;
     return [{
       exchange, externalId: refid,
       opType: "trade_buy", asset: recvAsset, amount: recvAmount,
-      priceEur: usdEurRate, totalEur, feeEur,
+      priceEur, totalEur, feeEur,
       counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
       executedAt: execDate, rawData,
     }];
   }
 
   // ---- Case 7: Sell stablecoin for fiat (e.g. USDC/USD sell)
+  //      proceeds = USD received (not stablecoin amount); priceEur = proceeds per stablecoin unit
   if (spentStable && recvFiat) {
-    const totalEur = spentAmount * usdEurRate;
+    const totalEur = recvAmount * usdEurRate;   // USD received → EUR
+    const priceEur = totalEur / spentAmount;    // per-unit stablecoin price
     return [{
       exchange, externalId: refid,
       opType: "trade_sell", asset: spentAsset, amount: spentAmount,
-      priceEur: usdEurRate, totalEur, feeEur,
+      priceEur, totalEur, feeEur,
       counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
       executedAt: execDate, rawData,
     }];
@@ -370,8 +374,37 @@ async function classifyAndBuildTrade(t: TradeClassifyInput): Promise<NormalizedO
     ];
   }
 
-  // ---- Case 9: Crypto-to-Crypto (e.g. ETH/BTC) — EUR value unknown from trade data
+  // ---- Case 9: Crypto-to-Crypto (e.g. ETH/BTC)
+  //      Try to get EUR historical price from CoinGecko for the spent asset.
+  //      Both sides share the same EUR value (what was given = what was received in EUR terms).
+  //      Falls back to requiresEurPrice=true only if no price is available.
   if (spentCrypto && recvCrypto) {
+    const spentEurPrice = await getCryptoEurPriceHistorical(spentAsset, execDate);
+
+    if (spentEurPrice !== null) {
+      const totalEur = spentAmount * spentEurPrice;
+      const feeHalf = feeEur / 2;
+      return [
+        {
+          exchange, externalId: `${refid}_c2c_sell`,
+          opType: "trade_sell", asset: spentAsset, amount: spentAmount,
+          priceEur: spentEurPrice, totalEur, feeEur: feeHalf,
+          counterAsset: recvAsset, pair: `${spentAsset}/${recvAsset}`,
+          executedAt: execDate, rawData,
+          requiresEurPrice: false,
+        },
+        {
+          exchange, externalId: `${refid}_c2c_buy`,
+          opType: "trade_buy", asset: recvAsset, amount: recvAmount,
+          priceEur: totalEur / recvAmount, totalEur, feeEur: feeHalf,
+          counterAsset: spentAsset, pair: `${recvAsset}/${spentAsset}`,
+          executedAt: execDate, rawData,
+          requiresEurPrice: false,
+        },
+      ];
+    }
+
+    console.warn(`[normalizer] Crypto-to-crypto ${refid}: no EUR price for ${spentAsset} on ${execDate.toISOString().split('T')[0]} — fallback to requiresEurPrice`);
     return [
       {
         exchange, externalId: `${refid}_c2c_sell`,

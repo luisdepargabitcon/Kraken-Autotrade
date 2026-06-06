@@ -107,8 +107,10 @@ export class FiscoRebuildService {
       fifo.criticalErrors.push(...validationErrors.filter(e =>
         !fifo.criticalErrors.some(x => x.code === e.code && x.externalId === e.externalId)
       ));
+      // Recalculate isSafeForReport based on the final merged error list
+      fifo.isSafeForReport = fifo.criticalErrors.length === 0;
 
-      console.log(`[fisco/rebuild] FIFO done. Lots=${fifo.lots.length} Disposals=${fifo.disposals.length} Errors=${fifo.criticalErrors.length}`);
+      console.log(`[fisco/rebuild] FIFO done. Lots=${fifo.lots.length} Disposals=${fifo.disposals.length} Errors=${fifo.criticalErrors.length} Safe=${fifo.isSafeForReport}`);
 
       // Step 4: Save to staging tables
       await this.saveToDryRun(runId, ops, fifo);
