@@ -1551,13 +1551,13 @@ export function registerFiscoRebuildRoutes(app: Express): void {
          GROUP BY fo.asset`
       );
       const negBalance = await pool.query(`
-        SELECT asset,
+        SELECT fl.asset,
           (SELECT SUM(quantity) FROM fisco_lots fl2 WHERE fl2.asset = fl.asset) -
           (SELECT COALESCE(SUM(fd.quantity),0) FROM fisco_disposals fd
             JOIN fisco_operations fo ON fd.sell_operation_id = fo.id
             WHERE fo.asset = fl.asset) AS bal
         FROM (SELECT DISTINCT asset FROM fisco_lots) fl
-        HAVING (
+        WHERE (
           (SELECT SUM(quantity) FROM fisco_lots fl2 WHERE fl2.asset = fl.asset) -
           (SELECT COALESCE(SUM(fd.quantity),0) FROM fisco_disposals fd
             JOIN fisco_operations fo ON fd.sell_operation_id = fo.id
