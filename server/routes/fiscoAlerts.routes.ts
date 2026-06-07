@@ -385,6 +385,19 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
       params.set("year", year.toString());
       if (exchange) params.set("exchange", exchange);
 
+      // Pre-validate: ensure official data is safe before generating report
+      const validateResp = await fetch(`http://127.0.0.1:${port}/api/fisco/validate`);
+      if (validateResp.ok) {
+        const validation = await validateResp.json() as any;
+        if (!validation.isSafeForReport) {
+          const errCodes = (validation.criticalErrors || []).map((e: any) => e.code).join(", ");
+          throw new Error(
+            `Informe fiscal bloqueado: los datos oficiales tienen ${validation.criticalErrors?.length ?? '?'} errores críticos (${errCodes || 'ver /api/fisco/validate'}). ` +
+            `Ejecuta un dry-run verde y luego commit antes de generar el informe.`
+          );
+        }
+      }
+
       // Llamar al endpoint real del informe anual
       const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/annual-report?${params.toString()}`);
       if (!resp.ok) {
@@ -430,11 +443,35 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
 
       const meta = `Generado: ${new Date().toLocaleString("es-ES")} | Método: FIFO | Fuentes: ${dataSourceLabel} | Última sincronización: ${fmtDateShort(report.last_sync)}`;
 
+      // Validation banner: uses committed_run context from annual-report response
+      const cr = report.committed_run;
+      const isSafe = report.is_safe_for_report && (cr?.isSafeForReport ?? true);
+      const bannerColor  = isSafe ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
+                                   : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
+      const validationBanner = `
+      <div style="background:${bannerColor.bg};border:2px solid ${bannerColor.border};border-radius:8px;padding:14px 18px;margin-bottom:22px;">
+        <div style="font-weight:700;color:${bannerColor.text};font-size:13px;margin-bottom:10px;">
+          ${isSafe ? '&#10003; Validación FIFO correcta: sin errores críticos. Informe apto para revisión fiscal.' : '&#9888; Informe con errores críticos — no apto para revisión fiscal oficial.'}
+        </div>
+        <table style="font-size:11px;width:auto;border-collapse:collapse;">
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Run ID</td><td style="font-family:monospace;font-size:10px;">${cr?.runId ?? 'N/A'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Estado</td><td style="font-weight:600;color:${bannerColor.badge}">${cr?.status ?? 'N/A'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">isSafeForReport</td><td>${isSafe ? 'true &#10003;' : 'false &#10007;'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Errores críticos</td><td>${cr?.criticalErrorsCount ?? report.critical_errors_count ?? 0}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Operaciones</td><td>${cr?.operationsCount ?? 'N/A'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Lotes</td><td>${cr?.lotsCount ?? 'N/A'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Disposiciones</td><td>${cr?.disposalsCount ?? 'N/A'}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Último commit</td><td>${fmtDateShort(cr?.completedAt ?? null)}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Exchanges</td><td>${dataSourceLabel}</td></tr>
+        </table>
+      </div>`;
+
       // Page 1: Section A — Transmissions summary
       const a = report.section_a;
       const pageA = `
     <div class="page">
       <div class="brand">${BRAND_LABEL}</div>
+      ${validationBanner}
       <h2>Resumen de ganancias y pérdidas derivadas de las transmisiones de activos el ${y}</h2>
       <table>
         <tr><th>Origen de Datos</th><th>Cuenta</th><th colspan="3">Ganancias y pérdidas de capital</th></tr>

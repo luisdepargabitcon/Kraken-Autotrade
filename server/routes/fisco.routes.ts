@@ -720,6 +720,26 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const exchWhere = exchangeFilter ? ` AND o.exchange = '${exchangeFilter.toLowerCase()}'` : '';
       const exchWhereOps = exchangeFilter ? ` AND exchange = '${exchangeFilter.toLowerCase()}'` : '';
 
+      // --- Latest committed run context (for report validation banner) ---
+      const committedRunQ = await pool.query(
+        `SELECT id, status, is_safe_for_report, critical_errors_count,
+                operations_count, lots_count, disposals_count, completed_at
+         FROM fisco_rebuild_runs
+         WHERE mode='commit' AND status='committed'
+         ORDER BY is_safe_for_report DESC, started_at DESC LIMIT 1`
+      );
+      const committedRunRow = committedRunQ.rows[0] ?? null;
+      const committedRun = committedRunRow ? {
+        runId: committedRunRow.id,
+        status: committedRunRow.status,
+        isSafeForReport: committedRunRow.is_safe_for_report,
+        criticalErrorsCount: committedRunRow.critical_errors_count ?? 0,
+        operationsCount: committedRunRow.operations_count ?? 0,
+        lotsCount: committedRunRow.lots_count ?? 0,
+        disposalsCount: committedRunRow.disposals_count ?? 0,
+        completedAt: committedRunRow.completed_at ?? null,
+      } : null;
+
       // --- Section A: Resumen de ganancias y pérdidas derivadas de transmisiones ---
       const gainsQ = await pool.query(`
         SELECT
@@ -953,6 +973,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       res.json({
         year,
         exchange_filter: exchangeFilter || 'all',
+        committed_run: committedRun,
         last_sync: lastSyncQ.rows[0]?.last_sync || null,
         is_safe_for_report: annualCriticalErrors.length === 0,
         critical_errors_count: annualCriticalErrors.length,
@@ -1524,6 +1545,52 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         revolutRateLimitWarnings: revolutPartial,
         recommendation: recommendations,
         semaphore: (run.is_safe_for_report && !revolutPartial) ? "green" : (criticalErrors.length > 0) ? "red" : "yellow",
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/runs/latest-committed/audit-summary
+   * Returns the latest run with mode=commit, status=committed (safe first).
+   */
+  app.get("/api/fisco/rebuild/runs/latest-committed/audit-summary", async (_req, res) => {
+    try {
+      const runRow = await pool.query(
+        `SELECT * FROM fisco_rebuild_runs
+         WHERE mode='commit' AND status='committed'
+         ORDER BY is_safe_for_report DESC, started_at DESC LIMIT 1`
+      );
+      if (!runRow.rows[0]) return res.status(404).json({ error: "No committed run found" });
+      const run = runRow.rows[0];
+      const criticalErrors: any[] = run.errors_json || [];
+
+      // Validate official tables match the committed run
+      const [opsCount, lotsCount, dispCount] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_operations`),
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_lots`),
+        pool.query(`SELECT COUNT(*) AS cnt FROM fisco_disposals`),
+      ]);
+
+      return res.json({
+        runId: run.id,
+        mode: run.mode,
+        status: run.status,
+        isSafeForReport: run.is_safe_for_report,
+        criticalErrorsCount: run.critical_errors_count ?? 0,
+        operationsCount: run.operations_count ?? 0,
+        lotsCount: run.lots_count ?? 0,
+        disposalsCount: run.disposals_count ?? 0,
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+        officialTables: {
+          operationsCount: parseInt(opsCount.rows[0].cnt),
+          lotsCount: parseInt(lotsCount.rows[0].cnt),
+          disposalsCount: parseInt(dispCount.rows[0].cnt),
+        },
+        firstCriticalErrors: criticalErrors.slice(0, 5),
+        semaphore: run.is_safe_for_report ? "green" : (criticalErrors.length > 0 ? "red" : "yellow"),
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
