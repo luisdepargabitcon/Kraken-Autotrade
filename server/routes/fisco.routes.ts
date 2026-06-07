@@ -1128,7 +1128,7 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       // Guard: block commit if latest dry-run is unsafe
       if (mode === "commit") {
         const latestRuns = await pool.query(
-          `SELECT is_safe_for_report, critical_errors_count, errors_json
+          `SELECT id, is_safe_for_report, critical_errors_count, errors_json, warnings_json
            FROM fisco_rebuild_runs
            WHERE mode = 'dry_run' AND status = 'completed_dry'
            ORDER BY started_at DESC LIMIT 1`
@@ -1141,23 +1141,34 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         }
         const latest = latestRuns.rows[0];
         if (!latest.is_safe_for_report || latest.critical_errors_count > 0) {
+          const errors: any[] = latest.errors_json || [];
+          const byCode: Record<string, number> = {};
+          for (const e of errors) byCode[e.code] = (byCode[e.code] || 0) + 1;
           return res.status(400).json({
             error: "COMMIT_BLOCKED",
             reason: `Latest dry-run has ${latest.critical_errors_count} critical error(s). Fix them before committing.`,
-            criticalErrors: latest.errors_json || [],
+            criticalErrorsByCode: byCode,
           });
         }
-        const requiresEurPrice = await pool.query(
-          `SELECT COUNT(*) AS cnt FROM fisco_staging_operations so
-           JOIN fisco_rebuild_runs rr ON rr.id = so.rebuild_run_id
-           WHERE rr.mode = 'dry_run' AND rr.status = 'completed_dry'
-             AND so.requires_eur_price = TRUE
-           ORDER BY rr.started_at DESC LIMIT 1`
-        );
-        if (parseInt(requiresEurPrice.rows[0]?.cnt ?? '0') > 0) {
+        // Block if RevolutX history is partial
+        const warnings: string[] = latest.warnings_json || [];
+        if (warnings.some((w: string) => w.includes('REVOLUT_PARTIAL_HISTORY'))) {
           return res.status(400).json({
             error: "COMMIT_BLOCKED",
-            reason: `Latest dry-run has ${requiresEurPrice.rows[0].cnt} operations with missing EUR price (REQUIRES_EUR_PRICE).`,
+            reason: "RevolutX historical data is incomplete (REVOLUT_PARTIAL_HISTORY). Ensure full history before committing.",
+          });
+        }
+        // Block if any ops still need EUR price
+        const requiresEurPriceQ = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM fisco_staging_operations so
+           JOIN fisco_rebuild_runs rr ON rr.id = so.rebuild_run_id
+           WHERE rr.id = $1 AND so.requires_eur_price = TRUE`,
+          [latest.id]
+        );
+        if (parseInt(requiresEurPriceQ.rows[0]?.cnt ?? '0') > 0) {
+          return res.status(400).json({
+            error: "COMMIT_BLOCKED",
+            reason: `Latest dry-run has ${requiresEurPriceQ.rows[0].cnt} operations with missing EUR price (REQUIRES_EUR_PRICE).`,
           });
         }
       }
@@ -1181,6 +1192,68 @@ export function registerFiscoRebuildRoutes(app: Express): void {
    */
   app.get("/api/fisco/rebuild/state", (_req, res) => {
     return res.json({ active: isFiscoRebuildActive() });
+  });
+
+  // ============================================================
+  // Opening Balances (saldo inicial fiscal)
+  // ============================================================
+
+  app.get("/api/fisco/opening-balances", async (_req, res) => {
+    try {
+      const rows = await pool.query(
+        `SELECT id, asset, quantity::float, acquisition_date, cost_basis_eur::float,
+                exchange, note, created_at, is_active
+         FROM fisco_opening_balances ORDER BY acquisition_date ASC`
+      );
+      return res.json({ openingBalances: rows.rows });
+    } catch (e: any) { return res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/fisco/opening-balances", async (req, res) => {
+    try {
+      const { asset, quantity, acquisitionDate, costBasisEur, exchange = 'manual', note } = req.body || {};
+      if (!asset || !quantity || !acquisitionDate || costBasisEur == null)
+        return res.status(400).json({ error: "asset, quantity, acquisitionDate, costBasisEur required" });
+      if (quantity <= 0) return res.status(400).json({ error: "quantity must be > 0" });
+      if (costBasisEur < 0) return res.status(400).json({ error: "costBasisEur must be >= 0" });
+      const row = await pool.query(
+        `INSERT INTO fisco_opening_balances (asset, quantity, acquisition_date, cost_basis_eur, exchange, note)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [asset, quantity, acquisitionDate, costBasisEur, exchange, note ?? null]
+      );
+      return res.status(201).json({ openingBalance: row.rows[0] });
+    } catch (e: any) { return res.status(500).json({ error: e.message }); }
+  });
+
+  app.put("/api/fisco/opening-balances/:id", async (req, res) => {
+    try {
+      const { asset, quantity, acquisitionDate, costBasisEur, exchange, note, isActive } = req.body || {};
+      const fields: string[] = [];
+      const vals: any[] = [];
+      const add = (col: string, val: any) => { if (val !== undefined) { fields.push(`${col} = $${vals.length + 2}`); vals.push(val); } };
+      add('asset', asset); add('quantity', quantity); add('acquisition_date', acquisitionDate);
+      add('cost_basis_eur', costBasisEur); add('exchange', exchange);
+      add('note', note); add('is_active', isActive);
+      if (fields.length === 0) return res.status(400).json({ error: "No fields to update" });
+      fields.push(`updated_at = NOW()`);
+      const row = await pool.query(
+        `UPDATE fisco_opening_balances SET ${fields.join(', ')} WHERE id = $1 RETURNING *`,
+        [req.params.id, ...vals]
+      );
+      if (!row.rows[0]) return res.status(404).json({ error: "Opening balance not found" });
+      return res.json({ openingBalance: row.rows[0] });
+    } catch (e: any) { return res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/fisco/opening-balances/:id", async (req, res) => {
+    try {
+      const row = await pool.query(
+        `UPDATE fisco_opening_balances SET is_active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id`,
+        [req.params.id]
+      );
+      if (!row.rows[0]) return res.status(404).json({ error: "Opening balance not found" });
+      return res.json({ deleted: true, id: row.rows[0].id });
+    } catch (e: any) { return res.status(500).json({ error: e.message }); }
   });
 
   /**
@@ -1329,6 +1402,7 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       const unknownBasis = criticalErrors.filter(e => e.code === "UNKNOWN_BASIS");
       const sellWithoutLots = criticalErrors.filter(e => e.code === "SELL_WITHOUT_LOTS");
       const unclassified = criticalErrors.filter(e => e.code === "UNCLASSIFIED_OPERATION");
+      const missingOpeningBalance = criticalErrors.filter(e => e.code === "MISSING_OPENING_BALANCE_OR_PREHISTORY");
 
       const negativeByAsset: Record<string, number> = {};
       for (const e of negativeInventory) negativeByAsset[e.asset] = (negativeByAsset[e.asset] || 0) + 1;
@@ -1336,6 +1410,8 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       for (const e of unknownBasis) unknownByAsset[e.asset] = (unknownByAsset[e.asset] || 0) + 1;
       const sellNoLotByAsset: Record<string, number> = {};
       for (const e of sellWithoutLots) sellNoLotByAsset[e.asset] = (sellNoLotByAsset[e.asset] || 0) + 1;
+      const missingObByAsset: Record<string, number> = {};
+      for (const e of missingOpeningBalance) missingObByAsset[e.asset] = (missingObByAsset[e.asset] || 0) + 1;
 
       // ── 3. Staging operations stats ───────────────────────────────────
       const [opsStats, exchangeStats, assetStats, typeStats, eurPriceStats, dateRange] =
@@ -1373,6 +1449,14 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           `Causa: compras no importadas o activos recibidos externamente sin registro.`
         );
       }
+      if (missingOpeningBalance.length > 0) {
+        const assets = Object.keys(missingObByAsset).join(", ");
+        recommendations.push(
+          `MISSING_OPENING_BALANCE_OR_PREHISTORY (${missingOpeningBalance.length}): Ventas sin ninguna compra previa en ${assets}. ` +
+          `El activo fue adquirido antes del histórico disponible o transferido desde otro exchange. ` +
+          `Solución: registra un saldo inicial (opening balance) via POST /api/fisco/opening-balances.`
+        );
+      }
       if (sellWithoutLots.length > 0) {
         recommendations.push(
           `SELL_WITHOUT_LOTS (${sellWithoutLots.length}): Ventas sin ningún lote abierto en ${Object.keys(sellNoLotByAsset).join(", ")}.`
@@ -1382,12 +1466,15 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         recommendations.push(`UNCLASSIFIED (${unclassified.length}): Operaciones con tipo desconocido — revisar normalizer.ts.`);
       }
       if (criticalErrors.length === 0) {
-        recommendations.push("✓ Sin errores críticos — puede proceder con mode=commit cuando esté listo.");
+        recommendations.push("OK Sin errores criticos — puede proceder con mode=commit cuando este listo.");
       }
 
       // Check RevolutX partial-history warning in warnings_json
       const warnings: string[] = run.warnings_json || [];
       const revolutPartial = warnings.some((w: string) => w.includes("REVOLUT_PARTIAL_HISTORY"));
+
+      // Fetch stats from stored JSON (populated since migration 044)
+      const fs: Record<string, any> = run.fetch_stats_json || {};
 
       return res.json({
         runId,
@@ -1407,6 +1494,7 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         negativeInventoryByAsset: negativeByAsset,
         unknownBasisByAsset: unknownByAsset,
         sellWithoutLotsByAsset: sellNoLotByAsset,
+        missingOpeningBalanceByAsset: missingObByAsset,
         operationsByExchange: toObj(exchangeStats.rows, "exchange", "cnt"),
         operationsByAsset: toObj(assetStats.rows, "asset", "cnt"),
         operationsByType: toObj(typeStats.rows, "op_type", "cnt"),
@@ -1414,9 +1502,28 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           from: dateRange.rows[0]?.from_date ?? null,
           to: dateRange.rows[0]?.to_date ?? null,
         },
+        krakenHistory: {
+          ledgerCount: fs.krakenLedgerCount ?? null,
+          opCount: fs.krakenOpCount ?? null,
+          firstDate: fs.krakenFirstLedgerDate ?? null,
+          lastDate: fs.krakenLastLedgerDate ?? null,
+          fullSync: fs.krakenFullSync ?? null,
+        },
+        revolutHistory: {
+          orderCount: fs.revolutOrderCount ?? null,
+          opCount: fs.revolutOpCount ?? null,
+          firstDate: fs.revolutFirstOrderDate ?? null,
+          lastDate: fs.revolutLastOrderDate ?? null,
+          completedWindows: fs.revolutCompletedWindows ?? null,
+          skippedWindows: fs.revolutSkippedWindows ?? null,
+          skippedWindowsList: fs.revolutSkippedWindowsList ?? [],
+          partialHistory: fs.revolutPartialHistory ?? false,
+          startFetchedFrom: fs.revolutStartMs ? new Date(fs.revolutStartMs).toISOString() : null,
+        },
+        openingBalancesInjected: fs.openingBalancesCount ?? 0,
         revolutRateLimitWarnings: revolutPartial,
         recommendation: recommendations,
-        semaphore: run.is_safe_for_report && !revolutPartial ? "green" : criticalErrors.length > 0 ? "red" : "yellow",
+        semaphore: (run.is_safe_for_report && !revolutPartial) ? "green" : (criticalErrors.length > 0) ? "red" : "yellow",
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });

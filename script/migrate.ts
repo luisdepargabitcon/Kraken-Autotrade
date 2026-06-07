@@ -1233,6 +1233,16 @@ END $$;
     await tryExecuteFile(db, fiscoRebuildPath, "fisco_rebuild_reconciliation");
     console.log("[migrate] 043_fisco_rebuild_reconciliation OK");
 
+    // ============================================================
+    // FISCO OPENING BALANCES + FETCH STATS (044)
+    // Adds fisco_opening_balances table for manual opening lots,
+    // and fetch_stats_json column to fisco_rebuild_runs.
+    // ============================================================
+    console.log("[migrate] Applying 044_fisco_opening_balances...");
+    const fiscoOpeningBalancesPath = path.resolve(process.cwd(), "db", "migrations", "044_fisco_opening_balances.sql");
+    await tryExecuteFile(db, fiscoOpeningBalancesPath, "fisco_opening_balances");
+    console.log("[migrate] 044_fisco_opening_balances OK");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

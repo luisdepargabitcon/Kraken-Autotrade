@@ -100,7 +100,7 @@ export class FiscoRebuildService {
       console.log(`[fisco/rebuild] Backup complete: ${backupId}`);
 
       // Step 2: Fetch and normalize
-      const { ops, partialWarnings } = await this.fetchAndNormalize(exchangeFilter, fullSync);
+      const { ops, partialWarnings, fetchStats } = await this.fetchAndNormalize(exchangeFilter, fullSync);
       console.log(`[fisco/rebuild] Normalized ${ops.length} operations`);
 
       // Step 3: FIFO
@@ -133,6 +133,7 @@ export class FiscoRebuildService {
         errors_json: JSON.stringify(fifo.criticalErrors),
         warnings_json: JSON.stringify(fifo.warnings),
         comparison_json: JSON.stringify(comparison),
+        fetch_stats_json: JSON.stringify(fetchStats),
         backup_id: backupId,
       });
 
@@ -272,12 +273,17 @@ export class FiscoRebuildService {
   async fetchAndNormalize(
     exchangeFilter: string | null | undefined,
     fullSync = true
-  ): Promise<{ ops: NormalizedOperation[]; partialWarnings: string[] }> {
+  ): Promise<{
+    ops: NormalizedOperation[];
+    partialWarnings: string[];
+    fetchStats: Record<string, any>;
+  }> {
     const doKraken = !exchangeFilter || exchangeFilter === "kraken";
     const doRevolut = !exchangeFilter || exchangeFilter === "revolutx";
 
     let krakenOps: NormalizedOperation[] = [];
     let revolutOps: NormalizedOperation[] = [];
+    const fetchStats: Record<string, any> = {};
 
     if (doKraken) {
       try {
@@ -296,6 +302,14 @@ export class FiscoRebuildService {
         }));
         krakenOps = await normalizeKrakenLedger(ledgerEntries);
         console.log(`[fisco/rebuild] Kraken: ${ledgerEntries.length} entries → ${krakenOps.length} ops`);
+
+        // Kraken stats — using raw ledger time (Unix seconds)
+        const times = ledgerEntries.map(e => e.time).filter(Boolean);
+        fetchStats.krakenLedgerCount = ledgerEntries.length;
+        fetchStats.krakenOpCount = krakenOps.length;
+        fetchStats.krakenFirstLedgerDate = times.length ? new Date(Math.min(...times) * 1000).toISOString() : null;
+        fetchStats.krakenLastLedgerDate = times.length ? new Date(Math.max(...times) * 1000).toISOString() : null;
+        fetchStats.krakenFullSync = fullSync;
       } catch (e: any) {
         const isRL = e.message?.includes("Rate limit") || e.stage === "kraken_ledger_pagination";
         const detail = {
@@ -316,9 +330,27 @@ export class FiscoRebuildService {
 
     if (doRevolut) {
       try {
-        const result = await revolutXService.getHistoricalOrders({ states: ["filled"] });
+        // For fullSync, always start from Revolut crypto launch era (2020-01-01)
+        const revolutStartMs = fullSync ? new Date('2020-01-01T00:00:00Z').getTime() : undefined;
+        const result = await revolutXService.getHistoricalOrders({
+          states: ["filled"],
+          startMs: revolutStartMs,
+        });
         revolutOps = await normalizeRevolutXOrders(result.orders);
         console.log(`[fisco/rebuild] RevolutX: ${result.orders.length} orders → ${revolutOps.length} ops`);
+
+        // RevolutX stats
+        const rdates = result.orders.map(o => o.filled_date || o.created_date).filter(Boolean);
+        fetchStats.revolutOrderCount = result.orders.length;
+        fetchStats.revolutOpCount = revolutOps.length;
+        fetchStats.revolutFirstOrderDate = rdates.length ? new Date(Math.min(...rdates)).toISOString() : null;
+        fetchStats.revolutLastOrderDate = rdates.length ? new Date(Math.max(...rdates)).toISOString() : null;
+        fetchStats.revolutCompletedWindows = result.completedWindows;
+        fetchStats.revolutSkippedWindows = result.skippedWindows.length;
+        fetchStats.revolutSkippedWindowsList = result.skippedWindows;
+        fetchStats.revolutStartMs = revolutStartMs ?? new Date('2020-01-01T00:00:00Z').getTime();
+        fetchStats.revolutPartialHistory = result.partialHistory;
+
         if (result.partialHistory) {
           const w = `REVOLUT_PARTIAL_HISTORY: ${result.skippedWindows.length} ventana(s) fallidas: ${result.skippedWindows.join('; ')}`;
           console.warn(`[fisco/rebuild] ${w}`);
@@ -326,10 +358,48 @@ export class FiscoRebuildService {
         }
       } catch (e: any) {
         console.warn(`[fisco/rebuild] RevolutX fetch failed (non-fatal): ${e.message}`);
+        fetchStats.revolutError = e.message;
       }
     }
 
-    return { ops: mergeAndSort(krakenOps, revolutOps), partialWarnings };
+    // ── Opening balances (saldo inicial fiscal) — synthetic trade_buy ops ──
+    let openingOps: NormalizedOperation[] = [];
+    try {
+      const obRows = await pool.query(
+        `SELECT * FROM fisco_opening_balances WHERE is_active = TRUE ORDER BY acquisition_date ASC`
+      );
+      if (!(!exchangeFilter || exchangeFilter === null) && exchangeFilter) {
+        // If exchange-filtered, don't inject opening balances
+      } else {
+        openingOps = obRows.rows.map((row: any) => {
+          const qty = parseFloat(row.quantity);
+          const cost = parseFloat(row.cost_basis_eur);
+          return {
+            exchange: row.exchange ?? 'manual',
+            externalId: `opening_balance_${row.id}`,
+            opType: 'trade_buy' as const,
+            asset: row.asset,
+            amount: qty,
+            priceEur: qty > 0 ? cost / qty : 0,
+            totalEur: cost,
+            feeEur: 0,
+            counterAsset: 'EUR',
+            pair: `${row.asset}/EUR`,
+            executedAt: new Date(row.acquisition_date),
+            rawData: { source: 'opening_balance', note: row.note },
+            requiresEurPrice: false,
+          };
+        });
+        if (openingOps.length > 0) {
+          console.log(`[fisco/rebuild] Opening balances: ${openingOps.length} synthetic BUY ops injected`);
+          fetchStats.openingBalancesCount = openingOps.length;
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[fisco/rebuild] Could not load opening balances: ${e.message}`);
+    }
+
+    return { ops: mergeAndSort(krakenOps, revolutOps, openingOps), partialWarnings, fetchStats };
   }
 
   // ============================================================

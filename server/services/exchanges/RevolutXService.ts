@@ -1110,10 +1110,12 @@ export class RevolutXService implements IExchangeService {
     }>;
     partialHistory: boolean;
     skippedWindows: string[];
+    completedWindows: number;
   }> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
-    const DEFAULT_START = new Date('2025-01-01T00:00:00Z').getTime();
+    // Default to Revolut crypto launch era — ensures full fiscal history on fullSync
+    const DEFAULT_START = new Date('2020-01-01T00:00:00Z').getTime();
     const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
     // Per-page/window RL retry delays (ms): 10s → 30s → 60s → 120s
     const REVOLUT_RL_DELAYS = [10_000, 30_000, 60_000, 120_000];
@@ -1143,6 +1145,7 @@ export class RevolutXService implements IExchangeService {
     let windowStart = startMs;
     let partialHistory = false;
     const skippedWindows: string[] = [];
+    let completedWindows = 0;
 
     console.log(`[revolutx] getHistoricalOrders: fetching from ${new Date(startMs).toISOString()} to ${new Date(endMs).toISOString()}`);
 
@@ -1272,8 +1275,11 @@ export class RevolutXService implements IExchangeService {
         console.warn(`[revolutx] REVOLUT_PARTIAL_HISTORY: Skipped window ${label} after exhausted retries`);
         partialHistory = true;
         skippedWindows.push(label);
-      } else if (pageCount > 0) {
-        console.log(`[revolutx] Window ${new Date(windowStart).toISOString()} → ${new Date(windowEnd).toISOString()}: ${pageCount} pages, total orders so far: ${allOrders.length}`);
+      } else {
+        completedWindows++;
+        if (pageCount > 0) {
+          console.log(`[revolutx] Window ${new Date(windowStart).toISOString()} → ${new Date(windowEnd).toISOString()}: ${pageCount} pages, total orders so far: ${allOrders.length}`);
+        }
       }
 
       windowStart = windowEnd;
@@ -1285,8 +1291,9 @@ export class RevolutXService implements IExchangeService {
     if (partialHistory) {
       console.warn(`[revolutx] REVOLUT_PARTIAL_HISTORY: ${skippedWindows.length} window(s) failed: ${skippedWindows.join(', ')}`);
     }
-    console.log(`[revolutx] getHistoricalOrders: total ${allOrders.length} filled orders fetched${partialHistory ? ' (PARTIAL — REVOLUT_PARTIAL_HISTORY)' : ''}`);
-    return { orders: allOrders, partialHistory, skippedWindows };
+    const totalWindows = completedWindows + skippedWindows.length;
+    console.log(`[revolutx] getHistoricalOrders: total ${allOrders.length} filled orders fetched | windows: ${completedWindows}/${totalWindows} OK${partialHistory ? ' (PARTIAL — REVOLUT_PARTIAL_HISTORY)' : ''}`);
+    return { orders: allOrders, partialHistory, skippedWindows, completedWindows };
   }
 }
 

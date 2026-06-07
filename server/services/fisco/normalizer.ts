@@ -533,9 +533,10 @@ export async function normalizeRevolutXOrders(
  */
 export function mergeAndSort(
   krakenOps: NormalizedOperation[],
-  revolutxOps: NormalizedOperation[]
+  revolutxOps: NormalizedOperation[],
+  ...extraOps: NormalizedOperation[][]
 ): NormalizedOperation[] {
-  const all = [...krakenOps, ...revolutxOps];
+  const all = [...krakenOps, ...revolutxOps, ...extraOps.flat()];
 
   // Deduplicate by exchange+externalId
   const seen = new Set<string>();

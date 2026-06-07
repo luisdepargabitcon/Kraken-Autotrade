@@ -44,11 +44,12 @@ export interface FifoDisposal {
 }
 
 export type FiscoCriticalErrorCode =
-  | "NEGATIVE_INVENTORY"      // sell reduces asset balance below zero
-  | "UNKNOWN_BASIS"           // sold quantity exceeds available lots
-  | "REQUIRES_EUR_PRICE"      // crypto-to-crypto trade without EUR value
-  | "SELL_WITHOUT_LOTS"       // sell operation with zero open lots
-  | "UNCLASSIFIED_OPERATION"; // operation type cannot be determined
+  | "NEGATIVE_INVENTORY"                    // sell reduces asset balance below zero
+  | "UNKNOWN_BASIS"                         // sold quantity exceeds available lots
+  | "REQUIRES_EUR_PRICE"                    // crypto-to-crypto trade without EUR value
+  | "SELL_WITHOUT_LOTS"                     // sell operation with zero open lots
+  | "UNCLASSIFIED_OPERATION"               // operation type cannot be determined
+  | "MISSING_OPENING_BALANCE_OR_PREHISTORY"; // sell before any buy — incomplete history
 
 export interface FiscoCriticalError {
   code: FiscoCriticalErrorCode;
@@ -109,6 +110,8 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
   const openLotsByAsset = new Map<string, FifoLot[]>();
   // Track running inventory to detect negative balances
   const inventoryByAsset = new Map<string, number>();
+  // Track assets that have ever had at least one BUY operation
+  const assetsWithAnyBuy = new Set<string>();
 
   let lotCounter = 0;
 
@@ -147,6 +150,8 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
         continue;
       }
 
+      assetsWithAnyBuy.add(op.asset);
+
       const lot: FifoLot = {
         id: `LOT-${++lotCounter}`,
         operationIdx: i,
@@ -179,8 +184,16 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
       // Check inventory before selling
       const currentInv = inventoryByAsset.get(op.asset) || 0;
       if (currentInv <= 1e-10) {
-        addCritical("SELL_WITHOUT_LOTS", op,
-          `Venta de ${op.amount.toFixed(8)} ${op.asset} sin ningún lote abierto (inventario actual: ${currentInv.toFixed(8)})`);
+        if (!assetsWithAnyBuy.has(op.asset)) {
+          // No buy ever seen for this asset — prehistory or missing opening balance
+          addCritical("MISSING_OPENING_BALANCE_OR_PREHISTORY", op,
+            `Venta de ${op.amount.toFixed(8)} ${op.asset} sin ninguna compra registrada previa. ` +
+            `El activo pudo adquirirse antes del histórico disponible o proceder de otro exchange. ` +
+            `Registra un saldo inicial (opening balance) para este activo.`);
+        } else {
+          addCritical("SELL_WITHOUT_LOTS", op,
+            `Venta de ${op.amount.toFixed(8)} ${op.asset} sin ningún lote abierto (inventario actual: ${currentInv.toFixed(8)})`);
+        }
       }
 
       let remainingToSell = op.amount;
