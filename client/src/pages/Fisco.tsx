@@ -155,6 +155,33 @@ interface RebuildRun {
   is_safe_for_report: boolean;
 }
 
+interface AuditSummary {
+  runId: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  isSafeForReport: boolean;
+  semaphore: "green" | "yellow" | "red";
+  operationsCount: number;
+  lotsCount: number;
+  disposalsCount: number;
+  criticalErrorsCount: number;
+  criticalErrorsSummaryByCode: Record<string, number>;
+  criticalErrorsSummaryByAsset: Record<string, number>;
+  firstCriticalErrors: FiscoCriticalError[];
+  requiresEurPriceCount: number;
+  requiresEurPriceAssets: string[];
+  negativeInventoryByAsset: Record<string, number>;
+  unknownBasisByAsset: Record<string, number>;
+  sellWithoutLotsByAsset: Record<string, number>;
+  operationsByExchange: Record<string, number>;
+  operationsByAsset: Record<string, number>;
+  operationsByType: Record<string, number>;
+  dateRange: { from: string | null; to: string | null };
+  revolutRateLimitWarnings: boolean;
+  recommendation: string[];
+}
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -383,6 +410,7 @@ export default function Fisco() {
   // Rebuild state
   const [rebuildConfirm, setRebuildConfirm] = useState<null | "dry_run" | "commit">(null);
   const [rebuildMode, setRebuildMode] = useState<"dry_run" | "commit">("dry_run");
+  const [showAuditPanel, setShowAuditPanel] = useState(false);
 
   // Anexo filters
   const [anexoAsset, setAnexoAsset] = useState("");
@@ -554,6 +582,15 @@ export default function Fisco() {
     refetchOnWindowFocus: false,
     retry: false,
     staleTime: 60_000,
+  });
+
+  // --- Audit summary (latest dry-run) ---
+  const auditSummaryQ = useQuery<AuditSummary>({
+    queryKey: ["/api/fisco/rebuild/runs/latest/audit-summary"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "rebuild",
+    staleTime: 30_000,
   });
 
   // --- Rebuild runs history ---
@@ -1608,6 +1645,37 @@ export default function Fisco() {
                     Error: {runRebuild.error.message}
                   </div>
                 )}
+
+                {/* Audit buttons */}
+                {auditSummaryQ.data && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className={`text-lg ${auditSummaryQ.data.semaphore === "green" ? "" : auditSummaryQ.data.semaphore === "yellow" ? "" : ""}`}>
+                      {auditSummaryQ.data.semaphore === "green" ? "🟢" : auditSummaryQ.data.semaphore === "yellow" ? "🟡" : "🔴"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {auditSummaryQ.data.criticalErrorsCount} error(es) crítico(s) · {auditSummaryQ.data.operationsCount} ops
+                    </span>
+                    <Button
+                      size="sm" variant="outline"
+                      className="ml-auto h-7 text-xs gap-1.5 border-blue-500/40 text-blue-400 hover:bg-blue-500/10"
+                      onClick={() => { setShowAuditPanel(true); auditSummaryQ.refetch(); }}
+                    >
+                      <FileWarning className="h-3.5 w-3.5" /> Ver informe dry-run
+                    </Button>
+                    <Button
+                      size="sm" variant="outline"
+                      className="h-7 text-xs gap-1.5 border-border"
+                      onClick={() => {
+                        const blob = new Blob([JSON.stringify(auditSummaryQ.data, null, 2)], { type: "application/json" });
+                        const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+                        a.download = `fisco-audit-${auditSummaryQ.data!.runId.slice(0,8)}.json`;
+                        a.click(); URL.revokeObjectURL(a.href);
+                      }}
+                    >
+                      <Download className="h-3.5 w-3.5" /> Descargar JSON
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1681,6 +1749,143 @@ export default function Fisco() {
           </TabsContent>
 
         </Tabs>
+
+        {/* ========== MODAL: AUDIT REPORT ========== */}
+        {showAuditPanel && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowAuditPanel(false)}>
+            <div className="bg-background border border-border rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
+                <h3 className="text-base font-semibold flex items-center gap-2">
+                  {auditSummaryQ.data?.semaphore === "green" ? "🟢" : auditSummaryQ.data?.semaphore === "yellow" ? "🟡" : "🔴"}
+                  Informe Dry-Run FISCO
+                </h3>
+                <Button variant="ghost" size="sm" onClick={() => setShowAuditPanel(false)}><X className="h-4 w-4" /></Button>
+              </div>
+
+              {auditSummaryQ.isLoading ? (
+                <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : auditSummaryQ.data ? (
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+                  {/* KPIs */}
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    {[
+                      ["Operaciones", auditSummaryQ.data.operationsCount],
+                      ["Lotes", auditSummaryQ.data.lotsCount],
+                      ["Disposals", auditSummaryQ.data.disposalsCount],
+                      ["Errores críticos", auditSummaryQ.data.criticalErrorsCount],
+                    ].map(([label, val]) => (
+                      <div key={label as string} className={`rounded border p-2 ${label === "Errores críticos" && (val as number) > 0 ? "border-red-500/40 bg-red-500/5" : "border-border bg-card"}`}>
+                        <div className="text-muted-foreground">{label}</div>
+                        <div className={`font-bold font-mono text-sm ${label === "Errores críticos" && (val as number) > 0 ? "text-red-400" : ""}`}>{(val as number).toLocaleString("es-ES")}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Rango de fechas + exchanges */}
+                  <div className="flex flex-wrap gap-3 text-muted-foreground">
+                    {auditSummaryQ.data.dateRange.from && (
+                      <span>📅 {fmtDateShort(auditSummaryQ.data.dateRange.from)} → {fmtDateShort(auditSummaryQ.data.dateRange.to)}</span>
+                    )}
+                    {Object.entries(auditSummaryQ.data.operationsByExchange).map(([ex, cnt]) => (
+                      <span key={ex} className="bg-muted/30 px-2 py-0.5 rounded">{ex}: {cnt} ops</span>
+                    ))}
+                    {auditSummaryQ.data.revolutRateLimitWarnings && (
+                      <span className="text-yellow-400">⚠ REVOLUT_PARTIAL_HISTORY</span>
+                    )}
+                  </div>
+
+                  {/* Errores por código */}
+                  {Object.keys(auditSummaryQ.data.criticalErrorsSummaryByCode).length > 0 && (
+                    <div>
+                      <div className="font-semibold text-red-400 mb-1">Errores por tipo</div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(auditSummaryQ.data.criticalErrorsSummaryByCode).map(([code, cnt]) => (
+                          <span key={code} className="bg-red-500/10 border border-red-500/30 text-red-300 px-2 py-0.5 rounded font-mono">{code}: {cnt}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Activos afectados */}
+                  {Object.keys(auditSummaryQ.data.criticalErrorsSummaryByAsset).length > 0 && (
+                    <div>
+                      <div className="font-semibold text-orange-400 mb-1">Activos afectados</div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(auditSummaryQ.data.criticalErrorsSummaryByAsset).sort((a,b) => b[1]-a[1]).map(([asset, cnt]) => (
+                          <span key={asset} className="bg-orange-500/10 border border-orange-500/30 text-orange-300 px-2 py-0.5 rounded">{asset}: {cnt}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* requiresEurPrice */}
+                  {auditSummaryQ.data.requiresEurPriceCount > 0 && (
+                    <div className="bg-yellow-500/5 border border-yellow-500/30 rounded p-2">
+                      <div className="font-semibold text-yellow-400 mb-1">⚠ Sin precio EUR ({auditSummaryQ.data.requiresEurPriceCount} ops)</div>
+                      <div className="text-muted-foreground">Activos: {auditSummaryQ.data.requiresEurPriceAssets.join(", ") || "—"}</div>
+                    </div>
+                  )}
+
+                  {/* Primeros errores */}
+                  {auditSummaryQ.data.firstCriticalErrors.length > 0 && (
+                    <div>
+                      <div className="font-semibold text-muted-foreground mb-1">Primeros {auditSummaryQ.data.firstCriticalErrors.length} errores</div>
+                      <div className="space-y-1 font-mono max-h-40 overflow-y-auto">
+                        {auditSummaryQ.data.firstCriticalErrors.map((e, i) => (
+                          <div key={i} className="text-red-300 leading-tight">
+                            <span className="text-red-500 font-bold">[{e.code}]</span>
+                            {e.asset ? <span className="text-orange-400"> {e.asset}</span> : null}
+                            {e.executedAt ? <span className="text-muted-foreground"> {fmtDateShort(e.executedAt)}</span> : null}
+                            {" — "}{e.detail}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recomendaciones */}
+                  <div>
+                    <div className="font-semibold mb-1">Recomendaciones</div>
+                    <div className="space-y-1">
+                      {auditSummaryQ.data.recommendation.map((r, i) => (
+                        <div key={i} className={`rounded p-2 border ${r.startsWith("✓") ? "border-green-500/30 bg-green-500/5 text-green-300" : "border-yellow-500/30 bg-yellow-500/5 text-yellow-200"}`}>
+                          {r}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Ops por tipo */}
+                  <div className="flex flex-wrap gap-2 text-muted-foreground">
+                    {Object.entries(auditSummaryQ.data.operationsByType).map(([t, c]) => (
+                      <span key={t} className="bg-muted/20 border border-border px-2 py-0.5 rounded">{t}: {c}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+                  No hay dry-run completado. Ejecuta una simulación primero.
+                </div>
+              )}
+
+              <div className="p-3 border-t border-border shrink-0 flex justify-between items-center">
+                <span className="text-xs text-muted-foreground font-mono">{auditSummaryQ.data?.runId?.slice(0, 16) ?? ""}</span>
+                {auditSummaryQ.data && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(auditSummaryQ.data, null, 2)], { type: "application/json" });
+                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+                      a.download = `fisco-audit-${auditSummaryQ.data!.runId.slice(0,8)}.json`;
+                      a.click(); URL.revokeObjectURL(a.href);
+                    }}
+                  >
+                    <Download className="h-3.5 w-3.5" /> Descargar JSON
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ========== MODAL: LOT DETAILS ========== */}
         {showLotModal && selectedAssetForLots && (

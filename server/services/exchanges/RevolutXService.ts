@@ -1093,25 +1093,31 @@ export class RevolutXService implements IExchangeService {
     endMs?: number;
     symbols?: string;
     states?: string[];
-  }): Promise<Array<{
-    id: string;
-    client_order_id?: string;
-    symbol: string;
-    side: 'buy' | 'sell';
-    type: string;
-    quantity: number;
-    filled_quantity: number;
-    average_fill_price: number;
-    total_fee: number;
-    status: string;
-    created_date: number;
-    filled_date?: number;
-  }>> {
+  }): Promise<{
+    orders: Array<{
+      id: string;
+      client_order_id?: string;
+      symbol: string;
+      side: 'buy' | 'sell';
+      type: string;
+      quantity: number;
+      filled_quantity: number;
+      average_fill_price: number;
+      total_fee: number;
+      status: string;
+      created_date: number;
+      filled_date?: number;
+    }>;
+    partialHistory: boolean;
+    skippedWindows: string[];
+  }> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
     const DEFAULT_START = new Date('2025-01-01T00:00:00Z').getTime();
     const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-    const RATE_LIMIT_DELAY = 500;
+    // Per-page/window RL retry delays (ms): 10s → 30s → 60s → 120s
+    const REVOLUT_RL_DELAYS = [10_000, 30_000, 60_000, 120_000];
+    const INTER_PAGE_DELAY_MS = 1_000;
 
     const startMs = params?.startMs || DEFAULT_START;
     const endMs = params?.endMs || Date.now();
@@ -1135,6 +1141,8 @@ export class RevolutXService implements IExchangeService {
 
     const seenIds = new Set<string>();
     let windowStart = startMs;
+    let partialHistory = false;
+    const skippedWindows: string[] = [];
 
     console.log(`[revolutx] getHistoricalOrders: fetching from ${new Date(startMs).toISOString()} to ${new Date(endMs).toISOString()}`);
 
@@ -1142,6 +1150,7 @@ export class RevolutXService implements IExchangeService {
       const windowEnd = Math.min(windowStart + ONE_WEEK_MS, endMs);
       let cursor: string | undefined;
       let pageCount = 0;
+      let windowFailed = false;
 
       do {
         const queryParams: Record<string, string | number | undefined> = {
@@ -1161,91 +1170,123 @@ export class RevolutXService implements IExchangeService {
         const fullUrl = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`;
         const headers = this.getHeaders('GET', path, queryString, '');
 
-        try {
-          const response = await fetch(fullUrl, { headers });
+        // Per-page RL retry — keeps cursor/window unchanged, never resets
+        let rlAttempt = 0;
+        let pageFetched = false;
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`[revolutx] getHistoricalOrders error: ${response.status} ${errorText}`);
-            // If we get a transient error, skip this window
+        while (true) {
+          try {
+            const response = await fetch(fullUrl, { headers });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              const isRL = response.status === 429;
+              if (isRL && rlAttempt < REVOLUT_RL_DELAYS.length) {
+                const delay = REVOLUT_RL_DELAYS[rlAttempt];
+                console.warn(`[revolutx] Rate limit on window ${new Date(windowStart).toISOString()}. Retry ${rlAttempt + 1}/${REVOLUT_RL_DELAYS.length} in ${delay / 1000}s…`);
+                await new Promise(r => setTimeout(r, delay));
+                rlAttempt++;
+                continue;
+              }
+              console.error(`[revolutx] getHistoricalOrders error: ${response.status} ${errorText}`);
+              windowFailed = true;
+              break;
+            }
+
+            const data = await response.json() as any;
+            const orders = Array.isArray(data) ? data : (data.data || data.orders || data.items || []);
+
+            for (const o of orders) {
+              const orderId = o.id || o.order_id || o.venue_order_id;
+              if (!orderId || seenIds.has(orderId)) continue;
+              seenIds.add(orderId);
+
+              const side = (o.side || '').toLowerCase();
+              if (side !== 'buy' && side !== 'sell') continue;
+
+              const filledQty = parseFloat(o.filled_quantity || o.filled_size || o.executed_size || '0');
+              const avgPrice = parseFloat(o.average_fill_price || o.avg_fill_price || o.average_price || '0');
+              const qty = parseFloat(o.quantity || o.size || o.base_size || '0');
+
+              const createdDate = typeof o.created_date === 'number' ? o.created_date :
+                (typeof o.created_date === 'string' ? (Number(o.created_date) || new Date(o.created_date).getTime()) : 0);
+              const filledDate = o.filled_date ?
+                (typeof o.filled_date === 'number' ? o.filled_date :
+                  (typeof o.filled_date === 'string' ? (Number(o.filled_date) || new Date(o.filled_date).getTime()) : undefined))
+                : undefined;
+
+              const totalFee = parseFloat(
+                o.total_fee ?? o.fee_amount ?? o.fee ?? o.commission ?? o.fees?.total_value ?? '0'
+              ) || 0;
+
+              allOrders.push({
+                id: orderId,
+                client_order_id: o.client_order_id,
+                symbol: o.symbol || '',
+                side: side as 'buy' | 'sell',
+                type: o.type || 'unknown',
+                quantity: qty,
+                filled_quantity: filledQty,
+                average_fill_price: avgPrice,
+                total_fee: totalFee,
+                status: (o.status || o.state || '').toLowerCase(),
+                created_date: createdDate,
+                filled_date: filledDate,
+              });
+            }
+
+            pageCount++;
+            pageFetched = true;
+
+            cursor = data?.metadata?.next_cursor ||
+              data?.metadata?.nextCursor ||
+              data?.next_cursor ||
+              data?.nextCursor ||
+              undefined;
+
+            break;
+          } catch (error: any) {
+            const isRL = error.message?.includes("429") || error.message?.toLowerCase().includes("rate limit");
+            if (isRL && rlAttempt < REVOLUT_RL_DELAYS.length) {
+              const delay = REVOLUT_RL_DELAYS[rlAttempt];
+              console.warn(`[revolutx] Exception rate limit on window ${new Date(windowStart).toISOString()}. Retry ${rlAttempt + 1}/${REVOLUT_RL_DELAYS.length} in ${delay / 1000}s…`);
+              await new Promise(r => setTimeout(r, delay));
+              rlAttempt++;
+              continue;
+            }
+            console.error(`[revolutx] getHistoricalOrders exception in window ${new Date(windowStart).toISOString()}: ${error.message}`);
+            windowFailed = true;
             break;
           }
-
-          const data = await response.json() as any;
-          const orders = Array.isArray(data) ? data : (data.data || data.orders || data.items || []);
-
-          for (const o of orders) {
-            const orderId = o.id || o.order_id || o.venue_order_id;
-            if (!orderId || seenIds.has(orderId)) continue;
-            seenIds.add(orderId);
-
-            const side = (o.side || '').toLowerCase();
-            if (side !== 'buy' && side !== 'sell') continue;
-
-            const filledQty = parseFloat(o.filled_quantity || o.filled_size || o.executed_size || '0');
-            const avgPrice = parseFloat(o.average_fill_price || o.avg_fill_price || o.average_price || '0');
-            const qty = parseFloat(o.quantity || o.size || o.base_size || '0');
-
-            // Parse timestamps
-            const createdDate = typeof o.created_date === 'number' ? o.created_date :
-              (typeof o.created_date === 'string' ? (Number(o.created_date) || new Date(o.created_date).getTime()) : 0);
-            const filledDate = o.filled_date ?
-              (typeof o.filled_date === 'number' ? o.filled_date :
-                (typeof o.filled_date === 'string' ? (Number(o.filled_date) || new Date(o.filled_date).getTime()) : undefined))
-              : undefined;
-
-            const totalFee = parseFloat(
-              o.total_fee ?? o.fee_amount ?? o.fee ?? o.commission ?? o.fees?.total_value ?? '0'
-            ) || 0;
-
-            allOrders.push({
-              id: orderId,
-              client_order_id: o.client_order_id,
-              symbol: o.symbol || '',
-              side: side as 'buy' | 'sell',
-              type: o.type || 'unknown',
-              quantity: qty,
-              filled_quantity: filledQty,
-              average_fill_price: avgPrice,
-              total_fee: totalFee,
-              status: (o.status || o.state || '').toLowerCase(),
-              created_date: createdDate,
-              filled_date: filledDate,
-            });
-          }
-
-          pageCount++;
-
-          // Extract cursor for next page
-          cursor = data?.metadata?.next_cursor ||
-            data?.metadata?.nextCursor ||
-            data?.next_cursor ||
-            data?.nextCursor ||
-            undefined;
-
-        } catch (error: any) {
-          console.error(`[revolutx] getHistoricalOrders exception in window ${new Date(windowStart).toISOString()}: ${error.message}`);
-          break;
         }
 
+        if (windowFailed || !pageFetched) break;
+
         if (cursor) {
-          await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+          await new Promise(resolve => setTimeout(resolve, INTER_PAGE_DELAY_MS));
         }
       } while (cursor);
 
-      if (pageCount > 0) {
+      if (windowFailed) {
+        const label = `${new Date(windowStart).toISOString()} → ${new Date(windowEnd).toISOString()}`;
+        console.warn(`[revolutx] REVOLUT_PARTIAL_HISTORY: Skipped window ${label} after exhausted retries`);
+        partialHistory = true;
+        skippedWindows.push(label);
+      } else if (pageCount > 0) {
         console.log(`[revolutx] Window ${new Date(windowStart).toISOString()} → ${new Date(windowEnd).toISOString()}: ${pageCount} pages, total orders so far: ${allOrders.length}`);
       }
 
       windowStart = windowEnd;
-      // Small delay between windows to respect rate limits
       if (windowStart < endMs) {
-        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+        await new Promise(resolve => setTimeout(resolve, INTER_PAGE_DELAY_MS));
       }
     }
 
-    console.log(`[revolutx] getHistoricalOrders: total ${allOrders.length} filled orders fetched`);
-    return allOrders;
+    if (partialHistory) {
+      console.warn(`[revolutx] REVOLUT_PARTIAL_HISTORY: ${skippedWindows.length} window(s) failed: ${skippedWindows.join(', ')}`);
+    }
+    console.log(`[revolutx] getHistoricalOrders: total ${allOrders.length} filled orders fetched${partialHistory ? ' (PARTIAL — REVOLUT_PARTIAL_HISTORY)' : ''}`);
+    return { orders: allOrders, partialHistory, skippedWindows };
   }
 }
 

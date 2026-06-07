@@ -100,11 +100,13 @@ export class FiscoRebuildService {
       console.log(`[fisco/rebuild] Backup complete: ${backupId}`);
 
       // Step 2: Fetch and normalize
-      const ops = await this.fetchAndNormalize(exchangeFilter, fullSync);
+      const { ops, partialWarnings } = await this.fetchAndNormalize(exchangeFilter, fullSync);
       console.log(`[fisco/rebuild] Normalized ${ops.length} operations`);
 
       // Step 3: FIFO
       const fifo = runFifo(ops);
+      // Inject partial-history warnings before validation
+      fifo.warnings.push(...partialWarnings);
       const validationErrors = validateFifoResult(fifo);
       fifo.criticalErrors.push(...validationErrors.filter(e =>
         !fifo.criticalErrors.some(x => x.code === e.code && x.externalId === e.externalId)
@@ -270,7 +272,7 @@ export class FiscoRebuildService {
   async fetchAndNormalize(
     exchangeFilter: string | null | undefined,
     fullSync = true
-  ): Promise<NormalizedOperation[]> {
+  ): Promise<{ ops: NormalizedOperation[]; partialWarnings: string[] }> {
     const doKraken = !exchangeFilter || exchangeFilter === "kraken";
     const doRevolut = !exchangeFilter || exchangeFilter === "revolutx";
 
@@ -310,17 +312,24 @@ export class FiscoRebuildService {
       }
     }
 
+    const partialWarnings: string[] = [];
+
     if (doRevolut) {
       try {
-        const orders = await revolutXService.getHistoricalOrders({ states: ["filled"] });
-        revolutOps = await normalizeRevolutXOrders(orders);
-        console.log(`[fisco/rebuild] RevolutX: ${orders.length} orders → ${revolutOps.length} ops`);
+        const result = await revolutXService.getHistoricalOrders({ states: ["filled"] });
+        revolutOps = await normalizeRevolutXOrders(result.orders);
+        console.log(`[fisco/rebuild] RevolutX: ${result.orders.length} orders → ${revolutOps.length} ops`);
+        if (result.partialHistory) {
+          const w = `REVOLUT_PARTIAL_HISTORY: ${result.skippedWindows.length} ventana(s) fallidas: ${result.skippedWindows.join('; ')}`;
+          console.warn(`[fisco/rebuild] ${w}`);
+          partialWarnings.push(w);
+        }
       } catch (e: any) {
         console.warn(`[fisco/rebuild] RevolutX fetch failed (non-fatal): ${e.message}`);
       }
     }
 
-    return mergeAndSort(krakenOps, revolutOps);
+    return { ops: mergeAndSort(krakenOps, revolutOps), partialWarnings };
   }
 
   // ============================================================

@@ -286,12 +286,16 @@ export class FiscoSyncService {
 
     try {
       // Obtener órdenes históricas de RevolutX
-      const orders = await revolutXService.getHistoricalOrders({
+      const revolutResult = await revolutXService.getHistoricalOrders({
         startMs: new Date('2020-01-01').getTime(),
         endMs: Date.now(),
         states: ['filled']
       });
-      
+      const orders = revolutResult.orders;
+      if (revolutResult.partialHistory) {
+        console.warn(`[FiscoSyncService] REVOLUT_PARTIAL_HISTORY: ${revolutResult.skippedWindows.join(', ')}`);
+      }
+
       // Normalizar operaciones
       const normalizedOps = await normalizeRevolutXOrders(orders);
       

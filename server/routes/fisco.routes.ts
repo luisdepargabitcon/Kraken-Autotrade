@@ -107,12 +107,13 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         results.revolutx.error = "RevolutX not initialized";
       } else {
         const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
-        const orders = await revolutXService.getHistoricalOrders({
+        const { orders: revolutOrders } = await revolutXService.getHistoricalOrders({
           startMs: twoWeeksAgo,
           states: ['filled'],
         });
+        const orders = revolutOrders;
 
-        const sampleOrders = orders.slice(0, 5).map(o => ({
+        const sampleOrders = orders.slice(0, 5).map((o: any) => ({
           id: o.id,
           symbol: o.symbol,
           side: o.side,
@@ -248,10 +249,11 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         console.log(`[fisco] Starting full RevolutX fetch (historical orders)${startMs ? ` from ${startParam}` : ''}...`);
         const startTime = Date.now();
 
-        const orders = await revolutXService.getHistoricalOrders({
+        const revolutResult = await revolutXService.getHistoricalOrders({
           startMs,
           states: ['filled'],
         });
+        const orders = revolutResult.orders;
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -418,7 +420,8 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       if (revolutXService.isInitialized()) {
         console.log("[fisco/run] Fetching RevolutX orders (FULL HISTORY)...");
         try {
-          revolutxOrders = await revolutXService.getHistoricalOrders({ states: ["filled"] });
+          const revolutResult = await revolutXService.getHistoricalOrders({ states: ["filled"] });
+          revolutxOrders = revolutResult.orders;
           console.log(`[fisco/run] RevolutX: ${revolutxOrders.length} orders`);
         } catch (revxErr: any) {
           console.error(`[fisco/run] RevolutX fetch failed: ${revxErr.message}`);
@@ -1121,6 +1124,44 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       if (mode !== "dry_run" && mode !== "commit") {
         return res.status(400).json({ error: "mode must be 'dry_run' or 'commit'" });
       }
+
+      // Guard: block commit if latest dry-run is unsafe
+      if (mode === "commit") {
+        const latestRuns = await pool.query(
+          `SELECT is_safe_for_report, critical_errors_count, errors_json
+           FROM fisco_rebuild_runs
+           WHERE mode = 'dry_run' AND status = 'completed_dry'
+           ORDER BY started_at DESC LIMIT 1`
+        );
+        if (latestRuns.rows.length === 0) {
+          return res.status(400).json({
+            error: "COMMIT_BLOCKED",
+            reason: "No completed dry-run found. Run a dry-run first.",
+          });
+        }
+        const latest = latestRuns.rows[0];
+        if (!latest.is_safe_for_report || latest.critical_errors_count > 0) {
+          return res.status(400).json({
+            error: "COMMIT_BLOCKED",
+            reason: `Latest dry-run has ${latest.critical_errors_count} critical error(s). Fix them before committing.`,
+            criticalErrors: latest.errors_json || [],
+          });
+        }
+        const requiresEurPrice = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM fisco_staging_operations so
+           JOIN fisco_rebuild_runs rr ON rr.id = so.rebuild_run_id
+           WHERE rr.mode = 'dry_run' AND rr.status = 'completed_dry'
+             AND so.requires_eur_price = TRUE
+           ORDER BY rr.started_at DESC LIMIT 1`
+        );
+        if (parseInt(requiresEurPrice.rows[0]?.cnt ?? '0') > 0) {
+          return res.status(400).json({
+            error: "COMMIT_BLOCKED",
+            reason: `Latest dry-run has ${requiresEurPrice.rows[0].cnt} operations with missing EUR price (REQUIRES_EUR_PRICE).`,
+          });
+        }
+      }
+
       const result = await fiscoRebuildService.rebuild({
         mode,
         triggeredBy: "ui_button",
@@ -1220,6 +1261,162 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         total: result.rows.length,
         requiresEurPriceCount: criticalCount,
         operations: result.rows,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/runs/latest/export
+   * Shorthand: exports staging operations for the latest dry-run.
+   */
+  app.get("/api/fisco/rebuild/runs/latest/export", async (_req, res) => {
+    try {
+      const runRow = await pool.query(
+        `SELECT id FROM fisco_rebuild_runs WHERE mode='dry_run' AND status='completed_dry'
+         ORDER BY started_at DESC LIMIT 1`
+      );
+      if (!runRow.rows[0]) return res.status(404).json({ error: "No completed dry-run found" });
+      const runId = runRow.rows[0].id;
+      const result = await pool.query(`
+        SELECT rebuild_run_id AS "runId", exchange, external_id AS "externalId",
+               op_type AS "opType", asset, amount::float, price_eur::float AS "priceEur",
+               total_eur::float AS "totalEur", fee_eur::float AS "feeEur",
+               counter_asset AS "counterAsset", pair, executed_at AS "executedAt",
+               requires_eur_price AS "requiresEurPrice"
+        FROM fisco_staging_operations WHERE rebuild_run_id = $1 ORDER BY executed_at ASC
+      `, [runId]);
+      return res.json({
+        runId, total: result.rows.length,
+        requiresEurPriceCount: result.rows.filter(r => r.requiresEurPrice).length,
+        operations: result.rows,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/rebuild/runs/latest/audit-summary
+   * Full diagnostic breakdown of the latest dry-run.
+   * Returns semaphore, grouped errors, affected assets, date range, recommendations.
+   */
+  app.get("/api/fisco/rebuild/runs/latest/audit-summary", async (_req, res) => {
+    try {
+      // ── 1. Get latest completed dry-run ──────────────────────────────
+      const runRow = await pool.query(
+        `SELECT * FROM fisco_rebuild_runs
+         WHERE mode='dry_run' AND status='completed_dry'
+         ORDER BY started_at DESC LIMIT 1`
+      );
+      if (!runRow.rows[0]) return res.status(404).json({ error: "No completed dry-run found" });
+      const run = runRow.rows[0];
+      const runId: string = run.id;
+      const criticalErrors: any[] = run.errors_json || [];
+
+      // ── 2. Aggregate critical errors ─────────────────────────────────
+      const byCode: Record<string, number> = {};
+      const byAsset: Record<string, number> = {};
+      for (const e of criticalErrors) {
+        byCode[e.code] = (byCode[e.code] || 0) + 1;
+        if (e.asset) byAsset[e.asset] = (byAsset[e.asset] || 0) + 1;
+      }
+
+      // Categorise root causes
+      const requiresEurPriceErrors = criticalErrors.filter(e => e.code === "REQUIRES_EUR_PRICE");
+      const negativeInventory = criticalErrors.filter(e => e.code === "NEGATIVE_INVENTORY");
+      const unknownBasis = criticalErrors.filter(e => e.code === "UNKNOWN_BASIS");
+      const sellWithoutLots = criticalErrors.filter(e => e.code === "SELL_WITHOUT_LOTS");
+      const unclassified = criticalErrors.filter(e => e.code === "UNCLASSIFIED_OPERATION");
+
+      const negativeByAsset: Record<string, number> = {};
+      for (const e of negativeInventory) negativeByAsset[e.asset] = (negativeByAsset[e.asset] || 0) + 1;
+      const unknownByAsset: Record<string, number> = {};
+      for (const e of unknownBasis) unknownByAsset[e.asset] = (unknownByAsset[e.asset] || 0) + 1;
+      const sellNoLotByAsset: Record<string, number> = {};
+      for (const e of sellWithoutLots) sellNoLotByAsset[e.asset] = (sellNoLotByAsset[e.asset] || 0) + 1;
+
+      // ── 3. Staging operations stats ───────────────────────────────────
+      const [opsStats, exchangeStats, assetStats, typeStats, eurPriceStats, dateRange] =
+        await Promise.all([
+          pool.query(`SELECT COUNT(*) AS total FROM fisco_staging_operations WHERE rebuild_run_id=$1`, [runId]),
+          pool.query(`SELECT exchange, COUNT(*) AS cnt FROM fisco_staging_operations WHERE rebuild_run_id=$1 GROUP BY exchange`, [runId]),
+          pool.query(`SELECT asset, COUNT(*) AS cnt FROM fisco_staging_operations WHERE rebuild_run_id=$1 GROUP BY asset ORDER BY cnt DESC LIMIT 20`, [runId]),
+          pool.query(`SELECT op_type, COUNT(*) AS cnt FROM fisco_staging_operations WHERE rebuild_run_id=$1 GROUP BY op_type`, [runId]),
+          pool.query(`SELECT COUNT(*) AS cnt, array_agg(DISTINCT asset) AS assets FROM fisco_staging_operations WHERE rebuild_run_id=$1 AND requires_eur_price=TRUE`, [runId]),
+          pool.query(`SELECT MIN(executed_at) AS from_date, MAX(executed_at) AS to_date FROM fisco_staging_operations WHERE rebuild_run_id=$1`, [runId]),
+        ]);
+
+      const toObj = (rows: any[], keyCol: string, valCol: string) =>
+        Object.fromEntries(rows.map(r => [r[keyCol], parseInt(r[valCol])]));
+
+      // ── 4. Build recommendation ───────────────────────────────────────
+      const recommendations: string[] = [];
+      if (requiresEurPriceErrors.length > 0) {
+        const affectedPairs = [...new Set(requiresEurPriceErrors.map((e: any) => e.detail?.match(/\(([^)]+)\)/)?.[1]).filter(Boolean))];
+        recommendations.push(
+          `REQUIRES_EUR_PRICE (${requiresEurPriceErrors.length}): Operaciones cripto→cripto sin precio EUR. ` +
+          `Pares afectados: ${affectedPairs.join(", ") || "ver firstCriticalErrors"}. ` +
+          `Solución: CoinGecko debe tener histórico para esos activos en esas fechas, o introducir precios manuales.`
+        );
+      }
+      if (negativeInventory.length > 0) {
+        recommendations.push(
+          `NEGATIVE_INVENTORY (${negativeInventory.length}): Ventas antes de compras detectadas en ${Object.keys(negativeByAsset).join(", ")}. ` +
+          `Causa probable: historial incompleto (falta fullSync) o transferencias entre exchanges no registradas.`
+        );
+      }
+      if (unknownBasis.length > 0) {
+        recommendations.push(
+          `UNKNOWN_BASIS (${unknownBasis.length}): Ventas sin lote de compra en ${Object.keys(unknownByAsset).join(", ")}. ` +
+          `Causa: compras no importadas o activos recibidos externamente sin registro.`
+        );
+      }
+      if (sellWithoutLots.length > 0) {
+        recommendations.push(
+          `SELL_WITHOUT_LOTS (${sellWithoutLots.length}): Ventas sin ningún lote abierto en ${Object.keys(sellNoLotByAsset).join(", ")}.`
+        );
+      }
+      if (unclassified.length > 0) {
+        recommendations.push(`UNCLASSIFIED (${unclassified.length}): Operaciones con tipo desconocido — revisar normalizer.ts.`);
+      }
+      if (criticalErrors.length === 0) {
+        recommendations.push("✓ Sin errores críticos — puede proceder con mode=commit cuando esté listo.");
+      }
+
+      // Check RevolutX partial-history warning in warnings_json
+      const warnings: string[] = run.warnings_json || [];
+      const revolutPartial = warnings.some((w: string) => w.includes("REVOLUT_PARTIAL_HISTORY"));
+
+      return res.json({
+        runId,
+        status: run.status,
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+        isSafeForReport: run.is_safe_for_report,
+        operationsCount: run.operations_count,
+        lotsCount: run.lots_count,
+        disposalsCount: run.disposals_count,
+        criticalErrorsCount: run.critical_errors_count,
+        criticalErrorsSummaryByCode: byCode,
+        criticalErrorsSummaryByAsset: byAsset,
+        firstCriticalErrors: criticalErrors.slice(0, 10),
+        requiresEurPriceCount: parseInt(eurPriceStats.rows[0]?.cnt ?? '0'),
+        requiresEurPriceAssets: eurPriceStats.rows[0]?.assets ?? [],
+        negativeInventoryByAsset: negativeByAsset,
+        unknownBasisByAsset: unknownByAsset,
+        sellWithoutLotsByAsset: sellNoLotByAsset,
+        operationsByExchange: toObj(exchangeStats.rows, "exchange", "cnt"),
+        operationsByAsset: toObj(assetStats.rows, "asset", "cnt"),
+        operationsByType: toObj(typeStats.rows, "op_type", "cnt"),
+        dateRange: {
+          from: dateRange.rows[0]?.from_date ?? null,
+          to: dateRange.rows[0]?.to_date ?? null,
+        },
+        revolutRateLimitWarnings: revolutPartial,
+        recommendation: recommendations,
+        semaphore: run.is_safe_for_report && !revolutPartial ? "green" : criticalErrors.length > 0 ? "red" : "yellow",
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
