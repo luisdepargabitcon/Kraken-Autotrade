@@ -461,7 +461,11 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
 
       // Validation banner: uses committed_run context from annual-report response
       const cr = report.committed_run;
-      const isSafe = report.is_safe_for_report && (cr?.isSafeForReport ?? true);
+      const committedSafe =
+        cr?.status === "committed" &&
+        cr?.isSafeForReport === true &&
+        Number(cr?.criticalErrorsCount ?? 0) === 0;
+      const isSafe = committedSafe;
       const bannerColor  = isSafe ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
                                    : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
       const validationBanner = `
