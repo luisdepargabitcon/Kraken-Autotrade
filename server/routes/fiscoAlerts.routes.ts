@@ -369,6 +369,22 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
     }
   });
 
+  // GET /api/fisco/report/existing/html — returns text/html directly (no JSON wrapper)
+  app.get("/api/fisco/report/existing/html", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const exchange = req.query.exchange as string || "";
+      const reportContent = await generateExistingFiscalReport(year, exchange);
+      const filename = `Informe_Fiscal_${year}.html`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(reportContent);
+    } catch (error: any) {
+      console.error('[FISCO Alerts] Error getting existing HTML report:', error);
+      res.status(500).json({ error: error.message || "Failed to get existing report" });
+    }
+  });
+
   // ============================================================
   // UTILIDADES
   // ============================================================

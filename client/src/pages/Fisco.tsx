@@ -22,10 +22,24 @@ import { es } from "date-fns/locale";
 // Types
 // ============================================================
 
+interface CommittedRunContext {
+  runId: string;
+  status: string;
+  isSafeForReport: boolean;
+  criticalErrorsCount: number;
+  operationsCount: number;
+  lotsCount: number;
+  disposalsCount: number;
+  completedAt: string | null;
+}
+
 interface AnnualReportResponse {
   year: number;
   exchange_filter: string;
   last_sync: string | null;
+  is_safe_for_report: boolean;
+  critical_errors_count: number;
+  committed_run: CommittedRunContext | null;
   counters: { total_operations: number; pending_valuation: number };
   section_a: { year: number; ganancias_eur: number; perdidas_eur: number; total_eur: number };
   section_b: Array<{
@@ -263,10 +277,35 @@ function generateBit2MePDF(report: AnnualReportResponse) {
   const meta = `Generado: ${new Date().toLocaleString("es-ES")} | M\u00e9todo: FIFO | Fuentes: ${dataSourceLabel} | \u00daltima sincronizaci\u00f3n: ${report.last_sync ? fmtDateShort(report.last_sync) : "N/A"}`;
 
   // Page 1: Section A — Transmissions summary
+  // Validation banner using committed_run context from API response
+  const cr = report.committed_run;
+  const isSafe = report.is_safe_for_report !== false && (cr?.isSafeForReport !== false);
+  const bc = isSafe
+    ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
+    : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
+  const validationBanner = `
+    <div style="background:${bc.bg};border:2px solid ${bc.border};border-radius:8px;padding:14px 18px;margin-bottom:22px;">
+      <div style="font-weight:700;color:${bc.text};font-size:13px;margin-bottom:10px;">
+        ${isSafe ? '&#10003; Validaci\u00f3n FIFO correcta: sin errores cr\u00edticos. Informe apto para revisi\u00f3n fiscal.' : '&#9888; Informe con errores cr\u00edticos \u2014 no apto para revisi\u00f3n fiscal oficial.'}
+      </div>
+      <table style="font-size:11px;width:auto;border-collapse:collapse;">
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Run ID</td><td style="font-family:monospace;font-size:10px;">${cr?.runId ?? 'N/A'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Estado</td><td style="font-weight:600;color:${bc.badge}">${cr?.status ?? 'N/A'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">isSafeForReport</td><td>${isSafe ? 'true &#10003;' : 'false &#10007;'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Errores cr\u00edticos</td><td>${cr?.criticalErrorsCount ?? report.critical_errors_count ?? 0}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Operaciones</td><td>${cr?.operationsCount ?? 'N/A'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Lotes</td><td>${cr?.lotsCount ?? 'N/A'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Disposiciones</td><td>${cr?.disposalsCount ?? 'N/A'}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">\u00daltimo commit</td><td>${fmtDateShort(cr?.completedAt)}</td></tr>
+        <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Exchanges</td><td>${dataSourceLabel}</td></tr>
+      </table>
+    </div>`;
+
   const a = report.section_a;
   const pageA = `
     <div class="page">
       <div class="brand">${BRAND_LABEL}</div>
+      ${validationBanner}
       <h2>Resumen de ganancias y p\u00e9rdidas derivadas de las transmisiones de activos el ${y}</h2>
       <table>
         <tr><th>Origen de Datos</th><th>Cuenta</th><th colspan="3">Ganancias y p\u00e9rdidas de capital</th></tr>
@@ -335,6 +374,9 @@ function generateBit2MePDF(report: AnnualReportResponse) {
 
   // Page 3: Section C — Capital mobiliario
   const c = report.section_c;
+  const stakingNote = c.staking === 0
+    ? `<p style="color:#64748b;font-size:11px;margin-top:8px;">No constan operaciones de staking en el ejercicio ${y}.</p>`
+    : '';
   const pageC = `
     <div class="page">
       <div class="brand">${BRAND_LABEL}</div>
@@ -349,6 +391,7 @@ function generateBit2MePDF(report: AnnualReportResponse) {
       <table>
         <tr class="total-row"><td>Total de rendimiento</td><td>${eur(c.total_eur)}</td></tr>
       </table>
+      ${stakingNote}
       <div class="footer-page">Resumen de rendimiento de capital mobiliario en ${y} \u2014 P\u00e1gina 3</div>
     </div>`;
 

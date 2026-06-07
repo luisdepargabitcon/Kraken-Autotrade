@@ -824,103 +824,53 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       };
 
       // --- Section D: Visión general de cartera (balance 01/01 vs 31/12) ---
-      // Include ALL exchange assets, not just bot operations
-      // Get current balances from exchanges to ensure all assets are included
-      let allExchangeAssets: string[] = [];
-      
-      try {
-        // Get Kraken balance — normalize raw tickers (EUR.HOLD → EUR, XXBT → BTC, etc.)
-        if (krakenService.isInitialized()) {
-          const krakenBalance = await krakenService.getBalance();
-          allExchangeAssets.push(...Object.keys(krakenBalance).map(k => krakenService.normalizeAsset(k)));
-        }
-        
-        // Get RevolutX balance (if available)
-        if (revolutXService.isInitialized()) {
-          try {
-            const revolutxBalance = await revolutXService.getBalance();
-            allExchangeAssets.push(...Object.keys(revolutxBalance));
-          } catch (e) {
-            console.log('[fisco] RevolutX balance not available, using operations only');
-          }
-        }
-      } catch (e) {
-        console.log('[fisco] Could not fetch live balances, using operations only');
-      }
-      
-      // Get assets from operations as fallback
-      const opsAssetsQ = await pool.query(`
-        SELECT DISTINCT asset FROM fisco_operations
+      // saldo_fin is sourced from fisco_lots.remaining_qty (FIFO ground truth).
+      // This avoids negative balances for stablecoins (USDC etc.) which are not
+      // tracked as FIFO lots. Only assets with actual FIFO lots are shown.
+      const lotsBalanceQ = await pool.query(`
+        SELECT fl.asset,
+               SUM(fl.remaining_qty)::numeric AS saldo_fin,
+               ARRAY_AGG(DISTINCT fo.exchange) AS exchanges
+        FROM fisco_lots fl
+        JOIN fisco_operations fo ON fo.id = fl.operation_id
+        WHERE fl.remaining_qty > 0
+        GROUP BY fl.asset
+        ORDER BY fl.asset
       `);
-      const opsAssets = opsAssetsQ.rows.map((r: any) => r.asset);
-      
-      // Combine and deduplicate all assets
-      const allAssets = [...new Set([...allExchangeAssets, ...opsAssets])].sort();
-      
-      // Compute running balances from all operations
-      const balanceQ = await pool.query(`
-        SELECT asset, exchange, op_type, amount::numeric as amount, executed_at
+
+      // Per-asset year flows from official operations
+      const yearFlowsQ = await pool.query(`
+        SELECT asset, exchange, op_type, amount::numeric AS amount
         FROM fisco_operations
-        WHERE executed_at < $1::date + interval '1 year'
+        WHERE EXTRACT(YEAR FROM executed_at) = $1
+          AND op_type IN ('trade_buy','deposit','staking','reward','distribution','trade_sell','withdrawal')
           ${exchWhereOps}
-        ORDER BY executed_at ASC
-      `, [`${year}-01-01`]);
+      `, [year]);
 
-      // Build per-asset balances - initialize for ALL assets
-      const assetBalances = new Map<string, {
-        saldo_inicio: number;
-        entradas: number;
-        salidas: number;
-        saldo_fin: number;
-        exchanges: Set<string>;
-      }>();
-      
-      // Initialize all assets to ensure they appear even with zero activity
-      for (const asset of allAssets) {
-        assetBalances.set(asset, { saldo_inicio: 0, entradas: 0, salidas: 0, saldo_fin: 0, exchanges: new Set() });
-      }
-
-      const yearStart = new Date(`${year}-01-01T00:00:00Z`);
-      const yearEnd = new Date(`${year + 1}-01-01T00:00:00Z`);
-
-      for (const r of balanceQ.rows) {
-        const asset = r.asset;
-        if (!assetBalances.has(asset)) {
-          assetBalances.set(asset, { saldo_inicio: 0, entradas: 0, salidas: 0, saldo_fin: 0, exchanges: new Set() });
-        }
-        const b = assetBalances.get(asset)!;
-        b.exchanges.add(r.exchange);
+      const yearInflows = new Map<string, number>();
+      const yearOutflows = new Map<string, number>();
+      const yearExchanges = new Map<string, Set<string>>();
+      for (const r of yearFlowsQ.rows) {
+        const isIn = ['trade_buy', 'deposit', 'staking', 'reward', 'distribution'].includes(r.op_type);
+        const isOut = ['trade_sell', 'withdrawal'].includes(r.op_type);
         const amt = parseFloat(r.amount);
-        const date = new Date(r.executed_at);
-        const isInflow = ['trade_buy', 'deposit', 'staking', 'reward', 'distribution'].includes(r.op_type);
-        const isOutflow = ['trade_sell', 'withdrawal'].includes(r.op_type);
-
-        if (date < yearStart) {
-          // Before year: contributes to saldo_inicio
-          if (isInflow) b.saldo_inicio += amt;
-          else if (isOutflow) b.saldo_inicio -= amt;
-        } else if (date < yearEnd) {
-          // During year
-          if (isInflow) b.entradas += amt;
-          else if (isOutflow) b.salidas += amt;
-        }
+        if (isIn) yearInflows.set(r.asset, (yearInflows.get(r.asset) ?? 0) + amt);
+        if (isOut) yearOutflows.set(r.asset, (yearOutflows.get(r.asset) ?? 0) + amt);
+        if (!yearExchanges.has(r.asset)) yearExchanges.set(r.asset, new Set());
+        yearExchanges.get(r.asset)!.add(r.exchange);
       }
 
-      // Compute saldo_fin
       const sectionD: any[] = [];
-      for (const [asset, b] of assetBalances) {
-        b.saldo_fin = b.saldo_inicio + b.entradas - b.salidas;
-        // Only include if there's any activity or non-zero balance
-        if (Math.abs(b.saldo_inicio) > 1e-10 || Math.abs(b.entradas) > 1e-10 || Math.abs(b.salidas) > 1e-10) {
-          sectionD.push({
-            asset,
-            exchanges: Array.from(b.exchanges),
-            saldo_inicio: Math.round(b.saldo_inicio * 1e8) / 1e8,
-            entradas: Math.round(b.entradas * 1e8) / 1e8,
-            salidas: Math.round(b.salidas * 1e8) / 1e8,
-            saldo_fin: Math.round(b.saldo_fin * 1e8) / 1e8,
-          });
-        }
+      for (const r of lotsBalanceQ.rows) {
+        const saldo_fin = Math.round(parseFloat(r.saldo_fin) * 1e8) / 1e8;
+        const entradas  = Math.round((yearInflows.get(r.asset) ?? 0) * 1e8) / 1e8;
+        const salidas   = Math.round((yearOutflows.get(r.asset) ?? 0) * 1e8) / 1e8;
+        // Backcompute saldo_inicio from FIFO ground-truth saldo_fin (never negative)
+        const saldo_inicio = Math.max(0, Math.round((saldo_fin - entradas + salidas) * 1e8) / 1e8);
+        const exchFromLots: string[] = r.exchanges ?? [];
+        const exchFromOps = Array.from(yearExchanges.get(r.asset) ?? []);
+        const exchanges = [...new Set([...exchFromLots, ...exchFromOps])];
+        sectionD.push({ asset: r.asset, exchanges, saldo_inicio, entradas, salidas, saldo_fin });
       }
       sectionD.sort((a, b) => a.asset.localeCompare(b.asset));
 
