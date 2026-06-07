@@ -143,12 +143,18 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
       continue;
     }
 
-    // --- BUY: Create a new FIFO lot ---
-    if (op.opType === "trade_buy") {
-      if (!op.totalEur || !op.priceEur) {
+    // --- BUY / DEPOSIT / STAKING: Create a new FIFO lot ---
+    // deposit: crypto received from external wallet — cost basis = EUR value at deposit date
+    // staking: crypto earned as reward — cost basis = EUR value at receipt (income taxed at receipt)
+    if (op.opType === "trade_buy" || op.opType === "deposit" || op.opType === "staking") {
+      if (op.opType === "trade_buy" && (!op.totalEur || !op.priceEur)) {
         warnings.push(`[${op.exchange}:${op.externalId}] Compra sin precio EUR, omitida del FIFO`);
         continue;
       }
+      // For deposit/staking without EUR price (price lookup failed): still create lot with 0 cost
+      // This tracks inventory correctly even if cost basis is unknown
+      const costTotal = (op.totalEur ?? 0) + op.feeEur;
+      const unitCost = op.amount > 0 ? costTotal / op.amount : 0;
 
       assetsWithAnyBuy.add(op.asset);
 
@@ -158,8 +164,8 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
         asset: op.asset,
         quantity: op.amount,
         remainingQty: op.amount,
-        costEur: op.totalEur + op.feeEur,
-        unitCostEur: (op.totalEur + op.feeEur) / op.amount,
+        costEur: costTotal,
+        unitCostEur: unitCost,
         feeEur: op.feeEur,
         acquiredAt: op.executedAt,
         isClosed: false,

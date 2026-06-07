@@ -161,14 +161,26 @@ export async function normalizeKrakenLedger(
 
     else if (firstEntry.type === "deposit") {
       const asset = normalizeAsset(firstEntry.asset);
+      const totalAmt = group.reduce((s, e) => s + Math.abs(e.amount), 0);
+      const totalFee = group.reduce((s, e) => s + Math.abs(e.fee), 0);
+      // For crypto deposits: fetch historical EUR price so FIFO can create a lot with known cost basis
+      let priceEur: number | null = null;
+      let totalEur: number | null = null;
+      if (isCrypto(asset) && totalAmt > 0) {
+        const eurPrice = await getCryptoEurPriceHistorical(asset, execDate);
+        if (eurPrice !== null) {
+          priceEur = eurPrice;
+          totalEur = eurPrice * totalAmt;
+        }
+      }
       ops.push({
         exchange: "kraken",
         externalId: refid,
         opType: "deposit",
         asset,
-        amount: Math.abs(firstEntry.amount),
-        priceEur: null, totalEur: null,
-        feeEur: await toEurAmt(Math.abs(firstEntry.fee), asset, execDate),
+        amount: totalAmt,
+        priceEur, totalEur,
+        feeEur: await toEurAmt(totalFee, asset, execDate),
         counterAsset: null, pair: null,
         executedAt: execDate, rawData: group,
       });
@@ -257,16 +269,26 @@ export async function normalizeKrakenLedger(
     }
 
     else if (firstEntry.type === "staking" || firstEntry.type === "reward") {
-      // staking = periodic staking reward; reward = earn reward (both are income, no disposal)
+      // staking = periodic staking reward; reward = earn reward (income, creates lot at receipt value)
       const asset = normalizeAsset(firstEntry.asset);
       const totalAmt = group.reduce((s, e) => s + Math.abs(e.amount), 0);
+      // Fetch EUR price so FIFO can create a lot with the income value as cost basis
+      let priceEur: number | null = null;
+      let totalEur: number | null = null;
+      if (isCrypto(asset) && totalAmt > 0) {
+        const eurPrice = await getCryptoEurPriceHistorical(asset, execDate);
+        if (eurPrice !== null) {
+          priceEur = eurPrice;
+          totalEur = eurPrice * totalAmt;
+        }
+      }
       ops.push({
         exchange: "kraken",
         externalId: refid,
         opType: "staking",
         asset,
         amount: totalAmt,
-        priceEur: null, totalEur: null, feeEur: 0,
+        priceEur, totalEur, feeEur: 0,
         counterAsset: null, pair: null,
         executedAt: execDate, rawData: group,
       });

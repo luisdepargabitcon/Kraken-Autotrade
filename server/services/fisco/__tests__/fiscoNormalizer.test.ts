@@ -440,3 +440,111 @@ describe("normalizeKrakenLedger — transfer type", () => {
     expect(ops).toHaveLength(0);
   });
 });
+
+// ============================================================
+// Deposit EUR price fetching
+// ============================================================
+
+describe("normalizeKrakenLedger — deposit EUR price", () => {
+  it("crypto deposit with known EUR price → priceEur and totalEur set", async () => {
+    vi.mocked(eurRates.getCryptoEurPriceHistorical).mockResolvedValueOnce(150);
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_DEP_SOL", type: "deposit", asset: "SOL", amount: 0.34542075, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("deposit");
+    expect(ops[0].asset).toBe("SOL");
+    expect(ops[0].priceEur).toBeCloseTo(150);
+    expect(ops[0].totalEur).toBeCloseTo(150 * 0.34542075);
+  });
+
+  it("crypto deposit without EUR price → priceEur null, totalEur null (still emits op)", async () => {
+    vi.mocked(eurRates.getCryptoEurPriceHistorical).mockResolvedValueOnce(null);
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_DEP_NOPRICE", type: "deposit", asset: "SOL", amount: 1.0, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].priceEur).toBeNull();
+    expect(ops[0].totalEur).toBeNull();
+    expect(ops[0].amount).toBeCloseTo(1.0);
+  });
+
+  it("staking reward with known EUR price → priceEur and totalEur set", async () => {
+    vi.mocked(eurRates.getCryptoEurPriceHistorical).mockResolvedValueOnce(80000);
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_STAKING_BTC", type: "staking", asset: "XXBT", amount: 0.00000277, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("staking");
+    expect(ops[0].asset).toBe("BTC");
+    expect(ops[0].priceEur).toBeCloseTo(80000);
+    expect(ops[0].totalEur).toBeCloseTo(80000 * 0.00000277);
+  });
+});
+
+// ============================================================
+// FIFO regression: deposit → lot creation → no MISSING_OPENING_BALANCE
+// Reproduces exact real-world cases from 2025-05-10/13 (SOL) and 2025-05-11/29 (TON)
+// ============================================================
+
+import { runFifo } from "../fifo-engine";
+import type { NormalizedOperation } from "../normalizer";
+
+function makeOp(overrides: Partial<NormalizedOperation>): NormalizedOperation {
+  return {
+    exchange: "kraken", externalId: "TEST", opType: "trade_buy",
+    asset: "BTC", amount: 1, priceEur: 30000, totalEur: 30000, feeEur: 0,
+    counterAsset: null, pair: null, executedAt: new Date("2025-01-01"), rawData: {},
+    ...overrides,
+  };
+}
+
+describe("FIFO — deposit creates lot (SOL regression TSGRLSI)", () => {
+  it("deposit then sell: no MISSING_OPENING_BALANCE, no NEGATIVE_INVENTORY", () => {
+    const ops: NormalizedOperation[] = [
+      makeOp({ opType: "deposit",    asset: "SOL", amount: 0.34542075, priceEur: 154.1, totalEur: 154.1 * 0.34542075, executedAt: new Date("2025-05-10") }),
+      makeOp({ opType: "trade_sell", asset: "SOL", amount: 0.34542,    priceEur: 154.1, totalEur: 154.1 * 0.34542,    executedAt: new Date("2025-05-13") }),
+    ];
+    const result = runFifo(ops);
+    const errors = result.criticalErrors.filter(e => e.asset === "SOL");
+    expect(errors).toHaveLength(0);
+    expect(result.lots.filter(l => l.asset === "SOL")).toHaveLength(1);
+    expect(result.disposals.filter(d => d.asset === "SOL")).toHaveLength(1);
+  });
+});
+
+describe("FIFO — deposit creates lot (TON regression TSKBU63)", () => {
+  it("deposit + 6 buys - 3 sells - big sell: no critical errors", () => {
+    const ops: NormalizedOperation[] = [
+      makeOp({ opType: "deposit",    asset: "TON", amount: 16.861676, priceEur: 3.0, totalEur: 16.861676 * 3.0, executedAt: new Date("2025-05-11") }),
+      // 6 buys of 0.8 TON
+      ...Array.from({ length: 6 }, (_, i) => makeOp({ opType: "trade_buy", asset: "TON", amount: 0.8, priceEur: 3.1, totalEur: 0.8 * 3.1, executedAt: new Date(`2025-05-14T${10 + i}:00:00`) })),
+      // 2 sells of 0.8 TON
+      makeOp({ opType: "trade_sell", asset: "TON", amount: 0.8, priceEur: 3.2, totalEur: 0.8 * 3.2, executedAt: new Date("2025-05-15T12:00:00") }),
+      makeOp({ opType: "trade_sell", asset: "TON", amount: 0.8, priceEur: 3.2, totalEur: 0.8 * 3.2, executedAt: new Date("2025-05-15T13:00:00") }),
+      // big sell: 21.6616 TON (deposit 16.86 + 6 buys 4.8 - 2 sells 1.6 = 20.06 available)
+      // use 19.4616 to fit available = 16.861676 + 4.8 - 1.6 = 20.061676
+      makeOp({ opType: "trade_sell", asset: "TON", amount: 20.0, priceEur: 3.3, totalEur: 20.0 * 3.3, executedAt: new Date("2025-05-29") }),
+    ];
+    const result = runFifo(ops);
+    const errors = result.criticalErrors.filter(e => e.asset === "TON");
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe("FIFO — staking creates lot (BTC 37-sat regression TAYARB)", () => {
+  it("buy + staking reward covers two sells exactly", () => {
+    const ops: NormalizedOperation[] = [
+      makeOp({ opType: "trade_buy",  asset: "BTC", amount: 0.00033063, priceEur: 80000, totalEur: 0.00033063 * 80000, executedAt: new Date("2025-12-11") }),
+      makeOp({ opType: "staking",    asset: "BTC", amount: 0.00000277, priceEur: 80000, totalEur: 0.00000277 * 80000, executedAt: new Date("2025-12-12") }),
+      makeOp({ opType: "trade_sell", asset: "BTC", amount: 0.0001655,  priceEur: 77000, totalEur: 0.0001655 * 77000,  executedAt: new Date("2025-12-12T22:00:00") }),
+      makeOp({ opType: "trade_sell", asset: "BTC", amount: 0.0001655,  priceEur: 77000, totalEur: 0.0001655 * 77000,  executedAt: new Date("2025-12-13") }),
+    ];
+    const result = runFifo(ops);
+    const errors = result.criticalErrors.filter(e => e.asset === "BTC");
+    expect(errors).toHaveLength(0);
+  });
+});
