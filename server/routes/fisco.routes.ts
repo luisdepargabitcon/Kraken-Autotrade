@@ -1633,4 +1633,115 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       return res.status(500).json({ error: e.message });
     }
   });
+
+  // ============================================================
+  // Debug: inspect Kraken ledger refid
+  // ============================================================
+
+  /**
+   * GET /api/fisco/debug/kraken-ledger-ref/:refid
+   * Returns all staging operations whose external_id matches the given refid prefix,
+   * plus their raw_data (original ledger entries) from the latest dry-run.
+   * Useful to diagnose receive/spend/deposit misclassifications.
+   */
+  app.get("/api/fisco/debug/kraken-ledger-ref/:refid", async (req, res) => {
+    try {
+      const { refid } = req.params;
+      if (!refid || refid.length < 3) return res.status(400).json({ error: "refid too short" });
+
+      // Latest dry-run id for context
+      const runRow = await pool.query(
+        `SELECT id, started_at FROM fisco_rebuild_runs
+         WHERE mode='dry_run' AND status='completed_dry'
+         ORDER BY started_at DESC LIMIT 1`
+      );
+      const runId: string | null = runRow.rows[0]?.id ?? null;
+
+      // Query staging ops across all runs that match the refid prefix
+      const stagingQ = await pool.query(
+        `SELECT
+           so.external_id, so.exchange, so.op_type, so.asset,
+           so.amount::float, so.price_eur::float, so.total_eur::float,
+           so.fee_eur::float, so.counter_asset, so.pair,
+           so.executed_at, so.requires_eur_price,
+           so.raw_data,
+           rr.started_at AS run_started_at,
+           rr.mode AS run_mode
+         FROM fisco_staging_operations so
+         JOIN fisco_rebuild_runs rr ON rr.id = so.rebuild_run_id
+         WHERE so.external_id LIKE $1
+         ORDER BY rr.started_at DESC, so.executed_at ASC
+         LIMIT 50`,
+        [`${refid}%`]
+      );
+
+      const ops = stagingQ.rows;
+
+      // Annotate with parsed raw_data
+      const annotated = ops.map((op: any) => {
+        const rawEntries: any[] = Array.isArray(op.raw_data) ? op.raw_data : [op.raw_data];
+        return {
+          externalId: op.external_id,
+          exchange: op.exchange,
+          opType: op.op_type,
+          asset: op.asset,
+          amount: op.amount,
+          priceEur: op.price_eur,
+          totalEur: op.total_eur,
+          feeEur: op.fee_eur,
+          counterAsset: op.counter_asset,
+          pair: op.pair,
+          executedAt: op.executed_at,
+          requiresEurPrice: op.requires_eur_price,
+          runStartedAt: op.run_started_at,
+          runMode: op.run_mode,
+          rawLedgerEntries: rawEntries.map((e: any) => ({
+            id: e.id,
+            refid: e.refid,
+            type: e.type,
+            subtype: e.subtype,
+            asset: e.asset,
+            amount: e.amount,
+            fee: e.fee,
+            balance: e.balance,
+            time: e.time,
+            timeISO: e.time ? new Date(e.time * 1000).toISOString() : null,
+          })),
+        };
+      });
+
+      // Human-readable diagnosis
+      const diagnosis: string[] = [];
+      if (ops.length === 0) {
+        diagnosis.push(
+          `No staging operations found for refid prefix "${refid}". ` +
+          `Possible causes: (1) normalizer skipped it (e.g. internal same-asset transfer), ` +
+          `(2) unhandled ledger type, (3) no completed dry-run exists yet.`
+        );
+      } else {
+        for (const op of annotated) {
+          const entries = op.rawLedgerEntries;
+          const types = [...new Set(entries.map((e: any) => e.type as string))].join("/");
+          const assets = entries
+            .map((e: any) => `${e.asset}(${e.amount > 0 ? "+" : ""}${e.amount})`)
+            .join(", ");
+          diagnosis.push(
+            `${op.externalId}: ledgerType=${types} raw=[${assets}]` +
+            ` → normalizedAs=${op.opType} ${op.asset} ${op.amount}`
+          );
+        }
+      }
+
+      return res.json({
+        refid,
+        latestRunId: runId,
+        latestRunStartedAt: runRow.rows[0]?.started_at ?? null,
+        matchedOpsCount: ops.length,
+        diagnosis,
+        operations: annotated,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
 }

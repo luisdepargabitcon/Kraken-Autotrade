@@ -196,12 +196,24 @@ export async function normalizeKrakenLedger(
         if (recv && spend) {
           const recvAsset = normalizeAsset(recv.asset);
           const spentAsset = normalizeAsset(spend.asset);
+
+          // ── Internal earn/staking transfer: same asset after normalization ──
+          // e.g. SOL.S (unstake) → SOL (spot), ETH2 → ETH, DOT.S → DOT
+          // No fiscal event: the lot's cost basis carries over unchanged.
+          if (recvAsset === spentAsset) {
+            console.log(
+              `[normalizer] ${refid}: internal transfer ` +
+              `${recv.asset}/${spend.asset} → both normalize to ${recvAsset} — skipped (no fiscal event)`
+            );
+            continue;
+          }
+
           const recvAmount = Math.abs(recv.amount);
           const spentAmount = Math.abs(spend.amount);
           const totalFee = group.reduce((s, e) => s + Math.abs(e.fee), 0);
           const usdEurRate = await rateFor(execDate);
 
-          // receive/spend can be stablecoin redemptions — use same classification
+          // Different assets: genuine conversion (e.g. stablecoin redemption)
           const newOps = await classifyAndBuildTrade({
             exchange: "kraken",
             refid: `${refid}_rcv`,
@@ -212,21 +224,58 @@ export async function normalizeKrakenLedger(
           });
           ops.push(...newOps);
         }
+      } else if (group.length === 1) {
+        // Single receive/spend — external deposit or external spend
+        const entry = group[0];
+        const asset = normalizeAsset(entry.asset);
+        if (entry.amount > 0) {
+          ops.push({
+            exchange: "kraken",
+            externalId: `${refid}_rcv`,
+            opType: "deposit",
+            asset,
+            amount: Math.abs(entry.amount),
+            priceEur: null, totalEur: null,
+            feeEur: await toEurAmt(Math.abs(entry.fee), asset, execDate),
+            counterAsset: null, pair: null,
+            executedAt: execDate, rawData: group,
+          });
+        } else if (entry.amount < 0) {
+          ops.push({
+            exchange: "kraken",
+            externalId: `${refid}_spd`,
+            opType: "withdrawal",
+            asset,
+            amount: Math.abs(entry.amount),
+            priceEur: null, totalEur: null,
+            feeEur: await toEurAmt(Math.abs(entry.fee), asset, execDate),
+            counterAsset: null, pair: null,
+            executedAt: execDate, rawData: group,
+          });
+        }
       }
     }
 
-    else if (firstEntry.type === "staking") {
+    else if (firstEntry.type === "staking" || firstEntry.type === "reward") {
+      // staking = periodic staking reward; reward = earn reward (both are income, no disposal)
       const asset = normalizeAsset(firstEntry.asset);
+      const totalAmt = group.reduce((s, e) => s + Math.abs(e.amount), 0);
       ops.push({
         exchange: "kraken",
         externalId: refid,
         opType: "staking",
         asset,
-        amount: Math.abs(firstEntry.amount),
+        amount: totalAmt,
         priceEur: null, totalEur: null, feeEur: 0,
         counterAsset: null, pair: null,
         executedAt: execDate, rawData: group,
       });
+    }
+
+    else if (firstEntry.type === "transfer") {
+      // Kraken internal transfers (e.g. spot↔futures, spot↔earn allocation)
+      // Not a fiscal event — skip.
+      console.log(`[normalizer] ${refid}: Kraken internal transfer — skipped`);
     }
   }
 

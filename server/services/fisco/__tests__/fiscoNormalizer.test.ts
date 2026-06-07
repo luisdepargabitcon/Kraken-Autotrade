@@ -344,3 +344,99 @@ describe("normalizeKrakenLedger — Case 1: Fiat to fiat conversion", () => {
     expect(ops[0].asset).toBe("EUR");
   });
 });
+
+// ============================================================
+// Receive/spend — Internal earn/staking transfer (bug regression)
+// SOL.S (unstake spend) + SOL (spot receive) → MUST be skipped
+// Previously generated a false trade_sell SOL causing MISSING_OPENING_BALANCE
+// ============================================================
+
+describe("normalizeKrakenLedger — receive/spend internal earn transfer", () => {
+  it("SOL.S spend + SOL receive: same asset after normalization → zero ops (no fiscal event)", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "TSGRLSI-5KGZS-NCXETD", type: "spend",   asset: "SOL.S", amount: -0.34542, fee: 0 }),
+      makeEntry({ id: "e2", refid: "TSGRLSI-5KGZS-NCXETD", type: "receive", asset: "SOL",   amount:  0.34542, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(0);
+  });
+
+  it("ETH2 (earn) spend + ETH receive: same asset after normalization → zero ops", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_ETH_EARN", type: "spend",   asset: "ETH2", amount: -1.5, fee: 0 }),
+      makeEntry({ id: "e2", refid: "R_ETH_EARN", type: "receive", asset: "ETH",  amount:  1.5, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(0);
+  });
+
+  it("DOT.S spend + DOT receive: zero ops (DOT.S strips to DOT)", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_DOT_STAKING", type: "spend",   asset: "DOT.S", amount: -10, fee: 0 }),
+      makeEntry({ id: "e2", refid: "R_DOT_STAKING", type: "receive", asset: "DOT",   amount:  10, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// Receive/spend — External (single-entry)
+// ============================================================
+
+describe("normalizeKrakenLedger — receive/spend single entry", () => {
+  it("single receive entry (positive amount) → deposit op", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_RCV_SINGLE", type: "receive", asset: "SOL", amount: 2.5, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("deposit");
+    expect(ops[0].asset).toBe("SOL");
+    expect(ops[0].amount).toBeCloseTo(2.5);
+    expect(ops[0].externalId).toBe("R_RCV_SINGLE_rcv");
+  });
+
+  it("single spend entry (negative amount) → withdrawal op", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_SPD_SINGLE", type: "spend", asset: "XXBT", amount: -0.05, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("withdrawal");
+    expect(ops[0].asset).toBe("BTC");
+    expect(ops[0].amount).toBeCloseTo(0.05);
+    expect(ops[0].externalId).toBe("R_SPD_SINGLE_spd");
+  });
+});
+
+// ============================================================
+// Reward type → staking op
+// ============================================================
+
+describe("normalizeKrakenLedger — reward type", () => {
+  it("reward entry → staking op (earn reward, no disposal)", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_REWARD", type: "reward", asset: "SOL", amount: 0.012, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("staking");
+    expect(ops[0].asset).toBe("SOL");
+    expect(ops[0].amount).toBeCloseTo(0.012);
+  });
+});
+
+// ============================================================
+// Transfer type → skipped (internal, no fiscal event)
+// ============================================================
+
+describe("normalizeKrakenLedger — transfer type", () => {
+  it("transfer entry → zero ops (internal Kraken movement)", async () => {
+    const entries = [
+      makeEntry({ id: "e1", refid: "R_TRANSFER", type: "transfer", asset: "XETH", amount: 1.0, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(0);
+  });
+});
