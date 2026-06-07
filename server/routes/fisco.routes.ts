@@ -1544,7 +1544,11 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         pool.query(`SELECT COUNT(*) AS cnt FROM fisco_disposals`),
       ]);
       const unknownBasis = await pool.query(
-        `SELECT asset, COUNT(*) AS cnt FROM fisco_disposals WHERE lot_id IS NULL GROUP BY asset`
+        `SELECT fo.asset, COUNT(*) AS cnt
+         FROM fisco_disposals d
+         JOIN fisco_operations fo ON fo.id = d.sell_operation_id
+         WHERE d.lot_id IS NULL
+         GROUP BY fo.asset`
       );
       const negBalance = await pool.query(`
         SELECT asset,

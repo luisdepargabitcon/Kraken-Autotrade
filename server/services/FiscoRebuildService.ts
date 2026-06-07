@@ -675,10 +675,11 @@ export class FiscoRebuildService {
 
     // Check for UNKNOWN_BASIS disposals in official tables
     const unknownBasis = await pool.query(`
-      SELECT d.asset, COUNT(*) as cnt, SUM(d.quantity) as total_qty
+      SELECT fo.asset, COUNT(*) as cnt, SUM(d.quantity) as total_qty
       FROM fisco_disposals d
+      JOIN fisco_operations fo ON fo.id = d.sell_operation_id
       WHERE d.lot_id IS NULL
-      GROUP BY d.asset
+      GROUP BY fo.asset
     `);
     for (const r of unknownBasis.rows) {
       discrepancies.push({
