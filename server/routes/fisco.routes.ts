@@ -14,8 +14,14 @@ import { KrakenReconciliationService } from "../services/fisco/KrakenReconciliat
 import { MultiYearReportService } from "../services/fisco/MultiYearReportService";
 import { FiscoExportService } from "../services/fisco/FiscoExportService";
 import { pool } from "../db";
+// Runtime-safe archiver loader: handles CJS direct export and bundler-wrapped default.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const archiverLib = require("archiver") as (format: string, opts?: object) => import("archiver").Archiver;
+const _archiverRaw = require("archiver");
+type ArchiverFactory = (format: string, opts?: object) => import("archiver").Archiver;
+const archiverLib: ArchiverFactory =
+  typeof _archiverRaw === "function"     ? _archiverRaw :
+  typeof _archiverRaw?.default === "function" ? _archiverRaw.default :
+  (() => { throw new Error("archiver module did not resolve to a callable function"); }) as any;
 
 /**
  * FISCO (Fiscal Control) routes.

@@ -132,13 +132,24 @@ export class MultiYearReportService {
       }
 
       if (includeExchangeBreakdown) {
+        const EXCHANGE_PORTFOLIO_NOTE =
+          "Diagnóstico por exchange. El FIFO fiscal oficial del bot es global multi-exchange. " +
+          "Esta validación puede mostrar diferencias si existen transferencias internas, " +
+          "withdrawals cross-exchange o movimientos cuyo lote de origen está en otro exchange. " +
+          "No bloquea el informe fiscal global.";
+
         const krakenPortfolio = await validationSvc.validatePortfolio(year, "kraken");
         reports.push({
           year,
           scope:    "exchange",
           exchange: "kraken",
           finalization_status:   finStatus,
-          portfolio_validation:  krakenPortfolio,
+          portfolio_validation:  {
+            ...krakenPortfolio,
+            diagnostic_only:      true,
+            affects_finalization: false,
+            note: EXCHANGE_PORTFOLIO_NOTE,
+          },
           kraken_reconciliation: krakenRec,
         });
 
@@ -149,7 +160,12 @@ export class MultiYearReportService {
             scope:    "exchange",
             exchange: "revolutx",
             finalization_status:  finStatus,
-            portfolio_validation: revPortfolio,
+            portfolio_validation: {
+              ...revPortfolio,
+              diagnostic_only:      true,
+              affects_finalization: false,
+              note: EXCHANGE_PORTFOLIO_NOTE,
+            },
           });
         }
       }

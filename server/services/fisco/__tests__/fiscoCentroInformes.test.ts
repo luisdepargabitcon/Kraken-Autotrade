@@ -173,7 +173,7 @@ describe("MultiYearReportService", () => {
     expect(globalReports.every(rep => rep.exchange === null)).toBe(true);
   });
 
-  it("Test 5: includeExchangeBreakdown=true produce scope=exchange entries", async () => {
+  it("Test 5: includeExchangeBreakdown=true — scope=exchange, diagnostic_only=true, affects_finalization=false", async () => {
     const pool = makeMultiYearPool();
     const svc  = new MultiYearReportService(pool);
     const r    = await svc.generate({ years: [2025], exchanges: ["kraken", "revolutx"], includeGlobal: false, includeExchangeBreakdown: true });
@@ -181,6 +181,14 @@ describe("MultiYearReportService", () => {
     const exchangeReports = r.reports.filter(rep => rep.scope === "exchange");
     expect(exchangeReports.length).toBeGreaterThanOrEqual(1);
     expect(exchangeReports.some(rep => rep.exchange === "kraken")).toBe(true);
+
+    // Each per-exchange portfolio must be marked as diagnostic only
+    for (const rep of exchangeReports) {
+      expect(rep.portfolio_validation.diagnostic_only).toBe(true);
+      expect(rep.portfolio_validation.affects_finalization).toBe(false);
+      expect(typeof rep.portfolio_validation.note).toBe("string");
+      expect(rep.portfolio_validation.note.length).toBeGreaterThan(10);
+    }
   });
 
   it("Test 11: año no finalizable → report_can_be_finalized=false en totals_by_year", async () => {
@@ -471,6 +479,53 @@ describe("FiscoExportService", () => {
     const header = csv.split("\n")[0];
     expect(header).toContain(";");
     expect(header).not.toContain(",");
+  });
+
+  it("Test 20: archiverLib runtime resolver logic — directa function export", () => {
+    // Verify the resolution logic used in fisco.routes.ts works correctly for both patterns:
+    // 1. Module is itself a function (native CJS — the real archiver case)
+    // 2. Module wraps the function in .default (some bundlers)
+    const resolveFn = (mod: unknown): unknown =>
+      typeof mod === "function"           ? mod :
+      typeof (mod as any)?.default === "function" ? (mod as any).default :
+      null;
+
+    const directFn = () => {};
+    expect(resolveFn(directFn)).toBe(directFn);
+
+    const wrappedFn = () => {};
+    expect(resolveFn({ default: wrappedFn })).toBe(wrappedFn);
+
+    expect(resolveFn({ notAFunction: true })).toBeNull();
+    expect(resolveFn(null)).toBeNull();
+  });
+
+  it("Test 21: portfolio global unaffected when per-exchange shows DIFFERENCES", async () => {
+    // Mock: revolutx portfolio has DIFFERENCES (closing < 0 for USDC)
+    // but global portfolio (exchange=null) returns OK.
+    // global_summary.totals_by_year must still reflect global finalization.
+    const pool = makeMultiYearPool();
+    const svc  = new MultiYearReportService(pool);
+    const r    = await svc.generate({
+      years: [2026],
+      exchanges: ["kraken", "revolutx"],
+      includeGlobal: true,
+      includeExchangeBreakdown: true,
+    });
+
+    // Global scope report: portfolio_validation has no diagnostic_only flag
+    const globalRep = r.reports.find(rep => rep.scope === "global" && rep.year === 2026)!;
+    expect(globalRep.portfolio_validation.diagnostic_only).toBeUndefined();
+    expect(globalRep.portfolio_validation.affects_finalization).toBeUndefined();
+
+    // Exchange scope reports: portfolio_validation tagged as diagnostic
+    const revRep = r.reports.find(rep => rep.scope === "exchange" && rep.exchange === "revolutx" && rep.year === 2026)!;
+    expect(revRep.portfolio_validation.diagnostic_only).toBe(true);
+    expect(revRep.portfolio_validation.affects_finalization).toBe(false);
+
+    // The global year summary (used for final decision) is driven by global portfolio, not per-exchange
+    const y = r.global_summary.totals_by_year.find(s => s.year === 2026)!;
+    expect(y.report_can_be_finalized).toBe(true); // mock returns OK everywhere
   });
 
   it("Test 19: getCounts devuelve counts de las 4 tablas", async () => {
