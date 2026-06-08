@@ -11,7 +11,11 @@ import { TransferMatchingService } from "../services/fisco/TransferMatchingServi
 import { ConservativeDisposalService, type Classification } from "../services/fisco/ConservativeDisposalService";
 import { FiscoValidationService } from "../services/fisco/FiscoValidationService";
 import { KrakenReconciliationService } from "../services/fisco/KrakenReconciliationService";
+import { MultiYearReportService } from "../services/fisco/MultiYearReportService";
+import { FiscoExportService } from "../services/fisco/FiscoExportService";
 import { pool } from "../db";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const archiverLib = require("archiver") as (format: string, opts?: object) => import("archiver").Archiver;
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -2959,6 +2963,238 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CENTRO DE INFORMES Y EXPORTACIONES FISCALES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/fisco/report/multi-year
+   * Multi-year fiscal audit report (JSON or HTML).
+   * Query params: years=2024,2025,2026 | exchanges=kraken,revolutx | includeGlobal=true |
+   *               includeExchangeBreakdown=true | includeOperations=false | format=json|html
+   */
+  app.get("/api/fisco/report/multi-year", async (req, res) => {
+    try {
+      const {
+        years:     yearsParam     = "2025,2026",
+        exchanges: exchangesParam = "kraken,revolutx",
+        includeGlobal           = "true",
+        includeExchangeBreakdown = "false",
+        format                  = "json",
+      } = req.query as Record<string, string>;
+
+      const years     = yearsParam.split(",").map(y => parseInt(y.trim(), 10)).filter(y => !isNaN(y));
+      const exchanges = exchangesParam.split(",").map(e => e.trim().toLowerCase());
+
+      const svc    = new MultiYearReportService(pool);
+      const report = await svc.generate({
+        years,
+        exchanges,
+        includeGlobal:            includeGlobal === "true",
+        includeExchangeBreakdown: includeExchangeBreakdown === "true",
+      });
+
+      if (format === "html") {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(svc.renderHtml(report));
+      }
+      return res.json(report);
+    } catch (e: any) {
+      console.error("[fisco/report/multi-year]", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── CSV Exports ──────────────────────────────────────────────────────────
+
+  function parseExportParams(query: Record<string, string>) {
+    const years     = query.years     ? query.years.split(",").map(y => parseInt(y.trim(), 10)).filter(y => !isNaN(y)) : undefined;
+    const exchanges = query.exchanges ? query.exchanges.split(",").map(e => e.trim().toLowerCase()) : undefined;
+    const delimiter = (query.delimiter === "semicolon" ? "semicolon" : "comma") as "comma" | "semicolon";
+    const includeRaw = query.includeRaw === "true";
+    return { years, exchanges, delimiter, includeRaw };
+  }
+
+  /**
+   * GET /api/fisco/export/operations.csv
+   * Exports fisco_operations as CSV.
+   */
+  app.get("/api/fisco/export/operations.csv", async (req, res) => {
+    try {
+      const opts = parseExportParams(req.query as Record<string, string>);
+      const csv  = await new FiscoExportService(pool).exportOperationsCsv(opts);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="fisco_operations.csv"');
+      res.send(csv);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/export/disposals.csv
+   * Exports fisco_disposals as CSV.
+   */
+  app.get("/api/fisco/export/disposals.csv", async (req, res) => {
+    try {
+      const opts = parseExportParams(req.query as Record<string, string>);
+      const csv  = await new FiscoExportService(pool).exportDisposalsCsv(opts);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="fisco_disposals.csv"');
+      res.send(csv);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/export/lots.csv
+   * Exports fisco_lots as CSV.
+   */
+  app.get("/api/fisco/export/lots.csv", async (req, res) => {
+    try {
+      const opts = parseExportParams(req.query as Record<string, string>);
+      const csv  = await new FiscoExportService(pool).exportLotsCsv(opts);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="fisco_lots.csv"');
+      res.send(csv);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/export/statement-items.csv
+   * Exports fisco_external_statement_items as CSV.
+   */
+  app.get("/api/fisco/export/statement-items.csv", async (req, res) => {
+    try {
+      const opts = parseExportParams(req.query as Record<string, string>);
+      const csv  = await new FiscoExportService(pool).exportStatementItemsCsv(opts);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="fisco_statement_items.csv"');
+      res.send(csv);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/export/conservative-disposals.csv
+   * Exports conservative_external_disposal items as CSV.
+   */
+  app.get("/api/fisco/export/conservative-disposals.csv", async (req, res) => {
+    try {
+      const opts = parseExportParams(req.query as Record<string, string>);
+      const csv  = await new FiscoExportService(pool).exportConservativeDisposalsCsv(opts);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="fisco_conservative_disposals.csv"');
+      res.send(csv);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/export/audit-pack.zip
+   * Generates a ZIP with HTML reports + all CSVs + JSON metadata.
+   * Query params: years=2024,2025,2026 | exchanges=kraken,revolutx | includeRaw=false
+   */
+  app.get("/api/fisco/export/audit-pack.zip", async (req, res) => {
+    try {
+      const opts       = parseExportParams(req.query as Record<string, string>);
+      const years      = opts.years      ?? [2025, 2026];
+      const exchanges  = opts.exchanges  ?? ["kraken", "revolutx"];
+      const exportSvc  = new FiscoExportService(pool);
+      const reportSvc  = new MultiYearReportService(pool);
+      const validSvc   = new FiscoValidationService(pool);
+
+      // Generate all data in parallel
+      const [opscsv, dispCsv, lotsCsv, stmtCsv, consDisCsv, multiReport, counts] = await Promise.all([
+        exportSvc.exportOperationsCsv({ years, exchanges, delimiter: opts.delimiter }),
+        exportSvc.exportDisposalsCsv({ years, exchanges, delimiter: opts.delimiter }),
+        exportSvc.exportLotsCsv({ exchanges, delimiter: opts.delimiter }),
+        exportSvc.exportStatementItemsCsv({ years, exchanges, delimiter: opts.delimiter }),
+        exportSvc.exportConservativeDisposalsCsv({ years, exchanges, delimiter: opts.delimiter }),
+        reportSvc.generate({ years, exchanges, includeGlobal: true, includeExchangeBreakdown: false }),
+        exportSvc.getCounts({ years, exchanges }),
+      ]);
+
+      // Per-year HTML reports + finalization
+      const yearHtmls: Record<number, string> = {};
+      const finByYear: Record<number, any>    = {};
+      const portByYear: Record<number, any>   = {};
+      for (const yr of years) {
+        const [fin, port] = await Promise.all([
+          validSvc.getFinalizationStatus(yr),
+          validSvc.validatePortfolio(yr, null),
+        ]);
+        finByYear[yr]  = fin;
+        portByYear[yr] = port;
+      }
+
+      const multiHtml = reportSvc.renderHtml(multiReport);
+
+      // audit_metadata.json
+      const auditMeta = {
+        generated_at:    new Date().toISOString(),
+        years,
+        exchanges,
+        filters_applied: { years, exchanges, includeRaw: opts.includeRaw },
+        counts,
+        report_can_be_finalized_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.report_can_be_finalized]),
+        ),
+        ordinary_fifo_gain_loss_eur_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.ordinary_fifo_gain_loss_eur]),
+        ),
+        conservative_external_disposals_gain_loss_eur_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.conservative_external_disposals_gain_loss_eur]),
+        ),
+        final_taxable_gain_loss_eur_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.final_taxable_gain_loss_eur]),
+        ),
+        blockers_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.blockers]),
+        ),
+        warnings_by_year: Object.fromEntries(
+          multiReport.global_summary.totals_by_year.map(y => [y.year, y.kraken_warnings]),
+        ),
+        accumulated_total_for_audit_only: multiReport.global_summary.accumulated_total_for_audit_only,
+      };
+
+      // Build ZIP
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition",
+        `attachment; filename="fisco_audit_${years.join("-")}.zip"`);
+
+      const archive = archiverLib("zip", { zlib: { level: 6 } });
+      archive.pipe(res);
+
+      archive.append(Buffer.from(multiHtml, "utf8"),                     { name: "reports/informe_multi_year.html" });
+      for (const yr of years) {
+        archive.append(Buffer.from(JSON.stringify(finByYear[yr], null, 2), "utf8"),
+          { name: `json/finalization_status_${yr}.json` });
+        archive.append(Buffer.from(JSON.stringify(portByYear[yr], null, 2), "utf8"),
+          { name: `json/portfolio_validation_${yr}.json` });
+      }
+      archive.append(Buffer.from(opscsv, "utf8"),    { name: "csv/fisco_operations.csv" });
+      archive.append(Buffer.from(dispCsv, "utf8"),   { name: "csv/fisco_disposals.csv" });
+      archive.append(Buffer.from(lotsCsv, "utf8"),   { name: "csv/fisco_lots.csv" });
+      archive.append(Buffer.from(stmtCsv, "utf8"),   { name: "csv/fisco_statement_items.csv" });
+      archive.append(Buffer.from(consDisCsv, "utf8"),{ name: "csv/fisco_conservative_disposals.csv" });
+      archive.append(Buffer.from(JSON.stringify(multiReport, null, 2), "utf8"),
+        { name: "json/reconciliation_summary.json" });
+      archive.append(Buffer.from(JSON.stringify(auditMeta, null, 2), "utf8"),
+        { name: "json/audit_metadata.json" });
+
+      await archive.finalize();
+    } catch (e: any) {
+      console.error("[fisco/export/audit-pack.zip]", e);
+      if (!res.headersSent) res.status(500).json({ error: e.message });
     }
   });
 }

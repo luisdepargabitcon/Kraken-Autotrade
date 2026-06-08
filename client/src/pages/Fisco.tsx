@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FiscoReportsCenter } from "@/components/fisco/FiscoReportsCenter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1239,9 +1240,10 @@ export default function Fisco() {
 
         {/* ========== TABS STRUCTURE ========== */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="resumen" className="gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> Resumen Fiscal</TabsTrigger>
             <TabsTrigger value="anexo" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Transacciones</TabsTrigger>
+            <TabsTrigger value="informes" className="gap-1.5"><Download className="h-3.5 w-3.5" /> Informes</TabsTrigger>
             <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
             <TabsTrigger value="rebuild" className="gap-1.5 relative">
               <Settings2 className="h-3.5 w-3.5" /> Reconstruir
@@ -1253,6 +1255,7 @@ export default function Fisco() {
           <div className="text-[11px] text-muted-foreground/60 font-mono px-0.5 -mt-3">
             {activeTab === "resumen" && "Informe FIFO completo: sección A (transmisiones), B (activos), C (rendimientos), D (saldos)."}
             {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
+            {activeTab === "informes" && "Centro de informes, exportaciones CSV/ZIP y auditoría fiscal multi-año."}
             {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
             {activeTab === "rebuild" && "Reconstrucción controlada de datos FIFO con backup, dry-run y validación de errores críticos."}
           </div>
@@ -1914,6 +1917,11 @@ export default function Fisco() {
               </CardContent>
             </Card>
 
+          </TabsContent>
+
+          {/* ==================== TAB: INFORMES Y EXPORTACIONES ==================== */}
+          <TabsContent value="informes">
+            <FiscoReportsCenter />
           </TabsContent>
 
           {/* ==================== TAB: REBUILD ==================== */}
