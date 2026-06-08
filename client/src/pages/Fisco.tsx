@@ -211,11 +211,21 @@ interface RevolutTxCheck {
   status: string;
   statement_item?: {
     statement_type: string;
+    classification: string;
+    classification_source: string | null;
+    taxable: string;
     amount_sent: number;
     fee_amount: number;
     total_out: number;
     network: string | null;
     reconciliation_status: string;
+    // conservative disposal
+    market_price_eur: number | null;
+    proceeds_eur: number | null;
+    cost_basis_eur: number | null;
+    gain_loss_eur: number | null;
+    finalized_note: string | null;
+    // transfer link
     link_status: string | null;
     link_confidence: string | null;
     link_to_exchange: string | null;
@@ -230,9 +240,12 @@ interface RevolutReconciliationResponse {
   year: number;
   overall_status: string;
   warning: string | null;
+  report_can_be_finalized: boolean;
+  has_conservative_disposals: boolean;
   statement_items_summary: {
     total: number;
     matched_internal: number;
+    conservative_disposal: number;
     unmatched: number;
     manual_review: number;
   };
@@ -465,24 +478,26 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
   let pageE = "";
   if (recon && Object.keys(recon.transaction_checks).length > 0) {
     const STATUS_STYLE: Record<string, string> = {
-      OK_ORDER_SELL:         "background:#dcfce7;color:#15803d;border:1px solid #16a34a;",
-      OK_INTERNAL_TRANSFER:  "background:#dbeafe;color:#1d4ed8;border:1px solid #3b82f6;",
-      EXTERNAL_DISPOSAL:     "background:#fef9c3;color:#92400e;border:1px solid #eab308;",
-      WITHDRAWAL_UNMATCHED:  "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
-      STATEMENT_ONLY_UNMATCHED: "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
+      OK_ORDER_SELL:                  "background:#dcfce7;color:#15803d;border:1px solid #16a34a;",
+      OK_INTERNAL_TRANSFER:            "background:#dbeafe;color:#1d4ed8;border:1px solid #3b82f6;",
+      EXTERNAL_DISPOSAL:               "background:#fef9c3;color:#92400e;border:1px solid #eab308;",
+      CONSERVATIVE_EXTERNAL_DISPOSAL:  "background:#fde8d0;color:#7c3d12;border:1px solid #ea580c;",
+      WITHDRAWAL_UNMATCHED:            "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
+      STATEMENT_ONLY_UNMATCHED:        "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
       MISSING_STABLECOIN_DISPOSAL_LEG: "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
       MISSING_API_WINDOW_NOT_FETCHED:  "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
       MISSING_MOVEMENT_SYNC: "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
     };
     const STATUS_LABEL: Record<string, string> = {
-      OK_ORDER_SELL:          "✓ Venta confirmada (trade_sell)",
-      OK_INTERNAL_TRANSFER:   "✓ Transferencia interna (no venta)",
-      EXTERNAL_DISPOSAL:      "Disposici\u00f3n externa",
-      WITHDRAWAL_UNMATCHED:   "⚠ Retirada sin destino identificado",
-      STATEMENT_ONLY_UNMATCHED: "⚠ Solo en extracto (importar)",
-      MISSING_STABLECOIN_DISPOSAL_LEG: "✗ Pierna de disposici\u00f3n faltante",
-      MISSING_API_WINDOW_NOT_FETCHED:  "✗ Datos API no sincronizados",
-      MISSING_MOVEMENT_SYNC:  "✗ Movimiento no importado",
+      OK_ORDER_SELL:                   "\u2713 Venta confirmada (trade_sell)",
+      OK_INTERNAL_TRANSFER:            "\u2713 Transferencia interna (no venta)",
+      EXTERNAL_DISPOSAL:               "Disposici\u00f3n externa confirmada",
+      CONSERVATIVE_EXTERNAL_DISPOSAL:  "\u2605 Disposici\u00f3n conservadora (sin match)",
+      WITHDRAWAL_UNMATCHED:            "\u26a0 Retirada sin destino identificado",
+      STATEMENT_ONLY_UNMATCHED:        "\u26a0 Solo en extracto (importar)",
+      MISSING_STABLECOIN_DISPOSAL_LEG: "\u2717 Pierna de disposici\u00f3n faltante",
+      MISSING_API_WINDOW_NOT_FETCHED:  "\u2717 Datos API no sincronizados",
+      MISSING_MOVEMENT_SYNC:           "\u2717 Movimiento no importado",
     };
 
     const overallStyle = recon.overall_status === "OK"
@@ -520,14 +535,36 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
                   </td>
                 </tr>`;
             }
+            if (tx.status === "CONSERVATIVE_EXTERNAL_DISPOSAL") {
+              const fmt = (n: number | null | undefined) =>
+                n != null ? n.toLocaleString("es-ES", { maximumFractionDigits: 4 }) : "N/A";
+              const glColor = (si.gain_loss_eur ?? 0) >= 0 ? "#15803d" : "#dc2626";
+              return `
+                <tr style="background:#fff7ed;">
+                  <td colspan="4" style="padding:8px 14px;font-size:11px;color:#7c3d12;border:1px solid #fed7aa;">
+                    <strong>Disposici\u00f3n externa asumida conservadoramente:</strong><br>
+                    Enviado: <strong>${si.amount_sent} ${asset}</strong> &nbsp;|&nbsp;
+                    Fee: <strong>${si.fee_amount} ${asset}</strong> &nbsp;|&nbsp;
+                    Red: ${si.network ?? "\u2013"}<br>
+                    Precio EUR estimado: <strong>${fmt(si.market_price_eur)} EUR/${asset}</strong><br>
+                    Valor transmisi\u00f3n: <strong>${fmt(si.proceeds_eur)} EUR</strong> &nbsp;|&nbsp;
+                    Coste FIFO: <strong>${fmt(si.cost_basis_eur)} EUR</strong> &nbsp;|&nbsp;
+                    G/P: <strong style="color:${glColor}">${fmt(si.gain_loss_eur)} EUR</strong><br>
+                    <span style="color:#64748b;font-size:10px;font-style:italic;">
+                      Tratado como disposici\u00f3n fiscal al no encontrar match con cuenta propia.
+                      Reclasificable via POST /api/fisco/statement-items/:id/reclassify si se confirma como transferencia interna.
+                    </span>
+                  </td>
+                </tr>`;
+            }
             if (tx.status === "WITHDRAWAL_UNMATCHED") {
               return `
                 <tr style="background:#fffbeb;">
                   <td colspan="4" style="padding:8px 14px;font-size:11px;color:#92400e;border:1px solid #fde68a;">
                     <strong>Retirada sin destino confirmado:</strong>
                     ${si.amount_sent} ${asset} enviados + ${si.fee_amount} fee = ${si.total_out} total.
-                    Red: ${si.network ?? "–"}.<br>
-                    No se ha encontrado dep\u00f3sito correspondiente en ning\u00fan exchange importado. Revisar manualmente.
+                    Red: ${si.network ?? "\u2013"}.<br>
+                    Usar POST /api/fisco/conservative-close-all para cerrar autom\u00e1ticamente como disposici\u00f3n conservadora.
                   </td>
                 </tr>`;
             }
@@ -550,11 +587,16 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
         })
       ).join("");
 
+    const canFinalize = recon.report_can_be_finalized;
     const summaryBadges = [
       `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:#dcfce7;color:#15803d;font-size:11px;font-weight:600;">&#10003; Confirmadas: ${recon.statement_items_summary.matched_internal}</span>`,
+      (recon.statement_items_summary.conservative_disposal ?? 0) > 0
+        ? `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:#fde8d0;color:#7c3d12;font-size:11px;font-weight:600;">&#9733; Conservadoras: ${recon.statement_items_summary.conservative_disposal}</span>`
+        : "",
       recon.statement_items_summary.unmatched > 0
         ? `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;">&#9888; Sin destino: ${recon.statement_items_summary.unmatched}</span>`
         : "",
+      `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:${canFinalize ? '#dcfce7' : '#fee2e2'};color:${canFinalize ? '#15803d' : '#991b1b'};font-size:11px;font-weight:600;">${canFinalize ? '&#10003; Listo para finalizar' : '&#9888; Requiere acción antes de finalizar'}</span>`,
     ].join("");
 
     pageE = `
@@ -575,10 +617,62 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
           </tr>
           ${txRows}
         </table>
+        ${(() => {
+          // Sub-section: dedicated conservative disposals table
+          const conservRows = Object.entries(recon.transaction_checks)
+            .flatMap(([a, checks]) =>
+              checks
+                .filter(tx => tx.status === "CONSERVATIVE_EXTERNAL_DISPOSAL" && tx.statement_item)
+                .map(tx => {
+                  const si = tx.statement_item!;
+                  const fmt = (n: number | null | undefined) =>
+                    n != null ? n.toLocaleString("es-ES", { maximumFractionDigits: 4 }) : "\u2014";
+                  const glColor = (si.gain_loss_eur ?? 0) >= 0 ? "#15803d" : "#dc2626";
+                  return `<tr>
+                    <td>${tx.expected_date}</td>
+                    <td>revolutx</td>
+                    <td>${a}</td>
+                    <td>${fmt(si.amount_sent)}</td>
+                    <td>${fmt(si.fee_amount)}</td>
+                    <td class="positive">${fmt(si.proceeds_eur)}</td>
+                    <td>${fmt(si.cost_basis_eur)}</td>
+                    <td style="color:${glColor};font-weight:600;">${fmt(si.gain_loss_eur)}</td>
+                    <td style="font-size:10px;color:#64748b;">Sin match interno</td>
+                  </tr>`;
+                })
+            ).join("");
+
+          if (!conservRows) return "";
+          return `
+            <h2 style="margin-top:20px;font-size:14px;color:#c2410c;">
+              Disposiciones externas asumidas conservadoramente
+            </h2>
+            <p style="font-size:11px;color:#92400e;margin-bottom:10px;">
+              Estas retiradas no tienen match con ning\u00fan dep\u00f3sito en cuenta propia.
+              Se tratan como disposiciones fiscales seg\u00fan la pol\u00edtica conservadora.
+              Si son transferencias internas, reclasificar via API para revertir el impacto fiscal.
+            </p>
+            <table>
+              <tr>
+                <th style="text-align:left;">Fecha</th>
+                <th style="text-align:left;">Exchange</th>
+                <th style="text-align:left;">Activo</th>
+                <th>Cantidad enviada</th>
+                <th>Fee</th>
+                <th>Valor transmisi\u00f3n EUR</th>
+                <th>Coste FIFO EUR</th>
+                <th>G/P EUR</th>
+                <th style="text-align:left;">Motivo</th>
+              </tr>
+              ${conservRows}
+            </table>`;
+        })()}
         <p style="font-size:10px;color:#64748b;margin-top:16px;border-top:1px solid #e2e8f0;padding-top:10px;">
-          Los movimientos con estado OK_INTERNAL_TRANSFER han sido identificados como transferencias entre cuentas propias
-          (RevolutX \u2192 Kraken). No generan evento fiscal de transmisi\u00f3n adicional. La base imponible y coste de adquisici\u00f3n
-          se preservan en el FIFO del activo correspondiente. Fuente: extracto fiscal Revolut ${y} + conciliaci\u00f3n autom\u00e1tica.
+          OK_INTERNAL_TRANSFER: transferencia entre cuentas propias, sin impacto FIFO.
+          CONSERVATIVE_EXTERNAL_DISPOSAL: disposici\u00f3n asumida por ausencia de match \u2014
+          los valores EUR son estimaciones basadas en precio de mercado y FIFO disponibles en la fecha.
+          Fuente: extracto fiscal Revolut ${y} + conciliaci\u00f3n autom\u00e1tica.
+          reportCanBeFinalized = ${recon.report_can_be_finalized}.
         </p>
         <div class="footer-page">Conciliaci\u00f3n RevolutX ${y} \u2014 P\u00e1gina 5</div>
       </div>`;

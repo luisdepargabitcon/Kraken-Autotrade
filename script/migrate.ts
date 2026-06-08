@@ -1254,6 +1254,17 @@ END $$;
     await tryExecuteFile(db, fiscoTransferLinksPath, "fisco_transfer_links");
     console.log("[migrate] 045_fisco_transfer_links OK");
 
+    // ============================================================
+    // FISCO CONSERVATIVE EXTERNAL DISPOSAL (046)
+    // Adds classification, taxable, and disposal columns to
+    // fisco_external_statement_items so unmatched withdrawals
+    // can be auto-closed as conservative_external_disposal.
+    // ============================================================
+    console.log("[migrate] Applying 046_fisco_conservative_disposal...");
+    const fiscoConservativePath = path.resolve(process.cwd(), "db", "migrations", "046_fisco_conservative_disposal.sql");
+    await tryExecuteFile(db, fiscoConservativePath, "fisco_conservative_disposal");
+    console.log("[migrate] 046_fisco_conservative_disposal OK");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

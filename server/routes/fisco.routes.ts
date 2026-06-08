@@ -8,6 +8,7 @@ import { getUsdToEurRate, getCachedUsdEurRate } from "../services/fisco/eur-rate
 import { fiscoRebuildService } from "../services/FiscoRebuildService";
 import { isFiscoRebuildActive } from "../services/fisco/rebuild-state";
 import { TransferMatchingService } from "../services/fisco/TransferMatchingService";
+import { ConservativeDisposalService, type Classification } from "../services/fisco/ConservativeDisposalService";
 import { pool } from "../db";
 
 /**
@@ -1910,6 +1911,17 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           si.reconciliation_status,
           si.matched_transfer_link_id,
           si.matched_operation_id,
+          -- Classification & taxable (from migration 046, default to 'pending' if column missing)
+          COALESCE(si.classification, 'pending')        AS classification,
+          COALESCE(si.classification_source, '')        AS classification_source,
+          COALESCE(si.taxable, 'pending_review')        AS taxable,
+          -- Conservative disposal fields (null if not yet computed)
+          si.market_price_eur::numeric                  AS market_price_eur,
+          si.proceeds_eur::numeric                      AS proceeds_eur,
+          si.cost_basis_eur::numeric                    AS cost_basis_eur,
+          si.gain_loss_eur::numeric                     AS gain_loss_eur,
+          si.finalized_note,
+          -- Transfer link fields
           tl.status       AS link_status,
           tl.confidence   AS link_confidence,
           tl.to_exchange  AS link_to_exchange,
@@ -2003,13 +2015,16 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             const bestStmt = stmtItems[0];
             const reconcStatus = bestStmt.reconciliation_status as string;
 
+            const classif = (bestStmt.classification ?? "pending") as string;
+
             let txStatus: string;
             if (reconcStatus === "matched_internal_transfer") {
               txStatus = "OK_INTERNAL_TRANSFER";
+            } else if (classif === "conservative_external_disposal") {
+              txStatus = "CONSERVATIVE_EXTERNAL_DISPOSAL";
             } else if (reconcStatus === "matched_external_disposal") {
               txStatus = "EXTERNAL_DISPOSAL";
             } else {
-              // Determine if it's withdrawal_crypto (unmatched) or something else
               txStatus = bestStmt.statement_type === "withdrawal_crypto"
                 ? "WITHDRAWAL_UNMATCHED"
                 : "STATEMENT_ONLY_UNMATCHED";
@@ -2027,17 +2042,27 @@ export function registerFiscoRebuildRoutes(app: Express): void {
               statement_item: {
                 id:                   bestStmt.id,
                 statement_type:       bestStmt.statement_type,
+                classification:       classif,
+                classification_source: bestStmt.classification_source ?? null,
+                taxable:              bestStmt.taxable ?? "pending_review",
                 amount_sent:          parseFloat(bestStmt.amount_sent   ?? 0),
                 fee_amount:           parseFloat(bestStmt.fee_amount    ?? 0),
                 total_out:            parseFloat(bestStmt.total_out     ?? 0),
                 network:              bestStmt.network,
                 reconciliation_status: reconcStatus,
-                link_status:          bestStmt.link_status ?? null,
-                link_confidence:      bestStmt.link_confidence ?? null,
-                link_to_exchange:     bestStmt.link_to_exchange ?? null,
-                deposit_external_id:  bestStmt.deposit_external_id ?? null,
-                deposit_at:           bestStmt.deposit_at ?? null,
-                link_reason:          bestStmt.link_reason ?? null,
+                // Conservative disposal fields
+                market_price_eur:     bestStmt.market_price_eur  != null ? parseFloat(bestStmt.market_price_eur)  : null,
+                proceeds_eur:         bestStmt.proceeds_eur      != null ? parseFloat(bestStmt.proceeds_eur)      : null,
+                cost_basis_eur:       bestStmt.cost_basis_eur    != null ? parseFloat(bestStmt.cost_basis_eur)    : null,
+                gain_loss_eur:        bestStmt.gain_loss_eur     != null ? parseFloat(bestStmt.gain_loss_eur)     : null,
+                finalized_note:       bestStmt.finalized_note    ?? null,
+                // Transfer link fields
+                link_status:          bestStmt.link_status          ?? null,
+                link_confidence:      bestStmt.link_confidence       ?? null,
+                link_to_exchange:     bestStmt.link_to_exchange      ?? null,
+                deposit_external_id:  bestStmt.deposit_external_id   ?? null,
+                deposit_at:           bestStmt.deposit_at            ?? null,
+                link_reason:          bestStmt.link_reason           ?? null,
               },
             };
           }
@@ -2081,11 +2106,12 @@ export function registerFiscoRebuildRoutes(app: Express): void {
 
       // ── Overall status ────────────────────────────────────────────────────────
       // OK only if ALL transaction checks are OK_ORDER_SELL or OK_INTERNAL_TRANSFER
-      const OK_STATUSES = new Set(["OK_ORDER_SELL", "OK_INTERNAL_TRANSFER", "EXTERNAL_DISPOSAL"]);
+      const OK_STATUSES   = new Set(["OK_ORDER_SELL", "OK_INTERNAL_TRANSFER", "EXTERNAL_DISPOSAL", "CONSERVATIVE_EXTERNAL_DISPOSAL"]);
       const WARN_STATUSES = new Set(["WITHDRAWAL_UNMATCHED", "STATEMENT_ONLY_UNMATCHED", "QTY_MISMATCH"]);
       const allChecks = Object.values(transactionChecks).flat();
       const hasError = allChecks.some((c: any) => !OK_STATUSES.has(c.status) && !WARN_STATUSES.has(c.status));
       const allOk    = allChecks.every((c: any) => OK_STATUSES.has(c.status));
+      const hasConservative = allChecks.some((c: any) => c.status === "CONSERVATIVE_EXTERNAL_DISPOSAL");
 
       const overallStatus = Object.keys(referenceForYear).length === 0
         ? "NO_REFERENCE_DATA"
@@ -2104,11 +2130,14 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           ? `No hay datos de referencia Revolut configurados para el año ${year}.`
           : null,
         note: "Los proceeds/fees se comparan en EUR usando tasa USD/EUR estimada. El PnL del exchange puede diferir del PnL fiscal FIFO global del bot.",
+        report_can_be_finalized: !allChecks.some((c: any) => c.status === "WITHDRAWAL_UNMATCHED" || c.status === "STATEMENT_ONLY_UNMATCHED"),
+        has_conservative_disposals: hasConservative,
         statement_items_summary: {
           total: stmtItemsQ.rows.length,
-          matched_internal: stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "matched_internal_transfer").length,
-          unmatched:        stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "unmatched").length,
-          manual_review:    stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "manual_review").length,
+          matched_internal:       stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "matched_internal_transfer").length,
+          conservative_disposal:  stmtItemsQ.rows.filter((r: any) => (r.classification ?? "") === "conservative_external_disposal").length,
+          unmatched:              stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "unmatched").length,
+          manual_review:          stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "manual_review").length,
         },
         revolut_reference: referenceForYear,
         bot_totals_by_asset: Object.fromEntries(
@@ -2356,6 +2385,122 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/statement-items rematch]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/statement-items/:id/close-conservative
+   * Closes an unmatched withdrawal as a CONSERVATIVE_EXTERNAL_DISPOSAL:
+   *   - Computes proceeds_eur from market price at withdrawal date
+   *   - Computes cost_basis_eur from FIFO lots (read-only, no lot modification)
+   *   - Marks taxable = true, classification_source = conservative_assumption
+   */
+  app.post("/api/fisco/statement-items/:id/close-conservative", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const svc = new ConservativeDisposalService(pool);
+      const result = await svc.closeAsConservative(id);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/close-conservative]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/statement-items/:id/reclassify
+   * Reclassifies a statement item to any valid classification.
+   * If previous classification was conservative_external_disposal, reverses the disposal:
+   *   - Nulls out proceeds_eur, cost_basis_eur, gain_loss_eur
+   *   - Sets conservative_reversed_at, conservative_reversed_to
+   * Body: { classification: Classification, note?: string }
+   */
+  app.post("/api/fisco/statement-items/:id/reclassify", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const VALID_CLASSIFICATIONS: Classification[] = [
+        "pending", "internal_transfer", "own_wallet", "external_disposal",
+        "conservative_external_disposal", "payment", "gift",
+      ];
+
+      const { classification, note } = req.body as { classification?: Classification; note?: string };
+      if (!classification || !VALID_CLASSIFICATIONS.includes(classification)) {
+        return res.status(400).json({
+          error: `classification must be one of: ${VALID_CLASSIFICATIONS.join(", ")}`,
+        });
+      }
+
+      const svc = new ConservativeDisposalService(pool);
+      const result = await svc.reclassify(id, classification, note);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/reclassify]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/conservative-close-all
+   * Closes ALL unmatched withdrawals for a year as conservative_external_disposal.
+   * Body: { year: number }
+   * Returns: array of ConservativeResult
+   */
+  app.post("/api/fisco/conservative-close-all", async (req, res) => {
+    try {
+      const year = parseInt(req.body?.year ?? req.query.year as string);
+      if (isNaN(year)) return res.status(400).json({ error: "year is required" });
+      const svc = new ConservativeDisposalService(pool);
+      const results = await svc.closeAllUnmatched(year);
+      const summary = await svc.getSummary(year);
+      res.json({
+        year,
+        processed: results.length,
+        results,
+        summary,
+      });
+    } catch (e: any) {
+      console.error("[fisco/conservative-close-all]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/conservative-disposals?year=2025
+   * Returns all conservative_external_disposal items for the year,
+   * with computed proceeds/cost/gain_loss for the report section.
+   */
+  app.get("/api/fisco/conservative-disposals", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string ?? String(new Date().getFullYear()));
+      const svc = new ConservativeDisposalService(pool);
+
+      const [itemsQ, summary] = await Promise.all([
+        pool.query(
+          `SELECT id, exchange, year, asset, event_at, amount_sent, fee_amount, fee_asset,
+                  total_out, network, market_price_eur, proceeds_eur, cost_basis_eur,
+                  gain_loss_eur, finalized_at, finalized_note, classification_source,
+                  conservative_reversed_at, conservative_reversed_to, notes
+           FROM fisco_external_statement_items
+           WHERE year = $1
+             AND classification = 'conservative_external_disposal'
+           ORDER BY event_at ASC`,
+          [year]
+        ),
+        svc.getSummary(year),
+      ]);
+
+      res.json({
+        year,
+        count: itemsQ.rows.length,
+        disposals: itemsQ.rows,
+        summary,
+      });
+    } catch (e: any) {
+      console.error("[fisco/conservative-disposals]", e);
       res.status(500).json({ error: e.message });
     }
   });
