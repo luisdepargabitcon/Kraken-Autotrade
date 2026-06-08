@@ -1768,6 +1768,234 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/fisco/reconciliation/revolut?year=2025
+   * Reconciles bot-imported RevolutX data vs official Revolut PDF annual tax extract.
+   * Reference data is hardcoded from the official Revolut statements.
+   */
+  app.get("/api/fisco/reconciliation/revolut", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || 2025;
+      const dateFrom = `${year}-01-01`;
+      const dateTo   = `${year + 1}-01-01`;
+
+      // ── Hardcoded Revolut PDF reference data ────────────────────────────────
+      const REVOLUT_REFERENCE: Record<number, Record<string, any>> = {
+        2025: {
+          USDC: {
+            source: "Revolut Annual Tax Statement 2025",
+            total_sold_quantity: 469.787168,
+            gross_proceeds_usd: 469.22,
+            cost_basis_usd: 469.91,
+            gross_pnl_usd: -0.69,
+            fees_usd: 4.59,
+            net_pnl_usd: -5.28,
+            transactions: [
+              { date: "2025-12-12", quantity: 105.72524,   cost_basis_usd: 105.85, gross_proceeds_usd: 105.45, fees_usd: 0.20, net_pnl_usd: -0.60 },
+              { date: "2025-12-14", quantity: 364.061928,  cost_basis_usd: 364.06, gross_proceeds_usd: 363.77, fees_usd: 4.39, net_pnl_usd: -4.68 },
+            ],
+          },
+        },
+      };
+
+      // ── Query bot: all RevolutX trade_sell operations in year ────────────────
+      const sellOpsQ = await pool.query(`
+        SELECT id, external_id, op_type, asset,
+               amount::numeric    AS amount,
+               price_eur::numeric AS price_eur,
+               total_eur::numeric AS total_eur,
+               fee_eur::numeric   AS fee_eur,
+               counter_asset, pair, executed_at, raw_data
+        FROM fisco_operations
+        WHERE exchange = 'revolutx'
+          AND op_type = 'trade_sell'
+          AND executed_at >= $1::date
+          AND executed_at < $2::date
+        ORDER BY executed_at
+      `, [dateFrom, dateTo]);
+
+      // ── Query bot: all RevolutX disposals in year ────────────────────────────
+      const disposalsQ = await pool.query(`
+        SELECT
+          d.id                    AS disposal_id,
+          so.id                   AS sell_operation_id,
+          so.external_id,
+          so.asset,
+          so.amount::numeric      AS sell_amount,
+          so.executed_at          AS sold_at,
+          so.total_eur::numeric   AS op_total_eur,
+          so.fee_eur::numeric     AS op_fee_eur,
+          d.quantity::numeric     AS quantity,
+          d.proceeds_eur::numeric AS proceeds_eur,
+          d.cost_basis_eur::numeric AS cost_basis_eur,
+          d.gain_loss_eur::numeric  AS gain_loss_eur,
+          d.lot_id
+        FROM fisco_disposals d
+        JOIN fisco_operations so ON so.id = d.sell_operation_id
+        WHERE so.exchange = 'revolutx'
+          AND so.executed_at >= $1::date
+          AND so.executed_at < $2::date
+        ORDER BY so.executed_at, d.id
+      `, [dateFrom, dateTo]);
+
+      // ── Aggregate bot totals by asset ────────────────────────────────────────
+      const botByAsset: Record<string, {
+        sell_count: number; total_qty_sold: number;
+        total_proceeds_eur: number; total_fee_eur: number;
+        first_sell_date: string | null; last_sell_date: string | null;
+        operations: any[];
+      }> = {};
+
+      for (const row of sellOpsQ.rows) {
+        const asset: string = row.asset;
+        if (!botByAsset[asset]) {
+          botByAsset[asset] = {
+            sell_count: 0, total_qty_sold: 0,
+            total_proceeds_eur: 0, total_fee_eur: 0,
+            first_sell_date: null, last_sell_date: null,
+            operations: [],
+          };
+        }
+        const t = botByAsset[asset];
+        t.sell_count++;
+        t.total_qty_sold    += parseFloat(row.amount    ?? 0);
+        t.total_proceeds_eur += parseFloat(row.total_eur ?? 0);
+        t.total_fee_eur      += parseFloat(row.fee_eur   ?? 0);
+        const dt = row.executed_at ? new Date(row.executed_at).toISOString().split("T")[0] : null;
+        if (dt) {
+          if (!t.first_sell_date || dt < t.first_sell_date) t.first_sell_date = dt;
+          if (!t.last_sell_date  || dt > t.last_sell_date)  t.last_sell_date  = dt;
+        }
+        t.operations.push({
+          id: row.id, external_id: row.external_id, asset: row.asset,
+          amount: parseFloat(row.amount ?? 0),
+          total_eur: row.total_eur != null ? parseFloat(row.total_eur) : null,
+          fee_eur:   row.fee_eur   != null ? parseFloat(row.fee_eur)   : null,
+          executed_at: row.executed_at,
+        });
+      }
+
+      // ── Diff bot vs reference ────────────────────────────────────────────────
+      // Approximate USD→EUR rate by year (for proceeds comparison only)
+      const USD_EUR: Record<number, number> = { 2025: 0.92, 2026: 0.88 };
+      const usdEurRate = USD_EUR[year] ?? 0.92;
+
+      const referenceForYear: Record<string, any> = REVOLUT_REFERENCE[year] ?? {};
+      const diffs: Record<string, any> = {};
+      const transactionChecks: Record<string, any[]> = {};
+
+      for (const [asset, ref] of Object.entries(referenceForYear)) {
+        const bot = botByAsset[asset];
+        const botQty     = bot?.total_qty_sold    ?? 0;
+        const botCount   = bot?.sell_count         ?? 0;
+        const botProEur  = bot?.total_proceeds_eur ?? 0;
+        const botFeeEur  = bot?.total_fee_eur      ?? 0;
+
+        const refProEurEst = ref.gross_proceeds_usd * usdEurRate;
+        const refFeeEurEst = ref.fees_usd           * usdEurRate;
+        const qtyDiff      = botQty - ref.total_sold_quantity;
+        const prosDiff     = botProEur - refProEurEst;
+        const feeDiff      = botFeeEur - refFeeEurEst;
+
+        const status = Math.abs(qtyDiff) <= 0.01 && Math.abs(prosDiff) <= 5 ? "OK" : "DIFFERENCES";
+
+        diffs[asset] = {
+          bot_qty:           botQty,
+          ref_qty:           ref.total_sold_quantity,
+          qty_diff:          qtyDiff,
+          bot_proceeds_eur:  botProEur,
+          ref_proceeds_eur_est: refProEurEst,
+          proceeds_diff_eur: prosDiff,
+          bot_fee_eur:       botFeeEur,
+          ref_fee_eur_est:   refFeeEurEst,
+          fee_diff_eur:      feeDiff,
+          bot_sell_count:    botCount,
+          ref_tx_count:      ref.transactions.length,
+          sell_count_diff:   botCount - ref.transactions.length,
+          usd_eur_rate_used: usdEurRate,
+          status,
+        };
+
+        // Check each expected Revolut transaction against bot operations
+        transactionChecks[asset] = ref.transactions.map((tx: any) => {
+          const matchOps = (bot?.operations ?? []).filter((op: any) => {
+            const opDate = op.executed_at
+              ? new Date(op.executed_at).toISOString().split("T")[0]
+              : null;
+            return opDate === tx.date;
+          });
+          const qtyOnDate = matchOps.reduce((s: number, op: any) => s + (op.amount ?? 0), 0);
+          const qtyOk = Math.abs(qtyOnDate - tx.quantity) < 0.01;
+          return {
+            expected_date:         tx.date,
+            expected_quantity:     tx.quantity,
+            expected_proceeds_usd: tx.gross_proceeds_usd,
+            expected_fees_usd:     tx.fees_usd,
+            bot_ops_on_date:       matchOps.length,
+            bot_qty_on_date:       qtyOnDate,
+            qty_match:             qtyOk,
+            status: matchOps.length === 0 ? "MISSING" : (qtyOk ? "OK" : "QTY_MISMATCH"),
+          };
+        });
+      }
+
+      const overallStatus = Object.keys(referenceForYear).length === 0
+        ? "NO_REFERENCE_DATA"
+        : Object.values(diffs).every((d: any) => d.status === "OK") ? "OK" : "DIFFERENCES";
+
+      res.json({
+        year,
+        overall_status: overallStatus,
+        warning: overallStatus === "DIFFERENCES"
+          ? "Diferencias entre extracto Revolut oficial y operaciones importadas en el bot. Verificar sincronización RevolutX para el año."
+          : overallStatus === "NO_REFERENCE_DATA"
+          ? `No hay datos de referencia Revolut configurados para el año ${year}.`
+          : null,
+        note: "Los proceeds/fees se comparan en EUR usando tasa USD/EUR estimada. El PnL del exchange puede diferir del PnL fiscal FIFO global del bot.",
+        revolut_reference: referenceForYear,
+        bot_totals_by_asset: Object.fromEntries(
+          Object.entries(botByAsset).map(([k, v]) => [k, {
+            sell_count: v.sell_count,
+            total_qty_sold:     v.total_qty_sold,
+            total_proceeds_eur: v.total_proceeds_eur,
+            total_fee_eur:      v.total_fee_eur,
+            first_sell_date:    v.first_sell_date,
+            last_sell_date:     v.last_sell_date,
+          }])
+        ),
+        diffs,
+        transaction_checks: transactionChecks,
+        all_bot_operations: sellOpsQ.rows.map((r: any) => ({
+          id: r.id, external_id: r.external_id, asset: r.asset,
+          amount:    parseFloat(r.amount   ?? 0),
+          total_eur: r.total_eur != null ? parseFloat(r.total_eur) : null,
+          fee_eur:   r.fee_eur   != null ? parseFloat(r.fee_eur)   : null,
+          price_eur: r.price_eur != null ? parseFloat(r.price_eur) : null,
+          pair: r.pair, counter_asset: r.counter_asset,
+          executed_at: r.executed_at,
+        })),
+        all_disposals: disposalsQ.rows.map((r: any) => ({
+          disposal_id:      r.disposal_id,
+          sell_operation_id: r.sell_operation_id,
+          external_id:      r.external_id,
+          asset:            r.asset,
+          sell_amount:      parseFloat(r.sell_amount   ?? 0),
+          sold_at:          r.sold_at,
+          op_total_eur:     r.op_total_eur   != null ? parseFloat(r.op_total_eur)   : null,
+          op_fee_eur:       r.op_fee_eur     != null ? parseFloat(r.op_fee_eur)     : null,
+          quantity:         parseFloat(r.quantity      ?? 0),
+          proceeds_eur:     parseFloat(r.proceeds_eur  ?? 0),
+          cost_basis_eur:   parseFloat(r.cost_basis_eur ?? 0),
+          gain_loss_eur:    parseFloat(r.gain_loss_eur  ?? 0),
+          lot_id:           r.lot_id,
+        })),
+      });
+    } catch (e: any) {
+      console.error("[fisco/reconciliation/revolut]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * GET /api/fisco/transactions-report?year=&exchange=&asset=
    * Returns detailed transaction list for HTML report generation.
    */
