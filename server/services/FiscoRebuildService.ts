@@ -713,6 +713,29 @@ export class FiscoRebuildService {
       }
     }
 
+    // Check for stablecoin lots with anomalous cost basis (USDC/USDT should be ~0.70-1.20 EUR/unit)
+    const stablecoinAnomalyQ = await pool.query(`
+      SELECT fl.id AS lot_id, fl.asset,
+             fl.quantity::numeric, fl.unit_cost_eur::numeric,
+             fo.exchange, fo.op_type, fo.executed_at
+      FROM fisco_lots fl
+      JOIN fisco_operations fo ON fo.id = fl.operation_id
+      WHERE fl.asset IN ('USDC','USDT')
+        AND fl.unit_cost_eur IS NOT NULL
+        AND fl.quantity > 0
+        AND (fl.unit_cost_eur::numeric < 0.70 OR fl.unit_cost_eur::numeric > 1.20)
+    `);
+    for (const r of stablecoinAnomalyQ.rows) {
+      discrepancies.push({
+        item_type: "stablecoin_cost_basis_anomaly",
+        asset: r.asset,
+        exchange: r.exchange,
+        actual_value: parseFloat(r.unit_cost_eur),
+        detail: `Lote ${r.lot_id} ${r.asset} (${r.exchange}/${r.op_type} ${new Date(r.executed_at).toISOString().split('T')[0]}): unit_cost_eur=${parseFloat(r.unit_cost_eur).toFixed(4)} fuera de rango 0.70-1.20`,
+        severity: "critical",
+      });
+    }
+
     // Get year ranges
     const yearRange = await pool.query(
       `SELECT MIN(EXTRACT(YEAR FROM executed_at))::int AS min_yr,

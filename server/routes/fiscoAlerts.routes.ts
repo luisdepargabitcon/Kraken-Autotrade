@@ -465,9 +465,13 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
         cr?.status === "committed" &&
         cr?.isSafeForReport === true &&
         Number(cr?.criticalErrorsCount ?? 0) === 0;
-      const isSafe = committedSafe;
+      const stablecoinAnomalies: any[] = report.stablecoin_anomalies ?? [];
+      const isSafe = committedSafe && stablecoinAnomalies.length === 0;
       const bannerColor  = isSafe ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
                                    : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
+      const stablecoinRow = stablecoinAnomalies.length > 0
+        ? `<tr><td style="color:#dc2626;padding:2px 12px 2px 0;font-weight:600;">STABLECOIN_COST_BASIS_ANOMALY</td><td style="color:#dc2626;">${stablecoinAnomalies.length} lotes con coste unitario fuera de rango 0.70–1.20 EUR</td></tr>`
+        : '';
       const validationBanner = `
       <div style="background:${bannerColor.bg};border:2px solid ${bannerColor.border};border-radius:8px;padding:14px 18px;margin-bottom:22px;">
         <div style="font-weight:700;color:${bannerColor.text};font-size:13px;margin-bottom:10px;">
@@ -483,6 +487,7 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
           <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Disposiciones</td><td>${cr?.disposalsCount ?? 'N/A'}</td></tr>
           <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Último commit</td><td>${fmtDateShort(cr?.completedAt ?? null)}</td></tr>
           <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Exchanges</td><td>${dataSourceLabel}</td></tr>
+          ${stablecoinRow}
         </table>
       </div>`;
 

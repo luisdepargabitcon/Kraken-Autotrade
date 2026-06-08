@@ -892,7 +892,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const lastSyncQ = await pool.query(`SELECT MAX(created_at) as last_sync FROM fisco_operations`);
 
       // --- Critical errors (DB-based validation for the report year) ---
-      const [unknownBasisQ, requiresEurQ] = await Promise.all([
+      const [unknownBasisQ, requiresEurQ, stablecoinAnomalyQ] = await Promise.all([
         pool.query(
           `SELECT o.asset, COUNT(*) AS cnt FROM fisco_disposals d
            JOIN fisco_operations o ON d.sell_operation_id = o.id
@@ -906,7 +906,33 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
            AND EXTRACT(YEAR FROM executed_at) = $1 ${exchWhereOps}
            GROUP BY asset`, [year]
         ),
+        pool.query(`
+          SELECT fl.id AS lot_id, fl.asset,
+                 fl.quantity::numeric, fl.remaining_qty::numeric,
+                 fl.unit_cost_eur::numeric, fl.cost_eur::numeric,
+                 fl.acquired_at, fo.exchange, fo.op_type, fo.external_id
+          FROM fisco_lots fl
+          JOIN fisco_operations fo ON fo.id = fl.operation_id
+          WHERE fl.asset IN ('USDC','USDT')
+            AND fl.unit_cost_eur IS NOT NULL
+            AND fl.quantity > 0
+            AND (fl.unit_cost_eur::numeric < 0.70 OR fl.unit_cost_eur::numeric > 1.20)
+          ORDER BY fl.acquired_at
+        `),
       ]);
+      const stablecoinAnomalies = stablecoinAnomalyQ.rows.map((r: any) => ({
+        code: "STABLECOIN_COST_BASIS_ANOMALY",
+        lot_id: r.lot_id,
+        asset: r.asset,
+        quantity: parseFloat(r.quantity),
+        remaining_qty: parseFloat(r.remaining_qty),
+        unit_cost_eur: parseFloat(r.unit_cost_eur),
+        cost_eur: parseFloat(r.cost_eur),
+        exchange: r.exchange,
+        acquired_at: r.acquired_at,
+        op_type: r.op_type,
+        detail: `Lote ${r.lot_id} ${r.asset} (${r.exchange}/${r.op_type}): unit_cost_eur=${parseFloat(r.unit_cost_eur).toFixed(4)} — esperado 0.70–1.20`,
+      }));
       const annualCriticalErrors = [
         ...unknownBasisQ.rows.map((r: any) => ({
           code: "UNKNOWN_BASIS",
@@ -925,9 +951,10 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         exchange_filter: exchangeFilter || 'all',
         committed_run: committedRun,
         last_sync: lastSyncQ.rows[0]?.last_sync || null,
-        is_safe_for_report: annualCriticalErrors.length === 0,
+        is_safe_for_report: annualCriticalErrors.length === 0 && stablecoinAnomalies.length === 0,
         critical_errors_count: annualCriticalErrors.length,
         critical_errors: annualCriticalErrors,
+        stablecoin_anomalies: stablecoinAnomalies,
         counters,
         section_a: sectionA,
         section_b: sectionB,
@@ -1581,6 +1608,19 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             WHERE fo.asset = fl.asset)
         ) < -0.000001
       `);
+      const stablecoinAnomalyQ = await pool.query(`
+        SELECT fl.id AS lot_id, fl.asset,
+               fl.quantity::numeric, fl.remaining_qty::numeric,
+               fl.unit_cost_eur::numeric, fl.cost_eur::numeric,
+               fl.acquired_at, fo.exchange, fo.op_type, fo.external_id
+        FROM fisco_lots fl
+        JOIN fisco_operations fo ON fo.id = fl.operation_id
+        WHERE fl.asset IN ('USDC','USDT')
+          AND fl.unit_cost_eur IS NOT NULL
+          AND fl.quantity > 0
+          AND (fl.unit_cost_eur::numeric < 0.70 OR fl.unit_cost_eur::numeric > 1.20)
+        ORDER BY fl.acquired_at
+      `);
       const criticalErrors = [
         ...unknownBasis.rows.map((r: any) => ({
           code: "UNKNOWN_BASIS",
@@ -1592,16 +1632,133 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           asset: r.asset,
           detail: `Balance negativo para ${r.asset}: ${parseFloat(r.bal).toFixed(8)}`,
         })),
+        ...stablecoinAnomalyQ.rows.map((r: any) => ({
+          code: "STABLECOIN_COST_BASIS_ANOMALY",
+          asset: r.asset,
+          lot_id: r.lot_id,
+          unit_cost_eur: parseFloat(r.unit_cost_eur),
+          exchange: r.exchange,
+          acquired_at: r.acquired_at,
+          detail: `Lote ${r.lot_id} ${r.asset} (${r.exchange} / ${r.op_type}): unit_cost_eur=${parseFloat(r.unit_cost_eur).toFixed(4)} — esperado 0.70–1.20`,
+        })),
       ];
       return res.json({
         isSafeForReport: criticalErrors.length === 0,
         criticalErrors,
+        stablecoinAnomalies: stablecoinAnomalyQ.rows.map((r: any) => ({
+          lot_id: r.lot_id,
+          asset: r.asset,
+          quantity: parseFloat(r.quantity),
+          remaining_qty: parseFloat(r.remaining_qty),
+          unit_cost_eur: parseFloat(r.unit_cost_eur),
+          cost_eur: parseFloat(r.cost_eur),
+          exchange: r.exchange,
+          acquired_at: r.acquired_at,
+          op_type: r.op_type,
+        })),
         operationsCount: parseInt(opsRes.rows[0].cnt),
         lotsCount: parseInt(lotsRes.rows[0].cnt),
         disposalsCount: parseInt(dispRes.rows[0].cnt),
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/debug/usdc-disposals?year=2026
+   * Returns all USDC disposals with full lot+operation detail for cost-basis audit.
+   */
+  app.get("/api/fisco/debug/usdc-disposals", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || 2026;
+      const exchange = (req.query.exchange as string) || null;
+      const exchClause = exchange ? `AND so.exchange = '${exchange}'` : "";
+
+      const disposals = await pool.query(`
+        SELECT
+          d.id                      AS disposal_id,
+          so.id                     AS sell_operation_id,
+          so.exchange               AS sell_exchange,
+          so.external_id            AS sell_external_id,
+          so.executed_at            AS sold_at,
+          so.asset,
+          d.quantity::numeric       AS quantity,
+          d.proceeds_eur::numeric   AS proceeds_eur,
+          d.cost_basis_eur::numeric AS cost_basis_eur,
+          d.gain_loss_eur::numeric  AS gain_loss_eur,
+          d.fee_eur::numeric        AS fee_eur,
+          d.lot_id,
+          fl.acquired_at            AS lot_acquired_at,
+          fl.quantity::numeric      AS lot_quantity,
+          fl.remaining_qty::numeric AS lot_remaining_qty,
+          fl.cost_eur::numeric      AS lot_cost_eur,
+          fl.unit_cost_eur::numeric AS lot_unit_cost_eur,
+          bo.exchange               AS buy_exchange,
+          bo.external_id            AS buy_external_id,
+          bo.op_type                AS buy_op_type,
+          bo.amount::numeric        AS buy_amount,
+          bo.price_eur::numeric     AS buy_price_eur,
+          bo.total_eur::numeric     AS buy_total_eur,
+          bo.executed_at            AS buy_executed_at
+        FROM fisco_disposals d
+        JOIN fisco_operations so ON so.id = d.sell_operation_id
+        LEFT JOIN fisco_lots fl ON fl.id = d.lot_id
+        LEFT JOIN fisco_operations bo ON bo.id = fl.operation_id
+        WHERE so.asset = 'USDC'
+          AND so.executed_at >= $1::date
+          AND so.executed_at < ($1::date + interval '1 year')
+          ${exchClause}
+        ORDER BY so.executed_at, d.id
+      `, [`${year}-01-01`]);
+
+      const allOps = await pool.query(`
+        SELECT
+          id, exchange, external_id, op_type, asset,
+          amount::numeric AS amount,
+          price_eur::numeric AS price_eur,
+          total_eur::numeric AS total_eur,
+          fee_eur::numeric AS fee_eur,
+          counter_asset, pair, executed_at, raw_data
+        FROM fisco_operations
+        WHERE asset = 'USDC'
+        ORDER BY executed_at
+      `);
+
+      const lots = await pool.query(`
+        SELECT
+          fl.id, fl.asset, fl.quantity::numeric, fl.remaining_qty::numeric,
+          fl.cost_eur::numeric, fl.unit_cost_eur::numeric, fl.acquired_at,
+          fo.exchange, fo.op_type, fo.external_id, fo.executed_at
+        FROM fisco_lots fl
+        JOIN fisco_operations fo ON fo.id = fl.operation_id
+        WHERE fl.asset = 'USDC'
+        ORDER BY fl.acquired_at
+      `);
+
+      const anomalousLots = lots.rows.filter(
+        (r: any) => r.unit_cost_eur !== null && (parseFloat(r.unit_cost_eur) < 0.70 || parseFloat(r.unit_cost_eur) > 1.20)
+      );
+
+      res.json({
+        year,
+        disposals: disposals.rows,
+        all_usdc_operations: allOps.rows,
+        usdc_lots: lots.rows,
+        anomalous_lots: anomalousLots,
+        summary: {
+          disposal_count: disposals.rows.length,
+          total_qty: disposals.rows.reduce((s: number, r: any) => s + parseFloat(r.quantity || 0), 0),
+          total_proceeds_eur: disposals.rows.reduce((s: number, r: any) => s + parseFloat(r.proceeds_eur || 0), 0),
+          total_cost_basis_eur: disposals.rows.reduce((s: number, r: any) => s + parseFloat(r.cost_basis_eur || 0), 0),
+          total_gain_loss_eur: disposals.rows.reduce((s: number, r: any) => s + parseFloat(r.gain_loss_eur || 0), 0),
+          lots_count: lots.rows.length,
+          anomalous_lots_count: anomalousLots.length,
+        },
+      });
+    } catch (e: any) {
+      console.error("[fisco/debug/usdc-disposals]", e);
+      res.status(500).json({ error: e.message });
     }
   });
 

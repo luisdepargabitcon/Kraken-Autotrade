@@ -51,6 +51,11 @@ interface AnnualReportResponse {
   section_d: Array<{
     asset: string; exchanges: string[]; saldo_inicio: number; entradas: number; salidas: number; saldo_fin: number;
   }>;
+  stablecoin_anomalies: Array<{
+    lot_id: number; asset: string; quantity: number; remaining_qty: number;
+    unit_cost_eur: number; cost_eur: number; exchange: string;
+    acquired_at: string; op_type: string; detail: string;
+  }>;
 }
 
 interface FiscoMetaResponse {
@@ -283,7 +288,8 @@ function generateBit2MePDF(report: AnnualReportResponse) {
     cr?.status === "committed" &&
     cr?.isSafeForReport === true &&
     Number(cr?.criticalErrorsCount ?? 0) === 0;
-  const isSafe = committedSafe;
+  const stablecoinAnomalies = report.stablecoin_anomalies ?? [];
+  const isSafe = committedSafe && stablecoinAnomalies.length === 0;
   const bc = isSafe
     ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
     : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
@@ -302,6 +308,7 @@ function generateBit2MePDF(report: AnnualReportResponse) {
         <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Disposiciones</td><td>${cr?.disposalsCount ?? 'N/A'}</td></tr>
         <tr><td style="color:#64748b;padding:2px 12px 2px 0;">\u00daltimo commit</td><td>${fmtDateShort(cr?.completedAt)}</td></tr>
         <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Exchanges</td><td>${dataSourceLabel}</td></tr>
+        ${stablecoinAnomalies.length > 0 ? `<tr><td style="color:#dc2626;padding:2px 12px 2px 0;font-weight:600;">STABLECOIN_COST_BASIS_ANOMALY</td><td style="color:#dc2626;">${stablecoinAnomalies.length} lotes con coste unitario fuera de rango 0.70–1.20 EUR</td></tr>` : ''}
       </table>
     </div>`;
 
