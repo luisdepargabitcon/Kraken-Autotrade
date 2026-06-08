@@ -41,7 +41,19 @@ interface AnnualReportResponse {
   critical_errors_count: number;
   committed_run: CommittedRunContext | null;
   counters: { total_operations: number; pending_valuation: number };
-  section_a: { year: number; ganancias_eur: number; perdidas_eur: number; total_eur: number };
+  section_a: {
+    year: number;
+    ganancias_eur: number;
+    perdidas_eur: number;
+    total_eur: number;                                    // FIFO only — backward compat
+    ordinary_fifo_gain_loss_eur: number;
+    conservative_external_disposals_gain_loss_eur: number;
+    conservative_external_disposals_ganancias_eur: number;
+    conservative_external_disposals_perdidas_eur: number;
+    conservative_disposals_count: number;
+    has_conservative_disposals: boolean;
+    final_taxable_gain_loss_eur: number;                 // FIFO + conservative
+  };
   section_b: Array<{
     asset: string; exchange: string; tipo: string; num_transmisiones: number;
     valor_transmision_eur: number; valor_adquisicion_eur: number; ganancia_perdida_eur: number;
@@ -364,6 +376,48 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
     </div>`;
 
   const a = report.section_a;
+  const finalTotal = a.final_taxable_gain_loss_eur ?? a.total_eur;
+  const hasConserv = a.has_conservative_disposals ?? false;
+
+  // Conservative breakdown block (only shown when there are conservative disposals)
+  const conservDisposalBlock = hasConserv ? `
+    <div style="margin-top:16px;border:1.5px solid #ea580c;border-radius:6px;padding:12px 16px;background:#fff7ed;">
+      <div style="font-size:12px;font-weight:700;color:#c2410c;margin-bottom:8px;">
+        Desglose resultado fiscal final declarado
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr>
+          <td style="padding:4px 8px;color:#334155;">Resultado FIFO ordinario (ventas/swaps)</td>
+          <td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:600;"
+              class="${a.ordinary_fifo_gain_loss_eur >= 0 ? 'positive' : 'negative'}">
+            ${eur(a.ordinary_fifo_gain_loss_eur)}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:4px 8px;color:#334155;">
+            Disposiciones externas conservadoras
+            <span style="font-size:10px;color:#64748b;">(${a.conservative_disposals_count} retirada${a.conservative_disposals_count !== 1 ? 's' : ''} sin match — ver P\u00e1gina 5)</span>
+          </td>
+          <td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:600;"
+              class="${a.conservative_external_disposals_gain_loss_eur >= 0 ? 'positive' : 'negative'}">
+            ${eur(a.conservative_external_disposals_gain_loss_eur)}
+          </td>
+        </tr>
+        <tr style="border-top:2px solid #ea580c;">
+          <td style="padding:6px 8px;font-weight:700;font-size:13px;">Total fiscal final declarado ${y}</td>
+          <td style="padding:6px 8px;text-align:right;font-family:monospace;font-weight:800;font-size:14px;"
+              class="${finalTotal >= 0 ? 'positive' : 'negative'}">
+            ${eur(finalTotal)}
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:10px;color:#92400e;margin-top:8px;font-style:italic;">
+        Las disposiciones conservadoras son estimaciones fiscales para retiradas sin match con cuenta propia.
+        Reclasificar si se demuestra ser transferencia interna (POST /api/fisco/statement-items/:id/reclassify).
+        Los lotes FIFO no se han modificado por estas disposiciones.
+      </div>
+    </div>` : "";
+
   const pageA = `
     <div class="page">
       <div class="brand">${BRAND_LABEL}</div>
@@ -378,8 +432,23 @@ function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconcil
           <td class="negative">${eur(a.perdidas_eur)}</td>
           <td class="${a.total_eur >= 0 ? 'positive' : 'negative'}">${eur(a.total_eur)}</td>
         </tr>
-        <tr class="total-row"><td colspan="2">Total ${y}</td><td>${eur(a.ganancias_eur)}</td><td>${eur(a.perdidas_eur)}</td><td>${eur(a.total_eur)}</td></tr>
+        ${hasConserv ? `
+        <tr style="background:#fff7ed;">
+          <td style="color:#7c3d12;font-style:italic;" colspan="2">+ Disposiciones externas conservadoras</td>
+          <td class="positive">${eur(a.conservative_external_disposals_ganancias_eur)}</td>
+          <td class="negative">${eur(a.conservative_external_disposals_perdidas_eur)}</td>
+          <td class="${a.conservative_external_disposals_gain_loss_eur >= 0 ? 'positive' : 'negative'}" style="font-style:italic;">
+            ${eur(a.conservative_external_disposals_gain_loss_eur)}
+          </td>
+        </tr>` : ""}
+        <tr class="total-row">
+          <td colspan="2">Total fiscal final ${y}</td>
+          <td>${eur(a.ganancias_eur + a.conservative_external_disposals_ganancias_eur)}</td>
+          <td>${eur(a.perdidas_eur + a.conservative_external_disposals_perdidas_eur)}</td>
+          <td>${eur(finalTotal)}</td>
+        </tr>
       </table>
+      ${conservDisposalBlock}
       <div class="meta">${meta}</div>
       <div class="footer-page">Resumen de ganancias y p\u00e9rdidas derivadas de las transmisiones de activos el ${y} \u2014 P\u00e1gina 1</div>
     </div>`;
@@ -1082,11 +1151,19 @@ export default function Fisco() {
                   : <span className="text-muted-foreground/50">Sin datos</span>}
               </div>
             </div>
-            <div className={`bg-card border rounded-lg p-3 space-y-0.5 ${report.section_a.total_eur >= 0 ? "border-green-500/30" : "border-red-500/30"}`}>
-              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">G/P Neto FIFO</div>
-              <div className={`text-base font-bold font-mono ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                {report.section_a.total_eur >= 0 ? "+" : ""}{eur(report.section_a.total_eur)}
+            <div className={`bg-card border rounded-lg p-3 space-y-0.5 ${(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur) >= 0 ? "border-green-500/30" : "border-red-500/30"}`}>
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                {report.section_a.has_conservative_disposals ? "G/P Total Fiscal Final" : "G/P Neto FIFO"}
               </div>
+              <div className={`text-base font-bold font-mono ${(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                {(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur) >= 0 ? "+" : ""}
+                {eur(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur)}
+              </div>
+              {report.section_a.has_conservative_disposals && (
+                <div className="text-[9px] text-orange-400 font-mono">
+                  FIFO {eur(report.section_a.ordinary_fifo_gain_loss_eur)} + conserv. {eur(report.section_a.conservative_external_disposals_gain_loss_eur)}
+                </div>
+              )}
             </div>
             <div className={`bg-card border rounded-lg p-3 space-y-0.5 ${report.counters.pending_valuation > 0 ? "border-yellow-500/30" : "border-green-500/20"}`}>
               <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">FIFO Estado</div>
@@ -1200,21 +1277,40 @@ export default function Fisco() {
                     <tbody>
                       <tr className="border-b border-border/50">
                         <td className="py-2.5 px-4">{(() => { const exs = [...new Set((report?.section_b || []).map(r => r.exchange))]; return exs.length > 0 ? exs.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(" + ") : "Kraken + RevolutX"; })()}</td>
-                        <td className="py-2.5 px-4">Cuenta Principal</td>
+                        <td className="py-2.5 px-4">Cuenta Principal (FIFO)</td>
                         <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
                         <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
                         <td className={`py-2.5 px-4 text-right font-mono font-bold ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
                           {eur(report.section_a.total_eur)}
                         </td>
                       </tr>
+                      {report.section_a.has_conservative_disposals && (
+                        <tr className="border-b border-orange-500/30 bg-orange-500/5">
+                          <td className="py-2.5 px-4 text-orange-400 text-xs italic">Disposiciones conservadoras</td>
+                          <td className="py-2.5 px-4 text-orange-400 text-xs">
+                            {report.section_a.conservative_disposals_count} retirada{report.section_a.conservative_disposals_count !== 1 ? "s" : ""} sin match
+                          </td>
+                          <td className="py-2.5 px-4 text-right font-mono text-green-400 text-xs">{eur(report.section_a.conservative_external_disposals_ganancias_eur)}</td>
+                          <td className="py-2.5 px-4 text-right font-mono text-red-400 text-xs">{eur(report.section_a.conservative_external_disposals_perdidas_eur)}</td>
+                          <td className={`py-2.5 px-4 text-right font-mono font-bold text-xs ${report.section_a.conservative_external_disposals_gain_loss_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {eur(report.section_a.conservative_external_disposals_gain_loss_eur)}
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                     <tfoot>
                       <tr className="bg-blue-500/10 font-bold">
-                        <td colSpan={2} className="py-2.5 px-4 text-blue-400">Total {selectedYear}</td>
-                        <td className="py-2.5 px-4 text-right font-mono text-green-400">{eur(report.section_a.ganancias_eur)}</td>
-                        <td className="py-2.5 px-4 text-right font-mono text-red-400">{eur(report.section_a.perdidas_eur)}</td>
-                        <td className={`py-2.5 px-4 text-right font-mono ${report.section_a.total_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
-                          {eur(report.section_a.total_eur)}
+                        <td colSpan={2} className="py-2.5 px-4 text-blue-400">
+                          {report.section_a.has_conservative_disposals ? `Total fiscal final ${selectedYear}` : `Total ${selectedYear}`}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-green-400">
+                          {eur((report.section_a.ganancias_eur ?? 0) + (report.section_a.conservative_external_disposals_ganancias_eur ?? 0))}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-red-400">
+                          {eur((report.section_a.perdidas_eur ?? 0) + (report.section_a.conservative_external_disposals_perdidas_eur ?? 0))}
+                        </td>
+                        <td className={`py-2.5 px-4 text-right font-mono ${(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {eur(report.section_a.final_taxable_gain_loss_eur ?? report.section_a.total_eur)}
                         </td>
                       </tr>
                     </tfoot>

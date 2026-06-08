@@ -266,3 +266,95 @@ describe("ConservativeDisposalService", () => {
     expect(updateCall).toBeUndefined();
   });
 });
+
+// ─── Annual report section_a conservative total ───────────────────────────────
+// Tests for the computation logic that produces final_taxable_gain_loss_eur.
+// The actual DB query lives in fisco.routes.ts annual-report endpoint.
+// These tests validate the arithmetic that the route would perform.
+
+describe("annual-report section_a — final_taxable_gain_loss_eur computation", () => {
+
+  /**
+   * Simulate the route computation:
+   * fifoTotal = sum(fisco_disposals.gain_loss_eur WHERE year = Y)
+   * conservTotal = sum(fisco_external_statement_items.gain_loss_eur WHERE classification = 'conservative_external_disposal' AND year = Y)
+   * finalTotal = fifoTotal + conservTotal
+   */
+  function computeSectionA(
+    fifoGanancias: number,
+    fifoPerdidas: number,
+    conservGanancias: number,
+    conservPerdidas: number,
+    conservCount: number
+  ) {
+    const fifoTotal    = Math.round((fifoGanancias + fifoPerdidas) * 100) / 100;
+    const conservTotal = Math.round((conservGanancias + conservPerdidas) * 100) / 100;
+    const finalTotal   = Math.round((fifoTotal + conservTotal) * 100) / 100;
+    return {
+      ganancias_eur:                                   Math.round(fifoGanancias * 100) / 100,
+      perdidas_eur:                                    Math.round(fifoPerdidas * 100) / 100,
+      total_eur:                                       fifoTotal,
+      ordinary_fifo_gain_loss_eur:                     fifoTotal,
+      conservative_external_disposals_gain_loss_eur:   conservTotal,
+      conservative_external_disposals_ganancias_eur:   Math.round(conservGanancias * 100) / 100,
+      conservative_external_disposals_perdidas_eur:    Math.round(conservPerdidas * 100) / 100,
+      conservative_disposals_count:                    conservCount,
+      has_conservative_disposals:                      conservCount > 0,
+      final_taxable_gain_loss_eur:                     finalTotal,
+    };
+  }
+
+  it("no conservative disposals → final_taxable = FIFO total, has_conservative = false", () => {
+    const sA = computeSectionA(500, -100, 0, 0, 0);
+    expect(sA.total_eur).toBeCloseTo(400);
+    expect(sA.final_taxable_gain_loss_eur).toBeCloseTo(400);
+    expect(sA.has_conservative_disposals).toBe(false);
+    expect(sA.conservative_disposals_count).toBe(0);
+    // Page 1 total-row = final_taxable = FIFO only (unchanged)
+    expect(sA.final_taxable_gain_loss_eur).toBe(sA.total_eur);
+  });
+
+  it("unmatched withdrawal closed as conservative with gain_loss_eur = X → final total = FIFO + X", () => {
+    // Scenario: FIFO = 400 EUR gain, conservative withdrawal gain = 30.40 EUR
+    const fifoGain    = 400;
+    const conservGain = 30.40;
+    const sA = computeSectionA(fifoGain, 0, conservGain, 0, 1);
+
+    expect(sA.ordinary_fifo_gain_loss_eur).toBeCloseTo(400);
+    expect(sA.conservative_external_disposals_gain_loss_eur).toBeCloseTo(30.40);
+    expect(sA.final_taxable_gain_loss_eur).toBeCloseTo(430.40);
+    expect(sA.has_conservative_disposals).toBe(true);
+    expect(sA.conservative_disposals_count).toBe(1);
+
+    // Page 1 must show final total ≠ FIFO total
+    expect(sA.final_taxable_gain_loss_eur).not.toBe(sA.total_eur);
+  });
+
+  it("conservative disposal with loss → reduces final total below FIFO", () => {
+    const sA = computeSectionA(400, 0, 0, -50, 1);
+    expect(sA.ordinary_fifo_gain_loss_eur).toBeCloseTo(400);
+    expect(sA.conservative_external_disposals_gain_loss_eur).toBeCloseTo(-50);
+    expect(sA.final_taxable_gain_loss_eur).toBeCloseTo(350);
+    expect(sA.has_conservative_disposals).toBe(true);
+  });
+
+  it("multiple conservative disposals → all summed into conservative_total", () => {
+    // 3 disposals: +20, +30.40, -5
+    const conservTotal = 20 + 30.40 - 5;   // = 45.40
+    const sA = computeSectionA(400, 0, 50.40, -5, 3);
+    expect(sA.conservative_external_disposals_gain_loss_eur).toBeCloseTo(45.40);
+    expect(sA.final_taxable_gain_loss_eur).toBeCloseTo(400 + 45.40);
+    expect(sA.conservative_disposals_count).toBe(3);
+  });
+
+  it("RevolutX 2025 real case — internal transfer, no conservative → final = FIFO", () => {
+    // Real case: 1 item classified internal_transfer (taxable = false)
+    // Conservative count = 0, so section_a conservative fields = 0
+    const sA = computeSectionA(1234.56, -89.01, 0, 0, 0);
+    expect(sA.final_taxable_gain_loss_eur).toBeCloseTo(1234.56 - 89.01);
+    expect(sA.has_conservative_disposals).toBe(false);
+    expect(sA.conservative_disposals_count).toBe(0);
+    // No conservative block in Page 1
+    expect(sA.conservative_external_disposals_gain_loss_eur).toBe(0);
+  });
+});

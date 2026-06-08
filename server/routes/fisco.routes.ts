@@ -743,6 +743,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       } : null;
 
       // --- Section A: Resumen de ganancias y pérdidas derivadas de transmisiones ---
+      // Query 1: FIFO ordinary disposals (from fisco_disposals)
       const gainsQ = await pool.query(`
         SELECT
           COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) as ganancias,
@@ -753,11 +754,42 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         WHERE EXTRACT(YEAR FROM d.disposed_at) = $1 ${exchWhere}
       `, [year]);
 
+      // Query 2: Conservative external disposals (from fisco_external_statement_items)
+      // These are NOT in fisco_disposals (lots not touched), so we aggregate them separately.
+      const conservQ = await pool.query(`
+        SELECT
+          COUNT(*)                             AS count,
+          COALESCE(SUM(gain_loss_eur::numeric), 0) AS total_gain_loss,
+          COALESCE(SUM(CASE WHEN gain_loss_eur::numeric > 0 THEN gain_loss_eur::numeric ELSE 0 END), 0) AS ganancias,
+          COALESCE(SUM(CASE WHEN gain_loss_eur::numeric < 0 THEN gain_loss_eur::numeric ELSE 0 END), 0) AS perdidas
+        FROM fisco_external_statement_items
+        WHERE year = $1
+          AND classification = 'conservative_external_disposal'
+          AND gain_loss_eur IS NOT NULL
+      `, [year]);
+
+      const fifoTotal        = Math.round((parseFloat(gainsQ.rows[0]?.total    || '0')) * 100) / 100;
+      const conservGain      = Math.round((parseFloat(conservQ.rows[0]?.ganancias || '0')) * 100) / 100;
+      const conservLoss      = Math.round((parseFloat(conservQ.rows[0]?.perdidas  || '0')) * 100) / 100;
+      const conservTotal     = Math.round((parseFloat(conservQ.rows[0]?.total_gain_loss || '0')) * 100) / 100;
+      const conservCount     = parseInt(conservQ.rows[0]?.count || '0', 10);
+      const finalTotal       = Math.round((fifoTotal + conservTotal) * 100) / 100;
+
       const sectionA = {
         year,
-        ganancias_eur: Math.round((gainsQ.rows[0]?.ganancias || 0) * 100) / 100,
-        perdidas_eur: Math.round((gainsQ.rows[0]?.perdidas || 0) * 100) / 100,
-        total_eur: Math.round((gainsQ.rows[0]?.total || 0) * 100) / 100,
+        // FIFO-only fields (backward-compatible)
+        ganancias_eur: Math.round((parseFloat(gainsQ.rows[0]?.ganancias || '0')) * 100) / 100,
+        perdidas_eur:  Math.round((parseFloat(gainsQ.rows[0]?.perdidas  || '0')) * 100) / 100,
+        total_eur:     fifoTotal,                         // FIFO only — kept for backward compat
+        // Conservative disposal breakdown (new)
+        ordinary_fifo_gain_loss_eur:                    fifoTotal,
+        conservative_external_disposals_gain_loss_eur:  conservTotal,
+        conservative_external_disposals_ganancias_eur:  conservGain,
+        conservative_external_disposals_perdidas_eur:   conservLoss,
+        conservative_disposals_count:                   conservCount,
+        has_conservative_disposals:                     conservCount > 0,
+        // Final total to declare (FIFO + conservative)
+        final_taxable_gain_loss_eur:                    finalTotal,
       };
 
       // --- Section B: Resumen de ganancias y pérdidas por activo ---
