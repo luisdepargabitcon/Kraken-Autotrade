@@ -163,10 +163,15 @@ export async function normalizeKrakenLedger(
       const asset = normalizeAsset(firstEntry.asset);
       const totalAmt = group.reduce((s, e) => s + Math.abs(e.amount), 0);
       const totalFee = group.reduce((s, e) => s + Math.abs(e.fee), 0);
+      // For stablecoin deposits: cost basis = amount × historical USD/EUR rate (peg ≈ 1 USD)
       // For crypto deposits: fetch historical EUR price so FIFO can create a lot with known cost basis
       let priceEur: number | null = null;
       let totalEur: number | null = null;
-      if (isCrypto(asset) && totalAmt > 0) {
+      if (isCryptoStable(asset) && totalAmt > 0) {
+        const usdEurRate = await rateFor(execDate);
+        priceEur = usdEurRate;
+        totalEur = totalAmt * usdEurRate;
+      } else if (isCrypto(asset) && totalAmt > 0) {
         const eurPrice = await getCryptoEurPriceHistorical(asset, execDate);
         if (eurPrice !== null) {
           priceEur = eurPrice;
@@ -241,13 +246,20 @@ export async function normalizeKrakenLedger(
         const entry = group[0];
         const asset = normalizeAsset(entry.asset);
         if (entry.amount > 0) {
+          let rcvPriceEur: number | null = null;
+          let rcvTotalEur: number | null = null;
+          if (isCryptoStable(asset) && Math.abs(entry.amount) > 0) {
+            const usdEurRate = await rateFor(execDate);
+            rcvPriceEur = usdEurRate;
+            rcvTotalEur = Math.abs(entry.amount) * usdEurRate;
+          }
           ops.push({
             exchange: "kraken",
             externalId: `${refid}_rcv`,
             opType: "deposit",
             asset,
             amount: Math.abs(entry.amount),
-            priceEur: null, totalEur: null,
+            priceEur: rcvPriceEur, totalEur: rcvTotalEur,
             feeEur: await toEurAmt(Math.abs(entry.fee), asset, execDate),
             counterAsset: null, pair: null,
             executedAt: execDate, rawData: group,
@@ -275,7 +287,11 @@ export async function normalizeKrakenLedger(
       // Fetch EUR price so FIFO can create a lot with the income value as cost basis
       let priceEur: number | null = null;
       let totalEur: number | null = null;
-      if (isCrypto(asset) && totalAmt > 0) {
+      if (isCryptoStable(asset) && totalAmt > 0) {
+        const usdEurRate = await rateFor(execDate);
+        priceEur = usdEurRate;
+        totalEur = totalAmt * usdEurRate;
+      } else if (isCrypto(asset) && totalAmt > 0) {
         const eurPrice = await getCryptoEurPriceHistorical(asset, execDate);
         if (eurPrice !== null) {
           priceEur = eurPrice;

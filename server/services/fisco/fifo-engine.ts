@@ -49,7 +49,8 @@ export type FiscoCriticalErrorCode =
   | "REQUIRES_EUR_PRICE"                    // crypto-to-crypto trade without EUR value
   | "SELL_WITHOUT_LOTS"                     // sell operation with zero open lots
   | "UNCLASSIFIED_OPERATION"               // operation type cannot be determined
-  | "MISSING_OPENING_BALANCE_OR_PREHISTORY"; // sell before any buy — incomplete history
+  | "MISSING_OPENING_BALANCE_OR_PREHISTORY" // sell before any buy — incomplete history
+  | "STABLECOIN_ZERO_COST_BASIS";           // stablecoin lot with unit_cost_eur < 0.70 (missing normalizer cost)
 
 export interface FiscoCriticalError {
   code: FiscoCriticalErrorCode;
@@ -101,6 +102,8 @@ export interface YearSummary {
  * Run FIFO calculation on sorted normalized operations.
  * Operations MUST be sorted chronologically before calling this.
  */
+const FIFO_STABLES = new Set(["USDC", "USDT", "USDE", "DAI", "BUSD"]);
+
 export function runFifo(operations: NormalizedOperation[]): FifoResult {
   const lots: FifoLot[] = [];
   const disposals: FifoDisposal[] = [];
@@ -172,6 +175,15 @@ export function runFifo(operations: NormalizedOperation[]): FifoResult {
         exchange: op.exchange,
         externalId: op.externalId,
       };
+
+      // Defensive guard: stablecoin lots must have a reasonable cost basis
+      if (FIFO_STABLES.has(op.asset) && unitCost < 0.70 && op.amount > 0) {
+        addCritical(
+          "STABLECOIN_ZERO_COST_BASIS", op,
+          `Lote ${op.asset} (${op.exchange}/${op.externalId}) creado con unit_cost_eur=${unitCost.toFixed(6)} EUR — ` +
+          `esperado >= 0.70 EUR. Verificar que el depósito/compra tiene total_eur correcto en el normalizer.`
+        );
+      }
 
       lots.push(lot);
       const assetLots = openLotsByAsset.get(op.asset) || [];

@@ -548,3 +548,40 @@ describe("FIFO — staking creates lot (BTC 37-sat regression TAYARB)", () => {
     expect(errors).toHaveLength(0);
   });
 });
+
+// ============================================================
+// USDC deposit cost basis regression (lot 5163 — FTAVCHJ)
+// Reproduces bug where Kraken USDC deposit got cost_eur=0 → fake +306€ gain on RevolutX sell
+// ============================================================
+
+describe("normalizeKrakenLedger — USDC deposit uses USD/EUR rate as cost basis (regression FTAVCHJ)", () => {
+  it("USDC deposit → priceEur = USD/EUR rate, totalEur = amount × rate, NOT null", async () => {
+    vi.mocked(eurRates.getHistoricalUsdEurRate).mockResolvedValueOnce(0.8524);
+    const entries = [
+      makeEntry({ id: "e1", refid: "FTAVCHJ", type: "deposit", asset: "USDC", amount: 360, fee: 0 }),
+    ];
+    const ops = await normalizeKrakenLedger(entries);
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("deposit");
+    expect(ops[0].asset).toBe("USDC");
+    expect(ops[0].priceEur).toBeCloseTo(0.8524);
+    expect(ops[0].totalEur).toBeCloseTo(360 * 0.8524);
+  });
+});
+
+describe("FIFO — USDC deposit at USD/EUR cost → sell produces near-zero gain (regression lot 5163)", () => {
+  it("deposit 360 USDC @ 0.8524 EUR/unit → sell 360 USDC @ 306.77 proceeds → gain ≈ 0 (not +306)", () => {
+    const costBasis = 360 * 0.8524; // 306.864 EUR
+    const proceeds  = 306.7735;
+    const ops: NormalizedOperation[] = [
+      makeOp({ opType: "deposit",    asset: "USDC", amount: 360, priceEur: 0.8524, totalEur: costBasis, executedAt: new Date("2025-12-14") }),
+      makeOp({ opType: "trade_sell", asset: "USDC", amount: 360, priceEur: proceeds / 360, totalEur: proceeds, executedAt: new Date("2026-01-20") }),
+    ];
+    const result = runFifo(ops);
+    const usdcErrors = result.criticalErrors.filter(e => e.asset === "USDC");
+    expect(usdcErrors).toHaveLength(0);
+    expect(result.disposals).toHaveLength(1);
+    const gain = result.disposals[0].gainLossEur;
+    expect(Math.abs(gain)).toBeLessThan(1); // gain must be near 0, NOT +306
+  });
+});
