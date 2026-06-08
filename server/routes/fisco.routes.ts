@@ -13,15 +13,9 @@ import { FiscoValidationService } from "../services/fisco/FiscoValidationService
 import { KrakenReconciliationService } from "../services/fisco/KrakenReconciliationService";
 import { MultiYearReportService } from "../services/fisco/MultiYearReportService";
 import { FiscoExportService } from "../services/fisco/FiscoExportService";
+import { FiscoHtmlRenderer } from "../services/fisco/FiscoHtmlRenderer";
+import JSZip from "jszip";
 import { pool } from "../db";
-// Runtime-safe archiver loader: handles CJS direct export and bundler-wrapped default.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const _archiverRaw = require("archiver");
-type ArchiverFactory = (format: string, opts?: object) => import("archiver").Archiver;
-const archiverLib: ArchiverFactory =
-  typeof _archiverRaw === "function"     ? _archiverRaw :
-  typeof _archiverRaw?.default === "function" ? _archiverRaw.default :
-  (() => { throw new Error("archiver module did not resolve to a callable function"); }) as any;
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -3105,6 +3099,40 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/fisco/report/annual/html
+   * Returns a complete, interactive annual fiscal HTML report in Spanish.
+   * Query params: year=YYYY | exchange=kraken|revolutx|all
+   */
+  app.get("/api/fisco/report/annual/html", async (req, res) => {
+    try {
+      const year      = parseInt((req.query.year as string) || "2025", 10);
+      const exchParam = (req.query.exchange as string) || "all";
+      const exchanges = exchParam === "all" ? ["kraken", "revolutx"] :
+                        exchParam === "global" ? ["kraken", "revolutx"] :
+                        exchParam.split(",").map(e => e.trim()).filter(Boolean);
+
+      const validSvc  = new FiscoValidationService(pool);
+      const krakenSvc = new KrakenReconciliationService(pool);
+      const renderer  = new FiscoHtmlRenderer(pool);
+
+      const [finStatus, portfolio, krakenRec] = await Promise.all([
+        validSvc.getFinalizationStatus(year),
+        validSvc.validatePortfolio(year, null),
+        krakenSvc.reconcile(year),
+      ]);
+
+      const html = await renderer.renderAnnualHtml({ year, exchanges, finStatus, portfolio, krakenRec });
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(html);
+    } catch (e: any) {
+      console.error("[fisco/report/annual/html]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * GET /api/fisco/export/audit-pack.zip
    * Generates a ZIP with HTML reports + all CSVs + JSON metadata.
    * Query params: years=2024,2025,2026 | exchanges=kraken,revolutx | includeRaw=false
@@ -3142,7 +3170,18 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         portByYear[yr] = port;
       }
 
+      const renderer  = new FiscoHtmlRenderer(pool);
       const multiHtml = reportSvc.renderHtml(multiReport);
+      // Per-year full HTML reports
+      for (const yr of years) {
+        const annualHtml = await renderer.renderAnnualHtml({
+          year: yr, exchanges,
+          finStatus: finByYear[yr],
+          portfolio: portByYear[yr],
+          krakenRec: await new KrakenReconciliationService(pool).reconcile(yr),
+        });
+        yearHtmls[yr] = annualHtml;
+      }
 
       // audit_metadata.json
       const auditMeta = {
@@ -3172,32 +3211,32 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         accumulated_total_for_audit_only: multiReport.global_summary.accumulated_total_for_audit_only,
       };
 
-      // Build ZIP
-      res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition",
-        `attachment; filename="fisco_audit_${years.join("-")}.zip"`);
-
-      const archive = archiverLib("zip", { zlib: { level: 6 } });
-      archive.pipe(res);
-
-      archive.append(Buffer.from(multiHtml, "utf8"),                     { name: "reports/informe_multi_year.html" });
+      // Build ZIP with JSZip (pure JS, works in all bundled environments)
+      const zip = new JSZip();
+      zip.file("reports/informe_multi_year.html", multiHtml);
       for (const yr of years) {
-        archive.append(Buffer.from(JSON.stringify(finByYear[yr], null, 2), "utf8"),
-          { name: `json/finalization_status_${yr}.json` });
-        archive.append(Buffer.from(JSON.stringify(portByYear[yr], null, 2), "utf8"),
-          { name: `json/portfolio_validation_${yr}.json` });
+        zip.file(`reports/informe_anual_${yr}.html`, yearHtmls[yr] ?? "");
+        zip.file(`json/finalization_status_${yr}.json`, JSON.stringify(finByYear[yr], null, 2));
+        zip.file(`json/portfolio_validation_${yr}.json`, JSON.stringify(portByYear[yr], null, 2));
       }
-      archive.append(Buffer.from(opscsv, "utf8"),    { name: "csv/fisco_operations.csv" });
-      archive.append(Buffer.from(dispCsv, "utf8"),   { name: "csv/fisco_disposals.csv" });
-      archive.append(Buffer.from(lotsCsv, "utf8"),   { name: "csv/fisco_lots.csv" });
-      archive.append(Buffer.from(stmtCsv, "utf8"),   { name: "csv/fisco_statement_items.csv" });
-      archive.append(Buffer.from(consDisCsv, "utf8"),{ name: "csv/fisco_conservative_disposals.csv" });
-      archive.append(Buffer.from(JSON.stringify(multiReport, null, 2), "utf8"),
-        { name: "json/reconciliation_summary.json" });
-      archive.append(Buffer.from(JSON.stringify(auditMeta, null, 2), "utf8"),
-        { name: "json/audit_metadata.json" });
+      zip.file("csv/fisco_operations.csv",              opscsv);
+      zip.file("csv/fisco_disposals.csv",               dispCsv);
+      zip.file("csv/fisco_lots.csv",                    lotsCsv);
+      zip.file("csv/fisco_statement_items.csv",         stmtCsv);
+      zip.file("csv/fisco_conservative_disposals.csv",  consDisCsv);
+      zip.file("json/reconciliation_summary.json",      JSON.stringify(multiReport, null, 2));
+      zip.file("json/audit_metadata.json",              JSON.stringify(auditMeta, null, 2));
 
-      await archive.finalize();
+      const buffer = await zip.generateAsync({
+        type: "nodebuffer",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+      });
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="fisco_audit_${years.join("-")}.zip"`);
+      res.setHeader("Content-Length", buffer.length.toString());
+      res.send(buffer);
     } catch (e: any) {
       console.error("[fisco/export/audit-pack.zip]", e);
       if (!res.headersSent) res.status(500).json({ error: e.message });

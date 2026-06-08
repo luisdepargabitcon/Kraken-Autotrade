@@ -14,6 +14,7 @@
 import type { Pool } from "pg";
 import { FiscoValidationService } from "./FiscoValidationService";
 import { KrakenReconciliationService } from "./KrakenReconciliationService";
+import { translateStatus, HTML_STYLE, HTML_SCRIPTS } from "./FiscoHtmlRenderer";
 
 export interface YearSummary {
   year: number;
@@ -192,64 +193,75 @@ export class MultiYearReportService {
     };
   }
 
-  /** Render multi-year report as HTML string */
+  /** Render multi-year report as interactive HTML in Spanish */
   renderHtml(report: MultiYearReport): string {
-    const statusBadge = (ok: boolean, warn?: boolean) =>
-      ok   ? `<span class="badge ok">✓ Finalizable</span>`
-      : warn ? `<span class="badge warn">⚠ Con warnings</span>`
-             : `<span class="badge err">✗ No finalizable</span>`;
+    const eur = (n: number) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
+    const gainCls = (n: number) => n > 0.01 ? "gain-pos" : n < -0.01 ? "gain-neg" : "gain-zero";
 
+    const badge = (cls: string, t: string) => `<span class="badge ${cls}">${t}</span>`;
+    const statusBadge = (ok: boolean, warn?: boolean) =>
+      ok && !warn ? badge("b-ok", "✓ Finalizable") :
+      warn        ? badge("b-warn", "⚠ Finalizable con avisos") :
+                    badge("b-err", "✗ No finalizable");
     const recBadge = (s: string) =>
-      s === "OK"               ? `<span class="badge ok">OK</span>` :
-      s === "OK_WITH_WARNINGS" ? `<span class="badge warn">OK_WITH_WARNINGS</span>` :
-      s === "WARNINGS"         ? `<span class="badge warn">WARNINGS</span>` :
-                                 `<span class="badge err">DIFFERENCES</span>`;
+      s === "OK"               ? badge("b-ok", "Correcto") :
+      s === "OK_WITH_WARNINGS" ? badge("b-warn", "Correcto con avisos") :
+      s === "WARNINGS"         ? badge("b-warn", "Avisos") :
+                                 badge("b-err", "Diferencias");
 
     const rows = report.global_summary.totals_by_year.map(y => `
       <tr>
-        <td>${y.year}</td>
-        <td class="${y.fifo_status === "OK" ? "ok" : "err"}">${y.fifo_status}</td>
-        <td>${y.ordinary_fifo_gain_loss_eur.toFixed(2)} €</td>
-        <td>${y.conservative_external_disposals_gain_loss_eur.toFixed(2)} €</td>
-        <td><strong>${y.final_taxable_gain_loss_eur.toFixed(2)} €</strong></td>
-        <td>${y.staking_total_eur.toFixed(2)} €</td>
-        <td class="${y.portfolio_status === "OK" ? "ok" : "err"}">${y.portfolio_status}</td>
-        <td><small>${y.validation_strength}</small></td>
+        <td><strong>${y.year}</strong></td>
+        <td>${badge(y.fifo_status === "OK" ? "b-ok" : "b-err", translateStatus(y.fifo_status))}</td>
+        <td class="${gainCls(y.ordinary_fifo_gain_loss_eur)}">${eur(y.ordinary_fifo_gain_loss_eur)}</td>
+        <td>${eur(y.conservative_external_disposals_gain_loss_eur)}</td>
+        <td><strong class="${gainCls(y.final_taxable_gain_loss_eur)}">${eur(y.final_taxable_gain_loss_eur)}</strong></td>
+        <td>${eur(y.staking_total_eur)}</td>
+        <td>${badge(y.portfolio_status === "OK" ? "b-ok" : "b-err", translateStatus(y.portfolio_status))}</td>
+        <td style="font-size:.75rem">${translateStatus(y.validation_strength)}</td>
         <td>${recBadge(y.exchange_reconciliation_status)}</td>
-        <td class="${y.withdrawals_status === "OK" ? "ok" : y.withdrawals_status === "PENDING" ? "err" : "warn"}">${y.withdrawals_status}</td>
+        <td>${badge(y.withdrawals_status === "OK" ? "b-ok" : y.withdrawals_status === "PENDING" ? "b-err" : "b-warn", translateStatus(y.withdrawals_status))}</td>
         <td>${statusBadge(y.report_can_be_finalized, y.warnings_count > 0 && y.report_can_be_finalized)}</td>
       </tr>
     `).join("");
 
     const yearSections = report.global_summary.totals_by_year.map(y => {
       const blockersHtml = y.blockers.length > 0
-        ? `<div class="blockers"><strong>Blockers:</strong><ul>${y.blockers.map(b => `<li class="err">[${b.code}] ${b.detail}</li>`).join("")}</ul></div>`
-        : `<div class="ok-msg">Sin blockers ✓</div>`;
+        ? `<div class="blockers"><strong>Bloqueantes:</strong><ul>${y.blockers.map(b => `<li class="err">[${b.code}] ${b.detail}</li>`).join("")}</ul></div>`
+        : `<p class="ok">Sin bloqueantes ✓</p>`;
       const warnsHtml = y.kraken_warnings.length > 0
-        ? `<div class="warnings"><strong>Kraken warnings:</strong><ul>${y.kraken_warnings.map(w => `<li class="warn">⚠ ${w}</li>`).join("")}</ul></div>`
-        : `<div class="ok-msg">Sin warnings ✓</div>`;
+        ? `<div class="warnings-box"><strong>Avisos Kraken (no bloquean):</strong><ul>${y.kraken_warnings.map(w => `<li class="warn">⚠ ${w}</li>`).join("")}</ul></div>`
+        : `<p class="ok">Sin avisos de conciliación ✓</p>`;
+
+      const total = y.final_taxable_gain_loss_eur;
+      const totalSign = total >= 0 ? "de ganancias netas" : "de pérdidas netas";
+      const resumenText = `En el ejercicio ${y.year} el resultado fiscal final por transmisiones de criptoactivos es de <strong class="${gainCls(total)}">${eur(Math.abs(total))}</strong> ${totalSign}. ` +
+        (y.fifo_status === "OK" ? "El FIFO no presenta errores críticos. " : `<span class="err">Errores críticos FIFO detectados. </span>`) +
+        (y.warnings_count > 0 ? `Existen ${y.warnings_count} aviso(s) no bloqueante(s).` : "Sin avisos de conciliación.");
 
       return `
-        <section class="year-section">
-          <h2>Año ${y.year}</h2>
-          <div class="grid2">
-            <div class="card"><label>FIFO status</label><span class="${y.fifo_status === "OK" ? "ok" : "err"}">${y.fifo_status}</span></div>
-            <div class="card"><label>Portfolio</label><span class="${y.portfolio_status === "OK" ? "ok" : "err"}">${y.portfolio_status}</span></div>
-            <div class="card"><label>Validación</label><span>${y.validation_strength}</span></div>
-            <div class="card"><label>Conciliación</label>${recBadge(y.exchange_reconciliation_status)}</div>
-            <div class="card"><label>Withdrawals</label><span>${y.withdrawals_status}</span></div>
-            <div class="card"><label>Conservative disposals</label><span>${y.conservative_disposals_status}</span></div>
+      <details class="year-section" open>
+        <summary>📅 Año ${y.year} — ${eur(total)} — ${statusBadge(y.report_can_be_finalized, y.warnings_count > 0 && y.report_can_be_finalized)}</summary>
+        <div class="details-body">
+          <div class="resumen-ejecutivo"><p>${resumenText}</p></div>
+          <div class="grid3">
+            <div class="card"><label>FIFO</label><span class="val">${badge(y.fifo_status === "OK" ? "b-ok" : "b-err", translateStatus(y.fifo_status))}</span></div>
+            <div class="card"><label>Cartera (portfolio)</label><span class="val">${badge(y.portfolio_status === "OK" ? "b-ok" : "b-err", translateStatus(y.portfolio_status))}</span></div>
+            <div class="card"><label>Método validación</label><span style="font-size:.78rem">${translateStatus(y.validation_strength)}</span></div>
+            <div class="card"><label>Conciliación Kraken</label>${recBadge(y.exchange_reconciliation_status)}</div>
+            <div class="card"><label>Retiradas</label><span>${translateStatus(y.withdrawals_status)}</span></div>
+            <div class="card"><label>Disposiciones conserv.</label><span>${translateStatus(y.conservative_disposals_status)}</span></div>
           </div>
           <table>
-            <tr><td>FIFO ordinario</td><td>${y.ordinary_fifo_gain_loss_eur.toFixed(2)} €</td></tr>
-            <tr><td>Disposiciones conservadoras</td><td>${y.conservative_external_disposals_gain_loss_eur.toFixed(2)} €</td></tr>
-            <tr><th>Total fiscal final</th><th>${y.final_taxable_gain_loss_eur.toFixed(2)} €</th></tr>
-            <tr><td>Staking/rewards</td><td>${y.staking_total_eur.toFixed(2)} €</td></tr>
+            <tr><th>Concepto</th><th>Importe</th></tr>
+            <tr><td>FIFO ordinario</td><td class="${gainCls(y.ordinary_fifo_gain_loss_eur)}">${eur(y.ordinary_fifo_gain_loss_eur)}</td></tr>
+            <tr><td>Disposiciones externas conservadoras</td><td>${eur(y.conservative_external_disposals_gain_loss_eur)}</td></tr>
+            <tr><th>Total fiscal final</th><th class="${gainCls(total)}">${eur(total)}</th></tr>
+            <tr><td>Staking / rewards (informativo)</td><td>${eur(y.staking_total_eur)}</td></tr>
           </table>
-          ${blockersHtml}
-          ${warnsHtml}
-          <div class="finalize">${statusBadge(y.report_can_be_finalized)}</div>
-        </section>`;
+          ${blockersHtml}${warnsHtml}
+        </div>
+      </details>`;
     }).join("\n");
 
     return `<!DOCTYPE html>
@@ -258,37 +270,26 @@ export class MultiYearReportService {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Informe fiscal multi-año — ${report.years.join(", ")}</title>
-  <style>
-    body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}
-    h1{color:#1a1a2e;border-bottom:2px solid #1a1a2e;padding-bottom:.5rem}
-    h2{color:#16213e;margin-top:2rem;border-left:4px solid #0f3460;padding-left:.75rem}
-    table{border-collapse:collapse;width:100%;margin:1rem 0}
-    th,td{padding:.5rem .75rem;border:1px solid #ddd;text-align:left;font-size:.85rem}
-    th{background:#f5f5f5}
-    .badge{display:inline-block;padding:.2rem .5rem;border-radius:4px;font-size:.75rem;font-weight:600}
-    .badge.ok{background:#d4edda;color:#155724}
-    .badge.warn{background:#fff3cd;color:#856404}
-    .badge.err{background:#f8d7da;color:#721c24}
-    .ok{color:#155724;font-weight:600} .err{color:#721c24;font-weight:600} .warn{color:#856404;font-weight:600}
-    .ok-msg{color:#155724;margin:.5rem 0} .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1rem 0}
-    .card{background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;padding:.75rem}
-    .card label{display:block;font-size:.7rem;text-transform:uppercase;color:#666;margin-bottom:.25rem}
-    .blockers,.warnings{background:#fff8f8;border:1px solid #f5c6cb;border-radius:6px;padding:.75rem;margin:.5rem 0}
-    .warnings{background:#fffbf0;border-color:#ffc107}
-    .warnings li{color:#856404} .blockers li{color:#721c24}
-    .finalize{margin-top:1rem} .year-section{border:1px solid #e0e0e0;border-radius:8px;padding:1.5rem;margin:1.5rem 0}
-    .portada{background:#f0f4ff;border-radius:8px;padding:2rem;margin-bottom:2rem}
-    .annexe{background:#f9f9f9;border:1px solid #ddd;border-radius:8px;padding:1.5rem;margin-top:2rem;font-size:.85rem}
-  </style>
+  ${HTML_STYLE}
 </head>
 <body>
 
+<div class="toolbar no-print">
+  <strong style="margin-right:.5rem">Informe multi-año ${report.years.join(", ")}</strong>
+  <button class="btn" onclick="expandAll()">▶ Expandir todo</button>
+  <button class="btn" onclick="collapseAll()">◀ Contraer todo</button>
+  <button class="btn btn-primary" onclick="preparePdf()">🖨 Preparar PDF completo</button>
+  <button class="btn" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+</div>
+
 <div class="portada">
-  <h1>📊 Informe fiscal multi-año / auditoría FISCO</h1>
-  <p><strong>Años incluidos:</strong> ${report.years.join(", ")}</p>
-  <p><strong>Exchanges:</strong> ${report.exchanges.join(", ")}</p>
-  <p><strong>Fecha de generación:</strong> ${new Date(report.generated_at).toLocaleString("es-ES")}</p>
-  <p class="warn">⚠ ${report.audit_note}</p>
+  <h1>📊 Informe Fiscal Multi-año / Auditoría FISCO</h1>
+  <div class="grid3">
+    <div class="card"><label>Años incluidos</label><span class="val">${report.years.join(", ")}</span></div>
+    <div class="card"><label>Exchanges</label><span class="val" style="font-size:.85rem">${report.exchanges.join(", ")}</span></div>
+    <div class="card"><label>Fecha de generación</label><span class="val" style="font-size:.8rem">${new Date(report.generated_at).toLocaleString("es-ES")}</span></div>
+  </div>
+  <p style="font-size:.82rem;color:#856404;margin:.5rem 0">⚠ ${report.audit_note}</p>
 </div>
 
 <h2>Resumen consolidado por año</h2>
@@ -296,16 +297,22 @@ export class MultiYearReportService {
   <thead>
     <tr>
       <th>Año</th><th>FIFO</th><th>FIFO ordinario</th><th>Conservadoras</th>
-      <th>Total fiscal</th><th>Staking</th><th>Cartera</th><th>Validation</th>
-      <th>Conciliación</th><th>Withdrawals</th><th>Finalizable</th>
+      <th>Total fiscal</th><th>Staking</th><th>Cartera</th><th>Método validación</th>
+      <th>Conciliación</th><th>Retiradas</th><th>Finalizable</th>
     </tr>
   </thead>
   <tbody>${rows}</tbody>
 </table>
 
-<p><strong>Total acumulado (solo auditoría, NO declaración conjunta):</strong>
-   <strong>${report.global_summary.accumulated_total_for_audit_only.toFixed(2)} €</strong></p>
+<p style="background:#f0f4ff;border:1px solid #c5d3f0;border-radius:6px;padding:.6rem 1rem;margin:1rem 0">
+  <strong>Total acumulado (solo auditoría — NO es declaración fiscal conjunta):</strong>
+  <strong class="${report.global_summary.accumulated_total_for_audit_only >= 0 ? "gain-pos" : "gain-neg"}">
+    ${new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(report.global_summary.accumulated_total_for_audit_only)}
+  </strong>
+  &nbsp;&nbsp;<span style="font-size:.8rem;color:#856404">⚠ Total acumulado solo para auditoría. No es una declaración fiscal conjunta.</span>
+</p>
 
+<h2>Detalle por año</h2>
 ${yearSections}
 
 <div class="annexe">

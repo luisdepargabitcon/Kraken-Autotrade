@@ -26,6 +26,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { MultiYearReportService } from "../MultiYearReportService";
 import { FiscoExportService } from "../FiscoExportService";
+import { FiscoHtmlRenderer, translateStatus } from "../FiscoHtmlRenderer";
 import type { Pool } from "pg";
 
 // ─── Mock factory ─────────────────────────────────────────────────────────────
@@ -537,5 +538,213 @@ describe("FiscoExportService", () => {
     expect(typeof counts.disposals).toBe("number");
     expect(typeof counts.lots).toBe("number");
     expect(typeof counts.statement_items).toBe("number");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FiscoHtmlRenderer — 16 nuevos tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeHtmlRendererPool() {
+  return makeMockPool((sql) => {
+    if (sql.includes("STRING_AGG") && sql.includes("fisco_operations")) return { rows: [{ asset: "BTC", exchanges: "kraken", acquisitions_qty: "1", disposals_qty: "0.5", fees_eur: "5", operations_count: "3" }] };
+    if (sql.includes("fisco_lots") && sql.includes("STRING_AGG")) return { rows: [] };
+    if (sql.includes("fisco_lots") && sql.includes("GROUP BY fl.asset")) return { rows: [{ asset: "BTC", opening_qty: "0.5", closing_qty: "0.5" }] };
+    if (sql.includes("fisco_disposals") && sql.includes("GROUP BY fd.asset")) return { rows: [{ asset: "BTC", proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", disposals_count: "2" }] };
+    if (sql.includes("fisco_disposals") && sql.includes("ORDER BY")) return { rows: [{ asset: "BTC", disposed_at: "2025-06-01T00:00:00Z", exchange: "kraken", quantity: "0.1", proceeds_eur: "2500", cost_basis_eur: "2400", fee_eur: "10", gain_loss_eur: "90" }] };
+    if (sql.includes("fisco_operations") && sql.includes("ORDER BY fo.asset")) return { rows: [{ asset: "BTC", executed_at: "2025-01-15T00:00:00Z", exchange: "kraken", op_type: "trade_buy", amount: "0.5", price_eur: "28000", total_eur: "14000", fee_eur: "5", external_id: "TXABC" }] };
+    if (sql.includes("GROUP BY fo.exchange")) return { rows: [{ exchange: "kraken", operations_count: "3", buys_count: "2", sells_count: "1", deposits_count: "0", withdrawals_count: "0", staking_count: "0", fees_eur: "5" }] };
+    if (sql.includes("GROUP BY fd.exchange")) return { rows: [{ exchange: "kraken", gain_loss_eur: "1000" }] };
+    if (sql.includes("staking") && sql.includes("IN ('staking'")) return { rows: [] };
+    if (sql.includes("fisco_external_statement_items")) return { rows: [] };
+    if (sql.includes("COUNT(*)") && sql.includes("fisco_operations")) return { rows: [{ c: "3" }] };
+    if (sql.includes("COUNT(*)") && sql.includes("fisco_disposals")) return { rows: [{ c: "2" }] };
+    if (sql.includes("COUNT(*)") && sql.includes("remaining_qty")) return { rows: [{ c: "1" }] };
+    return { rows: [] };
+  });
+}
+
+const MOCK_FIN_STATUS = {
+  fifo_status: "OK",
+  portfolio_status: "OK",
+  withdrawals_status: "OK",
+  conservative_disposals_status: "NONE",
+  report_can_be_finalized: true,
+  blockers: [],
+  warnings: [],
+  ordinary_fifo_gain_loss_eur: -200,
+  conservative_external_disposals_gain_loss_eur: 0,
+  final_taxable_gain_loss_eur: -200,
+  staking_total_eur: 10,
+  gains_eur: 50,
+  losses_eur: -250,
+};
+const MOCK_PORTFOLIO = { validation_strength: "fifo_internal_historical_inventory", portfolio_status: "OK", rows: [] };
+const MOCK_KRAKEN_REC = { status: "OK", warnings: [], report_can_be_finalized: true };
+
+describe("FiscoHtmlRenderer", () => {
+  it("Test H1: translateStatus traduce códigos técnicos a español", () => {
+    expect(translateStatus("OK")).toBe("Correcto");
+    expect(translateStatus("OK_WITH_WARNINGS")).toBe("Correcto con avisos");
+    expect(translateStatus("DIFFERENCES")).toBe("Diferencias");
+    expect(translateStatus("fifo_internal_historical_inventory")).toBe("Validación FIFO histórica interna");
+    expect(translateStatus("OK_INTERNAL_TRANSFER")).toBe("OK — Transferencia interna");
+    expect(translateStatus("UNKNOWN_CODE")).toBe("UNKNOWN_CODE");
+  });
+
+  it("Test H2: renderAnnualHtml devuelve text/html empezando con <!DOCTYPE html>", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html.trimStart()).toMatch(/^<!DOCTYPE html>/i);
+  });
+
+  it("Test H3: renderAnnualHtml NO devuelve JSON (no empieza con {)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html.trimStart()).not.toMatch(/^\{/);
+  });
+
+  it("Test H4: renderAnnualHtml contiene sección 'Detalle por activo'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Detalle por activo");
+  });
+
+  it("Test H5: renderAnnualHtml contiene <details> por activo", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("<details");
+  });
+
+  it("Test H6: renderAnnualHtml contiene 'Preparar PDF completo'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Preparar PDF completo");
+  });
+
+  it("Test H7: renderAnnualHtml usa estados en castellano (no muestra solo 'OK')", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Correcto");
+    expect(html).toContain("Validación FIFO histórica interna");
+  });
+
+  it("Test H8: renderAnnualHtml contiene sección 'Ventas y cálculo FIFO'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Ventas y cálculo FIFO");
+  });
+
+  it("Test H9: renderAnnualHtml contiene sección 'Rendimientos / staking'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Rendimientos / staking");
+  });
+
+  it("Test H10: renderAnnualHtml contiene sección 'Retiradas, depósitos y transferencias'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Retiradas, dep");
+  });
+
+  it("Test H11: renderAnnualHtml contiene @media print", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("@media print");
+  });
+
+  it("Test H12: renderAnnualHtml contiene expandAll y collapseAll JS", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("expandAll");
+    expect(html).toContain("collapseAll");
+    expect(html).toContain("preparePdf");
+  });
+
+  it("Test H13: multi-year renderHtml contiene 'Detalle por año' con <details>", () => {
+    const svc = new MultiYearReportService(makeMockPool(() => ({ rows: [] })));
+    const dummyReport = {
+      generated_at: new Date().toISOString(),
+      years: [2025],
+      exchanges: ["kraken"],
+      include_global: true,
+      include_exchange_breakdown: false,
+      audit_note: "Nota de auditoría",
+      global_summary: {
+        totals_by_year: [{
+          year: 2025,
+          ordinary_fifo_gain_loss_eur: -72.25,
+          conservative_external_disposals_gain_loss_eur: 0,
+          final_taxable_gain_loss_eur: -72.25,
+          staking_total_eur: 5,
+          portfolio_status: "OK" as const,
+          validation_strength: "fifo_internal_historical_inventory",
+          exchange_reconciliation_status: "OK_WITH_WARNINGS",
+          withdrawals_status: "OK",
+          conservative_disposals_status: "NONE",
+          fifo_status: "OK",
+          report_can_be_finalized: true,
+          blockers_count: 0,
+          warnings_count: 1,
+          blockers: [],
+          warnings: [],
+          kraken_reconciliation_status: "WARNINGS",
+          kraken_warnings: ["Retirada TON sin statement item enlazado"],
+          kraken_report_can_be_finalized: true,
+        }],
+        accumulated_total_for_audit_only: -72.25,
+      },
+      reports: [],
+    };
+    const html = svc.renderHtml(dummyReport);
+    expect(html).toContain("Detalle por año");
+    expect(html).toContain("<details");
+    expect(html).toContain("Correcto con avisos");
+    expect(html).toContain("Avisos Kraken");
+  });
+
+  it("Test H14: multi-year HTML contiene expandAll/collapseAll/preparePdf", () => {
+    const svc = new MultiYearReportService(makeMockPool(() => ({ rows: [] })));
+    const dummyReport = {
+      generated_at: new Date().toISOString(), years: [2025], exchanges: ["kraken"],
+      include_global: true, include_exchange_breakdown: false,
+      audit_note: "nota",
+      global_summary: { totals_by_year: [], accumulated_total_for_audit_only: 0 },
+      reports: [],
+    };
+    const html = svc.renderHtml(dummyReport);
+    expect(html).toContain("expandAll");
+    expect(html).toContain("collapseAll");
+    expect(html).toContain("preparePdf");
+  });
+
+  it("Test H15: multi-year HTML contiene @media print", () => {
+    const svc = new MultiYearReportService(makeMockPool(() => ({ rows: [] })));
+    const html = svc.renderHtml({
+      generated_at: new Date().toISOString(), years: [2025], exchanges: ["kraken"],
+      include_global: true, include_exchange_breakdown: false, audit_note: "nota",
+      global_summary: { totals_by_year: [], accumulated_total_for_audit_only: 0 }, reports: [],
+    });
+    expect(html).toContain("@media print");
+  });
+
+  it("Test H16: JSZip genera buffer de tipo Buffer (no string, no undefined)", async () => {
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    zip.file("test.txt", "contenido de prueba");
+    const buf = await zip.generateAsync({ type: "nodebuffer" });
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.length).toBeGreaterThan(10);
   });
 });

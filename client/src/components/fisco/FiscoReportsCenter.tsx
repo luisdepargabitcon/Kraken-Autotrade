@@ -96,7 +96,7 @@ function AnnualReportModule() {
     try {
       const base = existing
         ? `/api/fisco/report/existing/html?year=${year}`
-        : `/api/fisco/annual-report?year=${year}${exchangeParam}&format=html`;
+        : `/api/fisco/report/annual/html?year=${year}&exchange=${scope}`;
       window.open(base, "_blank");
     } finally {
       setLoading(false);
