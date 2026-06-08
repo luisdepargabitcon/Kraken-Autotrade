@@ -550,6 +550,88 @@ describe("FIFO — staking creates lot (BTC 37-sat regression TAYARB)", () => {
 });
 
 // ============================================================
+// RevolutX normalizer — Case 4 regression
+// side=buy, symbol=ETH/USDC → MUST generate trade_sell USDC + trade_buy ETH
+// (Validates that the stablecoin disposal leg is always emitted for crypto buys with USDC)
+// ============================================================
+
+function makeRevolutOrder(overrides: Partial<{
+  id: string; symbol: string; side: "buy" | "sell"; type: string;
+  quantity: number; filled_quantity: number; average_fill_price: number;
+  total_fee: number; status: string; created_date: number; filled_date?: number;
+}>) {
+  return {
+    id: "REV-TEST-1",
+    symbol: "ETH/USDC",
+    side: "buy" as const,
+    type: "market",
+    quantity: 0.1,
+    filled_quantity: 0.1,
+    average_fill_price: 3640.62,
+    total_fee: 4.39,
+    status: "filled",
+    created_date: new Date("2025-12-14T12:00:00Z").getTime(),
+    ...overrides,
+  };
+}
+
+describe("normalizeRevolutXOrders — Case 4: buy ETH with USDC → trade_sell USDC (regression 2025-12-14)", () => {
+  it("side=buy ETH/USDC → generates trade_sell USDC and trade_buy ETH", async () => {
+    vi.mocked(eurRates.getHistoricalUsdEurRate).mockResolvedValueOnce(0.8524);
+    const usdcSpent = 0.1 * 3640.62; // 364.062 USDC
+    const orders = [makeRevolutOrder()];
+    const ops = await normalizeRevolutXOrders(orders);
+
+    expect(ops).toHaveLength(2);
+
+    const stableSell = ops.find(op => op.opType === "trade_sell" && op.asset === "USDC");
+    const cryptoBuy  = ops.find(op => op.opType === "trade_buy"  && op.asset === "ETH");
+
+    expect(stableSell).toBeDefined();
+    expect(stableSell!.amount).toBeCloseTo(usdcSpent, 2);
+    expect(stableSell!.totalEur).toBeCloseTo(usdcSpent * 0.8524, 2);
+    expect(stableSell!.externalId).toContain("_disp_USDC");
+    expect(stableSell!.feeEur).toBe(0); // fee goes to the buy side
+
+    expect(cryptoBuy).toBeDefined();
+    expect(cryptoBuy!.amount).toBeCloseTo(0.1, 4);
+    expect(cryptoBuy!.totalEur).toBeCloseTo(usdcSpent * 0.8524, 2);
+    expect(cryptoBuy!.feeEur).toBeCloseTo(4.39 * 0.8524, 4);
+  });
+
+  it("side=sell ETH/USDC → generates trade_sell ETH and trade_buy USDC (Case 5)", async () => {
+    vi.mocked(eurRates.getHistoricalUsdEurRate).mockResolvedValueOnce(0.92);
+    const orders = [makeRevolutOrder({ side: "sell", symbol: "ETH/USDC", total_fee: 1.0 })];
+    const ops = await normalizeRevolutXOrders(orders);
+    expect(ops).toHaveLength(2);
+
+    const cryptoSell  = ops.find(op => op.opType === "trade_sell" && op.asset === "ETH");
+    const stableBuy   = ops.find(op => op.opType === "trade_buy"  && op.asset === "USDC");
+    expect(cryptoSell).toBeDefined();
+    expect(stableBuy).toBeDefined();
+    expect(stableBuy!.externalId).toContain("_rcv_USDC");
+  });
+
+  it("side=sell USDC/EUR → generates single trade_sell USDC (Case 7, like real 2025-12-12 order)", async () => {
+    vi.mocked(eurRates.getHistoricalUsdEurRate).mockResolvedValueOnce(0.92);
+    const orders = [makeRevolutOrder({
+      symbol: "USDC/EUR",
+      side: "sell",
+      quantity: 105.72524,
+      filled_quantity: 105.72524,
+      average_fill_price: 0.8511,
+      total_fee: 0.06,
+    })];
+    const ops = await normalizeRevolutXOrders(orders);
+    // USDC/EUR sell: spentAsset=USDC (stablecoin), recvAsset=EUR (fiat) → Case 7
+    expect(ops).toHaveLength(1);
+    expect(ops[0].opType).toBe("trade_sell");
+    expect(ops[0].asset).toBe("USDC");
+    expect(ops[0].amount).toBeCloseTo(105.72524, 3);
+  });
+});
+
+// ============================================================
 // USDC deposit cost basis regression (lot 5163 — FTAVCHJ)
 // Reproduces bug where Kraken USDC deposit got cost_eur=0 → fake +306€ gain on RevolutX sell
 // ============================================================

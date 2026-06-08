@@ -1874,12 +1874,38 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         });
       }
 
+      // ── Pre-query: ALL RevolutX ops (any type) on expected transaction dates ───
+      // Used to distinguish MISSING causes without needing a separate API call
+      const referenceForYear: Record<string, any> = REVOLUT_REFERENCE[year] ?? {};
+      const allExpectedDates = Object.values(referenceForYear)
+        .flatMap((ref: any) => ref.transactions.map((tx: any) => tx.date as string));
+      const uniqueExpectedDates = [...new Set(allExpectedDates)];
+
+      const STABLE_ASSETS_SET = ["USDC", "USDT", "USDE", "DAI", "BUSD"];
+
+      const allOpsOnDatesQ = uniqueExpectedDates.length > 0
+        ? await pool.query(`
+          SELECT op_type, asset, amount::numeric, counter_asset, pair,
+                 executed_at, external_id
+          FROM fisco_operations
+          WHERE exchange = 'revolutx'
+            AND executed_at::date = ANY($1::date[])
+          ORDER BY executed_at
+        `, [uniqueExpectedDates])
+        : { rows: [] as any[] };
+
+      const allOpsByDate: Record<string, any[]> = {};
+      for (const row of allOpsOnDatesQ.rows) {
+        const d = new Date(row.executed_at).toISOString().split("T")[0];
+        if (!allOpsByDate[d]) allOpsByDate[d] = [];
+        allOpsByDate[d].push(row);
+      }
+
       // ── Diff bot vs reference ────────────────────────────────────────────────
       // Approximate USD→EUR rate by year (for proceeds comparison only)
       const USD_EUR: Record<number, number> = { 2025: 0.92, 2026: 0.88 };
       const usdEurRate = USD_EUR[year] ?? 0.92;
 
-      const referenceForYear: Record<string, any> = REVOLUT_REFERENCE[year] ?? {};
       const diffs: Record<string, any> = {};
       const transactionChecks: Record<string, any[]> = {};
 
@@ -1925,6 +1951,23 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           });
           const qtyOnDate = matchOps.reduce((s: number, op: any) => s + (op.amount ?? 0), 0);
           const qtyOk = Math.abs(qtyOnDate - tx.quantity) < 0.01;
+
+          // For MISSING: determine root cause using all-ops query
+          const missingCause = (() => {
+            if (matchOps.length > 0) return null;
+            const allOpsOnDate = allOpsByDate[tx.date] ?? [];
+            if (allOpsOnDate.length === 0) {
+              return "MISSING_API_WINDOW_NOT_FETCHED"; // no ops from RevolutX on that date at all
+            }
+            // There ARE ops on that date — check for crypto buy with stablecoin counter
+            const hasCryptoBuyWithStable = allOpsOnDate.some((op: any) =>
+              op.op_type === "trade_buy" && STABLE_ASSETS_SET.includes(op.counter_asset)
+            );
+            return hasCryptoBuyWithStable
+              ? "MISSING_STABLECOIN_DISPOSAL_LEG"  // buy crypto w/ USDC present, but no trade_sell stablecoin
+              : "MISSING_CAUSE_UNKNOWN";            // ops exist but no clear stablecoin leg pattern
+          })();
+
           return {
             expected_date:         tx.date,
             expected_quantity:     tx.quantity,
@@ -1933,7 +1976,16 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             bot_ops_on_date:       matchOps.length,
             bot_qty_on_date:       qtyOnDate,
             qty_match:             qtyOk,
-            status: matchOps.length === 0 ? "MISSING" : (qtyOk ? "OK" : "QTY_MISMATCH"),
+            all_ops_on_date:       (allOpsByDate[tx.date] ?? []).map((op: any) => ({
+              op_type: op.op_type, asset: op.asset,
+              amount: parseFloat(op.amount ?? 0),
+              counter_asset: op.counter_asset,
+              external_id: op.external_id,
+              executed_at: op.executed_at,
+            })),
+            status: matchOps.length === 0
+              ? (missingCause ?? "MISSING")
+              : (qtyOk ? "OK" : "QTY_MISMATCH"),
           };
         });
       }
@@ -1991,6 +2043,88 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/reconciliation/revolut]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/debug/revolutx-ops?dateFrom=2025-12-14&dateTo=2025-12-15
+   * Returns ALL fisco_operations for RevolutX in a given date range (any op_type).
+   * Use to diagnose whether a specific order was fetched from the RevolutX API at all.
+   */
+  app.get("/api/fisco/debug/revolutx-ops", async (req, res) => {
+    try {
+      const { dateFrom, dateTo, year } = req.query as Record<string, string>;
+      let fromDate: string;
+      let toDate: string;
+      if (year) {
+        fromDate = `${year}-01-01`;
+        toDate   = `${parseInt(year) + 1}-01-01`;
+      } else {
+        fromDate = dateFrom || "2025-01-01";
+        toDate   = dateTo   || "2026-01-01";
+      }
+
+      const opsQ = await pool.query(`
+        SELECT
+          id,
+          external_id,
+          op_type,
+          asset,
+          amount::numeric         AS amount,
+          price_eur::numeric      AS price_eur,
+          total_eur::numeric      AS total_eur,
+          fee_eur::numeric        AS fee_eur,
+          counter_asset,
+          pair,
+          executed_at,
+          raw_data
+        FROM fisco_operations
+        WHERE exchange = 'revolutx'
+          AND executed_at >= $1::date
+          AND executed_at < $2::date
+        ORDER BY executed_at
+      `, [fromDate, toDate]);
+
+      const byDate: Record<string, any[]> = {};
+      for (const r of opsQ.rows) {
+        const d = new Date(r.executed_at).toISOString().split("T")[0];
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push({
+          id:            r.id,
+          external_id:   r.external_id,
+          op_type:       r.op_type,
+          asset:         r.asset,
+          amount:        parseFloat(r.amount   ?? 0),
+          price_eur:     r.price_eur  != null ? parseFloat(r.price_eur)  : null,
+          total_eur:     r.total_eur  != null ? parseFloat(r.total_eur)  : null,
+          fee_eur:       r.fee_eur    != null ? parseFloat(r.fee_eur)    : null,
+          counter_asset: r.counter_asset,
+          pair:          r.pair,
+          executed_at:   r.executed_at,
+          raw_data:      r.raw_data,
+        });
+      }
+
+      // Summary: count by date and op_type
+      const summary = Object.entries(byDate).map(([date, ops]) => ({
+        date,
+        op_count: ops.length,
+        by_type: ops.reduce((acc: Record<string, number>, op) => {
+          acc[op.op_type] = (acc[op.op_type] || 0) + 1;
+          return acc;
+        }, {}),
+        assets: [...new Set(ops.map((op) => op.asset))],
+      }));
+
+      res.json({
+        date_range: { from: fromDate, to: toDate },
+        total_ops:  opsQ.rows.length,
+        summary,
+        ops_by_date: byDate,
+      });
+    } catch (e: any) {
+      console.error("[fisco/debug/revolutx-ops]", e);
       res.status(500).json({ error: e.message });
     }
   });
