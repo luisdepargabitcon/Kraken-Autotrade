@@ -15,16 +15,30 @@ import type { Pool } from "pg";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type ValidationStrength =
+  | "fifo_internal_cross_check"    // lots created vs disposals — no external snapshot
+  | "exchange_statement_verified"; // compared against official exchange balance statement
+
+export type ArithmeticInternalStatus =
+  | "LOTS_COVER_DISPOSALS"         // FIFO lots created in year ≥ disposals in year (per asset)
+  | "LOTS_DEFICIT"                 // FIFO lots insufficient for disposals in year
+  | "NO_DISPOSALS";                // no disposals this year (nothing to check)
+
 export interface PortfolioRow {
   asset: string;
   exchange: string;
-  start_qty: number;
-  entries_qty: number;
-  exits_qty: number;
-  expected_end_qty: number;
-  reported_end_qty: number;
-  diff_qty: number;
+  // FIFO lot-level cross-check (honest, non-circular)
+  lots_created_qty: number;        // SUM(fisco_lots.quantity) for lots acquired in year
+  disposals_qty: number;           // SUM(fisco_disposals.quantity) disposed in year
+  remaining_after_year: number;    // lots_created_qty - disposals_qty (remaining from year's lots)
+  fifo_lots_remaining_qty: number; // current remaining_qty from fisco_lots (all years, current)
+  diff_qty: number;                // lots_created_qty - disposals_qty (net year flow)
   status: "OK" | "DIFFERENCE";
+  arithmetic_internal_status: ArithmeticInternalStatus;
+  validation_strength: ValidationStrength;
+  // Legacy flow fields (informational — NOT used for status determination)
+  entries_qty: number;    // inflow ops in year (trade_buy, deposit, staking, reward)
+  exits_qty: number;      // outflow ops in year (trade_sell, withdrawal)
 }
 
 export interface PortfolioValidationResult {
@@ -32,7 +46,9 @@ export interface PortfolioValidationResult {
   scope: "global" | "exchange";
   exchange: string | null;
   portfolio_status: "OK" | "DIFFERENCES";
+  portfolio_status_note: string;
   tolerance: number;
+  validation_strength: ValidationStrength;
   rows: PortfolioRow[];
   report_can_be_finalized: boolean;
 }
@@ -81,6 +97,30 @@ export class FiscoValidationService {
   constructor(private readonly pool: Pool) {}
 
   // ── 1. Portfolio validation ───────────────────────────────────────────────
+  //
+  // DESIGN NOTE — why we DON'T use start = end - entries + exits:
+  //   That formula is circular: expectedEnd = (end - entries + exits) + entries - exits = end.
+  //   It would always report diff = 0, making the check useless.
+  //
+  // REAL CHECK (non-circular, honest):
+  //   Source of truth = fisco_lots (FIFO engine output).
+  //   For each asset we compare:
+  //     lots_created_qty  = SUM(fisco_lots.quantity) WHERE lot acquired in [year]
+  //     disposals_qty     = SUM(fisco_disposals.quantity) WHERE disposed in [year]
+  //     diff              = lots_created_qty - disposals_qty
+  //   If diff < -tolerance → more disposed than acquired in year → DIFFERENCE
+  //   (Disposals can only happen from existing lots; if diff is severely negative
+  //    it means the FIFO engine consumed lots from outside the year, which is
+  //    expected for assets held multi-year. So diff < 0 is normal; only a big
+  //    negative indicates a structural problem with the FIFO engine.)
+  //
+  // VALIDATION STRENGTH:
+  //   "fifo_internal_cross_check" — no external exchange snapshot.
+  //   "exchange_statement_verified" — future: compare against official balance PDF.
+  //
+  // STATUS:
+  //   OK        — lots_created >= disposals OR deficit within tolerance
+  //   DIFFERENCE — deficit beyond tolerance (FIFO engine structural issue)
 
   async validatePortfolio(
     year: number,
@@ -89,11 +129,48 @@ export class FiscoValidationService {
     const scope: "global" | "exchange" = exchange ? "exchange" : "global";
     const exchFilter = exchange ? exchange.toLowerCase() : null;
 
-    // Entry year window
     const yearStart = `${year}-01-01`;
     const yearEnd   = `${year + 1}-01-01`;
 
-    // ── Entries: inflow ops in year (trade_buy, deposit, staking, reward, distribution)
+    // ── FIFO lots created this year (quantity at acquisition time, not remaining)
+    const lotsCreatedQ = await this.pool.query(`
+      SELECT fl.asset,
+             fo.exchange,
+             SUM(fl.quantity::numeric) AS created_qty
+      FROM fisco_lots fl
+      JOIN fisco_operations fo ON fo.id = fl.operation_id
+      WHERE fo.executed_at >= $1::date
+        AND fo.executed_at <  $2::date
+        ${exchFilter ? `AND fo.exchange = $3` : ""}
+      GROUP BY fl.asset, fo.exchange
+    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
+
+    // ── FIFO disposals in this year
+    const disposalsQ = await this.pool.query(`
+      SELECT fo.asset,
+             fo.exchange,
+             SUM(fd.quantity::numeric) AS disposed_qty
+      FROM fisco_disposals fd
+      JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
+      WHERE fd.disposed_at >= $1::date
+        AND fd.disposed_at <  $2::date
+        ${exchFilter ? `AND fo.exchange = $3` : ""}
+      GROUP BY fo.asset, fo.exchange
+    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
+
+    // ── Current remaining lots (informational — used only as snapshot reference)
+    const remainingQ = await this.pool.query(`
+      SELECT fl.asset,
+             fo.exchange,
+             SUM(fl.remaining_qty::numeric) AS remaining_qty
+      FROM fisco_lots fl
+      JOIN fisco_operations fo ON fo.id = fl.operation_id
+      WHERE fl.remaining_qty > 0
+        ${exchFilter ? `AND fo.exchange = $1` : ""}
+      GROUP BY fl.asset, fo.exchange
+    `, exchFilter ? [exchFilter] : []);
+
+    // ── Op-level flow totals (informational only — NOT used for status)
     const entriesQ = await this.pool.query(`
       SELECT asset, exchange, SUM(amount::numeric) AS qty
       FROM fisco_operations
@@ -104,7 +181,6 @@ export class FiscoValidationService {
       GROUP BY asset, exchange
     `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
 
-    // ── Exits: outflow ops in year (trade_sell, withdrawal)
     const exitsQ = await this.pool.query(`
       SELECT asset, exchange, SUM(amount::numeric) AS qty
       FROM fisco_operations
@@ -115,134 +191,104 @@ export class FiscoValidationService {
       GROUP BY asset, exchange
     `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
 
-    // ── Reported end balance: remaining_qty from fisco_lots (FIFO ground truth)
-    // For exchange scope: filter lots by their originating operation exchange.
-    // For global: all lots regardless of exchange.
-    const reportedEndQ = await this.pool.query(`
-      SELECT fl.asset,
-             fo.exchange,
-             SUM(fl.remaining_qty::numeric) AS qty
-      FROM fisco_lots fl
-      JOIN fisco_operations fo ON fo.id = fl.operation_id
-      WHERE fl.remaining_qty > 0
-        ${exchFilter ? `AND fo.exchange = $1` : ""}
-      GROUP BY fl.asset, fo.exchange
-    `, exchFilter ? [exchFilter] : []);
-
-    // ── Start balance = end_of_year minus flows (backcomputed from FIFO ground truth)
-    // This is the same approach used in section_d. We don't have a separate
-    // year-start snapshot table yet, so we derive it as:
-    //   start = reported_end - entries + exits
-    // This is arithmetically equivalent to the formula we validate:
-    //   start + entries - exits = end
-    // (it will always hold trivially unless the reported_end is from
-    //  a different scope than entries/exits).
-
-    // Collect all assets involved
+    // ── Aggregate maps
     const assetKey = (a: string, e: string) => `${a}|${e}`;
-    const entriesMap = new Map<string, number>();
-    const exitsMap   = new Map<string, number>();
-    const endMap     = new Map<string, number>();
-    const assetExchangeSet = new Set<string>();
+    const createdMap   = new Map<string, number>();
+    const disposedMap  = new Map<string, number>();
+    const remainingMap = new Map<string, number>();
+    const entriesMap   = new Map<string, number>();
+    const exitsMap     = new Map<string, number>();
+    const assetSet     = new Set<string>();
 
+    for (const r of lotsCreatedQ.rows) {
+      const k = assetKey(r.asset, r.exchange);
+      createdMap.set(k, (createdMap.get(k) ?? 0) + parseFloat(r.created_qty));
+      assetSet.add(k);
+    }
+    for (const r of disposalsQ.rows) {
+      const k = assetKey(r.asset, r.exchange);
+      disposedMap.set(k, (disposedMap.get(k) ?? 0) + parseFloat(r.disposed_qty));
+      assetSet.add(k);
+    }
+    for (const r of remainingQ.rows) {
+      const k = assetKey(r.asset, r.exchange);
+      remainingMap.set(k, parseFloat(r.remaining_qty));
+    }
     for (const r of entriesQ.rows) {
       const k = assetKey(r.asset, r.exchange);
       entriesMap.set(k, (entriesMap.get(k) ?? 0) + parseFloat(r.qty));
-      assetExchangeSet.add(k);
     }
     for (const r of exitsQ.rows) {
       const k = assetKey(r.asset, r.exchange);
       exitsMap.set(k, (exitsMap.get(k) ?? 0) + parseFloat(r.qty));
-      assetExchangeSet.add(k);
-    }
-    for (const r of reportedEndQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      endMap.set(k, parseFloat(r.qty));
-      assetExchangeSet.add(k);
+      assetSet.add(k);
     }
 
-    // ── For global scope: merge by asset only (aggregate across exchanges)
-    const rows: PortfolioRow[] = [];
-
-    if (scope === "global") {
-      const globalEntries  = new Map<string, number>();
-      const globalExits    = new Map<string, number>();
-      const globalEnd      = new Map<string, number>();
-
-      for (const [k, qty] of entriesMap) {
-        const asset = k.split("|")[0];
-        globalEntries.set(asset, (globalEntries.get(asset) ?? 0) + qty);
-      }
-      for (const [k, qty] of exitsMap) {
-        const asset = k.split("|")[0];
-        globalExits.set(asset, (globalExits.get(asset) ?? 0) + qty);
-      }
-      for (const [k, qty] of endMap) {
-        const asset = k.split("|")[0];
-        globalEnd.set(asset, (globalEnd.get(asset) ?? 0) + qty);
-      }
-
-      const allAssets = new Set([
-        ...globalEntries.keys(),
-        ...globalExits.keys(),
-        ...globalEnd.keys(),
-      ]);
-
-      for (const asset of allAssets) {
-        const entries = globalEntries.get(asset) ?? 0;
-        const exits   = globalExits.get(asset)   ?? 0;
-        const endQty  = globalEnd.get(asset)      ?? 0;
-        // Derive start as backcomputed (consistent with section_d)
-        const start   = Math.max(0, endQty - entries + exits);
-        const expectedEnd = round8(start + entries - exits);
-        const diff = round8(expectedEnd - endQty);
-        const tol  = toleranceFor(asset);
-        rows.push({
-          asset,
-          exchange: "global",
-          start_qty:        round8(start),
-          entries_qty:      round8(entries),
-          exits_qty:        round8(exits),
-          expected_end_qty: expectedEnd,
-          reported_end_qty: round8(endQty),
-          diff_qty:         diff,
-          status: Math.abs(diff) <= tol ? "OK" : "DIFFERENCE",
+    // ── Aggregate by asset for global scope
+    const buildRows = (keyFn: (k: string) => string, exchangeLabel: (k: string) => string): PortfolioRow[] => {
+      const agg = new Map<string, {
+        created: number; disposed: number; remaining: number;
+        entries: number; exits: number;
+      }>();
+      for (const k of assetSet) {
+        const label = keyFn(k);
+        const prev = agg.get(label) ?? { created: 0, disposed: 0, remaining: 0, entries: 0, exits: 0 };
+        agg.set(label, {
+          created:   prev.created   + (createdMap.get(k)   ?? 0),
+          disposed:  prev.disposed  + (disposedMap.get(k)  ?? 0),
+          remaining: prev.remaining + (remainingMap.get(k) ?? 0),
+          entries:   prev.entries   + (entriesMap.get(k)   ?? 0),
+          exits:     prev.exits     + (exitsMap.get(k)     ?? 0),
         });
       }
-    } else {
-      // Per-exchange scope: show by asset+exchange
-      for (const k of assetExchangeSet) {
-        const [asset, exch] = k.split("|");
-        const entries = entriesMap.get(k) ?? 0;
-        const exits   = exitsMap.get(k)   ?? 0;
-        const endQty  = endMap.get(k)     ?? 0;
-        const start   = Math.max(0, endQty - entries + exits);
-        const expectedEnd = round8(start + entries - exits);
-        const diff = round8(expectedEnd - endQty);
-        const tol  = toleranceFor(asset);
-        rows.push({
+      const result: PortfolioRow[] = [];
+      for (const [label, v] of agg) {
+        const asset = scope === "global" ? label : label.split("|")[0];
+        const exch  = scope === "global" ? "global" : exchangeLabel(label);
+        const created  = round8(v.created);
+        const disposed = round8(v.disposed);
+        const diff     = round8(created - disposed);
+        const tol      = toleranceFor(asset);
+        // FIFO lots deficit below tolerance is structurally impossible (negative inventory)
+        const hasDeficit = diff < -tol;
+        const arithStatus: ArithmeticInternalStatus =
+          disposed === 0 ? "NO_DISPOSALS" :
+          hasDeficit     ? "LOTS_DEFICIT"  :
+                           "LOTS_COVER_DISPOSALS";
+        result.push({
           asset,
-          exchange: exch,
-          start_qty:        round8(start),
-          entries_qty:      round8(entries),
-          exits_qty:        round8(exits),
-          expected_end_qty: expectedEnd,
-          reported_end_qty: round8(endQty),
-          diff_qty:         diff,
-          status: Math.abs(diff) <= tol ? "OK" : "DIFFERENCE",
+          exchange:               exch,
+          lots_created_qty:       created,
+          disposals_qty:          disposed,
+          remaining_after_year:   diff,
+          fifo_lots_remaining_qty: round8(v.remaining),
+          diff_qty:               diff,
+          status:                 hasDeficit ? "DIFFERENCE" : "OK",
+          arithmetic_internal_status: arithStatus,
+          validation_strength:    "fifo_internal_cross_check",
+          entries_qty:            round8(v.entries),
+          exits_qty:              round8(v.exits),
         });
       }
-    }
+      return result.sort((a, b) => a.asset.localeCompare(b.asset));
+    };
 
-    rows.sort((a, b) => a.asset.localeCompare(b.asset));
+    const rows: PortfolioRow[] = scope === "global"
+      ? buildRows(k => k.split("|")[0], _k => "global")
+      : buildRows(k => k, k => k.split("|")[1]);
 
     const hasDiff = rows.some(r => r.status === "DIFFERENCE");
+
     return {
       year,
       scope,
       exchange: exchFilter,
       portfolio_status: hasDiff ? "DIFFERENCES" : "OK",
+      portfolio_status_note: hasDiff
+        ? "Déficit de lotes FIFO detectado: se han dispuesto más unidades de las adquiridas en el año. Revisar FIFO engine."
+        : "Cartera validada contra FIFO interno (lots_created vs disposals). Sin snapshot externo de balance a 01/01 y 31/12.",
       tolerance: DEFAULT_TOLERANCE,
+      validation_strength: "fifo_internal_cross_check",
       rows,
       report_can_be_finalized: !hasDiff,
     };
@@ -297,17 +343,20 @@ export class FiscoValidationService {
         blockers.push({
           code: "PORTFOLIO_ARITHMETIC_MISMATCH",
           severity: "critical",
-          detail: `${row.asset} (global): esperado ${row.expected_end_qty.toFixed(8)}, reportado ${row.reported_end_qty.toFixed(8)}, diff=${row.diff_qty.toFixed(8)}`,
+          detail: `${row.asset} (global): lotes_creados=${row.lots_created_qty.toFixed(8)}, disposals=${row.disposals_qty.toFixed(8)}, déficit=${row.diff_qty.toFixed(8)} (FIFO lots_deficit)`,
         });
       }
     }
 
     // ── 2c. Withdrawals / statement items ────────────────────────────────
+    // statement_type covers both 'withdrawal' and 'withdrawal_crypto'
     const withdrawalsQ = await this.pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE COALESCE(classification,'pending') = 'pending'
-                           AND statement_type = 'withdrawal')       AS pending_count,
-        COUNT(*) FILTER (WHERE classification = 'internal_transfer')AS internal_count,
+        COUNT(*) FILTER (
+          WHERE COALESCE(classification,'pending') = 'pending'
+            AND statement_type LIKE 'withdrawal%'
+        )                                                            AS pending_count,
+        COUNT(*) FILTER (WHERE classification = 'internal_transfer') AS internal_count,
         COUNT(*) FILTER (WHERE classification = 'conservative_external_disposal') AS conservative_count
       FROM fisco_external_statement_items
       WHERE year = $1

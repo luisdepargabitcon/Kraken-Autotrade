@@ -2635,32 +2635,58 @@ export function registerFiscoRebuildRoutes(app: Express): void {
     try {
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const [krakenResult, finalizationResult, conservQ] = await Promise.all([
+      const summaryYearStart = `${year}-01-01`;
+      const summaryYearEnd   = `${year + 1}-01-01`;
+
+      const [krakenResult, finalizationResult, revStmtQ, revOpsQ] = await Promise.all([
         new KrakenReconciliationService(pool).reconcile(year),
         new FiscoValidationService(pool).getFinalizationStatus(year),
+        // RevolutX statement items — withdrawal% covers withdrawal_crypto too
         pool.query(`
           SELECT
-            COUNT(*) FILTER (WHERE statement_type = 'withdrawal'
-              AND COALESCE(classification,'pending') NOT IN ('internal_transfer','conservative_external_disposal')
+            COUNT(*) FILTER (
+              WHERE statement_type LIKE 'withdrawal%'
+                AND COALESCE(classification,'pending') NOT IN ('internal_transfer','conservative_external_disposal')
             ) AS unmatched_withdrawals,
-            COUNT(*) FILTER (WHERE classification = 'internal_transfer')            AS internal_transfers,
+            COUNT(*) FILTER (WHERE classification = 'internal_transfer')             AS internal_transfers,
             COUNT(*) FILTER (WHERE classification = 'conservative_external_disposal') AS conservative_disposals,
-            COUNT(*)                                                                  AS total_statement_items
+            COUNT(*)                                                                   AS total_statement_items
           FROM fisco_external_statement_items
           WHERE year = $1 AND exchange = 'revolutx'
         `, [year]),
+        // RevolutX op counts — independent from Kraken data
+        pool.query(`
+          SELECT
+            COUNT(*)                                              AS total_operations,
+            COUNT(*) FILTER (WHERE op_type = 'trade_buy')        AS trade_buy_count,
+            COUNT(*) FILTER (WHERE op_type = 'trade_sell')       AS trade_sell_count,
+            COUNT(*) FILTER (WHERE op_type = 'deposit')          AS deposits_count,
+            COUNT(*) FILTER (WHERE op_type = 'withdrawal')       AS withdrawals_count
+          FROM fisco_operations
+          WHERE exchange = 'revolutx'
+            AND executed_at >= $1::date
+            AND executed_at <  $2::date
+        `, [summaryYearStart, summaryYearEnd]),
       ]);
 
-      const revRow = conservQ.rows[0] ?? {};
+      const revRow    = revStmtQ.rows[0] ?? {};
+      const revOpsRow = revOpsQ.rows[0]  ?? {};
+
       const revolutxSummary = {
         status:
           parseInt(revRow.unmatched_withdrawals ?? "0", 10) > 0 ? "WARNINGS" :
           finalizationResult.withdrawals_status === "CONSERVATIVE" ? "WARNINGS" : "OK",
-        order_count:                    krakenResult.total_operations,
-        statement_items_count:          parseInt(revRow.total_statement_items    ?? "0", 10),
-        internal_transfers_count:       parseInt(revRow.internal_transfers       ?? "0", 10),
-        conservative_disposals_count:   parseInt(revRow.conservative_disposals  ?? "0", 10),
-        unmatched_withdrawals_count:    parseInt(revRow.unmatched_withdrawals    ?? "0", 10),
+        // RevolutX operation counts (correct — separate from Kraken)
+        operations_count:               parseInt(revOpsRow.total_operations  ?? "0", 10),
+        trade_buy_count:                parseInt(revOpsRow.trade_buy_count   ?? "0", 10),
+        trade_sell_count:               parseInt(revOpsRow.trade_sell_count  ?? "0", 10),
+        deposits_count:                 parseInt(revOpsRow.deposits_count    ?? "0", 10),
+        withdrawals_count:              parseInt(revOpsRow.withdrawals_count ?? "0", 10),
+        // Statement item metrics
+        statement_items_count:          parseInt(revRow.total_statement_items  ?? "0", 10),
+        internal_transfers_count:       parseInt(revRow.internal_transfers     ?? "0", 10),
+        conservative_disposals_count:   parseInt(revRow.conservative_disposals ?? "0", 10),
+        unmatched_withdrawals_count:    parseInt(revRow.unmatched_withdrawals   ?? "0", 10),
         statement_reconciliation_status:
           parseInt(revRow.unmatched_withdrawals ?? "0", 10) > 0 ? "PENDING" : "OK",
         warnings:
