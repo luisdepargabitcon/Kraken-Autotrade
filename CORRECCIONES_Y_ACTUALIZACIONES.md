@@ -3474,3 +3474,66 @@ curl -sS "http://127.0.0.1:3020/api/fisco/report/multi-year?years=2025,2026&exch
 curl -sS "http://127.0.0.1:3020/api/fisco/validate/portfolio?year=2026" | jq '{portfolio_status, validation_strength, report_can_be_finalized}'
 # portfolio_status: "OK", report_can_be_finalized: true
 ```
+
+---
+
+## 2026-06-08 — feat(fisco): Informes HTML interactivos + JSZip + endpoint annual/html — commit 3a13586
+
+### Ficheros nuevos
+- `server/services/fisco/FiscoHtmlRenderer.ts` — Renderer HTML completo con 8 secciones, CSS print, JS expandAll/collapseAll/preparePdf, translateStatus()
+
+### Ficheros modificados
+- `server/routes/fisco.routes.ts`:
+  - Reemplaza archiver con `import JSZip from "jszip"` (puro JS, sin dependencias nativas)
+  - audit-pack.zip usa `zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })`
+  - ZIP incluye `reports/informe_anual_{yr}.html` por año además del multi-year
+  - Nuevo endpoint `GET /api/fisco/report/annual/html?year=YYYY&exchange=kraken|revolutx|all` → devuelve `text/html`
+- `server/services/fisco/MultiYearReportService.ts`:
+  - `renderHtml()` mejorado: usa `HTML_STYLE` y `HTML_SCRIPTS` de FiscoHtmlRenderer
+  - Badges en castellano (translateStatus), `<details>` por año, resumen ejecutivo humano
+  - Toolbar sticky con PDF y expandAll/collapseAll, @media print
+- `client/src/components/fisco/FiscoReportsCenter.tsx`:
+  - Botón "Generar informe anual HTML" → `/api/fisco/report/annual/html?year=…&exchange=…` (ya no apunta a annual-report JSON)
+
+### Secciones del informe anual HTML (FiscoHtmlRenderer)
+1. Portada con estado, resultado fiscal y exchanges
+2. Resumen ejecutivo en lenguaje humano
+3. Tabla resumen fiscal (ganancias, pérdidas, FIFO, conservadoras, total, staking, counts)
+4. Estado de validación en castellano
+5. Detalle por activo — `<details>` colapsable por activo (inventario, gain/loss, ventas FIFO, operaciones)
+6. Detalle por exchange — conciliación, avisos, nota diagnóstico cross-exchange
+7. Ventas y cálculo FIFO — agrupadas por activo
+8. Rendimientos / staking / rewards — separados de ganancias por transmisión
+9. Retiradas, depósitos y transferencias internas — clasificadas
+10. Anexo técnico con códigos raw
+
+### BUG 1 resuelto definitivamente
+- `archiver` eliminado de fisco.routes.ts
+- JSZip es puro JavaScript, funciona sin módulos nativos en Docker/esbuild
+- ZIP válido con `file` = "Zip archive data", `unzip -t` = "No errors detected"
+- Tamaño > 1KB (contiene HTML reports + 5 CSV + JSON)
+
+### BUG 2 resuelto definitivamente
+- `GET /api/fisco/report/annual/html` → `Content-Type: text/html` (no JSON)
+- `GET /api/fisco/annual-report` sin cambios (sigue devolviendo JSON)
+
+### Tests
+- 123/123 passing
+- +16 tests nuevos (H1–H16): translateStatus, renderAnnualHtml HTML/JSON, secciones,
+  PDF buttons, CSS print, JSZip buffer, multi-year details/español
+
+### Criterio de éxito en VPS
+```bash
+# Informe anual HTML
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | head -5
+# → <!DOCTYPE html>
+
+# audit-pack.zip válido
+curl -L -sS -o /tmp/fisco_audit.zip "http://127.0.0.1:3020/api/fisco/export/audit-pack.zip?years=2025,2026&exchanges=kraken,revolutx"
+file /tmp/fisco_audit.zip          # → Zip archive data
+unzip -t /tmp/fisco_audit.zip      # → No errors detected
+unzip -l /tmp/fisco_audit.zip | head -20  # → reports/, csv/, json/
+
+# Multi-year HTML con secciones
+curl -sS "http://127.0.0.1:3020/api/fisco/report/multi-year?years=2025,2026&exchanges=kraken,revolutx&includeGlobal=true&includeExchangeBreakdown=true&format=html" | grep -Ei "Detalle por año|Preparar PDF|Correcto|Diferencias" | head
+```
