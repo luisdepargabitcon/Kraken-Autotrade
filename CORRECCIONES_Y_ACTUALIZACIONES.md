@@ -3398,3 +3398,79 @@ npx tsc --noEmit --skipLibCheck → Exit code: 0 ✅
 
 ### No deploy
 Este commit queda en main. Deploy a staging pendiente de aprobación explícita del usuario.
+
+---
+
+## 2026-06-08 — feat(fisco): Centro de Informes y Exportaciones Fiscales — commit 7c2d74d
+
+### Nuevos ficheros
+- `server/services/fisco/MultiYearReportService.ts` — agrega finalization + portfolio + reconciliation Kraken por año y exchange, renderHtml()
+- `server/services/fisco/FiscoExportService.ts` — 5 exportadores CSV (operations, disposals, lots, statement_items, conservative_disposals) + getCounts()
+- `client/src/components/fisco/FiscoReportsCenter.tsx` — componente React con 3 módulos: informe anual oficial, multi-año auditoría, exportaciones CSV/ZIP
+
+### Ficheros modificados
+- `server/routes/fisco.routes.ts` — 7 endpoints nuevos: /api/fisco/report/multi-year, /api/fisco/export/operations.csv, /api/fisco/export/disposals.csv, /api/fisco/export/lots.csv, /api/fisco/export/statement-items.csv, /api/fisco/export/conservative-disposals.csv, /api/fisco/export/audit-pack.zip
+- `client/src/pages/Fisco.tsx` — nuevo tab "Informes" (grid-cols-5), integración FiscoReportsCenter
+- `server/services/fisco/__tests__/fiscoCentroInformes.test.ts` — 20 tests nuevos (total 105/105)
+
+### Resultado de validación
+```
+tsc: 0 errores
+vitest: 105/105 passing
+```
+
+---
+
+## 2026-06-08 — fix(fisco): audit-pack.zip runtime crash + portfolio per-exchange diagnostic_only — commit 4911c4c
+
+### BUG 1 — audit-pack.zip devolvía 500 en Docker
+
+**Causa:** `require("archiver")` en runtime esbuild/Docker devolvía un objeto wrapeado donde la función estaba en `.default`, no en el módulo directamente. El cast `as (format, opts) => Archiver` no detectaba esto y fallaba con `TypeError: KHe is not a function`.
+
+**Fix** (`server/routes/fisco.routes.ts`):
+```ts
+const _archiverRaw = require("archiver");
+const archiverLib: ArchiverFactory =
+  typeof _archiverRaw === "function"          ? _archiverRaw :
+  typeof _archiverRaw?.default === "function" ? _archiverRaw.default :
+  (() => { throw new Error("archiver module did not resolve to a callable function"); }) as any;
+```
+Maneja ambos casos (CJS directo y bundler-wrapped) con error explícito si ninguno resuelve.
+
+### BUG 2 — portfolio por exchange mostraba DIFFERENCES contradiciendo estado global
+
+**Causa:** En `MultiYearReportService.generate()`, el `portfolio_validation` de los reports `scope=exchange` se publicaba sin marcar. El FIFO fiscal es global multi-exchange; USDC en RevolutX podía mostrar DIFFERENCES por transferencias cross-exchange, creando confusión aunque el informe global fuera OK.
+
+**Fix** (`server/services/fisco/MultiYearReportService.ts`):
+- Todos los `portfolio_validation` de `scope=exchange` reciben:
+  - `diagnostic_only: true`
+  - `affects_finalization: false`
+  - `note: "Diagnóstico por exchange. El FIFO fiscal oficial del bot es global multi-exchange. Esta validación puede mostrar diferencias si existen transferencias internas, withdrawals cross-exchange o movimientos cuyo lote de origen está en otro exchange. No bloquea el informe fiscal global."`
+- El `global_summary.totals_by_year` sigue basado exclusivamente en `scope=global` (sin cambios).
+- `validatePortfolio` global no tocado (sigue devolviendo `fifo_internal_historical_inventory`).
+
+### Tests añadidos (2)
+- **Test 20** — `archiverLib` resolver logic: directa function / .default / null → verifica los 3 casos del loader sin importar el módulo real de archiver (evita I/O error en vitest Windows)
+- **Test 21** — `portfolio global unaffected when per-exchange shows DIFFERENCES`: comprueba que `global_summary.totals_by_year` no se ve afectado por diffs de exchange; per-exchange tiene `diagnostic_only=true` y `affects_finalization=false`; global scope no tiene esas flags
+
+### Resultado de validación
+```
+tsc: 0 errores
+vitest: 107/107 passing
+```
+
+### Criterio de éxito en VPS
+```bash
+# ZIP válido
+curl -L -sS -o /tmp/fisco_audit.zip "http://127.0.0.1:3020/api/fisco/export/audit-pack.zip?years=2025,2026&exchanges=kraken,revolutx"
+file /tmp/fisco_audit.zip  # → Zip archive data
+unzip -t /tmp/fisco_audit.zip  # → No errors detected
+
+# Portfolio por exchange con flags de diagnóstico
+curl -sS "http://127.0.0.1:3020/api/fisco/report/multi-year?years=2025,2026&exchanges=kraken,revolutx&includeGlobal=true&includeExchangeBreakdown=true&format=json" | jq '[.reports[] | select(.scope=="exchange") | {year, exchange, diagnostic_only: .portfolio_validation.diagnostic_only, affects_finalization: .portfolio_validation.affects_finalization}]'
+# Todos deben tener diagnostic_only: true, affects_finalization: false
+
+# Global sigue finalizable
+curl -sS "http://127.0.0.1:3020/api/fisco/validate/portfolio?year=2026" | jq '{portfolio_status, validation_strength, report_can_be_finalized}'
+# portfolio_status: "OK", report_can_be_finalized: true
+```
