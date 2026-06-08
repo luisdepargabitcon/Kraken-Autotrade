@@ -7,6 +7,7 @@ import { runFifo, validateFifoResult } from "../services/fisco/fifo-engine";
 import { getUsdToEurRate, getCachedUsdEurRate } from "../services/fisco/eur-rates";
 import { fiscoRebuildService } from "../services/FiscoRebuildService";
 import { isFiscoRebuildActive } from "../services/fisco/rebuild-state";
+import { TransferMatchingService } from "../services/fisco/TransferMatchingService";
 import { pool } from "../db";
 
 /**
@@ -1875,7 +1876,6 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       }
 
       // ── Pre-query: ALL RevolutX ops (any type) on expected transaction dates ───
-      // Used to distinguish MISSING causes without needing a separate API call
       const referenceForYear: Record<string, any> = REVOLUT_REFERENCE[year] ?? {};
       const allExpectedDates = Object.values(referenceForYear)
         .flatMap((ref: any) => ref.transactions.map((tx: any) => tx.date as string));
@@ -1901,8 +1901,39 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         allOpsByDate[d].push(row);
       }
 
+      // ── Pre-query: external statement items for this exchange+year ────────────
+      const stmtItemsQ = await pool.query(`
+        SELECT
+          si.id, si.asset, si.statement_type, si.event_at,
+          si.amount_sent::numeric, si.fee_amount::numeric, si.total_out::numeric,
+          si.network, si.gross_proceeds_usd::numeric,
+          si.reconciliation_status,
+          si.matched_transfer_link_id,
+          si.matched_operation_id,
+          tl.status       AS link_status,
+          tl.confidence   AS link_confidence,
+          tl.to_exchange  AS link_to_exchange,
+          tl.to_operation_id AS link_to_op_id,
+          tl.match_reason AS link_reason,
+          fo.external_id  AS deposit_external_id,
+          fo.executed_at  AS deposit_at
+        FROM fisco_external_statement_items si
+        LEFT JOIN fisco_transfer_links tl ON tl.id = si.matched_transfer_link_id
+        LEFT JOIN fisco_operations fo     ON fo.id = tl.to_operation_id
+        WHERE si.exchange = 'revolutx'
+          AND si.year = $1
+        ORDER BY si.event_at
+      `, [year]);
+
+      // Index statement items by date
+      const stmtByDate: Record<string, any[]> = {};
+      for (const row of stmtItemsQ.rows) {
+        const d = new Date(row.event_at).toISOString().split("T")[0];
+        if (!stmtByDate[d]) stmtByDate[d] = [];
+        stmtByDate[d].push(row);
+      }
+
       // ── Diff bot vs reference ────────────────────────────────────────────────
-      // Approximate USD→EUR rate by year (for proceeds comparison only)
       const USD_EUR: Record<number, number> = { 2025: 0.92, 2026: 0.88 };
       const usdEurRate = USD_EUR[year] ?? 0.92;
 
@@ -1925,24 +1956,25 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         const status = Math.abs(qtyDiff) <= 0.01 && Math.abs(prosDiff) <= 5 ? "OK" : "DIFFERENCES";
 
         diffs[asset] = {
-          bot_qty:           botQty,
-          ref_qty:           ref.total_sold_quantity,
-          qty_diff:          qtyDiff,
-          bot_proceeds_eur:  botProEur,
+          bot_qty:              botQty,
+          ref_qty:              ref.total_sold_quantity,
+          qty_diff:             qtyDiff,
+          bot_proceeds_eur:     botProEur,
           ref_proceeds_eur_est: refProEurEst,
-          proceeds_diff_eur: prosDiff,
-          bot_fee_eur:       botFeeEur,
-          ref_fee_eur_est:   refFeeEurEst,
-          fee_diff_eur:      feeDiff,
-          bot_sell_count:    botCount,
-          ref_tx_count:      ref.transactions.length,
-          sell_count_diff:   botCount - ref.transactions.length,
-          usd_eur_rate_used: usdEurRate,
+          proceeds_diff_eur:    prosDiff,
+          bot_fee_eur:          botFeeEur,
+          ref_fee_eur_est:      refFeeEurEst,
+          fee_diff_eur:         feeDiff,
+          bot_sell_count:       botCount,
+          ref_tx_count:         ref.transactions.length,
+          sell_count_diff:      botCount - ref.transactions.length,
+          usd_eur_rate_used:    usdEurRate,
           status,
         };
 
-        // Check each expected Revolut transaction against bot operations
+        // ── Transaction-level checks ─────────────────────────────────────────
         transactionChecks[asset] = ref.transactions.map((tx: any) => {
+          // 1) Check trade_sell ops on that date
           const matchOps = (bot?.operations ?? []).filter((op: any) => {
             const opDate = op.executed_at
               ? new Date(op.executed_at).toISOString().split("T")[0]
@@ -1952,21 +1984,77 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           const qtyOnDate = matchOps.reduce((s: number, op: any) => s + (op.amount ?? 0), 0);
           const qtyOk = Math.abs(qtyOnDate - tx.quantity) < 0.01;
 
-          // For MISSING: determine root cause using all-ops query
-          const missingCause = (() => {
-            if (matchOps.length > 0) return null;
-            const allOpsOnDate = allOpsByDate[tx.date] ?? [];
-            if (allOpsOnDate.length === 0) {
-              return "MISSING_API_WINDOW_NOT_FETCHED"; // no ops from RevolutX on that date at all
+          if (matchOps.length > 0 && qtyOk) {
+            return {
+              expected_date:         tx.date,
+              expected_quantity:     tx.quantity,
+              expected_proceeds_usd: tx.gross_proceeds_usd,
+              expected_fees_usd:     tx.fees_usd,
+              bot_ops_on_date:       matchOps.length,
+              bot_qty_on_date:       qtyOnDate,
+              qty_match:             true,
+              status:                "OK_ORDER_SELL",
+            };
+          }
+
+          // 2) Check external statement items on that date
+          const stmtItems = (stmtByDate[tx.date] ?? []).filter((s: any) => s.asset === asset);
+          if (stmtItems.length > 0) {
+            const bestStmt = stmtItems[0];
+            const reconcStatus = bestStmt.reconciliation_status as string;
+
+            let txStatus: string;
+            if (reconcStatus === "matched_internal_transfer") {
+              txStatus = "OK_INTERNAL_TRANSFER";
+            } else if (reconcStatus === "matched_external_disposal") {
+              txStatus = "EXTERNAL_DISPOSAL";
+            } else {
+              // Determine if it's withdrawal_crypto (unmatched) or something else
+              txStatus = bestStmt.statement_type === "withdrawal_crypto"
+                ? "WITHDRAWAL_UNMATCHED"
+                : "STATEMENT_ONLY_UNMATCHED";
             }
-            // There ARE ops on that date — check for crypto buy with stablecoin counter
+
+            return {
+              expected_date:         tx.date,
+              expected_quantity:     tx.quantity,
+              expected_proceeds_usd: tx.gross_proceeds_usd,
+              expected_fees_usd:     tx.fees_usd,
+              bot_ops_on_date:       matchOps.length,
+              bot_qty_on_date:       qtyOnDate,
+              qty_match:             qtyOk,
+              status:                txStatus,
+              statement_item: {
+                id:                   bestStmt.id,
+                statement_type:       bestStmt.statement_type,
+                amount_sent:          parseFloat(bestStmt.amount_sent   ?? 0),
+                fee_amount:           parseFloat(bestStmt.fee_amount    ?? 0),
+                total_out:            parseFloat(bestStmt.total_out     ?? 0),
+                network:              bestStmt.network,
+                reconciliation_status: reconcStatus,
+                link_status:          bestStmt.link_status ?? null,
+                link_confidence:      bestStmt.link_confidence ?? null,
+                link_to_exchange:     bestStmt.link_to_exchange ?? null,
+                deposit_external_id:  bestStmt.deposit_external_id ?? null,
+                deposit_at:           bestStmt.deposit_at ?? null,
+                link_reason:          bestStmt.link_reason ?? null,
+              },
+            };
+          }
+
+          // 3) No trade_sell AND no statement item — classify root cause
+          const allOpsOnDate = allOpsByDate[tx.date] ?? [];
+          let unresolved: string;
+          if (allOpsOnDate.length === 0) {
+            unresolved = "MISSING_API_WINDOW_NOT_FETCHED";
+          } else {
             const hasCryptoBuyWithStable = allOpsOnDate.some((op: any) =>
               op.op_type === "trade_buy" && STABLE_ASSETS_SET.includes(op.counter_asset)
             );
-            return hasCryptoBuyWithStable
-              ? "MISSING_STABLECOIN_DISPOSAL_LEG"  // buy crypto w/ USDC present, but no trade_sell stablecoin
-              : "MISSING_CAUSE_UNKNOWN";            // ops exist but no clear stablecoin leg pattern
-          })();
+            unresolved = hasCryptoBuyWithStable
+              ? "MISSING_STABLECOIN_DISPOSAL_LEG"
+              : matchOps.length > 0 ? "QTY_MISMATCH" : "MISSING_MOVEMENT_SYNC";
+          }
 
           return {
             expected_date:         tx.date,
@@ -1976,33 +2064,52 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             bot_ops_on_date:       matchOps.length,
             bot_qty_on_date:       qtyOnDate,
             qty_match:             qtyOk,
-            all_ops_on_date:       (allOpsByDate[tx.date] ?? []).map((op: any) => ({
+            all_ops_on_date: allOpsOnDate.map((op: any) => ({
               op_type: op.op_type, asset: op.asset,
               amount: parseFloat(op.amount ?? 0),
               counter_asset: op.counter_asset,
               external_id: op.external_id,
               executed_at: op.executed_at,
             })),
-            status: matchOps.length === 0
-              ? (missingCause ?? "MISSING")
-              : (qtyOk ? "OK" : "QTY_MISMATCH"),
+            hint: unresolved === "MISSING_MOVEMENT_SYNC"
+              ? "Importa el movimiento manualmente via POST /api/fisco/statement-items"
+              : undefined,
+            status: unresolved,
           };
         });
       }
 
+      // ── Overall status ────────────────────────────────────────────────────────
+      // OK only if ALL transaction checks are OK_ORDER_SELL or OK_INTERNAL_TRANSFER
+      const OK_STATUSES = new Set(["OK_ORDER_SELL", "OK_INTERNAL_TRANSFER", "EXTERNAL_DISPOSAL"]);
+      const WARN_STATUSES = new Set(["WITHDRAWAL_UNMATCHED", "STATEMENT_ONLY_UNMATCHED", "QTY_MISMATCH"]);
+      const allChecks = Object.values(transactionChecks).flat();
+      const hasError = allChecks.some((c: any) => !OK_STATUSES.has(c.status) && !WARN_STATUSES.has(c.status));
+      const allOk    = allChecks.every((c: any) => OK_STATUSES.has(c.status));
+
       const overallStatus = Object.keys(referenceForYear).length === 0
         ? "NO_REFERENCE_DATA"
-        : Object.values(diffs).every((d: any) => d.status === "OK") ? "OK" : "DIFFERENCES";
+        : allOk ? "OK"
+        : hasError ? "DIFFERENCES"
+        : "WARNINGS"; // all resolved but some are unmatched withdrawals (need manual review)
 
       res.json({
         year,
         overall_status: overallStatus,
         warning: overallStatus === "DIFFERENCES"
           ? "Diferencias entre extracto Revolut oficial y operaciones importadas en el bot. Verificar sincronización RevolutX para el año."
+          : overallStatus === "WARNINGS"
+          ? "FIFO sin errores críticos, pero existen movimientos externos (withdrawals) pendientes de conciliación completa."
           : overallStatus === "NO_REFERENCE_DATA"
           ? `No hay datos de referencia Revolut configurados para el año ${year}.`
           : null,
         note: "Los proceeds/fees se comparan en EUR usando tasa USD/EUR estimada. El PnL del exchange puede diferir del PnL fiscal FIFO global del bot.",
+        statement_items_summary: {
+          total: stmtItemsQ.rows.length,
+          matched_internal: stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "matched_internal_transfer").length,
+          unmatched:        stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "unmatched").length,
+          manual_review:    stmtItemsQ.rows.filter((r: any) => r.reconciliation_status === "manual_review").length,
+        },
         revolut_reference: referenceForYear,
         bot_totals_by_asset: Object.fromEntries(
           Object.entries(botByAsset).map(([k, v]) => [k, {
@@ -2043,6 +2150,212 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/reconciliation/revolut]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // STATEMENT ITEMS — manual import of non-API movements
+  // ============================================================
+
+  /**
+   * POST /api/fisco/statement-items
+   * Manually import a non-order movement (e.g. RevolutX withdrawal not available via API).
+   * Automatically runs TransferMatchingService to try to link with a deposit on another exchange.
+   *
+   * Body example (2025-12-14 RevolutX USDC withdrawal):
+   * {
+   *   "exchange": "revolutx", "year": 2025, "asset": "USDC",
+   *   "statement_type": "withdrawal_crypto",
+   *   "event_at": "2025-12-14T11:01:00Z",
+   *   "amount_sent": 360, "fee_amount": 4.061928, "fee_asset": "USDC",
+   *   "total_out": 364.061928, "network": "ethereum",
+   *   "gross_proceeds_usd": 363.77, "cost_basis_usd": 364.06,
+   *   "fees_usd": 4.39, "net_pnl_usd": -4.68,
+   *   "transaction_identifier": "5243f5...142a4a",
+   *   "source_document": "revolut_fiscal_statement_2025+screenshot"
+   * }
+   */
+  app.post("/api/fisco/statement-items", async (req, res) => {
+    try {
+      const {
+        exchange, year, asset, statement_type, event_at,
+        amount_sent, fee_amount, fee_asset, total_out, network,
+        gross_proceeds_usd, cost_basis_usd, fees_usd, net_pnl_usd,
+        transaction_identifier, source_document, notes, raw_data_json,
+      } = req.body;
+
+      if (!exchange || !year || !asset || !statement_type || !event_at) {
+        return res.status(400).json({ error: "Required: exchange, year, asset, statement_type, event_at" });
+      }
+
+      const insertR = await pool.query(`
+        INSERT INTO fisco_external_statement_items (
+          exchange, year, asset, statement_type, event_at,
+          amount_sent, fee_amount, fee_asset, total_out, network,
+          gross_proceeds_usd, cost_basis_usd, fees_usd, net_pnl_usd,
+          transaction_identifier, source_document, notes, raw_data_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        RETURNING *
+      `, [
+        exchange, year, asset, statement_type, new Date(event_at),
+        amount_sent ?? null, fee_amount ?? null, fee_asset ?? null,
+        total_out ?? null, network ?? null,
+        gross_proceeds_usd ?? null, cost_basis_usd ?? null,
+        fees_usd ?? null, net_pnl_usd ?? null,
+        transaction_identifier ?? null, source_document ?? null,
+        notes ?? null, raw_data_json ?? null,
+      ]);
+
+      const item = insertR.rows[0];
+
+      // Auto-run transfer matching for withdrawal types
+      let matchResult: any = null;
+      let linkId: number | null = null;
+
+      if (
+        statement_type === "withdrawal_crypto" &&
+        amount_sent != null
+      ) {
+        try {
+          const svc = new TransferMatchingService(pool);
+          const w = {
+            asset,
+            amountSent: parseFloat(amount_sent),
+            feeAmount:  parseFloat(fee_amount ?? 0),
+            totalOut:   parseFloat(total_out ?? amount_sent),
+            executedAt: new Date(event_at),
+            network:    network ?? undefined,
+            fromExchange: exchange,
+            fromStatementItemId: item.id,
+          };
+          const { linkId: lid, result } = await svc.matchAndPersist(w);
+          linkId = lid;
+          matchResult = {
+            matched:           result.matched,
+            confidence:        result.confidence ?? null,
+            time_diff_minutes: result.timeDiffMinutes ?? null,
+            amount_delta:      result.amountDelta ?? null,
+            reason:            result.reason,
+            to_exchange:       result.candidate?.exchange ?? null,
+            to_operation_id:   result.candidate?.operationId ?? null,
+            to_external_id:    result.candidate?.externalId ?? null,
+          };
+        } catch (matchErr: any) {
+          console.warn("[fisco/statement-items] auto-match failed (non-fatal):", matchErr.message);
+          matchResult = { error: matchErr.message };
+        }
+      }
+
+      // Re-fetch updated item
+      const updatedR = await pool.query(
+        `SELECT * FROM fisco_external_statement_items WHERE id = $1`, [item.id]
+      );
+
+      res.status(201).json({
+        statement_item: updatedR.rows[0],
+        transfer_link_id: linkId,
+        auto_match: matchResult,
+      });
+    } catch (e: any) {
+      console.error("[fisco/statement-items POST]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/statement-items?year=2025&exchange=revolutx&asset=USDC
+   * List external statement items with optional filters.
+   */
+  app.get("/api/fisco/statement-items", async (req, res) => {
+    try {
+      const { year, exchange, asset, status } = req.query as Record<string, string>;
+      const conds: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+      if (year)     { conds.push(`year = $${p++}`);                  params.push(parseInt(year)); }
+      if (exchange) { conds.push(`exchange = $${p++}`);               params.push(exchange); }
+      if (asset)    { conds.push(`asset = $${p++}`);                  params.push(asset); }
+      if (status)   { conds.push(`reconciliation_status = $${p++}`);  params.push(status); }
+      const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+
+      const itemsQ = await pool.query(`
+        SELECT si.*,
+          tl.id AS link_id, tl.to_exchange, tl.to_operation_id,
+          tl.confidence, tl.status AS link_status, tl.match_reason,
+          fo.external_id AS deposit_external_id, fo.executed_at AS deposit_at
+        FROM fisco_external_statement_items si
+        LEFT JOIN fisco_transfer_links tl ON tl.id = si.matched_transfer_link_id
+        LEFT JOIN fisco_operations fo      ON fo.id = tl.to_operation_id
+        ${where}
+        ORDER BY si.event_at DESC
+      `, params);
+
+      res.json({
+        count: itemsQ.rows.length,
+        items: itemsQ.rows,
+      });
+    } catch (e: any) {
+      console.error("[fisco/statement-items GET]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/statement-items/:id/rematch
+   * Re-run TransferMatchingService for an existing statement item.
+   * Useful after importing new Kraken deposits.
+   */
+  app.post("/api/fisco/statement-items/:id/rematch", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const itemQ = await pool.query(
+        `SELECT * FROM fisco_external_statement_items WHERE id = $1`, [id]
+      );
+      if (itemQ.rows.length === 0) {
+        return res.status(404).json({ error: "Statement item not found" });
+      }
+      const item = itemQ.rows[0];
+
+      if (item.statement_type !== "withdrawal_crypto" || !item.amount_sent) {
+        return res.status(400).json({ error: "Only withdrawal_crypto items with amount_sent can be rematched" });
+      }
+
+      const svc = new TransferMatchingService(pool);
+      const w = {
+        asset:               item.asset,
+        amountSent:          parseFloat(item.amount_sent),
+        feeAmount:           parseFloat(item.fee_amount ?? 0),
+        totalOut:            parseFloat(item.total_out ?? item.amount_sent),
+        executedAt:          new Date(item.event_at),
+        network:             item.network ?? undefined,
+        fromExchange:        item.exchange,
+        fromStatementItemId: item.id,
+      };
+
+      // Clear old link if exists
+      if (item.matched_transfer_link_id) {
+        await pool.query(`DELETE FROM fisco_transfer_links WHERE id = $1`, [item.matched_transfer_link_id]);
+        await pool.query(`
+          UPDATE fisco_external_statement_items
+          SET reconciliation_status = 'unmatched', matched_transfer_link_id = NULL, matched_operation_id = NULL
+          WHERE id = $1
+        `, [id]);
+        w.fromStatementItemId = id;
+      }
+
+      const { linkId, result } = await svc.matchAndPersist(w);
+
+      res.json({
+        link_id:    linkId,
+        matched:    result.matched,
+        confidence: result.confidence ?? null,
+        reason:     result.reason,
+        to_exchange: result.candidate?.exchange ?? null,
+        to_operation_id: result.candidate?.operationId ?? null,
+      });
+    } catch (e: any) {
+      console.error("[fisco/statement-items rematch]", e);
       res.status(500).json({ error: e.message });
     }
   });
