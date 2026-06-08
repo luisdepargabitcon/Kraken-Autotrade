@@ -9,6 +9,8 @@ import { fiscoRebuildService } from "../services/FiscoRebuildService";
 import { isFiscoRebuildActive } from "../services/fisco/rebuild-state";
 import { TransferMatchingService } from "../services/fisco/TransferMatchingService";
 import { ConservativeDisposalService, type Classification } from "../services/fisco/ConservativeDisposalService";
+import { FiscoValidationService } from "../services/fisco/FiscoValidationService";
+import { KrakenReconciliationService } from "../services/fisco/KrakenReconciliationService";
 import { pool } from "../db";
 
 /**
@@ -894,6 +896,16 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         yearExchanges.get(r.asset)!.add(r.exchange);
       }
 
+      // IMPORTANT: lotsBalanceQ.saldo_fin = current remaining_qty (ALL years, global).
+      // yearFlows are filtered by year AND optionally by exchange.
+      // When exchangeFilter is set, entradas/salidas are for that exchange only,
+      // but saldo_fin is still global. This is the root cause of the arithmetic diff.
+      // We expose this clearly via portfolio_scope and arithmetic_check.
+      const portfolioScope = exchangeFilter ? "exchange_flows_global_balance" : "global";
+      const portfolioNote = exchangeFilter
+        ? `Entradas/salidas filtradas por exchange=${exchangeFilter}, pero saldo_fin es global multi-exchange. Para cuadre exacto usar GET /api/fisco/validate/portfolio?year=${year}&exchange=${exchangeFilter}`
+        : `Cartera global consolidada (FIFO multi-exchange). Para validación aritmética exacta usar GET /api/fisco/validate/portfolio?year=${year}`;
+
       const sectionD: any[] = [];
       for (const r of lotsBalanceQ.rows) {
         const saldo_fin = Math.round(parseFloat(r.saldo_fin) * 1e8) / 1e8;
@@ -901,10 +913,24 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         const salidas   = Math.round((yearOutflows.get(r.asset) ?? 0) * 1e8) / 1e8;
         // Backcompute saldo_inicio from FIFO ground-truth saldo_fin (never negative)
         const saldo_inicio = Math.max(0, Math.round((saldo_fin - entradas + salidas) * 1e8) / 1e8);
+        const expected_end = Math.round((saldo_inicio + entradas - salidas) * 1e8) / 1e8;
+        const diff = Math.round((expected_end - saldo_fin) * 1e8) / 1e8;
         const exchFromLots: string[] = r.exchanges ?? [];
         const exchFromOps = Array.from(yearExchanges.get(r.asset) ?? []);
         const exchanges = [...new Set([...exchFromLots, ...exchFromOps])];
-        sectionD.push({ asset: r.asset, exchanges, saldo_inicio, entradas, salidas, saldo_fin });
+        sectionD.push({
+          asset: r.asset,
+          exchanges,
+          saldo_inicio,
+          entradas,
+          salidas,
+          saldo_fin,
+          // Arithmetic check fields (diagnosis)
+          expected_end_qty: expected_end,
+          diff_qty: diff,
+          arithmetic_ok: Math.abs(diff) <= 0.001,
+          portfolio_scope: portfolioScope,
+        });
       }
       sectionD.sort((a, b) => a.asset.localeCompare(b.asset));
 
@@ -994,6 +1020,9 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         section_b: sectionB,
         section_c: sectionC,
         section_d: sectionD,
+        // Portfolio scope metadata — explains mixing when exchange filter is active
+        portfolio_scope: portfolioScope,
+        portfolio_note:  portfolioNote,
       });
     } catch (e: any) {
       console.error("[fisco/annual-report] Error:", e);
@@ -1829,6 +1858,21 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             ],
           },
         },
+        2026: {
+          // Source: Revolut Annual Tax Statement 2026 (official Revolut PDF)
+          // Gross proceeds = $20,658.69 | Cost basis = $21,750.71 | Fees = $34.97 | Net PnL = -$1,126.99
+          // NOTE: Revolut reports in USD; bot uses EUR (FIFO global multi-exchange).
+          // Expected differences: FX USD/EUR + FIFO global vs FIFO internal Revolut.
+          _AGGREGATE: {
+            source: "Revolut Annual Tax Statement 2026",
+            gross_proceeds_usd: 20658.69,
+            cost_basis_usd: 21750.71,
+            fees_usd: 34.97,
+            net_pnl_usd: -1126.99,
+            note: "Aggregate across all assets. Per-asset breakdown not yet available.",
+            transactions: [],
+          },
+        },
       };
 
       // ── Query bot: all RevolutX trade_sell operations in year ────────────────
@@ -2533,6 +2577,109 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/conservative-disposals]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET /api/fisco/validate/portfolio
+  // Portfolio arithmetic: start + entries - exits = end
+  // ============================================================
+  app.get("/api/fisco/validate/portfolio", async (req, res) => {
+    try {
+      const year     = parseInt(req.query.year as string) || new Date().getFullYear();
+      const exchange = (req.query.exchange as string | undefined) || (req.query.scope === "global" ? null : null);
+      const svc = new FiscoValidationService(pool);
+      const result = await svc.validatePortfolio(year, exchange || null);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET /api/fisco/finalization-status
+  // Composite finalization check: FIFO + portfolio + withdrawals + conservative
+  // ============================================================
+  app.get("/api/fisco/finalization-status", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const svc = new FiscoValidationService(pool);
+      const result = await svc.getFinalizationStatus(year);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET /api/fisco/reconciliation/kraken
+  // Validates Kraken-specific data (counts, lots, missing EUR, staking)
+  // ============================================================
+  app.get("/api/fisco/reconciliation/kraken", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const svc = new KrakenReconciliationService(pool);
+      const result = await svc.reconcile(year);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // GET /api/fisco/reconciliation/summary
+  // Global summary: Kraken + RevolutX + finalization status
+  // ============================================================
+  app.get("/api/fisco/reconciliation/summary", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+      const [krakenResult, finalizationResult, conservQ] = await Promise.all([
+        new KrakenReconciliationService(pool).reconcile(year),
+        new FiscoValidationService(pool).getFinalizationStatus(year),
+        pool.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE statement_type = 'withdrawal'
+              AND COALESCE(classification,'pending') NOT IN ('internal_transfer','conservative_external_disposal')
+            ) AS unmatched_withdrawals,
+            COUNT(*) FILTER (WHERE classification = 'internal_transfer')            AS internal_transfers,
+            COUNT(*) FILTER (WHERE classification = 'conservative_external_disposal') AS conservative_disposals,
+            COUNT(*)                                                                  AS total_statement_items
+          FROM fisco_external_statement_items
+          WHERE year = $1 AND exchange = 'revolutx'
+        `, [year]),
+      ]);
+
+      const revRow = conservQ.rows[0] ?? {};
+      const revolutxSummary = {
+        status:
+          parseInt(revRow.unmatched_withdrawals ?? "0", 10) > 0 ? "WARNINGS" :
+          finalizationResult.withdrawals_status === "CONSERVATIVE" ? "WARNINGS" : "OK",
+        order_count:                    krakenResult.total_operations,
+        statement_items_count:          parseInt(revRow.total_statement_items    ?? "0", 10),
+        internal_transfers_count:       parseInt(revRow.internal_transfers       ?? "0", 10),
+        conservative_disposals_count:   parseInt(revRow.conservative_disposals  ?? "0", 10),
+        unmatched_withdrawals_count:    parseInt(revRow.unmatched_withdrawals    ?? "0", 10),
+        statement_reconciliation_status:
+          parseInt(revRow.unmatched_withdrawals ?? "0", 10) > 0 ? "PENDING" : "OK",
+        warnings:
+          parseInt(revRow.unmatched_withdrawals ?? "0", 10) > 0
+            ? [`${revRow.unmatched_withdrawals} retira(s) sin clasificar — usar conservative-close-all`]
+            : [],
+      };
+
+      res.json({
+        year,
+        exchanges: {
+          kraken:   krakenResult,
+          revolutx: revolutxSummary,
+        },
+        global_status:            finalizationResult.report_can_be_finalized ? "OK" : "NOT_FINALIZABLE",
+        report_can_be_finalized:  finalizationResult.report_can_be_finalized,
+        finalization_detail:      finalizationResult,
+      });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
