@@ -1243,6 +1243,17 @@ END $$;
     await tryExecuteFile(db, fiscoOpeningBalancesPath, "fisco_opening_balances");
     console.log("[migrate] 044_fisco_opening_balances OK");
 
+    // ============================================================
+    // FISCO TRANSFER LINKS + EXTERNAL STATEMENT ITEMS (045)
+    // fisco_external_statement_items: non-API movements (RevolutX withdrawals, etc.)
+    // fisco_transfer_links: links a withdrawal to a deposit on another exchange
+    // Enables OK_INTERNAL_TRANSFER status in reconciliation (no fake trade_sell)
+    // ============================================================
+    console.log("[migrate] Applying 045_fisco_transfer_links...");
+    const fiscoTransferLinksPath = path.resolve(process.cwd(), "db", "migrations", "045_fisco_transfer_links.sql");
+    await tryExecuteFile(db, fiscoTransferLinksPath, "fisco_transfer_links");
+    console.log("[migrate] 045_fisco_transfer_links OK");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

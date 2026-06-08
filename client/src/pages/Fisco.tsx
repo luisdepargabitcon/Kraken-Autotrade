@@ -201,6 +201,44 @@ interface AuditSummary {
   recommendation: string[];
 }
 
+// ─── RevolutX reconciliation types (for PDF page 5) ──────────────────────────
+
+interface RevolutTxCheck {
+  expected_date: string;
+  expected_quantity: number;
+  expected_proceeds_usd: number;
+  expected_fees_usd: number;
+  status: string;
+  statement_item?: {
+    statement_type: string;
+    amount_sent: number;
+    fee_amount: number;
+    total_out: number;
+    network: string | null;
+    reconciliation_status: string;
+    link_status: string | null;
+    link_confidence: string | null;
+    link_to_exchange: string | null;
+    deposit_external_id: string | null;
+    deposit_at: string | null;
+    link_reason: string | null;
+  };
+  hint?: string;
+}
+
+interface RevolutReconciliationResponse {
+  year: number;
+  overall_status: string;
+  warning: string | null;
+  statement_items_summary: {
+    total: number;
+    matched_internal: number;
+    unmatched: number;
+    manual_review: number;
+  };
+  transaction_checks: Record<string, RevolutTxCheck[]>;
+}
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -246,7 +284,7 @@ const OP_TYPE_LABELS: Record<string, { label: string; color: string }> = {
 // PDF Generator (Bit2Me style — multi-page HTML)
 // ============================================================
 
-function generateBit2MePDF(report: AnnualReportResponse) {
+function generateBit2MePDF(report: AnnualReportResponse, recon?: RevolutReconciliationResponse) {
   const y = report.year;
 
   // --- Configurable labels ---
@@ -423,7 +461,130 @@ function generateBit2MePDF(report: AnnualReportResponse) {
       <div class="footer-page">Visi\u00f3n general de cartera ${y} \u2014 P\u00e1gina 4</div>
     </div>`;
 
-  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Informe Fiscal ${y}</title><style>${css}</style></head><body>${pageA}${pageB}${pageC}${pageD}</body></html>`;
+  // Page 5: RevolutX reconciliation (only if data available)
+  let pageE = "";
+  if (recon && Object.keys(recon.transaction_checks).length > 0) {
+    const STATUS_STYLE: Record<string, string> = {
+      OK_ORDER_SELL:         "background:#dcfce7;color:#15803d;border:1px solid #16a34a;",
+      OK_INTERNAL_TRANSFER:  "background:#dbeafe;color:#1d4ed8;border:1px solid #3b82f6;",
+      EXTERNAL_DISPOSAL:     "background:#fef9c3;color:#92400e;border:1px solid #eab308;",
+      WITHDRAWAL_UNMATCHED:  "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
+      STATEMENT_ONLY_UNMATCHED: "background:#fef3c7;color:#92400e;border:1px solid #f59e0b;",
+      MISSING_STABLECOIN_DISPOSAL_LEG: "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
+      MISSING_API_WINDOW_NOT_FETCHED:  "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
+      MISSING_MOVEMENT_SYNC: "background:#fee2e2;color:#991b1b;border:1px solid #ef4444;",
+    };
+    const STATUS_LABEL: Record<string, string> = {
+      OK_ORDER_SELL:          "✓ Venta confirmada (trade_sell)",
+      OK_INTERNAL_TRANSFER:   "✓ Transferencia interna (no venta)",
+      EXTERNAL_DISPOSAL:      "Disposici\u00f3n externa",
+      WITHDRAWAL_UNMATCHED:   "⚠ Retirada sin destino identificado",
+      STATEMENT_ONLY_UNMATCHED: "⚠ Solo en extracto (importar)",
+      MISSING_STABLECOIN_DISPOSAL_LEG: "✗ Pierna de disposici\u00f3n faltante",
+      MISSING_API_WINDOW_NOT_FETCHED:  "✗ Datos API no sincronizados",
+      MISSING_MOVEMENT_SYNC:  "✗ Movimiento no importado",
+    };
+
+    const overallStyle = recon.overall_status === "OK"
+      ? "background:#dcfce7;border:1.5px solid #16a34a;color:#15803d;"
+      : recon.overall_status === "WARNINGS"
+      ? "background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;"
+      : "background:#fee2e2;border:1.5px solid #ef4444;color:#991b1b;";
+
+    const txRows = Object.entries(recon.transaction_checks)
+      .flatMap(([asset, checks]) =>
+        checks.map(tx => {
+          const style = STATUS_STYLE[tx.status] ?? "background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;";
+          const label = STATUS_LABEL[tx.status] ?? tx.status;
+          const si = tx.statement_item;
+
+          const detailBlock = si ? (() => {
+            if (tx.status === "OK_INTERNAL_TRANSFER") {
+              return `
+                <tr style="background:#f0f9ff;">
+                  <td colspan="4" style="padding:8px 14px;font-size:11px;color:#334155;border:1px solid #bfdbfe;">
+                    <strong>Detalle de transferencia interna:</strong><br>
+                    Enviado: <strong>${si.amount_sent} ${asset}</strong> &nbsp;|&nbsp;
+                    Fee red: <strong>${si.fee_amount} ${asset}</strong> &nbsp;|&nbsp;
+                    Total salida: <strong>${si.total_out} ${asset}</strong> &nbsp;|&nbsp;
+                    Red: ${si.network ?? "–"}<br>
+                    Dep\u00f3sito en <strong>${si.link_to_exchange ?? "–"}</strong>:
+                    <span style="font-family:monospace;font-size:10px;">${si.deposit_external_id ?? "–"}</span>
+                    &nbsp;•&nbsp; ${si.deposit_at ? new Date(si.deposit_at).toLocaleString("es-ES") : "–"}
+                    &nbsp;•&nbsp; Confianza: <strong>${si.link_confidence ?? "–"}</strong><br>
+                    <span style="color:#64748b;font-size:10px;font-style:italic;">
+                      Revolut reporta este movimiento en su extracto oficial como transmisi\u00f3n (fee de red incluido en base imponible),
+                      pero ha sido conciliado como transferencia interna hacia cuenta propia en Kraken.
+                      No se trata como venta ordinaria adicional. Sin impacto FIFO.
+                    </span>
+                  </td>
+                </tr>`;
+            }
+            if (tx.status === "WITHDRAWAL_UNMATCHED") {
+              return `
+                <tr style="background:#fffbeb;">
+                  <td colspan="4" style="padding:8px 14px;font-size:11px;color:#92400e;border:1px solid #fde68a;">
+                    <strong>Retirada sin destino confirmado:</strong>
+                    ${si.amount_sent} ${asset} enviados + ${si.fee_amount} fee = ${si.total_out} total.
+                    Red: ${si.network ?? "–"}.<br>
+                    No se ha encontrado dep\u00f3sito correspondiente en ning\u00fan exchange importado. Revisar manualmente.
+                  </td>
+                </tr>`;
+            }
+            return "";
+          })() : (tx.hint ? `
+            <tr style="background:#f8fafc;">
+              <td colspan="4" style="padding:6px 14px;font-size:10px;color:#64748b;border:1px solid #e2e8f0;font-style:italic;">
+                ${tx.hint}
+              </td>
+            </tr>` : "");
+
+          return `
+            <tr>
+              <td style="font-weight:600;">${tx.expected_date}</td>
+              <td>${asset}</td>
+              <td>${tx.expected_quantity.toLocaleString("es-ES", { maximumFractionDigits: 6 })}</td>
+              <td><span style="padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;${style}">${label}</span></td>
+            </tr>
+            ${detailBlock}`;
+        })
+      ).join("");
+
+    const summaryBadges = [
+      `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:#dcfce7;color:#15803d;font-size:11px;font-weight:600;">&#10003; Confirmadas: ${recon.statement_items_summary.matched_internal}</span>`,
+      recon.statement_items_summary.unmatched > 0
+        ? `<span style="margin-right:8px;padding:3px 8px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;">&#9888; Sin destino: ${recon.statement_items_summary.unmatched}</span>`
+        : "",
+    ].join("");
+
+    pageE = `
+      <div class="page">
+        <div class="brand">Gestor Fiscal de Criptoactivos</div>
+        <h2>Conciliaci\u00f3n RevolutX ${y} \u2014 Movimientos no-API</h2>
+        <div style="${overallStyle}border-radius:6px;padding:10px 16px;margin-bottom:16px;font-size:12px;">
+          <strong>Estado global: ${recon.overall_status}</strong>
+          ${recon.warning ? `&nbsp;&mdash;&nbsp;${recon.warning}` : ""}
+        </div>
+        <div style="margin-bottom:14px;">${summaryBadges}</div>
+        <table>
+          <tr>
+            <th style="text-align:left;">Fecha</th>
+            <th style="text-align:left;">Activo</th>
+            <th>Cantidad</th>
+            <th style="text-align:left;">Estado conciliaci\u00f3n</th>
+          </tr>
+          ${txRows}
+        </table>
+        <p style="font-size:10px;color:#64748b;margin-top:16px;border-top:1px solid #e2e8f0;padding-top:10px;">
+          Los movimientos con estado OK_INTERNAL_TRANSFER han sido identificados como transferencias entre cuentas propias
+          (RevolutX \u2192 Kraken). No generan evento fiscal de transmisi\u00f3n adicional. La base imponible y coste de adquisici\u00f3n
+          se preservan en el FIFO del activo correspondiente. Fuente: extracto fiscal Revolut ${y} + conciliaci\u00f3n autom\u00e1tica.
+        </p>
+        <div class="footer-page">Conciliaci\u00f3n RevolutX ${y} \u2014 P\u00e1gina 5</div>
+      </div>`;
+  }
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Informe Fiscal ${y}</title><style>${css}</style></head><body>${pageA}${pageB}${pageC}${pageD}${pageE}</body></html>`;
 
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -647,6 +808,14 @@ export default function Fisco() {
     staleTime: 30_000,
   });
 
+  // --- RevolutX reconciliation (for PDF page 5) ---
+  const reconciliationQ = useQuery<RevolutReconciliationResponse>({
+    queryKey: [`/api/fisco/reconciliation/revolut?year=${selectedYear}`],
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: !!selectedYear,
+  });
+
   // --- Rebuild runs history ---
   const rebuildRunsQ = useQuery<{ runs: RebuildRun[] }>({
     queryKey: ["/api/fisco/rebuild/runs"],
@@ -773,7 +942,7 @@ export default function Fisco() {
               </Button>
 
               <Button
-                onClick={() => report && generateBit2MePDF(report)}
+                onClick={() => report && generateBit2MePDF(report, reconciliationQ.data)}
                 disabled={!report}
                 className="gap-2 h-11 bg-blue-600 hover:bg-blue-700"
               >
