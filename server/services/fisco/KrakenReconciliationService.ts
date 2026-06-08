@@ -198,6 +198,9 @@ export class KrakenReconciliationService {
       warnings.push(`${staking_without_price.length} entrada(s) de staking/reward sin precio EUR.`);
     }
 
+    // Critical = blocks finalization (missing EUR valuation, deposits without lot)
+    // Warning  = informational, does NOT block finalization (withdrawals without stmt,
+    //            staking without price)
     const criticalIssues =
       missing_eur_valuation.length > 0 ||
       deposits_without_lot.length > 0;
@@ -230,7 +233,8 @@ export class KrakenReconciliationService {
       staking_without_price,
       portfolio_by_asset,
       warnings,
-      report_can_be_finalized: status === "OK",
+      // WARNINGS are non-blocking: only DIFFERENCES prevents finalization
+      report_can_be_finalized: status !== "DIFFERENCES",
     };
   }
 }

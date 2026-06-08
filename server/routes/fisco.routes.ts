@@ -2695,14 +2695,23 @@ export function registerFiscoRebuildRoutes(app: Express): void {
             : [],
       };
 
+      // global_status reflects both finalization blockers AND Kraken WARNINGS
+      const hasKrakenWarnings = krakenResult.status === "WARNINGS" || krakenResult.status === "DIFFERENCES";
+      const hasKrakenDiff     = krakenResult.status === "DIFFERENCES";
+      const globalStatus =
+        !finalizationResult.report_can_be_finalized || hasKrakenDiff ? "NOT_FINALIZABLE" :
+        hasKrakenWarnings                                             ? "OK_WITH_WARNINGS" :
+                                                                        "OK";
+
       res.json({
         year,
         exchanges: {
           kraken:   krakenResult,
           revolutx: revolutxSummary,
         },
-        global_status:            finalizationResult.report_can_be_finalized ? "OK" : "NOT_FINALIZABLE",
-        report_can_be_finalized:  finalizationResult.report_can_be_finalized,
+        global_status:            globalStatus,
+        report_can_be_finalized:  finalizationResult.report_can_be_finalized && !hasKrakenDiff,
+        kraken_warnings:          krakenResult.warnings,
         finalization_detail:      finalizationResult,
       });
     } catch (e: any) {

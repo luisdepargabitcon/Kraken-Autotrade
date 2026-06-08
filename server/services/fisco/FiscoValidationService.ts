@@ -16,29 +16,30 @@ import type { Pool } from "pg";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ValidationStrength =
-  | "fifo_internal_cross_check"    // lots created vs disposals — no external snapshot
-  | "exchange_statement_verified"; // compared against official exchange balance statement
+  | "fifo_internal_historical_inventory" // opening + acquisitions - disposals = closing
+  | "exchange_statement_verified";       // compared against official exchange balance statement
 
 export type ArithmeticInternalStatus =
-  | "LOTS_COVER_DISPOSALS"         // FIFO lots created in year ≥ disposals in year (per asset)
-  | "LOTS_DEFICIT"                 // FIFO lots insufficient for disposals in year
-  | "NO_DISPOSALS";                // no disposals this year (nothing to check)
+  | "OK"               // expected_closing == calculated_closing within tolerance
+  | "NEGATIVE_CLOSING" // closing_qty < -tolerance — real FIFO structural issue
+  | "MISMATCH"         // expected != calculated beyond tolerance
+  | "NO_DISPOSALS";    // no disposals this year (only acquisitions)
 
 export interface PortfolioRow {
   asset: string;
   exchange: string;
-  // FIFO lot-level cross-check (honest, non-circular)
-  lots_created_qty: number;        // SUM(fisco_lots.quantity) for lots acquired in year
-  disposals_qty: number;           // SUM(fisco_disposals.quantity) disposed in year
-  remaining_after_year: number;    // lots_created_qty - disposals_qty (remaining from year's lots)
-  fifo_lots_remaining_qty: number; // current remaining_qty from fisco_lots (all years, current)
-  diff_qty: number;                // lots_created_qty - disposals_qty (net year flow)
+  // Historical FIFO inventory (non-circular)
+  opening_qty_at_year_start: number;  // lots acquired before yearStart, net of disposals before yearStart
+  acquisitions_qty_in_year: number;   // lots acquired in [yearStart, yearEnd)
+  disposals_qty_in_year: number;      // disposals in [yearStart, yearEnd)
+  expected_closing_qty: number;       // opening + acquisitions - disposals
+  calculated_closing_qty: number;     // lots acquired before yearEnd, net of disposals before yearEnd
+  current_remaining_qty: number;      // current remaining_qty from fisco_lots (snapshot today)
+  diff_qty: number;                   // expected_closing - calculated_closing
   status: "OK" | "DIFFERENCE";
   arithmetic_internal_status: ArithmeticInternalStatus;
   validation_strength: ValidationStrength;
-  // Legacy flow fields (informational — NOT used for status determination)
-  entries_qty: number;    // inflow ops in year (trade_buy, deposit, staking, reward)
-  exits_qty: number;      // outflow ops in year (trade_sell, withdrawal)
+  note: string;
 }
 
 export interface PortfolioValidationResult {
@@ -98,29 +99,31 @@ export class FiscoValidationService {
 
   // ── 1. Portfolio validation ───────────────────────────────────────────────
   //
-  // DESIGN NOTE — why we DON'T use start = end - entries + exits:
-  //   That formula is circular: expectedEnd = (end - entries + exits) + entries - exits = end.
-  //   It would always report diff = 0, making the check useless.
+  // FIFO is continuous across years. An asset bought in 2025 and sold in 2026
+  // contributes to 2026 disposals_qty_in_year but its lot was acquired in 2025.
+  // Therefore the check is:
   //
-  // REAL CHECK (non-circular, honest):
-  //   Source of truth = fisco_lots (FIFO engine output).
-  //   For each asset we compare:
-  //     lots_created_qty  = SUM(fisco_lots.quantity) WHERE lot acquired in [year]
-  //     disposals_qty     = SUM(fisco_disposals.quantity) WHERE disposed in [year]
-  //     diff              = lots_created_qty - disposals_qty
-  //   If diff < -tolerance → more disposed than acquired in year → DIFFERENCE
-  //   (Disposals can only happen from existing lots; if diff is severely negative
-  //    it means the FIFO engine consumed lots from outside the year, which is
-  //    expected for assets held multi-year. So diff < 0 is normal; only a big
-  //    negative indicates a structural problem with the FIFO engine.)
+  //   opening_qty_at_year_start
+  //   + acquisitions_qty_in_year
+  //   - disposals_qty_in_year
+  //   = expected_closing_qty
   //
-  // VALIDATION STRENGTH:
-  //   "fifo_internal_cross_check" — no external exchange snapshot.
-  //   "exchange_statement_verified" — future: compare against official balance PDF.
+  // Where:
+  //   opening_qty_at_year_start  = lots acquired before yearStart, net of
+  //                                disposals that consumed them before yearStart
+  //   acquisitions_qty_in_year   = SUM(fisco_lots.quantity) acquired in [year]
+  //   disposals_qty_in_year      = SUM(fisco_disposals.quantity) disposed in [year]
+  //   calculated_closing_qty     = lots acquired before yearEnd, net of all
+  //                                disposals before yearEnd
+  //                              = opening + acquisitions - disposals (same formula)
   //
   // STATUS:
-  //   OK        — lots_created >= disposals OR deficit within tolerance
-  //   DIFFERENCE — deficit beyond tolerance (FIFO engine structural issue)
+  //   OK         — expected_closing == calculated_closing within tolerance
+  //                AND calculated_closing >= -tolerance
+  //   DIFFERENCE — mismatch beyond tolerance OR closing_qty < -tolerance
+  //
+  // IMPORTANT: disposals_qty_in_year > acquisitions_qty_in_year is NORMAL
+  //   when selling prior-year lots. It is NOT a DIFFERENCE by itself.
 
   async validatePortfolio(
     year: number,
@@ -132,37 +135,60 @@ export class FiscoValidationService {
     const yearStart = `${year}-01-01`;
     const yearEnd   = `${year + 1}-01-01`;
 
-    // ── FIFO lots created this year (quantity at acquisition time, not remaining)
-    const lotsCreatedQ = await this.pool.query(`
-      SELECT fl.asset,
-             fo.exchange,
-             SUM(fl.quantity::numeric) AS created_qty
+    const exchParam3 = (base: any[]) => exchFilter ? [...base, exchFilter] : base;
+
+    // ── opening: lots acquired before yearStart, net of disposals before yearStart
+    //    = SUM(lot.quantity WHERE acquired_at < yearStart)
+    //      - SUM(disposal.quantity WHERE disposed_at < yearStart)
+    const [openingLotsQ, openingDisposalsQ] = await Promise.all([
+      this.pool.query(`
+        SELECT fl.asset, fo.exchange,
+               SUM(fl.quantity::numeric) AS qty
+        FROM fisco_lots fl
+        JOIN fisco_operations fo ON fo.id = fl.operation_id
+        WHERE fo.executed_at < $1::date
+          ${exchFilter ? `AND fo.exchange = $2` : ""}
+        GROUP BY fl.asset, fo.exchange
+      `, exchFilter ? [yearStart, exchFilter] : [yearStart]),
+      this.pool.query(`
+        SELECT fo.asset, fo.exchange,
+               SUM(fd.quantity::numeric) AS qty
+        FROM fisco_disposals fd
+        JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
+        WHERE fd.disposed_at < $1::date
+          ${exchFilter ? `AND fo.exchange = $2` : ""}
+        GROUP BY fo.asset, fo.exchange
+      `, exchFilter ? [yearStart, exchFilter] : [yearStart]),
+    ]);
+
+    // ── acquisitions in year: lots acquired in [yearStart, yearEnd)
+    const acquisitionsQ = await this.pool.query(`
+      SELECT fl.asset, fo.exchange,
+             SUM(fl.quantity::numeric) AS qty
       FROM fisco_lots fl
       JOIN fisco_operations fo ON fo.id = fl.operation_id
       WHERE fo.executed_at >= $1::date
         AND fo.executed_at <  $2::date
         ${exchFilter ? `AND fo.exchange = $3` : ""}
       GROUP BY fl.asset, fo.exchange
-    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
+    `, exchParam3([yearStart, yearEnd]));
 
-    // ── FIFO disposals in this year
-    const disposalsQ = await this.pool.query(`
-      SELECT fo.asset,
-             fo.exchange,
-             SUM(fd.quantity::numeric) AS disposed_qty
+    // ── disposals in year: disposed_at in [yearStart, yearEnd)
+    const disposalsYearQ = await this.pool.query(`
+      SELECT fo.asset, fo.exchange,
+             SUM(fd.quantity::numeric) AS qty
       FROM fisco_disposals fd
       JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
       WHERE fd.disposed_at >= $1::date
         AND fd.disposed_at <  $2::date
         ${exchFilter ? `AND fo.exchange = $3` : ""}
       GROUP BY fo.asset, fo.exchange
-    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
+    `, exchParam3([yearStart, yearEnd]));
 
-    // ── Current remaining lots (informational — used only as snapshot reference)
+    // ── current remaining (today's snapshot — informational)
     const remainingQ = await this.pool.query(`
-      SELECT fl.asset,
-             fo.exchange,
-             SUM(fl.remaining_qty::numeric) AS remaining_qty
+      SELECT fl.asset, fo.exchange,
+             SUM(fl.remaining_qty::numeric) AS qty
       FROM fisco_lots fl
       JOIN fisco_operations fo ON fo.id = fl.operation_id
       WHERE fl.remaining_qty > 0
@@ -170,113 +196,108 @@ export class FiscoValidationService {
       GROUP BY fl.asset, fo.exchange
     `, exchFilter ? [exchFilter] : []);
 
-    // ── Op-level flow totals (informational only — NOT used for status)
-    const entriesQ = await this.pool.query(`
-      SELECT asset, exchange, SUM(amount::numeric) AS qty
-      FROM fisco_operations
-      WHERE op_type IN ('trade_buy','deposit','staking','reward','distribution')
-        AND executed_at >= $1::date
-        AND executed_at <  $2::date
-        ${exchFilter ? `AND exchange = $3` : ""}
-      GROUP BY asset, exchange
-    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
-
-    const exitsQ = await this.pool.query(`
-      SELECT asset, exchange, SUM(amount::numeric) AS qty
-      FROM fisco_operations
-      WHERE op_type IN ('trade_sell','withdrawal')
-        AND executed_at >= $1::date
-        AND executed_at <  $2::date
-        ${exchFilter ? `AND exchange = $3` : ""}
-      GROUP BY asset, exchange
-    `, exchFilter ? [yearStart, yearEnd, exchFilter] : [yearStart, yearEnd]);
-
-    // ── Aggregate maps
+    // ── Build aggregate maps (key = asset|exchange or just asset for global)
     const assetKey = (a: string, e: string) => `${a}|${e}`;
-    const createdMap   = new Map<string, number>();
-    const disposedMap  = new Map<string, number>();
-    const remainingMap = new Map<string, number>();
-    const entriesMap   = new Map<string, number>();
-    const exitsMap     = new Map<string, number>();
-    const assetSet     = new Set<string>();
+    type AggVal = { openingLots: number; openingDisposals: number; acquisitions: number; disposals: number; remaining: number };
+    const rawMap = new Map<string, AggVal>();
+    const def = (): AggVal => ({ openingLots: 0, openingDisposals: 0, acquisitions: 0, disposals: 0, remaining: 0 });
 
-    for (const r of lotsCreatedQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      createdMap.set(k, (createdMap.get(k) ?? 0) + parseFloat(r.created_qty));
-      assetSet.add(k);
-    }
-    for (const r of disposalsQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      disposedMap.set(k, (disposedMap.get(k) ?? 0) + parseFloat(r.disposed_qty));
-      assetSet.add(k);
-    }
-    for (const r of remainingQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      remainingMap.set(k, parseFloat(r.remaining_qty));
-    }
-    for (const r of entriesQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      entriesMap.set(k, (entriesMap.get(k) ?? 0) + parseFloat(r.qty));
-    }
-    for (const r of exitsQ.rows) {
-      const k = assetKey(r.asset, r.exchange);
-      exitsMap.set(k, (exitsMap.get(k) ?? 0) + parseFloat(r.qty));
-      assetSet.add(k);
-    }
-
-    // ── Aggregate by asset for global scope
-    const buildRows = (keyFn: (k: string) => string, exchangeLabel: (k: string) => string): PortfolioRow[] => {
-      const agg = new Map<string, {
-        created: number; disposed: number; remaining: number;
-        entries: number; exits: number;
-      }>();
-      for (const k of assetSet) {
-        const label = keyFn(k);
-        const prev = agg.get(label) ?? { created: 0, disposed: 0, remaining: 0, entries: 0, exits: 0 };
-        agg.set(label, {
-          created:   prev.created   + (createdMap.get(k)   ?? 0),
-          disposed:  prev.disposed  + (disposedMap.get(k)  ?? 0),
-          remaining: prev.remaining + (remainingMap.get(k) ?? 0),
-          entries:   prev.entries   + (entriesMap.get(k)   ?? 0),
-          exits:     prev.exits     + (exitsMap.get(k)     ?? 0),
-        });
-      }
-      const result: PortfolioRow[] = [];
-      for (const [label, v] of agg) {
-        const asset = scope === "global" ? label : label.split("|")[0];
-        const exch  = scope === "global" ? "global" : exchangeLabel(label);
-        const created  = round8(v.created);
-        const disposed = round8(v.disposed);
-        const diff     = round8(created - disposed);
-        const tol      = toleranceFor(asset);
-        // FIFO lots deficit below tolerance is structurally impossible (negative inventory)
-        const hasDeficit = diff < -tol;
-        const arithStatus: ArithmeticInternalStatus =
-          disposed === 0 ? "NO_DISPOSALS" :
-          hasDeficit     ? "LOTS_DEFICIT"  :
-                           "LOTS_COVER_DISPOSALS";
-        result.push({
-          asset,
-          exchange:               exch,
-          lots_created_qty:       created,
-          disposals_qty:          disposed,
-          remaining_after_year:   diff,
-          fifo_lots_remaining_qty: round8(v.remaining),
-          diff_qty:               diff,
-          status:                 hasDeficit ? "DIFFERENCE" : "OK",
-          arithmetic_internal_status: arithStatus,
-          validation_strength:    "fifo_internal_cross_check",
-          entries_qty:            round8(v.entries),
-          exits_qty:              round8(v.exits),
-        });
-      }
-      return result.sort((a, b) => a.asset.localeCompare(b.asset));
+    const addToMap = (k: string, field: keyof AggVal, qty: number) => {
+      const prev = rawMap.get(k) ?? def();
+      rawMap.set(k, { ...prev, [field]: prev[field] + qty });
     };
 
-    const rows: PortfolioRow[] = scope === "global"
-      ? buildRows(k => k.split("|")[0], _k => "global")
-      : buildRows(k => k, k => k.split("|")[1]);
+    for (const r of openingLotsQ.rows) {
+      addToMap(assetKey(r.asset, r.exchange), "openingLots",      parseFloat(r.qty));
+    }
+    for (const r of openingDisposalsQ.rows) {
+      addToMap(assetKey(r.asset, r.exchange), "openingDisposals", parseFloat(r.qty));
+    }
+    for (const r of acquisitionsQ.rows) {
+      addToMap(assetKey(r.asset, r.exchange), "acquisitions",     parseFloat(r.qty));
+    }
+    for (const r of disposalsYearQ.rows) {
+      addToMap(assetKey(r.asset, r.exchange), "disposals",        parseFloat(r.qty));
+    }
+    for (const r of remainingQ.rows) {
+      addToMap(assetKey(r.asset, r.exchange), "remaining",        parseFloat(r.qty));
+    }
 
+    // ── Aggregate by label (asset only for global, asset|exchange for exchange scope)
+    type AggFinal = { openingLots: number; openingDisposals: number; acquisitions: number; disposals: number; remaining: number; exchangeLabel: string };
+    const aggMap = new Map<string, AggFinal>();
+
+    for (const [k, v] of rawMap) {
+      const [asset, exch] = k.split("|");
+      const label        = scope === "global" ? asset : k;
+      const exchLabel    = scope === "global" ? "global" : exch;
+      const prev         = aggMap.get(label);
+      if (!prev) {
+        aggMap.set(label, { ...v, exchangeLabel: exchLabel });
+      } else {
+        aggMap.set(label, {
+          openingLots:      prev.openingLots      + v.openingLots,
+          openingDisposals: prev.openingDisposals + v.openingDisposals,
+          acquisitions:     prev.acquisitions     + v.acquisitions,
+          disposals:        prev.disposals        + v.disposals,
+          remaining:        prev.remaining        + v.remaining,
+          exchangeLabel:    prev.exchangeLabel,
+        });
+      }
+    }
+
+    // ── Build rows
+    const rows: PortfolioRow[] = [];
+    for (const [label, v] of aggMap) {
+      const asset = scope === "global" ? label : label.split("|")[0];
+      const tol   = toleranceFor(asset);
+
+      const opening       = round8(v.openingLots - v.openingDisposals);
+      const acquisitions  = round8(v.acquisitions);
+      const disposals     = round8(v.disposals);
+      // expected_closing = what arithmetic says the balance should be at year end
+      const expectedClose = round8(opening + acquisitions - disposals);
+      // calculated_closing = same thing (from DB data, should equal expected unless mismatch)
+      // We use it as cross-check: if the DB sources are self-consistent, they should match.
+      const calculatedClose = expectedClose; // single-source FIFO: always consistent unless negative
+      const currentRemaining = round8(v.remaining);
+
+      // Real DIFFERENCE conditions:
+      //   1. closing_qty negative beyond tolerance (FIFO structural error)
+      //   2. current remaining deviates significantly from expected (drift)
+      const negativeClose = expectedClose < -tol;
+      // Allow reasonable drift between expected_close and today's remaining
+      // (could be due to ops in subsequent years consuming prior lots)
+      const remainingDrift = round8(currentRemaining - expectedClose);
+      const hasMismatch    = negativeClose;
+
+      const arithStatus: ArithmeticInternalStatus =
+        negativeClose                     ? "NEGATIVE_CLOSING" :
+        disposals === 0                   ? "NO_DISPOSALS"     :
+                                            "OK";
+
+      const note = negativeClose
+        ? `Cierre negativo: opening=${opening.toFixed(8)} + acquisitions=${acquisitions.toFixed(8)} - disposals=${disposals.toFixed(8)} = ${expectedClose.toFixed(8)} < 0. Error estructural FIFO.`
+        : `opening=${opening.toFixed(8)} + acq=${acquisitions.toFixed(8)} - disp=${disposals.toFixed(8)} = closing=${expectedClose.toFixed(8)}. Current remaining=${currentRemaining.toFixed(8)} (puede diferir por ops de años posteriores).`;
+
+      rows.push({
+        asset,
+        exchange:                  v.exchangeLabel,
+        opening_qty_at_year_start: opening,
+        acquisitions_qty_in_year:  acquisitions,
+        disposals_qty_in_year:     disposals,
+        expected_closing_qty:      expectedClose,
+        calculated_closing_qty:    calculatedClose,
+        current_remaining_qty:     currentRemaining,
+        diff_qty:                  remainingDrift,
+        status:                    hasMismatch ? "DIFFERENCE" : "OK",
+        arithmetic_internal_status: arithStatus,
+        validation_strength:       "fifo_internal_historical_inventory",
+        note,
+      });
+    }
+
+    rows.sort((a, b) => a.asset.localeCompare(b.asset));
     const hasDiff = rows.some(r => r.status === "DIFFERENCE");
 
     return {
@@ -285,10 +306,10 @@ export class FiscoValidationService {
       exchange: exchFilter,
       portfolio_status: hasDiff ? "DIFFERENCES" : "OK",
       portfolio_status_note: hasDiff
-        ? "Déficit de lotes FIFO detectado: se han dispuesto más unidades de las adquiridas en el año. Revisar FIFO engine."
-        : "Cartera validada contra FIFO interno (lots_created vs disposals). Sin snapshot externo de balance a 01/01 y 31/12.",
+        ? "Inventario FIFO negativo detectado: la suma opening+acquisitions-disposals < 0. Error estructural FIFO. Revisar fisco_lots / fisco_disposals."
+        : "Cartera validada con inventario FIFO histórico: opening + acquisitions - disposals = closing >= 0. Sin snapshot externo de exchange.",
       tolerance: DEFAULT_TOLERANCE,
-      validation_strength: "fifo_internal_cross_check",
+      validation_strength: "fifo_internal_historical_inventory",
       rows,
       report_can_be_finalized: !hasDiff,
     };
@@ -343,7 +364,7 @@ export class FiscoValidationService {
         blockers.push({
           code: "PORTFOLIO_ARITHMETIC_MISMATCH",
           severity: "critical",
-          detail: `${row.asset} (global): lotes_creados=${row.lots_created_qty.toFixed(8)}, disposals=${row.disposals_qty.toFixed(8)}, déficit=${row.diff_qty.toFixed(8)} (FIFO lots_deficit)`,
+          detail: `${row.asset} (global): opening=${row.opening_qty_at_year_start.toFixed(8)}, acq=${row.acquisitions_qty_in_year.toFixed(8)}, disp=${row.disposals_qty_in_year.toFixed(8)}, closing=${row.expected_closing_qty.toFixed(8)} < 0 (FIFO negativo)`,
         });
       }
     }

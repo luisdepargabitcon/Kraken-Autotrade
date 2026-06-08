@@ -1,29 +1,37 @@
 /**
  * FiscoValidationService + KrakenReconciliationService — unit tests
  *
- * Non-circular portfolio validation (lots_created vs disposals).
+ * Historical FIFO inventory portfolio validation:
+ *   opening_qty_at_year_start + acquisitions_qty_in_year - disposals_qty_in_year
+ *   = expected_closing_qty (must be >= 0, else DIFFERENCE)
+ *
  * withdrawal% covers both 'withdrawal' and 'withdrawal_crypto'.
+ * Kraken WARNINGS are non-blocking (only DIFFERENCES block).
  *
  * Tests:
- *  1.  Portfolio OK: lots_created >= disposals → OK
- *  2.  Portfolio DIFFERENCE: lots_created < disposals (FIFO deficit) → DIFFERENCES
- *  3.  Portfolio: no disposals → arithmetic_internal_status = NO_DISPOSALS → OK
- *  4.  Portfolio: validation_strength = fifo_internal_cross_check always
- *  5.  Portfolio: portfolio_status_note present and non-empty
- *  6.  Portfolio exchange scope sets scope=exchange, exchange=kraken
- *  7.  Finalization: pending withdrawal → blocker, not finalizable
- *  8.  Finalization: pending withdrawal_crypto → blocker (Bug 2 fix)
- *  9.  Finalization: withdrawal_crypto with internal_transfer → OK, finalizable
- * 10.  Finalization: conservative disposals → warning only, finalizable
- * 11.  Finalization: all clean → finalizable
- * 12.  Finalization: conservative gain sums to final_taxable
- * 13.  Finalization: RevolutX 2025 internal_transfer only → finalizable (regression)
- * 14.  Finalization: FIFO UNKNOWN_BASIS → CRITICAL, not finalizable
- * 15.  Finalization: FIFO lots_deficit (portfolio DIFFERENCES) → blocker
- * 16.  Kraken: counts by op_type
- * 17.  Kraken: missing EUR valuation → DIFFERENCES
- * 18.  Kraken: deposits without lots → DIFFERENCES
- * 19.  Kraken: all clean → OK
+ *  1.  Portfolio: buy in year, sell same year → opening=0, acq=1, disp=0.4, closing=0.6 → OK
+ *  2.  Portfolio: prior-year lot sold in current year → opening=1, acq=0, disp=1 → closing=0 → OK
+ *  3.  Portfolio: opening + acq covers disposals → OK (multi-year)
+ *  4.  Portfolio: disposals > opening + acq → closing negative → DIFFERENCES
+ *  5.  Portfolio: no disposals → NO_DISPOSALS → OK
+ *  6.  Portfolio: exchange scope → scope=exchange, exchange=kraken
+ *  7.  Portfolio: validation_strength = fifo_internal_historical_inventory
+ *  8.  Portfolio: portfolio_status_note present and non-empty
+ *  9.  Portfolio: real 2026 case — opening covers deficit → OK (non-regression)
+ * 10.  Finalization: pending withdrawal → blocker
+ * 11.  Finalization: pending withdrawal_crypto → blocker (LIKE withdrawal%)
+ * 12.  Finalization: withdrawal_crypto as internal_transfer → OK
+ * 13.  Finalization: conservative disposals → warning, finalizable
+ * 14.  Finalization: all clean → finalizable
+ * 15.  Finalization: conservative gain sums to final_taxable
+ * 16.  Finalization: RevolutX 2025 internal_transfer regression
+ * 17.  Finalization: FIFO UNKNOWN_BASIS → CRITICAL
+ * 18.  Finalization: portfolio NEGATIVE_CLOSING → blocker
+ * 19.  Kraken: counts by op_type
+ * 20.  Kraken: missing EUR → DIFFERENCES, not finalizable
+ * 21.  Kraken: deposits without lots → DIFFERENCES
+ * 22.  Kraken: withdrawals without statement → WARNINGS only, still finalizable
+ * 23.  Kraken: all clean → OK
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -42,39 +50,40 @@ function makeMockPool(handler: (sql: string, params?: any[]) => QueryResponse) {
 }
 
 // ─── Portfolio mock helpers ───────────────────────────────────────────────────
-// New non-circular queries use:
-//   fisco_lots.quantity  (lots created this year) → "SUM(fl.quantity"
-//   fisco_disposals.quantity (disposed this year) → "SUM(fd.quantity"
-//   fisco_lots.remaining_qty (current snapshot)   → "remaining_qty > 0"
-//   fisco_operations for entries/exits (informational) → "op_type IN ('trade_buy'"
+// New historical inventory queries:
+//   opening lots      → "SUM(fl.quantity" AND "fo.executed_at < $1"  (no >=)
+//   opening disposals → "SUM(fd.quantity" AND "fd.disposed_at < $1"  (no >=)
+//   acquisitions      → "SUM(fl.quantity" AND "fo.executed_at >="
+//   disposals in year → "SUM(fd.quantity" AND "fd.disposed_at >="
+//   remaining         → "remaining_qty > 0"
 
 function makePortfolioPool(overrides: {
-  lotsCreated?: Array<{ asset: string; exchange: string; created_qty: string }>;
-  disposals?:   Array<{ asset: string; exchange: string; disposed_qty: string }>;
-  remaining?:   Array<{ asset: string; exchange: string; remaining_qty: string }>;
-  entries?:     Array<{ asset: string; exchange: string; qty: string }>;
-  exits?:       Array<{ asset: string; exchange: string; qty: string }>;
+  openingLots?:       Array<{ asset: string; exchange: string; qty: string }>;
+  openingDisposals?:  Array<{ asset: string; exchange: string; qty: string }>;
+  acquisitions?:      Array<{ asset: string; exchange: string; qty: string }>;
+  disposals?:         Array<{ asset: string; exchange: string; qty: string }>;
+  remaining?:         Array<{ asset: string; exchange: string; qty: string }>;
 } = {}) {
   return makeMockPool((sql) => {
-    // lots created this year — "SUM(fl.quantity" with "fo.executed_at >="
-    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at >=")) {
-      return { rows: overrides.lotsCreated ?? [] };
+    // opening lots: SUM(fl.quantity) WHERE fo.executed_at < $1 (no >= bound)
+    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at < $") && !sql.includes("fo.executed_at >=")) {
+      return { rows: overrides.openingLots ?? [] };
     }
-    // disposals this year — "SUM(fd.quantity" with "fd.disposed_at >="
+    // opening disposals: SUM(fd.quantity) WHERE fd.disposed_at < $1
+    if (sql.includes("SUM(fd.quantity") && sql.includes("fd.disposed_at < $") && !sql.includes("fd.disposed_at >=")) {
+      return { rows: overrides.openingDisposals ?? [] };
+    }
+    // acquisitions in year: SUM(fl.quantity) WHERE fo.executed_at >=
+    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at >=")) {
+      return { rows: overrides.acquisitions ?? [] };
+    }
+    // disposals in year: SUM(fd.quantity) WHERE fd.disposed_at >=
     if (sql.includes("SUM(fd.quantity") && sql.includes("fd.disposed_at >=")) {
       return { rows: overrides.disposals ?? [] };
     }
-    // remaining (snapshot, informational)
+    // remaining snapshot (informational)
     if (sql.includes("remaining_qty > 0")) {
       return { rows: overrides.remaining ?? [] };
-    }
-    // entries (informational)
-    if (sql.includes("op_type IN ('trade_buy'")) {
-      return { rows: overrides.entries ?? [] };
-    }
-    // exits (informational)
-    if (sql.includes("op_type IN ('trade_sell'")) {
-      return { rows: overrides.exits ?? [] };
     }
     return { rows: [] };
   });
@@ -83,14 +92,16 @@ function makePortfolioPool(overrides: {
 // ─── Finalization mock helpers ────────────────────────────────────────────────
 
 function makeFinalizationPool(overrides: {
-  unknownBasis?:  any[];
-  negBalance?:    any[];
-  lotsCreated?:   any[];
-  disposals?:     any[];
-  withdrawalsRow?: any;
-  conservGain?:   string;
-  fifoGain?:      string;
-  stableAnomalies?: string;
+  unknownBasis?:       any[];
+  negBalance?:         any[];
+  openingLots?:        any[];
+  openingDisposals?:   any[];
+  acquisitions?:       any[];
+  disposals?:          any[];
+  withdrawalsRow?:     any;
+  conservGain?:        string;
+  fifoGain?:           string;
+  stableAnomalies?:    string;
 } = {}) {
   return makeMockPool((sql) => {
     if (sql.includes("cost_basis_eur::numeric = 0")) {
@@ -99,23 +110,27 @@ function makeFinalizationPool(overrides: {
     if (sql.includes("remaining_qty < -0.000001")) {
       return { rows: overrides.negBalance ?? [] };
     }
-    // Portfolio — lots created
-    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at >=")) {
-      return { rows: overrides.lotsCreated ?? [] };
+    // Portfolio — opening lots
+    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at < $") && !sql.includes("fo.executed_at >=")) {
+      return { rows: overrides.openingLots ?? [] };
     }
-    // Portfolio — disposals
+    // Portfolio — opening disposals
+    if (sql.includes("SUM(fd.quantity") && sql.includes("fd.disposed_at < $") && !sql.includes("fd.disposed_at >=")) {
+      return { rows: overrides.openingDisposals ?? [] };
+    }
+    // Portfolio — acquisitions in year
+    if (sql.includes("SUM(fl.quantity") && sql.includes("fo.executed_at >=")) {
+      return { rows: overrides.acquisitions ?? [] };
+    }
+    // Portfolio — disposals in year
     if (sql.includes("SUM(fd.quantity") && sql.includes("fd.disposed_at >=")) {
       return { rows: overrides.disposals ?? [] };
     }
-    // remaining snapshot (informational)
+    // remaining snapshot
     if (sql.includes("remaining_qty > 0")) {
       return { rows: [] };
     }
-    // entries/exits informational (portfolio)
-    if (sql.includes("op_type IN ('trade_buy'") || sql.includes("op_type IN ('trade_sell'")) {
-      return { rows: [] };
-    }
-    // Withdrawals — statement_type LIKE 'withdrawal%'
+    // Withdrawals — LIKE 'withdrawal%'
     if (sql.includes("pending_count") || sql.includes("LIKE 'withdrawal%'")) {
       const row = overrides.withdrawalsRow ?? { pending_count: "0", internal_count: "0", conservative_count: "0" };
       return { rows: [row] };
@@ -133,84 +148,95 @@ function makeFinalizationPool(overrides: {
   });
 }
 
-// ─── Tests: Portfolio validation ─────────────────────────────────────────────
+// ─── Tests: Portfolio validation (historical FIFO inventory) ─────────────────
 
-describe("FiscoValidationService.validatePortfolio — non-circular", () => {
+describe("FiscoValidationService.validatePortfolio — historical FIFO inventory", () => {
 
-  it("Test 1: lots_created > disposals → OK (non-circular)", async () => {
-    // ETH: 2.5 lots created, 1.9 disposed → diff = +0.6 → no deficit → OK
+  it("Test 1: buy and sell in same year → OK", async () => {
+    // opening=0, acq=1.0, disp=0.4, closing = 0.6 >= 0 → OK
     const pool = makePortfolioPool({
-      lotsCreated: [{ asset: "ETH", exchange: "kraken", created_qty: "2.5" }],
-      disposals:   [{ asset: "ETH", exchange: "kraken", disposed_qty: "1.9" }],
+      acquisitions: [{ asset: "ETH", exchange: "kraken", qty: "1.0" }],
+      disposals:    [{ asset: "ETH", exchange: "kraken", qty: "0.4" }],
     });
     const svc = new FiscoValidationService(pool);
     const result = await svc.validatePortfolio(2025, null);
 
     expect(result.portfolio_status).toBe("OK");
-    expect(result.report_can_be_finalized).toBe(true);
-    const ethRow = result.rows.find(r => r.asset === "ETH");
-    expect(ethRow).toBeDefined();
-    expect(ethRow!.lots_created_qty).toBeCloseTo(2.5);
-    expect(ethRow!.disposals_qty).toBeCloseTo(1.9);
-    expect(ethRow!.diff_qty).toBeCloseTo(0.6);
-    expect(ethRow!.status).toBe("OK");
-    expect(ethRow!.arithmetic_internal_status).toBe("LOTS_COVER_DISPOSALS");
-    expect(ethRow!.validation_strength).toBe("fifo_internal_cross_check");
+    const row = result.rows.find(r => r.asset === "ETH")!;
+    expect(row.opening_qty_at_year_start).toBeCloseTo(0);
+    expect(row.acquisitions_qty_in_year).toBeCloseTo(1.0);
+    expect(row.disposals_qty_in_year).toBeCloseTo(0.4);
+    expect(row.expected_closing_qty).toBeCloseTo(0.6);
+    expect(row.status).toBe("OK");
+    expect(row.validation_strength).toBe("fifo_internal_historical_inventory");
   });
 
-  it("Test 2: disposals > lots_created (deficit) → DIFFERENCE, not finalizable", async () => {
-    // BTC: 0.01 lots created but 0.05 disposed (consumed prior-year lots, which is OK)
-    // But here diff = 0.01 - 0.05 = -0.04, below tolerance → DIFFERENCE (FIFO structural issue)
+  it("Test 2: prior-year lot sold in current year → OK (key regression fix)", async () => {
+    // ETH bought in 2025, sold in 2026:
+    // opening=1 (lot from 2025, no prior disposals), acq=0, disp=1, closing=0 ≥ 0 → OK
     const pool = makePortfolioPool({
-      lotsCreated: [{ asset: "BTC", exchange: "kraken", created_qty: "0.01" }],
-      disposals:   [{ asset: "BTC", exchange: "kraken", disposed_qty: "0.05" }],
+      openingLots:      [{ asset: "ETH", exchange: "kraken", qty: "1.0" }],
+      openingDisposals: [],
+      acquisitions:     [],
+      disposals:        [{ asset: "ETH", exchange: "kraken", qty: "1.0" }],
     });
     const svc = new FiscoValidationService(pool);
-    const result = await svc.validatePortfolio(2025, null);
+    const result = await svc.validatePortfolio(2026, null);
+
+    expect(result.portfolio_status).toBe("OK");
+    const row = result.rows.find(r => r.asset === "ETH")!;
+    expect(row.opening_qty_at_year_start).toBeCloseTo(1.0);
+    expect(row.acquisitions_qty_in_year).toBeCloseTo(0);
+    expect(row.disposals_qty_in_year).toBeCloseTo(1.0);
+    expect(row.expected_closing_qty).toBeCloseTo(0);
+    expect(row.status).toBe("OK");
+    expect(row.arithmetic_internal_status).toBe("OK");
+  });
+
+  it("Test 3: opening + acquisitions covers disposals → OK (multi-year)", async () => {
+    // opening=2, acq=1, disp=2.5, closing=0.5 ≥ 0 → OK
+    const pool = makePortfolioPool({
+      openingLots:      [{ asset: "SOL", exchange: "kraken", qty: "2.5" }],
+      openingDisposals: [{ asset: "SOL", exchange: "kraken", qty: "0.5" }], // 0.5 consumed before year
+      acquisitions:     [{ asset: "SOL", exchange: "kraken", qty: "1.0" }],
+      disposals:        [{ asset: "SOL", exchange: "kraken", qty: "2.5" }],
+    });
+    const svc = new FiscoValidationService(pool);
+    const result = await svc.validatePortfolio(2026, null);
+
+    expect(result.portfolio_status).toBe("OK");
+    const row = result.rows.find(r => r.asset === "SOL")!;
+    expect(row.opening_qty_at_year_start).toBeCloseTo(2.0); // 2.5 - 0.5
+    expect(row.expected_closing_qty).toBeCloseTo(0.5);     // 2.0 + 1.0 - 2.5
+    expect(row.status).toBe("OK");
+  });
+
+  it("Test 4: disposals > opening + acquisitions → closing negative → DIFFERENCES", async () => {
+    // opening=1, acq=0, disp=2 → closing=-1 < 0 → DIFFERENCE
+    const pool = makePortfolioPool({
+      openingLots:  [{ asset: "BTC", exchange: "kraken", qty: "1.0" }],
+      disposals:    [{ asset: "BTC", exchange: "kraken", qty: "2.0" }],
+    });
+    const svc = new FiscoValidationService(pool);
+    const result = await svc.validatePortfolio(2026, null);
 
     expect(result.portfolio_status).toBe("DIFFERENCES");
-    expect(result.report_can_be_finalized).toBe(false);
-    const btcRow = result.rows.find(r => r.asset === "BTC");
-    expect(btcRow!.status).toBe("DIFFERENCE");
-    expect(btcRow!.arithmetic_internal_status).toBe("LOTS_DEFICIT");
-    expect(btcRow!.diff_qty).toBeCloseTo(-0.04);
+    const row = result.rows.find(r => r.asset === "BTC")!;
+    expect(row.expected_closing_qty).toBeCloseTo(-1.0);
+    expect(row.status).toBe("DIFFERENCE");
+    expect(row.arithmetic_internal_status).toBe("NEGATIVE_CLOSING");
   });
 
-  it("Test 3: no disposals → arithmetic_internal_status = NO_DISPOSALS → OK", async () => {
+  it("Test 5: no disposals → NO_DISPOSALS → OK", async () => {
     const pool = makePortfolioPool({
-      lotsCreated: [{ asset: "SOL", exchange: "kraken", created_qty: "10.0" }],
-      disposals:   [],
+      acquisitions: [{ asset: "XRP", exchange: "kraken", qty: "100" }],
     });
     const svc = new FiscoValidationService(pool);
     const result = await svc.validatePortfolio(2025, null);
 
-    const solRow = result.rows.find(r => r.asset === "SOL");
-    expect(solRow).toBeDefined();
-    expect(solRow!.arithmetic_internal_status).toBe("NO_DISPOSALS");
-    expect(solRow!.status).toBe("OK");
-    expect(result.portfolio_status).toBe("OK");
-  });
-
-  it("Test 4: validation_strength is always fifo_internal_cross_check", async () => {
-    const pool = makePortfolioPool({
-      lotsCreated: [{ asset: "ETH", exchange: "kraken", created_qty: "1.0" }],
-    });
-    const svc = new FiscoValidationService(pool);
-    const result = await svc.validatePortfolio(2025, null);
-
-    expect(result.validation_strength).toBe("fifo_internal_cross_check");
-    result.rows.forEach(r => {
-      expect(r.validation_strength).toBe("fifo_internal_cross_check");
-    });
-  });
-
-  it("Test 5: portfolio_status_note is present and non-empty", async () => {
-    const pool = makePortfolioPool();
-    const svc = new FiscoValidationService(pool);
-    const result = await svc.validatePortfolio(2025, null);
-
-    expect(result.portfolio_status_note).toBeTruthy();
-    expect(result.portfolio_status_note.length).toBeGreaterThan(10);
+    const row = result.rows.find(r => r.asset === "XRP")!;
+    expect(row.arithmetic_internal_status).toBe("NO_DISPOSALS");
+    expect(row.status).toBe("OK");
   });
 
   it("Test 6: exchange scope sets scope=exchange, exchange=kraken", async () => {
@@ -220,23 +246,49 @@ describe("FiscoValidationService.validatePortfolio — non-circular", () => {
 
     expect(result.scope).toBe("exchange");
     expect(result.exchange).toBe("kraken");
-    expect(result.portfolio_status).toBe("OK");
   });
 
-  it("Test: check is non-circular — diff != 0 when disposed > created", async () => {
-    // If the check were circular, diff would always be 0.
-    // With the new check: diff = created - disposed = 0.1 - 0.5 = -0.4
+  it("Test 7: validation_strength is always fifo_internal_historical_inventory", async () => {
     const pool = makePortfolioPool({
-      lotsCreated: [{ asset: "XRP", exchange: "revolutx", created_qty: "0.1" }],
-      disposals:   [{ asset: "XRP", exchange: "revolutx", disposed_qty: "0.5" }],
+      acquisitions: [{ asset: "ETH", exchange: "kraken", qty: "1.0" }],
     });
     const svc = new FiscoValidationService(pool);
     const result = await svc.validatePortfolio(2025, null);
 
-    const row = result.rows.find(r => r.asset === "XRP");
-    expect(row!.diff_qty).not.toBe(0); // not circular
-    expect(row!.diff_qty).toBeCloseTo(-0.4);
-    expect(row!.status).toBe("DIFFERENCE");
+    expect(result.validation_strength).toBe("fifo_internal_historical_inventory");
+    for (const r of result.rows) {
+      expect(r.validation_strength).toBe("fifo_internal_historical_inventory");
+    }
+  });
+
+  it("Test 8: portfolio_status_note present and non-empty", async () => {
+    const pool = makePortfolioPool();
+    const svc = new FiscoValidationService(pool);
+    const result = await svc.validatePortfolio(2025, null);
+
+    expect(result.portfolio_status_note).toBeTruthy();
+    expect(result.portfolio_status_note.length).toBeGreaterThan(10);
+  });
+
+  it("Test 9: real 2026 case — large disposals covered by opening → OK", async () => {
+    // Simulates 2026 real VPS situation:
+    //   ETH: lots before 2026 = 4.5, disposals before 2026 = 0.3, opening = 4.2
+    //   acquisitions in 2026 = 3.88, disposals in 2026 = 4.12
+    //   closing = 4.2 + 3.88 - 4.12 = 3.96 >= 0 → OK
+    const pool = makePortfolioPool({
+      openingLots:      [{ asset: "ETH", exchange: "kraken", qty: "4.5" }],
+      openingDisposals: [{ asset: "ETH", exchange: "kraken", qty: "0.3" }],
+      acquisitions:     [{ asset: "ETH", exchange: "kraken", qty: "3.88" }],
+      disposals:        [{ asset: "ETH", exchange: "kraken", qty: "4.12" }],
+    });
+    const svc = new FiscoValidationService(pool);
+    const result = await svc.validatePortfolio(2026, null);
+
+    expect(result.portfolio_status).toBe("OK");
+    const row = result.rows.find(r => r.asset === "ETH")!;
+    expect(row.opening_qty_at_year_start).toBeCloseTo(4.2);
+    expect(row.expected_closing_qty).toBeCloseTo(3.96);
+    expect(row.status).toBe("OK");
   });
 });
 
@@ -354,11 +406,11 @@ describe("FiscoValidationService.getFinalizationStatus", () => {
     expect(result.blockers.some(b => b.code === "FIFO_UNKNOWN_BASIS")).toBe(true);
   });
 
-  it("Test 15: lots_deficit (portfolio DIFFERENCES) → blocker, not finalizable", async () => {
-    // BTC deficit: created=0.01, disposed=0.05 → diff=-0.04 → DIFFERENCE
+  it("Test 15: NEGATIVE_CLOSING (portfolio DIFFERENCES) → blocker, not finalizable", async () => {
+    // BTC: opening=1, acq=0, disp=2 → closing=-1 < 0 → NEGATIVE_CLOSING → DIFFERENCE
     const pool = makeFinalizationPool({
-      lotsCreated: [{ asset: "BTC", exchange: "kraken", created_qty: "0.01" }],
-      disposals:   [{ asset: "BTC", exchange: "kraken", disposed_qty: "0.05" }],
+      openingLots: [{ asset: "BTC", exchange: "kraken", qty: "1.0" }],
+      disposals:   [{ asset: "BTC", exchange: "kraken", qty: "2.0" }],
     });
     const svc = new FiscoValidationService(pool);
     const result = await svc.getFinalizationStatus(2025);
@@ -412,6 +464,19 @@ describe("KrakenReconciliationService", () => {
       return { rows: [] };
     });
   }
+
+  it("Test 22: withdrawals without statement → WARNINGS only, still finalizable", async () => {
+    const pool = makeKrakenPool({
+      withdrawalsNoStmt: [{ external_id: "FTh3LJo", asset: "TON", amount: "32.072276", executed_at: "2025-05-29T00:00:00Z" }],
+    });
+    const svc = new KrakenReconciliationService(pool);
+    const result = await svc.reconcile(2025);
+
+    expect(result.status).toBe("WARNINGS");
+    expect(result.report_can_be_finalized).toBe(true); // WARNINGS are non-blocking
+    expect(result.warnings.some(w => w.includes("retirada"))).toBe(true);
+    expect(result.withdrawals_without_statement).toHaveLength(1);
+  });
 
   it("Test 16: counts by op_type correctly aggregated", async () => {
     const pool = makeKrakenPool();
