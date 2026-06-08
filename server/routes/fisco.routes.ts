@@ -1673,34 +1673,39 @@ export function registerFiscoRebuildRoutes(app: Express): void {
     try {
       const year = parseInt(req.query.year as string) || 2026;
       const exchange = (req.query.exchange as string) || null;
-      const exchClause = exchange ? `AND so.exchange = '${exchange}'` : "";
+      const disposalParams: any[] = [`${year}-01-01`];
+      let exchClause = "";
+      if (exchange) {
+        disposalParams.push(exchange);
+        exchClause = `AND so.exchange = $${disposalParams.length}`;
+      }
 
       const disposals = await pool.query(`
         SELECT
-          d.id                      AS disposal_id,
-          so.id                     AS sell_operation_id,
-          so.exchange               AS sell_exchange,
-          so.external_id            AS sell_external_id,
-          so.executed_at            AS sold_at,
+          d.id                                     AS disposal_id,
+          so.id                                    AS sell_operation_id,
+          so.exchange                              AS sell_exchange,
+          so.external_id                           AS sell_external_id,
+          so.executed_at                           AS sold_at,
           so.asset,
-          d.quantity::numeric       AS quantity,
-          d.proceeds_eur::numeric   AS proceeds_eur,
-          d.cost_basis_eur::numeric AS cost_basis_eur,
-          d.gain_loss_eur::numeric  AS gain_loss_eur,
-          d.fee_eur::numeric        AS fee_eur,
+          d.quantity::numeric                      AS quantity,
+          d.proceeds_eur::numeric                  AS proceeds_eur,
+          d.cost_basis_eur::numeric                AS cost_basis_eur,
+          d.gain_loss_eur::numeric                 AS gain_loss_eur,
+          COALESCE(so.fee_eur, 0)::numeric         AS fee_eur,
           d.lot_id,
-          fl.acquired_at            AS lot_acquired_at,
-          fl.quantity::numeric      AS lot_quantity,
-          fl.remaining_qty::numeric AS lot_remaining_qty,
-          fl.cost_eur::numeric      AS lot_cost_eur,
-          fl.unit_cost_eur::numeric AS lot_unit_cost_eur,
-          bo.exchange               AS buy_exchange,
-          bo.external_id            AS buy_external_id,
-          bo.op_type                AS buy_op_type,
-          bo.amount::numeric        AS buy_amount,
-          bo.price_eur::numeric     AS buy_price_eur,
-          bo.total_eur::numeric     AS buy_total_eur,
-          bo.executed_at            AS buy_executed_at
+          fl.acquired_at                           AS lot_acquired_at,
+          fl.quantity::numeric                     AS lot_quantity,
+          fl.remaining_qty::numeric                AS lot_remaining_qty,
+          fl.cost_eur::numeric                     AS lot_cost_eur,
+          fl.unit_cost_eur::numeric                AS lot_unit_cost_eur,
+          bo.exchange                              AS buy_exchange,
+          bo.external_id                           AS buy_external_id,
+          bo.op_type                               AS buy_op_type,
+          bo.amount::numeric                       AS buy_amount,
+          bo.price_eur::numeric                    AS buy_price_eur,
+          bo.total_eur::numeric                    AS buy_total_eur,
+          bo.executed_at                           AS buy_executed_at
         FROM fisco_disposals d
         JOIN fisco_operations so ON so.id = d.sell_operation_id
         LEFT JOIN fisco_lots fl ON fl.id = d.lot_id
@@ -1710,7 +1715,7 @@ export function registerFiscoRebuildRoutes(app: Express): void {
           AND so.executed_at < ($1::date + interval '1 year')
           ${exchClause}
         ORDER BY so.executed_at, d.id
-      `, [`${year}-01-01`]);
+      `, disposalParams);
 
       const allOps = await pool.query(`
         SELECT
