@@ -479,6 +479,7 @@ export class FiscoSyncService {
 
   /**
    * Sincronización incremental de Kraken con tracking de inserts
+   * Usa ventana incremental basada en última sync exitosa (48h de margen)
    */
   private async syncKrakenIncremental(): Promise<{
     totalInserted: number;
@@ -492,8 +493,27 @@ export class FiscoSyncService {
     const warnings: string[] = [];
 
     try {
-      // Obtener ledger de Kraken (fetchAll=true para incremental)
-      const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
+      // Obtener última sync exitosa para calcular ventana incremental
+      const lastSync = await db
+        .select()
+        .from(fiscoSyncHistory)
+        .where(eq(fiscoSyncHistory.status, 'completed'))
+        .orderBy(desc(fiscoSyncHistory.startedAt))
+        .limit(1);
+
+      let since: Date | undefined;
+      if (lastSync.length > 0 && lastSync[0].startedAt) {
+        // Ventana de 48h desde última sync exitosa
+        since = new Date(lastSync[0].startedAt.getTime() - 48 * 60 * 60 * 1000);
+        console.log(`[FiscoSyncService] Kraken incremental: using since=${since.toISOString()} (last sync: ${lastSync[0].startedAt.toISOString()})`);
+      } else {
+        console.log(`[FiscoSyncService] Kraken incremental: no previous sync found, using last 7 days`);
+        since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Últimos 7 días
+      }
+
+      // Obtener ledger de Kraken con ventana incremental (NO fetchAll)
+      // KrakenService.getLedgers accepts: { type?, start?, end?, fetchAll?, asset? }
+      const ledgerResp = await krakenService.getLedgers({ start: Math.floor(since.getTime() / 1000) });
       const ledger = ledgerResp?.ledger || {};
 
       // Convertir ledger entries al formato esperado por normalizeKrakenLedger
@@ -574,6 +594,7 @@ export class FiscoSyncService {
 
   /**
    * Sincronización incremental de RevolutX con tracking de inserts
+   * Usa ventana incremental basada en última sync exitosa (48h de margen)
    */
   private async syncRevolutXIncremental(): Promise<{
     totalInserted: number;
@@ -587,9 +608,27 @@ export class FiscoSyncService {
     const warnings: string[] = [];
 
     try {
-      // Obtener órdenes históricas de RevolutX
+      // Obtener última sync exitosa para calcular ventana incremental
+      const lastSync = await db
+        .select()
+        .from(fiscoSyncHistory)
+        .where(eq(fiscoSyncHistory.status, 'completed'))
+        .orderBy(desc(fiscoSyncHistory.startedAt))
+        .limit(1);
+
+      let startMs: number;
+      if (lastSync.length > 0 && lastSync[0].startedAt) {
+        // Ventana de 48h desde última sync exitosa
+        startMs = lastSync[0].startedAt.getTime() - 48 * 60 * 60 * 1000;
+        console.log(`[FiscoSyncService] RevolutX incremental: using startMs=${startMs} (last sync: ${lastSync[0].startedAt.toISOString()})`);
+      } else {
+        console.log(`[FiscoSyncService] RevolutX incremental: no previous sync found, using last 7 days`);
+        startMs = Date.now() - 7 * 24 * 60 * 60 * 1000; // Últimos 7 días
+      }
+
+      // Obtener órdenes históricas de RevolutX con ventana incremental (NO startMs=2020)
       const revolutResult = await revolutXService.getHistoricalOrders({
-        startMs: new Date('2020-01-01').getTime(),
+        startMs,
         endMs: Date.now(),
         states: ['filled']
       });

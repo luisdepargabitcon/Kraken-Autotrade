@@ -65,6 +65,7 @@ export interface AutoSyncJob {
   attempt_number: number;
   max_attempts: number;
   status: AutoSyncStatus;
+  current_phase: string | null;
   exchanges_synced: string[] | null;
   new_operations_count: number;
   new_operations_by_exchange: Record<string, { total: number; buys: number; sells: number; others: number }> | null;
@@ -128,59 +129,81 @@ export class FiscoAutoSyncService {
   // ============================================================
 
   /**
-   * Run auto-sync for a specific date (typically called by scheduler)
+   * Create auto-sync job for a specific date (returns jobId immediately)
+   * This is the public method called by HTTP endpoint and scheduler
    */
-  async runAutoSync(options: AutoSyncOptions = {}): Promise<AutoSyncResult> {
+  async runAutoSync(options: AutoSyncOptions = {}): Promise<{ jobId: number; status: string }> {
     const { year = new Date().getFullYear(), timezone = "Europe/Madrid", forceSync = false } = options;
     const now = new Date();
     const scheduledFor = this.getScheduledTimeForTimezone(now, timezone);
 
-    console.log(`[fisco/auto-sync] Starting auto-sync for year=${year} timezone=${timezone} scheduled=${scheduledFor.toISOString()}`);
+    console.log(`[fisco/auto-sync] Creating auto-sync job for year=${year} timezone=${timezone} scheduled=${scheduledFor.toISOString()}`);
 
     // Check if there's already a pending/running job for this day
     const existingJob = await this.getJobForDate(scheduledFor, timezone);
     if (existingJob && (existingJob.status === "running" || existingJob.status === "pending")) {
       console.log(`[fisco/auto-sync] Job already running/pending for this day: ${existingJob.id}`);
-      return {
-        jobId: existingJob.id,
-        status: existingJob.status,
-        newOperationsCount: existingJob.new_operations_count,
-        dryRunResult: null,
-        commitResult: null,
-        finalizationStatus: existingJob.finalization_status,
-        portfolioStatus: existingJob.portfolio_status,
-        warnings: existingJob.warnings || [],
-        error: "Job already running",
-        telegramSent: existingJob.telegram_sent,
-        nextRetryAt: null,
-      };
+      return { jobId: existingJob.id, status: existingJob.status };
     }
 
     // Create new job record with retry_group_id
     const retryGroupId = randomUUID();
     const jobId = await this.createJob(scheduledFor, timezone, 1, 5, retryGroupId);
 
+    console.log(`[fisco/auto-sync] Job created: ${jobId}, starting background processing`);
+    return { jobId, status: "pending" };
+  }
+
+  /**
+   * Process auto-sync job (internal method, runs in background)
+   * This contains all the actual sync/dry_run/commit logic
+   */
+  async processAutoSyncJob(jobId: number, options: AutoSyncOptions = {}): Promise<AutoSyncResult> {
+    const { year = new Date().getFullYear(), timezone = "Europe/Madrid", forceSync = false } = options;
+    const now = new Date();
+
+    console.log(`[fisco/auto-sync] Processing job ${jobId} for year=${year} timezone=${timezone}`);
+
+    // Get job to get scheduled_for
+    const job = await this.getJobById(jobId);
+    if (!job) {
+      throw new Error(`Job ${jobId} not found`);
+    }
+
+    const scheduledFor = job.scheduled_for;
+
     // Declare outside try block for error handling
     let newOpsCount = 0;
     let newOpsByExchange: Record<string, { total: number; buys: number; sells: number; others: number }> = {};
 
     try {
-      await this.updateJob(jobId, { status: "running", started_at: now });
+      console.log(`[fisco/auto-sync] job=${jobId} phase=started`);
+      await this.updateJob(jobId, { status: "running", started_at: now, current_phase: "started" });
 
       // Step 1: Execute real incremental sync (unless forceSync)
       let syncErrors: string[] = [];
       if (!forceSync) {
-        const syncResult = await fiscoSyncService.syncIncremental();
+        console.log(`[fisco/auto-sync] job=${jobId} phase=sync_incremental started`);
+        await this.updateJob(jobId, { current_phase: "sync_incremental" });
+
+        const syncResult = await this.withTimeout(
+          fiscoSyncService.syncIncremental(),
+          5 * 60 * 1000, // 5 minutes
+          "syncIncremental"
+        );
         newOpsCount = syncResult.totalInserted;
         newOpsByExchange = syncResult.byExchange;
         syncErrors = syncResult.errors ?? [];
 
+        console.log(`[fisco/auto-sync] job=${jobId} phase=sync_incremental completed totalInserted=${newOpsCount} errors=${syncErrors.length}`);
+
         // If sync failed, mark job failed and schedule retry
         if (syncErrors.length > 0) {
-          console.log(`[fisco/auto-sync] Sync failed with errors: ${syncErrors.join(", ")}`);
+          console.log(`[fisco/auto-sync] job=${jobId} Sync failed with errors: ${syncErrors.join(", ")}`);
           await this.updateJob(jobId, {
             status: "failed",
             completed_at: new Date(),
+            current_phase: "failed",
             error_message: `Sync failed: ${syncErrors.join(", ")}`,
           });
 
@@ -204,10 +227,11 @@ export class FiscoAutoSyncService {
         }
 
         if (newOpsCount === 0) {
-          console.log(`[fisco/auto-sync] No new operations detected after incremental sync`);
+          console.log(`[fisco/auto-sync] job=${jobId} No new operations detected after incremental sync`);
           await this.updateJob(jobId, {
             status: "skipped_no_changes",
             completed_at: new Date(),
+            current_phase: "completed",
             new_operations_count: 0,
             new_operations_by_exchange: newOpsByExchange,
           });
@@ -224,6 +248,8 @@ export class FiscoAutoSyncService {
 
           await this.updateJob(jobId, { telegram_sent: true });
 
+          console.log(`[fisco/auto-sync] job=${jobId} phase=done status=skipped_no_changes`);
+
           return {
             jobId,
             status: "skipped_no_changes",
@@ -239,15 +265,22 @@ export class FiscoAutoSyncService {
         }
       }
 
-      console.log(`[fisco/auto-sync] ${newOpsCount} new operations detected`);
+      console.log(`[fisco/auto-sync] job=${jobId} ${newOpsCount} new operations detected`);
 
       // Step 2: Run dry_run
+      console.log(`[fisco/auto-sync] job=${jobId} phase=dry_run started`);
+      await this.updateJob(jobId, { current_phase: "dry_run" });
+
       const rebuildService = FiscoRebuildService.getInstance();
-      const dryRunResult = await rebuildService.rebuild({
-        mode: "dry_run",
-        triggeredBy: "auto-sync",
-        fullSync: true,
-      });
+      const dryRunResult = await this.withTimeout(
+        rebuildService.rebuild({
+          mode: "dry_run",
+          triggeredBy: "auto-sync",
+          fullSync: true,
+        }),
+        3 * 60 * 1000, // 3 minutes
+        "dry_run"
+      );
 
       await this.updateJob(jobId, {
         dry_run_id: dryRunResult.runId ? parseInt(dryRunResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
@@ -256,12 +289,23 @@ export class FiscoAutoSyncService {
         warnings: dryRunResult.warnings as any[],
       });
 
+      console.log(`[fisco/auto-sync] job=${jobId} phase=dry_run completed`);
+
       // Step 3: Run full validation to get portfolio and finalization status
-      const fullValidation = await this.runFullValidation(year);
+      console.log(`[fisco/auto-sync] job=${jobId} phase=validation started`);
+      await this.updateJob(jobId, { current_phase: "validation" });
+
+      const fullValidation = await this.withTimeout(
+        this.runFullValidation(year),
+        2 * 60 * 1000, // 2 minutes
+        "validation"
+      );
       await this.updateJob(jobId, {
         finalization_status: fullValidation.finalization,
         portfolio_status: fullValidation.portfolio,
       });
+
+      console.log(`[fisco/auto-sync] job=${jobId} phase=validation completed`);
 
       // Step 4: Check if safe for auto-commit with hardened conditions
       const isSafeForAutoCommit = this.isSafeForAutoCommit(
@@ -272,10 +316,11 @@ export class FiscoAutoSyncService {
       );
 
       if (!isSafeForAutoCommit) {
-        console.log(`[fisco/auto-sync] Not safe for auto-commit after hardened validation`);
+        console.log(`[fisco/auto-sync] job=${jobId} Not safe for auto-commit after hardened validation`);
         await this.updateJob(jobId, {
           status: "failed",
           completed_at: new Date(),
+          current_phase: "failed",
           error_message: `Not safe for auto-commit: hardened validation failed`,
         });
 
@@ -301,15 +346,24 @@ export class FiscoAutoSyncService {
       }
 
       // Step 4: Run commit
-      const commitResult = await rebuildService.rebuild({
-        mode: "commit",
-        triggeredBy: "auto-sync",
-        fullSync: true,
-      });
+      console.log(`[fisco/auto-sync] job=${jobId} phase=commit started`);
+      await this.updateJob(jobId, { current_phase: "commit" });
+
+      const commitResult = await this.withTimeout(
+        rebuildService.rebuild({
+          mode: "commit",
+          triggeredBy: "auto-sync",
+          fullSync: true,
+        }),
+        3 * 60 * 1000, // 3 minutes
+        "commit"
+      );
 
       await this.updateJob(jobId, {
         commit_run_id: commitResult.runId ? parseInt(commitResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
       });
+
+      console.log(`[fisco/auto-sync] job=${jobId} phase=commit completed`);
 
       // Step 5: Run full validation again after commit
       const postCommitValidation = await this.runFullValidation(year);
@@ -325,17 +379,29 @@ export class FiscoAutoSyncService {
       await this.updateJob(jobId, {
         status: finalStatus,
         completed_at: new Date(),
+        current_phase: "completed",
         warnings: [...dryRunResult.warnings, ...postCommitValidation.finalization.warnings],
       });
 
       // Step 7: Send Telegram
-      if (hasWarnings) {
-        await this.sendTelegramWithWarnings(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, dryRunResult.warnings, jobId);
-      } else {
-        await this.sendTelegramSuccess(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, jobId);
-      }
+      console.log(`[fisco/auto-sync] job=${jobId} phase=telegram started`);
+      await this.updateJob(jobId, { current_phase: "telegram" });
+
+      await this.withTimeout(
+        (async () => {
+          if (hasWarnings) {
+            await this.sendTelegramWithWarnings(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, dryRunResult.warnings, jobId);
+          } else {
+            await this.sendTelegramSuccess(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, jobId);
+          }
+        })(),
+        30 * 1000, // 30 seconds
+        "telegram"
+      );
 
       await this.updateJob(jobId, { telegram_sent: true });
+
+      console.log(`[fisco/auto-sync] job=${jobId} phase=done status=${finalStatus}`);
 
       return {
         jobId,
@@ -622,6 +688,8 @@ export class FiscoAutoSyncService {
 
   async getStatus(): Promise<{
     lastJob: AutoSyncJob | null;
+    lastJobIsStale: boolean;
+    runningForSeconds: number | null;
     nextScheduled: Date | null;
     nextRetry: Date | null;
   }> {
@@ -645,7 +713,15 @@ export class FiscoAutoSyncService {
       nextRetry = this.calculateNextRetry(lastJob.scheduled_for, lastJob.attempt_number, lastJob.timezone);
     }
 
-    return { lastJob, nextScheduled, nextRetry };
+    // Detect if last job is stale (running > 15 minutes)
+    let lastJobIsStale = false;
+    let runningForSeconds = null;
+    if (lastJob && lastJob.status === "running" && lastJob.started_at) {
+      runningForSeconds = Math.floor((now.getTime() - lastJob.started_at.getTime()) / 1000);
+      lastJobIsStale = runningForSeconds > 15 * 60; // > 15 minutes
+    }
+
+    return { lastJob, lastJobIsStale, runningForSeconds, nextScheduled, nextRetry };
   }
 
   // ============================================================
@@ -654,6 +730,13 @@ export class FiscoAutoSyncService {
 
   private snakeCase(str: string): string {
     return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    const timeout = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timeout in phase: ${label} (${ms}ms)`)), ms);
+    });
+    return Promise.race([promise, timeout]);
   }
 
   private mapRowToJob(row: any): AutoSyncJob {
@@ -666,6 +749,7 @@ export class FiscoAutoSyncService {
       attempt_number: row.attempt_number,
       max_attempts: row.max_attempts,
       status: row.status,
+      current_phase: row.current_phase,
       exchanges_synced: row.exchanges_synced,
       new_operations_count: row.new_operations_count,
       new_operations_by_exchange: row.new_operations_by_exchange,

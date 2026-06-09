@@ -96,8 +96,18 @@ export class FiscoScheduler {
 
     try {
       const autoSyncService = FiscoAutoSyncService.getInstance();
-      await autoSyncService.runAutoSync({ timezone: "Europe/Madrid" });
-      console.log('[FISCO Scheduler] Auto-sync completed');
+      const { jobId } = await autoSyncService.runAutoSync({ timezone: "Europe/Madrid" });
+
+      // Process job in background
+      setImmediate(async () => {
+        try {
+          await autoSyncService.processAutoSyncJob(jobId, { timezone: "Europe/Madrid" });
+        } catch (error: any) {
+          console.error(`[FISCO Scheduler] Background processing failed for job ${jobId}:`, error);
+        }
+      });
+
+      console.log('[FISCO Scheduler] Auto-sync job created and started in background');
     } catch (error: any) {
       console.error('[FISCO Scheduler] Auto-sync failed:', error);
     }
@@ -105,11 +115,50 @@ export class FiscoScheduler {
 
   /**
    * Ejecuta reintentos automáticos para jobs fallidos con next_retry_at <= NOW
+   * También ejecuta watchdog para jobs running atascados (>15 minutos)
    */
   private async executeRetryJob(): Promise<void> {
     try {
       const autoSyncService = FiscoAutoSyncService.getInstance();
       const { pool } = await import("../db");
+
+      // Watchdog: marcar jobs running atascados como failed
+      const stuckJobsResult = await pool.query(
+        `UPDATE fisco_auto_sync_jobs
+         SET
+           status = 'failed',
+           completed_at = NOW(),
+           current_phase = 'failed',
+           error_message = 'Watchdog: job stuck in running state > 15 minutes',
+           updated_at = NOW()
+         WHERE status = 'running'
+         AND started_at < NOW() - INTERVAL '15 minutes'
+         RETURNING id, year, timezone, scheduled_for, attempt_number, max_attempts, retry_group_id`
+      );
+
+      for (const stuckJob of stuckJobsResult.rows) {
+        console.log(`[FISCO Scheduler] Watchdog: marked stuck job ${stuckJob.id} as failed`);
+
+        // Schedule retry
+        const nextRetryAt = new Date(stuckJob.scheduled_for);
+        nextRetryAt.setHours(0, 0, 0, 0);
+        const nextAttempt = stuckJob.attempt_number + 1;
+        const retryOffsetsMinutes: Record<number, number> = {
+          1: 15, 2: 60, 3: 180, 4: 360,
+        };
+        if (nextAttempt <= 4) {
+          nextRetryAt.setTime(nextRetryAt.getTime() + retryOffsetsMinutes[nextAttempt] * 60 * 1000);
+          await pool.query(
+            `UPDATE fisco_auto_sync_jobs
+             SET next_retry_at = $1
+             WHERE id = $2`,
+            [nextRetryAt, stuckJob.id]
+          );
+        }
+
+        // Send Telegram error (simplified - just log for now)
+        console.log(`[FISCO Scheduler] Watchdog: job ${stuckJob.id} stuck, next retry at ${nextRetryAt}`);
+      }
 
       // Buscar jobs fallidos con next_retry_at <= NOW y que no hayan sido reintentados aún
       // Excluir grupos que ya tengan un job success/success_with_warnings/skipped_no_changes posterior

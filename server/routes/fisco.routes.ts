@@ -3304,14 +3304,62 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/fisco/auto-sync/jobs/:id
+   * Get specific job by ID with running time and phase info
+   */
+  app.get("/api/fisco/auto-sync/jobs/:id", async (req, res) => {
+    try {
+      const jobId = parseInt(req.params.id);
+      if (isNaN(jobId)) {
+        return res.status(400).json({ error: "Invalid job ID" });
+      }
+
+      const job = await autoSyncService.getJobById(jobId);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Calculate running time if job is running
+      let runningForSeconds = null;
+      if (job.status === "running" && job.started_at) {
+        runningForSeconds = Math.floor((Date.now() - job.started_at.getTime()) / 1000);
+      }
+
+      res.json({
+        ...job,
+        runningForSeconds,
+      });
+    } catch (e: any) {
+      console.error("[fisco/auto-sync/jobs/:id]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * POST /api/fisco/auto-sync/run-now
    * Trigger auto-sync immediately (useful for testing or manual trigger)
+   * Returns 202 Accepted immediately, processes job in background
    */
   app.post("/api/fisco/auto-sync/run-now", async (req, res) => {
     try {
       const { year, timezone, forceSync } = req.body || {};
-      const result = await autoSyncService.runAutoSync({ year, timezone, forceSync });
-      res.json(result);
+      const { jobId, status } = await autoSyncService.runAutoSync({ year, timezone, forceSync });
+
+      // Process job in background
+      setImmediate(async () => {
+        try {
+          await autoSyncService.processAutoSyncJob(jobId, { year, timezone, forceSync });
+        } catch (error: any) {
+          console.error(`[fisco/auto-sync/run-now] Background processing failed for job ${jobId}:`, error);
+        }
+      });
+
+      res.status(202).json({
+        accepted: true,
+        jobId,
+        status,
+        message: "Auto-sync started in background",
+      });
     } catch (e: any) {
       console.error("[fisco/auto-sync/run-now]", e);
       res.status(500).json({ error: e.message });
