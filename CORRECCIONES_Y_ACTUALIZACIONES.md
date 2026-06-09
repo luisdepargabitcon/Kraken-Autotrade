@@ -3589,3 +3589,71 @@ file /tmp/fisco_audit.zip    # → Zip archive data
 unzip -t /tmp/fisco_audit.zip  # → No errors detected
 unzip -l /tmp/fisco_audit.zip | grep -E "informe_anual_202[56]|informe_multi_year"
 ```
+
+---
+
+## 2026-06-09 — fix(fisco): tabla FIFO fiscal clara — commit a1ca999
+
+### Problema
+Sección "Ventas y cálculo FIFO" mostraba columnas con nombres técnicos e incorrectos y repetía la comisión total de la venta en CADA fila de lote FIFO.
+
+Ejemplo incorrecto (BTC 10/1/2026, 2 lotes del mismo sell_op):
+```
+0,00000212 | 0,16 € | 0,16 € | 1,03 € | 0,01 €   ← comisión total en lote pequeño
+0,00377895 | 293,92 € | 300,95 € | 1,03 € | -8,06 €  ← comisión total repetida
+```
+
+### Cambios aplicados
+
+**CAMBIO 1 — Renombrar columnas (claridad fiscal)**
+| Antes | Después |
+|---|---|
+| Valor transmisión | Valor de venta / transmisión |
+| Coste FIFO | Valor de adquisición FIFO |
+| Comisión | Comisión imputada |
+| Ganancia/Pérdida | Ganancia/Pérdida fiscal |
+
+Aplicado en: Detalle por activo + Ventas y cálculo FIFO.
+
+**CAMBIO 2 — Comisión imputada por lote (Opción B1)**
+
+SQL antes: `COALESCE(sell_op.fee_eur, 0) AS fee_eur` — repetía la comisión total en cada lote
+
+SQL ahora:
+```sql
+GREATEST(0, fd.proceeds_eur::numeric - fd.cost_basis_eur::numeric - fd.gain_loss_eur::numeric) AS fee_eur
+```
+Resultado:
+- `fd1`: 0,16 − 0,16 − 0,01 = −0,01 → GREATEST(0, −0,01) = **0,00 €**
+- `fd2`: 293,92 − 300,95 − (−8,06) = 1,03 → GREATEST(0, 1,03) = **1,03 €**
+- Suma total = 1,03 € — exactamente la comisión real de la operación, sin repetición
+
+**CAMBIO 3 — Agrupación por sell_operation_id**
+- Cada venta muestra una fila resumen (cantidad total / venta total / adquisición / comisión total / resultado)
+- Si hay múltiples lotes, aparecen filas secundarias ↳ con el detalle por lote
+- La comisión aparece UNA SOLA VEZ en el resumen de la venta
+- Las filas de lote muestran `—` en la columna comisión
+
+**CAMBIO 4 — Texto explicativo**
+Encima de la tabla: "Una venta puede aparecer dividida en varias líneas porque el método FIFO consume varios lotes de compra distintos..."
+
+### Tests
++6 nuevos (F1–F6):
+- F1: cabecera "Valor de venta / transmisión"
+- F2: cabecera "Valor de adquisición FIFO"
+- F3: cabecera "Comisión imputada"
+- F4: texto explicativo FIFO multi-lote
+- F5: source no usa `sell_op.fee_eur AS fee_eur`; usa GREATEST B1
+- F6: ejemplo real BTC — feeFd1=0,00 feeFd2=1,03 suma=1,03
+
+**135/135 passing**
+
+### Criterio de éxito en VPS
+```bash
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | grep -Ei "Valor de venta|Valor de adquisición FIFO|Comisión imputada|Una venta puede aparecer" | head
+# → Debe mostrar las 4 cadenas
+
+# Comisión 1,03 no repetida en dos filas planas del mismo sell_op
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | grep -o "1,03" | wc -l
+# → 1 (aparece solo en el resumen de la venta, no en cada lote)
+```
