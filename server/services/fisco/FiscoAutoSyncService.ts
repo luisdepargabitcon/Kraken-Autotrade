@@ -692,6 +692,7 @@ export class FiscoAutoSyncService {
     runningForSeconds: number | null;
     nextScheduled: Date | null;
     nextRetry: Date | null;
+    nextRetrySource: "db" | null;
   }> {
     const lastJobResult = await pool.query(
       `SELECT * FROM fisco_auto_sync_jobs
@@ -707,11 +708,9 @@ export class FiscoAutoSyncService {
     tomorrow.setHours(0, 0, 0, 0);
     const nextScheduled = tomorrow;
 
-    // Calculate next retry if there's a failed job
-    let nextRetry: Date | null = null;
-    if (lastJob && lastJob.status === "failed" && lastJob.attempt_number < lastJob.max_attempts) {
-      nextRetry = this.calculateNextRetry(lastJob.scheduled_for, lastJob.attempt_number, lastJob.timezone);
-    }
+    // Use next_retry_at from DB directly (no recalculation)
+    const nextRetry = lastJob?.next_retry_at ?? null;
+    const nextRetrySource = nextRetry ? "db" : null;
 
     // Detect if last job is stale (running > 15 minutes)
     let lastJobIsStale = false;
@@ -721,7 +720,7 @@ export class FiscoAutoSyncService {
       lastJobIsStale = runningForSeconds > 15 * 60; // > 15 minutes
     }
 
-    return { lastJob, lastJobIsStale, runningForSeconds, nextScheduled, nextRetry };
+    return { lastJob, lastJobIsStale, runningForSeconds, nextScheduled, nextRetry, nextRetrySource };
   }
 
   // ============================================================
