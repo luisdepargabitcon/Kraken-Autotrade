@@ -3537,3 +3537,55 @@ unzip -l /tmp/fisco_audit.zip | head -20  # → reports/, csv/, json/
 # Multi-year HTML con secciones
 curl -sS "http://127.0.0.1:3020/api/fisco/report/multi-year?years=2025,2026&exchanges=kraken,revolutx&includeGlobal=true&includeExchangeBreakdown=true&format=html" | grep -Ei "Detalle por año|Preparar PDF|Correcto|Diferencias" | head
 ```
+
+---
+
+## 2026-06-08 — fix(fisco): corregir queries SQL schema real — commit 6e8bcce
+
+### Causa raíz
+`FiscoHtmlRenderer` usaba columnas que no existen en el schema real de PostgreSQL:
+
+| Columna usada (incorrecta) | Tabla | Corrección |
+|---|---|---|
+| `fd.asset` | `fisco_disposals` | `JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id` → `sell_op.asset` |
+| `fd.exchange` | `fisco_disposals` | mismo JOIN → `sell_op.exchange` |
+| `fd.fee_eur` | `fisco_disposals` | mismo JOIN → `COALESCE(sell_op.fee_eur, 0)` |
+| `fsi.executed_at` | `fisco_external_statement_items` | `fsi.event_at AS executed_at` |
+| `fsi.amount` | `fisco_external_statement_items` | `fsi.amount_sent AS amount` |
+| `fsi.fee_eur` | `fisco_external_statement_items` | `fsi.fee_amount AS fee_eur` |
+| `fsi.total_eur` | `fisco_external_statement_items` | `COALESCE(fsi.total_out, fsi.amount_sent, 0)` |
+| `fsi.external_id` | `fisco_external_statement_items` | `fsi.transaction_identifier AS external_id` |
+| `EXTRACT(YEAR FROM fsi.executed_at)` | `fisco_external_statement_items` | `WHERE fsi.year = $1` (columna real) |
+
+### Schema real confirmado
+- `fisco_disposals`: solo `id, sell_operation_id, lot_id, quantity, proceeds_eur, cost_basis_eur, gain_loss_eur, disposed_at, created_at`
+- `fisco_external_statement_items`: columna de fecha = `event_at`; columna de año = `year`; importe = `amount_sent`, `fee_amount`, `total_out`
+
+### Métodos corregidos en FiscoHtmlRenderer.ts
+- `fetchAssetSummaries` — GROUP BY sell_op.asset
+- `fetchDisposalsByAsset` — ORDER BY sell_op.asset con JOIN
+- `fetchExchangeSummaries` — GROUP BY sell_op.exchange con JOIN
+- `fetchStatementItems` — usa fsi.event_at, fsi.year, fsi.amount_sent, fsi.fee_amount, fsi.total_out, fsi.transaction_identifier
+
+### Tolerancia a fallos parciales
+- `renderAnnualHtml` ahora usa `safeLoad()` por cada bloque de datos
+- Si un fetch falla → muestra aviso HTML amarillo en el informe pero NO devuelve 500
+- El resumen fiscal base (portada, tabla FIFO, validación) siempre se renderiza
+
+### Tests
+- +6 nuevos schema safety tests (S1-S6)
+- **129/129 passing**
+
+### Criterio de éxito en VPS
+```bash
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | head -5
+# → <!DOCTYPE html>
+
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | grep -i "Advertencia: algunas secciones" | wc -l
+# → 0  (sin errores parciales)
+
+curl -L -sS -o /tmp/fisco_audit.zip "http://127.0.0.1:3020/api/fisco/export/audit-pack.zip?years=2025,2026&exchanges=kraken,revolutx"
+file /tmp/fisco_audit.zip    # → Zip archive data
+unzip -t /tmp/fisco_audit.zip  # → No errors detected
+unzip -l /tmp/fisco_audit.zip | grep -E "informe_anual_202[56]|informe_multi_year"
+```
