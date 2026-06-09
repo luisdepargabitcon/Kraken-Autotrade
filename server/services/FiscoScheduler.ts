@@ -133,7 +133,7 @@ export class FiscoScheduler {
            updated_at = NOW()
          WHERE status = 'running'
          AND started_at < NOW() - INTERVAL '15 minutes'
-         RETURNING id, year, timezone, scheduled_for, attempt_number, max_attempts, retry_group_id`
+         RETURNING id, timezone, scheduled_for, attempt_number, max_attempts, retry_group_id`
       );
 
       for (const stuckJob of stuckJobsResult.rows) {
