@@ -338,44 +338,82 @@ function renderStakingSection(stakingRows: any[]): string {
 
 // ─── Withdrawals / transfers section ─────────────────────────────────────────
 
-function renderWithdrawalsSection(stmtItems: any[]): string {
-  if (!stmtItems || stmtItems.length === 0) {
+function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
+  const withdrawalsNoStmt: any[] = krakenRec?.withdrawals_without_statement ?? [];
+
+  // Show "no data" only if BOTH statement items and kraken warnings are empty
+  if ((!stmtItems || stmtItems.length === 0) && withdrawalsNoStmt.length === 0) {
     return `<p style="color:#888">Sin retiradas o transferencias internas este año.</p>`;
   }
 
-  const byClass = stmtItems.reduce((m: Record<string, any[]>, r) => {
-    const k = r.classification ?? "unknown"; m[k] = m[k] ?? []; m[k].push(r); return m;
-  }, {});
+  let html = "";
 
-  const classLabels: Record<string, string> = {
-    internal_transfer:           "Transferencias internas conciliadas",
-    conservative_external_disposal: "Disposiciones conservadoras (sin statement)",
-    pending:                     "Pendientes de conciliación",
-  };
-
-  return Object.entries(byClass).map(([cls, rows]) => {
-    const label  = classLabels[cls] ?? cls;
-    const isWarn = cls === "conservative_external_disposal" || cls === "pending";
-
-    return `
-    <details>
-      <summary>${isWarn ? "⚠ " : "✓ "}${label} (${rows.length})</summary>
+  // Block 1 — Kraken withdrawals without statement item (from reconciliation)
+  if (withdrawalsNoStmt.length > 0) {
+    html += `
+    <details open>
+      <summary>⚠ Retiradas Kraken sin statement item (${withdrawalsNoStmt.length})</summary>
       <div class="details-body">
-        ${isWarn ? `<div class="warnings-box">Existen retiradas sin statement item enlazado. El sistema las muestra como aviso no bloqueante. Revisar si corresponden a transferencias internas o movimientos propios.</div>` : ""}
+        <div class="warnings-box">
+          <strong>Aviso no bloqueante:</strong> Existe${withdrawalsNoStmt.length === 1 ? " una retirada Kraken" : "n retiradas Kraken"} sin statement item enlazado.
+          Se muestra como aviso informativo. No bloquea el informe fiscal global porque finalization-status está OK.
+          Verificar si corresponde a una transferencia interna propia u otro movimiento.
+        </div>
         <table><thead><tr>
-          <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Fee</th><th>Total</th><th>Clasificación</th><th>External ID</th>
+          <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>External ID</th><th>Tipo</th><th>Estado</th>
         </tr></thead><tbody>
-        ${rows.map(r => `<tr>
-          <td>${fmtDate(r.executed_at)}</td><td>${r.exchange ?? "—"}</td><td>${r.asset ?? "—"}</td>
-          <td>${fmtQty(parseFloat(r.amount ?? "0"))}</td><td>${eur(parseFloat(r.fee_eur ?? "0"))}</td>
-          <td>${eur(parseFloat(r.total_eur ?? "0"))}</td>
-          <td>${badge(isWarn ? "b-warn" : "b-ok", label)}</td>
+        ${withdrawalsNoStmt.map((r: any) => `<tr>
+          <td>${fmtDate(r.executed_at)}</td>
+          <td>Kraken</td>
+          <td>${r.asset ?? "—"}</td>
+          <td>${fmtQty(parseFloat(String(r.amount ?? "0")))}</td>
           <td style="font-size:.72rem;color:#888">${r.external_id ?? "—"}</td>
+          <td>${badge("b-warn", "retirada sin statement item")}</td>
+          <td>${badge("b-info", "Aviso no bloqueante")}</td>
         </tr>`).join("")}
         </tbody></table>
       </div>
     </details>`;
-  }).join("\n");
+  }
+
+  // Block 2 — Statement items from fisco_external_statement_items
+  if (stmtItems && stmtItems.length > 0) {
+    const byClass = stmtItems.reduce((m: Record<string, any[]>, r) => {
+      const k = r.classification ?? "unknown"; m[k] = m[k] ?? []; m[k].push(r); return m;
+    }, {});
+
+    const classLabels: Record<string, string> = {
+      internal_transfer:               "Transferencias internas conciliadas",
+      conservative_external_disposal:  "Disposiciones conservadoras (sin statement)",
+      pending:                         "Pendientes de conciliación",
+    };
+
+    html += Object.entries(byClass).map(([cls, rows]) => {
+      const label  = classLabels[cls] ?? cls;
+      const isWarn = cls === "conservative_external_disposal" || cls === "pending";
+
+      return `
+      <details>
+        <summary>${isWarn ? "⚠ " : "✓ "}${label} (${rows.length})</summary>
+        <div class="details-body">
+          ${isWarn ? `<div class="warnings-box">Existen retiradas sin statement item enlazado. El sistema las muestra como aviso no bloqueante. Revisar si corresponden a transferencias internas o movimientos propios.</div>` : ""}
+          <table><thead><tr>
+            <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Fee</th><th>Total</th><th>Clasificación</th><th>External ID</th>
+          </tr></thead><tbody>
+          ${rows.map((r: any) => `<tr>
+            <td>${fmtDate(r.executed_at)}</td><td>${r.exchange ?? "—"}</td><td>${r.asset ?? "—"}</td>
+            <td>${fmtQty(parseFloat(r.amount ?? "0"))}</td><td>${eur(parseFloat(r.fee_eur ?? "0"))}</td>
+            <td>${eur(parseFloat(r.total_eur ?? "0"))}</td>
+            <td>${badge(isWarn ? "b-warn" : "b-ok", label)}</td>
+            <td style="font-size:.72rem;color:#888">${r.external_id ?? "—"}</td>
+          </tr>`).join("")}
+          </tbody></table>
+        </div>
+      </details>`;
+    }).join("\n");
+  }
+
+  return html;
 }
 
 // ─── Resumen ejecutivo humano ─────────────────────────────────────────────────
@@ -684,7 +722,7 @@ export class FiscoHtmlRenderer {
   async renderAnnualHtml(opts: {
     year: number;
     exchanges: string[];
-    finStatus: any;
+    finStatus: any;   // FinalizationStatus + gains_eur + losses_eur (enriched by route)
     portfolio: any;
     krakenRec: any;
   }): Promise<string> {
@@ -876,7 +914,7 @@ ${renderStakingSection(stakingRows)}
 
 <h2>Retiradas, depósitos y transferencias internas</h2>
 <div class="section-block">
-${renderWithdrawalsSection(stmtItems)}
+${renderWithdrawalsSection(stmtItems, krakenRec)}
 </div>
 
 <div class="annexe">

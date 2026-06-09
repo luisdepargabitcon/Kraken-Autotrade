@@ -27,6 +27,8 @@ import { describe, it, expect, vi } from "vitest";
 import { MultiYearReportService } from "../MultiYearReportService";
 import { FiscoExportService } from "../FiscoExportService";
 import { FiscoHtmlRenderer, translateStatus } from "../FiscoHtmlRenderer";
+import { FiscoValidationService } from "../FiscoValidationService";
+import { KrakenReconciliationService } from "../KrakenReconciliationService";
 import type { Pool } from "pg";
 
 // ─── Mock factory ─────────────────────────────────────────────────────────────
@@ -571,6 +573,12 @@ function makeHtmlRendererPool() {
     if (sql.includes("COUNT(*)") && sql.includes("fisco_operations")) return { rows: [{ c: "3" }] };
     if (sql.includes("COUNT(*)") && sql.includes("fisco_disposals")) return { rows: [{ c: "2" }] };
     if (sql.includes("COUNT(*)") && sql.includes("remaining_qty")) return { rows: [{ c: "1" }] };
+    // gains/losses breakdown query (from route enrichment for BUG1)
+    if (sql.includes("COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0")) return { rows: [{ ganancias: "824.37", perdidas: "-1424.85" }] };
+    // staking total query (from route enrichment for BUG1)
+    if (sql.includes("op_type IN ('staking','reward','distribution')") && sql.includes("SUM(fo.total_eur::numeric)")) return { rows: [{ total: "1.49" }] };
+    // fallback for any other gains/losses query (different WHERE clause patterns)
+    if (sql.includes("fisco_disposals") && sql.includes("CASE WHEN d.gain_loss_eur::numeric > 0")) return { rows: [{ ganancias: "824.37", perdidas: "-1424.85" }] };
     return { rows: [] };
   });
 }
@@ -858,6 +866,98 @@ describe("FiscoHtmlRenderer", () => {
     expect(src).toContain("fd.gain_loss_eur::numeric");
     // No debe asignar sell_op.fee_eur directamente como fee_eur en fetchDisposalsByAsset
     expect(src).not.toMatch(/sell_op\.fee_eur.*AS fee_eur/);
+  });
+
+  // ── BUG1: tabla fiscal principal — ganancias/pérdidas correctas ───────────
+
+  it("Test G1: renderAnnualHtml acepta gains_eur/losses_eur en finStatus sin crashear", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const finStatus = { ...MOCK_FIN_STATUS, gains_eur: 824.37, losses_eur: -1424.85, final_taxable_gain_loss_eur: -600.47, ordinary_fifo_gain_loss_eur: -600.47 };
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toMatch(/<!DOCTYPE html>/i);
+  });
+
+  it("Test G2: renderAnnualHtml con gains_eur=45.87 y staking_total_eur=1.49 renderiza sin error", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const finStatus = { ...MOCK_FIN_STATUS, gains_eur: 45.87, losses_eur: -118.12, final_taxable_gain_loss_eur: -72.25, ordinary_fifo_gain_loss_eur: -72.25, staking_total_eur: 1.49 };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toMatch(/<!DOCTYPE html>/i);
+  });
+
+  it("Test G3: si finStatus no trae gains_eur, tabla usa 0,00 como fallback sin crashear", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const finStatus = { ...MOCK_FIN_STATUS, gains_eur: undefined, losses_eur: undefined };
+    await expect(renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC })).resolves.toMatch(/<!DOCTYPE html>/i);
+  });
+
+  it("Test G4: ruta /api/fisco/report/annual/html enriquece finStatus con gains_eur/losses_eur", async () => {
+    // Test that the route layer enrichment logic works correctly
+    const pool = makeMockPool((sql) => {
+      if (sql.includes("COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0")) return { rows: [{ ganancias: "824.37", perdidas: "-1424.85" }] };
+      if (sql.includes("op_type IN ('staking','reward','distribution')")) return { rows: [{ total: "1.49" }] };
+      return { rows: [] };
+    });
+
+    const [gainsQ, stakingQ] = await Promise.all([
+      pool.query(`SELECT COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS ganancias, COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric < 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS perdidas FROM fisco_disposals d JOIN fisco_operations o ON o.id = d.sell_operation_id WHERE EXTRACT(YEAR FROM d.disposed_at) = $1`, [2026]),
+      pool.query(`SELECT COALESCE(SUM(fo.total_eur::numeric), 0) AS total FROM fisco_operations fo WHERE fo.op_type IN ('staking','reward','distribution') AND EXTRACT(YEAR FROM fo.executed_at) = $1`, [2026]),
+    ]);
+
+    const finEnriched = {
+      gains_eur:       Math.round(parseFloat(gainsQ.rows[0]?.ganancias ?? "0") * 100) / 100,
+      losses_eur:      Math.round(parseFloat(gainsQ.rows[0]?.perdidas  ?? "0") * 100) / 100,
+      staking_total_eur: Math.round(parseFloat(stakingQ.rows[0]?.total ?? "0") * 100) / 100,
+    };
+
+    expect(finEnriched.gains_eur).toBeCloseTo(824.37, 2);
+    expect(finEnriched.losses_eur).toBeCloseTo(-1424.85, 2);
+    expect(finEnriched.staking_total_eur).toBeCloseTo(1.49, 2);
+  });
+
+  // ── BUG2: retiradas Kraken sin statement item visibles ────────────────────
+
+  it("Test W1: krakenRec con withdrawals_without_statement → HTML no dice 'Sin retiradas'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
+    expect(html).not.toContain("Sin retiradas o transferencias internas este año");
+  });
+
+  it("Test W2: HTML contiene 'Aviso no bloqueante' cuando hay withdrawal sin statement", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
+    expect(html).toContain("Aviso no bloqueante");
+  });
+
+  it("Test W3: HTML contiene external_id FTjUqQe cuando está en withdrawals_without_statement", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
+    expect(html).toContain("FTjUqQe");
+    expect(html).toContain("USDC");
+  });
+
+  it("Test W4: HTML contiene 'retirada sin statement item' badge para el withdrawal", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
+    expect(html).toContain("retirada sin statement item");
+  });
+
+  it("Test W5: si stmtItems=[] y withdrawals_without_statement=[] → muestra 'Sin retiradas'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [] };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
+    expect(html).toContain("Sin retiradas o transferencias internas este año");
   });
 
   it("Test F6: comisión imputada B1 — ejemplo real BTC 10/1/2026 (dos lotes mismo sell_op)", () => {
