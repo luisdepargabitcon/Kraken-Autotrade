@@ -3657,3 +3657,160 @@ curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=
 curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" | grep -o "1,03" | wc -l
 # → 1 (aparece solo en el resumen de la venta, no en cada lote)
 ```
+
+---
+
+## 2026-06-09 — fix(fisco): BUG1+BUG2 — commit 790d63d
+
+### BUG1 — Tabla fiscal principal mostraba 0,00 en ganancias/pérdidas
+
+**Problema:**
+```
+Ganancias por transmisiones (FIFO): 0,00 €
+Pérdidas por transmisiones (FIFO): 0,00 €
+Resultado FIFO ordinario: -600,47 €
+```
+
+Pero el endpoint JSON `/api/fisco/annual-report?year=2026` devolvía:
+```
+section_a.ganancias_eur = 824.37
+section_a.perdidas_eur = -1424.85
+section_a.total_eur = -600.47
+```
+
+**Causa:**
+`renderFiscalSummaryTable` usaba `finStatus.gains_eur` y `finStatus.losses_eur`, pero `getFinalizationStatus` no devolvía esos campos — solo `ordinary_fifo_gain_loss_eur`, `final_taxable_gain_loss_eur`, etc.
+
+**Solución:**
+Enriquecer `finStatus` en la ruta `/api/fisco/report/annual/html` con queries adicionales idénticos a los de `annual-report` section_a:
+
+```sql
+-- Gains/losses breakdown
+SELECT
+  COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS ganancias,
+  COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric < 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS perdidas
+FROM fisco_disposals d
+JOIN fisco_operations o ON o.id = d.sell_operation_id
+WHERE EXTRACT(YEAR FROM d.disposed_at) = $1
+
+-- Staking total
+SELECT COALESCE(SUM(fo.total_eur::numeric), 0) AS total
+FROM fisco_operations fo
+WHERE fo.op_type IN ('staking','reward','distribution')
+  AND EXTRACT(YEAR FROM fo.executed_at) = $1
+```
+
+Luego enriquecer:
+```typescript
+const finEnriched = {
+  ...finStatus,
+  gains_eur:       Math.round(parseFloat(gainsQ.rows[0]?.ganancias ?? "0") * 100) / 100,
+  losses_eur:      Math.round(parseFloat(gainsQ.rows[0]?.perdidas  ?? "0") * 100) / 100,
+  staking_total_eur: Math.round(parseFloat(stakingQ.rows[0]?.total ?? "0") * 100) / 100,
+};
+```
+
+**Resultado esperado 2026:**
+```
+Ganancias por transmisiones (FIFO): 824,37 €
+Pérdidas por transmisiones (FIFO): -1.424,85 €
+Resultado FIFO ordinario: -600,47 €
+Disposiciones externas conservadoras: 0,00 €
+Total fiscal final: -600,47 €
+Staking / rewards: 0,00 €
+```
+
+**Resultado esperado 2025:**
+```
+Ganancias por transmisiones (FIFO): 45,87 €
+Pérdidas por transmisiones (FIFO): -118,12 €
+Resultado FIFO ordinario: -72,25 €
+Disposiciones externas conservadoras: 0,00 €
+Total fiscal final: -72,25 €
+Staking / rewards: 1,49 €
+```
+
+### BUG2 — Sección retiradas decía "Sin retiradas" aunque había warnings Kraken
+
+**Problema:**
+- Resumen ejecutivo: "1 retirada(s) sin statement item"
+- Detalle exchange: Kraken Retiradas = 1
+- External ID: FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ
+- Pero sección final: "Sin retiradas o transferencias internas este año."
+
+**Causa:**
+`renderWithdrawalsSection` solo procesaba `fisco_external_statement_items` (statement items). Si esa tabla estaba vacía, mostraba "Sin retiradas" aunque `krakenRec.withdrawals_without_statement` tuviera items.
+
+**Solución:**
+1. Cambiar firma de `renderWithdrawalsSection` para aceptar `krakenRec` opcional:
+   ```typescript
+   function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string
+   ```
+
+2. Mostrar bloque adicional si `krakenRec.withdrawals_without_statement.length > 0`:
+   - `<details open>` con "⚠ Retiradas Kraken sin statement item (N)"
+   - `warnings-box`: "Aviso no bloqueante: Existe N retirada(s) Kraken sin statement item..."
+   - Tabla con: Fecha, Exchange, Activo, Cantidad, External ID, Tipo, Estado
+
+3. Solo mostrar "Sin retiradas..." si AMBOS arrays están vacíos.
+
+**Resultado esperado 2026:**
+```
+⚠ Retiradas Kraken sin statement item (1)
+┌─────────────────────────────────────────────────────────────────┐
+│ Aviso no bloqueante: Existe una retirada Kraken sin statement  │
+│ item enlazado. Se muestra como aviso informativo. No bloquea    │
+│ el informe fiscal global porque finalization-status está OK.     │
+└─────────────────────────────────────────────────────────────────┘
+┌──────────┬─────────┬───────┬──────────┬─────────────────┬──────────┬──────────────────┐
+│ Fecha    │ Exchange│ Activo│ Cantidad │ External ID     │ Tipo     │ Estado           │
+├──────────┼─────────┼───────┼──────────┼─────────────────┼──────────┼──────────────────┤
+│ 10/1/2026│ Kraken  │ USDC  │ 451,5497 │ FTjUqQe-...     │ retirada │ Aviso no bloqueante│
+└──────────┴─────────┴───────┴──────────┴─────────────────┴──────────┴──────────────────┘
+```
+
+### Cambios en código
+
+**fisco.routes.ts:**
+- Añadir `gainsQ` y `stakingQ` al `Promise.all` en `/api/fisco/report/annual/html`
+- Enriquecer `finStatus` con `gains_eur`, `losses_eur`, `staking_total_eur`
+- Pasar `finEnriched` al renderer
+
+**FiscoHtmlRenderer.ts:**
+- `renderWithdrawalsSection(stmtItems, krakenRec?)` — nuevo parámetro opcional
+- Mostrar bloque de `krakenRec.withdrawals_without_statement` si existe
+- Llamada actualizada en `renderAnnualHtml`: `renderWithdrawalsSection(stmtItems, krakenRec)`
+
+### Tests
+
++9 nuevos (G1-G4 ganancias, W1-W5 retiradas):
+- G1: renderer acepta gains_eur/losses_eur sin crashear
+- G2: renderer con gains_eur=45.87 y staking_total_eur=1.49 renderiza
+- G3: si finStatus no trae gains_eur, usa 0,00 como fallback
+- G4: lógica de enriquecimiento de ruta funciona correctamente
+- W1: krakenRec con withdrawals_without_statement → no dice "Sin retiradas"
+- W2: HTML contiene "Aviso no bloqueante"
+- W3: HTML contiene external_id FTjUqQe
+- W4: HTML contiene "retirada sin statement item" badge
+- W5: si ambos arrays vacíos → muestra "Sin retiradas"
+
+**59/59 passing**
+
+### Validación VPS post-deploy
+
+```bash
+# Resumen fiscal correcto
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" \
+  | grep -Ei "824,37|-1.424,85|-600,47" | head
+# → Debe mostrar los 3 valores
+
+# Retiradas visibles
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" \
+  | grep -Ei "FTjUqQe|USDC|Aviso no bloqueante" | head
+# → Debe mostrar las 3 cadenas
+
+# No debe decir "Sin retiradas" cuando hay withdrawal sin statement
+curl -sS "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2026&exchange=all" \
+  | grep "Sin retiradas o transferencias internas este año"
+# → 0 (no debe aparecer)
+```
