@@ -7,11 +7,13 @@ import { fiscoSyncService } from "./FiscoSyncService";
 import { fiscoTelegramNotifier } from "./FiscoTelegramNotifier";
 import { fiscoKrakenRetryWorker } from "./FiscoKrakenRetryWorker";
 import { randomUUID } from "crypto";
+import { FiscoAutoSyncService } from "./fisco/FiscoAutoSyncService";
 
 export class FiscoScheduler {
   private static instance: FiscoScheduler;
   private dailySyncJob: cron.ScheduledTask | null = null;
   private annualReportJob: cron.ScheduledTask | null = null;
+  private autoSyncJob: cron.ScheduledTask | null = null;
   private isInitialized = false;
 
   public static getInstance(): FiscoScheduler {
@@ -31,6 +33,14 @@ export class FiscoScheduler {
     }
 
     console.log('[FISCO Scheduler] Initializing daily sync jobs...');
+
+    // Job auto-sync a las 00:00 (Europe/Madrid) - nuevo sistema de sincronización automática
+    this.autoSyncJob = cron.schedule('0 0 * * *', async () => {
+      await this.executeAutoSync();
+    }, {
+      timezone: "Europe/Madrid"
+    });
+    this.autoSyncJob.start();
 
     // Job diario a las 08:30 (Europe/Madrid)
     // Con timezone: "Europe/Madrid", cron interpreta la hora directamente en esa zona
@@ -52,6 +62,7 @@ export class FiscoScheduler {
     this.annualReportJob.start();
 
     this.isInitialized = true;
+    console.log('[FISCO Scheduler] Auto-sync job scheduled for 00:00 Europe/Madrid');
     console.log('[FISCO Scheduler] Daily sync job scheduled for 08:30 Europe/Madrid');
     console.log('[FISCO Scheduler] Annual report job scheduled for 10:00 on January 1st Europe/Madrid');
   }
@@ -61,7 +72,12 @@ export class FiscoScheduler {
    */
   shutdown(): void {
     console.log('[FISCO Scheduler] Shutting down...');
-    
+
+    if (this.autoSyncJob) {
+      this.autoSyncJob.stop();
+      this.autoSyncJob = null;
+    }
+
     if (this.dailySyncJob) {
       this.dailySyncJob.stop();
       this.dailySyncJob = null;
@@ -135,6 +151,21 @@ export class FiscoScheduler {
         `Daily sync failed: ${error.message}`,
         runId
       );
+    }
+  }
+
+  /**
+   * Ejecuta la sincronización automática con FiscoAutoSyncService (00:00 Europe/Madrid)
+   */
+  private async executeAutoSync(): Promise<void> {
+    console.log('[FISCO Scheduler] Starting auto-sync at 00:00 Europe/Madrid');
+
+    try {
+      const autoSyncService = FiscoAutoSyncService.getInstance();
+      await autoSyncService.runAutoSync({ timezone: "Europe/Madrid" });
+      console.log('[FISCO Scheduler] Auto-sync completed');
+    } catch (error: any) {
+      console.error('[FISCO Scheduler] Auto-sync failed:', error);
     }
   }
 
@@ -226,12 +257,14 @@ export class FiscoScheduler {
    */
   getStatus(): {
     isInitialized: boolean;
+    autoSyncJobActive: boolean;
     dailySyncJobActive: boolean;
     annualReportJobActive: boolean;
     nextRun?: string;
   } {
     return {
       isInitialized: this.isInitialized,
+      autoSyncJobActive: this.autoSyncJob !== null,
       dailySyncJobActive: this.dailySyncJob !== null,
       annualReportJobActive: this.annualReportJob !== null,
       nextRun: this.getNextRunTime()

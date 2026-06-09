@@ -265,6 +265,22 @@ interface RevolutReconciliationResponse {
   transaction_checks: Record<string, RevolutTxCheck[]>;
 }
 
+interface AutoSyncStatus {
+  lastJob: {
+    id: number;
+    scheduled_for: string;
+    started_at: string | null;
+    completed_at: string | null;
+    status: string;
+    attempt_number: number;
+    new_operations_count: number;
+    warnings_count: number;
+    error_message: string | null;
+  } | null;
+  nextScheduled: string | null;
+  nextRetry: string | null;
+}
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -790,6 +806,7 @@ export default function Fisco() {
   const [rebuildConfirm, setRebuildConfirm] = useState<null | "dry_run" | "commit">(null);
   const [rebuildMode, setRebuildMode] = useState<"dry_run" | "commit">("dry_run");
   const [showAuditPanel, setShowAuditPanel] = useState(false);
+  const [successfulDryRun, setSuccessfulDryRun] = useState(false);
 
   // Anexo filters
   const [anexoAsset, setAnexoAsset] = useState("");
@@ -988,6 +1005,14 @@ export default function Fisco() {
     enabled: activeTab === "rebuild",
   });
 
+  // --- Auto-sync status ---
+  const autoSyncStatusQ = useQuery<AutoSyncStatus>({
+    queryKey: ["/api/fisco/auto-sync/status"],
+    refetchOnWindowFocus: false,
+    retry: false,
+    refetchInterval: 60_000, // Refetch every minute
+  });
+
   // --- Rebuild mutation ---
   const runRebuild = useMutation<RebuildResult, Error, { mode: "dry_run" | "commit" }>({
     mutationFn: async ({ mode }) => {
@@ -1000,11 +1025,15 @@ export default function Fisco() {
       if (!resp.ok) throw new Error(data.error || resp.statusText);
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/fisco/rebuild/runs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/fisco/validate"] });
       queryClient.invalidateQueries({ queryKey: ["/api/fisco"] });
       setRebuildConfirm(null);
+      // Mark successful dry_run to allow commit
+      if (variables.mode === "dry_run" && data.isSafeForReport) {
+        setSuccessfulDryRun(true);
+      }
     },
     onError: () => setRebuildConfirm(null),
   });
@@ -1092,6 +1121,23 @@ export default function Fisco() {
             </div>
 
             <div className="flex gap-2 mt-auto ml-auto">
+              {/* Auto-sync status indicator */}
+              {autoSyncStatusQ.data && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                  <Clock className="h-4 w-4 text-blue-400" />
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Auto-sync: </span>
+                    <span className="font-semibold text-blue-400">
+                      {autoSyncStatusQ.data.lastJob?.status === "success" ? "✓ OK" : autoSyncStatusQ.data.lastJob?.status || "Pendiente"}
+                    </span>
+                    {autoSyncStatusQ.data.lastJob?.completed_at && (
+                      <span className="text-muted-foreground ml-1">
+                        ({fmtDateShort(autoSyncStatusQ.data.lastJob.completed_at)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
               <Button
                 onClick={() => runPipeline.mutate()}
                 disabled={isRunning}
@@ -1246,7 +1292,7 @@ export default function Fisco() {
             <TabsTrigger value="informes" className="gap-1.5"><Download className="h-3.5 w-3.5" /> Informes</TabsTrigger>
             <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
             <TabsTrigger value="rebuild" className="gap-1.5 relative">
-              <Settings2 className="h-3.5 w-3.5" /> Reconstruir
+              <Settings2 className="h-3.5 w-3.5" /> Avanzado
               {validateQ.data && !validateQ.data.isSafeForReport && (
                 <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500" />
               )}
@@ -1257,7 +1303,7 @@ export default function Fisco() {
             {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
             {activeTab === "informes" && "Centro de informes, exportaciones CSV/ZIP y auditoría fiscal multi-año."}
             {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
-            {activeTab === "rebuild" && "Reconstrucción controlada de datos FIFO con backup, dry-run y validación de errores críticos."}
+            {activeTab === "rebuild" && "Herramientas avanzadas: mantenimiento FIFO, reconstrucción con backup, validación de errores críticos."}
           </div>
 
           {/* ==================== TAB: RESUMEN FISCAL ==================== */}
@@ -1961,7 +2007,7 @@ export default function Fisco() {
             {/* Rebuild controls */}
             <Card className="border-border">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Reconstruir datos FIFO desde exchanges</CardTitle>
+                <CardTitle className="text-sm">Mantenimiento FIFO</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-xs text-muted-foreground">
@@ -1995,20 +2041,29 @@ export default function Fisco() {
                 {/* Confirmation flow */}
                 {rebuildConfirm === null ? (
                   <Button
-                    onClick={() => setRebuildConfirm(rebuildMode)}
-                    disabled={runRebuild.isPending}
+                    onClick={() => {
+                      if (rebuildMode === "commit" && !successfulDryRun) {
+                        alert("⚠️ Debes ejecutar primero un dry_run exitoso antes de poder hacer commit.");
+                        return;
+                      }
+                      setRebuildConfirm(rebuildMode);
+                    }}
+                    disabled={runRebuild.isPending || (rebuildMode === "commit" && !successfulDryRun)}
                     variant="outline"
                     className={`gap-2 ${rebuildMode === "commit" ? "border-red-500/50 text-red-400 hover:bg-red-500/10" : "border-blue-500/50 text-blue-400 hover:bg-blue-500/10"}`}
                   >
                     <Settings2 className="h-4 w-4" />
                     {rebuildMode === "dry_run" ? "Ejecutar simulación" : "Solicitar reconstrucción real"}
+                    {rebuildMode === "commit" && !successfulDryRun && (
+                      <span className="text-xs text-muted-foreground ml-2">(requiere dry_run exitoso)</span>
+                    )}
                   </Button>
                 ) : (
                   <div className="flex items-center gap-3 p-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5">
                     <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0" />
                     <span className="text-xs text-yellow-300">
                       {rebuildConfirm === "commit"
-                        ? "⚠️ CONFIRMAR: esto reemplazará los datos fiscales oficiales (backup automático activado)."
+                        ? "⚠️ CONFIRMAR: esto reemplazará los datos fiscales oficiales (backup automático activado). Esta acción es irreversible."
                         : "Confirmar ejecución del dry-run (no altera datos oficiales)."}
                     </span>
                     <div className="flex gap-2 ml-auto shrink-0">

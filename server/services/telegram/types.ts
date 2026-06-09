@@ -304,7 +304,7 @@ export function safeValidateContext<T>(
   if (result.success) {
     return { success: true, data: result.data };
   }
-  
+
   console.warn(`[telegram] Partial ${contextName} context - some fields invalid:`, result.error.format());
   return {
     success: false,
@@ -312,3 +312,78 @@ export function safeValidateContext<T>(
     partialData: data as Partial<T>,
   };
 }
+
+// ============================================================
+// FISCO AUTO-SYNC CONTEXT
+// ============================================================
+
+export const FiscoAutoSyncSuccessContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  scheduledTime: z.date(),
+  newOperationsCount: z.number().int().min(0),
+  newOperationsByExchange: z.record(z.object({
+    total: z.number().int().min(0),
+    buys: z.number().int().min(0),
+    sells: z.number().int().min(0),
+    others: z.number().int().min(0),
+  })),
+  fifoStatus: safeString,
+  portfolioStatus: safeString,
+  finalTaxableGainLossEur: safeString,
+  warningsCount: z.number().int().min(0),
+  reportCanBeFinalized: z.boolean(),
+  timestamp: z.date(),
+});
+export type FiscoAutoSyncSuccessContext = z.infer<typeof FiscoAutoSyncSuccessContextSchema>;
+
+export const FiscoAutoSyncNoChangesContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  scheduledTime: z.date(),
+  fifoStatus: safeString,
+  portfolioStatus: safeString,
+  finalTaxableGainLossEur: safeString,
+  reportCanBeFinalized: z.boolean(),
+});
+export type FiscoAutoSyncNoChangesContext = z.infer<typeof FiscoAutoSyncNoChangesContextSchema>;
+
+export const FiscoAutoSyncWarningsContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  scheduledTime: z.date(),
+  newOperationsCount: z.number().int().min(0),
+  newOperationsByExchange: z.record(z.object({
+    total: z.number().int().min(0),
+    buys: z.number().int().min(0),
+    sells: z.number().int().min(0),
+    others: z.number().int().min(0),
+  })),
+  finalTaxableGainLossEur: safeString,
+  warnings: z.array(z.string()),
+  reportCanBeFinalized: z.boolean(),
+});
+export type FiscoAutoSyncWarningsContext = z.infer<typeof FiscoAutoSyncWarningsContextSchema>;
+
+export const FiscoAutoSyncErrorContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  attempt: z.number().int().min(1),
+  maxAttempts: z.number().int().min(1),
+  error: safeString,
+  nextRetryAt: z.date().nullable(),
+});
+export type FiscoAutoSyncErrorContext = z.infer<typeof FiscoAutoSyncErrorContextSchema>;
+
+export const FiscoAutoSyncAllFailedContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  attempt: z.number().int().min(1),
+  maxAttempts: z.number().int().min(1),
+  attempts: z.array(z.object({
+    attempt: z.number().int(),
+    time: z.date(),
+    error: safeString,
+  })),
+});
+export type FiscoAutoSyncAllFailedContext = z.infer<typeof FiscoAutoSyncAllFailedContextSchema>;

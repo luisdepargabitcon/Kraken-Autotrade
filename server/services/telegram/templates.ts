@@ -12,6 +12,11 @@ import {
   PositionsUpdateContext,
   EntryIntentContext,
   ExchangeName,
+  FiscoAutoSyncSuccessContext,
+  FiscoAutoSyncNoChangesContext,
+  FiscoAutoSyncWarningsContext,
+  FiscoAutoSyncErrorContext,
+  FiscoAutoSyncAllFailedContext,
 } from "./types";
 import { environment } from "../environment";
 
@@ -738,6 +743,139 @@ export function buildTradePendingHTML(type: "BUY" | "SELL", pair: string, exchan
 }
 
 // ============================================================
+// FISCO AUTO-SYNC TEMPLATES
+// ============================================================
+
+export function buildFiscoAutoSyncSuccessHTML(context: FiscoAutoSyncSuccessContext): string {
+  const { env, year, scheduledTime, newOperationsCount, newOperationsByExchange, fifoStatus, portfolioStatus, finalTaxableGainLossEur, warningsCount, reportCanBeFinalized } = context;
+
+  const exchangeLines = Object.entries(newOperationsByExchange).map(([exchange, data]) => {
+    return `🏦 <b>${escapeHtml(exchange)}</b>: ${data.total} operaciones (${data.buys} compras, ${data.sells} ventas, ${data.others} otros)`;
+  }).join("\n");
+
+  return [
+    `✅✅✅ <b>FISCO ACTUALIZADO CORRECTAMENTE</b> ✅✅✅`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    `⏰ Horario: 00:00 Europe/Madrid`,
+    `🆕 Operaciones nuevas: <b>${newOperationsCount}</b>`,
+    ``,
+    exchangeLines || "Sin operaciones nuevas",
+    ``,
+    `📊 FIFO: <code>${escapeHtml(fifoStatus)}</code>`,
+    `📦 Portfolio: <code>${escapeHtml(portfolioStatus)}</code>`,
+    `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`,
+    `⚠️ Avisos: <b>${warningsCount}</b>`,
+    `✅ Informe finalizable: <b>${reportCanBeFinalized ? "Sí" : "No"}</b>`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+export function buildFiscoAutoSyncNoChangesHTML(context: FiscoAutoSyncNoChangesContext): string {
+  const { env, year, scheduledTime, fifoStatus, portfolioStatus, finalTaxableGainLossEur, reportCanBeFinalized } = context;
+
+  return [
+    `✅✅✅ <b>FISCO SINCRONIZADO SIN CAMBIOS</b> ✅✅✅`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    `⏰ Horario: 00:00 Europe/Madrid`,
+    ``,
+    `ℹ️ No se han detectado nuevas operaciones desde la última sincronización.`,
+    ``,
+    `📊 FIFO: <code>${escapeHtml(fifoStatus)}</code>`,
+    `📦 Portfolio: <code>${escapeHtml(portfolioStatus)}</code>`,
+    `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`,
+    `✅ Informe finalizable: <b>${reportCanBeFinalized ? "Sí" : "No"}</b>`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+export function buildFiscoAutoSyncWarningsHTML(context: FiscoAutoSyncWarningsContext): string {
+  const { env, year, scheduledTime, newOperationsCount, newOperationsByExchange, finalTaxableGainLossEur, warnings, reportCanBeFinalized } = context;
+
+  const exchangeLines = Object.entries(newOperationsByExchange).map(([exchange, data]) => {
+    return `🏦 <b>${escapeHtml(exchange)}</b>: ${data.total} operaciones (${data.buys} compras, ${data.sells} ventas, ${data.others} otros)`;
+  }).join("\n");
+
+  const warningLines = warnings.map((w, i) => `• ${escapeHtml(w)}`).join("\n");
+
+  return [
+    `⚠️⚠️⚠️ <b>FISCO ACTUALIZADO CON AVISOS</b> ⚠️⚠️⚠️`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    `🆕 Operaciones nuevas: <b>${newOperationsCount}</b>`,
+    `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`,
+    ``,
+    exchangeLines || "Sin operaciones nuevas",
+    ``,
+    `⚠️ <b>Avisos:</b>`,
+    warningLines || "Sin avisos",
+    ``,
+    `✅ Informe finalizable: <b>${reportCanBeFinalized ? "Sí" : "No"}</b>`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+export function buildFiscoAutoSyncErrorHTML(context: FiscoAutoSyncErrorContext): string {
+  const { env, year, attempt, maxAttempts, error, nextRetryAt } = context;
+
+  const retryLine = nextRetryAt
+    ? `🔄 Se reintentará automáticamente a las <b>${formatSpanishDate(nextRetryAt)}</b>`
+    : `❌ No hay más reintentos programados`;
+
+  return [
+    `⚠️⚠️⚠️ <b>FISCO: ERROR DE SINCRONIZACIÓN</b> ⚠️⚠️⚠️`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    `🔄 Intento: <b>${attempt}/${maxAttempts}</b>`,
+    `⏰ Hora: 00:00 Europe/Madrid`,
+    ``,
+    `❌ <b>Motivo:</b> ${escapeHtml(error)}`,
+    ``,
+    retryLine,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+export function buildFiscoAutoSyncAllFailedHTML(context: FiscoAutoSyncAllFailedContext): string {
+  const { env, year, attempt, maxAttempts, attempts } = context;
+
+  const attemptLines = attempts.map((a) => {
+    return `• Intento ${a.attempt}: ${formatSpanishDate(a.time)} — ${escapeHtml(a.error)}`;
+  }).join("\n");
+
+  return [
+    `❌❌❌ <b>FISCO REQUIERE REVISIÓN MANUAL</b> ❌❌❌`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    ``,
+    `La sincronización automática falló después de varios intentos.`,
+    ``,
+    `📋 <b>Intentos:</b>`,
+    attemptLines,
+    ``,
+    `❌ No se hizo commit automático.`,
+    `🔧 <b>Acción recomendada:</b> entrar en Fiscal → Avanzado → Mantenimiento FIFO.`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+// ============================================================
 // EXPORT ALL TEMPLATES
 // ============================================================
 export const telegramTemplates = {
@@ -757,4 +895,9 @@ export const telegramTemplates = {
   buildErrorAlertHTML,
   buildErrorAlertHTMLSimple,
   buildTradePendingHTML,
+  buildFiscoAutoSyncSuccessHTML,
+  buildFiscoAutoSyncNoChangesHTML,
+  buildFiscoAutoSyncWarningsHTML,
+  buildFiscoAutoSyncErrorHTML,
+  buildFiscoAutoSyncAllFailedHTML,
 };

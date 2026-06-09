@@ -16,6 +16,7 @@ import { FiscoExportService } from "../services/fisco/FiscoExportService";
 import { FiscoHtmlRenderer } from "../services/fisco/FiscoHtmlRenderer";
 import JSZip from "jszip";
 import { pool } from "../db";
+import { FiscoAutoSyncService } from "../services/fisco/FiscoAutoSyncService";
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -3264,6 +3265,74 @@ export function registerFiscoRebuildRoutes(app: Express): void {
     } catch (e: any) {
       console.error("[fisco/export/audit-pack.zip]", e);
       if (!res.headersSent) res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // AUTO-SYNC ENDPOINTS
+  // ============================================================
+
+  const autoSyncService = FiscoAutoSyncService.getInstance();
+
+  /**
+   * GET /api/fisco/auto-sync/status
+   * Get current auto-sync status (last job, next scheduled, next retry)
+   */
+  app.get("/api/fisco/auto-sync/status", async (req, res) => {
+    try {
+      const status = await autoSyncService.getStatus();
+      res.json(status);
+    } catch (e: any) {
+      console.error("[fisco/auto-sync/status]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/auto-sync/history
+   * Get history of auto-sync jobs
+   */
+  app.get("/api/fisco/auto-sync/history", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 10;
+      const jobs = await autoSyncService.getLatestJobs(limit);
+      res.json(jobs);
+    } catch (e: any) {
+      console.error("[fisco/auto-sync/history]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/auto-sync/run-now
+   * Trigger auto-sync immediately (useful for testing or manual trigger)
+   */
+  app.post("/api/fisco/auto-sync/run-now", async (req, res) => {
+    try {
+      const { year, timezone, forceSync } = req.body || {};
+      const result = await autoSyncService.runAutoSync({ year, timezone, forceSync });
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/auto-sync/run-now]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/auto-sync/retry-failed
+   * Retry a failed job
+   */
+  app.post("/api/fisco/auto-sync/retry-failed", async (req, res) => {
+    try {
+      const { jobId } = req.body;
+      if (!jobId) {
+        return res.status(400).json({ error: "jobId is required" });
+      }
+      const result = await autoSyncService.retryFailedJob(jobId);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/auto-sync/retry-failed]", e);
+      res.status(500).json({ error: e.message });
     }
   });
 }
