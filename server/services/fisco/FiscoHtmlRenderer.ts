@@ -493,17 +493,18 @@ export class FiscoHtmlRenderer {
     const lotsMap: Record<string, { opening_qty: number; closing_qty: number }> = {};
     for (const r of lotsQ.rows) lotsMap[r.asset] = { opening_qty: parseFloat(r.opening_qty), closing_qty: parseFloat(r.closing_qty) };
 
-    // Disposals gain/loss from fisco_disposals
+    // Disposals gain/loss — fisco_disposals has no asset column; JOIN via sell_operation_id
     const dispQ = await this.pool.query(`
       SELECT
-        fd.asset,
+        sell_op.asset,
         COALESCE(SUM(fd.proceeds_eur::numeric), 0)    AS proceeds_eur,
         COALESCE(SUM(fd.cost_basis_eur::numeric), 0)  AS cost_basis_eur,
         COALESCE(SUM(fd.gain_loss_eur::numeric), 0)   AS gain_loss_eur,
         COUNT(*) AS disposals_count
       FROM fisco_disposals fd
+      JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id
       WHERE EXTRACT(YEAR FROM fd.disposed_at) = $1
-      GROUP BY fd.asset
+      GROUP BY sell_op.asset
     `, [year]);
     const dispMap: Record<string, any> = {};
     for (const r of dispQ.rows) dispMap[r.asset] = r;
@@ -525,12 +526,23 @@ export class FiscoHtmlRenderer {
   }
 
   private async fetchDisposalsByAsset(year: number): Promise<Record<string, any[]>> {
+    // fisco_disposals has no asset/exchange/fee_eur columns — obtain via JOIN
     const q = await this.pool.query(`
-      SELECT fd.asset, fd.disposed_at, fd.exchange, fd.quantity, fd.proceeds_eur,
-             fd.cost_basis_eur, fd.fee_eur, fd.gain_loss_eur, fd.lot_id, fd.sell_operation_id
+      SELECT
+        sell_op.asset,
+        sell_op.exchange,
+        fd.disposed_at,
+        fd.quantity,
+        fd.proceeds_eur,
+        fd.cost_basis_eur,
+        COALESCE(sell_op.fee_eur, 0) AS fee_eur,
+        fd.gain_loss_eur,
+        fd.lot_id,
+        fd.sell_operation_id
       FROM fisco_disposals fd
+      JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id
       WHERE EXTRACT(YEAR FROM fd.disposed_at) = $1
-      ORDER BY fd.asset, fd.disposed_at
+      ORDER BY sell_op.asset, fd.disposed_at
     `, [year]);
     const m: Record<string, any[]> = {};
     for (const r of q.rows) { m[r.asset] = m[r.asset] ?? []; m[r.asset].push(r); }
@@ -583,12 +595,13 @@ export class FiscoHtmlRenderer {
       ORDER BY fo.exchange
     `, params);
 
-    // gain_loss per exchange from disposals (approximation)
+    // gain_loss per exchange from disposals — no exchange col in fisco_disposals, JOIN needed
     const dispQ = await this.pool.query(`
-      SELECT fd.exchange, COALESCE(SUM(fd.gain_loss_eur::numeric), 0) AS gain_loss_eur
+      SELECT sell_op.exchange, COALESCE(SUM(fd.gain_loss_eur::numeric), 0) AS gain_loss_eur
       FROM fisco_disposals fd
+      JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id
       WHERE EXTRACT(YEAR FROM fd.disposed_at) = $1
-      GROUP BY fd.exchange
+      GROUP BY sell_op.exchange
     `, [year]);
     const dispGain: Record<string, number> = {};
     for (const r of dispQ.rows) dispGain[r.exchange] = parseFloat(r.gain_loss_eur);
@@ -627,12 +640,20 @@ export class FiscoHtmlRenderer {
   }
 
   private async fetchStatementItems(year: number): Promise<any[]> {
+    // Real columns: event_at, asset, exchange, amount_sent, fee_amount, total_out, classification, transaction_identifier
     const q = await this.pool.query(`
-      SELECT fsi.executed_at, fsi.exchange, fsi.asset, fsi.amount, fsi.fee_eur, fsi.total_eur,
-             fsi.classification, fsi.external_id
+      SELECT
+        fsi.event_at        AS executed_at,
+        fsi.exchange,
+        fsi.asset,
+        fsi.amount_sent     AS amount,
+        COALESCE(fsi.fee_amount, 0)   AS fee_eur,
+        COALESCE(fsi.total_out, fsi.amount_sent, 0) AS total_eur,
+        fsi.classification,
+        fsi.transaction_identifier    AS external_id
       FROM fisco_external_statement_items fsi
-      WHERE EXTRACT(YEAR FROM fsi.executed_at) = $1
-      ORDER BY fsi.executed_at
+      WHERE fsi.year = $1
+      ORDER BY fsi.event_at
     `, [year]);
     return q.rows;
   }
@@ -661,16 +682,45 @@ export class FiscoHtmlRenderer {
   }): Promise<string> {
     const { year, exchanges, finStatus, portfolio, krakenRec } = opts;
 
-    const [assetSummaries, disposalsByAsset, operationsByAsset, exchangeSummaries, stakingRows, stmtItems, counts] =
-      await Promise.all([
-        this.fetchAssetSummaries(year, exchanges),
-        this.fetchDisposalsByAsset(year),
-        this.fetchOperationsByAsset(year, exchanges),
-        this.fetchExchangeSummaries(year, exchanges, krakenRec),
-        this.fetchStaking(year),
-        this.fetchStatementItems(year),
-        this.fetchFinCounts(year),
-      ]);
+    // Each data block is independently fault-tolerant so a single table error
+    // never breaks the full report.
+    const safeLoad = async <T>(label: string, fn: () => Promise<T>, fallback: T): Promise<{ data: T; error: string | null }> => {
+      try { return { data: await fn(), error: null }; }
+      catch (e: any) {
+        console.error(`[FiscoHtmlRenderer:${label}] ${e.message}`);
+        return { data: fallback, error: e.message ?? String(e) };
+      }
+    };
+
+    const [rAssets, rDisposals, rOps, rExchanges, rStaking, rStmt, rCounts] = await Promise.all([
+      safeLoad("fetchAssetSummaries",   () => this.fetchAssetSummaries(year, exchanges),            [] as AssetSummary[]),
+      safeLoad("fetchDisposalsByAsset", () => this.fetchDisposalsByAsset(year),                    {} as Record<string, any[]>),
+      safeLoad("fetchOperationsByAsset",() => this.fetchOperationsByAsset(year, exchanges),         {} as Record<string, any[]>),
+      safeLoad("fetchExchangeSummaries",() => this.fetchExchangeSummaries(year, exchanges, krakenRec), [] as ExchangeSummary[]),
+      safeLoad("fetchStaking",          () => this.fetchStaking(year),                             [] as any[]),
+      safeLoad("fetchStatementItems",   () => this.fetchStatementItems(year),                      [] as any[]),
+      safeLoad("fetchFinCounts",        () => this.fetchFinCounts(year),
+        { operations_count: 0, disposals_count: 0, open_lots_count: 0 }),
+    ]);
+
+    const assetSummaries   = rAssets.data;
+    const disposalsByAsset = rDisposals.data;
+    const operationsByAsset= rOps.data;
+    const exchangeSummaries= rExchanges.data;
+    const stakingRows      = rStaking.data;
+    const stmtItems        = rStmt.data;
+    const counts           = rCounts.data;
+
+    // Collect any partial errors to surface in HTML
+    const partialErrors: string[] = [
+      rAssets.error    && `Activos: ${rAssets.error}`,
+      rDisposals.error && `Disposals: ${rDisposals.error}`,
+      rOps.error       && `Operaciones: ${rOps.error}`,
+      rExchanges.error && `Exchanges: ${rExchanges.error}`,
+      rStaking.error   && `Staking: ${rStaking.error}`,
+      rStmt.error      && `Statement items: ${rStmt.error}`,
+      rCounts.error    && `Counts: ${rCounts.error}`,
+    ].filter(Boolean) as string[];
 
     // Enrich finStatus with counts
     const finEnriched = { ...finStatus, ...counts };
@@ -718,6 +768,13 @@ export class FiscoHtmlRenderer {
     El resultado mostrado corresponde únicamente al ejercicio ${year}.
   </p>
 </div>
+
+${partialErrors.length > 0 ? `
+<div class="warnings-box" style="margin:1rem 0">
+  <strong>⚠ Advertencia: algunas secciones no pudieron cargarse correctamente</strong>
+  <ul>${partialErrors.map(e => `<li class="err">${e}</li>`).join("")}</ul>
+  <p style="font-size:.8rem;margin:.4rem 0 0">El informe fiscal base (resumen, validación) sigue siendo correcto. Solo el detalle auxiliar puede estar incompleto.</p>
+</div>` : ""}
 
 <h2>Resumen ejecutivo</h2>
 <div class="resumen-ejecutivo">

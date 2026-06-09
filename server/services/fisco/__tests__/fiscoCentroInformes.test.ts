@@ -547,16 +547,27 @@ describe("FiscoExportService", () => {
 
 function makeHtmlRendererPool() {
   return makeMockPool((sql) => {
+    // fisco_operations asset summaries (STRING_AGG)
     if (sql.includes("STRING_AGG") && sql.includes("fisco_operations")) return { rows: [{ asset: "BTC", exchanges: "kraken", acquisitions_qty: "1", disposals_qty: "0.5", fees_eur: "5", operations_count: "3" }] };
-    if (sql.includes("fisco_lots") && sql.includes("STRING_AGG")) return { rows: [] };
+    // fisco_lots opening/closing inventory
     if (sql.includes("fisco_lots") && sql.includes("GROUP BY fl.asset")) return { rows: [{ asset: "BTC", opening_qty: "0.5", closing_qty: "0.5" }] };
-    if (sql.includes("fisco_disposals") && sql.includes("GROUP BY fd.asset")) return { rows: [{ asset: "BTC", proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", disposals_count: "2" }] };
-    if (sql.includes("fisco_disposals") && sql.includes("ORDER BY")) return { rows: [{ asset: "BTC", disposed_at: "2025-06-01T00:00:00Z", exchange: "kraken", quantity: "0.1", proceeds_eur: "2500", cost_basis_eur: "2400", fee_eur: "10", gain_loss_eur: "90" }] };
+    // disposals summary — real schema: JOIN sell_op ON sell_operation_id, GROUP BY sell_op.asset
+    if (sql.includes("fisco_disposals") && sql.includes("GROUP BY sell_op.asset")) return { rows: [{ asset: "BTC", proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", disposals_count: "2" }] };
+    // disposals detail — real schema: JOIN fisco_operations sell_op, ORDER BY sell_op.asset
+    if (sql.includes("fisco_disposals") && sql.includes("JOIN fisco_operations sell_op") && sql.includes("ORDER BY sell_op.asset")) {
+      return { rows: [{ asset: "BTC", disposed_at: "2025-06-01T00:00:00Z", exchange: "kraken", quantity: "0.1", proceeds_eur: "2500", cost_basis_eur: "2400", fee_eur: "10", gain_loss_eur: "90" }] };
+    }
+    // operations per asset detail
     if (sql.includes("fisco_operations") && sql.includes("ORDER BY fo.asset")) return { rows: [{ asset: "BTC", executed_at: "2025-01-15T00:00:00Z", exchange: "kraken", op_type: "trade_buy", amount: "0.5", price_eur: "28000", total_eur: "14000", fee_eur: "5", external_id: "TXABC" }] };
+    // exchange summaries by operations
     if (sql.includes("GROUP BY fo.exchange")) return { rows: [{ exchange: "kraken", operations_count: "3", buys_count: "2", sells_count: "1", deposits_count: "0", withdrawals_count: "0", staking_count: "0", fees_eur: "5" }] };
-    if (sql.includes("GROUP BY fd.exchange")) return { rows: [{ exchange: "kraken", gain_loss_eur: "1000" }] };
-    if (sql.includes("staking") && sql.includes("IN ('staking'")) return { rows: [] };
-    if (sql.includes("fisco_external_statement_items")) return { rows: [] };
+    // disposals gain by exchange — real schema: JOIN sell_op, GROUP BY sell_op.exchange
+    if (sql.includes("fisco_disposals") && sql.includes("GROUP BY sell_op.exchange")) return { rows: [{ exchange: "kraken", gain_loss_eur: "1000" }] };
+    // staking rows
+    if (sql.includes("op_type IN ('staking'")) return { rows: [] };
+    // statement items — real schema uses fsi.year and fsi.event_at
+    if (sql.includes("fisco_external_statement_items") && sql.includes("fsi.year")) return { rows: [] };
+    // counts
     if (sql.includes("COUNT(*)") && sql.includes("fisco_operations")) return { rows: [{ c: "3" }] };
     if (sql.includes("COUNT(*)") && sql.includes("fisco_disposals")) return { rows: [{ c: "2" }] };
     if (sql.includes("COUNT(*)") && sql.includes("remaining_qty")) return { rows: [{ c: "1" }] };
@@ -746,5 +757,61 @@ describe("FiscoHtmlRenderer", () => {
     const buf = await zip.generateAsync({ type: "nodebuffer" });
     expect(Buffer.isBuffer(buf)).toBe(true);
     expect(buf.length).toBeGreaterThan(10);
+  });
+
+  // ── Schema safety tests ────────────────────────────────────────────────────
+
+  it("Test S1: FiscoHtmlRenderer source no contiene fd.asset directamente", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/fd\.asset/);
+  });
+
+  it("Test S2: FiscoHtmlRenderer source no contiene fsi.executed_at directamente", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/fsi\.executed_at/);
+  });
+
+  it("Test S3: FiscoHtmlRenderer source no contiene fd.exchange directamente", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/fd\.exchange/);
+  });
+
+  it("Test S4: FiscoHtmlRenderer usa JOIN sell_op ON sell_operation_id para obtener asset", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    expect(src).toContain("JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id");
+  });
+
+  it("Test S5: FiscoHtmlRenderer usa fsi.event_at para statement items", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    expect(src).toContain("fsi.event_at");
+    expect(src).toContain("fsi.year");
+  });
+
+  it("Test S6: renderAnnualHtml con mock schema real devuelve HTML sin errores parciales", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).not.toContain("Advertencia: algunas secciones no pudieron cargarse");
+    expect(html.trimStart()).toMatch(/^<!DOCTYPE html>/i);
   });
 });
