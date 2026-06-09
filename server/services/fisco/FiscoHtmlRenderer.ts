@@ -203,8 +203,8 @@ function renderAssetSection(assetSummaries: AssetSummary[], disposalsByAsset: Re
 
     const dispTable = disposals.length === 0 ? `<p style="color:#888">Sin ventas FIFO este año</p>` : `
       <table><thead><tr>
-        <th>Fecha venta</th><th>Exchange</th><th>Cantidad vendida</th><th>Valor transmisión</th>
-        <th>Coste FIFO</th><th>Comisión</th><th>Ganancia/Pérdida</th>
+        <th>Fecha venta</th><th>Exchange</th><th>Cantidad vendida</th><th>Valor de venta / transmisión</th>
+        <th>Valor de adquisición FIFO</th><th>Comisión imputada</th><th>Ganancia/Pérdida fiscal</th>
       </tr></thead><tbody>
       ${disposals.slice(0, 100).map(d => `<tr>
         <td>${fmtDate(d.disposed_at)}</td>
@@ -246,8 +246,8 @@ function renderAssetSection(assetSummaries: AssetSummary[], disposalsByAsset: Re
           <div class="card"><label>Adquirido en el año</label><span class="val">${fmtQty(a.acquisitions_qty)}</span></div>
           <div class="card"><label>Vendido/dispuesto</label><span class="val">${fmtQty(a.disposals_qty)}</span></div>
           <div class="card"><label>Inventario fin año</label><span class="val">${fmtQty(a.closing_qty)}</span></div>
-          <div class="card"><label>Valor transmisión</label><span class="val">${eur(a.proceeds_eur)}</span></div>
-          <div class="card"><label>Coste de adquisición</label><span class="val">${eur(a.cost_basis_eur)}</span></div>
+          <div class="card"><label>Valor de venta / transmisión</label><span class="val">${eur(a.proceeds_eur)}</span></div>
+          <div class="card"><label>Valor de adquisición FIFO</label><span class="val">${eur(a.cost_basis_eur)}</span></div>
           <div class="card"><label>Comisiones</label><span class="val">${eur(a.fees_eur)}</span></div>
           <div class="card"><label>Ganancia / Pérdida</label><span class="val ${gainClass(totalGain)}">${eur(totalGain)}</span></div>
           <div class="card"><label>Exchanges</label><span style="font-size:.82rem">${a.exchanges ?? "—"}</span></div>
@@ -526,7 +526,10 @@ export class FiscoHtmlRenderer {
   }
 
   private async fetchDisposalsByAsset(year: number): Promise<Record<string, any[]>> {
-    // fisco_disposals has no asset/exchange/fee_eur columns — obtain via JOIN
+    // fisco_disposals has no asset/exchange/fee_eur columns — obtain via JOIN.
+    // fee_eur is derived per-lot using Opción B1:
+    //   GREATEST(0, proceeds_eur - cost_basis_eur - gain_loss_eur)
+    // This avoids repeating the total sell_op fee across every FIFO lot row.
     const q = await this.pool.query(`
       SELECT
         sell_op.asset,
@@ -535,14 +538,19 @@ export class FiscoHtmlRenderer {
         fd.quantity,
         fd.proceeds_eur,
         fd.cost_basis_eur,
-        COALESCE(sell_op.fee_eur, 0) AS fee_eur,
+        GREATEST(
+          0,
+          fd.proceeds_eur::numeric
+          - fd.cost_basis_eur::numeric
+          - fd.gain_loss_eur::numeric
+        )                          AS fee_eur,
         fd.gain_loss_eur,
         fd.lot_id,
         fd.sell_operation_id
       FROM fisco_disposals fd
       JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id
       WHERE EXTRACT(YEAR FROM fd.disposed_at) = $1
-      ORDER BY sell_op.asset, fd.disposed_at
+      ORDER BY sell_op.asset, fd.disposed_at, fd.sell_operation_id, fd.id
     `, [year]);
     const m: Record<string, any[]> = {};
     for (const r of q.rows) { m[r.asset] = m[r.asset] ?? []; m[r.asset].push(r); }
@@ -797,29 +805,65 @@ ${renderExchangeSection(exchangeSummaries)}
 
 <h2>Ventas y cálculo FIFO</h2>
 <div class="section-block">
-<p style="font-size:.85rem;color:#555">Disposals FIFO agrupados por activo. El coste de adquisición se calcula por el método FIFO histórico multi-año.</p>
+<p style="font-size:.85rem;color:#555;margin:.5rem 0">
+  Una venta puede aparecer dividida en varias líneas porque el método FIFO consume varios lotes de compra distintos.
+  La columna <strong>«Valor de adquisición FIFO»</strong> es el coste fiscal de las unidades vendidas.
+  La columna <strong>«Comisión imputada»</strong> muestra la comisión atribuida a esa línea (evitando repetir la comisión total en todos los lotes).
+  El resumen de cada venta agrupa todos sus lotes y muestra la comisión total una sola vez.
+</p>
 ${assetSummaries.filter(a => (disposalsByAsset[a.asset] ?? []).length > 0).map(a => {
   const disposals = disposalsByAsset[a.asset] ?? [];
-  const totalG = disposals.reduce((s, d) => s + parseFloat(d.gain_loss_eur ?? "0"), 0);
+  const totalG = disposals.reduce((s: number, d: any) => s + parseFloat(d.gain_loss_eur ?? "0"), 0);
+
+  // Agrupar por sell_operation_id para mostrar cada venta consolidada con sus lotes
+  const byOp = new Map<string, any[]>();
+  for (const d of disposals) {
+    const k = String(d.sell_operation_id ?? "?");
+    if (!byOp.has(k)) byOp.set(k, []);
+    byOp.get(k)!.push(d);
+  }
+
+  const opRows = [...byOp.entries()].slice(0, 200).map(([opId, rows]) => {
+    const first      = rows[0];
+    const totalQty   = rows.reduce((s: number, r: any) => s + parseFloat(r.quantity ?? "0"), 0);
+    const totalProc  = rows.reduce((s: number, r: any) => s + parseFloat(r.proceeds_eur ?? "0"), 0);
+    const totalCost  = rows.reduce((s: number, r: any) => s + parseFloat(r.cost_basis_eur ?? "0"), 0);
+    const totalFee   = rows.reduce((s: number, r: any) => s + parseFloat(r.fee_eur ?? "0"), 0);
+    const totalGain  = rows.reduce((s: number, r: any) => s + parseFloat(r.gain_loss_eur ?? "0"), 0);
+    const multiLot   = rows.length > 1;
+
+    const lotRows = multiLot ? rows.map((r: any) => `<tr style="font-size:.8rem;color:#555">
+      <td style="padding-left:1.5rem">↳ Lote ${r.lot_id ?? "—"}</td>
+      <td>${fmtQty(parseFloat(r.quantity ?? "0"))}</td>
+      <td>${eur(parseFloat(r.proceeds_eur ?? "0"))}</td>
+      <td>${eur(parseFloat(r.cost_basis_eur ?? "0"))}</td>
+      <td>—</td>
+      <td class="${gainClass(parseFloat(r.gain_loss_eur ?? "0"))}">${eur(parseFloat(r.gain_loss_eur ?? "0"))}</td>
+    </tr>`).join("") : "";
+
+    return `<tr>
+      <td>${fmtDate(first.disposed_at)}</td>
+      <td>${first.exchange ?? "—"}</td>
+      <td>${fmtQty(totalQty)}${multiLot ? ` <span style="font-size:.7rem;color:#888">(${rows.length} lotes)</span>` : ""}</td>
+      <td>${eur(totalProc)}</td>
+      <td>${eur(totalCost)}</td>
+      <td>${eur(totalFee)}</td>
+      <td class="${gainClass(totalGain)}">${eur(totalGain)}</td>
+    </tr>${lotRows}`;
+  }).join("");
+
   return `
   <details>
-    <summary>${a.asset} — ${disposals.length} ventas FIFO — Ganancia/Pérdida: <span class="${gainClass(totalG)}">${eur(totalG)}</span></summary>
+    <summary>${a.asset} — ${byOp.size} venta(s) — ${disposals.length} lote(s) FIFO — Ganancia/Pérdida: <span class="${gainClass(totalG)}">${eur(totalG)}</span></summary>
     <div class="details-body">
       <table><thead><tr>
         <th>Fecha venta</th><th>Exchange</th><th>Cantidad</th>
-        <th>Valor transmisión</th><th>Coste FIFO</th><th>Comisión</th><th>Ganancia/Pérdida</th>
+        <th>Valor de venta / transmisión</th><th>Valor de adquisición FIFO</th><th>Comisión imputada</th><th>Ganancia/Pérdida fiscal</th>
       </tr></thead><tbody>
-      ${disposals.slice(0, 200).map((d: any) => `<tr>
-        <td>${fmtDate(d.disposed_at)}</td>
-        <td>${d.exchange ?? "—"}</td>
-        <td>${fmtQty(parseFloat(d.quantity ?? "0"))}</td>
-        <td>${eur(parseFloat(d.proceeds_eur ?? "0"))}</td>
-        <td>${eur(parseFloat(d.cost_basis_eur ?? "0"))}</td>
-        <td>${eur(parseFloat(d.fee_eur ?? "0"))}</td>
-        <td class="${gainClass(parseFloat(d.gain_loss_eur ?? "0"))}">${eur(parseFloat(d.gain_loss_eur ?? "0"))}</td>
-      </tr>`).join("")}
-      ${disposals.length > 200 ? `<tr><td colspan="7" style="color:#888">… y ${disposals.length - 200} más (ver CSV para lista completa)</td></tr>` : ""}
+      ${opRows}
+      ${byOp.size > 200 ? `<tr><td colspan="7" style="color:#888">… y ${byOp.size - 200} ventas más (ver CSV para lista completa)</td></tr>` : ""}
       </tbody></table>
+      <p style="font-size:.75rem;color:#888;margin:.4rem 0 0">Las filas ↳ muestran el detalle por lote FIFO. La comisión imputada se muestra en el resumen de venta, no repetida por lote.</p>
     </div>
   </details>`;
 }).join("")}

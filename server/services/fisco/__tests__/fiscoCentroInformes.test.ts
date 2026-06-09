@@ -814,4 +814,64 @@ describe("FiscoHtmlRenderer", () => {
     expect(html).not.toContain("Advertencia: algunas secciones no pudieron cargarse");
     expect(html.trimStart()).toMatch(/^<!DOCTYPE html>/i);
   });
+
+  // ── FIFO display correctness tests ───────────────────────────────────────────
+
+  it("Test F1: HTML contiene cabecera 'Valor de venta / transmisión'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Valor de venta / transmisión");
+  });
+
+  it("Test F2: HTML contiene cabecera 'Valor de adquisición FIFO'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Valor de adquisición FIFO");
+  });
+
+  it("Test F3: HTML contiene cabecera 'Comisión imputada'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Comisión imputada");
+  });
+
+  it("Test F4: HTML contiene texto explicativo FIFO multi-lote", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Una venta puede aparecer dividida en varias líneas");
+  });
+
+  it("Test F5: FiscoHtmlRenderer source no usa sell_op.fee_eur como fee_eur en fetchDisposalsByAsset", async () => {
+    const fs = await import("fs");
+    const src = fs.readFileSync(
+      new URL("../FiscoHtmlRenderer.ts", import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1"),
+      "utf8"
+    );
+    // Debe usar GREATEST(0, proceeds - cost_basis - gain_loss) — Opción B1
+    expect(src).toContain("GREATEST(");
+    expect(src).toContain("fd.proceeds_eur::numeric");
+    expect(src).toContain("fd.cost_basis_eur::numeric");
+    expect(src).toContain("fd.gain_loss_eur::numeric");
+    // No debe asignar sell_op.fee_eur directamente como fee_eur en fetchDisposalsByAsset
+    expect(src).not.toMatch(/sell_op\.fee_eur.*AS fee_eur/);
+  });
+
+  it("Test F6: comisión imputada B1 — ejemplo real BTC 10/1/2026 (dos lotes mismo sell_op)", () => {
+    // fd1: proceeds=0.16, cost_basis=0.16, gain_loss=0.01 → fee = GREATEST(0, 0.16-0.16-0.01) = 0
+    // fd2: proceeds=293.92, cost_basis=300.95, gain_loss=-8.06 → fee = GREATEST(0, 293.92-300.95-(-8.06)) = GREATEST(0, 1.03) = 1.03
+    const feeB1 = (proceeds: number, costBasis: number, gainLoss: number) =>
+      Math.max(0, proceeds - costBasis - gainLoss);
+
+    const feeFd1 = feeB1(0.16, 0.16, 0.01);
+    const feeFd2 = feeB1(293.92, 300.95, -8.06);
+
+    expect(feeFd1).toBeCloseTo(0, 4);
+    expect(feeFd2).toBeCloseTo(1.03, 2);
+    // La suma total no supera la comisión real de la operación (1.03 €)
+    expect(feeFd1 + feeFd2).toBeCloseTo(1.03, 2);
+  });
 });
