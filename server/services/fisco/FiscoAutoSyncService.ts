@@ -33,6 +33,7 @@ import { KrakenReconciliationService } from "./KrakenReconciliationService";
 import { randomUUID } from "crypto";
 import { environment } from "../environment";
 import { telegramService } from "../telegram";
+import { fiscoSyncService, type IncrementalSyncResult } from "../FiscoSyncService";
 import {
   buildFiscoAutoSyncSuccessHTML,
   buildFiscoAutoSyncNoChangesHTML,
@@ -75,6 +76,9 @@ export interface AutoSyncJob {
   error_message: string | null;
   telegram_sent: boolean;
   telegram_message_id: number | null;
+  next_retry_at: Date | null;
+  retry_group_id: string | null;
+  parent_job_id: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -152,8 +156,9 @@ export class FiscoAutoSyncService {
       };
     }
 
-    // Create new job record
-    const jobId = await this.createJob(scheduledFor, timezone, 1, 5);
+    // Create new job record with retry_group_id
+    const retryGroupId = randomUUID();
+    const jobId = await this.createJob(scheduledFor, timezone, 1, 5, retryGroupId);
 
     // Declare outside try block for error handling
     let newOpsCount = 0;
@@ -162,14 +167,44 @@ export class FiscoAutoSyncService {
     try {
       await this.updateJob(jobId, { status: "running", started_at: now });
 
-      // Step 1: Check for new operations (unless forceSync)
+      // Step 1: Execute real incremental sync (unless forceSync)
+      let syncErrors: string[] = [];
       if (!forceSync) {
-        const newOpsCheck = await this.checkForNewOperations(year);
-        newOpsCount = newOpsCheck.total;
-        newOpsByExchange = newOpsCheck.byExchange;
+        const syncResult = await fiscoSyncService.syncIncremental();
+        newOpsCount = syncResult.totalInserted;
+        newOpsByExchange = syncResult.byExchange;
+        syncErrors = syncResult.errors ?? [];
+
+        // If sync failed, mark job failed and schedule retry
+        if (syncErrors.length > 0) {
+          console.log(`[fisco/auto-sync] Sync failed with errors: ${syncErrors.join(", ")}`);
+          await this.updateJob(jobId, {
+            status: "failed",
+            completed_at: new Date(),
+            error_message: `Sync failed: ${syncErrors.join(", ")}`,
+          });
+
+          const nextRetryAt = this.calculateNextRetry(scheduledFor, 1, timezone);
+          await this.sendTelegramError(year, 1, 5, `Sync failed: ${syncErrors.join(", ")}`, nextRetryAt, jobId);
+          await this.updateJob(jobId, { telegram_sent: true, next_retry_at: nextRetryAt });
+
+          return {
+            jobId,
+            status: "failed",
+            newOperationsCount: 0,
+            dryRunResult: null,
+            commitResult: null,
+            finalizationStatus: null,
+            portfolioStatus: null,
+            warnings: syncErrors,
+            error: `Sync failed: ${syncErrors.join(", ")}`,
+            telegramSent: true,
+            nextRetryAt,
+          };
+        }
 
         if (newOpsCount === 0) {
-          console.log(`[fisco/auto-sync] No new operations detected`);
+          console.log(`[fisco/auto-sync] No new operations detected after incremental sync`);
           await this.updateJob(jobId, {
             status: "skipped_no_changes",
             completed_at: new Date(),
@@ -184,8 +219,8 @@ export class FiscoAutoSyncService {
             portfolio_status: validation.portfolio,
           });
 
-          // Send Telegram "no changes"
-          await this.sendTelegramNoChanges(year, validation.finalization, validation.portfolio, jobId);
+          // Send Telegram "no changes" with sync info
+          await this.sendTelegramNoChanges(year, validation.finalization, validation.portfolio, jobId, true, syncErrors);
 
           await this.updateJob(jobId, { telegram_sent: true });
 
@@ -221,22 +256,34 @@ export class FiscoAutoSyncService {
         warnings: dryRunResult.warnings as any[],
       });
 
-      // Step 3: Check if safe for auto-commit
-      const isSafeForAutoCommit = this.isSafeForAutoCommit(dryRunResult);
+      // Step 3: Run full validation to get portfolio and finalization status
+      const fullValidation = await this.runFullValidation(year);
+      await this.updateJob(jobId, {
+        finalization_status: fullValidation.finalization,
+        portfolio_status: fullValidation.portfolio,
+      });
+
+      // Step 4: Check if safe for auto-commit with hardened conditions
+      const isSafeForAutoCommit = this.isSafeForAutoCommit(
+        dryRunResult,
+        fullValidation.portfolio,
+        fullValidation.finalization,
+        syncErrors
+      );
 
       if (!isSafeForAutoCommit) {
-        console.log(`[fisco/auto-sync] Not safe for auto-commit: ${dryRunResult.criticalErrors.length} critical errors`);
+        console.log(`[fisco/auto-sync] Not safe for auto-commit after hardened validation`);
         await this.updateJob(jobId, {
           status: "failed",
           completed_at: new Date(),
-          error_message: `Not safe for auto-commit: ${dryRunResult.criticalErrors.length} critical errors`,
+          error_message: `Not safe for auto-commit: hardened validation failed`,
         });
 
         // Send Telegram error with retry info
-        const nextRetryAt = this.calculateNextRetry(1);
-        await this.sendTelegramError(year, 1, 5, "Not safe for auto-commit", nextRetryAt, jobId);
+        const nextRetryAt = this.calculateNextRetry(scheduledFor, 1, timezone);
+        await this.sendTelegramError(year, 1, 5, "Not safe for auto-commit (hardened validation)", nextRetryAt, jobId);
 
-        await this.updateJob(jobId, { telegram_sent: true });
+        await this.updateJob(jobId, { telegram_sent: true, next_retry_at: nextRetryAt });
 
         return {
           jobId,
@@ -244,10 +291,10 @@ export class FiscoAutoSyncService {
           newOperationsCount: newOpsCount,
           dryRunResult,
           commitResult: null,
-          finalizationStatus: null,
-          portfolioStatus: null,
+          finalizationStatus: fullValidation.finalization,
+          portfolioStatus: fullValidation.portfolio,
           warnings: dryRunResult.warnings,
-          error: "Not safe for auto-commit",
+          error: "Not safe for auto-commit (hardened validation)",
           telegramSent: true,
           nextRetryAt,
         };
@@ -264,28 +311,28 @@ export class FiscoAutoSyncService {
         commit_run_id: commitResult.runId ? parseInt(commitResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
       });
 
-      // Step 5: Run full validation
-      const validation = await this.runFullValidation(year);
+      // Step 5: Run full validation again after commit
+      const postCommitValidation = await this.runFullValidation(year);
       await this.updateJob(jobId, {
-        finalization_status: validation.finalization,
-        portfolio_status: validation.portfolio,
+        finalization_status: postCommitValidation.finalization,
+        portfolio_status: postCommitValidation.portfolio,
       });
 
       // Step 6: Determine final status
-      const hasWarnings = dryRunResult.warnings.length > 0 || validation.finalization.warnings.length > 0;
+      const hasWarnings = dryRunResult.warnings.length > 0 || postCommitValidation.finalization.warnings.length > 0;
       const finalStatus: AutoSyncStatus = hasWarnings ? "success_with_warnings" : "success";
 
       await this.updateJob(jobId, {
         status: finalStatus,
         completed_at: new Date(),
-        warnings: [...dryRunResult.warnings, ...validation.finalization.warnings],
+        warnings: [...dryRunResult.warnings, ...postCommitValidation.finalization.warnings],
       });
 
       // Step 7: Send Telegram
       if (hasWarnings) {
-        await this.sendTelegramWithWarnings(year, newOpsCount, newOpsByExchange, validation.finalization, dryRunResult.warnings, jobId);
+        await this.sendTelegramWithWarnings(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, dryRunResult.warnings, jobId);
       } else {
-        await this.sendTelegramSuccess(year, newOpsCount, newOpsByExchange, validation.finalization, jobId);
+        await this.sendTelegramSuccess(year, newOpsCount, newOpsByExchange, postCommitValidation.finalization, jobId);
       }
 
       await this.updateJob(jobId, { telegram_sent: true });
@@ -296,9 +343,9 @@ export class FiscoAutoSyncService {
         newOperationsCount: newOpsCount,
         dryRunResult,
         commitResult,
-        finalizationStatus: validation.finalization,
-        portfolioStatus: validation.portfolio,
-        warnings: [...dryRunResult.warnings, ...validation.finalization.warnings] as string[],
+        finalizationStatus: postCommitValidation.finalization,
+        portfolioStatus: postCommitValidation.portfolio,
+        warnings: [...dryRunResult.warnings, ...postCommitValidation.finalization.warnings] as string[],
         telegramSent: true,
         nextRetryAt: null,
       };
@@ -312,9 +359,9 @@ export class FiscoAutoSyncService {
       });
 
       // Schedule retry
-      const nextRetryAt = this.calculateNextRetry(1);
+      const nextRetryAt = this.calculateNextRetry(scheduledFor, 1, timezone);
       await this.sendTelegramError(year, 1, 5, error.message, nextRetryAt, jobId);
-      await this.updateJob(jobId, { telegram_sent: true });
+      await this.updateJob(jobId, { telegram_sent: true, next_retry_at: nextRetryAt });
 
       return {
         jobId,
@@ -354,8 +401,11 @@ export class FiscoAutoSyncService {
     const now = new Date();
     const scheduledFor = this.getScheduledTimeForTimezone(now, job.timezone);
 
-    // Create new job record for retry
-    const newJobId = await this.createJob(scheduledFor, job.timezone, nextAttempt, job.max_attempts);
+    // Use existing retry_group_id or create new one
+    const retryGroupId = job.retry_group_id || randomUUID();
+
+    // Create new job record for retry with retry_group_id and parent_job_id
+    const newJobId = await this.createJob(scheduledFor, job.timezone, nextAttempt, job.max_attempts, retryGroupId, jobId);
 
     try {
       await this.updateJob(newJobId, { status: "running", started_at: now });
@@ -373,24 +423,37 @@ export class FiscoAutoSyncService {
         warnings: dryRunResult.warnings,
       });
 
-      // Check if safe for auto-commit
-      const isSafeForAutoCommit = this.isSafeForAutoCommit(dryRunResult);
+      // Run full validation to get portfolio and finalization status
+      const validation = await this.runFullValidation(year);
+      await this.updateJob(newJobId, {
+        finalization_status: validation.finalization,
+        portfolio_status: validation.portfolio,
+      });
+
+      // Check if safe for auto-commit with hardened conditions
+      const syncErrors: string[] = [];
+      const isSafeForAutoCommit = this.isSafeForAutoCommit(
+        dryRunResult,
+        validation.portfolio,
+        validation.finalization,
+        syncErrors
+      );
 
       if (!isSafeForAutoCommit) {
         await this.updateJob(newJobId, {
           status: "failed",
           completed_at: new Date(),
-          error_message: `Not safe for auto-commit: ${dryRunResult.criticalErrors.length} critical errors`,
+          error_message: `Not safe for auto-commit: hardened validation failed`,
         });
 
-        const nextRetryAt = this.calculateNextRetry(nextAttempt);
+        const nextRetryAt = this.calculateNextRetry(job.scheduled_for, nextAttempt, job.timezone);
         if (nextRetryAt) {
-          await this.sendTelegramError(year, nextAttempt, job.max_attempts, "Not safe for auto-commit", nextRetryAt, newJobId);
+          await this.sendTelegramError(year, nextAttempt, job.max_attempts, "Not safe for auto-commit (hardened validation)", nextRetryAt, newJobId);
         } else {
           await this.sendTelegramAllFailed(year, nextAttempt, job.max_attempts, newJobId);
         }
 
-        await this.updateJob(newJobId, { telegram_sent: true });
+        await this.updateJob(newJobId, { telegram_sent: true, next_retry_at: nextRetryAt });
 
         return {
           jobId: newJobId,
@@ -418,23 +481,23 @@ export class FiscoAutoSyncService {
         commit_run_id: commitResult.runId ? parseInt(commitResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
       });
 
-      // Run validation
-      const validation = await this.runFullValidation(year);
+      // Run validation again after commit
+      const postCommitValidation = await this.runFullValidation(year);
       await this.updateJob(newJobId, {
-        finalization_status: validation.finalization,
-        portfolio_status: validation.portfolio,
+        finalization_status: postCommitValidation.finalization,
+        portfolio_status: postCommitValidation.portfolio,
       });
 
-      const hasWarnings = dryRunResult.warnings.length > 0 || validation.finalization.warnings.length > 0;
+      const hasWarnings = dryRunResult.warnings.length > 0 || postCommitValidation.finalization.warnings.length > 0;
       const finalStatus: AutoSyncStatus = hasWarnings ? "success_with_warnings" : "success";
 
       await this.updateJob(newJobId, {
         status: finalStatus,
         completed_at: new Date(),
-        warnings: [...dryRunResult.warnings, ...validation.finalization.warnings],
+        warnings: [...dryRunResult.warnings, ...postCommitValidation.finalization.warnings],
       });
 
-      await this.sendTelegramSuccess(year, 0, {}, validation.finalization, newJobId);
+      await this.sendTelegramSuccess(year, 0, {}, postCommitValidation.finalization, newJobId);
       await this.updateJob(newJobId, { telegram_sent: true });
 
       return {
@@ -443,9 +506,9 @@ export class FiscoAutoSyncService {
         newOperationsCount: 0,
         dryRunResult,
         commitResult,
-        finalizationStatus: validation.finalization,
-        portfolioStatus: validation.portfolio,
-        warnings: [...dryRunResult.warnings, ...validation.finalization.warnings] as string[],
+        finalizationStatus: postCommitValidation.finalization,
+        portfolioStatus: postCommitValidation.portfolio,
+        warnings: [...dryRunResult.warnings, ...postCommitValidation.finalization.warnings] as string[],
         telegramSent: true,
         nextRetryAt: null,
       };
@@ -458,14 +521,14 @@ export class FiscoAutoSyncService {
         error_message: error.message,
       });
 
-      const nextRetryAt = this.calculateNextRetry(nextAttempt);
+      const nextRetryAt = this.calculateNextRetry(job.scheduled_for, nextAttempt, job.timezone);
       if (nextRetryAt) {
         await this.sendTelegramError(year, nextAttempt, job.max_attempts, error.message, nextRetryAt, newJobId);
       } else {
         await this.sendTelegramAllFailed(year, nextAttempt, job.max_attempts, newJobId);
       }
 
-      await this.updateJob(newJobId, { telegram_sent: true });
+      await this.updateJob(newJobId, { telegram_sent: true, next_retry_at: nextRetryAt });
 
       return {
         jobId: newJobId,
@@ -487,12 +550,19 @@ export class FiscoAutoSyncService {
   // DB operations
   // ============================================================
 
-  private async createJob(scheduledFor: Date, timezone: string, attemptNumber: number, maxAttempts: number): Promise<number> {
+  private async createJob(
+    scheduledFor: Date,
+    timezone: string,
+    attemptNumber: number,
+    maxAttempts: number,
+    retryGroupId?: string,
+    parentJobId?: number
+  ): Promise<number> {
     const result = await pool.query(
-      `INSERT INTO fisco_auto_sync_jobs (scheduled_for, timezone, attempt_number, max_attempts, status)
-       VALUES ($1, $2, $3, $4, 'pending')
+      `INSERT INTO fisco_auto_sync_jobs (scheduled_for, timezone, attempt_number, max_attempts, status, retry_group_id, parent_job_id)
+       VALUES ($1, $2, $3, $4, 'pending', $5, $6)
        RETURNING id`,
-      [scheduledFor, timezone, attemptNumber, maxAttempts]
+      [scheduledFor, timezone, attemptNumber, maxAttempts, retryGroupId || null, parentJobId || null]
     );
     return result.rows[0].id;
   }
@@ -532,7 +602,7 @@ export class FiscoAutoSyncService {
       `SELECT * FROM fisco_auto_sync_jobs
        WHERE DATE(scheduled_for AT TIME ZONE $1) = DATE($2 AT TIME ZONE $1)
        AND timezone = $1
-       AND status IN ('pending', 'running')
+       AND status IN ('pending', 'running', 'success', 'success_with_warnings', 'skipped_no_changes')
        ORDER BY created_at DESC
        LIMIT 1`,
       [timezone, date]
@@ -572,7 +642,7 @@ export class FiscoAutoSyncService {
     // Calculate next retry if there's a failed job
     let nextRetry: Date | null = null;
     if (lastJob && lastJob.status === "failed" && lastJob.attempt_number < lastJob.max_attempts) {
-      nextRetry = this.calculateNextRetry(lastJob.attempt_number);
+      nextRetry = this.calculateNextRetry(lastJob.scheduled_for, lastJob.attempt_number, lastJob.timezone);
     }
 
     return { lastJob, nextScheduled, nextRetry };
@@ -607,6 +677,9 @@ export class FiscoAutoSyncService {
       error_message: row.error_message,
       telegram_sent: row.telegram_sent,
       telegram_message_id: row.telegram_message_id,
+      next_retry_at: row.next_retry_at,
+      retry_group_id: row.retry_group_id,
+      parent_job_id: row.parent_job_id,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
@@ -619,66 +692,105 @@ export class FiscoAutoSyncService {
     return targetDate;
   }
 
-  private calculateNextRetry(attemptNumber: number): Date | null {
-    if (attemptNumber >= RETRY_SCHEDULE_MINUTES.length) {
+  private calculateNextRetry(baseScheduledFor: Date, attemptNumber: number, timezone = "Europe/Madrid"): Date | null {
+    const retryOffsetsMinutes: Record<number, number> = {
+      1: 15,   // 00:15
+      2: 60,   // 01:00
+      3: 180,  // 03:00
+      4: 360,  // 06:00
+    };
+
+    if (attemptNumber > 4) {
       return null;
     }
-    const now = new Date();
-    const nextRetryMinutes = RETRY_SCHEDULE_MINUTES[attemptNumber];
-    const nextRetry = new Date(now.getTime() + nextRetryMinutes * 60 * 1000);
+
+    const offsetMinutes = retryOffsetsMinutes[attemptNumber];
+    if (offsetMinutes === undefined) {
+      return null;
+    }
+
+    // Calculate from baseScheduledFor (00:00 Europe/Madrid), not from now
+    const baseDate = new Date(baseScheduledFor.toLocaleString("en-US", { timeZone: timezone }));
+    baseDate.setHours(0, 0, 0, 0);
+    const nextRetry = new Date(baseDate.getTime() + offsetMinutes * 60 * 1000);
     return nextRetry;
   }
 
-  private isSafeForAutoCommit(dryRunResult: RebuildResult): boolean {
-    return (
-      dryRunResult.criticalErrorsCount === 0 &&
-      dryRunResult.isSafeForReport === true
-    );
+  // ============================================================
+  // Testing helpers (public for unit testing)
+  // ============================================================
+
+  /**
+   * Testing method: calculate next retry time for a given attempt
+   * @internal
+   */
+  public testCalculateNextRetry(baseScheduledFor: Date, attemptNumber: number, timezone = "Europe/Madrid"): Date | null {
+    return this.calculateNextRetry(baseScheduledFor, attemptNumber, timezone);
   }
 
-  private async checkForNewOperations(year: number): Promise<{
-    total: number;
-    byExchange: Record<string, { total: number; buys: number; sells: number; others: number }>;
-  }> {
-    // Check last sync timestamp
-    const lastSyncResult = await pool.query(
-      `SELECT MAX(created_at) as last_sync FROM fisco_operations`
-    );
-    const lastSync = lastSyncResult.rows[0]?.last_sync;
-
-    if (!lastSync) {
-      // First sync ever - assume there are operations
-      return { total: 1, byExchange: { kraken: { total: 1, buys: 0, sells: 0, others: 1 } } };
+  private isSafeForAutoCommit(
+    dryRunResult: RebuildResult,
+    portfolioStatus: PortfolioValidationResult | null,
+    finalizationStatus: FinalizationStatus | null,
+    syncErrors: string[]
+  ): boolean {
+    // 1. No errores críticos de FIFO
+    if (dryRunResult.criticalErrorsCount !== 0) {
+      console.log(`[isSafeForAutoCommit] Blocked: ${dryRunResult.criticalErrorsCount} critical errors`);
+      return false;
     }
 
-    // Count operations added since last sync
-    const result = await pool.query(
-      `SELECT
-         exchange,
-         COUNT(*) as total,
-         SUM(CASE WHEN op_type = 'trade_buy' THEN 1 ELSE 0 END) as buys,
-         SUM(CASE WHEN op_type = 'trade_sell' THEN 1 ELSE 0 END) as sells,
-         SUM(CASE WHEN op_type NOT IN ('trade_buy', 'trade_sell') THEN 1 ELSE 0 END) as others
-       FROM fisco_operations
-       WHERE created_at > $1
-       GROUP BY exchange`,
-      [lastSync]
-    );
-
-    const byExchange: Record<string, { total: number; buys: number; sells: number; others: number }> = {};
-    let total = 0;
-
-    for (const row of result.rows) {
-      byExchange[row.exchange] = {
-        total: parseInt(row.total),
-        buys: parseInt(row.buys),
-        sells: parseInt(row.sells),
-        others: parseInt(row.others),
-      };
-      total += parseInt(row.total);
+    // 2. isSafeForReport debe ser true
+    if (!dryRunResult.isSafeForReport) {
+      console.log('[isSafeForAutoCommit] Blocked: isSafeForReport is false');
+      return false;
     }
 
-    return { total, byExchange };
+    // 3. No errores de importación de exchanges
+    if (syncErrors.length > 0) {
+      console.log(`[isSafeForAutoCommit] Blocked: ${syncErrors.length} sync errors`);
+      return false;
+    }
+
+    // 4. No errores críticos de tipo STABLECOIN_ZERO_COST_BASIS
+    const stablecoinErrors = dryRunResult.criticalErrors.filter(e => e.code === "STABLECOIN_ZERO_COST_BASIS");
+    if (stablecoinErrors.length > 0) {
+      console.log(`[isSafeForAutoCommit] Blocked: ${stablecoinErrors.length} stablecoin zero cost basis errors`);
+      return false;
+    }
+
+    // 5. No errores críticos de tipo NEGATIVE_INVENTORY (FIFO negativo)
+    const negativeInventoryErrors = dryRunResult.criticalErrors.filter(e => e.code === "NEGATIVE_INVENTORY");
+    if (negativeInventoryErrors.length > 0) {
+      console.log(`[isSafeForAutoCommit] Blocked: ${negativeInventoryErrors.length} negative inventory errors`);
+      return false;
+    }
+
+    // 6. No portfolio DIFFERENCES bloqueante
+    if (portfolioStatus && portfolioStatus.portfolio_status === "DIFFERENCES" && !portfolioStatus.report_can_be_finalized) {
+      console.log('[isSafeForAutoCommit] Blocked: portfolio differences blocking finalization');
+      return false;
+    }
+
+    // 7. No conservative disposals nuevos pendientes de revisión manual
+    if (finalizationStatus && finalizationStatus.conservative_disposals_status === "ACTIVE") {
+      console.log('[isSafeForAutoCommit] Blocked: active conservative disposals pending manual review');
+      return false;
+    }
+
+    // 8. Finalization status debe ser finalizable
+    if (finalizationStatus && !finalizationStatus.report_can_be_finalized) {
+      console.log('[isSafeForAutoCommit] Blocked: report cannot be finalized');
+      return false;
+    }
+
+    // 9. No withdrawals en estado CONSERVATIVE o PENDING
+    if (finalizationStatus && (finalizationStatus.withdrawals_status === "CONSERVATIVE" || finalizationStatus.withdrawals_status === "PENDING")) {
+      console.log('[isSafeForAutoCommit] Blocked: withdrawals in conservative/pending status');
+      return false;
+    }
+
+    return true;
   }
 
   private async runLightValidation(year: number): Promise<{
@@ -730,6 +842,7 @@ export class FiscoAutoSyncService {
         finalTaxableGainLossEur: finalization.final_taxable_gain_loss_eur.toFixed(2) + " €",
         warningsCount: finalization.warnings.length,
         reportCanBeFinalized: finalization.report_can_be_finalized,
+        timestamp: new Date(),
       }, "FiscoAutoSyncSuccess");
 
       const message = buildFiscoAutoSyncSuccessHTML(context);
@@ -744,13 +857,17 @@ export class FiscoAutoSyncService {
     year: number,
     finalization: FinalizationStatus,
     portfolio: PortfolioValidationResult,
-    jobId: number
+    jobId: number,
+    syncExecuted: boolean = true,
+    syncErrors: string[] = []
   ): Promise<void> {
     try {
       const context = validateContext(FiscoAutoSyncNoChangesContextSchema, {
         env: environment.envTag,
         year,
         scheduledTime: new Date(),
+        syncExecuted,
+        syncErrors: syncErrors.length > 0 ? syncErrors : undefined,
         fifoStatus: finalization.fifo_status,
         portfolioStatus: finalization.portfolio_status,
         finalTaxableGainLossEur: finalization.final_taxable_gain_loss_eur.toFixed(2) + " €",

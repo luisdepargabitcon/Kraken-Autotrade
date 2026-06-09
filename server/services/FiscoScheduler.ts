@@ -1,5 +1,6 @@
 /**
- * FISCO Scheduler - Job automático de sincronización diaria a las 08:00
+ * FISCO Scheduler - Job automático de sincronización diaria a las 00:00
+ * Solo existe un job fiscal diario: auto-sync a las 00:00 Europe/Madrid
  */
 
 import * as cron from "node-cron";
@@ -11,9 +12,9 @@ import { FiscoAutoSyncService } from "./fisco/FiscoAutoSyncService";
 
 export class FiscoScheduler {
   private static instance: FiscoScheduler;
-  private dailySyncJob: cron.ScheduledTask | null = null;
   private annualReportJob: cron.ScheduledTask | null = null;
   private autoSyncJob: cron.ScheduledTask | null = null;
+  private retryJob: cron.ScheduledTask | null = null;
   private isInitialized = false;
 
   public static getInstance(): FiscoScheduler {
@@ -32,9 +33,9 @@ export class FiscoScheduler {
       return;
     }
 
-    console.log('[FISCO Scheduler] Initializing daily sync jobs...');
+    console.log('[FISCO Scheduler] Initializing auto-sync job...');
 
-    // Job auto-sync a las 00:00 (Europe/Madrid) - nuevo sistema de sincronización automática
+    // Job auto-sync a las 00:00 (Europe/Madrid) - único job fiscal diario
     this.autoSyncJob = cron.schedule('0 0 * * *', async () => {
       await this.executeAutoSync();
     }, {
@@ -42,16 +43,11 @@ export class FiscoScheduler {
     });
     this.autoSyncJob.start();
 
-    // Job diario a las 08:30 (Europe/Madrid)
-    // Con timezone: "Europe/Madrid", cron interpreta la hora directamente en esa zona
-    this.dailySyncJob = cron.schedule('30 8 * * *', async () => {
-      await this.executeDailySync();
-    }, {
-      timezone: "Europe/Madrid"
+    // Job de reintentos: cada 5 minutos busca jobs fallidos con next_retry_at <= NOW
+    this.retryJob = cron.schedule('*/5 * * * *', async () => {
+      await this.executeRetryJob();
     });
-
-    // Iniciar el job
-    this.dailySyncJob.start();
+    this.retryJob.start();
 
     // Job anual: 1 de enero a las 10:00 (Europe/Madrid) — enviar informe del año anterior
     this.annualReportJob = cron.schedule('0 10 1 1 *', async () => {
@@ -63,7 +59,7 @@ export class FiscoScheduler {
 
     this.isInitialized = true;
     console.log('[FISCO Scheduler] Auto-sync job scheduled for 00:00 Europe/Madrid');
-    console.log('[FISCO Scheduler] Daily sync job scheduled for 08:30 Europe/Madrid');
+    console.log('[FISCO Scheduler] Retry job scheduled every 5 minutes');
     console.log('[FISCO Scheduler] Annual report job scheduled for 10:00 on January 1st Europe/Madrid');
   }
 
@@ -78,9 +74,9 @@ export class FiscoScheduler {
       this.autoSyncJob = null;
     }
 
-    if (this.dailySyncJob) {
-      this.dailySyncJob.stop();
-      this.dailySyncJob = null;
+    if (this.retryJob) {
+      this.retryJob.stop();
+      this.retryJob = null;
     }
 
     if (this.annualReportJob) {
@@ -90,68 +86,6 @@ export class FiscoScheduler {
 
     this.isInitialized = false;
     console.log('[FISCO Scheduler] Shutdown complete');
-  }
-
-  /**
-   * Ejecuta la sincronización diaria
-   */
-  private async executeDailySync(): Promise<void> {
-    const runId = randomUUID();
-    console.log(`[FISCO Scheduler] Starting daily sync (runId: ${runId})`);
-
-    try {
-      // Ejecutar sincronización
-      const summary = await fiscoSyncService.syncAllExchanges({
-        runId,
-        mode: 'auto',
-        triggeredBy: 'scheduler',
-        fullSync: true
-      });
-
-      // Detectar RATE_LIMIT Kraken en resultados y programar reintento
-      const krakenResult = summary.results.find(r => r.exchange === 'Kraken' && r.status === 'error');
-      if (krakenResult?.error) {
-        const isRateLimit = krakenResult.error.includes('EAPI:Rate limit') || krakenResult.error.includes('Rate limit exceed');
-        if (isRateLimit) {
-          try {
-            const { nextRetryAt, retryCount } = await fiscoKrakenRetryWorker.scheduleRetry('RATE_LIMIT', krakenResult.error);
-            await fiscoTelegramNotifier.sendKrakenRetryScheduled(nextRetryAt, retryCount + 1, 'RATE_LIMIT').catch(() => {});
-          } catch (retryErr: any) {
-            console.error('[FISCO Scheduler] Failed to schedule Kraken retry:', retryErr.message);
-          }
-        }
-      }
-
-      // Enviar alerta de sincronización diaria
-      await fiscoTelegramNotifier.sendSyncDailyAlert({
-        results: summary.results,
-        mode: 'auto',
-        runId: summary.runId,
-        triggeredBy: 'scheduler'
-      });
-
-      console.log(`[FISCO Scheduler] Daily sync completed: ${summary.totalOperations} operations imported`);
-
-    } catch (error: any) {
-      console.error(`[FISCO Scheduler] Daily sync failed:`, error);
-
-      // Detectar RATE_LIMIT Kraken incluso en fallo global del sync
-      const isRateLimit = error.message?.includes('EAPI:Rate limit') || error.message?.includes('Rate limit exceed') || (error as any).errorCode === 'RATE_LIMIT';
-      if (isRateLimit) {
-        try {
-          const { nextRetryAt, retryCount } = await fiscoKrakenRetryWorker.scheduleRetry('RATE_LIMIT', error.message);
-          await fiscoTelegramNotifier.sendKrakenRetryScheduled(nextRetryAt, retryCount + 1, 'RATE_LIMIT').catch(() => {});
-        } catch (retryErr: any) {
-          console.error('[FISCO Scheduler] Failed to schedule Kraken retry in catch:', retryErr.message);
-        }
-      }
-
-      // Enviar alerta de error
-      await fiscoTelegramNotifier.sendSyncErrorAlert(
-        `Daily sync failed: ${error.message}`,
-        runId
-      );
-    }
   }
 
   /**
@@ -166,6 +100,45 @@ export class FiscoScheduler {
       console.log('[FISCO Scheduler] Auto-sync completed');
     } catch (error: any) {
       console.error('[FISCO Scheduler] Auto-sync failed:', error);
+    }
+  }
+
+  /**
+   * Ejecuta reintentos automáticos para jobs fallidos con next_retry_at <= NOW
+   */
+  private async executeRetryJob(): Promise<void> {
+    try {
+      const autoSyncService = FiscoAutoSyncService.getInstance();
+      const { pool } = await import("../db");
+
+      // Buscar jobs fallidos con next_retry_at <= NOW y que no hayan sido reintentados aún
+      // Excluir grupos que ya tengan un job success/success_with_warnings/skipped_no_changes posterior
+      const result = await pool.query(
+        `SELECT id FROM fisco_auto_sync_jobs failed
+         WHERE failed.status = 'failed'
+         AND failed.next_retry_at IS NOT NULL
+         AND failed.next_retry_at <= NOW()
+         AND NOT EXISTS (
+           SELECT 1
+           FROM fisco_auto_sync_jobs ok
+           WHERE ok.retry_group_id = failed.retry_group_id
+           AND ok.status IN ('success','success_with_warnings','skipped_no_changes')
+         )
+         ORDER BY failed.next_retry_at ASC
+         LIMIT 1`
+      );
+
+      if (result.rows.length === 0) {
+        return; // No hay reintentos pendientes
+      }
+
+      const jobId = result.rows[0].id;
+      console.log(`[FISCO Scheduler] Executing retry for job ${jobId}`);
+
+      await autoSyncService.retryFailedJob(jobId);
+      console.log(`[FISCO Scheduler] Retry completed for job ${jobId}`);
+    } catch (error: any) {
+      console.error('[FISCO Scheduler] Retry job failed:', error);
     }
   }
 
@@ -258,33 +231,33 @@ export class FiscoScheduler {
   getStatus(): {
     isInitialized: boolean;
     autoSyncJobActive: boolean;
-    dailySyncJobActive: boolean;
+    retryJobActive: boolean;
     annualReportJobActive: boolean;
     nextRun?: string;
   } {
     return {
       isInitialized: this.isInitialized,
       autoSyncJobActive: this.autoSyncJob !== null,
-      dailySyncJobActive: this.dailySyncJob !== null,
+      retryJobActive: this.retryJob !== null,
       annualReportJobActive: this.annualReportJob !== null,
       nextRun: this.getNextRunTime()
     };
   }
 
   /**
-   * Calcula próxima ejecución del job diario
+   * Calcula próxima ejecución del job auto-sync (00:00 Europe/Madrid)
    */
   private getNextRunTime(): string | undefined {
-    if (!this.dailySyncJob) return undefined;
+    if (!this.autoSyncJob) return undefined;
 
     try {
-      // Calcular próxima 08:00 Europe/Madrid
+      // Calcular próxima 00:00 Europe/Madrid
       const now = new Date();
       const nextRun = new Date();
-      
-      // Establecer hora 08:30 Europe/Madrid
-      nextRun.setHours(8, 30, 0, 0);
-      
+
+      // Establecer hora 00:00 Europe/Madrid
+      nextRun.setHours(0, 0, 0, 0);
+
       // Si ya pasó hoy, programar para mañana
       if (nextRun <= now) {
         nextRun.setDate(nextRun.getDate() + 1);
@@ -295,18 +268,6 @@ export class FiscoScheduler {
       console.error('[FISCO Scheduler] Error calculating next run time:', error);
       return undefined;
     }
-  }
-
-  /**
-   * Forzar ejecución del job diario (para testing)
-   */
-  async triggerDailySync(): Promise<void> {
-    if (!this.isInitialized) {
-      throw new Error('Scheduler not initialized');
-    }
-
-    console.log('[FISCO Scheduler] Manual trigger of daily sync');
-    await this.executeDailySync();
   }
 }
 

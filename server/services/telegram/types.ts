@@ -341,6 +341,8 @@ export const FiscoAutoSyncNoChangesContextSchema = z.object({
   env: safeString,
   year: z.number().int(),
   scheduledTime: z.date(),
+  syncExecuted: z.boolean(), // Indica si se ejecutó el import incremental
+  syncErrors: z.array(z.string()).optional(), // Errores de importación si los hubo
   fifoStatus: safeString,
   portfolioStatus: safeString,
   finalTaxableGainLossEur: safeString,

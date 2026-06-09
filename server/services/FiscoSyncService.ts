@@ -14,7 +14,7 @@ import {
   fiscoSyncHistory,
   fiscoOperations
 } from "@shared/schema";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface SyncOptions {
@@ -22,6 +22,14 @@ export interface SyncOptions {
   mode: 'auto' | 'manual';
   triggeredBy: 'scheduler' | 'ui_button' | 'telegram_command';
   fullSync?: boolean; // Si true, sincroniza todo el histórico
+}
+
+export interface IncrementalSyncResult {
+  totalInserted: number;
+  byExchange: Record<string, { total: number; buys: number; sells: number; others: number }>;
+  byType: Record<string, number>;
+  errors: string[];
+  warnings: string[];
 }
 
 export interface SyncSummary {
@@ -412,8 +420,245 @@ export class FiscoSyncService {
       .from(fiscoSyncHistory)
       .where(eq(fiscoSyncHistory.runId, runId))
       .limit(1);
-    
+
     return results[0];
+  }
+
+  /**
+   * Sincronización incremental - ejecuta import real y devuelve conteo de operaciones nuevas
+   * Reutiliza la lógica existente de syncKraken y syncRevolutX pero con tracking de inserts
+   */
+  async syncIncremental(): Promise<IncrementalSyncResult> {
+    console.log('[FiscoSyncService] Starting incremental sync');
+
+    const result: IncrementalSyncResult = {
+      totalInserted: 0,
+      byExchange: {},
+      byType: {},
+      errors: [],
+      warnings: []
+    };
+
+    try {
+      // Sincronizar Kraken
+      if (krakenService.isInitialized()) {
+        try {
+          const krakenResult = await this.syncKrakenIncremental();
+          result.totalInserted += krakenResult.totalInserted;
+          result.byExchange['kraken'] = krakenResult.byType;
+          Object.assign(result.byType, krakenResult.byType);
+          result.warnings.push(...krakenResult.warnings);
+        } catch (error: any) {
+          const errorMsg = `Kraken incremental sync failed: ${error.message}`;
+          result.errors.push(errorMsg);
+        }
+      }
+
+      // Sincronizar RevolutX
+      if (revolutXService.isInitialized()) {
+        try {
+          const revolutxResult = await this.syncRevolutXIncremental();
+          result.totalInserted += revolutxResult.totalInserted;
+          result.byExchange['revolutx'] = revolutxResult.byType;
+          Object.assign(result.byType, revolutxResult.byType);
+          result.warnings.push(...revolutxResult.warnings);
+        } catch (error: any) {
+          const errorMsg = `RevolutX incremental sync failed: ${error.message}`;
+          result.errors.push(errorMsg);
+        }
+      }
+
+      console.log(`[FiscoSyncService] Incremental sync completed: ${result.totalInserted} new operations`);
+      return result;
+    } catch (error: any) {
+      console.error('[FiscoSyncService] Incremental sync error:', error);
+      result.errors.push(error.message);
+      return result;
+    }
+  }
+
+  /**
+   * Sincronización incremental de Kraken con tracking de inserts
+   */
+  private async syncKrakenIncremental(): Promise<{
+    totalInserted: number;
+    byType: { total: number; buys: number; sells: number; others: number };
+    warnings: string[];
+  }> {
+    console.log('[FiscoSyncService] Starting Kraken incremental sync');
+
+    let totalInserted = 0;
+    const byType = { total: 0, buys: 0, sells: 0, others: 0 };
+    const warnings: string[] = [];
+
+    try {
+      // Obtener ledger de Kraken (fetchAll=true para incremental)
+      const ledgerResp = await krakenService.getLedgers({ fetchAll: true });
+      const ledger = ledgerResp?.ledger || {};
+
+      // Convertir ledger entries al formato esperado por normalizeKrakenLedger
+      const ledgerEntries = Object.entries(ledger).map(([id, e]: [string, any]) => ({
+        id,
+        refid: e.refid,
+        type: e.type,
+        subtype: e.subtype,
+        aclass: e.aclass,
+        asset: e.asset,
+        amount: typeof e.amount === "string" ? parseFloat(e.amount) : e.amount,
+        fee: typeof e.fee === "string" ? parseFloat(e.fee) : e.fee,
+        balance: typeof e.balance === "string" ? parseFloat(e.balance) : e.balance,
+        time: e.time,
+      }));
+
+      // Normalizar operaciones
+      const normalizedOps = await normalizeKrakenLedger(ledgerEntries);
+
+      // Insertar operaciones con tracking de inserts
+      for (const op of normalizedOps) {
+        try {
+          // Verificar si ya existe (idempotencia por externalId)
+          const existing = await db
+            .select()
+            .from(fiscoOperations)
+            .where(and(
+              eq(fiscoOperations.exchange, 'kraken'),
+              eq(fiscoOperations.externalId, op.externalId)
+            ))
+            .limit(1);
+
+          if (existing.length > 0) {
+            continue; // Ya existe, no insertar
+          }
+
+          // Insertar nueva operación
+          await db.insert(fiscoOperations).values({
+            exchange: 'kraken',
+            externalId: op.externalId,
+            opType: op.opType,
+            asset: op.asset,
+            amount: op.amount.toString(),
+            priceEur: op.priceEur?.toString() ?? null,
+            totalEur: op.totalEur?.toString() ?? null,
+            feeEur: op.feeEur?.toString() || "0",
+            counterAsset: op.counterAsset,
+            pair: op.pair,
+            executedAt: op.executedAt,
+            rawData: op.rawData
+          });
+
+          totalInserted++;
+          byType.total++;
+
+          switch (op.opType) {
+            case 'trade_buy':
+              byType.buys++;
+              break;
+            case 'trade_sell':
+              byType.sells++;
+              break;
+            default:
+              byType.others++;
+          }
+        } catch (error: any) {
+          warnings.push(`Failed to insert Kraken operation ${op.externalId}: ${error.message}`);
+        }
+      }
+
+      console.log(`[FiscoSyncService] Kraken incremental sync: ${totalInserted} new operations`);
+      return { totalInserted, byType, warnings };
+    } catch (error: any) {
+      console.error('[FiscoSyncService] Kraken incremental sync error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sincronización incremental de RevolutX con tracking de inserts
+   */
+  private async syncRevolutXIncremental(): Promise<{
+    totalInserted: number;
+    byType: { total: number; buys: number; sells: number; others: number };
+    warnings: string[];
+  }> {
+    console.log('[FiscoSyncService] Starting RevolutX incremental sync');
+
+    let totalInserted = 0;
+    const byType = { total: 0, buys: 0, sells: 0, others: 0 };
+    const warnings: string[] = [];
+
+    try {
+      // Obtener órdenes históricas de RevolutX
+      const revolutResult = await revolutXService.getHistoricalOrders({
+        startMs: new Date('2020-01-01').getTime(),
+        endMs: Date.now(),
+        states: ['filled']
+      });
+      const orders = revolutResult.orders;
+
+      if (revolutResult.partialHistory) {
+        warnings.push(`REVOLUT_PARTIAL_HISTORY: ${revolutResult.skippedWindows.join(', ')}`);
+      }
+
+      // Normalizar operaciones
+      const normalizedOps = await normalizeRevolutXOrders(orders);
+
+      // Insertar operaciones con tracking de inserts
+      for (const op of normalizedOps) {
+        try {
+          // Verificar si ya existe (idempotencia por externalId)
+          const existing = await db
+            .select()
+            .from(fiscoOperations)
+            .where(and(
+              eq(fiscoOperations.exchange, 'revolutx'),
+              eq(fiscoOperations.externalId, op.externalId)
+            ))
+            .limit(1);
+
+          if (existing.length > 0) {
+            continue; // Ya existe, no insertar
+          }
+
+          // Insertar nueva operación
+          await db.insert(fiscoOperations).values({
+            exchange: 'revolutx',
+            externalId: op.externalId,
+            opType: op.opType,
+            asset: op.asset,
+            amount: op.amount.toString(),
+            priceEur: op.priceEur?.toString() ?? null,
+            totalEur: op.totalEur?.toString() ?? null,
+            feeEur: op.feeEur?.toString() || "0",
+            counterAsset: op.counterAsset,
+            pair: op.pair,
+            executedAt: op.executedAt,
+            rawData: op.rawData
+          });
+
+          totalInserted++;
+          byType.total++;
+
+          switch (op.opType) {
+            case 'trade_buy':
+              byType.buys++;
+              break;
+            case 'trade_sell':
+              byType.sells++;
+              break;
+            default:
+              byType.others++;
+          }
+        } catch (error: any) {
+          warnings.push(`Failed to insert RevolutX operation ${op.externalId}: ${error.message}`);
+        }
+      }
+
+      console.log(`[FiscoSyncService] RevolutX incremental sync: ${totalInserted} new operations`);
+      return { totalInserted, byType, warnings };
+    } catch (error: any) {
+      console.error('[FiscoSyncService] RevolutX incremental sync error:', error);
+      throw error;
+    }
   }
 }
 

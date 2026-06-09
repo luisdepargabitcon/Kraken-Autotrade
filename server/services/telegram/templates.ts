@@ -775,7 +775,15 @@ export function buildFiscoAutoSyncSuccessHTML(context: FiscoAutoSyncSuccessConte
 }
 
 export function buildFiscoAutoSyncNoChangesHTML(context: FiscoAutoSyncNoChangesContext): string {
-  const { env, year, scheduledTime, fifoStatus, portfolioStatus, finalTaxableGainLossEur, reportCanBeFinalized } = context;
+  const { env, year, scheduledTime, syncExecuted, syncErrors, fifoStatus, portfolioStatus, finalTaxableGainLossEur, reportCanBeFinalized } = context;
+
+  const syncStatusLine = syncExecuted
+    ? `✅ Importación incremental ejecutada: <b>Sí</b>`
+    : `ℹ️ Importación incremental ejecutada: <b>No</b>`;
+
+  const syncErrorsLines = syncErrors && syncErrors.length > 0
+    ? syncErrors.map((e) => `• ${escapeHtml(e)}`).join("\n")
+    : null;
 
   return [
     `✅✅✅ <b>FISCO SINCRONIZADO SIN CAMBIOS</b> ✅✅✅`,
@@ -784,8 +792,11 @@ export function buildFiscoAutoSyncNoChangesHTML(context: FiscoAutoSyncNoChangesC
     `📅 Año fiscal: <b>${year}</b>`,
     `⏰ Horario: 00:00 Europe/Madrid`,
     ``,
+    syncStatusLine,
+    ``,
     `ℹ️ No se han detectado nuevas operaciones desde la última sincronización.`,
     ``,
+    syncErrorsLines ? `⚠️ <b>Errores de importación:</b>\n${syncErrorsLines}\n` : "",
     `📊 FIFO: <code>${escapeHtml(fifoStatus)}</code>`,
     `📦 Portfolio: <code>${escapeHtml(portfolioStatus)}</code>`,
     `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`,
