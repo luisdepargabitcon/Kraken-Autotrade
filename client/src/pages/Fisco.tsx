@@ -1152,11 +1152,15 @@ export default function Fisco() {
               </Button>
 
               <Button
-                onClick={() => report && generateBit2MePDF(report, reconciliationQ.data)}
+                onClick={() => {
+                  const year = selectedYear;
+                  const exchange = selectedExchange || "all";
+                  window.open(`/api/fisco/report/annual/html?year=${year}&exchange=${exchange}`, "_blank");
+                }}
                 disabled={!report}
                 className="gap-2 h-11 bg-blue-600 hover:bg-blue-700"
               >
-                <Download className="h-4 w-4" /> Generar PDF
+                <Download className="h-4 w-4" /> Generar informe HTML
               </Button>
 
               <Button

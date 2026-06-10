@@ -78,16 +78,81 @@ export const HTML_STYLE = `
   .annexe{background:#f9f9f9;border:1px solid #ddd;border-radius:8px;padding:1.5rem;margin-top:2rem;font-size:.82rem}
   .section-block{border:1px solid #e0e0e0;border-radius:8px;padding:1.25rem;margin:1.25rem 0}
   .gain-pos{color:#721c24;font-weight:700}.gain-neg{color:#155724;font-weight:700}.gain-zero{color:#555;font-weight:700}
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
   @media print {
-    .toolbar,.no-print{display:none!important}
-    details{display:block!important}
-    details summary{display:none}
-    .details-body{display:block!important;padding:0}
-    table{page-break-inside:auto}
-    tr{page-break-inside:avoid;page-break-after:auto}
-    .section-block,.year-section{page-break-before:auto;page-break-inside:avoid}
-    .portada{background:none;border:1px solid #ccc}
-    body{max-width:100%;font-size:11px}
+    html, body {
+      width: 190mm;
+      max-width: 190mm;
+      margin: 0 auto;
+      padding: 0;
+      font-size: 10px;
+      line-height: 1.25;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .toolbar,
+    .no-print {
+      display: none !important;
+    }
+    .portada {
+      padding: 10mm;
+      margin-bottom: 8mm;
+      page-break-after: avoid;
+    }
+    .grid2,
+    .grid3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4mm;
+    }
+    .card {
+      padding: 4mm;
+      page-break-inside: avoid;
+    }
+    .section-block {
+      page-break-inside: avoid;
+      margin: 6mm 0;
+      padding: 4mm;
+    }
+    table {
+      width: 100%;
+      table-layout: fixed;
+      font-size: 8.5px;
+      page-break-inside: auto;
+    }
+    th,
+    td {
+      padding: 2.5px 3.5px;
+      word-break: break-word;
+    }
+    tr {
+      page-break-inside: avoid;
+    }
+    details {
+      display: block !important;
+      page-break-inside: avoid;
+      border: none;
+    }
+    details summary {
+      display: none !important;
+    }
+    .details-body {
+      display: block !important;
+      padding: 0;
+    }
+    h1 {
+      font-size: 18px;
+    }
+    h2 {
+      font-size: 14px;
+      margin-top: 8mm;
+    }
+    h3 {
+      font-size: 12px;
+    }
   }
 </style>`;
 
@@ -95,7 +160,11 @@ export const HTML_SCRIPTS = `
 <script>
 function expandAll(){document.querySelectorAll('details').forEach(d=>d.open=true)}
 function collapseAll(){document.querySelectorAll('details').forEach(d=>d.open=false)}
-function preparePdf(){expandAll();setTimeout(()=>window.print(),300)}
+function preparePdf(){
+  expandAll();
+  document.body.classList.add('print-mode');
+  setTimeout(()=>window.print(),200);
+}
 function filterTable(inputId,tableId){
   var v=document.getElementById(inputId).value.toLowerCase();
   document.querySelectorAll('#'+tableId+' tbody tr').forEach(function(r){
