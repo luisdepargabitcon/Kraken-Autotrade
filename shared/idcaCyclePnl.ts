@@ -20,8 +20,14 @@ export interface IdcaCyclePnlResult {
   totalFeesUsd: number;
   realizedNetUsd: number;
   realizedPnlPct: number;
-  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "insufficient";
+  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "insufficient" | "cost_basis_missing";
   warnings: string[];
+  importedOpeningLot?: {
+    quantity: number;
+    avgPrice: number;
+    costUsd: number;
+    source: string;
+  };
 }
 
 export interface IdcaCyclePnlOrder {
@@ -60,6 +66,7 @@ export interface IdcaCyclePnlOrder {
 }
 
 export interface IdcaCyclePnlInput {
+  id?: number | string | null;
   capitalUsedUsd?: number | string | null;
   totalQuantity?: number | string | null;
   avgEntryPrice?: number | string | null;
@@ -67,8 +74,19 @@ export interface IdcaCyclePnlInput {
   pair?: string | null;
   status?: string;
   isImported?: boolean;
+  is_imported?: boolean;
   sourceType?: string;
+  source_type?: string;
   isManualCycle?: boolean;
+  is_manual_cycle?: boolean;
+  managedBy?: string;
+  managed_by?: string;
+  basePrice?: number | string | null;
+  base_price?: number | string | null;
+  basePriceType?: string;
+  base_price_type?: string;
+  importSnapshotJson?: any;
+  import_snapshot_json?: any;
 }
 
 /**
@@ -171,6 +189,125 @@ function normalizeOrderSide(order: IdcaCyclePnlOrder): "buy" | "sell" | "unknown
   ) return "sell";
 
   return "unknown";
+}
+
+/**
+ * Check if cycle is imported or manual.
+ * Detects imported/manual cycles from multiple field variants.
+ */
+function isImportedOrManualCycle(cycle: IdcaCyclePnlInput): boolean {
+  return Boolean(
+    cycle.isImported ||
+    cycle.is_imported ||
+    cycle.isManualCycle ||
+    cycle.is_manual_cycle ||
+    cycle.sourceType === "manual" ||
+    cycle.source_type === "manual" ||
+    cycle.managedBy === "manual" ||
+    cycle.managed_by === "manual" ||
+    String(cycle.basePriceType || cycle.base_price_type || "").toLowerCase().includes("imported") ||
+    String(cycle.sourceType || cycle.source_type || "").toLowerCase().includes("import")
+  );
+}
+
+/**
+ * Build imported opening lot from cycle data.
+ * Returns the cost basis for the initial imported position.
+ */
+function buildImportedOpeningLot(
+  cycle: IdcaCyclePnlInput,
+  totalSellQty: number,
+  totalBuyQty: number
+): {
+  quantity: number;
+  avgPrice: number;
+  costUsd: number;
+  source: string;
+  valid: boolean;
+  warning?: string;
+} {
+  const warnings: string[] = [];
+  let importedQty = 0;
+  let importedAvgPrice = 0;
+  let source = "";
+
+  // Try to get imported quantity from importSnapshotJson
+  const snapshot = cycle.importSnapshotJson || cycle.import_snapshot_json;
+  if (snapshot && typeof snapshot === "object") {
+    importedQty = readNumber(
+      snapshot.quantity,
+      snapshot.totalQuantity,
+      snapshot.total_quantity,
+      snapshot.baseQuantity,
+      snapshot.base_quantity,
+      snapshot.importedQuantity,
+      snapshot.imported_quantity
+    );
+    importedAvgPrice = readNumber(
+      snapshot.avgEntryPrice,
+      snapshot.avg_entry_price,
+      snapshot.averagePrice,
+      snapshot.average_price,
+      snapshot.price
+    );
+    if (importedQty > 0 || importedAvgPrice > 0) {
+      source = "import_snapshot_json";
+    }
+  }
+
+  // Fallback to cycle fields
+  if (importedQty <= 0) {
+    importedQty = readNumber(cycle.totalQuantity);
+    if (importedQty > 0) {
+      source = source || "cycle_total_quantity";
+    }
+  }
+
+  if (importedAvgPrice <= 0) {
+    importedAvgPrice = readNumber(cycle.avgEntryPrice);
+    if (importedAvgPrice > 0) {
+      source = source || "cycle_avg_entry_price";
+    }
+  }
+
+  // If basePriceType contains imported_avg, use basePrice
+  const basePriceType = String(cycle.basePriceType || cycle.base_price_type || "").toLowerCase();
+  if (basePriceType.includes("imported_avg") || basePriceType.includes("imported")) {
+    const basePrice = readNumber(cycle.basePrice, cycle.base_price);
+    if (basePrice > 0) {
+      importedAvgPrice = basePrice;
+      source = source || "base_price_imported_avg";
+    }
+  }
+
+  // If sell qty > buy qty, we need imported quantity to cover the difference
+  const importedQtyNeeded = Math.max(0, totalSellQty - totalBuyQty);
+  if (importedQtyNeeded > 0 && importedQty <= 0) {
+    importedQty = importedQtyNeeded;
+    source = source || "calculated_from_sell_buy_diff";
+    warnings.push(`Imported quantity calculated from sell-buy diff: ${importedQty}`);
+  }
+
+  const importedCostUsd = importedQty * importedAvgPrice;
+  const valid = importedQty > 0 && importedAvgPrice > 0;
+
+  if (!valid) {
+    if (importedQty <= 0) {
+      warnings.push("Cannot determine imported quantity");
+    }
+    if (importedAvgPrice <= 0) {
+      warnings.push("Cannot determine imported average price");
+    }
+  }
+
+  return {
+    quantity: importedQty,
+    avgPrice: importedAvgPrice,
+    costUsd: importedCostUsd,
+    source,
+    valid,
+    warning: warnings.length > 0 ? warnings.join("; ") : undefined,
+  };
 }
 
 /**
@@ -288,9 +425,157 @@ export function calculateIdcaCycleRealizedPnl(
 
   // PRIORITY 1: Calculate from orders when SELL orders exist
   if (hasSellOrders) {
+    const isImported = isImportedOrManualCycle(cycle);
     let soldCostBasisUsd = 0;
     let calculatedPnlSource: IdcaCyclePnlResult["pnlSource"] = "orders";
+    let importedOpeningLot: IdcaCyclePnlResult["importedOpeningLot"] = undefined;
+    let costBasisMissing = false;
 
+    // For imported/manual cycles, use FIFO calculation with imported opening lot
+    if (isImported) {
+      const importedLot = buildImportedOpeningLot(cycle, totalSellQty, totalBuyQty);
+      if (importedLot.warning) {
+        warnings.push(`Imported lot: ${importedLot.warning}`);
+      }
+
+      // Build cost lots for FIFO calculation
+      interface CostLot {
+        source: string;
+        quantity: number;
+        remainingQty: number;
+        costUsd: number;
+        avgPrice: number;
+      }
+
+      const lots: CostLot[] = [];
+
+      // Add imported opening lot if valid
+      if (importedLot.valid) {
+        lots.push({
+          source: "imported_opening",
+          quantity: importedLot.quantity,
+          remainingQty: importedLot.quantity,
+          costUsd: importedLot.costUsd,
+          avgPrice: importedLot.avgPrice,
+        });
+        importedOpeningLot = {
+          quantity: importedLot.quantity,
+          avgPrice: importedLot.avgPrice,
+          costUsd: importedLot.costUsd,
+          source: importedLot.source,
+        };
+      }
+
+      // Add BUY orders as lots
+      for (const buy of buyOrders) {
+        const buyQty = buy.quantity || 0;
+        const buyValue = buy.valueUsd || 0;
+        const buyFee = buy.feeUsd || 0;
+        const buyCost = buyValue + buyFee;
+        lots.push({
+          source: "buy_order",
+          quantity: buyQty,
+          remainingQty: buyQty,
+          costUsd: buyCost,
+          avgPrice: buyQty > 0 ? buyCost / buyQty : 0,
+        });
+      }
+
+      // Consume lots FIFO for each SELL
+      let totalSoldCostBasis = 0;
+      const dustTolerance = pair.includes("BTC") ? 0.00001 : pair.includes("ETH") ? 0.0001 : 0.001;
+
+      for (const sell of sellOrders) {
+        let sellQtyRemaining = sell.quantity || 0;
+
+        for (const lot of lots) {
+          if (sellQtyRemaining <= 0) break;
+          if (lot.remainingQty <= 0) continue;
+
+          const consumeQty = Math.min(lot.remainingQty, sellQtyRemaining);
+          totalSoldCostBasis += consumeQty * lot.avgPrice;
+          lot.remainingQty -= consumeQty;
+          sellQtyRemaining -= consumeQty;
+        }
+
+        // If we still have quantity to sell but no lots left, cost basis is missing
+        if (sellQtyRemaining > dustTolerance) {
+          costBasisMissing = true;
+          warnings.push(`Missing cost basis for ${sellQtyRemaining.toFixed(6)} sold units (imported position not fully accounted)`);
+        }
+      }
+
+      soldCostBasisUsd = totalSoldCostBasis;
+      calculatedPnlSource = "orders";
+
+      // Guardrail: if cost basis is missing for imported cycle, mark as cost_basis_missing
+      if (costBasisMissing) {
+        warnings.push("Imported/manual cycle has missing cost basis - cannot calculate accurate PnL");
+        return {
+          capitalInvestedUsd: totalBuyCostUsd || capitalUsedUsd,
+          totalBuyQty: totalBuyQty || totalQuantity,
+          totalBuyCostUsd: totalBuyCostUsd || capitalUsedUsd,
+          avgCostUsd: avgCostUsd || avgEntryPrice,
+          totalSellQty,
+          totalSellValueUsd,
+          soldCostBasisUsd: 0,
+          realizedGrossUsd: 0,
+          totalFeesUsd: totalSellFeesUsd,
+          realizedNetUsd: 0,
+          realizedPnlPct: 0,
+          pnlSource: "cost_basis_missing",
+          warnings,
+          importedOpeningLot,
+        };
+      }
+
+      // Guardrail: implausible PnL for imported cycles (>50%)
+      const realizedGrossUsd = totalSellValueUsd - soldCostBasisUsd;
+      const realizedNetUsd = realizedGrossUsd - totalSellFeesUsd;
+      const realizedPnlPct = soldCostBasisUsd > 0 ? (realizedNetUsd / soldCostBasisUsd) * 100 : 0;
+
+      if (realizedPnlPct > 50) {
+        warnings.push(`Imported/manual cycle PnL implausible (${realizedPnlPct.toFixed(2)}%) - missing opening cost basis`);
+        return {
+          capitalInvestedUsd: totalBuyCostUsd || capitalUsedUsd,
+          totalBuyQty: totalBuyQty || totalQuantity,
+          totalBuyCostUsd: totalBuyCostUsd || capitalUsedUsd,
+          avgCostUsd: avgCostUsd || avgEntryPrice,
+          totalSellQty,
+          totalSellValueUsd,
+          soldCostBasisUsd: 0,
+          realizedGrossUsd: 0,
+          totalFeesUsd: totalSellFeesUsd,
+          realizedNetUsd: 0,
+          realizedPnlPct: 0,
+          pnlSource: "cost_basis_missing",
+          warnings,
+          importedOpeningLot,
+        };
+      }
+
+      // Debug log for imported cycles
+      console.debug(`[IDCA][PNL_HISTORY_CALC] cycleId=${cycle.id || 'unknown'} pair=${pair} isImported=true source=fifo_imported importedQty=${importedLot.quantity} importedAvg=${importedLot.avgPrice} importedCost=${importedLot.costUsd} buyQty=${totalBuyQty} buyCost=${totalBuyCostUsd} sellQty=${totalSellQty} sellValue=${totalSellValueUsd} soldCostBasis=${soldCostBasisUsd} realizedNet=${realizedNetUsd} pnlPct=${realizedPnlPct} warnings=${warnings.join(', ')}`);
+
+      return {
+        capitalInvestedUsd: totalBuyCostUsd + (importedOpeningLot?.costUsd || 0),
+        totalBuyQty: totalBuyQty + (importedOpeningLot?.quantity || 0),
+        totalBuyCostUsd: totalBuyCostUsd + (importedOpeningLot?.costUsd || 0),
+        avgCostUsd: soldCostBasisUsd > 0 && totalSellQty > 0 ? soldCostBasisUsd / totalSellQty : avgCostUsd,
+        totalSellQty,
+        totalSellValueUsd,
+        soldCostBasisUsd,
+        realizedGrossUsd,
+        totalFeesUsd: totalSellFeesUsd,
+        realizedNetUsd,
+        realizedPnlPct,
+        pnlSource: calculatedPnlSource,
+        warnings,
+        importedOpeningLot,
+      };
+    }
+
+    // Normal cycles (non-imported): use existing logic
     if (hasBuyOrders) {
       // Use BUY orders for cost basis
       soldCostBasisUsd = avgCostUsd * totalSellQty;

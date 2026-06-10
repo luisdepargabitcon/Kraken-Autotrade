@@ -2,6 +2,421 @@
 
 ---
 
+## 2026-06-10 — fix(idca): corregir PnL de ciclos importados con coste base inicial
+
+### Problema
+En IDCA → Historial aparecía un ciclo ETH/USD importado/manual con una ganancia imposible:
+- PnL neto mostrado: +$2,934.75
+- PnL % mostrado: +140.69%
+
+El error era que el cálculo usaba como coste solo las compras adicionales del ciclo ($2,086), pero sumaba ventas que incluían una posición importada previa. Faltaba incluir el coste base de la posición importada inicial.
+
+### Causa raíz
+- Ciclos importados/manuales vendían cantidad que no provenía solo de compras del bot
+- El helper restaba ventas contra coste incompleto (solo compras adicionales)
+- No existía lógica para construir lote inicial importado desde importSnapshotJson/cycle fields
+- No había guardrails para evitar ganancias imposibles (>50%) en ciclos importados
+
+### Solución
+
+#### `shared/idcaCyclePnl.ts` ✅ MODIFICADO
+- Añadido campo `id` a `IdcaCyclePnlInput`
+- Añadidos campos de importación: `is_imported`, `source_type`, `is_manual_cycle`, `managed_by`, `base_price`, `base_price_type`, `importSnapshotJson`, `import_snapshot_json`
+- Añadido nuevo valor `"cost_basis_missing"` a `pnlSource` en `IdcaCyclePnlResult`
+- Añadido campo `importedOpeningLot` a `IdcaCyclePnlResult` con `{ quantity, avgPrice, costUsd, source }`
+- **Función `isImportedOrManualCycle()`**: detección robusta de ciclos importados/manuales desde múltiples variantes de campo
+- **Función `buildImportedOpeningLot()`**: construye lote inicial importado desde:
+  - `importSnapshotJson` (quantity, avgEntryPrice, etc.)
+  - `cycle.totalQuantity` / `cycle.avgEntryPrice`
+  - `basePrice` si `basePriceType` contiene "imported_avg"
+  - Calcula cantidad necesaria si `sellQty > buyQty`
+- **Cálculo FIFO para ciclos importados**:
+  - Crea lotes de coste: lote importado inicial + órdenes BUY
+  - Consume lotes FIFO para cada SELL
+  - Calcula `soldCostBasisUsd` correctamente
+- **Guardrails**:
+  - Si `costBasisMissing=true` → devuelve `pnlSource="cost_basis_missing"`, `realizedNetUsd=0`
+  - Si `realizedPnlPct > 50%` en ciclo importado → marca como `cost_basis_missing`
+  - Logs de debug `[IDCA][PNL_HISTORY_CALC]` con detalles del cálculo
+
+#### `client/src/pages/InstitutionalDca.tsx` ✅ MODIFICADO
+- **Aggregate stats**: excluye ciclos con `pnlSource="cost_basis_missing"` del total PnL, wins y losses
+- Añadido contador `pendingCostBasis` para ciclos con coste importado pendiente
+- Badge "⏳ X coste pendiente" en aggregate bar si hay ciclos pendientes
+- **Cycle card**: muestra "Pendiente" / "—" en lugar de valor PnL cuando `isCostBasisMissing=true`
+- **Cycle card**: borde naranja (`border-l-orange-500`) para ciclos con coste pendiente
+- **HistoryCycleDetail**:
+  - Banner warning naranja: "⚠️ Coste importado pendiente: No se puede calcular el beneficio porque falta el coste base de la posición importada. El ciclo no se suma al PnL total."
+  - Etiqueta "Capital invertido" → "Coste base usado" si `hasImportedLot=true`
+  - Subtítulo "Incluye posición importada + compras del bot" si hay lote importado
+  - PnL neto/PnL % muestran "Pendiente" / "—" cuando `isCostBasisMissing=true`
+
+#### `server/services/__tests__/idcaCyclePnl.test.ts` ✅ NUEVO
+- 15 tests unitarios para `calculateIdcaCycleRealizedPnl`:
+  1. Ciclo normal BTC con BUY+SELL
+  2. Ciclo ETH con BUY+SELL
+  3. Ciclo importado con ventas mayores que compras y con importedAvg
+  4. Ciclo importado sin importedAvg (debe devolver cost_basis_missing)
+  5. Ciclo importado sin coste base (no debe contar como win)
+  6. Ciclo importado con coste base incompleto (no debe mostrar PnL positivo gigante)
+  7. Side/type en castellano (COMPRA/VENTA)
+  8. valueUsd faltante (reconstruir desde price * quantity)
+  9. realizedPnlUsd con valor de venta (no usar como net PnL)
+  10. PnL total excluye ciclos cost_basis_missing
+  11-15. Detección de ciclos importados/manuales (5 variantes de campo)
+
+### Validación
+- ✅ npm run build: sin errores (3799 módulos)
+- ✅ vitest idcaCyclePnl.test.ts: 15/15 tests pasando
+- ✅ git commit: pendiente
+- ✅ git push: pendiente
+
+### Notas de deploy
+- No requiere migración DB (reutiliza tablas existentes)
+- El fix es quirúrgico en el cálculo de PnL histórico, no afecta lógica operativa IDCA
+- Ciclos importados con coste base disponible mostrarán PnL realista
+- Ciclos importados sin coste base mostrarán "Pendiente" y no se sumarán al total
+
+---
+
+### Problema
+El audit-pack ZIP generaba informes anuales con `finStatus` sin enriquecer, mostrando:
+- Ganancias por transmisiones FIFO: 0,00 €
+- Pérdidas por transmisiones FIFO: 0,00 €
+- Resultado FIFO ordinario: -600,47 €
+
+Esto era incoherente con el endpoint directo `/api/fisco/report/annual/html` que sí mostraba los valores correctos (824,37€ / -1424,85€).
+
+### Causa
+El audit-pack usaba `finStatus` directamente de `getFinalizationStatus(year)` sin enriquecer con `gains_eur`, `losses_eur`, `staking_total_eur`. El endpoint directo sí enriquecía estos campos.
+
+### Solución
+- Creada función canónica `buildAnnualHtmlReportData()` en `FiscoHtmlRenderer.ts`
+- Esta función enriquece `finStatus` con:
+  - `gains_eur`: suma de ganancias positivas de disposals
+  - `losses_eur`: suma de pérdidas negativas de disposals
+  - `staking_total_eur`: suma de operaciones staking/reward/distribution
+- `/api/fisco/report/annual/html` ahora usa `buildAnnualHtmlReportData`
+- `/api/fisco/export/audit-pack.zip` ahora usa `buildAnnualHtmlReportData` para informes anuales
+- Eliminada función legacy `generateBit2MePDF()` de `Fisco.tsx` (ya no se usa)
+- Migrado `generateExistingFiscalReport()` en `fiscoAlerts.routes.ts` para usar endpoint `/api/fisco/report/annual/html`
+
+### Archivos modificados
+- `server/services/fisco/FiscoHtmlRenderer.ts` (añadido `buildAnnualHtmlReportData`)
+- `server/routes/fisco.routes.ts` (usar función canónica en annual/html y audit-pack)
+- `server/routes/fiscoAlerts.routes.ts` (migrado a usar endpoint annual/html)
+- `client/src/pages/Fisco.tsx` (eliminada función legacy `generateBit2MePDF`)
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fisco: 176/176 tests pasando
+- ✅ git commit: d89774b
+- ✅ git push: exitoso
+
+### Notas
+- No se modifican cálculos fiscales (2025 = -72,25€, 2026 = -600,47€)
+- El audit-pack ZIP ahora muestra los mismos valores que el endpoint directo
+- El botón "Informe → Telegram" también usa el renderer canónico
+
+---
+
+## 2026-06-10 — feat(fisco): unify report generator to new HTML interactive report
+
+### Objetivo
+Unificar el generador de informes para eliminar duplicidad entre el generador antiguo (PDF legacy) y el nuevo informe HTML interactivo del sistema FISCO.
+
+### Cambios
+
+#### `client/src/pages/Fisco.tsx` ✅ MODIFICADO
+- Cambiado botón "Generar PDF" por "Generar informe HTML"
+- Botón ahora abre `/api/fisco/report/annual/html?year=YYYY&exchange=all` (endpoint canónico nuevo)
+- Eliminada llamada al generador legacy `generateBit2MePDF`
+
+#### `server/services/fisco/FiscoHtmlRenderer.ts` ✅ MODIFICADO
+- Añadido CSS profesional para impresión A4:
+  - `@page { size: A4 portrait; margin: 10mm; }`
+  - `html, body { width: 190mm; max-width: 190mm; font-size: 10px; line-height: 1.25; }`
+  - `table { table-layout: fixed; font-size: 8.5px; }`
+  - Reglas `page-break-inside: avoid` para cards, section-block, details, tr
+  - `.toolbar, .no-print { display: none !important; }`
+  - `details { display: block !important; border: none; }`
+  - `details summary { display: none !important; }`
+- Actualizado `preparePdf()`:
+  - Añadido `document.body.classList.add('print-mode')`
+  - Timeout cambiado de 300ms a 200ms
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fisco: 176/176 tests pasando
+- ✅ git commit: 0185ee9
+- ✅ git push: exitoso
+
+### Notas
+- No se modifican cálculos fiscales (2025 = -72,25€, 2026 = -600,47€)
+- El endpoint canónico `/api/fisco/report/annual/html` es el mismo que se usa en el audit-pack ZIP
+- El informe HTML se imprime en tamaño A4 profesional con formato optimizado
+
+---
+
+## 2026-06-09 — fix(fisco): remove year from watchdog RETURNING (column does not exist)
+
+### Problema
+Watchdog en `executeRetryJob()` hacía `RETURNING id, year, timezone, ...` pero la columna `year` no existe en `fisco_auto_sync_jobs`.
+
+### Corrección
+- Eliminado `year` del RETURNING (OPCIÓN A)
+- `year` no se usa en la lógica del watchdog
+- Validado: npm run check, npm test fiscoAutoSync (32/32 passing)
+- Verificado: no quedan referencias a `year` en RETURNING
+
+### Archivos modificados
+- `server/services/FiscoScheduler.ts` (executeRetryJob)
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fiscoAutoSync: 32/32 tests pasando
+- ✅ grep FiscoScheduler: no hay RETURNING year
+- ✅ git commit: 0436151
+- ✅ git push: exitoso
+
+---
+
+## 2026-06-09 — fix(fisco): status endpoint uses next_retry_at from DB instead of recalculating
+
+### Problema
+`/api/fisco/auto-sync/status` devolvía `nextRetry` calculado con `calculateNextRetry` incluso cuando `next_retry_at` en DB era null.
+
+### Corrección
+- `getStatus` ahora usa `lastJob.next_retry_at` directamente (sin recalcular)
+- Añadido campo `nextRetrySource` para indicar origen: `"db"` si viene de DB, `null` si no hay retry programado
+- No se tocan resultados fiscales actuales
+
+### Archivos modificados
+- `server/services/fisco/FiscoAutoSyncService.ts` (getStatus)
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ git commit: 79f0bff
+- ✅ git push: exitoso
+
+---
+
+## 2026-06-09 — fix(fisco): auto-sync async execution, timeouts, watchdog and incremental sync
+
+### Objetivo
+Corregir 11 puntos críticos detectados en VPS donde el auto-sync job quedaba colgado en estado running sin completar.
+
+### Cambios
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ MODIFICADO
+- **FIX 2**: Separado `runAutoSync` (solo crea job) y `processAutoSyncJob` (ejecuta toda la lógica en background)
+- **FIX 3**: Añadido helper `withTimeout<T>(promise, ms, label)` para timeouts duros por fase
+- **FIX 5**: Logs de checkpoints obligatorios por fase: `[fisco/auto-sync] job=X phase=started/completed/done`
+- **FIX 8**: Añadido campo `current_phase` a interfaz `AutoSyncJob` y `mapRowToJob`
+- **FIX 9**: `getStatus` devuelve `lastJobIsStale` y `runningForSeconds` para detectar jobs atascados
+- **FIX 3**: Timeouts por fase:
+  - syncIncremental: 5 minutos
+  - dry_run: 3 minutos
+  - validation: 2 minutos
+  - commit: 3 minutos
+  - telegram: 30 segundos
+
+#### `server/services/FiscoScheduler.ts` ✅ MODIFICADO
+- **FIX 1**: `executeAutoSync` usa `runAutoSync` + `setImmediate(processAutoSyncJob)` para ejecución en background
+- **FIX 6**: `executeRetryJob` incluye watchdog que marca jobs running >15 minutos como failed con error_message "Watchdog: job stuck in running state > 15 minutes"
+
+#### `server/services/FiscoSyncService.ts` ✅ MODIFICADO
+- **FIX 4**: `syncKrakenIncremental` usa ventana incremental (48h desde última sync exitosa) en lugar de `fetchAll=true`
+- **FIX 4**: `syncRevolutXIncremental` usa ventana incremental (48h desde última sync exitosa) en lugar de `startMs=2020`
+- **FIX 4**: Si no hay sync previa, usa ventana de 7 días (no histórico completo desde 2020)
+- **FIX 4**: Kraken usa `getLedgers({ start: timestamp })` en lugar de `fetchAll`
+
+#### `server/routes/fisco.routes.ts` ✅ MODIFICADO
+- **FIX 1**: `POST /api/fisco/auto-sync/run-now` devuelve HTTP 202 inmediatamente con `{ accepted: true, jobId, status, message }`
+- **FIX 1**: Ejecuta `processAutoSyncJob` en background con `setImmediate`
+- **FIX 7**: Añadido `GET /api/fisco/auto-sync/jobs/:id` que devuelve job completo + `runningForSeconds`
+
+#### `server/services/fisco/__tests__/fiscoAutoSync.test.ts` ✅ MODIFICADO
+- **FIX 10**: Añadidos 5 tests nuevos (27-31) para verificar comportamiento asíncrono, timeouts, e interfaces
+- Total: 32 tests pasando
+
+#### `db/migrations/049_fisco_auto_sync_current_phase.sql` ✅ NUEVO
+- **FIX 8**: Campo `current_phase VARCHAR(80)` en `fisco_auto_sync_jobs`
+- Índices: `idx_fisco_auto_sync_current_phase`, `idx_fisco_auto_sync_running_started`
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fiscoAutoSync: 32/32 tests pasando
+- ✅ git commit: f579831
+- ✅ git push: exitoso
+
+### Notas de deploy
+- Requiere migración DB: `049_fisco_auto_sync_current_phase.sql`
+- No rompe: annual/html, audit-pack.zip, finalization-status, validate/portfolio, informes actuales 2025/2026
+- Scheduler ejecuta jobs en background, no bloquea el proceso principal
+- Watchdog cada 5 minutos marca jobs running >15m como failed
+
+---
+
+## 2026-06-09 — fix(fisco): auto-sync retry slots, sync error handling and Telegram validation
+
+### Objetivo
+Corregir 9 puntos críticos en el sistema Fisco Auto Sync para garantizar:
+- Reintentos en horarios fijos (00:15, 01:00, 03:00, 06:00) desde baseScheduledFor
+- Bloqueo de jobs duplicados si ya hubo éxito en el día
+- Manejo correcto de errores de syncIncremental
+- Validación de Telegram con timestamp obligatorio
+- Exclusión de grupos de retry que ya tuvieron éxito
+
+### Cambios
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ MODIFICADO
+- **FIX 1**: `calculateNextRetry(baseScheduledFor, attemptNumber, timezone)` usa horarios fijos desde baseScheduledFor (00:00 Europe/Madrid) en lugar de `now + minutos`
+  - Offsets: 15min (00:15), 60min (01:00), 180min (03:00), 360min (06:00)
+  - Retorna null después de attempt 4
+- **FIX 2**: `getJobForDate` bloquea estados `success`, `success_with_warnings`, `skipped_no_changes` además de `pending`, `running`
+- **FIX 3**: `runAutoSync` captura errores reales de `syncIncremental` en `syncErrors` y los pasa a `isSafeForAutoCommit`
+- **FIX 4**: Si `syncIncremental` devuelve errores, marca job failed, programa retry, envía Telegram error, NO ejecuta dry_run/commit, NO envía "sin cambios"
+- **FIX 5**: `sendTelegramSuccess` añade `timestamp: new Date()` al contexto para cumplir con schema
+- **FIX 6**: Eliminado método muerto `checkForNewOperations` (reemplazado por `syncIncremental`)
+- **FIX 7**: Añadido método público de testing `testCalculateNextRetry` para unit tests
+
+#### `server/services/FiscoScheduler.ts` ✅ MODIFICADO
+- **FIX 7**: Query de retry worker excluye grupos que ya tengan un job con status `success`, `success_with_warnings`, `skipped_no_changes`:
+  ```sql
+  SELECT id FROM fisco_auto_sync_jobs failed
+  WHERE failed.status = 'failed'
+  AND failed.next_retry_at IS NOT NULL
+  AND failed.next_retry_at <= NOW()
+  AND NOT EXISTS (
+    SELECT 1 FROM fisco_auto_sync_jobs ok
+    WHERE ok.retry_group_id = failed.retry_group_id
+    AND ok.status IN ('success','success_with_warnings','skipped_no_changes')
+  )
+  ```
+
+#### `server/services/fisco/__tests__/fiscoAutoSync.test.ts` ✅ MODIFICADO
+- **FIX 8**: Tests reales para `calculateNextRetry` (verifica offsets de 15, 60, 180, 360 minutos)
+- **FIX 8**: Test para verificar que `sendTelegramSuccess` incluye timestamp
+- Total: 27 tests (26 previos + 1 nuevo específico de calculateNextRetry)
+
+#### `server/services/telegram/types.ts` ✅ MODIFICADO
+- **FIX 5**: `FiscoAutoSyncNoChangesContextSchema` incluye `syncExecuted: z.boolean()` y `syncErrors: z.array(z.string()).optional()`
+
+#### `server/services/telegram/templates.ts` ✅ MODIFICADO
+- **FIX 5**: `buildFiscoAutoSyncNoChangesHTML` muestra `syncExecuted` y `syncErrors` en el mensaje Telegram
+
+#### `db/migrations/048_fisco_auto_sync_retry_fields.sql` ✅ NUEVO
+- Campos para retry logic: `next_retry_at`, `retry_group_id`, `parent_job_id`
+- Índices: `idx_fisco_auto_sync_retry_group`, `idx_fisco_auto_sync_next_retry`
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fiscoAutoSync.test.ts: 27/27 tests pasados
+- ✅ git commit: d8e7847
+- ✅ git push: exitoso
+
+### Notas de deploy
+- Requiere migración DB: `048_fisco_auto_sync_retry_fields.sql`
+- No rompe: annual/html, audit-pack.zip, finalization-status, validate/portfolio, informes actuales 2025/2026
+- Scheduler retry job ejecuta cada 5 minutos buscando jobs fallidos con `next_retry_at <= NOW()`
+
+---
+
+## 2026-06-09 — feat(fisco): Fisco Auto Sync con Telegram, scheduler y UI
+
+### Objetivo
+Implementar sistema de sincronización automática fiscal (FISCO) que:
+- Ejecute sincronización diaria automática a las 00:00 Europe/Madrid
+- Envíe notificaciones Telegram según resultado (success, no changes, warnings, error, all failed)
+- Realice commit automático cuando dry-run es exitoso y sin errores críticos
+- Proporcione endpoints REST para control manual (status, history, run-now, retry-failed)
+- Muestre estado en UI con protecciones para commit manual
+
+### Cambios
+
+#### `db/migrations/047_fisco_auto_sync_jobs.sql` ✅ NUEVO
+- Tabla `fisco_auto_sync_jobs` para historial de jobs de auto-sync
+- Campos: id, year, scheduled_for, started_at, completed_at, status, attempt_number, new_operations_count, warnings_count, error_message
+- Índices: year, scheduled_for, status, attempt_number
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ NUEVO
+- Singleton service para gestión de auto-sync fiscal
+- Métodos principales:
+  - `runAutoSync()`: ejecuta sync con lógica de reintentos (max 3 intentos)
+  - `getStatus()`: retorna estado actual (last job, next scheduled, next retry)
+  - `getLatestJobs()`: retorna historial de jobs
+  - `retryFailedJob()`: reintenta job fallido
+- Lógica de commit automático:
+  - Ejecuta dry-run primero
+  - Si dry-run exitoso y isSafeForReport=true → ejecuta commit
+  - Si dry-run con errores críticos → aborta commit
+- Integración Telegram (5 tipos de mensaje):
+  - `sendTelegramSuccess()`: éxito con nuevas operaciones
+  - `sendTelegramNoChanges()`: sin cambios
+  - `sendTelegramWithWarnings()`: éxito con advertencias
+  - `sendTelegramError()`: error con info de reintento
+  - `sendTelegramAllFailed()`: todos los reintentos fallaron
+
+#### `server/services/telegram/types.ts` ✅ MODIFICADO
+- Añadidos schemas Zod para contextos Fisco Auto Sync:
+  - `FiscoAutoSyncSuccessContextSchema`
+  - `FiscoAutoSyncNoChangesContextSchema`
+  - `FiscoAutoSyncWarningsContextSchema`
+  - `FiscoAutoSyncErrorContextSchema`
+  - `FiscoAutoSyncAllFailedContextSchema`
+
+#### `server/services/telegram/templates.ts` ✅ MODIFICADO
+- Añadidas funciones de plantilla HTML:
+  - `buildFiscoAutoSyncSuccessHTML()`
+  - `buildFiscoAutoSyncNoChangesHTML()`
+  - `buildFiscoAutoSyncWarningsHTML()`
+  - `buildFiscoAutoSyncErrorHTML()`
+  - `buildFiscoAutoSyncAllFailedHTML()`
+
+#### `server/routes/fisco.routes.ts` ✅ MODIFICADO
+- Añadidos endpoints REST:
+  - `GET /api/fisco/auto-sync/status`: estado actual
+  - `GET /api/fisco/auto-sync/history`: historial de jobs
+  - `POST /api/fisco/auto-sync/run-now`: ejecución manual
+  - `POST /api/fisco/auto-sync/retry-failed`: reintento de job fallido
+
+#### `server/services/FiscoScheduler.ts` ✅ MODIFICADO
+- Añadido job cron para auto-sync a las 00:00 Europe/Madrid
+- Método `executeAutoSync()` que llama FiscoAutoSyncService
+- Actualizado `getStatus()` para incluir `autoSyncJobActive`
+- Actualizado `shutdown()` para detener autoSyncJob
+
+#### `client/src/pages/Fisco.tsx` ✅ MODIFICADO
+- Añadido tipo `AutoSyncStatus` para respuesta de endpoint
+- Añadido query `autoSyncStatusQ` con refetch cada 60s
+- Añadido bloque UI de estado automático Fisco en TOP BAR
+- Renombrada pestaña "Reconstruir" → "Avanzado"
+- Actualizado título sección rebuild → "Mantenimiento FIFO"
+- Añadido estado `successfulDryRun` para rastrear dry-run exitoso
+- Añadidas protecciones para commit manual:
+  - Bloqueo de botón commit sin dry_run exitoso previo
+  - Alerta explicativa si intenta commit sin dry_run
+  - Confirmación más explícita en mensaje de commit
+
+#### `server/services/fisco/__tests__/fiscoAutoSync.test.ts` ✅ NUEVO
+- 18 tests unitarios para FiscoAutoSyncService
+- Tests cubren: singleton, métodos públicos, lógica de reintentos, integración Telegram, commit automático
+
+### Validación
+- ✅ npm run check (tsc): sin errores
+- ✅ npm test fiscoAutoSync.test.ts: 18/18 tests pasados
+- ✅ git commit: aad3d93
+- ✅ git push: exitoso
+
+### Notas de deploy
+- Requiere migración DB: `047_fisco_auto_sync_jobs.sql`
+- Scheduler se activa automáticamente al iniciar el servidor
+- Telegram usa configuración existente (chatId de FISCO alerts)
+- UI muestra estado en tiempo real con refresco cada 60s
+
+---
+
 ## 2026-06-06 — fix(fisco): Normalización FIFO completa + Rebuild Service (Fase FISCO-AUDIT)
 
 ### Problema
