@@ -390,16 +390,15 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
   // ============================================================
 
   /**
-   * Genera informe fiscal usando la lógica existente (MISMA PLANTILLA)
-   * Llama internamente al endpoint /api/fisco/annual-report para obtener los datos
-   * y genera el mismo HTML que el frontend (generateBit2MePDF)
+   * Genera informe fiscal usando el endpoint canónico /api/fisco/report/annual/html
+   * Este endpoint usa el nuevo renderer HTML interactivo con enriched finStatus
    */
   async function generateExistingFiscalReport(year: number, exchange?: string): Promise<string> {
     try {
       const port = parseInt(process.env.PORT || "5000", 10);
       const params = new URLSearchParams();
       params.set("year", year.toString());
-      if (exchange) params.set("exchange", exchange);
+      params.set("exchange", exchange || "all");
 
       // Pre-validate: ensure official data is safe before generating report
       const validateResp = await fetch(`http://127.0.0.1:${port}/api/fisco/validate`);
@@ -414,189 +413,14 @@ export function registerFiscoAlertsRoutes(app: Express, deps: RouterDeps): void 
         }
       }
 
-      // Llamar al endpoint real del informe anual
-      const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/annual-report?${params.toString()}`);
+      // Llamar al endpoint canónico del informe anual HTML
+      const resp = await fetch(`http://127.0.0.1:${port}/api/fisco/report/annual/html?${params.toString()}`);
       if (!resp.ok) {
         const errBody = await resp.text();
-        throw new Error(`annual-report endpoint returned ${resp.status}: ${errBody}`);
+        throw new Error(`annual/html endpoint returned ${resp.status}: ${errBody}`);
       }
-      const report = await resp.json() as any;
-
-      // ===== MISMA PLANTILLA que generateBit2MePDF del frontend =====
-      const y = year.toString();
-      const BRAND_LABEL = "Gestor Fiscal de Criptoactivos";
-      const exchangesInReport: string[] = Array.from(new Set((report.section_b || []).map((r: any) => String(r.exchange))));
-      const dataSourceLabel = exchangesInReport.length > 0
-        ? exchangesInReport.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(" + ")
-        : "Kraken + RevolutX";
-      const accountLabel = "Cuenta Principal";
-
-      const eur = (v: number) => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const qty = (v: number) => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 8 });
-      const fmtDateShort = (d: string | null) => d ? new Date(d).toLocaleDateString("es-ES") : "N/A";
-
-      const css = `
-    body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 0; }
-    .page { page-break-after: always; padding: 50px 60px; max-width: 900px; margin: 0 auto; }
-    .page:last-child { page-break-after: auto; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .header h1 { color: #1e40af; font-size: 22px; margin: 0 0 4px; }
-    .header .sub { color: #64748b; font-size: 12px; }
-    .brand { text-align: right; font-size: 20px; font-weight: 700; color: #1e40af; margin-bottom: 20px; }
-    h2 { text-align: center; color: #1e40af; font-size: 16px; margin: 0 0 20px; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; }
-    th { background: #dbeafe; color: #1e40af; padding: 8px 10px; text-align: right; border: 1px solid #bfdbfe; font-weight: 600; font-size: 11px; }
-    th:first-child { text-align: left; }
-    td { padding: 7px 10px; border: 1px solid #e2e8f0; text-align: right; }
-    td:first-child { text-align: left; font-weight: 500; }
-    .total-row td { background: #dbeafe; font-weight: 700; color: #1e40af; }
-    .positive { color: #16a34a; }
-    .negative { color: #dc2626; }
-    .meta { text-align: center; color: #94a3b8; font-size: 11px; margin-top: 20px; }
-    .footer-page { text-align: center; color: #94a3b8; font-size: 10px; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
-    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-      `;
-
-      const meta = `Generado: ${new Date().toLocaleString("es-ES")} | Método: FIFO | Fuentes: ${dataSourceLabel} | Última sincronización: ${fmtDateShort(report.last_sync)}`;
-
-      // Validation banner: uses committed_run context from annual-report response
-      const cr = report.committed_run;
-      const committedSafe =
-        cr?.status === "committed" &&
-        cr?.isSafeForReport === true &&
-        Number(cr?.criticalErrorsCount ?? 0) === 0;
-      const stablecoinAnomalies: any[] = report.stablecoin_anomalies ?? [];
-      const isSafe = committedSafe && stablecoinAnomalies.length === 0;
-      const bannerColor  = isSafe ? { bg: '#dcfce7', border: '#16a34a', text: '#15803d', badge: '#16a34a' }
-                                   : { bg: '#fef2f2', border: '#dc2626', text: '#dc2626', badge: '#dc2626' };
-      const stablecoinRow = stablecoinAnomalies.length > 0
-        ? `<tr><td style="color:#dc2626;padding:2px 12px 2px 0;font-weight:600;">STABLECOIN_COST_BASIS_ANOMALY</td><td style="color:#dc2626;">${stablecoinAnomalies.length} lotes con coste unitario fuera de rango 0.70–1.20 EUR</td></tr>`
-        : '';
-      const validationBanner = `
-      <div style="background:${bannerColor.bg};border:2px solid ${bannerColor.border};border-radius:8px;padding:14px 18px;margin-bottom:22px;">
-        <div style="font-weight:700;color:${bannerColor.text};font-size:13px;margin-bottom:10px;">
-          ${isSafe ? '&#10003; Validación FIFO correcta: sin errores críticos. Informe apto para revisión fiscal.' : '&#9888; Informe con errores críticos — no apto para revisión fiscal oficial.'}
-        </div>
-        <table style="font-size:11px;width:auto;border-collapse:collapse;">
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Run ID</td><td style="font-family:monospace;font-size:10px;">${cr?.runId ?? 'N/A'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Estado</td><td style="font-weight:600;color:${bannerColor.badge}">${cr?.status ?? 'N/A'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">isSafeForReport</td><td>${isSafe ? 'true &#10003;' : 'false &#10007;'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Errores críticos</td><td>${cr?.criticalErrorsCount ?? report.critical_errors_count ?? 0}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Operaciones</td><td>${cr?.operationsCount ?? 'N/A'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Lotes</td><td>${cr?.lotsCount ?? 'N/A'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Disposiciones</td><td>${cr?.disposalsCount ?? 'N/A'}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Último commit</td><td>${fmtDateShort(cr?.completedAt ?? null)}</td></tr>
-          <tr><td style="color:#64748b;padding:2px 12px 2px 0;">Exchanges</td><td>${dataSourceLabel}</td></tr>
-          ${stablecoinRow}
-        </table>
-      </div>`;
-
-      // Page 1: Section A — Transmissions summary
-      const a = report.section_a;
-      const pageA = `
-    <div class="page">
-      <div class="brand">${BRAND_LABEL}</div>
-      ${validationBanner}
-      <h2>Resumen de ganancias y pérdidas derivadas de las transmisiones de activos el ${y}</h2>
-      <table>
-        <tr><th>Origen de Datos</th><th>Cuenta</th><th colspan="3">Ganancias y pérdidas de capital</th></tr>
-        <tr><th></th><th></th><th>Ganancias en EUR</th><th>Pérdidas en EUR</th><th>Total en EUR</th></tr>
-        <tr>
-          <td>${dataSourceLabel}</td><td>${accountLabel}</td>
-          <td class="positive">${eur(a.ganancias_eur)}</td>
-          <td class="negative">${eur(a.perdidas_eur)}</td>
-          <td class="${a.total_eur >= 0 ? 'positive' : 'negative'}">${eur(a.total_eur)}</td>
-        </tr>
-        <tr class="total-row"><td colspan="2">Total ${y}</td><td>${eur(a.ganancias_eur)}</td><td>${eur(a.perdidas_eur)}</td><td>${eur(a.total_eur)}</td></tr>
-      </table>
-      <div class="meta">${meta}</div>
-      <div class="footer-page">Resumen de ganancias y pérdidas derivadas de las transmisiones de activos el ${y} — Página 1</div>
-    </div>`;
-
-      // Page 2: Section B — Per-asset breakdown + aggregated
-      const bRows = (report.section_b || []).map((r: any) => `
-    <tr>
-      <td>${r.asset}</td><td>${r.exchange}</td><td>${r.tipo}</td>
-      <td>${eur(r.valor_transmision_eur)}</td><td>${eur(r.valor_adquisicion_eur)}</td>
-      <td class="${r.ganancia_perdida_eur >= 0 ? 'positive' : 'negative'}">${eur(r.ganancia_perdida_eur)}</td>
-    </tr>`).join("");
-      const bTotals = (report.section_b || []).reduce((s: any, r: any) => ({
-        vt: s.vt + r.valor_transmision_eur, va: s.va + r.valor_adquisicion_eur, gp: s.gp + r.ganancia_perdida_eur,
-      }), { vt: 0, va: 0, gp: 0 });
-
-      // Aggregated by asset (merge exchanges) — same as frontend
-      const aggMap = new Map<string, { vt: number; va: number; gp: number }>();
-      for (const r of (report.section_b || [])) {
-        const prev = aggMap.get(r.asset) || { vt: 0, va: 0, gp: 0 };
-        prev.vt += r.valor_transmision_eur;
-        prev.va += r.valor_adquisicion_eur;
-        prev.gp += r.ganancia_perdida_eur;
-        aggMap.set(r.asset, prev);
-      }
-      const aggRows = Array.from(aggMap.entries()).map(([asset, v]) => `
-          <tr>
-            <td>${asset}</td>
-            <td>${eur(v.vt)}</td><td>${eur(v.va)}</td>
-            <td class="${v.gp >= 0 ? 'positive' : 'negative'}">${eur(v.gp)}</td>
-          </tr>`).join("");
-      const aggSection = `
-          <h2 style="margin-top:24px;">B) Resumen por activo (agregado) el ${y}</h2>
-          <table>
-            <tr><th>Ticker</th><th>Valor transmisión EUR</th><th>Valor adquisición EUR</th><th>Ganancia/Pérdida EUR</th></tr>
-            ${aggRows}
-            <tr class="total-row"><td>Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
-          </table>`;
-
-      const pageB = `
-    <div class="page">
-      <div class="brand">${BRAND_LABEL}</div>
-      <h2>A) Resumen de ganancias y pérdidas por activo y exchange el ${y}</h2>
-      <table>
-        <tr><th>Ticker</th><th>Exchange</th><th>Tipo</th><th>Valor transmisión EUR</th><th>Valor adquisición EUR</th><th>Ganancia/Pérdida EUR</th></tr>
-        ${bRows}
-        <tr class="total-row"><td colspan="3">Total ${y}</td><td>${eur(bTotals.vt)}</td><td>${eur(bTotals.va)}</td><td>${eur(bTotals.gp)}</td></tr>
-      </table>
-      ${aggSection}
-      <div class="footer-page">Resumen de ganancias y pérdidas por activo el ${y} — Página 2</div>
-    </div>`;
-
-      // Page 3: Section C — Capital mobiliario
-      const c = report.section_c;
-      const pageC = `
-    <div class="page">
-      <div class="brand">${BRAND_LABEL}</div>
-      <h2>Resumen de rendimiento de capital mobiliario en ${y}</h2>
-      <h2 style="font-size:14px;color:#334155;">Entradas en EUR</h2>
-      <table>
-        <tr><td>Staking (Almacenamiento)</td><td>${eur(c.staking)}</td></tr>
-        <tr><td>Masternodos</td><td>${eur(c.masternodes)}</td></tr>
-        <tr><td>Lending (Préstamos)</td><td>${eur(c.lending)}</td></tr>
-        <tr><td>Distribuciones de Tokens de Seguridad</td><td>${eur(c.distribuciones)}</td></tr>
-      </table>
-      <table>
-        <tr class="total-row"><td>Total de rendimiento</td><td>${eur(c.total_eur)}</td></tr>
-      </table>
-      <div class="footer-page">Resumen de rendimiento de capital mobiliario en ${y} — Página 3</div>
-    </div>`;
-
-      // Page 4: Section D — Portfolio vision
-      const dRows = (report.section_d || []).map((r: any) => `
-    <tr>
-      <td>${r.asset}</td><td>${(r.exchanges || []).join(", ")}</td>
-      <td>${qty(r.saldo_inicio)}</td><td>${qty(r.entradas)}</td><td>${qty(r.salidas)}</td><td>${qty(r.saldo_fin)}</td>
-    </tr>`).join("");
-      const pageD = `
-    <div class="page">
-      <div class="brand">${BRAND_LABEL}</div>
-      <h2>Visión general de valores en cartera y cambios en valores de cartera en ${y}</h2>
-      <table>
-        <tr><th>Activo</th><th>Exchange</th><th>Saldo 01/01/${y}</th><th>Entradas (${y})</th><th>Salidas (${y})</th><th>Saldo 31/12/${y}</th></tr>
-        ${dRows}
-      </table>
-      <div class="footer-page">Visión general de cartera ${y} — Página 4</div>
-    </div>`;
-
-      return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Informe Fiscal ${y}</title><style>${css}</style></head><body>${pageA}${pageB}${pageC}${pageD}</body></html>`;
+      const html = await resp.text();
+      return html;
     } catch (error: any) {
       throw new Error(`Failed to generate fiscal report: ${error.message}`);
     }

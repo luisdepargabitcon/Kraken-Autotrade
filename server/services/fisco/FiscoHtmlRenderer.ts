@@ -175,6 +175,61 @@ function filterTable(inputId,tableId){
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Canonical function to build annual HTML report data with enriched finStatus.
+ * This ensures consistent enrichment of gains_eur, losses_eur, staking_total_eur
+ * across all report generation endpoints (direct HTML and audit-pack ZIP).
+ */
+export async function buildAnnualHtmlReportData(
+  pool: Pool,
+  year: number,
+  exchanges: string[]
+): Promise<{
+  year: number;
+  exchanges: string[];
+  finStatus: any;
+  portfolio: any;
+  krakenRec: any;
+}> {
+  const { FiscoValidationService } = await import("./FiscoValidationService");
+  const { KrakenReconciliationService } = await import("./KrakenReconciliationService");
+
+  const validSvc = new FiscoValidationService(pool);
+  const krakenSvc = new KrakenReconciliationService(pool);
+
+  const [finStatus, portfolio, krakenRec, gainsQ, stakingQ] = await Promise.all([
+    validSvc.getFinalizationStatus(year),
+    validSvc.validatePortfolio(year, null),
+    krakenSvc.reconcile(year),
+    // Gains/losses breakdown — same query as /api/fisco/annual-report section_a
+    pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric > 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS ganancias,
+        COALESCE(SUM(CASE WHEN d.gain_loss_eur::numeric < 0 THEN d.gain_loss_eur::numeric ELSE 0 END), 0) AS perdidas
+      FROM fisco_disposals d
+      JOIN fisco_operations o ON o.id = d.sell_operation_id
+      WHERE EXTRACT(YEAR FROM d.disposed_at) = $1
+    `, [year]),
+    // Staking total — informational row in fiscal summary
+    pool.query(`
+      SELECT COALESCE(SUM(fo.total_eur::numeric), 0) AS total
+      FROM fisco_operations fo
+      WHERE fo.op_type IN ('staking','reward','distribution')
+        AND EXTRACT(YEAR FROM fo.executed_at) = $1
+    `, [year]),
+  ]);
+
+  // Enrich finStatus so renderFiscalSummaryTable can show gains/losses/staking correctly
+  const finEnriched = {
+    ...finStatus,
+    gains_eur: Math.round(parseFloat(gainsQ.rows[0]?.ganancias ?? "0") * 100) / 100,
+    losses_eur: Math.round(parseFloat(gainsQ.rows[0]?.perdidas ?? "0") * 100) / 100,
+    staking_total_eur: Math.round(parseFloat(stakingQ.rows[0]?.total ?? "0") * 100) / 100,
+  };
+
+  return { year, exchanges, finStatus: finEnriched, portfolio, krakenRec };
+}
+
 function eur(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return "—";
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
