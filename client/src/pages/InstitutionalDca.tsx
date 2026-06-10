@@ -4323,7 +4323,7 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
         const pnlSource = pnlResult?.pnlSource || "";
         const isCostBasisMissing = pnlSource === "cost_basis_missing";
         const isInsufficient = pnlSource === "insufficient";
-        const isPersistedFallback = pnlSource === "cycle_realized_fallback";
+        const isPersistedFallback = pnlSource === "cycle_realized_fallback" || pnlSource === "imported_persisted_pnl";
         const isProfit = !isCostBasisMissing && !isInsufficient && pnlUsd > 1;
         const isLoss = !isCostBasisMissing && !isInsufficient && pnlUsd < -1;
         const resultIcon = isCostBasisMissing ? "⏳" : isInsufficient ? "❓" : isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
@@ -4439,7 +4439,7 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
   const pnlSource = pnlResult?.pnlSource || "";
   const isCostBasisMissing = pnlSource === "cost_basis_missing";
   const isInsufficient = pnlSource === "insufficient";
-  const isPersistedFallback = pnlSource === "cycle_realized_fallback";
+  const isPersistedFallback = pnlSource === "cycle_realized_fallback" || pnlSource === "imported_persisted_pnl";
   const hasImportedLot = pnlResult?.importedOpeningLot && pnlResult.importedOpeningLot.quantity > 0;
 
   // Si hay warnings, log técnico (no romper UI)

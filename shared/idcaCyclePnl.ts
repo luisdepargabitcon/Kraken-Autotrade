@@ -20,7 +20,7 @@ export interface IdcaCyclePnlResult {
   totalFeesUsd: number;
   realizedNetUsd: number;
   realizedPnlPct: number;
-  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "cycle_realized_fallback" | "insufficient" | "cost_basis_missing";
+  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "cycle_realized_fallback" | "imported_persisted_pnl" | "insufficient" | "cost_basis_missing";
   warnings: string[];
   importedOpeningLot?: {
     quantity: number;
@@ -28,6 +28,12 @@ export interface IdcaCyclePnlResult {
     costUsd: number;
     source: string;
   };
+  // Audit fields for discrepancy tracking
+  auditRealizedNetUsd?: number;
+  auditRealizedPnlPct?: number;
+  auditSource?: string;
+  pnlDiscrepancyUsd?: number;
+  pnlDiscrepancyPct?: number;
 }
 
 export interface IdcaCyclePnlOrder {
@@ -544,6 +550,50 @@ export function calculateIdcaCycleRealizedPnl(
       soldCostBasisUsd = totalSoldCostBasis;
       calculatedPnlSource = "orders";
 
+      // Calculate FIFO PnL for audit purposes
+      const fifoRealizedNetUsd = totalSellValueUsd - totalSellFeesUsd - soldCostBasisUsd;
+      const fifoRealizedPnlPct = soldCostBasisUsd > 0 ? (fifoRealizedNetUsd / soldCostBasisUsd) * 100 : 0;
+
+      // Canonical policy for imported/manual cycles with persisted negative PnL
+      const hasPersistedNegativePnl =
+        status === "closed" &&
+        isImported &&
+        Number.isFinite(realizedPnlUsd) &&
+        realizedPnlUsd < 0;
+
+      if (hasPersistedNegativePnl) {
+        // Use persisted PnL as canonical value for imported/manual cycles with negative PnL
+        const costBasisForPct = importedOpeningLot?.costUsd || capitalUsedUsd || soldCostBasisUsd;
+        const persistedPnlPct = costBasisForPct > 0 ? (realizedPnlUsd / costBasisForPct) * 100 : 0;
+        const discrepancyUsd = Math.abs(fifoRealizedNetUsd - realizedPnlUsd);
+        const discrepancyPct = costBasisForPct > 0 ? (discrepancyUsd / costBasisForPct) * 100 : 0;
+
+        warnings.push("Imported/manual cycle uses persisted negative PnL as canonical value");
+
+        return {
+          capitalInvestedUsd: importedOpeningLot?.costUsd || capitalUsedUsd || 0,
+          totalBuyQty: importedOpeningLot?.quantity || totalBuyQty || totalQuantity || 0,
+          totalBuyCostUsd: importedOpeningLot?.costUsd || totalBuyCostUsd || capitalUsedUsd || 0,
+          avgCostUsd: importedOpeningLot?.avgPrice || avgCostUsd || avgEntryPrice || 0,
+          totalSellQty,
+          totalSellValueUsd,
+          soldCostBasisUsd: importedOpeningLot?.costUsd || capitalUsedUsd || 0,
+          realizedGrossUsd: realizedPnlUsd,
+          totalFeesUsd: totalSellFeesUsd,
+          realizedNetUsd: realizedPnlUsd,
+          realizedPnlPct: persistedPnlPct,
+          pnlSource: "imported_persisted_pnl",
+          warnings,
+          importedOpeningLot,
+          // Audit fields
+          auditRealizedNetUsd: fifoRealizedNetUsd,
+          auditRealizedPnlPct: fifoRealizedPnlPct,
+          auditSource: calculatedPnlSource,
+          pnlDiscrepancyUsd: discrepancyUsd,
+          pnlDiscrepancyPct: discrepancyPct,
+        };
+      }
+
       // Guardrail: if cost basis is missing for imported cycle, check for negative realizedPnlUsd fallback
       if (costBasisMissing) {
         const hasPersistedNegativePnl =
@@ -569,6 +619,12 @@ export function calculateIdcaCycleRealizedPnl(
             pnlSource: "cycle_realized_fallback",
             warnings,
             importedOpeningLot,
+            // Audit fields
+            auditRealizedNetUsd: fifoRealizedNetUsd,
+            auditRealizedPnlPct: fifoRealizedPnlPct,
+            auditSource: calculatedPnlSource,
+            pnlDiscrepancyUsd: Math.abs(fifoRealizedNetUsd - realizedPnlUsd),
+            pnlDiscrepancyPct: (importedOpeningLot?.costUsd || capitalUsedUsd) > 0 ? (Math.abs(fifoRealizedNetUsd - realizedPnlUsd) / (importedOpeningLot?.costUsd || capitalUsedUsd)) * 100 : 0,
           };
         }
 

@@ -2,6 +2,70 @@
 
 ---
 
+## 2026-06-10 — fix(idca): usar PnL persistido como canónico en ciclos importados manuales
+
+### Problema
+Ciclos importados/manuales cerrados con `realizedPnlUsd` negativo terminaban mostrando PnL FIFO recalculado en lugar del PnL persistido real, causando discrepancias.
+
+**Caso real ETH/USD id=17:**
+- DB `realized_pnl_usd`: -$654.95 (PnL persistido real)
+- UI anterior: -$741.39 (FIFO recalculado)
+- Diferencia: -$86.44 USD
+
+### Causa raíz
+- La política anterior solo usaba `realizedPnlUsd` como fallback cuando `costBasisMissing=true`
+- No había priorización de PnL persistido para ciclos importados/manuales cerrados con PnL negativo
+- No existían campos de auditoría para rastrear discrepancias entre PnL persistido y FIFO
+
+### Solución
+
+#### `shared/idcaCyclePnl.ts` ✅ MODIFICADO
+- Añadido nuevo `pnlSource`: `imported_persisted_pnl`
+- Añadidos campos de auditoría: `auditRealizedNetUsd`, `auditRealizedPnlPct`, `auditSource`, `pnlDiscrepancyUsd`, `pnlDiscrepancyPct`
+- Política canónica para ciclos importados/manuales cerrados:
+  - Si `hasPersistedNegativePnl = status === "closed" && isImported && Number.isFinite(realizedPnlUsd) && realizedPnlUsd < 0`:
+    - Usar `realizedPnlUsd` como PnL principal (`realizedNetUsd`)
+    - Calcular FIFO solo como auditoría en campos `audit*`
+    - Calcular discrepancia entre ambos
+    - `pnlSource = "imported_persisted_pnl"`
+  - Si `costBasisMissing` y `hasPersistedNegativePnl`:
+    - Usar `cycle_realized_fallback` con campos de auditoría
+  - Ciclos normales no importados: mantener comportamiento actual (calcular desde órdenes)
+
+#### `client/src/pages/InstitutionalDca.tsx` ✅ MODIFICADO
+- `isPersistedFallback` ahora incluye `imported_persisted_pnl` (antes solo `cycle_realized_fallback`)
+- Badge "PnL persistido" se muestra para ambos tipos de fallback
+- `isPnlCalculable` ya incluye `imported_persisted_pnl` como calculable
+
+#### `server/services/__tests__/idcaCyclePnl.test.ts` ✅ MODIFICADO
+- Test "Ciclo ETH id=17 (importado con snapshot)": ahora espera `imported_persisted_pnl` con campos de auditoría
+- Test "Ciclo ETH id=17 con costBasisMissing": ahora espera `imported_persisted_pnl` en lugar de `cycle_realized_fallback`
+- Test "Ciclo ETH id=17 con órdenes completas": verifica `imported_persisted_pnl` como canónico y FIFO como auditoría
+- Total: 23/23 tests pasando
+
+### Validación
+- ✅ npm run build: sin errores
+- ✅ vitest idcaCyclePnl.test.ts: 23/23 tests pasando
+- ✅ git commit: pendiente
+- ✅ git push: pendiente
+
+### Notas de deploy
+- No requiere migración DB
+- Ciclos importados/manuales cerrados con `realizedPnlUsd` negativo mostrarán el valor persistido como PnL principal
+- FIFO recalculado se guarda en campos de auditoría para referencia
+- Discrepancias entre ambos se calculan y están disponibles en `pnlDiscrepancyUsd` y `pnlDiscrepancyPct`
+- `imported_persisted_pnl` cuenta como PnL calculable en totales/wins/losses
+
+### Resultado esperado para ETH/USD id=17 después de deploy
+- PnL principal visible: -$654.95 (no -$741.39)
+- Badge: "PnL persistido"
+- Campos de auditoría disponibles:
+  - `auditRealizedNetUsd`: FIFO recalculado (~-$741.39)
+  - `pnlDiscrepancyUsd`: ~$86.44
+- Total del Historial usará -$654.95 (no -$741.39)
+
+---
+
 ## 2026-06-10 — fix(idca): evitar PnL cero en ciclos importados con PnL persistido
 
 ### Problema

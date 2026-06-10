@@ -145,7 +145,7 @@ describe("calculateIdcaCycleRealizedPnl", () => {
   });
 
   describe("Ciclo ETH id=17 (importado con snapshot originalQty/originalCapital)", () => {
-    it("debe construir lote importado desde snapshot con originalQty/originalCapital", () => {
+    it("debe usar imported_persisted_pnl como canónico y guardar FIFO como auditoría", () => {
       const cycle = {
         id: 17,
         pair: "ETH/USD",
@@ -197,11 +197,16 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       expect(result.importedOpeningLot?.avgPrice).toBeCloseTo(2427.01, 1);
       expect(result.importedOpeningLot?.source).toBe("import_snapshot_original_capital");
 
-      // PnL calculation: sell - imported cost - fees
-      // 4013.90 - 3676.14 - 5 = 332.76
-      expect(result.realizedNetUsd).toBeCloseTo(332.76, 1);
-      expect(result.realizedPnlPct).toBeCloseTo(9.05, 1);
-      expect(result.pnlSource).toBe("orders");
+      // Should use imported_persisted_pnl as canonical value (negative PnL)
+      expect(result.pnlSource).toBe("imported_persisted_pnl");
+      expect(result.realizedNetUsd).toBeCloseTo(-654.95, 2);
+      expect(result.realizedNetUsd).not.toBe(0);
+
+      // Audit fields should contain FIFO calculation
+      expect(result.auditRealizedNetUsd).toBeDefined();
+      expect(result.auditRealizedPnlPct).toBeDefined();
+      expect(result.auditSource).toBe("orders");
+      expect(result.pnlDiscrepancyUsd).toBeGreaterThan(0);
     });
   });
 
@@ -238,7 +243,7 @@ describe("calculateIdcaCycleRealizedPnl", () => {
   });
 
   describe("Ciclo ETH id=17 con costBasisMissing y realizedPnlUsd negativo", () => {
-    it("debe usar cycle_realized_fallback en lugar de cost_basis_missing", () => {
+    it("debe usar imported_persisted_pnl en lugar de cost_basis_missing", () => {
       const cycle = {
         id: 17,
         pair: "ETH/USD",
@@ -284,12 +289,78 @@ describe("calculateIdcaCycleRealizedPnl", () => {
 
       const result = calculateIdcaCycleRealizedPnl(cycle, orders);
 
-      // Should use cycle_realized_fallback instead of cost_basis_missing
-      expect(result.pnlSource).toBe("cycle_realized_fallback");
+      // Should use imported_persisted_pnl instead of cost_basis_missing
+      expect(result.pnlSource).toBe("imported_persisted_pnl");
       expect(result.realizedNetUsd).toBeCloseTo(-654.95, 2);
       expect(result.realizedNetUsd).not.toBe(0);
       expect(result.importedOpeningLot?.costUsd).toBeCloseTo(3676.1389440212, 2);
       expect(result.importedOpeningLot?.quantity).toBeCloseTo(1.51467812, 6);
+    });
+  });
+
+  describe("Ciclo ETH id=17 con órdenes completas y realizedPnlUsd negativo", () => {
+    it("debe usar imported_persisted_pnl como canónico y guardar FIFO como auditoría", () => {
+      const cycle = {
+        id: 17,
+        pair: "ETH/USD",
+        isImported: true,
+        isManualCycle: true,
+        sourceType: "manual",
+        capitalUsedUsd: 0,
+        totalQuantity: 0,
+        avgEntryPrice: 2301.64843305,
+        realizedPnlUsd: -654.95,
+        basePrice: 2427.01,
+        basePriceType: "imported_avg",
+        status: "closed",
+        importSnapshotJson: {
+          importedAt: "2026-03-29T11:09:46.452Z",
+          soloSalida: true,
+          sourceType: "manual",
+          feesPaidUsd: 0,
+          originalQty: 1.51467812,
+          isManualCycle: true,
+          exchangeSource: "revolut_x",
+          estimatedFeePct: 0.09,
+          estimatedFeeUsd: 3.31,
+          originalCapital: 3676.1389440212,
+          originalAvgPrice: 2427.01,
+          feesOverrideManual: false,
+          hadActiveCycleAtImport: false,
+        },
+      };
+
+      // Orders that allow FIFO calculation (sell qty matches imported lot)
+      const orders = [
+        {
+          side: "sell",
+          order_type: "manual_close",
+          status: "filled",
+          price: 2650,
+          quantity: 1.51467812, // Matches imported lot
+          gross_value_usd: 4013.90,
+          fees_usd: 5,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Should use imported_persisted_pnl as canonical value
+      expect(result.pnlSource).toBe("imported_persisted_pnl");
+      expect(result.realizedNetUsd).toBeCloseTo(-654.95, 2);
+      expect(result.realizedNetUsd).not.toBe(0);
+      expect(result.importedOpeningLot?.costUsd).toBeCloseTo(3676.1389440212, 2);
+      expect(result.importedOpeningLot?.quantity).toBeCloseTo(1.51467812, 6);
+
+      // Audit fields should contain FIFO calculation
+      expect(result.auditRealizedNetUsd).toBeDefined();
+      expect(result.auditRealizedPnlPct).toBeDefined();
+      expect(result.auditSource).toBe("orders");
+      expect(result.pnlDiscrepancyUsd).toBeGreaterThan(0);
+      expect(result.pnlDiscrepancyPct).toBeGreaterThan(0);
+
+      // FIFO calculated PnL should be different from persisted PnL
+      expect(result.auditRealizedNetUsd).not.toBeCloseTo(-654.95, 1);
     });
   });
 
@@ -357,6 +428,81 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       expect(result.realizedNetUsd).not.toBeCloseTo(2934.75, 1);
       expect(result.realizedPnlPct).not.toBeCloseTo(140.69, 1);
       expect(Math.abs(result.realizedPnlPct)).toBeLessThan(50);
+    });
+  });
+
+
+  describe("Ciclo normal no importado con realizedPnlUsd neto", () => {
+    it("debe mantener comportamiento actual (calcular desde órdenes)", () => {
+      const cycle = {
+        id: 21,
+        pair: "BTC/USD",
+        capitalUsedUsd: 500,
+        totalQuantity: 0.005,
+        avgEntryPrice: 100000,
+        realizedPnlUsd: 24,
+        status: "closed",
+      };
+
+      const orders = [
+        {
+          side: "buy",
+          order_type: "initial_buy",
+          status: "filled",
+          price: 100000,
+          quantity: 0.005,
+          gross_value_usd: 500,
+          fees_usd: 0.50,
+        },
+        {
+          side: "sell",
+          order_type: "trailing_exit",
+          status: "filled",
+          price: 105000,
+          quantity: 0.005,
+          gross_value_usd: 525,
+          fees_usd: 0.50,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Should calculate from orders, not use realizedPnlUsd
+      expect(result.pnlSource).toBe("orders");
+      expect(result.realizedNetUsd).toBeCloseTo(24, 0);
+      expect(result.realizedNetUsd).not.toBe(0);
+    });
+  });
+
+  describe("Ciclo importado sin realizedPnlUsd y sin snapshot", () => {
+    it("debe mantener cost_basis_missing", () => {
+      const cycle = {
+        id: 22,
+        pair: "ETH/USD",
+        isImported: true,
+        capitalUsedUsd: 0,
+        totalQuantity: 0,
+        avgEntryPrice: 0,
+        realizedPnlUsd: 0,
+        status: "closed",
+      };
+
+      const orders = [
+        {
+          side: "sell",
+          order_type: "manual_close",
+          status: "filled",
+          price: 2000,
+          quantity: 1,
+          gross_value_usd: 2000,
+          fees_usd: 10,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      expect(result.pnlSource).toBe("cost_basis_missing");
+      expect(result.realizedNetUsd).toBe(0);
     });
   });
 
