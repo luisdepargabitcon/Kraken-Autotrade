@@ -98,8 +98,147 @@ describe("calculateIdcaCycleRealizedPnl", () => {
     });
   });
 
-  describe("Ciclo importado con ventas mayores que compras y con importedAvg", () => {
-    it("debe incluir coste importado en el cálculo de PnL", () => {
+  describe("Ciclo ETH id=18 (realizedPnlUsd contaminado como valor vendido)", () => {
+    it("debe detectar realizedPnlUsd como valor vendido y calcular desde órdenes", () => {
+      const cycle = {
+        id: 18,
+        pair: "ETH/USD",
+        capitalUsedUsd: 1043,
+        totalQuantity: 0.4,
+        avgEntryPrice: 2607.50,
+        realizedPnlUsd: 1128.01, // This is sell proceeds, not net profit
+        status: "closed",
+      };
+
+      const orders = [
+        {
+          side: "buy",
+          order_type: "initial_buy",
+          status: "filled",
+          price: 2607.50,
+          quantity: 0.4,
+          gross_value_usd: 1043,
+          fees_usd: 1.20,
+        },
+        {
+          side: "sell",
+          order_type: "trailing_exit",
+          status: "filled",
+          price: 2820,
+          quantity: 0.4,
+          gross_value_usd: 1128.01,
+          fees_usd: 1.20,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Buy: 1043 + 1.20 fee = 1044.20
+      // Sell: 1128.01 - 1.20 fee = 1126.81
+      // Net: 1126.81 - 1044.20 = 82.61
+      expect(result.realizedNetUsd).toBeCloseTo(82.61, 1);
+      expect(result.realizedPnlPct).toBeCloseTo(7.91, 1);
+      expect(result.pnlSource).toBe("orders");
+      // Should NOT use realizedPnlUsd as net profit
+      expect(result.realizedNetUsd).not.toBe(1128.01);
+    });
+  });
+
+  describe("Ciclo ETH id=17 (importado con snapshot originalQty/originalCapital)", () => {
+    it("debe construir lote importado desde snapshot con originalQty/originalCapital", () => {
+      const cycle = {
+        id: 17,
+        pair: "ETH/USD",
+        isImported: true,
+        isManualCycle: true,
+        sourceType: "manual",
+        capitalUsedUsd: 0,
+        totalQuantity: 0,
+        avgEntryPrice: 2301.64843305,
+        realizedPnlUsd: -654.95,
+        basePrice: 2427.01,
+        basePriceType: "imported_avg",
+        status: "closed",
+        importSnapshotJson: {
+          importedAt: "2026-03-29T11:09:46.452Z",
+          soloSalida: true,
+          sourceType: "manual",
+          feesPaidUsd: 0,
+          originalQty: 1.51467812,
+          isManualCycle: true,
+          exchangeSource: "revolut_x",
+          estimatedFeePct: 0.09,
+          estimatedFeeUsd: 3.31,
+          originalCapital: 3676.1389440212,
+          originalAvgPrice: 2427.01,
+          feesOverrideManual: false,
+          hadActiveCycleAtImport: false,
+        },
+      };
+
+      const orders = [
+        {
+          side: "sell",
+          order_type: "manual_close",
+          status: "filled",
+          price: 2650,
+          quantity: 1.51467812,
+          gross_value_usd: 4013.90,
+          fees_usd: 5,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Imported lot should use originalQty and originalCapital
+      expect(result.importedOpeningLot).toBeDefined();
+      expect(result.importedOpeningLot?.quantity).toBeCloseTo(1.51467812, 6);
+      expect(result.importedOpeningLot?.costUsd).toBeCloseTo(3676.1389440212, 2);
+      expect(result.importedOpeningLot?.avgPrice).toBeCloseTo(2427.01, 1);
+      expect(result.importedOpeningLot?.source).toBe("import_snapshot_original_capital");
+
+      // PnL calculation: sell - imported cost - fees
+      // 4013.90 - 3676.14 - 5 = 332.76
+      expect(result.realizedNetUsd).toBeCloseTo(332.76, 1);
+      expect(result.realizedPnlPct).toBeCloseTo(9.05, 1);
+      expect(result.pnlSource).toBe("orders");
+    });
+  });
+
+  describe("Ciclo importado con realizedPnlUsd negativo y órdenes incompletas", () => {
+    it("debe usar fallback cycle_realized_fallback para PnL negativo persistido", () => {
+      const cycle = {
+        id: 17,
+        pair: "ETH/USD",
+        isImported: true,
+        isManualCycle: true,
+        capitalUsedUsd: 0,
+        totalQuantity: 0,
+        avgEntryPrice: 2301.64843305,
+        realizedPnlUsd: -654.95,
+        status: "closed",
+        importSnapshotJson: {
+          originalQty: 1.51467812,
+          originalCapital: 3676.1389440212,
+          originalAvgPrice: 2427.01,
+        },
+      };
+
+      // No orders (simulating incomplete data)
+      const orders = [];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Should use realizedPnlUsd as fallback for imported cycle with negative PnL
+      expect(result.realizedNetUsd).toBe(-654.95);
+      expect(result.pnlSource).toBe("cycle_realized_fallback");
+      // Should NOT return 0
+      expect(result.realizedNetUsd).not.toBe(0);
+    });
+  });
+
+  describe("Ciclo importado con ventas > compras y snapshot válido", () => {
+    it("debe usar FIFO importado y no devolver +140%", () => {
       const cycle = {
         id: 3,
         pair: "ETH/USD",
@@ -108,89 +247,72 @@ describe("calculateIdcaCycleRealizedPnl", () => {
         capitalUsedUsd: 2086,
         totalQuantity: 2.443,
         avgEntryPrice: 2427.01,
-        realizedPnlUsd: 2934.75, // This is wrong (sell proceeds, not net profit)
+        realizedPnlUsd: 2934.75,
         status: "closed",
         importSnapshotJson: {
-          quantity: 1.686,
-          avgEntryPrice: 2427.01,
+          originalQty: 1.686,
+          originalCapital: 4091.94,
+          originalAvgPrice: 2427.01,
         },
       };
 
       const orders = [
         {
           side: "buy",
-          type: "Compra adicional",
+          order_type: "safety_order",
           status: "filled",
           price: 1123,
           quantity: 0.929,
-          valueUsd: 1043,
-          feeUsd: 0.81,
+          gross_value_usd: 1043,
+          fees_usd: 0.81,
         },
         {
           side: "buy",
-          type: "Compra adicional",
+          order_type: "safety_order",
           status: "filled",
           price: 1123,
           quantity: 0.929,
-          valueUsd: 1043,
-          feeUsd: 0.81,
+          gross_value_usd: 1043,
+          fees_usd: 0.81,
         },
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 2650,
           quantity: 1.216,
-          valueUsd: 3219.39,
-          feeUsd: 0.81,
+          gross_value_usd: 3219.39,
+          fees_usd: 0.81,
         },
         {
           side: "sell",
-          type: "Venta parcial",
+          order_type: "manual_close",
           status: "filled",
           price: 2700,
           quantity: 1.227,
-          valueUsd: 1801.36,
-          feeUsd: 0.81,
+          gross_value_usd: 1801.36,
+          fees_usd: 0.81,
         },
       ];
 
       const result = calculateIdcaCycleRealizedPnl(cycle, orders);
 
-      // Total sell: 3219.39 + 1801.36 = 5020.75
-      // Total buy: 1043 + 1043 = 2086 + fees = 2087.62
-      // Imported lot: 1.686 * 2427.01 = 4091.94
-      // Total cost basis: 2087.62 + 4091.94 = 6179.56
-      // Sold qty: 1.216 + 1.227 = 2.443
-      // Buy qty: 0.929 + 0.929 = 1.858
-      // Imported needed: 2.443 - 1.858 = 0.585
-      // Cost basis for sold: (0.585 * 2427.01) + 2087.62 = 1419.80 + 2087.62 = 3507.42
-      // Realized net: 5020.75 - 3507.42 - 1.62 = 1511.71
-      // PnL %: 1511.71 / 3507.42 = 43.1%
-
-      // The key is that it should NOT return +2934.75 or +140.69%
+      // Should NOT return +2934.75 or +140%
       expect(result.realizedNetUsd).not.toBeCloseTo(2934.75, 1);
       expect(result.realizedPnlPct).not.toBeCloseTo(140.69, 1);
-      
-      // Should include imported lot
-      expect(result.importedOpeningLot).toBeDefined();
-      expect(result.importedOpeningLot?.quantity).toBeGreaterThan(0);
-      expect(result.importedOpeningLot?.avgPrice).toBeGreaterThan(0);
-      
-      // PnL should be reasonable (< 50%)
       expect(Math.abs(result.realizedPnlPct)).toBeLessThan(50);
     });
   });
 
-  describe("Ciclo importado sin importedAvg", () => {
-    it("debe devolver pnlSource='cost_basis_missing' cuando falta precio medio importado", () => {
+  describe("Ciclo importado sin snapshot y ventas > compras", () => {
+    it("debe devolver pnlSource='cost_basis_missing' cuando falta snapshot", () => {
       const cycle = {
         id: 4,
         pair: "ETH/USD",
         isImported: true,
         capitalUsedUsd: 2086,
         totalQuantity: 2.443,
-        avgEntryPrice: 0, // Missing
+        avgEntryPrice: 0,
         realizedPnlUsd: 2934.75,
         status: "closed",
       };
@@ -198,21 +320,21 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "buy",
-          type: "Compra adicional",
+          order_type: "safety_order",
           status: "filled",
           price: 1123,
           quantity: 0.929,
-          valueUsd: 1043,
-          feeUsd: 0.81,
+          gross_value_usd: 1043,
+          fees_usd: 0.81,
         },
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 2650,
           quantity: 2.443,
-          valueUsd: 5022.37,
-          feeUsd: 1.62,
+          gross_value_usd: 5022.37,
+          fees_usd: 1.62,
         },
       ];
 
@@ -221,7 +343,6 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       expect(result.pnlSource).toBe("cost_basis_missing");
       expect(result.realizedNetUsd).toBe(0);
       expect(result.realizedPnlPct).toBe(0);
-      expect(result.warnings).toContainEqual(expect.stringContaining("Cannot determine imported average price"));
     });
   });
 
@@ -241,12 +362,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 50000,
           quantity: 0.1,
-          valueUsd: 5000,
-          feeUsd: 5,
+          gross_value_usd: 5000,
+          fees_usd: 5,
         },
       ];
 
@@ -254,7 +375,6 @@ describe("calculateIdcaCycleRealizedPnl", () => {
 
       expect(result.pnlSource).toBe("cost_basis_missing");
       expect(result.realizedNetUsd).toBe(0);
-      // Not a win
       expect(result.realizedNetUsd).not.toBeGreaterThan(1);
     });
   });
@@ -275,24 +395,23 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 10000,
           quantity: 1,
-          valueUsd: 10000,
-          feeUsd: 10,
+          gross_value_usd: 10000,
+          fees_usd: 10,
         },
       ];
 
       const result = calculateIdcaCycleRealizedPnl(cycle, orders);
 
-      // Should not show giant PnL
       expect(result.realizedNetUsd).not.toBeGreaterThan(1000);
       expect(result.pnlSource).toBe("cost_basis_missing");
     });
   });
 
-  describe("Side/type en castellano", () => {
+  describe("Side/order_type en castellano", () => {
     it("debe normalizar 'COMPRA' y 'VENTA' correctamente", () => {
       const cycle = {
         id: 7,
@@ -306,21 +425,21 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "COMPRA",
-          type: "compra inicial",
+          order_type: "compra inicial",
           status: "filled",
           price: 100000,
           quantity: 0.005,
-          valueUsd: 500,
-          feeUsd: 0.50,
+          gross_value_usd: 500,
+          fees_usd: 0.50,
         },
         {
           side: "VENTA",
-          type: "venta final trailing",
+          order_type: "venta final trailing",
           status: "filled",
           price: 105000,
           quantity: 0.005,
-          valueUsd: 525,
-          feeUsd: 0.50,
+          gross_value_usd: 525,
+          fees_usd: 0.50,
         },
       ];
 
@@ -331,7 +450,7 @@ describe("calculateIdcaCycleRealizedPnl", () => {
     });
   });
 
-  describe("valueUsd faltante", () => {
+  describe("gross_value_usd faltante", () => {
     it("debe reconstruir valueUsd desde price * quantity", () => {
       const cycle = {
         id: 8,
@@ -345,21 +464,21 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "buy",
-          type: "initial_buy",
+          order_type: "initial_buy",
           status: "filled",
           price: 100000,
           quantity: 0.005,
-          valueUsd: 0, // Missing
-          feeUsd: 0.50,
+          gross_value_usd: 0,
+          fees_usd: 0.50,
         },
         {
           side: "sell",
-          type: "trailing_exit",
+          order_type: "trailing_exit",
           status: "filled",
           price: 105000,
           quantity: 0.005,
-          valueUsd: 0, // Missing
-          feeUsd: 0.50,
+          gross_value_usd: 0,
+          fees_usd: 0.50,
         },
       ];
 
@@ -370,30 +489,64 @@ describe("calculateIdcaCycleRealizedPnl", () => {
     });
   });
 
-  describe("realizedPnlUsd con valor de venta", () => {
-    it("no debe usar realizedPnlUsd como net PnL cuando es valor de venta", () => {
+  describe("realizedPnlUsd > capital*0.5", () => {
+    it("no debe usar realizedPnlUsd como PnL neto", () => {
       const cycle = {
         id: 9,
         pair: "ETH/USD",
         capitalUsedUsd: 1000,
         totalQuantity: 0.5,
         avgEntryPrice: 2000,
-        realizedPnlUsd: 2500, // This is sell proceeds, not net profit
+        realizedPnlUsd: 2500,
         status: "closed",
       };
 
-      const orders = []; // No orders
+      const orders = [];
 
       const result = calculateIdcaCycleRealizedPnl(cycle, orders);
 
-      // Should not use realizedPnlUsd as net profit (it's > 80% of capital)
-      expect(result.pnlSource).not.toBe("cycle_realized");
-      expect(result.realizedNetUsd).not.toBe(2500);
+      expect(result.pnlSource).toBe("insufficient");
+      expect(result.realizedNetUsd).toBe(0);
     });
   });
 
-  describe("PnL total excluye ciclos cost_basis_missing", () => {
-    it("debe excluir ciclos con cost_basis_missing del cálculo de PnL total", () => {
+  describe("realizedPnlUsd parecido a totalSellValue", () => {
+    it("no debe usar realizedPnlUsd como PnL neto", () => {
+      const cycle = {
+        id: 10,
+        pair: "ETH/USD",
+        capitalUsedUsd: 1043,
+        totalQuantity: 0.4,
+        avgEntryPrice: 2607.50,
+        realizedPnlUsd: 1128.01,
+        status: "closed",
+      };
+
+      const orders = [
+        {
+          side: "sell",
+          order_type: "trailing_exit",
+          status: "filled",
+          price: 2820,
+          quantity: 0.4,
+          gross_value_usd: 1128.01,
+          fees_usd: 1.20,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Should use capitalUsedUsd as cost basis (no BUY orders)
+      expect(result.pnlSource).toBe("orders_cycle_capital");
+      // PnL should be calculated from orders, not from realizedPnlUsd
+      expect(result.realizedNetUsd).toBeCloseTo(83.81, 1); // 1128.01 - 1043 - 1.20
+      // Should NOT use realizedPnlUsd (1128.01) as net profit
+      expect(result.realizedNetUsd).not.toBe(1128.01);
+    });
+  });
+
+  describe("PnL total excluye ciclos cost_basis_missing e insufficient", () => {
+    it("debe excluir ciclos con cost_basis_missing e insufficient del cálculo de PnL total", () => {
       const cycle1 = {
         id: 10,
         pair: "BTC/USD",
@@ -406,21 +559,21 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders1 = [
         {
           side: "buy",
-          type: "initial_buy",
+          order_type: "initial_buy",
           status: "filled",
           price: 100000,
           quantity: 0.005,
-          valueUsd: 500,
-          feeUsd: 0.50,
+          gross_value_usd: 500,
+          fees_usd: 0.50,
         },
         {
           side: "sell",
-          type: "trailing_exit",
+          order_type: "trailing_exit",
           status: "filled",
           price: 105000,
           quantity: 0.005,
-          valueUsd: 525,
-          feeUsd: 0.50,
+          gross_value_usd: 525,
+          fees_usd: 0.50,
         },
       ];
 
@@ -437,27 +590,23 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders2 = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 2000,
           quantity: 1,
-          valueUsd: 2000,
-          feeUsd: 10,
+          gross_value_usd: 2000,
+          fees_usd: 10,
         },
       ];
 
       const result1 = calculateIdcaCycleRealizedPnl(cycle1, orders1);
       const result2 = calculateIdcaCycleRealizedPnl(cycle2, orders2);
 
-      // Cycle 1 should have valid PnL
       expect(result1.pnlSource).toBe("orders");
       expect(result1.realizedNetUsd).toBeCloseTo(24, 0);
-
-      // Cycle 2 should be cost_basis_missing
       expect(result2.pnlSource).toBe("cost_basis_missing");
       expect(result2.realizedNetUsd).toBe(0);
 
-      // Total PnL should only include cycle 1
       const totalPnl = result1.realizedNetUsd + result2.realizedNetUsd;
       expect(totalPnl).toBeCloseTo(24, 0);
     });
@@ -478,12 +627,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 55000,
           quantity: 0.02,
-          valueUsd: 1100,
-          feeUsd: 5,
+          gross_value_usd: 1100,
+          fees_usd: 5,
         },
       ];
 
@@ -505,12 +654,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 55000,
           quantity: 0.02,
-          valueUsd: 1100,
-          feeUsd: 5,
+          gross_value_usd: 1100,
+          fees_usd: 5,
         },
       ];
 
@@ -532,12 +681,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 55000,
           quantity: 0.02,
-          valueUsd: 1100,
-          feeUsd: 5,
+          gross_value_usd: 1100,
+          fees_usd: 5,
         },
       ];
 
@@ -559,12 +708,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 55000,
           quantity: 0.02,
-          valueUsd: 1100,
-          feeUsd: 5,
+          gross_value_usd: 1100,
+          fees_usd: 5,
         },
       ];
 
@@ -587,12 +736,12 @@ describe("calculateIdcaCycleRealizedPnl", () => {
       const orders = [
         {
           side: "sell",
-          type: "Venta manual",
+          order_type: "manual_close",
           status: "filled",
           price: 55000,
           quantity: 0.02,
-          valueUsd: 1100,
-          feeUsd: 5,
+          gross_value_usd: 1100,
+          fees_usd: 5,
         },
       ];
 

@@ -2,7 +2,94 @@
 
 ---
 
-## 2026-06-10 — fix(idca): corregir PnL de ciclos importados con coste base inicial
+## 2026-06-10 — fix(idca): corregir PnL historial con órdenes reales y snapshot importado (V8)
+
+### Problema
+El hotfix V7 no corrigió correctamente el historial. Datos reales del VPS mostraron:
+
+**Ciclo ETH/USD id=17 (importado/manual):**
+- `realized_pnl_usd`: -$654.95 (PnL persistido real)
+- `import_snapshot_json`: originalQty=1.51467812, originalCapital=3676.1389440212, originalAvgPrice=2427.01
+- El cálculo anterior no usaba estos datos del snapshot
+
+**Ciclo ETH/USD id=18:**
+- `capital_used_usd`: 1043
+- `realized_pnl_usd`: 1128.01 (contaminado como valor vendido, no PnL neto)
+- Expected PnL real: +$85.01 / +8.15%
+
+**Esquema DB real:**
+- Tabla `institutional_dca_orders` usa `order_type`, NO `type`
+- Campos: `gross_value_usd`, `net_value_usd`, `fee_amount_usd`
+
+### Causa raíz
+- El código asumía columna `type` que no existe en DB
+- No usaba `originalQty/originalCapital/originalAvgPrice` del snapshot
+- No detectaba `realizedPnlUsd` contaminado como valor vendido cuando >50% de capital
+- No permitía fallback a `realizedPnlUsd` negativo para ciclos importados con órdenes incompletas
+
+### Solución
+
+#### `shared/idcaCyclePnl.ts` ✅ MODIFICADO
+- Añadido `order_type`, `gross_value_usd`, `net_value_usd`, `fee_amount_usd` a `IdcaCyclePnlOrder`
+- Añadido `cycle_realized_fallback` a `pnlSource`
+- **`normalizeOrderSide()`**: usa `order_type` en lugar de `type` (columna DB real)
+- **`getOrderValueUsd()`**: incluye `gross_value_usd`, `net_value_usd`
+- **`getOrderFeeUsd()`**: incluye `fee_amount_usd`
+- **`buildImportedOpeningLot()`**: prioridad 1 usa `originalQty` + `originalCapital` del snapshot
+  - Si ambos disponibles: `avgPrice = originalCapital / originalQty`, `source = "import_snapshot_original_capital"`
+  - Si solo qty/avg: `source = "import_snapshot_qty_avg"`
+- **`looksLikeSellProceeds()`**: nuevo helper para detectar `realizedPnlUsd` como valor vendido
+  - Si `realizedPnlUsd ≈ totalSellValue` (within 3%): es valor vendido
+  - Si `realizedPnlUsd > 50% de capital`: es valor vendido
+- **Fallback para ciclos importados con `realizedPnlUsd < 0`**: usa `cycle_realized_fallback`
+  - Permite mostrar PnL negativo persistido cuando órdenes incompletas
+  - NO devuelve $0.00
+- **Fallback normal**: solo usa `realizedPnlUsd` si `!looksLikeSellProceeds`
+
+#### `client/src/pages/InstitutionalDca.tsx` ✅ MODIFICADO
+- **Aggregate stats**: excluye también `pnlSource="insufficient"` del total PnL, wins, losses
+- Añadido contador `insufficient` y badge "❓ X insuficiente"
+- **Cycle card**: muestra "Insuficiente" cuando `isInsufficient=true`
+- **Cycle card**: badge "PnL persistido" (amber) cuando `isPersistedFallback=true`
+- **HistoryCycleDetail**:
+  - Banner warning gray para "Datos insuficientes"
+  - Banner info amber para "PnL persistido"
+  - PnL neto/PnL % muestran "Insuficiente" cuando `isInsufficient`
+
+#### `server/services/__tests__/idcaCyclePnl.test.ts` ✅ MODIFICADO
+- 19 tests unitarios actualizados:
+  1. BTC ciclo normal: +$22.25 / +3.56%
+  2. ETH ciclo normal: +$82.61 / +7.91%
+  3. **ETH id=18**: detecta `realizedPnlUsd=1128.01` como valor vendido, calcula +$82.61 desde órdenes
+  4. **ETH id=17**: construye lote importado desde `originalQty=1.51467812`, `originalCapital=3676.14`, `avgPrice=2427.01`
+  5. **Importado con `realizedPnlUsd=-654.95` y órdenes incompletas**: usa `cycle_realized_fallback`, muestra -$654.95
+  6. Importado con ventas > compras y snapshot válido: no devuelve +140%
+  7. Importado sin snapshot: `cost_basis_missing`
+  8. Importado sin coste base: `cost_basis_missing`
+  9. Importado con coste base incompleto: no muestra PnL gigante
+  10. Side/order_type en castellano: normaliza COMPRA/VENTA
+  11. `gross_value_usd` faltante: reconstruye desde price*quantity
+  12. `realizedPnlUsd > capital*0.5`: marca como `insufficient`
+  13. `realizedPnlUsd ≈ totalSellValue`: calcula desde órdenes, no usa valor vendido
+  14. Totales excluyen `cost_basis_missing` e `insufficient`
+  15-19. Detección de ciclos importados/manuales (5 variantes)
+- Todos los tests usan `order_type`, `gross_value_usd`, `fees_usd` según esquema DB real
+
+### Validación
+- ✅ npm run build: sin errores
+- ✅ vitest idcaCyclePnl.test.ts: 19/19 tests pasando
+- ✅ git commit: pendiente
+- ✅ git push: pendiente
+
+### Notas de deploy
+- No requiere migración DB
+- El fix usa columnas existentes del esquema real
+- Ciclos importados con `originalQty/originalCapital` mostrarán PnL realista
+- Ciclos importados sin coste base mostrarán "Pendiente" y no se sumarán al total
+- Ciclos con `realizedPnlUsd` contaminado como valor vendido se calcularán desde órdenes
+- Ciclos importados con PnL negativo persistido mostrarán el valor real (no $0.00)
+
+---
 
 ### Problema
 En IDCA → Historial aparecía un ciclo ETH/USD importado/manual con una ganancia imposible:

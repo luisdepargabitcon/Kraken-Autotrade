@@ -4260,27 +4260,31 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
     }
   });
 
-  // Aggregate stats (exclude cycles with cost_basis_missing)
+  // Aggregate stats (exclude cycles with cost_basis_missing and insufficient)
   const totalPnl = cycles.reduce((s, c) => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing") return s;
+    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return s;
     return s + (pnlResult?.realizedNetUsd || 0);
   }, 0);
   const wins = cycles.filter(c => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing") return false;
+    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return false;
     return (pnlResult?.realizedNetUsd || 0) > 1;
   }).length;
   const losses = cycles.filter(c => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing") return false;
+    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return false;
     return (pnlResult?.realizedNetUsd || 0) < -1;
   }).length;
   const pendingCostBasis = cycles.filter(c => {
     const pnlResult = cyclePnlMap.get(c.id);
     return pnlResult?.pnlSource === "cost_basis_missing";
   }).length;
-  const neutral = cycles.length - wins - losses - pendingCostBasis;
+  const insufficient = cycles.filter(c => {
+    const pnlResult = cyclePnlMap.get(c.id);
+    return pnlResult?.pnlSource === "insufficient";
+  }).length;
+  const neutral = cycles.length - wins - losses - pendingCostBasis - insufficient;
 
   return (
     <div className="space-y-3">
@@ -4292,6 +4296,9 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
         <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-muted-foreground">⚖️ {neutral} neutral</Badge>
         {pendingCostBasis > 0 && (
           <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-orange-400 border-orange-400/30">⏳ {pendingCostBasis} coste pendiente</Badge>
+        )}
+        {insufficient > 0 && (
+          <Badge variant="outline" className="text-sm font-semibold px-3 py-1.5 text-gray-400 border-gray-400/30">❓ {insufficient} insuficiente</Badge>
         )}
         <Badge variant="outline" className={cn("text-lg font-bold px-4 py-2", totalPnl >= 0 ? "text-green-400 border-green-400/30" : "text-red-400 border-red-400/30")}>
           PnL Total: {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
@@ -4306,11 +4313,13 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
         const pnlPct = pnlResult?.realizedPnlPct || 0;
         const pnlSource = pnlResult?.pnlSource || "";
         const isCostBasisMissing = pnlSource === "cost_basis_missing";
-        const isProfit = !isCostBasisMissing && pnlUsd > 1;
-        const isLoss = !isCostBasisMissing && pnlUsd < -1;
-        const resultIcon = isCostBasisMissing ? "⏳" : isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
-        const resultColor = isCostBasisMissing ? "text-orange-400" : isProfit ? "text-green-400" : isLoss ? "text-red-400" : "text-muted-foreground";
-        const borderColor = isCostBasisMissing ? "border-l-orange-500" : isProfit ? "border-l-green-500" : isLoss ? "border-l-red-500" : "border-l-slate-500";
+        const isInsufficient = pnlSource === "insufficient";
+        const isPersistedFallback = pnlSource === "cycle_realized_fallback";
+        const isProfit = !isCostBasisMissing && !isInsufficient && pnlUsd > 1;
+        const isLoss = !isCostBasisMissing && !isInsufficient && pnlUsd < -1;
+        const resultIcon = isCostBasisMissing ? "⏳" : isInsufficient ? "❓" : isProfit ? "✅" : isLoss ? "🔴" : "⚖️";
+        const resultColor = isCostBasisMissing ? "text-orange-400" : isInsufficient ? "text-gray-400" : isProfit ? "text-green-400" : isLoss ? "text-red-400" : "text-muted-foreground";
+        const borderColor = isCostBasisMissing ? "border-l-orange-500" : isInsufficient ? "border-l-gray-500" : isProfit ? "border-l-green-500" : isLoss ? "border-l-red-500" : "border-l-slate-500";
         const isExpanded = expandedId === cycle.id;
 
         // Duration
@@ -4358,6 +4367,9 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
                       {cycle.isImported && (
                         <Badge variant="outline" className="text-[10px] font-mono text-cyan-400 border-cyan-400/50">IMPORTADO</Badge>
                       )}
+                      {isPersistedFallback && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-400/50 bg-amber-400/5">PnL persistido</Badge>
+                      )}
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">
                       {fmtDate(cycle.startedAt)} → {fmtDate(cycle.closedAt)} • {durationStr} • {cycle.buyCount} compra{cycle.buyCount !== 1 ? "s" : ""}
@@ -4369,10 +4381,10 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
                 </div>
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="text-right">
-                    {isCostBasisMissing ? (
+                    {isCostBasisMissing || isInsufficient ? (
                       <>
                         <div className={cn("text-sm font-mono font-bold", resultColor)}>
-                          Pendiente
+                          {isCostBasisMissing ? "Pendiente" : "Insuficiente"}
                         </div>
                         <div className={cn("text-[10px] font-mono", resultColor)}>
                           —
@@ -4417,6 +4429,8 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
   const sellValue = pnlResult?.totalSellValueUsd || 0;
   const pnlSource = pnlResult?.pnlSource || "";
   const isCostBasisMissing = pnlSource === "cost_basis_missing";
+  const isInsufficient = pnlSource === "insufficient";
+  const isPersistedFallback = pnlSource === "cycle_realized_fallback";
   const hasImportedLot = pnlResult?.importedOpeningLot && pnlResult.importedOpeningLot.quantity > 0;
 
   // Si hay warnings, log técnico (no romper UI)
@@ -4430,6 +4444,18 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
       {isCostBasisMissing && (
         <div className="p-2 rounded bg-orange-500/10 border border-orange-500/30 text-xs text-orange-400">
           <strong>⚠️ Coste importado pendiente:</strong> No se puede calcular el beneficio porque falta el coste base de la posición importada. El ciclo no se suma al PnL total.
+        </div>
+      )}
+      {/* Warning banner for insufficient data */}
+      {isInsufficient && (
+        <div className="p-2 rounded bg-gray-500/10 border border-gray-500/30 text-xs text-gray-400">
+          <strong>❓ Datos insuficientes:</strong> No se puede calcular el PnL porque faltan datos de órdenes o el valor persistido parece incorrecto. El ciclo no se suma al PnL total.
+        </div>
+      )}
+      {/* Info banner for persisted fallback */}
+      {isPersistedFallback && (
+        <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400">
+          <strong>📋 PnL persistido:</strong> El PnL mostrado proviene del valor persistido del ciclo (realizedPnlUsd) porque no se pudo calcular desde órdenes completas.
         </div>
       )}
 
@@ -4454,8 +4480,10 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
         </div>
         <div className="bg-background/50 rounded p-2 border border-border/30">
           <div className="text-[10px] text-muted-foreground">PnL neto</div>
-          {isCostBasisMissing ? (
-            <div className="font-bold text-orange-400">Pendiente</div>
+          {isCostBasisMissing || isInsufficient ? (
+            <div className={cn("font-bold", isCostBasisMissing ? "text-orange-400" : "text-gray-400")}>
+              {isCostBasisMissing ? "Pendiente" : "Insuficiente"}
+            </div>
           ) : (
             <div className={cn("font-bold", pnlUsd >= 0 ? "text-green-400" : "text-red-400")}>
               {pnlUsd >= 0 ? "+" : ""}{fmtUsd(pnlUsd)}
@@ -4464,8 +4492,10 @@ function HistoryCycleDetail({ cycleId, cycle }: { cycleId: number; cycle: any })
         </div>
         <div className="bg-background/50 rounded p-2 border border-border/30">
           <div className="text-[10px] text-muted-foreground">PnL %</div>
-          {isCostBasisMissing ? (
-            <div className="font-bold text-orange-400">—</div>
+          {isCostBasisMissing || isInsufficient ? (
+            <div className={cn("font-bold", isCostBasisMissing ? "text-orange-400" : "text-gray-400")}>
+              —
+            </div>
           ) : (
             <div className={cn("font-bold", pnlPct >= 0 ? "text-green-400" : "text-red-400")}>
               {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%

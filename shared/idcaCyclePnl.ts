@@ -20,7 +20,7 @@ export interface IdcaCyclePnlResult {
   totalFeesUsd: number;
   realizedNetUsd: number;
   realizedPnlPct: number;
-  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "insufficient" | "cost_basis_missing";
+  pnlSource: "orders" | "orders_cycle_capital" | "orders_avg_entry" | "cycle_realized" | "cycle_realized_fallback" | "insufficient" | "cost_basis_missing";
   warnings: string[];
   importedOpeningLot?: {
     quantity: number;
@@ -34,6 +34,7 @@ export interface IdcaCyclePnlOrder {
   side?: string;
   status?: string;
   type?: string;
+  order_type?: string;
   reason?: string;
   label?: string;
   title?: string;
@@ -49,6 +50,8 @@ export interface IdcaCyclePnlOrder {
   executed_qty?: number | string | null;
   valueUsd?: number | string | null;
   value_usd?: number | string | null;
+  gross_value_usd?: number | string | null;
+  net_value_usd?: number | string | null;
   valueUSD?: number | string | null;
   totalValueUsd?: number | string | null;
   total_value_usd?: number | string | null;
@@ -63,6 +66,7 @@ export interface IdcaCyclePnlOrder {
   fees_usd?: number | string | null;
   fee?: number | string | null;
   fees?: number | string | null;
+  fee_amount_usd?: number | string | null;
 }
 
 export interface IdcaCyclePnlInput {
@@ -108,6 +112,8 @@ function getOrderValueUsd(order: IdcaCyclePnlOrder): number {
   return readNumber(
     order.valueUsd,
     order.value_usd,
+    order.gross_value_usd,
+    order.net_value_usd,
     order.valueUSD,
     order.totalValueUsd,
     order.total_value_usd,
@@ -144,7 +150,8 @@ function getOrderFeeUsd(order: IdcaCyclePnlOrder): number {
     order.fee_usd,
     order.fees_usd,
     order.fee,
-    order.fees
+    order.fees,
+    order.fee_amount_usd
   );
 }
 
@@ -158,11 +165,12 @@ function getOrderPrice(order: IdcaCyclePnlOrder): number {
 /**
  * Normalize order side/type to "buy" | "sell" | "unknown"
  * Handles English and Spanish variants.
+ * Does NOT depend on 'type' column (DB uses 'order_type').
  */
 function normalizeOrderSide(order: IdcaCyclePnlOrder): "buy" | "sell" | "unknown" {
   const raw = [
     order.side,
-    order.type,
+    order.order_type,
     order.reason,
     order.label,
     order.title
@@ -213,6 +221,7 @@ function isImportedOrManualCycle(cycle: IdcaCyclePnlInput): boolean {
 /**
  * Build imported opening lot from cycle data.
  * Returns the cost basis for the initial imported position.
+ * Uses originalQty/originalCapital/originalAvgPrice from snapshot if available.
  */
 function buildImportedOpeningLot(
   cycle: IdcaCyclePnlInput,
@@ -229,12 +238,16 @@ function buildImportedOpeningLot(
   const warnings: string[] = [];
   let importedQty = 0;
   let importedAvgPrice = 0;
+  let importedCapital = 0;
   let source = "";
 
-  // Try to get imported quantity from importSnapshotJson
+  // Try to get imported data from importSnapshotJson
   const snapshot = cycle.importSnapshotJson || cycle.import_snapshot_json;
   if (snapshot && typeof snapshot === "object") {
+    // Priority 1: originalQty + originalCapital (most accurate)
     importedQty = readNumber(
+      snapshot.originalQty,
+      snapshot.original_qty,
       snapshot.quantity,
       snapshot.totalQuantity,
       snapshot.total_quantity,
@@ -243,15 +256,33 @@ function buildImportedOpeningLot(
       snapshot.importedQuantity,
       snapshot.imported_quantity
     );
+    importedCapital = readNumber(
+      snapshot.originalCapital,
+      snapshot.original_capital,
+      snapshot.costUsd,
+      snapshot.cost_usd,
+      snapshot.valueUsd,
+      snapshot.value_usd
+    );
     importedAvgPrice = readNumber(
+      snapshot.originalAvgPrice,
+      snapshot.original_avg_price,
       snapshot.avgEntryPrice,
       snapshot.avg_entry_price,
       snapshot.averagePrice,
       snapshot.average_price,
       snapshot.price
     );
-    if (importedQty > 0 || importedAvgPrice > 0) {
-      source = "import_snapshot_json";
+
+    // If we have originalQty and originalCapital, use them directly
+    if (importedQty > 0 && importedCapital > 0) {
+      importedAvgPrice = importedCapital / importedQty;
+      source = "import_snapshot_original_capital";
+    } else if (importedQty > 0 && importedAvgPrice > 0) {
+      importedCapital = importedQty * importedAvgPrice;
+      source = "import_snapshot_qty_avg";
+    } else if (importedQty > 0 || importedAvgPrice > 0) {
+      source = "import_snapshot_partial";
     }
   }
 
@@ -288,7 +319,11 @@ function buildImportedOpeningLot(
     warnings.push(`Imported quantity calculated from sell-buy diff: ${importedQty}`);
   }
 
-  const importedCostUsd = importedQty * importedAvgPrice;
+  // Calculate cost if not set
+  if (importedCapital <= 0 && importedQty > 0 && importedAvgPrice > 0) {
+    importedCapital = importedQty * importedAvgPrice;
+  }
+
   const valid = importedQty > 0 && importedAvgPrice > 0;
 
   if (!valid) {
@@ -303,7 +338,7 @@ function buildImportedOpeningLot(
   return {
     quantity: importedQty,
     avgPrice: importedAvgPrice,
-    costUsd: importedCostUsd,
+    costUsd: importedCapital,
     source,
     valid,
     warning: warnings.length > 0 ? warnings.join("; ") : undefined,
@@ -311,32 +346,33 @@ function buildImportedOpeningLot(
 }
 
 /**
- * Check if realizedPnlUsd is plausible as NET PROFIT (not sell proceeds).
+ * Check if realizedPnlUsd looks like SELL PROCEEDS (not net profit).
  * Legacy/imported cycles may store sell proceeds in realizedPnlUsd.
  */
-function isPlausibleNetPnl(realizedPnlUsd: number, capitalUsedUsd: number): { plausible: boolean; reason: string } {
-  if (capitalUsedUsd <= 0) {
-    return { plausible: false, reason: "No capital to compare" };
+function looksLikeSellProceeds(
+  realizedPnlUsd: number,
+  capitalUsedUsd: number,
+  totalSellValueUsd: number
+): { isSellProceeds: boolean; reason: string } {
+  if (realizedPnlUsd <= 0) {
+    return { isSellProceeds: false, reason: "Negative or zero, not sell proceeds" };
   }
 
-  const pnlRatio = Math.abs(realizedPnlUsd) / capitalUsedUsd;
-
-  // If realizedPnlUsd is > 80% of capital, it's likely sell proceeds, not net profit
-  if (realizedPnlUsd > capitalUsedUsd * 0.80) {
-    return { plausible: false, reason: "realizedPnlUsd > 80% of capital, likely sell proceeds" };
+  // If totalSellValue is available and realizedPnlUsd is close to it, it's sell proceeds
+  if (totalSellValueUsd > 0) {
+    const diff = Math.abs(realizedPnlUsd - totalSellValueUsd);
+    const diffPct = diff / totalSellValueUsd;
+    if (diffPct < 0.03) {
+      return { isSellProceeds: true, reason: "realizedPnlUsd ≈ totalSellValue (within 3%)" };
+    }
   }
 
-  // If realizedPnlUsd is ≈ capital + typical profit, it's likely sell proceeds
-  if (realizedPnlUsd > capitalUsedUsd * 0.50 && realizedPnlUsd < capitalUsedUsd * 1.20) {
-    return { plausible: false, reason: "realizedPnlUsd ≈ capital, likely sell proceeds" };
+  // If realizedPnlUsd > 50% of capital, it's likely sell proceeds
+  if (capitalUsedUsd > 0 && realizedPnlUsd / capitalUsedUsd > 0.50) {
+    return { isSellProceeds: true, reason: "realizedPnlUsd > 50% of capital, likely sell proceeds" };
   }
 
-  // If abs(realizedPnlUsd) <= 50% of capital, it's plausible as net profit
-  if (pnlRatio <= 0.50) {
-    return { plausible: true, reason: "Plausible as net profit" };
-  }
-
-  return { plausible: false, reason: "Unsure, treat as sell proceeds" };
+  return { isSellProceeds: false, reason: "Plausible as net profit" };
 }
 
 /**
@@ -654,10 +690,34 @@ export function calculateIdcaCycleRealizedPnl(
   }
 
   // PRIORITY 2: Fallback to realizedPnlUsd (only if no orders sufficient)
-  const plausible = isPlausibleNetPnl(realizedPnlUsd, capitalUsedUsd);
-  if (status === "closed" && plausible.plausible && realizedPnlUsd !== 0) {
+  const isImported = isImportedOrManualCycle(cycle);
+  const sellProceedsCheck = looksLikeSellProceeds(realizedPnlUsd, capitalUsedUsd, 0);
+
+  // For imported/manual cycles with negative realizedPnlUsd, allow fallback
+  if (status === "closed" && isImported && realizedPnlUsd < 0) {
     const realizedPnlPct = capitalUsedUsd > 0 ? (realizedPnlUsd / capitalUsedUsd) * 100 : 0;
-    warnings.push(`Using realizedPnlUsd as fallback: ${plausible.reason}`);
+    warnings.push(`Using realizedPnlUsd as fallback for imported cycle (negative): ${realizedPnlUsd}`);
+    return {
+      capitalInvestedUsd: capitalUsedUsd,
+      totalBuyQty: totalQuantity,
+      totalBuyCostUsd: capitalUsedUsd,
+      avgCostUsd: capitalUsedUsd > 0 && totalQuantity > 0 ? capitalUsedUsd / totalQuantity : 0,
+      totalSellQty: totalQuantity,
+      totalSellValueUsd: capitalUsedUsd + realizedPnlUsd,
+      soldCostBasisUsd: capitalUsedUsd,
+      realizedGrossUsd: realizedPnlUsd,
+      totalFeesUsd: 0,
+      realizedNetUsd: realizedPnlUsd,
+      realizedPnlPct,
+      pnlSource: "cycle_realized_fallback",
+      warnings,
+    };
+  }
+
+  // For normal cycles, only use realizedPnlUsd if it's plausible as net profit
+  if (status === "closed" && !sellProceedsCheck.isSellProceeds && realizedPnlUsd !== 0) {
+    const realizedPnlPct = capitalUsedUsd > 0 ? (realizedPnlUsd / capitalUsedUsd) * 100 : 0;
+    warnings.push(`Using realizedPnlUsd as fallback: ${sellProceedsCheck.reason}`);
     return {
       capitalInvestedUsd: capitalUsedUsd,
       totalBuyQty: totalQuantity,
@@ -676,8 +736,8 @@ export function calculateIdcaCycleRealizedPnl(
   }
 
   // PRIORITY 3: Insufficient data
-  if (!plausible.plausible) {
-    warnings.push(`realizedPnlUsd not plausible as net profit: ${plausible.reason}`);
+  if (sellProceedsCheck.isSellProceeds) {
+    warnings.push(`realizedPnlUsd looks like sell proceeds: ${sellProceedsCheck.reason}`);
   }
   warnings.push("Insufficient data to calculate PnL");
   return {
