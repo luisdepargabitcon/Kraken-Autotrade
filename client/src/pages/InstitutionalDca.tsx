@@ -4221,6 +4221,15 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
     );
   };
 
+  // Helper para determinar si un PnL es calculable (para totales/wins/losses)
+  const isPnlCalculable = (pnlResult: any): boolean => {
+    if (!pnlResult) return false;
+    if (pnlResult.pnlSource === "cost_basis_missing") return false;
+    if (pnlResult.pnlSource === "insufficient") return false;
+    if (!Number.isFinite(pnlResult.realizedNetUsd)) return false;
+    return true;
+  };
+
   // Usar función canónica para calcular PnL de cada ciclo
   const cyclePnlMap = new Map<number, any>();
   cycles.forEach(cycle => {
@@ -4263,17 +4272,17 @@ function HistoryCyclesView({ cycles }: { cycles: any[] }) {
   // Aggregate stats (exclude cycles with cost_basis_missing and insufficient)
   const totalPnl = cycles.reduce((s, c) => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return s;
+    if (!isPnlCalculable(pnlResult)) return s;
     return s + (pnlResult?.realizedNetUsd || 0);
   }, 0);
   const wins = cycles.filter(c => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return false;
+    if (!isPnlCalculable(pnlResult)) return false;
     return (pnlResult?.realizedNetUsd || 0) > 1;
   }).length;
   const losses = cycles.filter(c => {
     const pnlResult = cyclePnlMap.get(c.id);
-    if (pnlResult?.pnlSource === "cost_basis_missing" || pnlResult?.pnlSource === "insufficient") return false;
+    if (!isPnlCalculable(pnlResult)) return false;
     return (pnlResult?.realizedNetUsd || 0) < -1;
   }).length;
   const pendingCostBasis = cycles.filter(c => {

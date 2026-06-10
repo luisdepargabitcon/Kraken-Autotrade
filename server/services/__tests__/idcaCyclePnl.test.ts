@@ -237,6 +237,62 @@ describe("calculateIdcaCycleRealizedPnl", () => {
     });
   });
 
+  describe("Ciclo ETH id=17 con costBasisMissing y realizedPnlUsd negativo", () => {
+    it("debe usar cycle_realized_fallback en lugar de cost_basis_missing", () => {
+      const cycle = {
+        id: 17,
+        pair: "ETH/USD",
+        isImported: true,
+        isManualCycle: true,
+        sourceType: "manual",
+        capitalUsedUsd: 0,
+        totalQuantity: 0,
+        avgEntryPrice: 2301.64843305,
+        realizedPnlUsd: -654.95,
+        basePrice: 2427.01,
+        basePriceType: "imported_avg",
+        status: "closed",
+        importSnapshotJson: {
+          importedAt: "2026-03-29T11:09:46.452Z",
+          soloSalida: true,
+          sourceType: "manual",
+          feesPaidUsd: 0,
+          originalQty: 1.51467812,
+          isManualCycle: true,
+          exchangeSource: "revolut_x",
+          estimatedFeePct: 0.09,
+          estimatedFeeUsd: 3.31,
+          originalCapital: 3676.1389440212,
+          originalAvgPrice: 2427.01,
+          feesOverrideManual: false,
+          hadActiveCycleAtImport: false,
+        },
+      };
+
+      // Orders that cause costBasisMissing (sell qty > buy qty + imported lot not fully accounted)
+      const orders = [
+        {
+          side: "sell",
+          order_type: "manual_close",
+          status: "filled",
+          price: 2650,
+          quantity: 2.0, // More than imported lot (1.51467812)
+          gross_value_usd: 5300,
+          fees_usd: 5,
+        },
+      ];
+
+      const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+
+      // Should use cycle_realized_fallback instead of cost_basis_missing
+      expect(result.pnlSource).toBe("cycle_realized_fallback");
+      expect(result.realizedNetUsd).toBeCloseTo(-654.95, 2);
+      expect(result.realizedNetUsd).not.toBe(0);
+      expect(result.importedOpeningLot?.costUsd).toBeCloseTo(3676.1389440212, 2);
+      expect(result.importedOpeningLot?.quantity).toBeCloseTo(1.51467812, 6);
+    });
+  });
+
   describe("Ciclo importado con ventas > compras y snapshot válido", () => {
     it("debe usar FIFO importado y no devolver +140%", () => {
       const cycle = {

@@ -2,6 +2,56 @@
 
 ---
 
+## 2026-06-10 — fix(idca): evitar PnL cero en ciclos importados con PnL persistido
+
+### Problema
+Ciclos importados/manuales con `realizedPnlUsd` negativo terminaban mostrando $0.00 porque caían en `cost_basis_missing` cuando el FIFO no podía completarse.
+
+**Caso real ETH/USD id=17:**
+- `realized_pnl_usd`: -$654.95 (PnL persistido real)
+- `import_snapshot_json`: originalQty=1.51467812, originalCapital=3676.1389440212, originalAvgPrice=2427.01
+- Si las órdenes no permitían FIFO completo, devolvía `cost_basis_missing` con `realizedNetUsd=0`
+
+### Causa raíz
+- Antes de devolver `cost_basis_missing`, no se verificaba si existía `realizedPnlUsd` negativo persistido
+- El helper `isPnlCalculable` en UI no existía, por lo que `cycle_realized_fallback` no se contaba como calculable
+
+### Solución
+
+#### `shared/idcaCyclePnl.ts` ✅ MODIFICADO
+- Antes de devolver `cost_basis_missing` para ciclos importados:
+  - Verificar `hasPersistedNegativePnl = status === "closed" && isImported && Number.isFinite(realizedPnlUsd) && realizedPnlUsd < 0`
+  - Si true: devolver `cycle_realized_fallback` con `realizedNetUsd=realizedPnlUsd` (no 0)
+  - Usar `importedOpeningLot` como coste base si existe
+
+#### `client/src/pages/InstitutionalDca.tsx` ✅ MODIFICADO
+- Añadido helper `isPnlCalculable(pnlResult)`:
+  - Retorna false si `pnlSource === "cost_basis_missing"` o `"insufficient"`
+  - Retorna false si `!Number.isFinite(realizedNetUsd)`
+  - Retorna true para `cycle_realized_fallback` (sí cuenta como calculable)
+- Usar `isPnlCalculable` en totalPnl, wins, losses, neutral
+
+#### `server/services/__tests__/idcaCyclePnl.test.ts` ✅ MODIFICADO
+- Añadido test "Ciclo ETH id=17 con costBasisMissing y realizedPnlUsd negativo":
+  - Verifica que usa `cycle_realized_fallback` en lugar de `cost_basis_missing`
+  - Verifica `realizedNetUsd=-654.95` (no 0)
+  - Verifica `importedOpeningLot.costUsd=3676.14`
+- Total: 20/20 tests pasando
+
+### Validación
+- ✅ npm run build: sin errores
+- ✅ vitest idcaCyclePnl.test.ts: 20/20 tests pasando
+- ✅ git commit: pendiente
+- ✅ git push: pendiente
+
+### Notas de deploy
+- No requiere migración DB
+- Ciclos importados con `realizedPnlUsd` negativo mostrarán el valor real (no $0.00)
+- `cycle_realized_fallback` ahora cuenta como PnL calculable en totales/wins/losses
+- `cost_basis_missing` e `insufficient` siguen excluidos de totales
+
+---
+
 ## 2026-06-10 — fix(idca): corregir PnL historial con órdenes reales y snapshot importado (V8)
 
 ### Problema

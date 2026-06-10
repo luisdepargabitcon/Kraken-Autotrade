@@ -544,8 +544,34 @@ export function calculateIdcaCycleRealizedPnl(
       soldCostBasisUsd = totalSoldCostBasis;
       calculatedPnlSource = "orders";
 
-      // Guardrail: if cost basis is missing for imported cycle, mark as cost_basis_missing
+      // Guardrail: if cost basis is missing for imported cycle, check for negative realizedPnlUsd fallback
       if (costBasisMissing) {
+        const hasPersistedNegativePnl =
+          status === "closed" &&
+          isImported &&
+          Number.isFinite(realizedPnlUsd) &&
+          realizedPnlUsd < 0;
+
+        if (hasPersistedNegativePnl) {
+          warnings.push("Using negative realizedPnlUsd fallback for imported/manual cycle with incomplete order cost basis");
+          return {
+            capitalInvestedUsd: importedOpeningLot?.costUsd || capitalUsedUsd || 0,
+            totalBuyQty: importedOpeningLot?.quantity || totalBuyQty || totalQuantity || 0,
+            totalBuyCostUsd: importedOpeningLot?.costUsd || totalBuyCostUsd || capitalUsedUsd || 0,
+            avgCostUsd: importedOpeningLot?.avgPrice || avgCostUsd || avgEntryPrice || 0,
+            totalSellQty,
+            totalSellValueUsd,
+            soldCostBasisUsd: importedOpeningLot?.costUsd || capitalUsedUsd || 0,
+            realizedGrossUsd: realizedPnlUsd,
+            totalFeesUsd: totalSellFeesUsd,
+            realizedNetUsd: realizedPnlUsd,
+            realizedPnlPct: (importedOpeningLot?.costUsd || capitalUsedUsd) > 0 ? (realizedPnlUsd / (importedOpeningLot?.costUsd || capitalUsedUsd)) * 100 : 0,
+            pnlSource: "cycle_realized_fallback",
+            warnings,
+            importedOpeningLot,
+          };
+        }
+
         warnings.push("Imported/manual cycle has missing cost basis - cannot calculate accurate PnL");
         return {
           capitalInvestedUsd: totalBuyCostUsd || capitalUsedUsd,
