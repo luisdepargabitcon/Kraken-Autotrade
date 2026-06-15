@@ -587,8 +587,8 @@ function renderValidationState(fin: any, portfolio: any): string {
   return `
   <div class="grid2">
     <div class="card"><label>FIFO</label><span class="val ${fin.fifo_status === "OK" ? "ok" : "err"}">${fifoHuman}</span></div>
-    <div class="card"><label>Cartera (portfolio)</label><span class="val ${fin.portfolio_status === "OK" ? "ok" : "err"}">${portHuman}</span></div>
-    <div class="card"><label>Retiradas / withdrawals</label><span class="val">${wdHuman}</span></div>
+    <div class="card"><label>Cartera</label><span class="val ${fin.portfolio_status === "OK" ? "ok" : "err"}">${portHuman}</span></div>
+    <div class="card"><label>Retiradas</label><span class="val">${wdHuman}</span></div>
     <div class="card"><label>Disposiciones conservadoras</label><span class="val">${consHuman}</span></div>
     <div class="card"><label>Método de validación</label><span style="font-size:.82rem">${valStrength}</span></div>
     <div class="card"><label>Estado final</label>${statusBadge(fin.report_can_be_finalized)}</div>
@@ -1117,17 +1117,17 @@ function renderTechnicalAnnex(opts: {
     ${renderWithdrawalsSection(stmtItems, krakenRec)}
   </div>
 
-  <h2>Fuentes y códigos técnicos</h2>
+  <h2>Fuentes y datos técnicos</h2>
   <div class="section-block">
     <ul>
-      <li><strong>Método FIFO:</strong> First-In First-Out continuo, histórico multi-año.</li>
-      <li><strong>Validation strength:</strong> ${translateStatus(portfolio?.validation_strength ?? "—")}</li>
-      <li><strong>Código técnico FIFO:</strong> <code>${fin.fifo_status ?? "—"}</code></li>
-      <li><strong>Código técnico portfolio:</strong> <code>${fin.portfolio_status ?? "—"}</code></li>
-      <li><strong>Código técnico withdrawals:</strong> <code>${fin.withdrawals_status ?? "—"}</code></li>
-      <li><strong>Conservative disposals:</strong> <code>${fin.conservative_disposals_status ?? "—"}</code></li>
-      <li><strong>Fuentes de datos:</strong> fisco_operations, fisco_lots, fisco_disposals.</li>
-      <li><strong>Fecha de generación:</strong> ${new Date().toISOString()}</li>
+      <li><strong>Método FIFO:</strong> primero en entrar, primero en salir, aplicado de forma continua con histórico multianual.</li>
+      <li><strong>Nivel de validación:</strong> ${translateStatus(portfolio?.validation_strength ?? "—") === "—" ? "validación interna del histórico FIFO" : translateStatus(portfolio?.validation_strength ?? "—")}</li>
+      <li><strong>Validación FIFO:</strong> ${fin.fifo_status === "OK" ? "correcta" : (translateStatus(fin.fifo_status ?? "—"))}</li>
+      <li><strong>Validación de cartera:</strong> ${fin.portfolio_status === "OK" ? "correcta" : (translateStatus(fin.portfolio_status ?? "—"))}</li>
+      <li><strong>Validación de retiradas:</strong> ${fin.withdrawals_status === "OK" ? "correcta" : (translateStatus(fin.withdrawals_status ?? "—"))}</li>
+      <li><strong>Disposiciones conservadoras aplicadas:</strong> ${fin.conservative_disposals_status === "NONE" || !fin.conservative_disposals_status ? "ninguna. No se han aplicado disposiciones conservadoras. Ninguna retirada se ha computado como transmisión fiscal adicional." : translateStatus(fin.conservative_disposals_status)}</li>
+      <li><strong>Fuentes de datos:</strong> operaciones normalizadas, lotes FIFO y transmisiones fiscales calculadas.</li>
+      <li><strong>Fecha de generación:</strong> ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", "")} hora peninsular española</li>
     </ul>
   </div>
 </div>`;

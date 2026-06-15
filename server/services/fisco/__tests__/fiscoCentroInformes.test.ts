@@ -1731,3 +1731,82 @@ describe("renderAnnualHtml: pluralización y formato numérico español", () => 
     expect(result.technicalLabel).not.toContain("451.5497");
   });
 });
+
+// ─── Tests A1-A15: castellanización del anexo técnico ────────────────────────
+
+describe("renderAnnualHtml: castellanización del anexo técnico (A1-A15)", () => {
+  async function getHtml() {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    return renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+  }
+
+  it("A1: HTML completo no contiene 'First-In First-Out'", async () => {
+    expect(await getHtml()).not.toContain("First-In First-Out");
+  });
+
+  it("A2: HTML completo no contiene 'Validation strength'", async () => {
+    expect(await getHtml()).not.toContain("Validation strength");
+  });
+
+  it("A3: HTML completo no contiene 'Conservative disposals'", async () => {
+    expect(await getHtml()).not.toContain("Conservative disposals");
+  });
+
+  it("A4: HTML completo no contiene texto literal ':NONE' (sin traducir)", async () => {
+    const html = await getHtml();
+    expect(html).not.toMatch(/>NONE</);
+    expect(html).not.toContain(": NONE");
+    expect(html).not.toContain(":NONE");
+  });
+
+  it("A5: HTML completo no contiene 'fisco_operations'", async () => {
+    expect(await getHtml()).not.toContain("fisco_operations");
+  });
+
+  it("A6: HTML completo no contiene 'fisco_lots'", async () => {
+    expect(await getHtml()).not.toContain("fisco_lots");
+  });
+
+  it("A7: HTML completo no contiene 'fisco_disposals'", async () => {
+    expect(await getHtml()).not.toContain("fisco_disposals");
+  });
+
+  it("A8: HTML contiene 'primero en entrar, primero en salir'", async () => {
+    expect(await getHtml()).toContain("primero en entrar, primero en salir");
+  });
+
+  it("A9: HTML contiene 'Nivel de validación'", async () => {
+    expect(await getHtml()).toContain("Nivel de validación");
+  });
+
+  it("A10: HTML contiene 'Validación FIFO: correcta' o 'Validación FIFO'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Validación FIFO");
+    expect(html).toContain("correcta");
+  });
+
+  it("A11: HTML contiene 'Validación de cartera'", async () => {
+    expect(await getHtml()).toContain("Validación de cartera");
+  });
+
+  it("A12: HTML contiene 'Validación de retiradas'", async () => {
+    expect(await getHtml()).toContain("Validación de retiradas");
+  });
+
+  it("A13: HTML contiene 'Disposiciones conservadoras aplicadas: ninguna'", async () => {
+    expect(await getHtml()).toContain("Disposiciones conservadoras aplicadas:");
+    expect(await getHtml()).toContain("ninguna");
+  });
+
+  it("A14: HTML contiene 'operaciones normalizadas, lotes FIFO y transmisiones fiscales calculadas'", async () => {
+    expect(await getHtml()).toContain("operaciones normalizadas, lotes FIFO y transmisiones fiscales calculadas");
+  });
+
+  it("A15: totales fiscales no cambian", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Importes para la declaración");
+    expect(html).toContain("Total fiscal final");
+    expect(html).toContain("-200,00");
+  });
+});
