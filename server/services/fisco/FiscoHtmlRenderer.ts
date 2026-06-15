@@ -682,9 +682,8 @@ function renderExchangeSection(exchangeSummaries: ExchangeSummary[]): string {
   return exchangeSummaries.map(e => {
     const diagNote = e.diagnostic_only ? `
       <div class="diagnostic-note">ℹ️ <strong>Diagnóstico por exchange.</strong>
-      El FIFO fiscal oficial del bot es global multi-exchange. Esta vista puede mostrar diferencias si existen
-      transferencias internas, withdrawals cross-exchange o movimientos cuyo lote de origen está en otro exchange.
-      No bloquea el informe fiscal global.</div>` : "";
+      El FIFO fiscal oficial es global multi-exchange. Esta vista puede mostrar diferencias si existen
+      movimientos entre exchanges o lotes de origen en otro exchange. No altera el resultado fiscal global.</div>` : "";
 
     return `
     <details>
@@ -703,9 +702,9 @@ function renderExchangeSection(exchangeSummaries: ExchangeSummary[]): string {
           <div class="card"><label>Staking/rewards</label><span class="val">${e.staking_count ?? 0}</span></div>
           <div class="card"><label>Comisiones totales</label><span class="val">${eur(e.fees_eur ?? 0)}</span></div>
           <div class="card"><label>Resultado atribuido</label><span class="val ${gainClass(e.gain_loss_eur ?? 0)}">${eur(e.gain_loss_eur ?? 0)}</span></div>
-          <div class="card"><label>Conciliación</label>${badge(e.reconciliation_status === "OK" ? "b-ok" : e.reconciliation_status === "OK_WITH_WARNINGS" ? "b-warn" : "b-err", translateStatus(e.reconciliation_status ?? "—"))}</div>
+          <div class="card"><label>Estado técnico</label>${badge(e.reconciliation_status === "OK" ? "b-ok" : e.reconciliation_status === "OK_WITH_WARNINGS" ? "b-warn" : "b-err", translateStatus(e.reconciliation_status ?? "—"))}</div>
         </div>
-        ${e.warnings && e.warnings.length > 0 ? `<div class="warnings-box"><strong>Avisos:</strong><ul>${e.warnings.map((w: string) => `<li class="warn">⚠ ${w}</li>`).join("")}</ul></div>` : ""}
+        ${e.warnings && e.warnings.length > 0 ? `<div class="warnings-box"><strong>Observaciones técnicas:</strong><ul>${e.warnings.map((w: string) => `<li class="warn">${w}</li>`).join("")}</ul></div>` : ""}
       </div>
     </details>`;
   }).join("\n");
@@ -865,7 +864,7 @@ export function classifyWithdrawalForReport(w: WithdrawalForClassification): Wit
   if (w.isInternalTransfer === true) {
     return {
       professionalLabel: "Transferencia interna identificada",
-      technicalLabel:    "Movimiento interno conciliado entre cuentas/exchanges propios",
+      technicalLabel:    "Transferencia interna identificada: movimiento entre cuentas/carteras propias.",
       showInProfessionalReport: false,
       affectsTaxResult: false,
       severity: "info",
@@ -877,28 +876,31 @@ export function classifyWithdrawalForReport(w: WithdrawalForClassification): Wit
     const exchange = w.exchange ?? "exchange desconocido";
     return {
       professionalLabel: "Disposición conservadora aplicada",
-      technicalLabel: `Se ha aplicado un criterio conservador sobre una salida de ${asset} desde ${exchange}, al no constar destino identificado ni entrada asociada. El importe se ha incluido en el resultado fiscal del ejercicio.`,
+      technicalLabel: `Disposición conservadora aplicada: retirada de ${qty} ${asset} desde ${exchange}. El importe se ha incluido en el resultado fiscal del ejercicio.`,
       showInProfessionalReport: true,
       affectsTaxResult: true,
       severity: "warning",
     };
   }
   if (w.destinationKnown === true) {
+    const qty      = w.quantity != null ? `${w.quantity} ` : "";
+    const asset    = w.asset    ?? "activo desconocido";
+    const exchange = w.exchange ?? "exchange desconocido";
     return {
-      professionalLabel: "Salida a cartera externa identificada",
-      technicalLabel:    "Salida a dirección externa conocida o etiquetada. No genera transmisión fiscal.",
+      professionalLabel: "Retirada a destino externo etiquetado",
+      technicalLabel:    `Retirada registrada de ${qty}${asset} desde ${exchange}. Tratamiento fiscal aplicado: movimiento de salida sin cómputo de transmisión en este ejercicio. Destino etiquetado en el informe.`,
       showInProfessionalReport: false,
       affectsTaxResult: false,
       severity: "info",
     };
   }
-  // Default: salida no identificada sin impacto fiscal
+  // Default: retirada externa sin impacto fiscal
   const qty      = w.quantity != null ? `${w.quantity} ` : "";
   const asset    = w.asset    ?? "activo desconocido";
   const exchange = w.exchange ?? "exchange desconocido";
   return {
-    professionalLabel: "Salida a cartera externa no identificada",
-    technicalLabel: `Salida a cartera externa no identificada: retirada de ${qty}${asset} desde ${exchange}. No existe una entrada asociada en los datos normalizados del informe.`,
+    professionalLabel: "Retirada externa registrada",
+    technicalLabel: `Retirada registrada de ${qty}${asset} desde ${exchange}. Tratamiento fiscal aplicado: movimiento de salida sin cómputo de transmisión en este ejercicio. Destino no etiquetado en el informe.`,
     showInProfessionalReport: false,
     affectsTaxResult: false,
     severity: "info",
@@ -1169,7 +1171,7 @@ function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
 
   let html = "";
 
-  // Block 1 — Salidas sin entrada asociada (clasificadas profesionalmente)
+  // Block 1 — Movimientos externos registrados (clasificados profesionalmente)
   if (withdrawalsNoStmt.length > 0) {
     const classified = withdrawalsNoStmt.map((r: any) => ({
       r,
@@ -1185,7 +1187,7 @@ function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
 
     html += `
     <details open>
-      <summary>📤 Salidas a cartera externa (${withdrawalsNoStmt.length})</summary>
+      <summary>📤 Movimientos externos registrados (${withdrawalsNoStmt.length})</summary>
       <div class="details-body">
         <table><thead><tr>
           <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Clasificación fiscal</th><th>Impacto fiscal</th><th>Ref. interna</th>
@@ -1198,18 +1200,19 @@ function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
           <td>${badge(cls.severity === "warning" ? "b-warn" : "b-info", cls.professionalLabel)}</td>
           <td>${cls.affectsTaxResult ? badge("b-warn", "Afecta al resultado") : badge("b-ok", "No altera el resultado fiscal del ejercicio")}</td>
           <td style="font-size:.72rem;color:#888">${r.external_id ?? "—"}</td>
-        </tr>`).join("")}
+        </tr>
+        <tr><td colspan="7" style="font-size:.78rem;color:#666;padding-left:1rem">${cls.technicalLabel}</td></tr>`).join("")}
         </tbody></table>
       </div>
     </details>`;
   }
 
-  // Block 2 — Movimientos normalizados (fisco_external_statement_items)
+  // Block 2 — Movimientos normalizados de la base de datos (fisco_external_statement_items)
   if (stmtItems && stmtItems.length > 0) {
     const classLabels: Record<string, string> = {
       internal_transfer:               "Transferencia interna identificada",
       conservative_external_disposal:  "Disposición conservadora aplicada",
-      pending:                         "Salida a cartera externa no identificada",
+      pending:                         "Retirada externa registrada",
     };
     const byClass = stmtItems.reduce((m: Record<string, any[]>, r) => {
       const k = r.classification ?? "unknown"; m[k] = m[k] ?? []; m[k].push(r); return m;
