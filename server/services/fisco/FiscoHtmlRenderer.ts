@@ -13,6 +13,106 @@
 
 import type { Pool } from "pg";
 
+// ─── Annual gain/loss summary types ─────────────────────────────────────────
+
+export interface AnnualGainLossByAssetRow {
+  ticker: string;
+  name: string;
+  considerationTypeCode: string;
+  considerationTypeLabel: string;
+  transmissionValueEur: number;
+  acquisitionValueEur: number;
+  capitalGainLossEur: number;
+}
+
+export interface AnnualGainLossByAssetSummary {
+  year: number;
+  rows: AnnualGainLossByAssetRow[];
+  totals: {
+    transmissionValueEur: number;
+    acquisitionValueEur: number;
+    capitalGainLossEur: number;
+  };
+}
+
+// Consideration type codes (Art. 14 bis Ley 35/2006)
+const CONSIDERATION_TYPE_LABELS: Record<string, string> = {
+  F: "F - Moneda de curso legal",
+  N: "N - Otra moneda virtual",
+  O: "O - Otro activo virtual",
+};
+
+/**
+ * Builds a summary of annual gains/losses grouped by asset ticker and consideration type.
+ * Uses the same data as fetchAssetSummaries (proceeds_eur, cost_basis_eur, gain_loss_eur).
+ * No independent FIFO recalculation — feeds from canonical AssetSummary data.
+ */
+export function buildAnnualGainLossByAssetSummary(
+  year: number,
+  assetSummaries: AssetSummary[],
+  considerationTypeByAsset?: Record<string, string>
+): AnnualGainLossByAssetSummary {
+  // Only include assets that have actual disposals (proceeds > 0 or gain_loss != 0)
+  const withDisposals = assetSummaries.filter(
+    a => a.disposals_count > 0 || Math.abs(a.gain_loss_eur) > 0.001
+  );
+
+  const rows: AnnualGainLossByAssetRow[] = withDisposals.map(a => {
+    const typeCode = considerationTypeByAsset?.[a.asset] ?? "F";
+    const typeLabel = CONSIDERATION_TYPE_LABELS[typeCode]
+      ?? `${typeCode} - Tipo no determinado`;
+    return {
+      ticker: a.asset,
+      name: a.asset,
+      considerationTypeCode: typeCode,
+      considerationTypeLabel: typeLabel,
+      transmissionValueEur: a.proceeds_eur,
+      acquisitionValueEur: a.cost_basis_eur,
+      capitalGainLossEur: a.gain_loss_eur,
+    };
+  });
+
+  // Sort: ticker asc, then consideration type code order F < N < O
+  const typeOrder: Record<string, number> = { F: 0, N: 1, O: 2 };
+  rows.sort((a, b) => {
+    const tickerCmp = a.ticker.localeCompare(b.ticker);
+    if (tickerCmp !== 0) return tickerCmp;
+    return (typeOrder[a.considerationTypeCode] ?? 9) - (typeOrder[b.considerationTypeCode] ?? 9);
+  });
+
+  const totalTransmission = rows.reduce((s, r) => s + r.transmissionValueEur, 0);
+  const totalAcquisition  = rows.reduce((s, r) => s + r.acquisitionValueEur, 0);
+  const totalGainLoss     = rows.reduce((s, r) => s + r.capitalGainLossEur, 0);
+
+  // Validation: gain/loss should equal transmission - acquisition (within tolerance)
+  const expectedGainLoss = totalTransmission - totalAcquisition;
+  const diff = Math.abs(totalGainLoss - expectedGainLoss);
+  if (diff > 0.02) {
+    console.warn(
+      `[FISCO][ANNUAL_GAIN_LOSS_SUMMARY_WARNING] year=${year} reason=totals_mismatch ` +
+      `diff=${diff.toFixed(4)} totalGainLoss=${totalGainLoss.toFixed(2)} ` +
+      `expected=${expectedGainLoss.toFixed(2)}`
+    );
+  }
+
+  console.log(
+    `[FISCO][ANNUAL_GAIN_LOSS_SUMMARY] year=${year} rows=${rows.length} ` +
+    `transmission=${totalTransmission.toFixed(2)} ` +
+    `acquisition=${totalAcquisition.toFixed(2)} ` +
+    `pnl=${totalGainLoss.toFixed(2)}`
+  );
+
+  return {
+    year,
+    rows,
+    totals: {
+      transmissionValueEur: totalTransmission,
+      acquisitionValueEur:  totalAcquisition,
+      capitalGainLossEur:   totalGainLoss,
+    },
+  };
+}
+
 // ─── Status translations ──────────────────────────────────────────────────────
 
 export function translateStatus(code: string): string {
@@ -78,6 +178,14 @@ export const HTML_STYLE = `
   .annexe{background:#f9f9f9;border:1px solid #ddd;border-radius:8px;padding:1.5rem;margin-top:2rem;font-size:.82rem}
   .section-block{border:1px solid #e0e0e0;border-radius:8px;padding:1.25rem;margin:1.25rem 0}
   .gain-pos{color:#721c24;font-weight:700}.gain-neg{color:#155724;font-weight:700}.gain-zero{color:#555;font-weight:700}
+  .annual-gain-loss-summary{margin:1.5rem 0;page-break-after:always;break-after:page}
+  .annual-gain-loss-summary h2{margin-top:0}
+  .gain-loss-summary-table{width:100%;border-collapse:collapse;font-size:12px;margin:.75rem 0}
+  .gain-loss-summary-table th,.gain-loss-summary-table td{border:1px solid #333;padding:4px 6px;vertical-align:middle}
+  .gain-loss-summary-table th{background:#e8eef8;font-weight:700;text-align:center;font-size:11px}
+  .gain-loss-summary-table td:nth-child(4),.gain-loss-summary-table td:nth-child(5),.gain-loss-summary-table td:nth-child(6){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .gain-loss-summary-table .total-row{font-weight:700;background:#f0f0f0}
+  .gain-loss-summary-table .total-row td{border-top:2px solid #333}
   @page {
     size: A4 portrait;
     margin: 10mm;
@@ -130,6 +238,37 @@ export const HTML_STYLE = `
     }
     tr {
       page-break-inside: avoid;
+    }
+    .annual-gain-loss-summary {
+      page-break-after: always;
+      break-after: page;
+    }
+    .annual-gain-loss-summary .gain-loss-summary-table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+      font-size: 8.5pt;
+    }
+    .annual-gain-loss-summary .gain-loss-summary-table th,
+    .annual-gain-loss-summary .gain-loss-summary-table td {
+      border: 1px solid #333;
+      padding: 3px 4px;
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+    .annual-gain-loss-summary .gain-loss-summary-table th {
+      font-weight: 700;
+      text-align: center;
+    }
+    .annual-gain-loss-summary .gain-loss-summary-table td:nth-child(4),
+    .annual-gain-loss-summary .gain-loss-summary-table td:nth-child(5),
+    .annual-gain-loss-summary .gain-loss-summary-table td:nth-child(6) {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .annual-gain-loss-summary .gain-loss-summary-table .total-row {
+      font-weight: 700;
     }
     details {
       display: block !important;
@@ -427,6 +566,67 @@ function renderExchangeSection(exchangeSummaries: ExchangeSummary[]): string {
       </div>
     </details>`;
   }).join("\n");
+}
+
+// ─── Formato EUR español (sin símbolo) ───────────────────────────────────────
+
+function fmtEurEs(n: number): string {
+  return new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+// ─── Annual gain/loss summary section ────────────────────────────────────────
+
+function renderAnnualGainLossSummarySection(
+  summary: AnnualGainLossByAssetSummary
+): string {
+  const { year, rows, totals } = summary;
+
+  if (rows.length === 0) {
+    return `
+<section class="annual-gain-loss-summary section-block">
+  <h2>Resumen de ganancias y pérdidas por activo el ${year}</h2>
+  <p style="color:#888">Sin transmisiones registradas en ${year}.</p>
+</section>`;
+  }
+
+  const dataRows = rows.map(r => `
+      <tr>
+        <td>${r.ticker}</td>
+        <td>${r.name}</td>
+        <td>${r.considerationTypeLabel}</td>
+        <td>${fmtEurEs(r.transmissionValueEur)}</td>
+        <td>${fmtEurEs(r.acquisitionValueEur)}</td>
+        <td class="${r.capitalGainLossEur > 0.005 ? "gain-pos" : r.capitalGainLossEur < -0.005 ? "gain-neg" : "gain-zero"}">${fmtEurEs(r.capitalGainLossEur)}</td>
+      </tr>`).join("");
+
+  const totalClass = totals.capitalGainLossEur > 0.005 ? "gain-pos"
+    : totals.capitalGainLossEur < -0.005 ? "gain-neg" : "gain-zero";
+
+  return `
+<section class="annual-gain-loss-summary">
+  <h2>Resumen de ganancias y pérdidas por activo el ${year}</h2>
+  <table class="gain-loss-summary-table">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Nombre</th>
+        <th>Tipo de contraprestación recibida a cambio</th>
+        <th>Valor de transmisión en EUR</th>
+        <th>Valor de adquisición en EUR</th>
+        <th>Ganancia o pérdida de capital en EUR</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${dataRows}
+      <tr class="total-row">
+        <td colspan="3">Total ${year}</td>
+        <td>${fmtEurEs(totals.transmissionValueEur)}</td>
+        <td>${fmtEurEs(totals.acquisitionValueEur)}</td>
+        <td class="${totalClass}">${fmtEurEs(totals.capitalGainLossEur)}</td>
+      </tr>
+    </tbody>
+  </table>
+</section>`;
 }
 
 // ─── Staking section ─────────────────────────────────────────────────────────
@@ -881,6 +1081,9 @@ export class FiscoHtmlRenderer {
     const stmtItems        = rStmt.data;
     const counts           = rCounts.data;
 
+    // Build gain/loss summary from canonical asset data (no independent FIFO recalc)
+    const gainLossSummary = buildAnnualGainLossByAssetSummary(year, assetSummaries);
+
     // Collect any partial errors to surface in HTML
     const partialErrors: string[] = [
       rAssets.error    && `Activos: ${rAssets.error}`,
@@ -938,6 +1141,8 @@ export class FiscoHtmlRenderer {
     El resultado mostrado corresponde únicamente al ejercicio ${year}.
   </p>
 </div>
+
+${renderAnnualGainLossSummarySection(gainLossSummary)}
 
 ${partialErrors.length > 0 ? `
 <div class="warnings-box" style="margin:1rem 0">

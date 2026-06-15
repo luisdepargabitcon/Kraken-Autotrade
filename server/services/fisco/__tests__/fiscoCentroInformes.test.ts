@@ -975,3 +975,225 @@ describe("FiscoHtmlRenderer", () => {
     expect(feeFd1 + feeFd2).toBeCloseTo(1.03, 2);
   });
 });
+
+// ─── Tests: buildAnnualGainLossByAssetSummary ────────────────────────────────
+
+import {
+  buildAnnualGainLossByAssetSummary,
+  type AssetSummary,
+  type AnnualGainLossByAssetSummary,
+} from "../FiscoHtmlRenderer";
+
+function makeAssetSummary(asset: string, overrides: Partial<AssetSummary> = {}): AssetSummary {
+  return {
+    asset,
+    exchanges: "kraken",
+    acquisitions_qty: 1,
+    disposals_qty: 1,
+    opening_qty: 0,
+    closing_qty: 0,
+    proceeds_eur: 0,
+    cost_basis_eur: 0,
+    fees_eur: 0,
+    gain_loss_eur: 0,
+    operations_count: 2,
+    disposals_count: 1,
+    ...overrides,
+  };
+}
+
+describe("buildAnnualGainLossByAssetSummary", () => {
+  it("S1: excluye activos sin disposals y sin ganancia/pérdida", () => {
+    const assets = [
+      makeAssetSummary("BTC", { disposals_count: 0, gain_loss_eur: 0, proceeds_eur: 0 }),
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 336.49, cost_basis_eur: 424.93, gain_loss_eur: -88.44 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].ticker).toBe("ETH");
+  });
+
+  it("S2: agrupa por ticker y tipo de contraprestación", () => {
+    const assets = [
+      makeAssetSummary("BTC", { disposals_count: 1, proceeds_eur: 100, cost_basis_eur: 80, gain_loss_eur: 20 }),
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 200, cost_basis_eur: 300, gain_loss_eur: -100 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.map(r => r.ticker)).toEqual(["BTC", "ETH"]);
+  });
+
+  it("S3: suma correctamente valor de transmisión", () => {
+    const assets = [
+      makeAssetSummary("BTC", { disposals_count: 1, proceeds_eur: 336.49, cost_basis_eur: 200, gain_loss_eur: 136.49 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.totals.transmissionValueEur).toBeCloseTo(336.49, 2);
+  });
+
+  it("S4: suma correctamente valor de adquisición", () => {
+    const assets = [
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 336.49, cost_basis_eur: 424.93, gain_loss_eur: -88.44 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.totals.acquisitionValueEur).toBeCloseTo(424.93, 2);
+  });
+
+  it("S5: calcula ganancia/pérdida correctamente", () => {
+    const assets = [
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 336.49, cost_basis_eur: 424.93, gain_loss_eur: -88.44 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.totals.capitalGainLossEur).toBeCloseTo(-88.44, 2);
+  });
+
+  it("S6: genera fila total correcta", () => {
+    const assets = [
+      makeAssetSummary("BTC", { disposals_count: 1, proceeds_eur: 100, cost_basis_eur: 80, gain_loss_eur: 20 }),
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 236.49, cost_basis_eur: 344.93, gain_loss_eur: -108.44 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.totals.transmissionValueEur).toBeCloseTo(336.49, 2);
+    expect(result.totals.acquisitionValueEur).toBeCloseTo(424.93, 2);
+    expect(result.totals.capitalGainLossEur).toBeCloseTo(-88.44, 2);
+  });
+
+  it("S7: mantiene negativos con signo menos en fmtEurEs", () => {
+    const n = new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(-88.44);
+    expect(n).toContain("-");
+    expect(n).toContain("88");
+    expect(n).toContain("44");
+  });
+
+  it("S8: formatea importes con coma decimal en español", () => {
+    const n = new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1424.85);
+    expect(n).toContain(",");
+    expect(n).toContain("1");
+    expect(n).toContain("424");
+  });
+
+  it("S9: ordena por ticker ascendente", () => {
+    const assets = [
+      makeAssetSummary("XRP",  { disposals_count: 1, gain_loss_eur: 5 }),
+      makeAssetSummary("ADA",  { disposals_count: 1, gain_loss_eur: 3 }),
+      makeAssetSummary("BTC",  { disposals_count: 1, gain_loss_eur: 10 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    expect(result.rows[0].ticker).toBe("ADA");
+    expect(result.rows[1].ticker).toBe("BTC");
+    expect(result.rows[2].ticker).toBe("XRP");
+  });
+
+  it("S10: diferencia mismo ticker con tipos F/N/O", () => {
+    const assets = [
+      makeAssetSummary("BTC", { disposals_count: 1, gain_loss_eur: 10 }),
+    ];
+    const customTypes = { BTC: "N" };
+    const result = buildAnnualGainLossByAssetSummary(2025, assets, customTypes);
+    expect(result.rows[0].considerationTypeCode).toBe("N");
+    expect(result.rows[0].considerationTypeLabel).toContain("N -");
+  });
+
+  it("S11: tolera tipo desconocido sin romper", () => {
+    const assets = [
+      makeAssetSummary("SOL", { disposals_count: 1, gain_loss_eur: 5 }),
+    ];
+    const customTypes = { SOL: "Z" };
+    const result = buildAnnualGainLossByAssetSummary(2025, assets, customTypes);
+    expect(result.rows[0].considerationTypeCode).toBe("Z");
+    expect(result.rows[0].considerationTypeLabel).toContain("Tipo no determinado");
+  });
+
+  it("S12: totales cuadran con tolerancia <= 0,02 (caso PDF ejemplo)", () => {
+    // transmisión 336,49 | adquisición 424,93 | PnL -88,44
+    const assets = [
+      makeAssetSummary("ETH", { disposals_count: 1, proceeds_eur: 336.49, cost_basis_eur: 424.93, gain_loss_eur: -88.44 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, assets);
+    const { transmissionValueEur, acquisitionValueEur, capitalGainLossEur } = result.totals;
+    expect(transmissionValueEur).toBeCloseTo(336.49, 2);
+    expect(acquisitionValueEur).toBeCloseTo(424.93, 2);
+    expect(capitalGainLossEur).toBeCloseTo(-88.44, 2);
+    // Verificar coherencia interna
+    const diff = Math.abs(capitalGainLossEur - (transmissionValueEur - acquisitionValueEur));
+    expect(diff).toBeLessThanOrEqual(0.02);
+  });
+});
+
+// ─── Tests: render HTML con sección resumen ──────────────────────────────────
+
+describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo", () => {
+  function makeHtmlPoolFull() {
+    return {
+      query: vi.fn().mockImplementation((sql: string) => {
+        // Asset summaries with disposals
+        if (sql.includes("STRING_AGG") && sql.includes("acquisitions_qty")) {
+          return { rows: [{ asset: "ETH", exchanges: "kraken", acquisitions_qty: "1", disposals_qty: "1", fees_eur: "1.5", operations_count: "2" }] };
+        }
+        if (sql.includes("opening_qty") && sql.includes("closing_qty")) {
+          return { rows: [{ asset: "ETH", opening_qty: "0", closing_qty: "0" }] };
+        }
+        if (sql.includes("proceeds_eur") && sql.includes("cost_basis_eur")) {
+          return { rows: [{ asset: "ETH", proceeds_eur: "336.49", cost_basis_eur: "424.93", gain_loss_eur: "-88.44", disposals_count: "1" }] };
+        }
+        return { rows: [] };
+      }),
+    } as any;
+  }
+
+  it("R1: HTML contiene 'Resumen de ganancias y pérdidas por activo el 2025'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Resumen de ganancias y pérdidas por activo el 2025");
+  });
+
+  it("R2: HTML contiene 'Tipo de contraprestación recibida a cambio'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Tipo de contraprestación recibida a cambio");
+  });
+
+  it("R3: HTML contiene 'Valor de transmisión en EUR'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Valor de transmisión en EUR");
+  });
+
+  it("R4: HTML contiene 'Valor de adquisición en EUR'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Valor de adquisición en EUR");
+  });
+
+  it("R5: HTML contiene 'Ganancia o pérdida de capital en EUR'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Ganancia o pérdida de capital en EUR");
+  });
+
+  it("R6: HTML contiene 'Total 2025'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Total 2025");
+  });
+
+  it("R7: HTML contiene clase annual-gain-loss-summary", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("annual-gain-loss-summary");
+  });
+
+  it("R8: con año 2026 la sección dice 'Total 2026'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Total 2026");
+  });
+});

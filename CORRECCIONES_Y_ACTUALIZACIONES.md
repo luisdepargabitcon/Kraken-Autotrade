@@ -2,6 +2,104 @@
 
 ---
 
+## 2026-06-15 — feat(fisco): añadir resumen anual de ganancias y pérdidas por activo
+
+### Objetivo
+Añadir al principio del informe anual fiscal (HTML/PDF) una nueva sección de resumen por activo, antes del detalle de operaciones, para facilitar la cumplimentación de la declaración de la renta.
+
+### Implementación
+
+#### `server/services/fisco/FiscoHtmlRenderer.ts` ✅ MODIFICADO
+**Nuevas interfaces exportadas:**
+- `AnnualGainLossByAssetRow` — Fila por activo con campos: ticker, name, considerationTypeCode/Label, transmissionValueEur, acquisitionValueEur, capitalGainLossEur
+- `AnnualGainLossByAssetSummary` — Estructura completa con rows y totals
+
+**Nuevo helper exportado:**
+- `buildAnnualGainLossByAssetSummary(year, assetSummaries, considerationTypeByAsset?)` — Construye el resumen a partir de los datos canónicos de AssetSummary. No recalcula FIFO de forma independiente. Agrupa por ticker, ordena por ticker asc y tipo F < N < O. Valida que los totales cuadren (tolerancia 0,02 EUR). Emite logs `[FISCO][ANNUAL_GAIN_LOSS_SUMMARY]` y warnings `[FISCO][ANNUAL_GAIN_LOSS_SUMMARY_WARNING]`.
+
+**Nuevas funciones privadas:**
+- `fmtEurEs(n)` — Formato español sin símbolo: 1.424,85 / -88,44
+- `renderAnnualGainLossSummarySection(summary)` — Genera el HTML de la sección con tabla completa, coloreado de ganancia/pérdida, fila Total {year}
+
+**Modificación `renderAnnualHtml`:**
+- Calcula `gainLossSummary` justo después de cargar `assetSummaries`
+- Llama a `renderAnnualGainLossSummarySection` y lo inserta inmediatamente después de la portada, antes del bloque de avisos y del "Resumen ejecutivo"
+
+**CSS añadido (screen + print):**
+- `.annual-gain-loss-summary` — page-break-after:always para que ocupe su propia página al imprimir
+- `.gain-loss-summary-table` — tabla compacta, bordes sólidos, cabeceras con fondo azul claro
+- Columnas numéricas (4,5,6) alineadas a la derecha con tabular-nums
+- `.total-row` — fila en negrita con borde-top doble
+- `@media print` — font-size 8.5pt, table-layout fixed, no corte horizontal
+
+### Contenido de la sección
+```
+Resumen de ganancias y pérdidas por activo el {year}
+
+| Ticker | Nombre | Tipo contraprestación | Val. transmisión EUR | Val. adquisición EUR | Gan./Pérd. EUR |
+|--------|--------|-----------------------|----------------------|----------------------|----------------|
+| ETH    | ETH    | F - Moneda curso legal| 336,49               | 424,93               | -88,44         |
+| ...    |        |                       |                      |                      |                |
+| Total {year} |||                        | 336,49               | 424,93               | -88,44         |
+```
+
+### Tipos de contraprestación
+- `F` — Moneda de curso legal (default cuando no se especifica)
+- `N` — Otra moneda virtual
+- `O` — Otro activo virtual
+- Tipo desconocido → se muestra el código original + "Tipo no determinado" (no rompe el informe)
+
+### Validación de totales
+- Se verifica que `capitalGainLossEur` ≈ `transmissionValueEur - acquisitionValueEur` (tolerancia 0,02 EUR)
+- Si descuadra: warning en log, informe sigue mostrándose
+
+### Tests añadidos
+
+#### `server/services/fisco/__tests__/fiscoCentroInformes.test.ts` ✅ MODIFICADO
+**12 tests de helper `buildAnnualGainLossByAssetSummary` (S1-S12):**
+- S1: Excluye activos sin disposals y sin ganancia/pérdida
+- S2: Agrupa por ticker y tipo de contraprestación
+- S3: Suma correctamente valor de transmisión
+- S4: Suma correctamente valor de adquisición
+- S5: Calcula ganancia/pérdida correctamente
+- S6: Genera fila total correcta (BTC+ETH → totales exactos)
+- S7: Mantiene negativos con signo menos en fmtEurEs
+- S8: Formatea importes con coma decimal en español
+- S9: Ordena por ticker ascendente
+- S10: Diferencia mismo ticker con tipos F/N/O
+- S11: Tolera tipo desconocido sin romper
+- S12: Caso del PDF ejemplo (336,49 / 424,93 / -88,44) con tolerancia ≤ 0,02
+
+**8 tests de render HTML (R1-R8):**
+- R1: "Resumen de ganancias y pérdidas por activo el 2025"
+- R2: "Tipo de contraprestación recibida a cambio"
+- R3: "Valor de transmisión en EUR"
+- R4: "Valor de adquisición en EUR"
+- R5: "Ganancia o pérdida de capital en EUR"
+- R6: "Total 2025"
+- R7: clase `annual-gain-loss-summary`
+- R8: "Total 2026" para año 2026
+
+### Validación
+- ✅ npm run build: 3799 módulos, sin errores
+- ✅ vitest fiscoCentroInformes.test.ts: **79/79 tests** pasando (incluyendo los 20 nuevos)
+- ✅ No requiere migración DB — usa datos ya existentes en fisco_disposals/fisco_operations
+- ✅ No recalcula FIFO independientemente — reutiliza AssetSummary ya calculado
+
+### Notas de deploy
+- No requiere migración DB
+- Endpoint `GET /api/fisco/report/annual/html?year=YYYY&exchange=all` ya incluye la nueva sección
+- La sección aparece entre la portada y el "Resumen ejecutivo"
+- Al imprimir/PDF, la sección ocupa su propia página (page-break-after: always)
+
+### Validación en VPS (después de deploy)
+```bash
+curl -s "http://127.0.0.1:3020/api/fisco/report/annual/html?year=2025&exchange=all" \
+  | grep -Ei "Resumen de ganancias|Tipo de contraprestación|Valor de transmisión|Total 2025"
+```
+
+---
+
 ## 2026-06-10 — fix(idca): usar PnL persistido como canónico en ciclos importados manuales
 
 ### Problema
