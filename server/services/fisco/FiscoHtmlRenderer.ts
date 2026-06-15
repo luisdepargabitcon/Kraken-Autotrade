@@ -843,6 +843,10 @@ function renderCompactAssetSummary(
 
 // ─── Withdrawal professional classification ────────────────────────────────
 
+function fmtCryptoEs(n: number): string {
+  return new Intl.NumberFormat("es-ES", { minimumFractionDigits: 0, maximumFractionDigits: 8 }).format(n);
+}
+
 export interface WithdrawalClassification {
   professionalLabel: string;
   technicalLabel: string;
@@ -871,7 +875,7 @@ export function classifyWithdrawalForReport(w: WithdrawalForClassification): Wit
     };
   }
   if (w.conservativeDisposalApplied === true) {
-    const qty      = w.quantity != null ? String(w.quantity) : "—";
+    const qty      = w.quantity != null ? fmtCryptoEs(w.quantity) : "—";
     const asset    = w.asset    ?? "activo desconocido";
     const exchange = w.exchange ?? "exchange desconocido";
     return {
@@ -883,7 +887,7 @@ export function classifyWithdrawalForReport(w: WithdrawalForClassification): Wit
     };
   }
   if (w.destinationKnown === true) {
-    const qty      = w.quantity != null ? `${w.quantity} ` : "";
+    const qty      = w.quantity != null ? `${fmtCryptoEs(w.quantity)} ` : "";
     const asset    = w.asset    ?? "activo desconocido";
     const exchange = w.exchange ?? "exchange desconocido";
     return {
@@ -895,7 +899,7 @@ export function classifyWithdrawalForReport(w: WithdrawalForClassification): Wit
     };
   }
   // Default: retirada externa sin impacto fiscal
-  const qty      = w.quantity != null ? `${w.quantity} ` : "";
+  const qty      = w.quantity != null ? `${fmtCryptoEs(w.quantity)} ` : "";
   const asset    = w.asset    ?? "activo desconocido";
   const exchange = w.exchange ?? "exchange desconocido";
   return {

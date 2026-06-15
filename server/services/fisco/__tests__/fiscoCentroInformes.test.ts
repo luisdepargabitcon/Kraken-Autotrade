@@ -725,7 +725,7 @@ describe("FiscoHtmlRenderer", () => {
           blockers: [],
           warnings: [],
           kraken_reconciliation_status: "WARNINGS",
-          kraken_warnings: ["1 retirada(s) externa(s) registrada(s). Movimiento de salida sin cómputo de transmisión en este ejercicio."],
+          kraken_warnings: ["1 retirada externa registrada. Movimiento de salida sin cómputo de transmisión en este ejercicio."],
           kraken_report_can_be_finalized: true,
         }],
         accumulated_total_for_audit_only: -72.25,
@@ -1655,5 +1655,79 @@ describe("renderAnnualHtml: limpieza definitiva de textos prohibidos (T1-T20)", 
     expect(html).toContain("Importes para la declaración");
     expect(html).toContain("Total fiscal final");
     expect(html).toContain("-200,00");
+  });
+});
+
+// ─── Tests P1-P6: pluralización y formato numérico español ───────────────────────
+
+describe("renderAnnualHtml: pluralización y formato numérico español", () => {
+  const WITHDRAWAL_USDC = {
+    executed_at: "2025-03-15T10:00:00Z",
+    asset: "USDC",
+    amount: 451.5497,
+    external_id: "TXABC123",
+    isInternalTransfer: false,
+    destinationKnown: false,
+    conservativeDisposalApplied: false,
+  };
+
+  async function getHtmlWithWithdrawal(withdrawals: any[]) {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    return renderer.renderAnnualHtml({
+      year: 2025, exchanges: ["kraken"],
+      finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO,
+      krakenRec: { ...MOCK_KRAKEN_REC, withdrawals_without_statement: withdrawals },
+    });
+  }
+
+  it("P1: HTML no contiene 'retirada(s)'", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    expect(html).not.toContain("retirada(s)");
+  });
+
+  it("P2: HTML no contiene 'externa(s)'", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    expect(html).not.toContain("externa(s)");
+  });
+
+  it("P3: HTML no contiene 'registrada(s)'", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    expect(html).not.toContain("registrada(s)");
+  });
+
+  it("P4: HTML contiene 'Retirada externa registrada' y 'Movimientos externos registrados (1)'", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    expect(html).toContain("Retirada externa registrada");
+    expect(html).toContain("Movimientos externos registrados (1)");
+  });
+
+  it("P4b: KrakenReconciliationService genera texto plural correcto para 2 retiradas", () => {
+    const plural = (n: number) =>
+      n === 1
+        ? `1 retirada externa registrada. Movimiento de salida sin cómputo de transmisión en este ejercicio.`
+        : `${n} retiradas externas registradas. Movimientos de salida sin cómputo de transmisión en este ejercicio.`;
+    expect(plural(2)).toBe("2 retiradas externas registradas. Movimientos de salida sin cómputo de transmisión en este ejercicio.");
+    expect(plural(1)).toBe("1 retirada externa registrada. Movimiento de salida sin cómputo de transmisión en este ejercicio.");
+    expect(plural(1)).not.toContain("(s)");
+    expect(plural(2)).not.toContain("(s)");
+  });
+
+  it("P5: technical-annex contiene '451,5497 USDC' con coma decimal", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    const annexStart = html.indexOf('id="technical-annex"');
+    const annexPart = annexStart > 0 ? html.slice(annexStart) : html;
+    expect(annexPart).toContain("451,5497 USDC");
+  });
+
+  it("P6: HTML no contiene '451.5497 USDC' con punto decimal", async () => {
+    const html = await getHtmlWithWithdrawal([WITHDRAWAL_USDC]);
+    expect(html).not.toContain("451.5497 USDC");
+  });
+
+  it("P-classifyWR: classifyWithdrawalForReport formatea con coma decimal", () => {
+    const result = classifyWithdrawalForReport({ quantity: 451.5497, asset: "USDC", exchange: "Kraken" });
+    expect(result.technicalLabel).toContain("451,5497 USDC");
+    expect(result.technicalLabel).not.toContain("451.5497");
   });
 });

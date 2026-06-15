@@ -190,7 +190,12 @@ export class KrakenReconciliationService {
       warnings.push(`${deposits_without_lot.length} depósito(s) sin lote FIFO creado.`);
     }
     if (withdrawals_without_statement.length > 0) {
-      warnings.push(`${withdrawals_without_statement.length} retirada(s) externa(s) registrada(s). Movimiento de salida sin cómputo de transmisión en este ejercicio.`);
+      const n = withdrawals_without_statement.length;
+      warnings.push(
+        n === 1
+          ? `1 retirada externa registrada. Movimiento de salida sin cómputo de transmisión en este ejercicio.`
+          : `${n} retiradas externas registradas. Movimientos de salida sin cómputo de transmisión en este ejercicio.`
+      );
     }
     if (staking_without_price.length > 0) {
       warnings.push(`${staking_without_price.length} entrada(s) de staking/reward sin precio EUR.`);
