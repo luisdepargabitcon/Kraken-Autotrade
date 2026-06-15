@@ -644,11 +644,12 @@ describe("FiscoHtmlRenderer", () => {
     expect(html).toContain("<details");
   });
 
-  it("Test H6: renderAnnualHtml contiene 'Preparar PDF completo'", async () => {
+  it("Test H6: renderAnnualHtml contiene botones PDF profesional y completo", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
-    expect(html).toContain("Preparar PDF completo");
+    expect(html).toContain("prepareProfessionalPdf");
+    expect(html).toContain("prepareFullPdf");
   });
 
   it("Test H7: renderAnnualHtml usa estados en castellano (no muestra solo 'OK')", async () => {
@@ -693,7 +694,7 @@ describe("FiscoHtmlRenderer", () => {
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
     expect(html).toContain("expandAll");
     expect(html).toContain("collapseAll");
-    expect(html).toContain("preparePdf");
+    expect(html).toContain("prepareProfessionalPdf");
   });
 
   it("Test H13: multi-year renderHtml contiene 'Detalle por año' con <details>", () => {
@@ -1230,11 +1231,11 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     expect(html).toContain("Tipo de contraprestación recibida a cambio");
   });
 
-  it("R3: HTML contiene 'Valor de transmisión en EUR'", async () => {
+  it("R3: HTML contiene 'Valor de transmisión neto en EUR'", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
-    expect(html).toContain("Valor de transmisión en EUR");
+    expect(html).toContain("Valor de transmisión neto en EUR");
   });
 
   it("R4: HTML contiene 'Valor de adquisición en EUR'", async () => {
@@ -1270,5 +1271,104 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
     expect(html).toContain("Total 2026");
+  });
+
+  it("R9: HTML contiene 'Importes para la declaración'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Importes para la declaración");
+  });
+
+  it("R10: HTML contiene 'Estado de validación'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Estado de validación");
+  });
+
+  it("R11: HTML contiene 'Avisos relevantes'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Avisos relevantes");
+  });
+
+  it("R12: HTML contiene 'Resumen compacto por activo'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Resumen compacto por activo");
+  });
+
+  it("R13: informe principal NO contiene External ID en la parte principal (.report-main)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    // Extract report-main content (before technical-annex)
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    expect(mainPart).not.toContain("External ID");
+    expect(mainPart).not.toContain("external_id");
+  });
+
+  it("R14: el anexo técnico sí contiene 'External ID' o 'Op. ID' en su contenido", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const annexStart = html.indexOf('id="technical-annex"');
+    expect(annexStart).toBeGreaterThan(0);
+    const annexPart = html.slice(annexStart);
+    expect(annexPart).toContain("Op. ID");
+  });
+
+  it("R15: CSS contiene '.technical-annex:not(.print-enabled)' (oculta en print profesional)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain(".technical-annex:not(.print-enabled)");
+  });
+
+  it("R16: HTML contiene función 'prepareProfessionalPdf'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("prepareProfessionalPdf");
+  });
+
+  it("R17: HTML contiene función 'prepareFullPdf'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("prepareFullPdf");
+  });
+
+  it("R18: tabla inicial usa 'Valor de transmisión neto en EUR' y no solo 'Valor de transmisión en EUR'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Valor de transmisión neto en EUR");
+    // La cabecera 'Valor de transmisión en EUR' sin 'neto' no debe aparecer en el header de la tabla de resumen
+    const summarySection = html.slice(html.indexOf('annual-gain-loss-summary'), html.indexOf('Importes para la declaración'));
+    expect(summarySection).not.toContain('<th>Valor de transmisión en EUR</th>');
+  });
+
+  it("R19: HTML contiene .report-main y .technical-annex", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain('class="report-main"');
+    expect(html).toContain('id="technical-annex"');
+  });
+
+  it("R20: 'Resumen de ganancias y pérdidas' aparece antes de 'Importes para la declaración'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const posResumen = html.indexOf("Resumen de ganancias y pérdidas por activo el 2025");
+    const posImportes = html.indexOf("Importes para la declaración");
+    expect(posResumen).toBeGreaterThan(0);
+    expect(posImportes).toBeGreaterThan(0);
+    expect(posResumen).toBeLessThan(posImportes);
   });
 });

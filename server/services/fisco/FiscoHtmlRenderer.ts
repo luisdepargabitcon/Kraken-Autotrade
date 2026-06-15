@@ -288,7 +288,6 @@ export const HTML_STYLE = `
   .btn:hover{background:#f0f4ff;border-color:#0f3460;color:#0f3460}
   .btn-primary{background:#0f3460;color:#fff;border-color:#0f3460}
   .btn-primary:hover{background:#16213e}
-  .annexe{background:#f9f9f9;border:1px solid #ddd;border-radius:8px;padding:1.5rem;margin-top:2rem;font-size:.82rem}
   .section-block{border:1px solid #e0e0e0;border-radius:8px;padding:1.25rem;margin:1.25rem 0}
   .gain-pos{color:#721c24;font-weight:700}.gain-neg{color:#155724;font-weight:700}.gain-zero{color:#555;font-weight:700}
   .annual-gain-loss-summary{margin:1.5rem 0;page-break-after:always;break-after:page}
@@ -299,6 +298,14 @@ export const HTML_STYLE = `
   .gain-loss-summary-table td:nth-child(4),.gain-loss-summary-table td:nth-child(5),.gain-loss-summary-table td:nth-child(6){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .gain-loss-summary-table .total-row{font-weight:700;background:#f0f0f0}
   .gain-loss-summary-table .total-row td{border-top:2px solid #333}
+  /* ── Informe principal vs. Anexo técnico ─────────────────────────────────── */
+  .report-main{}
+  .professional-page{break-after:page;page-break-after:always}
+  .avoid-break{break-inside:avoid;page-break-inside:avoid}
+  .technical-annex{background:#f9f9f9;border:2px dashed #bbb;border-radius:8px;padding:1.5rem;margin-top:2rem;font-size:.82rem}
+  .technical-annex h2{color:#666;border-left-color:#bbb}
+  .technical-annex-label{display:inline-block;background:#f0f0f0;border:1px solid #bbb;border-radius:4px;padding:.2rem .6rem;font-size:.7rem;font-weight:600;color:#888;margin-bottom:.75rem;letter-spacing:.05em;text-transform:uppercase}
+  .annex-toggle-bar{background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:.5rem 1rem;margin:.5rem 0;display:flex;align-items:center;gap:.75rem;font-size:.82rem;color:#555}
   @page {
     size: A4 portrait;
     margin: 10mm;
@@ -314,9 +321,23 @@ export const HTML_STYLE = `
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    /* Ocultar siempre en impresión */
     .toolbar,
-    .no-print {
+    .no-print,
+    .screen-only {
       display: none !important;
+    }
+    /* Anexo técnico oculto por defecto; visible solo si tiene .print-enabled */
+    .technical-annex:not(.print-enabled) {
+      display: none !important;
+    }
+    .report-main {
+      width: 100%;
+      max-width: none;
+    }
+    .professional-page {
+      break-after: page;
+      page-break-after: always;
     }
     .portada {
       padding: 10mm;
@@ -341,15 +362,18 @@ export const HTML_STYLE = `
     table {
       width: 100%;
       table-layout: fixed;
-      font-size: 8.5px;
+      font-size: 8.5pt;
       page-break-inside: auto;
     }
-    th,
-    td {
-      padding: 2.5px 3.5px;
+    th, td {
+      padding: 3px 4px;
       word-break: break-word;
     }
     tr {
+      page-break-inside: avoid;
+    }
+    .avoid-break {
+      break-inside: avoid;
       page-break-inside: avoid;
     }
     .annual-gain-loss-summary {
@@ -395,16 +419,9 @@ export const HTML_STYLE = `
       display: block !important;
       padding: 0;
     }
-    h1 {
-      font-size: 18px;
-    }
-    h2 {
-      font-size: 14px;
-      margin-top: 8mm;
-    }
-    h3 {
-      font-size: 12px;
-    }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; margin-top: 8mm; }
+    h3 { font-size: 12px; }
   }
 </style>`;
 
@@ -412,10 +429,23 @@ export const HTML_SCRIPTS = `
 <script>
 function expandAll(){document.querySelectorAll('details').forEach(d=>d.open=true)}
 function collapseAll(){document.querySelectorAll('details').forEach(d=>d.open=false)}
-function preparePdf(){
-  expandAll();
-  document.body.classList.add('print-mode');
+function prepareProfessionalPdf(){
+  document.querySelectorAll('.report-main details').forEach(d=>d.open=true);
+  document.querySelectorAll('.technical-annex').forEach(el=>el.classList.remove('print-enabled'));
   setTimeout(()=>window.print(),200);
+}
+function prepareFullPdf(){
+  expandAll();
+  document.querySelectorAll('.technical-annex').forEach(el=>el.classList.add('print-enabled'));
+  setTimeout(()=>window.print(),200);
+}
+function toggleAnnex(){
+  var annex=document.getElementById('technical-annex');
+  if(!annex)return;
+  var isHidden=annex.style.display==='none'||annex.style.display==='';
+  annex.style.display=isHidden?'block':'none';
+  var btn=document.getElementById('annex-toggle-btn');
+  if(btn)btn.textContent=isHidden?'▲ Ocultar anexo técnico':'▼ Ver anexo técnico de auditoría';
 }
 function filterTable(inputId,tableId){
   var v=document.getElementById(inputId).value.toLowerCase();
@@ -724,7 +754,7 @@ function renderAnnualGainLossSummarySection(
         <th>Ticker</th>
         <th>Nombre</th>
         <th>Tipo de contraprestación recibida a cambio</th>
-        <th>Valor de transmisión en EUR</th>
+        <th>Valor de transmisión neto en EUR</th>
         <th>Valor de adquisición en EUR</th>
         <th>Ganancia o pérdida de capital en EUR</th>
       </tr>
@@ -740,6 +770,278 @@ function renderAnnualGainLossSummarySection(
     </tbody>
   </table>
 </section>`;
+}
+
+// ─── Compact asset summary (informe principal) ───────────────────────────────
+
+function renderCompactAssetSummary(
+  assetSummaries: AssetSummary[],
+  disposalsByAsset: Record<string, any[]>
+): string {
+  const assetsWithDisposals = assetSummaries.filter(
+    a => (disposalsByAsset[a.asset] ?? []).length > 0 || (a.disposals_count ?? 0) > 0
+  );
+  if (assetsWithDisposals.length === 0) {
+    return `<p style="color:#888">Sin transmisiones registradas este año.</p>`;
+  }
+
+  const rows = assetsWithDisposals.map(a => {
+    const disposals = disposalsByAsset[a.asset] ?? [];
+    const numSales  = new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0);
+    const grossProc = a.proceeds_eur ?? 0;
+    const fees      = a.fees_eur ?? 0;
+    const netTrans  = grossProc - fees;
+    const costBasis = a.cost_basis_eur ?? 0;
+    const gainLoss  = a.gain_loss_eur ?? 0;
+    return `<tr>
+      <td><strong>${a.asset}</strong></td>
+      <td style="text-align:right">${eur(grossProc)}</td>
+      <td style="text-align:right">${eur(fees)}</td>
+      <td style="text-align:right">${eur(netTrans)}</td>
+      <td style="text-align:right">${eur(costBasis)}</td>
+      <td style="text-align:right" class="${gainClass(gainLoss)}">${eur(gainLoss)}</td>
+      <td style="text-align:center">${numSales}</td>
+    </tr>`;
+  }).join("");
+
+  const totGross   = assetsWithDisposals.reduce((s, a) => s + (a.proceeds_eur ?? 0), 0);
+  const totFees    = assetsWithDisposals.reduce((s, a) => s + (a.fees_eur ?? 0), 0);
+  const totNet     = totGross - totFees;
+  const totCost    = assetsWithDisposals.reduce((s, a) => s + (a.cost_basis_eur ?? 0), 0);
+  const totGain    = assetsWithDisposals.reduce((s, a) => s + (a.gain_loss_eur ?? 0), 0);
+  const totSales   = assetsWithDisposals.reduce((s, a) => {
+    const disposals = disposalsByAsset[a.asset] ?? [];
+    return s + (new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0));
+  }, 0);
+
+  return `
+<div class="section-block avoid-break">
+  <table>
+    <thead><tr>
+      <th>Ticker</th>
+      <th style="text-align:right">Valor bruto de venta</th>
+      <th style="text-align:right">Comisiones imputadas</th>
+      <th style="text-align:right">Valor de transmisión neto</th>
+      <th style="text-align:right">Valor de adquisición FIFO</th>
+      <th style="text-align:right">Ganancia/Pérdida fiscal</th>
+      <th style="text-align:center">Nº ventas</th>
+    </tr></thead>
+    <tbody>
+      ${rows}
+      <tr style="font-weight:700;background:#f0f0f0;border-top:2px solid #333">
+        <td>Total</td>
+        <td style="text-align:right">${eur(totGross)}</td>
+        <td style="text-align:right">${eur(totFees)}</td>
+        <td style="text-align:right">${eur(totNet)}</td>
+        <td style="text-align:right">${eur(totCost)}</td>
+        <td style="text-align:right" class="${gainClass(totGain)}">${eur(totGain)}</td>
+        <td style="text-align:center">${totSales}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>`;
+}
+
+// ─── Relevant warnings section (informe principal) ───────────────────────────
+
+function renderRelevantWarnings(fin: any, krakenRec: any): string {
+  const blockers: any[]  = fin.blockers  ?? [];
+  const warnings: any[]  = fin.warnings  ?? [];
+  const krakenWarns: string[] = krakenRec?.withdrawals_without_statement?.length > 0
+    ? [`Existe${krakenRec.withdrawals_without_statement.length === 1 ? " una retirada Kraken" : "n retiradas Kraken"} sin statement item enlazado (${krakenRec.withdrawals_without_statement.length}). No bloquea el informe. Verificar si corresponde a transferencia interna propia.`]
+    : [];
+
+  if (blockers.length === 0 && warnings.length === 0 && krakenWarns.length === 0) {
+    return `<p class="ok">✓ Sin avisos relevantes. El informe está listo para declarar.</p>`;
+  }
+
+  let html = "";
+  if (blockers.length > 0) {
+    html += `<div class="blockers"><strong>🔴 Bloqueantes (impiden declarar):</strong><ul>
+      ${blockers.map((b: any) => `<li class="err">[${b.code}] ${b.detail}</li>`).join("")}
+    </ul></div>`;
+  }
+  if (warnings.length > 0) {
+    html += `<div class="warnings-box"><strong>⚠ Avisos (no bloquean):</strong><ul>
+      ${warnings.map((w: any) => `<li class="warn">[${w.code}] ${w.detail}</li>`).join("")}
+    </ul></div>`;
+  }
+  if (krakenWarns.length > 0) {
+    html += `<div class="warnings-box"><strong>⚠ Conciliación Kraken:</strong><ul>
+      ${krakenWarns.map(w => `<li class="warn">${w}</li>`).join("")}
+    </ul></div>`;
+  }
+  return html;
+}
+
+// ─── Validation summary (informe principal — versión compacta) ────────────────
+
+function renderValidationSummary(fin: any): string {
+  const statLabel = (code: string) => {
+    if (!code || code === "OK") return `<span class="ok">✓ Correcto</span>`;
+    if (code.includes("WARNING") || code === "OK_WITH_WARNINGS") return `<span class="warn">⚠ Correcto con avisos</span>`;
+    return `<span class="err">✗ Error</span>`;
+  };
+  const finalBadge = fin.report_can_be_finalized
+    ? badge("b-ok", "✓ Finalizable")
+    : badge("b-err", "✗ No finalizable");
+
+  return `
+<div class="grid2 avoid-break">
+  <div class="card"><label>FIFO</label><div>${statLabel(fin.fifo_status)}</div></div>
+  <div class="card"><label>Cartera</label><div>${statLabel(fin.portfolio_status)}</div></div>
+  <div class="card"><label>Retiradas</label><div>${statLabel(fin.withdrawals_status)}</div></div>
+  <div class="card"><label>Estado final</label><div>${finalBadge}</div></div>
+</div>`;
+}
+
+// ─── Fiscal declaration table (importes para la declaración) ──────────────────
+
+function renderDeclarationTable(fin: any): string {
+  const gains    = fin.gains_eur ?? 0;
+  const losses   = fin.losses_eur ?? 0;
+  const netFifo  = fin.ordinary_fifo_gain_loss_eur ?? (gains + losses);
+  const consDisp = fin.conservative_external_disposals_gain_loss_eur ?? 0;
+  const staking  = fin.staking_total_eur ?? 0;
+  const total    = fin.final_taxable_gain_loss_eur ?? (netFifo + consDisp);
+
+  const row = (label: string, val: number, note: string, bold = false) =>
+    `<tr><td${bold ? " style=\"font-weight:700\"" : ""}>${label}</td>` +
+    `<td style="text-align:right${bold ? ";font-weight:700" : ""}" class="${gainClass(val)}">${eur(val)}</td>` +
+    `<td style="font-size:.8rem;color:#666">${note}</td></tr>`;
+
+  return `
+<table class="avoid-break">
+  <thead><tr><th>Concepto</th><th style="text-align:right">Importe</th><th>Nota</th></tr></thead>
+  <tbody>
+    ${row("Ganancias por transmisiones FIFO", gains, "Suma de ganancias individuales de cada venta")}
+    ${row("Pérdidas por transmisiones FIFO", losses, "Suma de pérdidas individuales de cada venta")}
+    ${row("Resultado neto por transmisiones", netFifo, "Ganancias + Pérdidas del ejercicio", true)}
+    ${row("Disposiciones conservadoras", consDisp, "Retiros sin statement item, valorados conservadoramente")}
+    ${row("Rendimientos staking/rewards", staking, "Rendimiento del capital mobiliario — informativo")}
+    ${row("Total fiscal final", total, "A declarar en Renta — FIFO + Disposiciones conservadoras", true)}
+  </tbody>
+</table>`;
+}
+
+// ─── Technical annex (colapsado, no imprimible por defecto) ───────────────────
+
+function renderTechnicalAnnex(opts: {
+  year: number;
+  fin: any;
+  portfolio: any;
+  assetSummaries: AssetSummary[];
+  disposalsByAsset: Record<string, any[]>;
+  operationsByAsset: Record<string, any[]>;
+  exchangeSummaries: ExchangeSummary[];
+  stakingRows: any[];
+  stmtItems: any[];
+  krakenRec: any;
+}): string {
+  const { year, fin, portfolio, assetSummaries, disposalsByAsset, operationsByAsset, exchangeSummaries, stakingRows, stmtItems, krakenRec } = opts;
+
+  return `
+<div id="technical-annex" class="technical-annex" style="display:none">
+  <span class="technical-annex-label">📋 Anexo técnico de auditoría</span>
+  <div class="annex-toggle-bar screen-only">
+    <span>Este anexo contiene el detalle completo FIFO, operaciones, lotes y External IDs.</span>
+    <strong>No se imprime por defecto.</strong>
+    <button class="btn btn-primary" onclick="prepareFullPdf()">🖨 PDF completo con anexo</button>
+  </div>
+
+  <h2>Detalle técnico de validación</h2>
+  <div class="section-block">
+    ${renderValidationState(fin, portfolio)}
+  </div>
+
+  <h2>Detalle por activo (FIFO completo)</h2>
+  ${renderAssetSection(assetSummaries, disposalsByAsset, operationsByAsset)}
+
+  <h2>Ventas y cálculo FIFO (lotes)</h2>
+  <div class="section-block">
+  <p style="font-size:.85rem;color:#555;margin:.5rem 0">
+    Una venta puede aparecer dividida en varias líneas porque el método FIFO consume varios lotes de compra distintos.
+  </p>
+  ${assetSummaries.filter(a => (disposalsByAsset[a.asset] ?? []).length > 0).map(a => {
+    const disposals = disposalsByAsset[a.asset] ?? [];
+    const totalG = disposals.reduce((s: number, d: any) => s + parseFloat(d.gain_loss_eur ?? "0"), 0);
+    const byOp = new Map<string, any[]>();
+    for (const d of disposals) {
+      const k = String(d.sell_operation_id ?? "?");
+      if (!byOp.has(k)) byOp.set(k, []);
+      byOp.get(k)!.push(d);
+    }
+    const opRows = [...byOp.entries()].slice(0, 200).map(([, rows]) => {
+      const first     = rows[0];
+      const totalQty  = rows.reduce((s: number, r: any) => s + parseFloat(r.quantity ?? "0"), 0);
+      const totalProc = rows.reduce((s: number, r: any) => s + parseFloat(r.proceeds_eur ?? "0"), 0);
+      const totalCost = rows.reduce((s: number, r: any) => s + parseFloat(r.cost_basis_eur ?? "0"), 0);
+      const totalFee  = rows.reduce((s: number, r: any) => s + parseFloat(r.fee_eur ?? "0"), 0);
+      const totalGain = rows.reduce((s: number, r: any) => s + parseFloat(r.gain_loss_eur ?? "0"), 0);
+      const multiLot  = rows.length > 1;
+      const lotRows   = multiLot ? rows.map((r: any) => `<tr style="font-size:.8rem;color:#555">
+        <td style="padding-left:1.5rem">↳ Lote ${r.lot_id ?? "—"}</td>
+        <td>${fmtQty(parseFloat(r.quantity ?? "0"))}</td>
+        <td>${eur(parseFloat(r.proceeds_eur ?? "0"))}</td>
+        <td>${eur(parseFloat(r.cost_basis_eur ?? "0"))}</td><td>—</td>
+        <td class="${gainClass(parseFloat(r.gain_loss_eur ?? "0"))}">${eur(parseFloat(r.gain_loss_eur ?? "0"))}</td>
+        <td style="font-size:.7rem;color:#aaa">${r.sell_operation_id ?? "—"}</td>
+      </tr>`).join("") : "";
+      return `<tr>
+        <td>${fmtDate(first.disposed_at)}</td>
+        <td>${first.exchange ?? "—"}</td>
+        <td>${fmtQty(totalQty)}${multiLot ? ` <span style="font-size:.7rem;color:#888">(${rows.length} lotes)</span>` : ""}</td>
+        <td>${eur(totalProc)}</td>
+        <td>${eur(totalCost)}</td>
+        <td>${eur(totalFee)}</td>
+        <td class="${gainClass(totalGain)}">${eur(totalGain)}</td>
+        <td style="font-size:.7rem;color:#888">${first.sell_operation_id ?? "—"}</td>
+      </tr>${lotRows}`;
+    }).join("");
+    return `<details>
+      <summary>${a.asset} — ${byOp.size} venta(s) — ${disposals.length} lote(s) FIFO — G/P: <span class="${gainClass(totalG)}">${eur(totalG)}</span></summary>
+      <div class="details-body">
+        <table><thead><tr>
+          <th>Fecha</th><th>Exchange</th><th>Cantidad</th>
+          <th>Valor bruto de venta</th><th>Valor adquisición FIFO</th><th>Comisión</th><th>Ganancia/Pérdida</th><th>Op. ID</th>
+        </tr></thead><tbody>
+        ${opRows}
+        ${byOp.size > 200 ? `<tr><td colspan="8" style="color:#888">… y ${byOp.size - 200} ventas más</td></tr>` : ""}
+        </tbody></table>
+      </div>
+    </details>`;
+  }).join("")}
+  </div>
+
+  <h2>Detalle por exchange</h2>
+  <div class="section-block">
+    ${renderExchangeSection(exchangeSummaries)}
+  </div>
+
+  <h2>Rendimientos / staking / rewards</h2>
+  <div class="section-block">
+    ${renderStakingSection(stakingRows)}
+  </div>
+
+  <h2>Retiradas, depósitos y transferencias internas</h2>
+  <div class="section-block">
+    ${renderWithdrawalsSection(stmtItems, krakenRec)}
+  </div>
+
+  <h2>Fuentes y códigos técnicos</h2>
+  <div class="section-block">
+    <ul>
+      <li><strong>Método FIFO:</strong> First-In First-Out continuo, histórico multi-año.</li>
+      <li><strong>Validation strength:</strong> ${translateStatus(portfolio?.validation_strength ?? "—")}</li>
+      <li><strong>Código técnico FIFO:</strong> <code>${fin.fifo_status ?? "—"}</code></li>
+      <li><strong>Código técnico portfolio:</strong> <code>${fin.portfolio_status ?? "—"}</code></li>
+      <li><strong>Código técnico withdrawals:</strong> <code>${fin.withdrawals_status ?? "—"}</code></li>
+      <li><strong>Conservative disposals:</strong> <code>${fin.conservative_disposals_status ?? "—"}</code></li>
+      <li><strong>Fuentes de datos:</strong> fisco_operations, fisco_lots, fisco_disposals.</li>
+      <li><strong>Fecha de generación:</strong> ${new Date().toISOString()}</li>
+    </ul>
+  </div>
+</div>`;
 }
 
 // ─── Staking section ─────────────────────────────────────────────────────────
@@ -1277,148 +1579,90 @@ export class FiscoHtmlRenderer {
 </head>
 <body>
 
-<div class="toolbar no-print">
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- BARRA DE HERRAMIENTAS — solo pantalla                                   -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="toolbar screen-only">
   <strong style="margin-right:.5rem">Informe fiscal ${year}</strong>
+  <button class="btn btn-primary" onclick="prepareProfessionalPdf()">🖨 PDF profesional (4-6 pág.)</button>
+  <button class="btn" onclick="prepareFullPdf()">🖨 PDF completo con anexo</button>
+  <button class="btn" id="annex-toggle-btn" onclick="toggleAnnex()">▼ Ver anexo técnico de auditoría</button>
   <button class="btn" onclick="expandAll()">▶ Expandir todo</button>
   <button class="btn" onclick="collapseAll()">◀ Contraer todo</button>
-  <button class="btn btn-primary" onclick="preparePdf()">🖨 Preparar PDF completo</button>
-  <button class="btn" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
 </div>
 
-<div class="portada">
-  <h1>📊 Informe Fiscal ${year}</h1>
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- INFORME PRINCIPAL — imprimible                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="report-main">
+
+<!-- 1. PORTADA COMPACTA -->
+<div class="portada professional-page">
+  <h1>📊 Informe Fiscal Cripto ${year}</h1>
   <div class="grid3">
     <div class="card"><label>Año fiscal</label><span class="val">${year}</span></div>
-    <div class="card"><label>Exchanges</label><span class="val" style="font-size:.85rem">${exchangeList}</span></div>
-    <div class="card"><label>Fecha de generación</label><span class="val" style="font-size:.82rem">${new Date().toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>
     <div class="card"><label>Estado del informe</label><span class="val">${portadaEstado}</span></div>
     <div class="card"><label>Resultado fiscal final</label><span class="val ${gainClass(totalGain)}">${eur(totalGain)}</span></div>
-    <div class="card"><label>Número de operaciones</label><span class="val">${counts.operations_count}</span></div>
+    <div class="card"><label>Exchanges incluidos</label><span style="font-size:.82rem">${exchangeList}</span></div>
+    <div class="card"><label>Fecha de generación</label><span style="font-size:.8rem">${new Date().toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>
+    <div class="card"><label>Método</label><span style="font-size:.78rem">FIFO global multi-exchange</span></div>
   </div>
   <p style="font-size:.82rem;color:#555;margin-top:.75rem">
-    ⚠ Este informe usa FIFO fiscal global multi-exchange. Cada año fiscal se declara por separado.
-    El resultado mostrado corresponde únicamente al ejercicio ${year}.
+    Cada ejercicio fiscal se declara por separado. El resultado mostrado corresponde únicamente al ejercicio ${year}.
   </p>
 </div>
 
+<!-- 2. TABLA OBLIGATORIA: RESUMEN G/P POR ACTIVO -->
 ${renderAnnualGainLossSummarySection(gainLossSummary)}
 
 ${partialErrors.length > 0 ? `
 <div class="warnings-box" style="margin:1rem 0">
-  <strong>⚠ Advertencia: algunas secciones no pudieron cargarse correctamente</strong>
+  <strong>⚠ Algunas secciones no pudieron cargarse correctamente</strong>
   <ul>${partialErrors.map(e => `<li class="err">${e}</li>`).join("")}</ul>
-  <p style="font-size:.8rem;margin:.4rem 0 0">El informe fiscal base (resumen, validación) sigue siendo correcto. Solo el detalle auxiliar puede estar incompleto.</p>
+  <p style="font-size:.8rem;margin:.4rem 0 0">El informe fiscal base sigue siendo correcto. Solo el detalle auxiliar puede estar incompleto.</p>
 </div>` : ""}
 
-<h2>Resumen ejecutivo</h2>
-<div class="resumen-ejecutivo">
-  <p>${buildResumenEjecutivo(year, finStatus, krakenWarnings)}</p>
+<!-- 3. IMPORTES PARA LA DECLARACIÓN -->
+<div class="section-block avoid-break">
+  <h2>Importes para la declaración</h2>
+  ${renderDeclarationTable(finEnriched)}
 </div>
 
-<h2>Tabla resumen fiscal</h2>
-${renderFiscalSummaryTable(finEnriched)}
+<!-- 4. ESTADO DE VALIDACIÓN -->
+<div class="section-block avoid-break">
+  <h2>Estado de validación</h2>
+  ${renderValidationSummary(finEnriched)}
+</div>
 
-<h2>Estado de validación</h2>
-${renderValidationState(finStatus, portfolio)}
+<!-- 5. AVISOS RELEVANTES -->
+<div class="section-block avoid-break">
+  <h2>Avisos relevantes</h2>
+  ${renderRelevantWarnings(finEnriched, krakenRec)}
+</div>
 
-<h2>Detalle por activo</h2>
-${renderAssetSection(assetSummaries, disposalsByAsset, operationsByAsset)}
-
-<h2>Detalle por exchange</h2>
+<!-- 6. RESUMEN COMPACTO POR ACTIVO -->
 <div class="section-block">
-${renderExchangeSection(exchangeSummaries)}
+  <h2>Resumen compacto por activo</h2>
+  ${renderCompactAssetSummary(assetSummaries, disposalsByAsset)}
 </div>
 
-<h2>Ventas y cálculo FIFO</h2>
-<div class="section-block">
-<p style="font-size:.85rem;color:#555;margin:.5rem 0">
-  Una venta puede aparecer dividida en varias líneas porque el método FIFO consume varios lotes de compra distintos.
-  La columna <strong>«Valor de adquisición FIFO»</strong> es el coste fiscal de las unidades vendidas.
-  La columna <strong>«Comisión imputada»</strong> muestra la comisión atribuida a esa línea (evitando repetir la comisión total en todos los lotes).
-  El resumen de cada venta agrupa todos sus lotes y muestra la comisión total una sola vez.
-</p>
-${assetSummaries.filter(a => (disposalsByAsset[a.asset] ?? []).length > 0).map(a => {
-  const disposals = disposalsByAsset[a.asset] ?? [];
-  const totalG = disposals.reduce((s: number, d: any) => s + parseFloat(d.gain_loss_eur ?? "0"), 0);
+</div><!-- /.report-main -->
 
-  // Agrupar por sell_operation_id para mostrar cada venta consolidada con sus lotes
-  const byOp = new Map<string, any[]>();
-  for (const d of disposals) {
-    const k = String(d.sell_operation_id ?? "?");
-    if (!byOp.has(k)) byOp.set(k, []);
-    byOp.get(k)!.push(d);
-  }
-
-  const opRows = [...byOp.entries()].slice(0, 200).map(([opId, rows]) => {
-    const first      = rows[0];
-    const totalQty   = rows.reduce((s: number, r: any) => s + parseFloat(r.quantity ?? "0"), 0);
-    const totalProc  = rows.reduce((s: number, r: any) => s + parseFloat(r.proceeds_eur ?? "0"), 0);
-    const totalCost  = rows.reduce((s: number, r: any) => s + parseFloat(r.cost_basis_eur ?? "0"), 0);
-    const totalFee   = rows.reduce((s: number, r: any) => s + parseFloat(r.fee_eur ?? "0"), 0);
-    const totalGain  = rows.reduce((s: number, r: any) => s + parseFloat(r.gain_loss_eur ?? "0"), 0);
-    const multiLot   = rows.length > 1;
-
-    const lotRows = multiLot ? rows.map((r: any) => `<tr style="font-size:.8rem;color:#555">
-      <td style="padding-left:1.5rem">↳ Lote ${r.lot_id ?? "—"}</td>
-      <td>${fmtQty(parseFloat(r.quantity ?? "0"))}</td>
-      <td>${eur(parseFloat(r.proceeds_eur ?? "0"))}</td>
-      <td>${eur(parseFloat(r.cost_basis_eur ?? "0"))}</td>
-      <td>—</td>
-      <td class="${gainClass(parseFloat(r.gain_loss_eur ?? "0"))}">${eur(parseFloat(r.gain_loss_eur ?? "0"))}</td>
-    </tr>`).join("") : "";
-
-    return `<tr>
-      <td>${fmtDate(first.disposed_at)}</td>
-      <td>${first.exchange ?? "—"}</td>
-      <td>${fmtQty(totalQty)}${multiLot ? ` <span style="font-size:.7rem;color:#888">(${rows.length} lotes)</span>` : ""}</td>
-      <td>${eur(totalProc)}</td>
-      <td>${eur(totalCost)}</td>
-      <td>${eur(totalFee)}</td>
-      <td class="${gainClass(totalGain)}">${eur(totalGain)}</td>
-    </tr>${lotRows}`;
-  }).join("");
-
-  return `
-  <details>
-    <summary>${a.asset} — ${byOp.size} venta(s) — ${disposals.length} lote(s) FIFO — Ganancia/Pérdida: <span class="${gainClass(totalG)}">${eur(totalG)}</span></summary>
-    <div class="details-body">
-      <table><thead><tr>
-        <th>Fecha venta</th><th>Exchange</th><th>Cantidad</th>
-        <th>Valor de venta / transmisión</th><th>Valor de adquisición FIFO</th><th>Comisión imputada</th><th>Ganancia/Pérdida fiscal</th>
-      </tr></thead><tbody>
-      ${opRows}
-      ${byOp.size > 200 ? `<tr><td colspan="7" style="color:#888">… y ${byOp.size - 200} ventas más (ver CSV para lista completa)</td></tr>` : ""}
-      </tbody></table>
-      <p style="font-size:.75rem;color:#888;margin:.4rem 0 0">Las filas ↳ muestran el detalle por lote FIFO. La comisión imputada se muestra en el resumen de venta, no repetida por lote.</p>
-    </div>
-  </details>`;
-}).join("")}
-</div>
-
-<h2>Rendimientos / staking / rewards</h2>
-<div class="section-block">
-${renderStakingSection(stakingRows)}
-</div>
-
-<h2>Retiradas, depósitos y transferencias internas</h2>
-<div class="section-block">
-${renderWithdrawalsSection(stmtItems, krakenRec)}
-</div>
-
-<div class="annexe">
-  <h3>Anexo técnico</h3>
-  <ul>
-    <li><strong>Método FIFO:</strong> First-In First-Out continuo, histórico multi-año.</li>
-    <li><strong>Validation strength:</strong> ${translateStatus(portfolio?.validation_strength ?? "—")}</li>
-    <li><strong>Código técnico FIFO:</strong> <code>${finStatus.fifo_status ?? "—"}</code></li>
-    <li><strong>Código técnico portfolio:</strong> <code>${finStatus.portfolio_status ?? "—"}</code></li>
-    <li><strong>Código técnico withdrawals:</strong> <code>${finStatus.withdrawals_status ?? "—"}</code></li>
-    <li><strong>Conservative disposals:</strong> <code>${finStatus.conservative_disposals_status ?? "—"}</code></li>
-    <li><strong>Fuentes de datos:</strong> Kraken + RevolutX (fisco_operations, fisco_lots, fisco_disposals).</li>
-    <li><strong>Fecha de generación:</strong> ${new Date().toISOString()}</li>
-    <li><strong>Nota fiscal:</strong> Cada año fiscal debe declararse por separado. Este informe es una herramienta de auditoría.</li>
-  </ul>
-</div>
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ANEXO TÉCNICO — colapsado por defecto, no imprimible salvo PDF completo -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+${renderTechnicalAnnex({
+  year,
+  fin: finEnriched,
+  portfolio,
+  assetSummaries,
+  disposalsByAsset,
+  operationsByAsset,
+  exchangeSummaries,
+  stakingRows,
+  stmtItems,
+  krakenRec,
+})}
 
 ${HTML_SCRIPTS}
 </body>
