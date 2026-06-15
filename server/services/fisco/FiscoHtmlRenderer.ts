@@ -35,6 +35,22 @@ export interface AnnualGainLossByAssetSummary {
   };
 }
 
+/**
+ * Per-disposal enrichment row from DB JOIN.
+ * Each row represents one sell_operation_id with its counter_asset info.
+ */
+export interface DisposalCounterAssetRow {
+  asset: string;
+  sell_operation_id: number;
+  counter_asset: string | null;
+  pair: string | null;
+  op_type: string | null;
+  net_proceeds_eur: number;
+  cost_basis_eur: number;
+  gain_loss_eur: number;
+  is_fee_disposal: boolean;
+}
+
 // Consideration type codes (Art. 14 bis Ley 35/2006)
 const CONSIDERATION_TYPE_LABELS: Record<string, string> = {
   F: "F - Moneda de curso legal",
@@ -42,49 +58,146 @@ const CONSIDERATION_TYPE_LABELS: Record<string, string> = {
   O: "O - Otro activo virtual",
 };
 
+// Fiat currencies: EUR, USD and major world currencies
+export const FIAT_CURRENCIES = new Set([
+  "EUR","USD","GBP","CHF","JPY","CAD","AUD","NZD",
+  "SEK","NOK","DKK","PLN","CZK","HUF","RON","TRY",
+  "MXN","BRL","ZUSD","ZEUR","ZGBP",
+]);
+
+// op_types that indicate a fee/expense disposal (→ type O)
+const FEE_DISPOSAL_OP_TYPES = new Set([
+  "fee","expense","fee_disposal","balancing","rounding","other","adjustment",
+  "conservative_external_disposal",
+]);
+
 /**
- * Builds a summary of annual gains/losses grouped by asset ticker and consideration type.
- * Uses the same data as fetchAssetSummaries (proceeds_eur, cost_basis_eur, gain_loss_eur).
- * No independent FIFO recalculation — feeds from canonical AssetSummary data.
+ * Classifies the consideration type for a disposal:
+ *  F  — received fiat currency (EUR, USD, GBP, …)
+ *  N  — received another virtual currency (BTC, ETH, USDC, USDT, EURC, …)
+ *  O  — fee/expense disposal, or counter asset unknown/missing
+ *
+ * Priority: op_type fee → O; counter fiat → F; counter crypto → N;
+ *           infer from pair → F/N; missing counter → O + warning
+ */
+export function classifyConsiderationType(
+  counterAsset: string | null | undefined,
+  pair: string | null | undefined,
+  opType: string | null | undefined,
+  year: number,
+  asset: string
+): { code: "F" | "N" | "O"; source: string } {
+  // 1. Fee/expense/other op_type → O
+  if (opType && FEE_DISPOSAL_OP_TYPES.has(opType.toLowerCase())) {
+    return { code: "O", source: "op_type_fee" };
+  }
+
+  // 2. Explicit counter_asset present
+  if (counterAsset && counterAsset.trim() !== "") {
+    const ca = counterAsset.trim().toUpperCase();
+    if (FIAT_CURRENCIES.has(ca)) {
+      console.log(
+        `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY] year=${year} asset=${asset} counter=${ca} type=F source=operation_counter_asset`
+      );
+      return { code: "F", source: "operation_counter_asset" };
+    }
+    console.log(
+      `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY] year=${year} asset=${asset} counter=${ca} type=N source=operation_counter_asset`
+    );
+    return { code: "N", source: "operation_counter_asset" };
+  }
+
+  // 3. Infer from pair (format BASE/COUNTER or BASECOUNTER with known fiat suffix)
+  if (pair && pair.includes("/")) {
+    const parts = pair.split("/");
+    const counterFromPair = parts[parts.length - 1].trim().toUpperCase();
+    if (FIAT_CURRENCIES.has(counterFromPair)) {
+      console.log(
+        `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY] year=${year} asset=${asset} counter=${counterFromPair} type=F source=pair_inference`
+      );
+      return { code: "F", source: "pair_inference" };
+    }
+    if (counterFromPair !== "") {
+      console.log(
+        `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY] year=${year} asset=${asset} counter=${counterFromPair} type=N source=pair_inference`
+      );
+      return { code: "N", source: "pair_inference" };
+    }
+  }
+
+  // 4. No counter info → O + warning
+  console.warn(
+    `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY_WARNING] year=${year} asset=${asset} reason=counter_asset_missing fallback=O`
+  );
+  return { code: "O", source: "missing_counter" };
+}
+
+/**
+ * Builds the annual gain/loss summary grouped by (asset, considerationType).
+ * Uses enriched disposal rows with counter_asset / pair / op_type so that
+ * F/N/O is derived from actual transaction data, not a default fallback.
+ *
+ * transmissionValueEur = net proceeds (proceeds_eur - fee_eur) per Bit2Me convention.
+ * gain_loss_eur        = remains canonical (from fisco_disposals FIFO).
  */
 export function buildAnnualGainLossByAssetSummary(
   year: number,
-  assetSummaries: AssetSummary[],
-  considerationTypeByAsset?: Record<string, string>
+  disposalRows: DisposalCounterAssetRow[]
 ): AnnualGainLossByAssetSummary {
-  // Only include assets that have actual disposals (proceeds > 0 or gain_loss != 0)
-  const withDisposals = assetSummaries.filter(
-    a => a.disposals_count > 0 || Math.abs(a.gain_loss_eur) > 0.001
-  );
+  // Group by asset + considerationType
+  const groupKey = (asset: string, typeCode: string) => `${asset}|${typeCode}`;
+  const groups = new Map<string, {
+    ticker: string;
+    typeCode: string;
+    transmissionValueEur: number;
+    acquisitionValueEur: number;
+    capitalGainLossEur: number;
+  }>();
 
-  const rows: AnnualGainLossByAssetRow[] = withDisposals.map(a => {
-    const typeCode = considerationTypeByAsset?.[a.asset] ?? "F";
-    const typeLabel = CONSIDERATION_TYPE_LABELS[typeCode]
-      ?? `${typeCode} - Tipo no determinado`;
-    return {
-      ticker: a.asset,
-      name: a.asset,
-      considerationTypeCode: typeCode,
-      considerationTypeLabel: typeLabel,
-      transmissionValueEur: a.proceeds_eur,
-      acquisitionValueEur: a.cost_basis_eur,
-      capitalGainLossEur: a.gain_loss_eur,
-    };
-  });
+  for (const r of disposalRows) {
+    const { code } = classifyConsiderationType(
+      r.counter_asset, r.pair, r.op_type, year, r.asset
+    );
+    const key = groupKey(r.asset, code);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.transmissionValueEur += r.net_proceeds_eur;
+      existing.acquisitionValueEur  += r.cost_basis_eur;
+      existing.capitalGainLossEur   += r.gain_loss_eur;
+    } else {
+      groups.set(key, {
+        ticker: r.asset,
+        typeCode: code,
+        transmissionValueEur: r.net_proceeds_eur,
+        acquisitionValueEur:  r.cost_basis_eur,
+        capitalGainLossEur:   r.gain_loss_eur,
+      });
+    }
+  }
 
-  // Sort: ticker asc, then consideration type code order F < N < O
   const typeOrder: Record<string, number> = { F: 0, N: 1, O: 2 };
-  rows.sort((a, b) => {
-    const tickerCmp = a.ticker.localeCompare(b.ticker);
-    if (tickerCmp !== 0) return tickerCmp;
-    return (typeOrder[a.considerationTypeCode] ?? 9) - (typeOrder[b.considerationTypeCode] ?? 9);
-  });
+  const rows: AnnualGainLossByAssetRow[] = [...groups.values()]
+    .map(g => ({
+      ticker: g.ticker,
+      name: g.ticker,
+      considerationTypeCode: g.typeCode,
+      considerationTypeLabel: CONSIDERATION_TYPE_LABELS[g.typeCode]
+        ?? `${g.typeCode} - Tipo no determinado`,
+      transmissionValueEur: g.transmissionValueEur,
+      acquisitionValueEur: g.acquisitionValueEur,
+      capitalGainLossEur: g.capitalGainLossEur,
+    }))
+    .sort((a, b) => {
+      const tc = a.ticker.localeCompare(b.ticker);
+      if (tc !== 0) return tc;
+      return (typeOrder[a.considerationTypeCode] ?? 9) - (typeOrder[b.considerationTypeCode] ?? 9);
+    });
 
   const totalTransmission = rows.reduce((s, r) => s + r.transmissionValueEur, 0);
   const totalAcquisition  = rows.reduce((s, r) => s + r.acquisitionValueEur, 0);
   const totalGainLoss     = rows.reduce((s, r) => s + r.capitalGainLossEur, 0);
 
-  // Validation: gain/loss should equal transmission - acquisition (within tolerance)
+  // Validation: transmission_net - acquisition should ≈ gain_loss (tolerance 0.02 EUR)
   const expectedGainLoss = totalTransmission - totalAcquisition;
   const diff = Math.abs(totalGainLoss - expectedGainLoss);
   if (diff > 0.02) {
@@ -97,7 +210,7 @@ export function buildAnnualGainLossByAssetSummary(
 
   console.log(
     `[FISCO][ANNUAL_GAIN_LOSS_SUMMARY] year=${year} rows=${rows.length} ` +
-    `transmission=${totalTransmission.toFixed(2)} ` +
+    `transmission_net=${totalTransmission.toFixed(2)} ` +
     `acquisition=${totalAcquisition.toFixed(2)} ` +
     `pnl=${totalGainLoss.toFixed(2)}`
   );
@@ -1041,6 +1154,50 @@ export class FiscoHtmlRenderer {
     };
   }
 
+  /**
+   * Fetches per-sell-operation counter_asset data for the gain/loss summary.
+   * Grouped by (asset, sell_operation_id, counter_asset, pair, op_type).
+   * net_proceeds_eur = SUM(proceeds_eur) - GREATEST(0, SUM(fee_eur)) per Bit2Me convention.
+   */
+  private async fetchDisposalCounterAssets(year: number): Promise<DisposalCounterAssetRow[]> {
+    const q = await this.pool.query(`
+      SELECT
+        sell_op.asset                                               AS asset,
+        fd.sell_operation_id,
+        sell_op.counter_asset,
+        sell_op.pair,
+        sell_op.op_type,
+        COALESCE(SUM(fd.proceeds_eur::numeric), 0)
+          - GREATEST(0, COALESCE(SUM(
+              GREATEST(0, fd.proceeds_eur::numeric - fd.cost_basis_eur::numeric - fd.gain_loss_eur::numeric)
+            ), 0))                                                  AS net_proceeds_eur,
+        COALESCE(SUM(fd.cost_basis_eur::numeric), 0)               AS cost_basis_eur,
+        COALESCE(SUM(fd.gain_loss_eur::numeric), 0)                AS gain_loss_eur,
+        (sell_op.op_type IN ('fee','expense','fee_disposal','balancing',
+                             'rounding','other','adjustment',
+                             'conservative_external_disposal'))     AS is_fee_disposal
+      FROM fisco_disposals fd
+      JOIN fisco_operations sell_op ON sell_op.id = fd.sell_operation_id
+      WHERE EXTRACT(YEAR FROM fd.disposed_at) = $1
+      GROUP BY sell_op.asset, fd.sell_operation_id,
+               sell_op.counter_asset, sell_op.pair,
+               sell_op.op_type
+      ORDER BY sell_op.asset
+    `, [year]);
+
+    return q.rows.map((r: any) => ({
+      asset:             r.asset,
+      sell_operation_id: parseInt(r.sell_operation_id),
+      counter_asset:     r.counter_asset ?? null,
+      pair:              r.pair ?? null,
+      op_type:           r.op_type ?? null,
+      net_proceeds_eur:  parseFloat(r.net_proceeds_eur),
+      cost_basis_eur:    parseFloat(r.cost_basis_eur),
+      gain_loss_eur:     parseFloat(r.gain_loss_eur),
+      is_fee_disposal:   r.is_fee_disposal ?? false,
+    }));
+  }
+
   // ─── Main render: annual HTML report ──────────────────────────────────────
 
   async renderAnnualHtml(opts: {
@@ -1062,15 +1219,16 @@ export class FiscoHtmlRenderer {
       }
     };
 
-    const [rAssets, rDisposals, rOps, rExchanges, rStaking, rStmt, rCounts] = await Promise.all([
-      safeLoad("fetchAssetSummaries",   () => this.fetchAssetSummaries(year, exchanges),            [] as AssetSummary[]),
-      safeLoad("fetchDisposalsByAsset", () => this.fetchDisposalsByAsset(year),                    {} as Record<string, any[]>),
-      safeLoad("fetchOperationsByAsset",() => this.fetchOperationsByAsset(year, exchanges),         {} as Record<string, any[]>),
-      safeLoad("fetchExchangeSummaries",() => this.fetchExchangeSummaries(year, exchanges, krakenRec), [] as ExchangeSummary[]),
-      safeLoad("fetchStaking",          () => this.fetchStaking(year),                             [] as any[]),
-      safeLoad("fetchStatementItems",   () => this.fetchStatementItems(year),                      [] as any[]),
-      safeLoad("fetchFinCounts",        () => this.fetchFinCounts(year),
+    const [rAssets, rDisposals, rOps, rExchanges, rStaking, rStmt, rCounts, rCounterAssets] = await Promise.all([
+      safeLoad("fetchAssetSummaries",       () => this.fetchAssetSummaries(year, exchanges),            [] as AssetSummary[]),
+      safeLoad("fetchDisposalsByAsset",     () => this.fetchDisposalsByAsset(year),                    {} as Record<string, any[]>),
+      safeLoad("fetchOperationsByAsset",    () => this.fetchOperationsByAsset(year, exchanges),         {} as Record<string, any[]>),
+      safeLoad("fetchExchangeSummaries",    () => this.fetchExchangeSummaries(year, exchanges, krakenRec), [] as ExchangeSummary[]),
+      safeLoad("fetchStaking",              () => this.fetchStaking(year),                             [] as any[]),
+      safeLoad("fetchStatementItems",       () => this.fetchStatementItems(year),                      [] as any[]),
+      safeLoad("fetchFinCounts",            () => this.fetchFinCounts(year),
         { operations_count: 0, disposals_count: 0, open_lots_count: 0 }),
+      safeLoad("fetchDisposalCounterAssets",() => this.fetchDisposalCounterAssets(year),               [] as DisposalCounterAssetRow[]),
     ]);
 
     const assetSummaries   = rAssets.data;
@@ -1080,9 +1238,10 @@ export class FiscoHtmlRenderer {
     const stakingRows      = rStaking.data;
     const stmtItems        = rStmt.data;
     const counts           = rCounts.data;
+    const counterAssetRows = rCounterAssets.data;
 
-    // Build gain/loss summary from canonical asset data (no independent FIFO recalc)
-    const gainLossSummary = buildAnnualGainLossByAssetSummary(year, assetSummaries);
+    // Build gain/loss summary grouped by (asset, F/N/O) from real counter_asset data
+    const gainLossSummary = buildAnnualGainLossByAssetSummary(year, counterAssetRows);
 
     // Collect any partial errors to surface in HTML
     const partialErrors: string[] = [
