@@ -551,7 +551,7 @@ function renderFiscalSummaryTable(fin: any): string {
     ["Ganancias por transmisiones (FIFO)",   eur(fin.gains_eur ?? 0),         "Suma de ganancias individuales de cada venta"],
     ["Pérdidas por transmisiones (FIFO)",    eur(fin.losses_eur ?? 0),        "Suma de pérdidas individuales de cada venta"],
     ["Resultado FIFO ordinario",             `<strong class="${gainClass(fin.ordinary_fifo_gain_loss_eur ?? 0)}">${eur(fin.ordinary_fifo_gain_loss_eur)}</strong>`, "Ganancias + Pérdidas del ejercicio"],
-    ["Disposiciones externas conservadoras", eur(fin.conservative_external_disposals_gain_loss_eur ?? 0), "Retiros sin statement, valorados conservadoramente a precio de mercado"],
+    ["Disposiciones conservadoras aplicadas", eur(fin.conservative_external_disposals_gain_loss_eur ?? 0), "Salidas a cartera externa valoradas conservadoramente por no constar destino identificado"],
     ["Total fiscal final",                   `<strong class="${gainClass(fin.final_taxable_gain_loss_eur ?? 0)}">${eur(fin.final_taxable_gain_loss_eur)}</strong>`, "FIFO ordinario + Disposiciones conservadoras — A declarar"],
     ["Staking / rewards (informativo)",      eur(fin.staking_total_eur ?? 0),  "Rendimientos de staking — se tratan como rendimiento del capital mobiliario"],
     ["Número de operaciones",                String(fin.operations_count ?? "—"), "Total operaciones en el año"],
@@ -842,17 +842,92 @@ function renderCompactAssetSummary(
 </div>`;
 }
 
+// ─── Withdrawal professional classification ────────────────────────────────
+
+export interface WithdrawalClassification {
+  professionalLabel: string;
+  technicalLabel: string;
+  showInProfessionalReport: boolean;
+  affectsTaxResult: boolean;
+  severity: "info" | "warning" | "error";
+}
+
+export interface WithdrawalForClassification {
+  isInternalTransfer?: boolean;
+  destinationKnown?: boolean;
+  conservativeDisposalApplied?: boolean;
+  quantity?: number;
+  asset?: string;
+  exchange?: string;
+}
+
+export function classifyWithdrawalForReport(w: WithdrawalForClassification): WithdrawalClassification {
+  if (w.isInternalTransfer === true) {
+    return {
+      professionalLabel: "Transferencia interna identificada",
+      technicalLabel:    "Movimiento interno conciliado entre cuentas/exchanges propios",
+      showInProfessionalReport: false,
+      affectsTaxResult: false,
+      severity: "info",
+    };
+  }
+  if (w.conservativeDisposalApplied === true) {
+    const qty      = w.quantity != null ? String(w.quantity) : "—";
+    const asset    = w.asset    ?? "activo desconocido";
+    const exchange = w.exchange ?? "exchange desconocido";
+    return {
+      professionalLabel: "Disposición conservadora aplicada",
+      technicalLabel: `Se ha aplicado un criterio conservador sobre una salida de ${asset} desde ${exchange}, al no constar destino identificado ni entrada asociada. El importe se ha incluido en el resultado fiscal del ejercicio.`,
+      showInProfessionalReport: true,
+      affectsTaxResult: true,
+      severity: "warning",
+    };
+  }
+  if (w.destinationKnown === true) {
+    return {
+      professionalLabel: "Salida a cartera externa identificada",
+      technicalLabel:    "Salida a dirección externa conocida o etiquetada. No genera transmisión fiscal.",
+      showInProfessionalReport: false,
+      affectsTaxResult: false,
+      severity: "info",
+    };
+  }
+  // Default: salida no identificada sin impacto fiscal
+  const qty      = w.quantity != null ? `${w.quantity} ` : "";
+  const asset    = w.asset    ?? "activo desconocido";
+  const exchange = w.exchange ?? "exchange desconocido";
+  return {
+    professionalLabel: "Salida a cartera externa no identificada",
+    technicalLabel: `Salida a cartera externa no identificada: retirada de ${qty}${asset} desde ${exchange}. No existe una entrada asociada en los datos normalizados del informe.`,
+    showInProfessionalReport: false,
+    affectsTaxResult: false,
+    severity: "info",
+  };
+}
+
 // ─── Relevant warnings section (informe principal) ───────────────────────────
 
 function renderRelevantWarnings(fin: any, krakenRec: any): string {
-  const blockers: any[]  = fin.blockers  ?? [];
-  const warnings: any[]  = fin.warnings  ?? [];
-  const krakenWarns: string[] = krakenRec?.withdrawals_without_statement?.length > 0
-    ? [`Existe${krakenRec.withdrawals_without_statement.length === 1 ? " una retirada Kraken" : "n retiradas Kraken"} sin statement item enlazado (${krakenRec.withdrawals_without_statement.length}). No bloquea el informe. Verificar si corresponde a transferencia interna propia.`]
-    : [];
+  const blockers: any[] = fin.blockers ?? [];
+  const warnings: any[] = fin.warnings ?? [];
 
-  if (blockers.length === 0 && warnings.length === 0 && krakenWarns.length === 0) {
-    return `<p class="ok">✓ Sin avisos relevantes. El informe está listo para declarar.</p>`;
+  // Classify withdrawals_without_statement using professional labels.
+  // Only show in professional report if they affect the tax result (conservative disposal applied).
+  const withdrawalsNoStmt: any[] = krakenRec?.withdrawals_without_statement ?? [];
+  const taxImpactWithdrawals = withdrawalsNoStmt.filter((r: any) => {
+    const cls = classifyWithdrawalForReport({
+      isInternalTransfer:          r.isInternalTransfer          ?? false,
+      destinationKnown:            r.destinationKnown            ?? false,
+      conservativeDisposalApplied: r.conservativeDisposalApplied ?? (r.classification === "conservative_external_disposal"),
+      quantity: r.amount ? parseFloat(String(r.amount)) : undefined,
+      asset:    r.asset,
+      exchange: r.exchange ?? "Kraken",
+    });
+    return cls.showInProfessionalReport && cls.affectsTaxResult;
+  });
+
+  if (blockers.length === 0 && warnings.length === 0 && taxImpactWithdrawals.length === 0) {
+    return `<p class="ok">✓ Sin incidencias fiscales relevantes. El informe está listo para declarar.</p>`;
   }
 
   let html = "";
@@ -862,13 +937,21 @@ function renderRelevantWarnings(fin: any, krakenRec: any): string {
     </ul></div>`;
   }
   if (warnings.length > 0) {
-    html += `<div class="warnings-box"><strong>⚠ Avisos (no bloquean):</strong><ul>
+    html += `<div class="warnings-box"><strong>⚠ Avisos con impacto fiscal:</strong><ul>
       ${warnings.map((w: any) => `<li class="warn">[${w.code}] ${w.detail}</li>`).join("")}
     </ul></div>`;
   }
-  if (krakenWarns.length > 0) {
-    html += `<div class="warnings-box"><strong>⚠ Conciliación Kraken:</strong><ul>
-      ${krakenWarns.map(w => `<li class="warn">${w}</li>`).join("")}
+  if (taxImpactWithdrawals.length > 0) {
+    html += `<div class="warnings-box"><strong>⚠ Disposición conservadora aplicada:</strong><ul>
+      ${taxImpactWithdrawals.map((r: any) => {
+        const cls = classifyWithdrawalForReport({
+          conservativeDisposalApplied: true,
+          quantity: r.amount ? parseFloat(String(r.amount)) : undefined,
+          asset:    r.asset,
+          exchange: r.exchange ?? "Kraken",
+        });
+        return `<li class="warn">${cls.technicalLabel}</li>`;
+      }).join("")}
     </ul></div>`;
   }
   return html;
@@ -917,7 +1000,7 @@ function renderDeclarationTable(fin: any): string {
     ${row("Ganancias por transmisiones FIFO", gains, "Suma de ganancias individuales de cada venta")}
     ${row("Pérdidas por transmisiones FIFO", losses, "Suma de pérdidas individuales de cada venta")}
     ${row("Resultado neto por transmisiones", netFifo, "Ganancias + Pérdidas del ejercicio", true)}
-    ${row("Disposiciones conservadoras", consDisp, "Retiros sin statement item, valorados conservadoramente")}
+    ${row("Disposiciones conservadoras aplicadas", consDisp, "Salidas a cartera externa valoradas conservadoramente por no constar destino identificado")}
     ${row("Rendimientos staking/rewards", staking, "Rendimiento del capital mobiliario — informativo")}
     ${row("Total fiscal final", total, "A declarar en Renta — FIFO + Disposiciones conservadoras", true)}
   </tbody>
@@ -1080,52 +1163,57 @@ function renderStakingSection(stakingRows: any[]): string {
 function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
   const withdrawalsNoStmt: any[] = krakenRec?.withdrawals_without_statement ?? [];
 
-  // Show "no data" only if BOTH statement items and kraken warnings are empty
   if ((!stmtItems || stmtItems.length === 0) && withdrawalsNoStmt.length === 0) {
     return `<p style="color:#888">Sin retiradas o transferencias internas este año.</p>`;
   }
 
   let html = "";
 
-  // Block 1 — Kraken withdrawals without statement item (from reconciliation)
+  // Block 1 — Salidas sin entrada asociada (clasificadas profesionalmente)
   if (withdrawalsNoStmt.length > 0) {
+    const classified = withdrawalsNoStmt.map((r: any) => ({
+      r,
+      cls: classifyWithdrawalForReport({
+        isInternalTransfer:          r.isInternalTransfer          ?? false,
+        destinationKnown:            r.destinationKnown            ?? false,
+        conservativeDisposalApplied: r.conservativeDisposalApplied ?? (r.classification === "conservative_external_disposal"),
+        quantity: r.amount ? parseFloat(String(r.amount)) : undefined,
+        asset:    r.asset,
+        exchange: r.exchange ?? "Kraken",
+      }),
+    }));
+
     html += `
     <details open>
-      <summary>⚠ Retiradas Kraken sin statement item (${withdrawalsNoStmt.length})</summary>
+      <summary>📤 Salidas a cartera externa (${withdrawalsNoStmt.length})</summary>
       <div class="details-body">
-        <div class="warnings-box">
-          <strong>Aviso no bloqueante:</strong> Existe${withdrawalsNoStmt.length === 1 ? " una retirada Kraken" : "n retiradas Kraken"} sin statement item enlazado.
-          Se muestra como aviso informativo. No bloquea el informe fiscal global porque finalization-status está OK.
-          Verificar si corresponde a una transferencia interna propia u otro movimiento.
-        </div>
         <table><thead><tr>
-          <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>External ID</th><th>Tipo</th><th>Estado</th>
+          <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Clasificación fiscal</th><th>Impacto fiscal</th><th>Ref. interna</th>
         </tr></thead><tbody>
-        ${withdrawalsNoStmt.map((r: any) => `<tr>
+        ${classified.map(({ r, cls }) => `<tr>
           <td>${fmtDate(r.executed_at)}</td>
-          <td>Kraken</td>
+          <td>${r.exchange ?? "Kraken"}</td>
           <td>${r.asset ?? "—"}</td>
           <td>${fmtQty(parseFloat(String(r.amount ?? "0")))}</td>
+          <td>${badge(cls.severity === "warning" ? "b-warn" : "b-info", cls.professionalLabel)}</td>
+          <td>${cls.affectsTaxResult ? badge("b-warn", "Afecta al resultado") : badge("b-ok", "No altera el resultado fiscal del ejercicio")}</td>
           <td style="font-size:.72rem;color:#888">${r.external_id ?? "—"}</td>
-          <td>${badge("b-warn", "retirada sin statement item")}</td>
-          <td>${badge("b-info", "Aviso no bloqueante")}</td>
         </tr>`).join("")}
         </tbody></table>
       </div>
     </details>`;
   }
 
-  // Block 2 — Statement items from fisco_external_statement_items
+  // Block 2 — Movimientos normalizados (fisco_external_statement_items)
   if (stmtItems && stmtItems.length > 0) {
+    const classLabels: Record<string, string> = {
+      internal_transfer:               "Transferencia interna identificada",
+      conservative_external_disposal:  "Disposición conservadora aplicada",
+      pending:                         "Salida a cartera externa no identificada",
+    };
     const byClass = stmtItems.reduce((m: Record<string, any[]>, r) => {
       const k = r.classification ?? "unknown"; m[k] = m[k] ?? []; m[k].push(r); return m;
     }, {});
-
-    const classLabels: Record<string, string> = {
-      internal_transfer:               "Transferencias internas conciliadas",
-      conservative_external_disposal:  "Disposiciones conservadoras (sin statement)",
-      pending:                         "Pendientes de conciliación",
-    };
 
     html += Object.entries(byClass).map(([cls, rows]) => {
       const label  = classLabels[cls] ?? cls;
@@ -1135,9 +1223,10 @@ function renderWithdrawalsSection(stmtItems: any[], krakenRec?: any): string {
       <details>
         <summary>${isWarn ? "⚠ " : "✓ "}${label} (${rows.length})</summary>
         <div class="details-body">
-          ${isWarn ? `<div class="warnings-box">Existen retiradas sin statement item enlazado. El sistema las muestra como aviso no bloqueante. Revisar si corresponden a transferencias internas o movimientos propios.</div>` : ""}
+          ${isWarn && cls === "conservative_external_disposal" ? `<div class="warnings-box"><strong>Disposición conservadora aplicada:</strong> El importe de estas salidas se ha incluido en el resultado fiscal del ejercicio por no constar destino identificado.</div>` : ""}
+          ${isWarn && cls === "pending" ? `<div class="diagnostic-note">Salida a cartera externa no identificada. No altera el resultado fiscal del ejercicio salvo que se aplique criterio conservador.</div>` : ""}
           <table><thead><tr>
-            <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Fee</th><th>Total</th><th>Clasificación</th><th>External ID</th>
+            <th>Fecha</th><th>Exchange</th><th>Activo</th><th>Cantidad</th><th>Fee</th><th>Total</th><th>Clasificación fiscal</th><th>Ref. interna</th>
           </tr></thead><tbody>
           ${rows.map((r: any) => `<tr>
             <td>${fmtDate(r.executed_at)}</td><td>${r.exchange ?? "—"}</td><td>${r.asset ?? "—"}</td>
@@ -1178,12 +1267,9 @@ function buildResumenEjecutivo(year: number, fin: any, krakenWarnings: string[])
   }
 
   if (hasWarns) {
-    texto += `Existen ${krakenWarnings.length} aviso(s) no bloqueante(s): `;
-    texto += krakenWarnings.slice(0, 2).map(w => `<em>${w}</em>`).join("; ");
-    if (krakenWarnings.length > 2) texto += ` y ${krakenWarnings.length - 2} más`;
-    texto += ". ";
+    texto += `Existen ${krakenWarnings.length} incidencia(s) pendiente(s) de revisión. `;
   } else {
-    texto += `No existen avisos de conciliación Kraken. `;
+    texto += `Sin incidencias fiscales relevantes. `;
   }
 
   if (finaliz) {
@@ -1552,7 +1638,7 @@ export class FiscoHtmlRenderer {
       rOps.error       && `Operaciones: ${rOps.error}`,
       rExchanges.error && `Exchanges: ${rExchanges.error}`,
       rStaking.error   && `Staking: ${rStaking.error}`,
-      rStmt.error      && `Statement items: ${rStmt.error}`,
+      rStmt.error      && `Movimientos normalizados: ${rStmt.error}`,
       rCounts.error    && `Counts: ${rCounts.error}`,
     ].filter(Boolean) as string[];
 

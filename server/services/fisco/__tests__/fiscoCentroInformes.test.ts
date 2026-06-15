@@ -933,12 +933,13 @@ describe("FiscoHtmlRenderer", () => {
     expect(html).not.toContain("Sin retiradas o transferencias internas este año");
   });
 
-  it("Test W2: HTML contiene 'Aviso no bloqueante' cuando hay withdrawal sin statement", async () => {
+  it("Test W2: HTML contiene etiqueta profesional 'Salida a cartera externa' cuando hay withdrawal sin statement", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
     const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
-    expect(html).toContain("Aviso no bloqueante");
+    expect(html).toContain("Salida a cartera externa no identificada");
+    expect(html.toLowerCase()).not.toContain("aviso no bloqueante");
   });
 
   it("Test W3: HTML contiene external_id FTjUqQe cuando está en withdrawals_without_statement", async () => {
@@ -950,12 +951,13 @@ describe("FiscoHtmlRenderer", () => {
     expect(html).toContain("USDC");
   });
 
-  it("Test W4: HTML contiene 'retirada sin statement item' badge para el withdrawal", async () => {
+  it("Test W4: HTML contiene 'No altera el resultado fiscal del ejercicio' para withdrawal sin impacto", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const krakenRec = { ...MOCK_KRAKEN_REC, withdrawals_without_statement: [{ external_id: "FTjUqQe-9UY4zzevqM4Qcd9u6jfFQJ", asset: "USDC", amount: 451.5497, executed_at: "2026-01-10T12:00:00Z" }] };
     const html = await renderer.renderAnnualHtml({ year: 2026, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec });
-    expect(html).toContain("retirada sin statement item");
+    expect(html).toContain("No altera el resultado fiscal del ejercicio");
+    expect(html.toLowerCase()).not.toContain("retirada sin statement item");
   });
 
   it("Test W5: si stmtItems=[] y withdrawals_without_statement=[] → muestra 'Sin retiradas'", async () => {
@@ -987,6 +989,7 @@ describe("FiscoHtmlRenderer", () => {
 import {
   buildAnnualGainLossByAssetSummary,
   classifyConsiderationType,
+  classifyWithdrawalForReport,
   type DisposalCounterAssetRow,
 } from "../FiscoHtmlRenderer";
 
@@ -1370,5 +1373,140 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     expect(posResumen).toBeGreaterThan(0);
     expect(posImportes).toBeGreaterThan(0);
     expect(posResumen).toBeLessThan(posImportes);
+  });
+});
+
+// ─── Tests: classifyWithdrawalForReport ─────────────────────────────────────────
+
+describe("classifyWithdrawalForReport", () => {
+  it("W1: transferencia interna identificada — no aparece en informe profesional", () => {
+    const result = classifyWithdrawalForReport({ isInternalTransfer: true, asset: "BTC", exchange: "Kraken" });
+    expect(result.professionalLabel).toBe("Transferencia interna identificada");
+    expect(result.showInProfessionalReport).toBe(false);
+    expect(result.affectsTaxResult).toBe(false);
+  });
+
+  it("W2: salida externa no identificada sin impacto fiscal — no aparece en informe profesional", () => {
+    const result = classifyWithdrawalForReport({ isInternalTransfer: false, destinationKnown: false, conservativeDisposalApplied: false, quantity: 451.5497, asset: "USDC", exchange: "Kraken" });
+    expect(result.professionalLabel).toBe("Salida a cartera externa no identificada");
+    expect(result.showInProfessionalReport).toBe(false);
+    expect(result.affectsTaxResult).toBe(false);
+  });
+
+  it("W3: salida externa no identificada — technicalLabel contiene 'Salida a cartera externa no identificada'", () => {
+    const result = classifyWithdrawalForReport({ quantity: 451.5497, asset: "USDC", exchange: "Kraken" });
+    expect(result.technicalLabel).toContain("Salida a cartera externa no identificada");
+    expect(result.technicalLabel).toContain("USDC");
+    expect(result.technicalLabel).toContain("Kraken");
+  });
+
+  it("W4: disposición conservadora aplicada — sí aparece en informe profesional", () => {
+    const result = classifyWithdrawalForReport({ conservativeDisposalApplied: true, asset: "ETH", exchange: "Kraken", quantity: 0.5 });
+    expect(result.professionalLabel).toBe("Disposición conservadora aplicada");
+    expect(result.showInProfessionalReport).toBe(true);
+    expect(result.affectsTaxResult).toBe(true);
+  });
+
+  it("W5: salida externa identificada — no aparece en informe profesional", () => {
+    const result = classifyWithdrawalForReport({ destinationKnown: true, asset: "DOT", exchange: "Kraken" });
+    expect(result.professionalLabel).toBe("Salida a cartera externa identificada");
+    expect(result.showInProfessionalReport).toBe(false);
+    expect(result.affectsTaxResult).toBe(false);
+  });
+});
+
+// ─── Tests: informe profesional libre de textos prohibidos ──────────────────
+
+describe("renderAnnualHtml: textos prohibidos y etiquetas profesionales", () => {
+  it("W6: report-main no contiene 'statement item'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    expect(mainPart.toLowerCase()).not.toContain("statement item");
+  });
+
+  it("W7: report-main no contiene 'no bloqueante'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    expect(mainPart.toLowerCase()).not.toContain("no bloqueante");
+  });
+
+  it("W8: report-main no contiene 'verificar si corresponde'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    expect(mainPart.toLowerCase()).not.toContain("verificar si corresponde");
+  });
+
+  it("W9: krakenRec con withdrawal sin impacto fiscal NO genera aviso en report-main", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRecWithWithdrawal = {
+      ...MOCK_KRAKEN_REC,
+      withdrawals_without_statement: [{
+        executed_at: new Date().toISOString(),
+        asset: "USDC",
+        amount: 451.5497,
+        external_id: "TXABC123",
+        isInternalTransfer: false,
+        destinationKnown: false,
+        conservativeDisposalApplied: false,
+      }],
+    };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: krakenRecWithWithdrawal });
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    // El aviso profesional debe decir 'Sin incidencias fiscales relevantes'
+    expect(mainPart).toContain("Sin incidencias fiscales relevantes");
+    expect(mainPart.toLowerCase()).not.toContain("statement item");
+    expect(mainPart.toLowerCase()).not.toContain("no bloqueante");
+  });
+
+  it("W10: krakenRec con disposición conservadora SÍ genera aviso en report-main", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRecConservative = {
+      ...MOCK_KRAKEN_REC,
+      withdrawals_without_statement: [{
+        executed_at: new Date().toISOString(),
+        asset: "ETH",
+        amount: 0.5,
+        external_id: "TXDEF456",
+        isInternalTransfer: false,
+        destinationKnown: false,
+        conservativeDisposalApplied: true,
+        classification: "conservative_external_disposal",
+      }],
+    };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: krakenRecConservative });
+    const mainEnd = html.indexOf('id="technical-annex"');
+    const mainPart = mainEnd > 0 ? html.slice(0, mainEnd) : html;
+    expect(mainPart).toContain("Disposición conservadora aplicada");
+  });
+
+  it("W11: HTML completo (anexo) contiene 'Salida a cartera externa no identificada' para withdrawal sin destino", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const krakenRecWithWithdrawal = {
+      ...MOCK_KRAKEN_REC,
+      withdrawals_without_statement: [{
+        executed_at: new Date().toISOString(),
+        asset: "USDC",
+        amount: 451.5497,
+        external_id: "TXABC123",
+        isInternalTransfer: false,
+        destinationKnown: false,
+        conservativeDisposalApplied: false,
+      }],
+    };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: krakenRecWithWithdrawal });
+    expect(html).toContain("Salida a cartera externa no identificada");
   });
 });
