@@ -547,11 +547,15 @@ function gainClass(n: number): string {
 // ─── Fiscal summary table ────────────────────────────────────────────────────
 
 function renderFiscalSummaryTable(fin: any): string {
+  const _consDispAmt = Math.abs(fin.conservative_external_disposals_gain_loss_eur ?? 0);
+  const _consDispNote = _consDispAmt < 0.005 || fin.conservative_disposals_status === "NONE" || !fin.conservative_disposals_status
+    ? "No se han aplicado disposiciones conservadoras en este ejercicio."
+    : "Importe de salidas tratadas conservadoramente como transmisión fiscal.";
   const rows = [
     ["Ganancias por transmisiones (FIFO)",   eur(fin.gains_eur ?? 0),         "Suma de ganancias individuales de cada venta"],
     ["Pérdidas por transmisiones (FIFO)",    eur(fin.losses_eur ?? 0),        "Suma de pérdidas individuales de cada venta"],
     ["Resultado FIFO ordinario",             `<strong class="${gainClass(fin.ordinary_fifo_gain_loss_eur ?? 0)}">${eur(fin.ordinary_fifo_gain_loss_eur)}</strong>`, "Ganancias + Pérdidas del ejercicio"],
-    ["Disposiciones conservadoras aplicadas", eur(fin.conservative_external_disposals_gain_loss_eur ?? 0), "Salidas a cartera externa valoradas conservadoramente por no constar destino identificado"],
+    ["Disposiciones conservadoras aplicadas", eur(fin.conservative_external_disposals_gain_loss_eur ?? 0), _consDispNote],
     ["Total fiscal final",                   `<strong class="${gainClass(fin.final_taxable_gain_loss_eur ?? 0)}">${eur(fin.final_taxable_gain_loss_eur)}</strong>`, "FIFO ordinario + Disposiciones conservadoras — A declarar"],
     ["Staking / rewards (informativo)",      eur(fin.staking_total_eur ?? 0),  "Rendimientos de staking — se tratan como rendimiento del capital mobiliario"],
     ["Número de operaciones",                String(fin.operations_count ?? "—"), "Total operaciones en el año"],
@@ -1006,7 +1010,7 @@ function renderDeclarationTable(fin: any): string {
     ${row("Ganancias por transmisiones FIFO", gains, "Suma de ganancias individuales de cada venta")}
     ${row("Pérdidas por transmisiones FIFO", losses, "Suma de pérdidas individuales de cada venta")}
     ${row("Resultado neto por transmisiones", netFifo, "Ganancias + Pérdidas del ejercicio", true)}
-    ${row("Disposiciones conservadoras aplicadas", consDisp, "Salidas a cartera externa valoradas conservadoramente por no constar destino identificado")}
+    ${row("Disposiciones conservadoras aplicadas", consDisp, Math.abs(consDisp) < 0.005 || fin.conservative_disposals_status === "NONE" || !fin.conservative_disposals_status ? "No se han aplicado disposiciones conservadoras en este ejercicio." : "Importe de salidas tratadas conservadoramente como transmisión fiscal.")}
     ${row("Rendimientos staking/rewards", staking, "Rendimiento del capital mobiliario — informativo")}
     ${row("Total fiscal final", total, "A declarar en Renta — FIFO + Disposiciones conservadoras", true)}
   </tbody>

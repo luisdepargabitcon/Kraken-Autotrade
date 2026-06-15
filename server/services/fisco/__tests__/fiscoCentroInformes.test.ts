@@ -1810,3 +1810,40 @@ describe("renderAnnualHtml: castellanización del anexo técnico (A1-A15)", () =
     expect(html).toContain("-200,00");
   });
 });
+
+// ─── Tests CD1-CD4: texto condicional disposiciones conservadoras ─────────────
+
+describe("renderAnnualHtml: texto disposiciones conservadoras según importe (CD1-CD4)", () => {
+  async function getHtmlWith(finOverride: Record<string, unknown>) {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    return renderer.renderAnnualHtml({
+      year: 2025, exchanges: ["kraken"],
+      finStatus: { ...MOCK_FIN_STATUS, ...finOverride },
+      portfolio: MOCK_PORTFOLIO,
+      krakenRec: MOCK_KRAKEN_REC,
+    });
+  }
+
+  it("CD1: conservative_disposals_status NONE → 'No se han aplicado disposiciones conservadoras en este ejercicio.'", async () => {
+    const html = await getHtmlWith({ conservative_disposals_status: "NONE", conservative_external_disposals_gain_loss_eur: 0 });
+    expect(html).toContain("No se han aplicado disposiciones conservadoras en este ejercicio.");
+  });
+
+  it("CD2: importe 0,00 € → NO contiene 'Salidas a cartera externa valoradas conservadoramente'", async () => {
+    const html = await getHtmlWith({ conservative_disposals_status: "NONE", conservative_external_disposals_gain_loss_eur: 0 });
+    expect(html).not.toContain("Salidas a cartera externa valoradas conservadoramente");
+  });
+
+  it("CD3: importe > 0 → 'Importe de salidas tratadas conservadoramente como transmisión fiscal.'", async () => {
+    const html = await getHtmlWith({ conservative_disposals_status: "ACTIVE", conservative_external_disposals_gain_loss_eur: 150.5 });
+    expect(html).toContain("Importe de salidas tratadas conservadoramente como transmisión fiscal.");
+    expect(html).not.toContain("No se han aplicado disposiciones conservadoras en este ejercicio.");
+  });
+
+  it("CD4: totales fiscales no cambian con MOCK_FIN_STATUS", async () => {
+    const html = await getHtmlWith({});
+    expect(html).toContain("Total fiscal final");
+    expect(html).toContain("-200,00");
+  });
+});
