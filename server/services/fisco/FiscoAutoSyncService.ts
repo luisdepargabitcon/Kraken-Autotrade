@@ -34,6 +34,7 @@ import { randomUUID } from "crypto";
 import { environment } from "../environment";
 import { telegramService } from "../telegram";
 import { fiscoSyncService, type IncrementalSyncResult } from "../FiscoSyncService";
+import { FiscoPendingDetector, type PendingFiscalChanges } from "./FiscoPendingDetector";
 import {
   buildFiscoAutoSyncSuccessHTML,
   buildFiscoAutoSyncNoChangesHTML,
@@ -240,41 +241,58 @@ export class FiscoAutoSyncService {
         }
 
         if (newOpsCount === 0) {
-          console.log(`[fisco/auto-sync] job=${jobId} No new operations detected after incremental sync`);
-          await this.updateJob(jobId, {
-            status: "skipped_no_changes",
-            completed_at: new Date(),
-            current_phase: "completed",
-            new_operations_count: 0,
-            new_operations_by_exchange: newOpsByExchange,
-          });
+          // Fase 2: check for pending ops or orphan sells before skipping
+          let pending: PendingFiscalChanges | null = null;
+          try {
+            const detector = FiscoPendingDetector.getInstance();
+            pending = await detector.detectPendingFiscalChanges(year);
+          } catch (detectorErr) {
+            console.warn(`[fisco/auto-sync] job=${jobId} PendingDetector failed (non-critical):`, detectorErr);
+          }
 
-          // Light validation to confirm FISCO still OK
-          const validation = await this.runLightValidation(year);
-          await this.updateJob(jobId, {
-            finalization_status: validation.finalization,
-            portfolio_status: validation.portfolio,
-          });
+          if (pending?.has_pending) {
+            console.log(
+              `[fisco/auto-sync] job=${jobId} No new ops from sync but pending detected: ` +
+              `pending_ops=${pending.pending_operations_count} orphan_sells=${pending.orphan_sells_count} — proceeding with rebuild`
+            );
+            // Fall through to dry_run + commit below
+          } else {
+            console.log(`[fisco/auto-sync] job=${jobId} No new operations and no pending changes — skipping`);
+            await this.updateJob(jobId, {
+              status: "skipped_no_changes",
+              completed_at: new Date(),
+              current_phase: "completed",
+              new_operations_count: 0,
+              new_operations_by_exchange: newOpsByExchange,
+            });
 
-          // Send Telegram "no changes" with sync info
-          await this.sendTelegramNoChanges(year, validation.finalization, validation.portfolio, jobId, true, syncErrors);
+            // Light validation to confirm FISCO still OK
+            const validation = await this.runLightValidation(year);
+            await this.updateJob(jobId, {
+              finalization_status: validation.finalization,
+              portfolio_status: validation.portfolio,
+            });
 
-          await this.updateJob(jobId, { telegram_sent: true });
+            // Send Telegram "no changes" with sync info
+            await this.sendTelegramNoChanges(year, validation.finalization, validation.portfolio, jobId, true, syncErrors);
 
-          console.log(`[fisco/auto-sync] job=${jobId} phase=done status=skipped_no_changes`);
+            await this.updateJob(jobId, { telegram_sent: true });
 
-          return {
-            jobId,
-            status: "skipped_no_changes",
-            newOperationsCount: 0,
-            dryRunResult: null,
-            commitResult: null,
-            finalizationStatus: validation.finalization,
-            portfolioStatus: validation.portfolio,
-            warnings: [],
-            telegramSent: true,
-            nextRetryAt: null,
-          };
+            console.log(`[fisco/auto-sync] job=${jobId} phase=done status=skipped_no_changes`);
+
+            return {
+              jobId,
+              status: "skipped_no_changes",
+              newOperationsCount: 0,
+              dryRunResult: null,
+              commitResult: null,
+              finalizationStatus: validation.finalization,
+              portfolioStatus: validation.portfolio,
+              warnings: [],
+              telegramSent: true,
+              nextRetryAt: null,
+            };
+          }
         }
       }
 
