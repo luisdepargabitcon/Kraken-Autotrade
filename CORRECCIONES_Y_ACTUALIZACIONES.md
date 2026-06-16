@@ -5,7 +5,8 @@
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
-- `XXXXXXX` — fix(fisco): commitToOfficial maneja FKs de fisco_external_statement_items y transfer_links - preserve/detach/rebuild/reattach
+- `2180bc4` — fix(fisco): commitToOfficial maneja FKs de fisco_external_statement_items y transfer_links - preserve/detach/rebuild/reattach
+- `691fcda` — fix(fisco): corregir columna inexistente statement_item_id en Phase5 commitToOfficial + tests schema correcto
 
 ### Problema
 El commit/rebuild fallaba con error de FK:
@@ -40,7 +41,9 @@ UPDATE fisco_transfer_links SET from_operation_id = NULL, to_operation_id = NULL
 - Actualizar `matched_operation_id`, `from_operation_id`, `to_operation_id`
 - Registrar warnings si alguna referencia no puede revincularse
 
-**PHASE 5: Validate** — Guardar warnings en `warnings_json` del rebuild run para visibilidad
+**PHASE 5: Log** — Guardar warnings en `warnings_json` del rebuild run para visibilidad (simplificado: sin subquery, solo log directo de contadores)
+
+**Fix adicional (`691fcda`)**: Phase 5 contenía una subquery con `SELECT DISTINCT statement_item_id FROM fisco_external_statement_items` — `statement_item_id` no es columna física (es alias `esi.id AS statement_item_id`). El commit fallaba con `column "statement_item_id" does not exist`. Eliminada la subquery redundante, simplificado a log directo de contadores ya calculados. También corregidas las helpers del test de integración para usar columnas reales del schema (migración 045).
 
 ### Tests añadidos
 
@@ -55,7 +58,7 @@ Los tests son condicionales (se saltan si no hay acceso a DB, marcando [SKIP]).
 
 ### Validación
 - `npm run check`: ✅ TypeScript sin errores
-- `npm run test -- fisco`: ✅ 313/313 tests pasan
+- `npm run test -- fisco`: ✅ 315/315 tests pasan (incluyendo SANITY-01, SANITY-02)
 
 ---
 
