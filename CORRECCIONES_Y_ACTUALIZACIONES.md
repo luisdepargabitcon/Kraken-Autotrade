@@ -2,6 +2,97 @@
 
 ---
 
+## 2026-06-16 — fix+feat(fisco): Corrección crítica auto-sync FISCO (Fases 1–4)
+
+### Commits
+- `ff3971d` — fix(fisco): fase1 integridad auto-sync - failed_commit, errors_json, UUID rebuild, watchdog stale
+- `8359e8a` — feat(fisco): fase2 detector operaciones pendientes FIFO y orphan sells
+- `5593635` — feat(fisco): fase3 Telegram detallado - pending/orphan/commit status en mensajes FISCO
+- `19ac305` — feat(fisco): fase4 endpoint pending-changes y panel UI en Mantenimiento FIFO
+
+---
+
+### Fase 1 — Integridad auto-sync (bug fixes críticos)
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ MODIFICADO
+- **`failed_commit`** añadido al tipo `AutoSyncStatus` — estado distinto de `failed` para cuando el dry_run pasa pero el commit falla.
+- **Verificación estricta de commit status** en `processAutoSyncJob` y `retryFailedJob`: si `commitResult.status !== 'committed'` se marca `failed_commit`, no `success`.
+- **UUID reales** guardados en `dry_run_rebuild_id` y `commit_rebuild_id` — antes se hacía `parseInt(uuid)` truncando el id.
+- **Watchdog stale** llamado al inicio de `processAutoSyncJob`: marca como `failed_stale` los rebuild runs en `running` por más de 15 minutos.
+- **`mapRowToJob`** actualizado para leer los nuevos campos UUID.
+
+#### `server/services/FiscoRebuildService.ts` ✅ MODIFICADO
+- **`errors_json`** guardado correctamente en el `catch` del rebuild: antes solo se guardaba `err.message` en `notes`, dejando `errors_json` vacío.
+- **`markStaleRebuildRuns()`** nuevo método: actualiza a `failed_stale` los runs en estado `running` con `started_at` anterior a `now - threshold`.
+
+#### `db/migrations/050_fisco_autosync_uuid_and_stale.sql` ✅ CREADO
+- Añade columnas `dry_run_rebuild_id TEXT` y `commit_rebuild_id TEXT` a `fisco_auto_sync_jobs`.
+- Función SQL watchdog `mark_stale_fisco_rebuild_runs()`.
+
+#### Tests: `server/services/fisco/__tests__/fiscoAutoSync.test.ts`
+- F1-01 a F1-07: `failed_commit` en tipo, `AutoSyncJob` campos UUID, `isSafeForAutoCommit`, `markStaleRebuildRuns`, `errors_json`.
+
+---
+
+### Fase 2 — Detector de cambios fiscales pendientes
+
+#### `server/services/fisco/FiscoPendingDetector.ts` ✅ CREADO
+- Singleton `FiscoPendingDetector` con método `detectPendingFiscalChanges(year)`.
+- Detecta: (1) operaciones en `fisco_operations` creadas después del último commit, (2) `trade_sell` del año sin entradas en `fisco_disposals` (orphan sells).
+- Retorna `PendingFiscalChanges` con `has_pending`, `pending_operations_count`, `orphan_sells_count`, `lastCommittedRun`.
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ MODIFICADO (adicional)
+- En `processAutoSyncJob`: cuando `newOpsCount === 0`, consulta `FiscoPendingDetector` antes de saltar con `skipped_no_changes`. Si `has_pending === true`, procede con dry_run + commit igualmente.
+
+#### Tests: `server/services/fisco/__tests__/fiscoPendingDetector.test.ts` ✅ CREADO
+- F2-01 a F2-12: tipos, singleton, campos, lógica `has_pending`.
+
+---
+
+### Fase 3 — Notificaciones Telegram detalladas
+
+#### `server/services/telegram/types.ts` ✅ MODIFICADO
+- `FiscoAutoSyncSuccessContextSchema`: añade `pendingOperationsCount`, `orphanSellsCount`, `previousFinalTaxableGainLossEur`.
+- `FiscoAutoSyncNoChangesContextSchema`: añade `pendingOperationsCount`, `orphanSellsCount`.
+- **Nuevo schema** `FiscoAutoSyncFailedCommitContextSchema` + tipo `FiscoAutoSyncFailedCommitContext`.
+
+#### `server/services/telegram/templates.ts` ✅ MODIFICADO
+- `buildFiscoAutoSyncSuccessHTML`: muestra `pending_ops`, `orphan_sells`, estado dry-run/commit, delta fiscal.
+- `buildFiscoAutoSyncNoChangesHTML`: muestra pending=0/orphan=0 y "Rebuild FIFO: no necesario".
+- **Nueva función** `buildFiscoAutoSyncFailedCommitHTML`: mensaje específico cuando commit falla — título "COMMIT FIFO FALLIDO", muestra "NO APLICADO", error real, resultado anterior conservado.
+
+#### `server/services/fisco/FiscoAutoSyncService.ts` ✅ MODIFICADO (adicional)
+- `sendTelegramSuccess` acepta `pendingCounts` con `pendingOperationsCount`, `orphanSellsCount`, `previousFinalTaxableGainLossEur`.
+- `sendTelegramNoChanges` acepta `pendingCounts`.
+- Importa `buildFiscoAutoSyncFailedCommitHTML` y `FiscoAutoSyncFailedCommitContextSchema`.
+
+#### Tests: F3-01 a F3-05 en `fiscoAutoSync.test.ts`.
+
+---
+
+### Fase 4 — Endpoint y UI de cambios pendientes
+
+#### `server/routes/fisco.routes.ts` ✅ MODIFICADO
+- **Nuevo endpoint** `GET /api/fisco/pending-changes?year=YYYY`: llama a `FiscoPendingDetector.detectPendingFiscalChanges(year)` y devuelve el resultado. Read-only, seguro.
+
+#### `client/src/pages/Fisco.tsx` ✅ MODIFICADO
+- Añade interfaz TypeScript `PendingFiscalChanges` con los campos del detector.
+- Añade query `pendingChangesQ` (activa solo en tab `rebuild`, staleTime 30s).
+- Añade panel visual entre "Datos FIFO válidos" y "Mantenimiento FIFO":
+  - Verde: "FIFO al día" cuando `has_pending === false`.
+  - Ámbar: "Cambios fiscales pendientes de recalcular" con badges de ops pendientes y ventas sin FIFO.
+  - Muestra fecha del último commit FIFO.
+  - Botón refresh para refetch manual.
+
+---
+
+### Validaciones
+- `npm run check`: ✅ (TypeScript sin errores)
+- `npx vitest run fisco/__tests__/`: ✅ 308/308 tests
+- Tests preexistentes de `telegram/templates.test.ts`: los 9 fallos son preexistentes (snapshots de templates de trading), no relacionados con esta implementación.
+
+---
+
 ## 2026-06-15 — feat(fisco): añadir resumen anual de ganancias y pérdidas por activo
 
 ### Objetivo
